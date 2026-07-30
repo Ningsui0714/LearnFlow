@@ -301,7 +301,13 @@ async def generate_exercises(
     try:
         exercises_data = j.loads(m.group(1))
     except j.JSONDecodeError as e:
-        return {"error": f"JSON parse failed: {e}", "raw": content[:500]}
+        # Return both the error and the raw LLM output for debugging
+        raw_content = content[:2000]  # limit raw output size
+        return {
+            "error": f"LLM 返回了无法解析的 JSON: {e}",
+            "raw": raw_content,
+            "hint": "这个错误说明 AI 生成的响应格式有问题。请再试一次，如果持续出现请联系开发者。"
+        }
 
     # Save to DB
     saved = []

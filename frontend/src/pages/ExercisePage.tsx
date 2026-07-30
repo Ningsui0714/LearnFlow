@@ -70,7 +70,16 @@ export default function ExercisePage() {
       if (res.data.exercises) {
         await loadExercises()
       } else {
-        alert('生成失败: ' + (res.data.error || '未知错误'))
+        const msg = res.data.error || '未知错误'
+        const raw = res.data.raw
+        if (raw) {
+          alert(`生成失败: ${msg}
+
+AI 返回的原始内容:
+${raw.slice(0, 500)}`)
+        } else {
+          alert(`生成失败: ${msg}`)
+        }
       }
     } catch (e: any) {
       alert('生成失败: ' + (e?.response?.data?.detail || e.message))
