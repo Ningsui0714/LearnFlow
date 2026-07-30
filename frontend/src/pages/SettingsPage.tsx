@@ -22,6 +22,8 @@ export default function SettingsPage() {
   const [editModel, setEditModel] = useState('')
   const [editEmbBackend, setEditEmbBackend] = useState('local')
   const [editEmbModel, setEditEmbModel] = useState('')
+  const [editEmbKey, setEditEmbKey] = useState('')
+  const [editEmbUrl, setEditEmbUrl] = useState('')
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ type: 'ok' | 'error' | ''; msg: string }>({ type: '', msg: '' })
@@ -51,8 +53,10 @@ export default function SettingsPage() {
         llm_model: editModel,
         embedding_backend: editEmbBackend,
         embedding_model: editEmbModel,
+        embedding_base_url: editEmbUrl,
       }
       if (editKey) body.llm_api_key = editKey
+      if (editEmbKey) body.embedding_api_key = editEmbKey
 
       const res = await api.put('/settings', body)
       setSaveMsg(`✅ 已保存: ${res.data.updated.join(', ')}`)
@@ -280,26 +284,55 @@ export default function SettingsPage() {
             </div>
 
             {editEmbBackend === 'api' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Embedding 模型名
-                </label>
-                <input
-                  type="text" value={editEmbModel}
-                  onChange={e => setEditEmbModel(e.target.value)}
-                  placeholder="text-embedding-ada-002 / deepseek-embedding"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
-                             focus:outline-none focus:ring-2 focus:ring-primary-400"
-                />
-                <div className="flex gap-2 mt-1.5">
-                  <button onClick={() => setEditEmbModel('text-embedding-ada-002')}
-                    className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
-                    OpenAI ada-002
-                  </button>
-                  <button onClick={() => setEditEmbModel('deepseek-embedding')}
-                    className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
-                    DeepSeek Embedding
-                  </button>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Embedding API Key
+                    <span className="text-gray-400 font-normal ml-2">留空则复用 LLM Key</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={editEmbKey}
+                    onChange={e => setEditEmbKey(e.target.value)}
+                    placeholder="留空复用 LLM API Key"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                               focus:outline-none focus:ring-2 focus:ring-primary-400 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Embedding Base URL
+                    <span className="text-gray-400 font-normal ml-2">留空则复用 LLM URL</span>
+                  </label>
+                  <input
+                    type="text" value={editEmbUrl}
+                    onChange={e => setEditEmbUrl(e.target.value)}
+                    placeholder="留空复用 LLM Base URL"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                               focus:outline-none focus:ring-2 focus:ring-primary-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Embedding 模型名
+                  </label>
+                  <input
+                    type="text" value={editEmbModel}
+                    onChange={e => setEditEmbModel(e.target.value)}
+                    placeholder="text-embedding-ada-002 / deepseek-embedding"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                               focus:outline-none focus:ring-2 focus:ring-primary-400"
+                  />
+                  <div className="flex gap-2 mt-1.5">
+                    <button onClick={() => setEditEmbModel('text-embedding-ada-002')}
+                      className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                      OpenAI ada-002
+                    </button>
+                    <button onClick={() => setEditEmbModel('deepseek-embedding')}
+                      className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                      DeepSeek Embedding
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

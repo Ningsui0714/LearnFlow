@@ -36,10 +36,10 @@ def _get_api_client():
     global _api_client
     if _api_client is None:
         from openai import AsyncOpenAI
-        _api_client = AsyncOpenAI(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-        )
+        # Use embedding-specific settings if provided, fallback to LLM settings
+        api_key = settings.embedding_api_key or settings.llm_api_key
+        base_url = settings.embedding_base_url or settings.llm_base_url
+        _api_client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     return _api_client
 
 EMBEDDING_API_MODEL = getattr(settings, "embedding_model", "text-embedding-ada-002")

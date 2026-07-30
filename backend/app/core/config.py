@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # Embedding
     embedding_backend: str = "local"  # local | api
     embedding_model: str = "text-embedding-ada-002"  # for api backend
+    embedding_api_key: str = ""  # separate from llm_api_key
+    embedding_base_url: str = ""  # separate from llm_base_url (empty = use llm_base_url)
 
     # CORS — stored as comma-separated in env, split at use
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"

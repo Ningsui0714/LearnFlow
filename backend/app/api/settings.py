@@ -18,6 +18,8 @@ class SettingsUpdate(BaseModel):
     llm_model: Optional[str] = None
     embedding_backend: Optional[str] = None
     embedding_model: Optional[str] = None
+    embedding_api_key: Optional[str] = None
+    embedding_base_url: Optional[str] = None
 
 
 def _read_env() -> dict:
@@ -83,12 +85,16 @@ async def get_settings():
 
     raw = _read_env()
 
+    emb_key = raw.get("EMBEDDING_API_KEY", "") or app_settings.embedding_api_key or ""
+
     return {
         "llm_api_key": _mask_key(raw.get("LLM_API_KEY", app_settings.llm_api_key)),
         "llm_base_url": raw.get("LLM_BASE_URL", app_settings.llm_base_url),
         "llm_model": raw.get("LLM_MODEL", app_settings.llm_model),
         "embedding_backend": raw.get("EMBEDDING_BACKEND", app_settings.embedding_backend),
         "embedding_model": raw.get("EMBEDDING_MODEL", app_settings.embedding_model),
+        "embedding_api_key": _mask_key(emb_key) if emb_key else "",
+        "embedding_base_url": raw.get("EMBEDDING_BASE_URL", app_settings.embedding_base_url or ""),
         "has_key": bool(app_settings.llm_api_key and app_settings.llm_api_key not in ("", "sk-your-key-here")),
     }
 
@@ -159,6 +165,8 @@ async def save_settings(data: SettingsUpdate):
         "llm_model": "LLM_MODEL",
         "embedding_backend": "EMBEDDING_BACKEND",
         "embedding_model": "EMBEDDING_MODEL",
+        "embedding_api_key": "EMBEDDING_API_KEY",
+        "embedding_base_url": "EMBEDDING_BASE_URL",
     }
     for field, env_key in mapping.items():
         val = getattr(data, field, None)
