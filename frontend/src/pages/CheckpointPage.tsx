@@ -23,7 +23,8 @@ export default function CheckpointPage() {
   const [status, setStatus] = useState<'loading' | 'none' | 'draft' | 'published'>('loading')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
-  const [error, setError] = useState('')           // ← 持久化的错误消息
+  const [error, setError] = useState('')
+  const [checkpointTitle, setCheckpointTitle] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [showWorkspace, setShowWorkspace] = useState(false)
   const sectionsRef = useRef<Section[]>([])
@@ -36,6 +37,12 @@ export default function CheckpointPage() {
     setStatus('loading')
     setError('')
     try {
+      // Load checkpoint title with order number
+      fetch(`/api/projects/${pid}/roadmap`).then(r => r.json()).then(rm => {
+        const cp = (rm.checkpoints || []).find((c: any) => c.id === cid)
+        if (cp) setCheckpointTitle(`#${cp.order} ${cp.title}`)
+      }).catch(() => {})
+
       const data = await getLecture(cid)
       if (data.sections && data.sections.length > 0) {
         setSections(data.sections)

@@ -28,6 +28,15 @@ export default function ProjectPage() {
   const [sourceUrl, setSourceUrl] = useState('')
   const [processing, setProcessing] = useState(false)
   const [activeTab, setActiveTab] = useState<'sources' | 'roadmap'>('sources')
+  const [initialTabSet, setInitialTabSet] = useState(false)
+
+  // After loading, switch to roadmap tab if roadmap exists
+  useEffect(() => {
+    if (!initialTabSet && checkpoints.length > 0) {
+      setActiveTab('roadmap')
+      setInitialTabSet(true)
+    }
+  }, [checkpoints, initialTabSet])
   const [notification, setNotification] = useState<string | null>(null)
 
   useEffect(() => { load() }, [pid])
