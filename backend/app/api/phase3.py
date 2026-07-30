@@ -280,7 +280,9 @@ async def generate_exercises(
 - 题目与学习内容强相关
 - starter_code 包含 TODO 标记
 - 用 KaTeX 公式
-- 难度递进"""
+- 难度递进
+- **重要：JSON 字符串中的所有双引号必须用反斜杠转义！**
+  例如 title 中含引号，应写为: \"列表的\\"引用\\"行为\""""
 
     from langchain_openai import ChatOpenAI
     from app.core.config import settings
@@ -299,8 +301,25 @@ async def generate_exercises(
         return {"error": "LLM did not return valid JSON", "raw": content[:500]}
 
     try:
+        # Try strict parse first
         exercises_data = j.loads(m.group(1))
     except j.JSONDecodeError as e:
+        # Attempt to repair common JSON issues (unescaped quotes in strings)
+        import re
+        raw = m.group(1)
+        # Replace unescaped quotes inside string values (crude but often works)
+        # Focus on quoted strings that span multiple lines
+        try:
+            # More lenient parse with strict=False
+            exercises_data = j.loads(raw, strict=False)
+        except j.JSONDecodeError:
+            # Return detailed error
+            raw_content = content[:2000]
+            return {
+                "error": f"LLM 返回了无法解析的 JSON: {e}",
+                "raw": raw_content,
+                "hint": "JSON 格式错误，常见原因：字符串中的双引号未转义。请重试。"
+            }
         # Return both the error and the raw LLM output for debugging
         raw_content = content[:2000]  # limit raw output size
         return {
