@@ -143,7 +143,7 @@ export default function CheckpointPage() {
           </button>
           <span className="text-gray-300">|</span>
           <h1 className="text-lg font-semibold text-gray-900">
-            关卡 {checkpointId}
+            {checkpointTitle || `关卡 ${checkpointId}`}
           </h1>
         </div>
 
