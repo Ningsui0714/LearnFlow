@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./learnflow.db"
 
+    # Embedding
+    embedding_backend: str = "local"  # local | api
+    embedding_model: str = "text-embedding-ada-002"  # for api backend
+
     # CORS — stored as comma-separated in env, split at use
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

@@ -203,16 +203,30 @@ User Query (e.g., "梯度下降入门")
             top-k chunks → LLM
 ```
 
-### Synonym Dictionary
+### Query Expansion (Phase 3.5)
 
-Built-in domain-specific thesaurus (~20 groups):
+Built-in domain-specific thesaurus (~20 groups) for keyword expansion:
 ```
 梯度下降 → gradient descent, GD, parameter update, steepest descent
 反向传播 → backpropagation, backprop, BP, chain rule
 注意力   → attention, self-attention, transformer, scaled dot-product
 ...
 ```
-No external embedding API required.
+Expanded keywords feed into all retrieval levels. No external API required.
+
+### Embedding Backend (Phase 4)
+
+| Backend | Vector Dim | Quality | Requirements |
+|---------|-----------|---------|-------------|
+| `local` (default) | 384 (gte-small) | Good | `pip install sentence-transformers` |
+| `api` | configurable (e.g. 1024) | Better | API key with embedding support |
+
+Configurable via `.env`:
+```env
+EMBEDDING_BACKEND=local   # local | api
+EMBEDDING_MODEL=text-embedding-ada-002   # only for api backend
+```
+The local backend runs entirely on-device. Switch to `api` for higher quality embeddings when available.
 
 ---
 
