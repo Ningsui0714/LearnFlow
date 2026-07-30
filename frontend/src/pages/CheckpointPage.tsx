@@ -37,11 +37,15 @@ export default function CheckpointPage() {
     setStatus('loading')
     setError('')
     try {
-      // Load checkpoint title with order number
-      fetch(`/api/projects/${pid}/roadmap`).then(r => r.json()).then(rm => {
+      // Load checkpoint order and title from roadmap
+      try {
+        const rmResp = await fetch(`/api/projects/${pid}/roadmap`)
+        const rm = await rmResp.json()
         const cp = (rm.checkpoints || []).find((c: any) => c.id === cid)
-        if (cp) setCheckpointTitle(`#${cp.order} ${cp.title}`)
-      }).catch(() => {})
+        if (cp) {
+          setCheckpointTitle(`#${cp.order} ${cp.title}`)
+        }
+      } catch {}
 
       const data = await getLecture(cid)
       if (data.sections && data.sections.length > 0) {
