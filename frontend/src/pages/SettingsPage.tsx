@@ -28,9 +28,12 @@ export default function SettingsPage() {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ type: 'ok' | 'error' | ''; msg: string }>({ type: '', msg: '' })
   const [saveMsg, setSaveMsg] = useState('')
+  const [projects, setProjects] = useState<any[]>([])
+  const [indexingProject, setIndexingProject] = useState<number | null>(null)
+  const [indexingAll, setIndexingAll] = useState(false)
   const [showKey, setShowKey] = useState(false)
 
-  useEffect(() => { loadSettings() }, [])
+  useEffect(() => { loadSettings(); loadProjects() }, [])
 
   const loadSettings = async () => {
     try {
@@ -42,6 +45,40 @@ export default function SettingsPage() {
       setEditEmbBackend(s.embedding_backend)
       setEditEmbModel(s.embedding_model)
     } catch { /* ignore */ }
+  }
+
+  const loadProjects = async () => {
+    try {
+      const res = await api.get('/projects')
+      // Get chunk counts for each project
+      const withCounts = await Promise.all(res.data.map(async (p: any) => {
+        try {
+          const c = await api.get(`/projects/${p.id}/chunks`)
+          return { ...p, chunks_count: c.data.length }
+        } catch { return { ...p, chunks_count: 0 } }
+      }))
+      setProjects(withCounts)
+    } catch { /* ignore */ }
+  }
+
+  const handleReindex = async (projectId: number, name: string) => {
+    setIndexingProject(projectId)
+    setTestResult({ type: '', msg: `正在索引「${name}」的切片...` })
+    try {
+      const res = await api.post(`/projects/${projectId}/embeddings/index`)
+      setTestResult({ type: 'ok', msg: `✅ 「${name}」索引完成: ${res.data.indexed} 个切片` })
+    } catch (e: any) {
+      setTestResult({ type: 'error', msg: `❌ 索引失败: ${e?.response?.data?.detail || e.message}` })
+    }
+    setIndexingProject(null)
+  }
+
+  const handleReindexAll = async () => {
+    setIndexingAll(true)
+    for (const p of projects) {
+      await handleReindex(p.id, p.name)
+    }
+    setIndexingAll(false)
   }
 
   const handleSave = async () => {
@@ -360,6 +397,41 @@ export default function SettingsPage() {
             <p className="text-sm">{testResult.msg}</p>
           </div>
         )}
+
+        {/* Re-index */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <h2 className="font-semibold text-gray-900 mb-4">🗂️ 向量索引</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            更换 Embedding 后端或模型后，需要重新索引切片使新向量生效。
+          </p>
+          {projects.map(p => (
+            <div key={p.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+              <div>
+                <p className="text-sm text-gray-800">{p.name}</p>
+                <p className="text-xs text-gray-400">{p.chunks_count || '?'} 个切片</p>
+              </div>
+              <button
+                onClick={() => handleReindex(p.id, p.name)}
+                disabled={indexingProject === p.id}
+                className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-xs
+                           hover:bg-gray-200 disabled:opacity-50 transition-colors"
+              >
+                {indexingProject === p.id ? '索引中...' : '🔄 索引'}
+              </button>
+            </div>
+          ))}
+          {projects.length === 0 && (
+            <p className="text-xs text-gray-400">暂无项目</p>
+          )}
+          {projects.length > 1 && (
+            <button onClick={handleReindexAll} disabled={indexingProject !== null}
+              className="mt-3 w-full text-xs bg-primary-50 text-primary-700 py-2 rounded-lg
+                         hover:bg-primary-100 disabled:opacity-50 transition-colors"
+            >
+              {indexingAll ? '索引中...' : '🔄 全部重新索引'}
+            </button>
+          )}
+        </div>
 
         {/* Save message */}
         {saveMsg && (
