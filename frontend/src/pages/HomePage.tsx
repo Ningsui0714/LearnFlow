@@ -30,6 +30,16 @@ export default function HomePage() {
     }
   }
 
+  const handleDeleteProject = async (id: number, name: string) => {
+    if (!confirm(`确定删除项目「${name}」？所有切片、路线图和讲义将被永久删除。`)) return
+    try {
+      await import('../services/api').then(m => m.default.delete(`/projects/${id}`))
+      setProjects(prev => prev.filter(p => p.id !== id))
+    } catch (e: any) {
+      alert('删除失败: ' + (e?.response?.data?.detail || e.message))
+    }
+  }
+
   const handleCreate = async () => {
     if (!name.trim()) return
     try {
@@ -94,20 +104,30 @@ export default function HomePage() {
           {projects.map(p => (
             <div
               key={p.id}
-              onClick={() => navigate(`/projects/${p.id}`)}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 cursor-pointer
-                         hover:border-primary-300 hover:shadow-md transition-all"
+              className="bg-white rounded-xl shadow-sm border border-gray-200 p-5
+                         hover:border-primary-300 hover:shadow-md transition-all group relative"
             >
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">{p.name}</h3>
-                  {p.description && <p className="text-gray-500 text-sm mt-1">{p.description}</p>}
-                </div>
-                <div className="flex gap-4 text-sm text-gray-500 shrink-0">
-                  <span>📄 {p.source_count} 来源</span>
-                  <span>🎯 {p.completed_count}/{p.checkpoint_count} 关卡</span>
+              <div onClick={() => navigate(`/projects/${p.id}`)} className="cursor-pointer">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">{p.name}</h3>
+                    {p.description && <p className="text-gray-500 text-sm mt-1">{p.description}</p>}
+                  </div>
+                  <div className="flex gap-4 text-sm text-gray-500 shrink-0">
+                    <span>📄 {p.source_count} 来源</span>
+                    <span>🎯 {p.completed_count}/{p.checkpoint_count} 关卡</span>
+                  </div>
                 </div>
               </div>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteProject(p.id, p.name) }}
+                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100
+                           text-xs text-red-400 hover:text-red-600 bg-white/80 rounded px-1.5
+                           transition-opacity"
+                title="删除项目"
+              >
+                ✕
+              </button>
             </div>
           ))}
         </div>

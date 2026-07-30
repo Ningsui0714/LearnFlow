@@ -62,6 +62,38 @@ async def get_project(project_id: int, db: AsyncSession = Depends(get_db)):
     return project
 
 
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a project and all related data."""
+    # Also clear embedding cache for this project's chunks
+    from app.services.embedding import load_cache, save_cache
+    result = await db.execute(select(Project).where(Project.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    
+    # Get chunk IDs before deletion
+    chunk_ids = []
+    from app.models.project import Source, Chunk
+    srcs = await db.execute(select(Chunk.id).join(Source).where(Source.project_id == project_id))
+    chunk_ids = [r[0] for r in srcs.all()]
+    
+    # Delete project (cascades to sources, chunks, roadmap, checkpoints, etc.)
+    await db.delete(project)
+    await db.commit()
+    
+    # Clean up embedding cache
+    try:
+        cache = load_cache()
+        for cid in chunk_ids:
+            cache.pop(f"chunk-{cid}", None)
+        save_cache(cache)
+    except Exception:
+        pass
+    
+    return {"status": "ok", "deleted": project.name, "chunks_cleaned": len(chunk_ids)}
+
+
 # ── Sources ──
 
 @router.post("/projects/{project_id}/sources", response_model=SourceOut)
