@@ -1,0 +1,340 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import axios from 'axios'
+
+const api = axios.create({ baseURL: '/api', timeout: 15000 })
+
+interface Settings {
+  llm_api_key: string
+  llm_base_url: string
+  llm_model: string
+  embedding_backend: string
+  embedding_model: string
+  has_key: boolean
+}
+
+export default function SettingsPage() {
+  const navigate = useNavigate()
+
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [editKey, setEditKey] = useState('')
+  const [editUrl, setEditUrl] = useState('')
+  const [editModel, setEditModel] = useState('')
+  const [editEmbBackend, setEditEmbBackend] = useState('local')
+  const [editEmbModel, setEditEmbModel] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ type: 'ok' | 'error' | ''; msg: string }>({ type: '', msg: '' })
+  const [saveMsg, setSaveMsg] = useState('')
+  const [showKey, setShowKey] = useState(false)
+
+  useEffect(() => { loadSettings() }, [])
+
+  const loadSettings = async () => {
+    try {
+      const res = await api.get('/settings')
+      const s: Settings = res.data
+      setSettings(s)
+      setEditUrl(s.llm_base_url)
+      setEditModel(s.llm_model)
+      setEditEmbBackend(s.embedding_backend)
+      setEditEmbModel(s.embedding_model)
+    } catch { /* ignore */ }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveMsg('')
+    try {
+      const body: any = {
+        llm_base_url: editUrl,
+        llm_model: editModel,
+        embedding_backend: editEmbBackend,
+        embedding_model: editEmbModel,
+      }
+      if (editKey) body.llm_api_key = editKey
+
+      const res = await api.put('/settings', body)
+      setSaveMsg(`✅ 已保存: ${res.data.updated.join(', ')}`)
+      await loadSettings()
+      setEditKey('')
+      setShowKey(false)
+    } catch (e: any) {
+      setSaveMsg('❌ 保存失败: ' + (e?.response?.data?.detail || e.message))
+    }
+    setSaving(false)
+  }
+
+  const handleTest = async () => {
+    setTesting(true)
+    setTestResult({ type: '', msg: '' })
+    try {
+      const key = editKey || settings?.llm_api_key?.replace(/…/g, '') || ''
+      // For test we need the real key - if masked, try to use current
+      // The backend handles this
+      const res = await api.post('/settings/test', {
+        api_key: editKey || 'use_current',
+        base_url: editUrl,
+        model: editModel,
+      })
+      setTestResult({ type: 'ok', msg: `✅ 连接成功！模型: ${res.data.model}` })
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail || e.message
+      setTestResult({ type: 'error', msg: `❌ ${detail}` })
+    }
+    setTesting(false)
+  }
+
+  const handleTestEmbedding = async () => {
+    if (editEmbBackend !== 'api') {
+      setTestResult({ type: 'ok', msg: 'Local 后端无需测试' })
+      return
+    }
+    setTesting(true)
+    setTestResult({ type: '', msg: '' })
+    try {
+      const res = await api.post('/settings/test-embedding', {
+        api_key: editKey || 'use_current',
+        base_url: editUrl,
+        model: editEmbModel,
+      })
+      setTestResult({ type: 'ok', msg: `✅ Embedding 可用，维度: ${res.data.dimensions}` })
+    } catch (e: any) {
+      setTestResult({ type: 'error', msg: `❌ ${e?.response?.data?.detail || e.message}` })
+    }
+    setTesting(false)
+  }
+
+  if (!settings) return <div className="p-8 text-gray-400">加载中...</div>
+
+  return (
+    <div className="h-full overflow-y-auto p-8">
+      <div className="max-w-2xl mx-auto">
+        {/* Header */}
+        <button onClick={() => navigate('/')} className="text-sm text-gray-400 hover:text-gray-600 mb-4">
+          ← 返回首页
+        </button>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">⚙️ 设置</h1>
+        <p className="text-sm text-gray-500 mb-8">配置 AI 模型和嵌入服务</p>
+
+        {/* Status card */}
+        <div className={`rounded-xl border p-5 mb-6 ${settings.has_key
+          ? 'bg-green-50 border-green-200'
+          : 'bg-yellow-50 border-yellow-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            <span className={`w-3 h-3 rounded-full ${settings.has_key ? 'bg-green-500' : 'bg-yellow-500'}`} />
+            <div>
+              <p className="font-medium text-sm text-gray-900">
+                {settings.has_key ? 'API Key 已配置' : 'API Key 未配置'}
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {settings.has_key
+                  ? '路线规划、讲义生成、代码审阅等功能可用'
+                  : '请配置 API Key 后使用 AI 功能。支持 DeepSeek、OpenAI 等兼容接口'
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* LLM Settings */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <h2 className="font-semibold text-gray-900 mb-4">🤖 AI 模型</h2>
+
+          <div className="space-y-4">
+            {/* API Key */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                API Key
+                <span className="text-gray-400 font-normal ml-2">必填</span>
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  value={editKey}
+                  onChange={e => setEditKey(e.target.value)}
+                  placeholder={settings.has_key ? '输入新 Key 替换当前配置' : 'sk-...'}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm
+                             focus:outline-none focus:ring-2 focus:ring-primary-400 font-mono"
+                />
+                <button onClick={() => setShowKey(!showKey)}
+                  className="text-xs text-gray-500 px-2 hover:text-gray-700">
+                  {showKey ? '隐藏' : '显示'}
+                </button>
+              </div>
+              {settings.has_key && (
+                <p className="text-xs text-gray-400 mt-1">
+                  当前 Key: {settings.llm_api_key}（输入新值替换，留空保留现有）
+                </p>
+              )}
+            </div>
+
+            {/* Base URL */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Base URL
+                <span className="text-gray-400 font-normal ml-2">推荐使用 DeepSeek</span>
+              </label>
+              <input
+                type="text" value={editUrl}
+                onChange={e => setEditUrl(e.target.value)}
+                placeholder="https://api.deepseek.com/v1"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-primary-400"
+              />
+              <div className="flex gap-2 mt-1.5">
+                <button onClick={() => setEditUrl('https://api.deepseek.com/v1')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  DeepSeek
+                </button>
+                <button onClick={() => setEditUrl('https://api.openai.com/v1')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  OpenAI
+                </button>
+                <button onClick={() => setEditUrl('https://api.moonshot.cn/v1')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  Kimi
+                </button>
+              </div>
+            </div>
+
+            {/* Model */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                模型名称
+                <span className="text-gray-400 font-normal ml-2">根据 API 提供商填写</span>
+              </label>
+              <input
+                type="text" value={editModel}
+                onChange={e => setEditModel(e.target.value)}
+                placeholder="deepseek-chat / gpt-4o-mini / moonshot-v1-8k"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-primary-400"
+              />
+              <div className="flex gap-2 mt-1.5">
+                <button onClick={() => setEditModel('deepseek-chat')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  DeepSeek Chat
+                </button>
+                <button onClick={() => setEditModel('gpt-4o-mini')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  GPT-4o-mini
+                </button>
+                <button onClick={() => setEditModel('moonshot-v1-8k')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  Kimi K3
+                </button>
+              </div>
+            </div>
+
+            {/* Test + Save */}
+            <div className="flex gap-3 pt-2">
+              <button onClick={handleTest} disabled={testing || !editUrl}
+                className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm
+                           hover:bg-gray-200 disabled:opacity-50 transition-colors">
+                {testing ? '测试中...' : '🔌 测试连接'}
+              </button>
+              <button onClick={handleSave} disabled={saving}
+                className="bg-primary-600 text-white px-5 py-2 rounded-lg text-sm
+                           hover:bg-primary-700 disabled:bg-gray-300 transition-colors">
+                {saving ? '保存中...' : '💾 保存设置'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Embedding Settings */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <h2 className="font-semibold text-gray-900 mb-4">🧠 向量嵌入</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            用于讲义生成时的切片检索。Local 模式使用本地 gte-small 模型（免费离线），
+            API 模式使用外部嵌入服务（质量更高）。
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">后端类型</label>
+              <div className="flex gap-3">
+                <label className={`flex-1 border-2 rounded-xl p-3 cursor-pointer transition-all ${
+                  editEmbBackend === 'local'
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}>
+                  <input type="radio" name="emb" value="local" checked={editEmbBackend === 'local'}
+                    onChange={() => setEditEmbBackend('local')} className="sr-only" />
+                  <p className="font-medium text-sm text-gray-900">Local</p>
+                  <p className="text-xs text-gray-500 mt-1">gte-small · 384维<br/>免费离线</p>
+                </label>
+                <label className={`flex-1 border-2 rounded-xl p-3 cursor-pointer transition-all ${
+                  editEmbBackend === 'api'
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}>
+                  <input type="radio" name="emb" value="api" checked={editEmbBackend === 'api'}
+                    onChange={() => setEditEmbBackend('api')} className="sr-only" />
+                  <p className="font-medium text-sm text-gray-900">API</p>
+                  <p className="text-xs text-gray-500 mt-1">外部服务 · 维度可配<br/>质量更高</p>
+                </label>
+              </div>
+            </div>
+
+            {editEmbBackend === 'api' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Embedding 模型名
+                </label>
+                <input
+                  type="text" value={editEmbModel}
+                  onChange={e => setEditEmbModel(e.target.value)}
+                  placeholder="text-embedding-ada-002 / deepseek-embedding"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                             focus:outline-none focus:ring-2 focus:ring-primary-400"
+                />
+                <div className="flex gap-2 mt-1.5">
+                  <button onClick={() => setEditEmbModel('text-embedding-ada-002')}
+                    className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                    OpenAI ada-002
+                  </button>
+                  <button onClick={() => setEditEmbModel('deepseek-embedding')}
+                    className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                    DeepSeek Embedding
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={handleTestEmbedding} disabled={testing}
+                className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm
+                           hover:bg-gray-200 disabled:opacity-50 transition-colors">
+                {testing ? '测试中...' : '🧪 测试嵌入'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Test Result */}
+        {testResult.msg && (
+          <div className={`rounded-xl border p-4 mb-6 ${
+            testResult.type === 'ok' ? 'bg-green-50 border-green-200 text-green-800'
+            : testResult.type === 'error' ? 'bg-red-50 border-red-200 text-red-800'
+            : 'bg-gray-50 border-gray-200'
+          }`}>
+            <p className="text-sm">{testResult.msg}</p>
+          </div>
+        )}
+
+        {/* Save message */}
+        {saveMsg && (
+          <div className={`rounded-xl border p-4 mb-6 ${
+            saveMsg.startsWith('✅') ? 'bg-green-50 border-green-200 text-green-800'
+            : 'bg-red-50 border-red-200 text-red-800'
+          }`}>
+            <p className="text-sm">{saveMsg}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

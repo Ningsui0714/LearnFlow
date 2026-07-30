@@ -18,6 +18,9 @@ export default function Layout() {
               项目列表
             </Link>
           )}
+          <Link to="/settings" className="text-gray-400 hover:text-primary-600 text-xs transition-colors">
+            ⚙️
+          </Link>
         </nav>
       </header>
 
