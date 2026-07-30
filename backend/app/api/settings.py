@@ -109,9 +109,13 @@ class TestConnectionRequest(BaseModel):
 async def test_connection(req: TestConnectionRequest):
     """Test LLM connection with provided credentials."""
     from openai import AsyncOpenAI
+    from app.core.config import settings as app_settings
+
+    api_key = req.api_key if req.api_key != "use_current" else app_settings.llm_api_key
+    base_url = req.base_url or app_settings.llm_base_url
 
     try:
-        client = AsyncOpenAI(api_key=req.api_key, base_url=req.base_url)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         resp = await client.chat.completions.create(
             model=req.model,
             messages=[{"role": "user", "content": "say just: OK"}],
@@ -136,9 +140,18 @@ async def test_connection(req: TestConnectionRequest):
 async def test_embedding(req: TestConnectionRequest):
     """Test embedding API connection."""
     from openai import AsyncOpenAI
+    from app.core.config import settings as app_settings
+
+    # Resolve credentials: use_current → current LLM key; empty → fallback
+    api_key = req.api_key
+    base_url = req.base_url
+    if api_key == "use_current" or not api_key:
+        api_key = app_settings.embedding_api_key or app_settings.llm_api_key
+    if not base_url:
+        base_url = app_settings.embedding_base_url or app_settings.llm_base_url
 
     try:
-        client = AsyncOpenAI(api_key=req.api_key, base_url=req.base_url)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         resp = await client.embeddings.create(
             model=req.model or "text-embedding-ada-002",
             input="test",

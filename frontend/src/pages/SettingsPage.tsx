@@ -97,9 +97,12 @@ export default function SettingsPage() {
     setTesting(true)
     setTestResult({ type: '', msg: '' })
     try {
+      // Use embedding-specific credentials; fallback to LLM if empty
+      const testKey = editEmbKey || editKey || 'use_current'
+      const testUrl = editEmbUrl || editUrl
       const res = await api.post('/settings/test-embedding', {
-        api_key: editKey || 'use_current',
-        base_url: editUrl,
+        api_key: testKey,
+        base_url: testUrl,
         model: editEmbModel,
       })
       setTestResult({ type: 'ok', msg: `✅ Embedding 可用，维度: ${res.data.dimensions}` })
