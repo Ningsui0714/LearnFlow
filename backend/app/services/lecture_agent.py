@@ -127,6 +127,20 @@ GENERATE_SECTION_PROMPT = """你是学习内容专家。根据大纲生成完整
 ## 可视化图（可选）
 - 需要示意图且资料中没有合适图片时，可以输出 ```matplotlib 代码块（后端会执行并渲染成图插入讲义）。
 - matplotlib 代码必须是自包含、可直接运行的（只依赖 numpy/matplotlib），不要读文件。
+- **交互式可视化（强烈推荐，优先于 matplotlib）**：需要展示"动态过程/结构关系"时，用 ```viz JSON 块，
+  支持以下组件（只输出 JSON，不要代码）：
+  1. array-pointer：数组+指针移动+步骤动画（排序/搜索/指针操作）
+     {{"type":"array-pointer","data":{{"array":[5,3,8,1],"pointers":["i","j"]}},
+       "steps":[{{"pointers":{{"i":0}},"highlight":[0,1],"note":"比较 5 和 3"}},
+                {{"pointers":{{"i":1,"j":2}},"swap":[1,2],"note":"交换"}}]}}
+  2. function-plot：函数曲线/损失曲线 + 标记点
+     {{"type":"function-plot","functions":[{{"expr":"x^2","label":"L(w)"}}],
+       "points":[{{"x":3,"y":9,"label":"初始"}}],"xrange":[-5,5],"yrange":[-2,12]}}
+  3. tensor-shape：矩阵/张量网格（形状、高亮格子）
+     {{"type":"tensor-shape","data":{{"matrix":[[1,2,3],[4,5,6]]}},"highlight":[[0,1]]}}
+  4. neural-net：神经网络层结构（可带权重）
+     {{"type":"neural-net","layers":[3,4,1],"activation":"relu"}}
+- 每节最多 1-2 个 viz 块，只在确有价值时使用；expr 只支持 + - * / ^ sin cos exp log abs 和 x。
 
 ## 输出
 直接输出 markdown 内容，不要额外的 JSON 包裹。"""

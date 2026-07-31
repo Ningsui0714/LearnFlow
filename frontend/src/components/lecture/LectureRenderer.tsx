@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
+import VizRenderer from '../viz/VizRenderer'
 
 interface Section {
   title: string
@@ -87,6 +88,10 @@ export default function LectureRenderer({ sections, onSelect, onDeleteImage }: P
                 // Style code blocks
                 code({ className, children, ...props }: any) {
                   const isInline = !className
+                  // viz blocks: JSON-driven interactive visualizations
+                  if (className?.includes('language-viz')) {
+                    return <VizRenderer code={String(children || '').replace(/\n$/, '')} />
+                  }
                   if (isInline) {
                     return <code className="bg-gray-100 text-red-600 px-1 rounded text-sm" {...props}>{children}</code>
                   }
