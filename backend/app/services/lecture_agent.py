@@ -67,9 +67,10 @@ STRUCTURED_PLAN_PROMPT = """你是学习内容专家。你需要为某个学习�
    - 合并：多个骨架小节（尤其是内容短的）合并成一节，chunk_ids 取并集。
    - 拆开：一个骨架小节内容太多时拆成多节（需在 adjust_reason 说明）。
    - 重排：仅在骨架顺序明显不符合教学递进时重排（如定义在最后）。
-   - 新增：需要引导性/总结性的小节时，可以新增一节（source_file 留空，chunk_ids 可空）。
+   - 新增：仅当确实缺少引导或总结内容时才新增（source_file 留空，chunk_ids 可空）。
+     **不要为了凑结构而新增导览/边界/回顾类小节**；内容重叠的候选必须合并。
 3. chunk_ids 只能来自骨架中列出的切片编号，不要臆造。
-4. 输出 3-9 节。
+4. 输出 3-9 节；若骨架本身已能覆盖内容，直接按骨架输出，宁少勿滥。
 
 ## 输出格式（JSON）
 ```json
@@ -545,12 +546,13 @@ class LectureAgent:
         section_keywords: Optional[List[str]] = None,
         brief: Optional[Dict] = None,
         section_chunk_ids: Optional[List[int]] = None,
+        used_images: Optional[set] = None,
     ) -> str:
         """Generate a single section's content, using retrieved relevant chunks.
 
         section_chunk_ids (from the structure skeleton) restrict the pool first
-        (T4); if retrieval comes back too sparse, retry with wider scope (T3
-        per-section policy adjustment).
+        (T4); used_images excludes figures already used in earlier sections so
+        the same image is never inserted twice in one lecture.
         """
         query = section.get("title", "")
         extra_kw = (section_keywords or []) + [checkpoint_title]
@@ -575,6 +577,10 @@ class LectureAgent:
         # Split image chunks (T6): captions appended as optional figure material
         text_chunks = [c for c in relevant if (c.get("meta") or {}).get("type") != "image"]
         image_chunks = [c for c in relevant if (c.get("meta") or {}).get("type") == "image"]
+        if used_images:
+            # exclude images already used in earlier sections of this lecture
+            image_chunks = [c for c in image_chunks
+                            if (c.get("meta") or {}).get("image_path") not in used_images]
         ctx = self._build_chunk_context(text_chunks)
         if image_chunks:
             fig_lines = ["\n## 资料图片（按需引用，不要硬插）"]

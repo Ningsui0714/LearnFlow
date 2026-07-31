@@ -241,6 +241,18 @@ async def run_lecture_generation(task_id: int):
 
     # ── Generate each section (reuse saved ones on resume) ──
     cited_all = []
+    used_images: set = set()  # T6: one lecture never repeats the same image
+
+    def _dedup_images(content: str) -> str:
+        import re as _re
+        def fix(m):
+            url = m.group(1)
+            if url in used_images:
+                return ""  # already used in an earlier section → drop
+            used_images.add(url)
+            return m.group(0)
+        return _re.sub(r"!\[[^\]]*\]\((/api/sources/\d+/files/[^)]+)\)", fix, content)
+
     for i, ps in enumerate(plan_sections):
         title = ps.get("title", f"第{i+1}节")
 
@@ -255,6 +267,7 @@ async def run_lecture_generation(task_id: int):
                     section_keywords=ps.get("keywords", []),
                     brief=brief,
                     section_chunk_ids=ps.get("chunk_ids"),
+                    used_images=used_images,
                 )
             except Exception as e:
                 # One retry per section, then fail the task (partial remains)
@@ -264,6 +277,7 @@ async def run_lecture_generation(task_id: int):
                         section_keywords=ps.get("keywords", []),
                         brief=brief,
                         section_chunk_ids=ps.get("chunk_ids"),
+                        used_images=used_images,
                     )
                 except Exception as e2:
                     from app.services.task_manager import classify_error
@@ -278,6 +292,8 @@ async def run_lecture_generation(task_id: int):
             # T6: rewrite image paths + render matplotlib blocks
             content = _postprocess_section(
                 content, ps.get("source_file", ""), main_source_id or 0, persist_dir)
+            # Hard dedup: drop image refs already used in earlier sections
+            content = _dedup_images(content)
             questions = agent._extract_questions(content)
 
         cited_all.extend(agent._extract_cited_chunks(content))
