@@ -353,6 +353,8 @@ async def submit_concept(
     correct = sorted(q.answer_indexes or [])
     user = sorted(int(i) for i in (data or {}).get("answer_indexes", []))
     is_correct = user == correct and len(user) > 0
+    from app.services.progress import record_concept_answer
+    await record_concept_answer(checkpoint_id, question_id, is_correct)
     return {
         "correct": is_correct,
         "answer_indexes": correct,
@@ -438,4 +440,7 @@ async def submit_exercise(
     from app.services.exercise_agent import ExerciseAgent
     results = ExerciseAgent.verify_exercise(req.code, test_cases)
     passed = sum(1 for r in results if r["passed"])
+    if passed == len(results) and passed > 0:
+        from app.services.progress import record_exercise_solved
+        await record_exercise_solved(exercise.checkpoint_id, exercise.id)
     return {"passed": passed, "total": len(results), "results": results}

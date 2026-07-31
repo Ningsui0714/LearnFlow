@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getProject, addSource, listSources, listChunks, processAllSources, getRoadmap, startImageCaptioning, getTaskStatus } from '../services/api'
+import { getProject, addSource, listSources, processAllSources, getRoadmap, startImageCaptioning, getTaskStatus, setSourceRole, reconcileSources, applyReconcile } from '../services/api'
 import ChatInterface from '../components/workspace/ChatInterface'
 import CheckpointGraph from '../components/checkpoint/CheckpointGraph'
 
@@ -12,6 +12,8 @@ interface CheckpointNode {
   prerequisites: number[]
   completed: boolean
   chunk_ids: number[]
+  archived?: boolean
+  progress?: any
 }
 
 export default function ProjectPage() {
@@ -29,6 +31,8 @@ export default function ProjectPage() {
   const [processing, setProcessing] = useState(false)
   const [captioningSource, setCaptioningSource] = useState<number | null>(null)
   const [visionEnhanceEnabled, setVisionEnhanceEnabled] = useState(false)
+  const [reconcileSuggestion, setReconcileSuggestion] = useState<any>(null)
+  const [reconcileLoading, setReconcileLoading] = useState(false)
 
   // Check whether paid API enhance is allowed (settings)
   useEffect(() => {
@@ -48,7 +52,44 @@ export default function ProjectPage() {
   }, [checkpoints, initialTabSet])
   const [notification, setNotification] = useState<string | null>(null)
 
-  // T6: trigger image captioning (manual, idempotent) and poll the task
+  // T10: source main/aux role + reconcile
+  const handleSetRole = async (sourceId: number, role: 'main' | 'auxiliary') => {
+    try {
+      await setSourceRole(pid, sourceId, role)
+      await load()
+      setNotification(`已设为${role === 'main' ? '主' : '辅助'}来源`)
+    } catch (e: any) {
+      setNotification('❌ ' + (e?.response?.data?.detail || e.message))
+    }
+    setTimeout(() => setNotification(null), 3000)
+  }
+
+  const handleReconcile = async () => {
+    setReconcileLoading(true)
+    setNotification('正在分析新来源与路线的契合度...')
+    try {
+      const res = await reconcileSources(pid)
+      setReconcileSuggestion(res.suggestion)
+      setNotification(null)
+    } catch (e: any) {
+      setNotification('❌ ' + (e?.response?.data?.detail || e.message))
+    }
+    setReconcileLoading(false)
+  }
+
+  const handleApplyReconcile = async () => {
+    if (!reconcileSuggestion) return
+    setReconcileLoading(true)
+    try {
+      const res = await applyReconcile(pid, reconcileSuggestion)
+      setNotification(`✅ 已整合：新增 ${res.inserted} 关，扩展 ${res.extended} 关`)
+      setReconcileSuggestion(null)
+      await load()
+    } catch (e: any) {
+      setNotification('❌ ' + (e?.response?.data?.detail || e.message))
+    }
+    setReconcileLoading(false)
+  }
   const handleCaption = async (sourceId: number, mode: 'free' | 'api' = 'free') => {
     setCaptioningSource(sourceId)
     setNotification(mode === 'api' ? '正在用 API 增强图片描述...' : '正在分析图片...')
@@ -288,6 +329,33 @@ export default function ProjectPage() {
                     )}
                   </div>
                 )}
+                {/* T10: main/auxiliary role */}
+                {s.status === 'processed' && (
+                  <div className="mt-1 flex gap-1">
+                    <button
+                      onClick={() => handleSetRole(s.id, 'main')}
+                      title="主来源：决定路线骨架"
+                      className={`flex-1 text-[10px] py-0.5 rounded transition-colors ${
+                        s.role !== 'auxiliary'
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+                      }`}
+                    >
+                      主来源
+                    </button>
+                    <button
+                      onClick={() => handleSetRole(s.id, 'auxiliary')}
+                      title="辅助来源：仅补充检索，不决定路线"
+                      className={`flex-1 text-[10px] py-0.5 rounded transition-colors ${
+                        s.role === 'auxiliary'
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-50 text-gray-400 hover:bg-gray-100'
+                      }`}
+                    >
+                      辅助
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -300,6 +368,16 @@ export default function ProjectPage() {
                          hover:bg-primary-100 disabled:opacity-50 transition-colors mb-3"
             >
               {processing ? '处理中...' : '🔄 处理所有来源'}
+            </button>
+          )}
+          {hasProcessedChunks && (
+            <button
+              onClick={handleReconcile}
+              disabled={reconcileLoading}
+              className="w-full text-xs bg-indigo-50 text-indigo-700 py-2 rounded-lg
+                         hover:bg-indigo-100 disabled:opacity-50 transition-colors mb-3"
+            >
+              {reconcileLoading ? '分析中...' : '🧩 整合新来源到路线'}
             </button>
           )}
 
@@ -397,6 +475,64 @@ export default function ProjectPage() {
           )}
         </div>
       </div>
+
+      {/* T10: reconcile suggestion modal */}
+      {reconcileSuggestion && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+             onClick={() => setReconcileSuggestion(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-[520px] max-h-[75vh] flex flex-col"
+               onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+              <h3 className="font-semibold text-gray-800">🧩 新来源整合建议</h3>
+              <button onClick={() => setReconcileSuggestion(null)}
+                      className="text-gray-400 hover:text-gray-600 text-sm px-1">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 text-sm space-y-3">
+              <p className="text-xs text-gray-500">{reconcileSuggestion.reason || ''}</p>
+              {(reconcileSuggestion.insert || []).length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-700 mb-1">📥 建议新增关卡</p>
+                  {reconcileSuggestion.insert.map((ins: any, i: number) => (
+                    <div key={i} className="border border-indigo-100 bg-indigo-50/50 rounded-lg p-2.5 mb-1.5">
+                      <p className="font-medium text-gray-800">
+                        {ins.after_order ? `插在第 ${ins.after_order} 关之后 · ` : ''}{ins.title}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">{ins.description}</p>
+                      {ins.files?.length > 0 && (
+                        <p className="text-[10px] text-gray-400 mt-1 truncate">📄 {ins.files.join(', ')}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(reconcileSuggestion.extend || []).length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-700 mb-1">📎 建议扩展已有关卡</p>
+                  {reconcileSuggestion.extend.map((ex: any, i: number) => (
+                    <div key={i} className="border border-amber-100 bg-amber-50/50 rounded-lg p-2.5 mb-1.5">
+                      <p className="font-medium text-gray-800">关卡 {ex.checkpoint_order} 补充 {ex.files?.length || 0} 个文件</p>
+                      <p className="text-[10px] text-gray-400 mt-1 truncate">📄 {(ex.files || []).join(', ')}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {reconcileSuggestion.ignore && (
+                <p className="text-xs text-gray-400">🤷 建议忽略该来源（与现有路线契合度低）</p>
+              )}
+            </div>
+            <div className="flex gap-2 px-5 py-3 border-t border-gray-100 shrink-0">
+              <button onClick={() => setReconcileSuggestion(null)}
+                      className="bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm hover:bg-gray-200">
+                取消
+              </button>
+              <button onClick={handleApplyReconcile} disabled={reconcileLoading}
+                      className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50">
+                {reconcileLoading ? '应用中...' : '✅ 确认整合'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -25,6 +25,7 @@ class Source(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     type = Column(String(50), nullable=False)  # github, url, file
     url = Column(Text, default="")
+    role = Column(String(20), default="main")  # main | auxiliary (T10)
     status = Column(String(50), default="pending")  # pending, processing, processed, failed
     error = Column(Text, default="")
     meta_data = Column(JSON, default=dict)
@@ -72,7 +73,9 @@ class Checkpoint(Base):
     order = Column(Integer, nullable=False)
     prerequisites = Column(JSON, default=list)  # list of checkpoint ids
     completed = Column(Boolean, default=False)
+    archived = Column(Boolean, default=False)  # T10: removed-but-kept checkpoints
     brief = Column(JSON, default=dict)  # CheckpointBrief handoff contract (see docs/design)
+    progress = Column(JSON, default=dict)  # T10: {lecture_read, exercises_done, concept_total, concept_correct, notes_count}
     created_at = Column(DateTime, default=datetime.utcnow)
 
     roadmap = relationship("Roadmap", back_populates="checkpoints")

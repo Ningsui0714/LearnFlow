@@ -82,6 +82,8 @@ class RoadmapNode(BaseModel):
     completed: bool
     chunk_ids: List[int]
     brief: dict = {}
+    archived: bool = False
+    progress: dict = {}
 
 
 class RoadmapOut(BaseModel):

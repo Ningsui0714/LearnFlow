@@ -426,6 +426,10 @@ async def create_note(
     db.add(note)
     await db.commit()
     await db.refresh(note)
+    from app.services.progress import update_notes_count
+    await update_notes_count(checkpoint_id, len((await db.execute(
+        select(LectureNote).where(LectureNote.checkpoint_id == checkpoint_id)
+    )).scalars().all()))
     return {"id": note.id, "status": "ok"}
 
 
@@ -458,4 +462,8 @@ async def delete_note(
         raise HTTPException(404, "Note not found")
     await db.delete(note)
     await db.commit()
+    from app.services.progress import update_notes_count
+    await update_notes_count(note.checkpoint_id, len((await db.execute(
+        select(LectureNote).where(LectureNote.checkpoint_id == note.checkpoint_id)
+    )).scalars().all()))
     return {"status": "ok"}

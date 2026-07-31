@@ -23,6 +23,8 @@ interface CheckpointNode {
   prerequisites: number[]
   completed: boolean
   chunk_ids: number[]
+  archived?: boolean
+  progress?: any
 }
 
 interface Props {
@@ -31,7 +33,11 @@ interface Props {
 }
 
 function CheckpointNodeComponent({ data }: NodeProps) {
-  const { label, completed, description } = data as any
+  const { label, completed, description, progress } = data as any
+  const conceptTotal = progress?.concept_total || 0
+  const conceptCorrect = progress?.concept_correct || 0
+  const exercisesDone = progress?.exercises_done || 0
+  const hasProgress = conceptTotal > 0 || exercisesDone > 0
   return (
     <div
       className={`
@@ -50,6 +56,22 @@ function CheckpointNodeComponent({ data }: NodeProps) {
         }`} />
         <span className="font-medium text-sm text-gray-900">{label}</span>
       </div>
+      {hasProgress && (
+        <div className="flex gap-1.5 mt-1.5">
+          {exercisesDone > 0 && (
+            <span className="text-[10px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded-full">
+              💻 {exercisesDone}
+            </span>
+          )}
+          {conceptTotal > 0 && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
+              conceptCorrect === conceptTotal ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'
+            }`}>
+              🧠 {conceptCorrect}/{conceptTotal}
+            </span>
+          )}
+        </div>
+      )}
       {description && (
         <p className="text-xs text-gray-500 mt-1 line-clamp-2">{description}</p>
       )}
@@ -61,8 +83,10 @@ function CheckpointNodeComponent({ data }: NodeProps) {
 const nodeTypes = { checkpoint: CheckpointNodeComponent }
 
 export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Props) {
+  // T10: archived checkpoints are hidden from the roadmap (products kept)
+  const visible = checkpoints.filter(cp => !cp.archived)
   // Build nodes and edges from checkpoint data
-  const initialNodes: Node[] = checkpoints.map(cp => ({
+  const initialNodes: Node[] = visible.map(cp => ({
     id: String(cp.id),
     type: 'checkpoint',
     position: { x: 0, y: 0 }, // Will be laid out below
@@ -71,13 +95,16 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
       completed: cp.completed,
       description: cp.description,
       checkpointId: cp.id,
+      progress: cp.progress,
     },
     draggable: true,
   }))
 
   const initialEdges: Edge[] = []
-  for (const cp of checkpoints) {
+  const visibleIds = new Set(visible.map(c => c.id))
+  for (const cp of visible) {
     for (const prereqId of cp.prerequisites) {
+      if (!visibleIds.has(prereqId)) continue
       initialEdges.push({
         id: `e${prereqId}-${cp.id}`,
         source: String(prereqId),
@@ -91,7 +118,7 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
   }
 
   // Layout: arrange in columns by position
-  const layoutNodes = layoutCheckpoints(initialNodes, checkpoints)
+  const layoutNodes = layoutCheckpoints(initialNodes, visible)
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)

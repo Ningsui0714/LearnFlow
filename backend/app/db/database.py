@@ -25,7 +25,12 @@ async def get_db():
 # explicitly (SQLite ADD COLUMN).
 EXTRA_COLUMNS = {
     "checkpoints": [
-        ("brief", "TEXT"),  # CheckpointBrief handoff contract (T2)
+        ("brief", "TEXT"),        # CheckpointBrief handoff contract (T2)
+        ("archived", "BOOLEAN"), # T10: removed-but-kept checkpoints
+        ("progress", "TEXT"),    # T10: learning progress stats
+    ],
+    "sources": [
+        ("role", "TEXT"),        # T10: main | auxiliary
     ],
 }
 

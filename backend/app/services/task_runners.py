@@ -361,6 +361,9 @@ async def run_lecture_generation(task_id: int):
             checkpoint.brief = new_brief
         await db.commit()
 
+    from app.services.progress import mark_lecture_generated
+    await mark_lecture_generated(checkpoint_id)
+
     await update_task(
         task_id, status="completed",
         progress={"current": total, "total": total, "message": f"完成！共 {total} 节"},

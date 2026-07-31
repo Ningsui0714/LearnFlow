@@ -31,6 +31,15 @@ export const processAllSources = (projectId: number) =>
 export const startImageCaptioning = (projectId: number, sourceId: number, limit?: number, mode: 'free' | 'api' = 'free') =>
   api.post(`/projects/${projectId}/sources/${sourceId}/images/caption`, { limit, mode }).then(r => r.data)
 
+export const setSourceRole = (projectId: number, sourceId: number, role: 'main' | 'auxiliary') =>
+  api.put(`/projects/${projectId}/sources/${sourceId}/role`, { role }).then(r => r.data)
+
+export const reconcileSources = (projectId: number) =>
+  api.post(`/projects/${projectId}/reconcile`).then(r => r.data)
+
+export const applyReconcile = (projectId: number, suggestion: any) =>
+  api.post(`/projects/${projectId}/reconcile/apply`, suggestion).then(r => r.data)
+
 // ── Chunk ──
 export const listChunks = (projectId: number) =>
   api.get(`/projects/${projectId}/chunks`).then(r => r.data)

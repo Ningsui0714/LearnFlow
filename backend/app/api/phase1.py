@@ -419,6 +419,217 @@ async def process_all_sources(
     return {"status": "ok", "processed": count, "errors": errors}
 
 
+@router.put("/projects/{project_id}/sources/{source_id}/role")
+async def set_source_role(
+    project_id: int,
+    source_id: int,
+    data: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    """T10: set source role — main (roadmap skeleton) | auxiliary (retrieval only)."""
+    source = (await db.execute(
+        select(Source).where(Source.id == source_id, Source.project_id == project_id)
+    )).scalar_one_or_none()
+    if not source:
+        raise HTTPException(404, "Source not found")
+    role = (data or {}).get("role", "main")
+    if role not in ("main", "auxiliary"):
+        raise HTTPException(400, "role 必须是 main 或 auxiliary")
+    source.role = role
+    await db.commit()
+    return {"status": "ok", "role": role}
+
+
+# ── T10: reconcile new sources into the roadmap ──
+
+@router.post("/projects/{project_id}/reconcile")
+async def reconcile_sources(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """T10: suggest how a new/changed source fits the existing roadmap.
+
+    One LLM call comparing the source's structure (L0/L1) with current
+    checkpoints → suggestions: insert new checkpoints, extend existing
+    checkpoint scopes, or ignore. Apply happens via /roadmap/reconcile-apply
+    after the user confirms.
+    """
+    if not settings.llm_api_key or settings.llm_api_key == "***":
+        raise HTTPException(400, "请先配置 API Key")
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.project_id == project_id)
+    )).scalar_one_or_none()
+    if not roadmap:
+        raise HTTPException(400, "该项目还没有路线图")
+    cps = (await db.execute(
+        select(Checkpoint).where(Checkpoint.roadmap_id == roadmap.id, Checkpoint.archived == False)  # noqa: E712
+        .order_by(Checkpoint.order)
+    )).scalars().all()
+    sources = (await db.execute(
+        select(Source).where(Source.project_id == project_id).order_by(Source.id)
+    )).scalars().all()
+
+    # Source structure digest (dir groups + file summaries, main sources only)
+    lines = []
+    for s in sources:
+        ra = (s.meta_data or {}).get("repo_analysis") or {}
+        groups = ra.get("dir_groups") or []
+        summaries = ra.get("file_summaries") or {}
+        lines.append(f"## 来源 #{s.id} ({s.role}, {s.url[:60]})")
+        for g in groups[:15]:
+            lines.append(f"  📁 {g.get('name')} ({g.get('count')} 文件)")
+        for fp, sm in list(summaries.items())[:20]:
+            lines.append(f"  - {fp}: {sm}")
+
+    cp_lines = [f"- 关卡{cp.order} {cp.title}: {cp.description or ''}" for cp in cps]
+    prompt = (
+        "你是学习路线规划专家。现有学习路线如下，新加入/更新了一个参考资料仓库。\n"
+        "请判断新仓库与现有路线的契合度，给出整合建议。\n\n"
+        "## 现有路线\n" + "\n".join(cp_lines) + "\n\n"
+        "## 仓库结构\n" + "\n".join(lines) + "\n\n"
+        "## 输出 JSON（只输出 JSON）\n"
+        "{\"insert\": [{\"after_order\": 3, \"title\": \"建议关卡名\", "
+        "\"description\": \"学习目标\", \"files\": [\"相关文件路径\"]}], "
+        "\"extend\": [{\"checkpoint_order\": 2, \"files\": [\"补充文件\"]}], "
+        "\"ignore\": true|false, \"reason\": \"一句话理由\"}\n"
+        "规则：只输出确有价值的建议；仓库与路线无关时 ignore=true。"
+    )
+    from langchain_openai import ChatOpenAI
+    from langchain_core.messages import HumanMessage
+    llm = ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0.3,
+        timeout=120,
+        max_retries=0,
+        max_tokens=4000,
+        model_kwargs={"response_format": {"type": "json_object"}},
+    )
+    try:
+        resp = await llm.ainvoke([HumanMessage(content=prompt)])
+        import re as _re
+        content = resp.content
+        m = _re.search(r"```json\s*(.*?)\s*```", content, _re.DOTALL)
+        raw = m.group(1) if m else content
+        import json as _json
+        data = _json.loads(raw)
+    except Exception as e:
+        raise HTTPException(502, f"建议生成失败: {str(e)[:200]}")
+
+    return {"suggestion": data, "sources": [{"id": s.id, "role": s.role, "url": s.url} for s in sources]}
+
+
+@router.post("/projects/{project_id}/reconcile/apply")
+async def apply_reconcile(
+    project_id: int,
+    data: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    """T10: apply confirmed reconcile suggestions (insert checkpoints / extend
+    scopes). Deterministic — no LLM here."""
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.project_id == project_id)
+    )).scalar_one_or_none()
+    if not roadmap:
+        raise HTTPException(404, "Roadmap not found")
+
+    all_chunks = (await db.execute(
+        select(Chunk).join(Source).where(Source.project_id == project_id)
+    )).scalars().all()
+    chunks_by_file = {}
+    for c in all_chunks:
+        fp = (c.meta_data or {}).get("file", "")
+        if fp:
+            chunks_by_file.setdefault(fp, []).append(c)
+
+    # Gather structure info for briefs
+    sources = (await db.execute(
+        select(Source).where(Source.project_id == project_id).order_by(Source.id)
+    )).scalars().all()
+    structure_logic, structure_confidence = "mixed", "low"
+    for s in sources:
+        ra = (s.meta_data or {}).get("repo_analysis") or {}
+        if ra.get("structure_logic"):
+            structure_logic = ra["structure_logic"]
+            structure_confidence = (ra.get("structure_confidence") or {}).get("level", "low")
+            break
+    main_source_id = next((s.id for s in sources if s.role == "main"),
+                          (sources[0].id if sources else None))
+
+    # Reindex existing checkpoints after inserts
+    cps = (await db.execute(
+        select(Checkpoint).where(Checkpoint.roadmap_id == roadmap.id)
+        .order_by(Checkpoint.order)
+    )).scalars().all()
+
+    async def _assign_files(cp, files):
+        valid = [f for f in files if f in chunks_by_file]
+        scope_ids = []
+        for f in valid:
+            scope_ids += [c.id for c in chunks_by_file[f]]
+        scope_ids = list(dict.fromkeys(scope_ids))
+        old = (await db.execute(
+            select(CheckpointChunk).where(CheckpointChunk.checkpoint_id == cp.id)
+        )).scalars().all()
+        for cc in old:
+            await db.delete(cc)
+        for cid in scope_ids:
+            db.add(CheckpointChunk(checkpoint_id=cp.id, chunk_id=cid))
+        node = {"title": cp.title, "description": cp.description,
+                "prerequisites": cp.prerequisites or [], "key_concepts": []}
+        cp.brief = _build_brief(cp.id, cp.order, node, valid, scope_ids, [],
+                                structure_logic, structure_confidence, main_source_id)
+
+    inserted = extended = 0
+    inserts = (data or {}).get("insert") or []
+    extends = (data or {}).get("extend") or []
+
+    # Extend first (stable orders), then insert
+    for ex in extends:
+        target = next((c for c in cps if c.order == ex.get("checkpoint_order")), None)
+        if not target or target.archived:
+            continue
+        old_files = (target.brief or {}).get("scope", {}).get("files") or []
+        merged = list(dict.fromkeys(old_files + [f for f in (ex.get("files") or []) if isinstance(f, str)]))
+        await _assign_files(target, merged)
+        extended += 1
+
+    if inserts:
+        existing_ordered = sorted([c for c in cps if not c.archived], key=lambda c: c.order)
+        # create new checkpoints (order assigned during re-layout below)
+        pending = []
+        for ins in inserts:
+            cp = Checkpoint(
+                roadmap_id=roadmap.id,
+                title=ins.get("title", "新关卡"),
+                description=ins.get("description", ""),
+                prerequisites=[],
+                completed=False,
+            )
+            db.add(cp)
+            await db.flush()
+            await _assign_files(cp, ins.get("files") or [])
+            pending.append((ins.get("after_order"), cp))
+            inserted += 1
+        # Re-layout: insert each new cp right after its after_order checkpoint
+        final = []
+        for c in existing_ordered:
+            final.append(c)
+            for after, cp in pending:
+                if after == c.order:
+                    final.append(cp)
+        used_ids = {id(c) for c in final}
+        for after, cp in pending:
+            if id(cp) not in used_ids:
+                final.append(cp)  # unmatched after_order → append at end
+        for i, cp in enumerate(final, start=1):
+            cp.order = i
+
+    await db.commit()
+    return {"status": "ok", "inserted": inserted, "extended": extended}
+
+
 # ── Roadmap Agent Chat ──
 
 @router.post("/projects/{project_id}/roadmap/chat", response_model=AgentChatResponse)
@@ -927,5 +1138,17 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
     for order, cp in existing.items():
         if order not in seen_orders and not cp.completed:
             await db.delete(cp)
+
+    # T10: apply archives — completed checkpoints declared in "archives" are
+    # archived (products kept, hidden from the roadmap) instead of deleted
+    archives = roadmap_data.get("archives") or []
+    for a in archives:
+        cp = next((c for c in existing.values()
+                   if c.title == a.get("title") and c.completed), None)
+        if cp and not cp.archived:
+            cp.archived = True
+            brief = dict(cp.brief or {})
+            brief["archived_by"] = a.get("replaced_by_title", "")
+            cp.brief = brief
 
     await db.commit()

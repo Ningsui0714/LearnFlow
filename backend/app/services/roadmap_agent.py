@@ -77,6 +77,9 @@ class RoadmapAgent:
     # ── Compact structure context (L0 + L1, no chunk stuffing) ──
 
     def _build_structure_context(self, sources_info: List[Dict]) -> str:
+        # T10: only main sources shape the roadmap skeleton; auxiliary
+        # sources stay available for read/search tools
+        sources_info = [s for s in sources_info if s.get("role", "main") == "main"]
         parts = []
         for s in sources_info:
             ra = s.get("repo_analysis") or {}
@@ -126,10 +129,12 @@ class RoadmapAgent:
                 if where is not None:
                     stmt = stmt.where(where)
                 rows = (await db.execute(stmt)).scalars().all()
-            return [{"id": c.id, "content": c.content, "meta": c.meta_data or {}} for c in rows]
+            return [{"id": c.id, "source_id": c.source_id, "content": c.content, "meta": c.meta_data or {}} for c in rows]
 
         def first_repo_analysis() -> dict:
             for s in sources_info:
+                if s.get("role", "main") != "main":
+                    continue
                 ra = s.get("repo_analysis")
                 if ra:
                     return ra
@@ -247,13 +252,19 @@ class RoadmapAgent:
             return "\n".join(out)
 
         @tool
-        def submit_roadmap(checkpoints: List[dict]) -> str:
-            """用户确认后提交最终路线。系统会校验已学关卡不可删除；校验通过后路线生效。"""
-            errors = self._validate_roadmap(checkpoints)
+        def submit_roadmap(checkpoints: List[dict], archives: Optional[List[dict]] = None) -> str:
+            """用户确认后提交最终路线。系统会校验已学关卡不可删除；
+            如需移除已学关卡，必须在 archives 中声明替换关系：
+            [{"title": "已学关卡名", "replaced_by_title": "新路线中的替代关卡名"}]。
+            被归档的关卡保留其讲义/练习/笔记，不再显示在路线中。"""
+            errors = self._validate_roadmap(checkpoints, archives or [])
             if errors:
                 return ("提交被拒绝：\n" + "\n".join(f"- {e}" for e in errors)
                         + "\n请修正后重新提交。")
-            self._last_submitted_roadmap = {"checkpoints": checkpoints}
+            self._last_submitted_roadmap = {
+                "checkpoints": checkpoints,
+                "archives": archives or [],
+            }
             return f"✅ 路线已确认并保存，共 {len(checkpoints)} 关。请向用户简要总结最终路线。"
 
         return [get_repo_structure, get_file_summaries, list_chunks,
@@ -261,7 +272,7 @@ class RoadmapAgent:
 
     # ── Validation ──
 
-    def _validate_roadmap(self, checkpoints: List[dict]) -> List[str]:
+    def _validate_roadmap(self, checkpoints: List[dict], archives: List[dict] = None) -> List[str]:
         errors = []
         if not checkpoints:
             return ["路线为空"]
@@ -272,9 +283,17 @@ class RoadmapAgent:
         existing_cps = existing.get("checkpoints", [])
         completed_titles = {c.get("title") for c in existing_cps if c.get("completed")}
         new_titles = {c.get("title") for c in checkpoints}
+        archived_titles = {a.get("title") for a in (archives or [])}
+        replaced_by = {a.get("title"): a.get("replaced_by_title") for a in (archives or [])}
         for t in completed_titles:
-            if t and t not in new_titles:
-                errors.append(f"已学关卡「{t}」不可删除或改名")
+            if t and t not in new_titles and t not in archived_titles:
+                errors.append(f"已学关卡「{t}」不可删除或改名（如需移除请用 archives 声明替代关系）")
+        for a in (archives or []):
+            t, r = a.get("title"), a.get("replaced_by_title")
+            if t not in completed_titles:
+                errors.append(f"archives 中的「{t}」不是已学关卡")
+            if r and r not in new_titles:
+                errors.append(f"archives 的替代关卡「{r}」不在新路线中")
         for c in checkpoints:
             title = c.get("title", "")
             if not title:
