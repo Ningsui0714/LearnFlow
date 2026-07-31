@@ -633,6 +633,14 @@ class LectureAgent:
 class QAAgent:
     """Q&A agent for follow-up questions on selected lecture text."""
 
+    QUICK_ACTION_TEMPLATES = {
+        "explain": "用通俗的语言解释选中的内容，先讲核心概念，再拆开讲每个部分的意思。200-400 字。",
+        "example": "为选中的概念举一个具体、贴近生活的例子（或一段简单代码），说明它为什么是好的例子。200-400 字。",
+        "summary": "用 3-5 句话总结选中的内容，突出最关键的信息，不要遗漏公式或结论。",
+        "translate": "把选中的内容翻译成英文。如果是代码或公式保留原样，术语保持准确。",
+        "quiz": "根据选中内容出一道思考题：给出题目和简短的提示，不要直接给答案。题目要考察理解而非记忆。",
+    }
+
     def __init__(self):
         self.llm = ChatOpenAI(
             model=settings.llm_model,
@@ -681,4 +689,36 @@ class QAAgent:
         messages.append(HumanMessage(content=question))
 
         response = await self.llm.ainvoke(messages)
+        return response.content
+
+    async def quick_action(
+        self,
+        action: str,
+        selected_text: str,
+        section_content: str,
+        checkpoint_title: str,
+    ) -> str:
+        """Preset prompt-template actions (T9)."""
+        instruction = self.QUICK_ACTION_TEMPLATES.get(action)
+        if not instruction:
+            raise ValueError(f"未知快捷动作: {action}")
+
+        system_prompt = f"""你是一名学习辅导助手。
+
+## 当前关卡
+{checkpoint_title}
+
+## 讲义上下文（选中段落所在小节）
+{section_content[:3000]}
+
+## 用户选中的文字
+「{selected_text}」
+
+## 任务
+{instruction}
+
+- 用 KaTeX 语法写公式
+- 回答直接给出内容，不要重复用户的问题"""
+
+        response = await self.llm.ainvoke([HumanMessage(content=system_prompt)])
         return response.content

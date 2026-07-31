@@ -162,8 +162,21 @@ export const cancelTask = (taskId: number) =>
 
 export const lectureTaskEventsUrl = (taskId: number) => `/api/tasks/${taskId}/events`
 
-export const askQuestion = (checkpointId: number, data: { selection: string; question: string; history: any[] }) =>
+export const askQuestion = (checkpointId: number, data: { selection: string; question: string; history: any[]; action?: string }) =>
   api.post(`/checkpoints/${checkpointId}/ask`, data).then(r => r.data)
+
+// ── T9: anchored notes ──
+export const listNotes = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/notes`).then(r => r.data)
+
+export const createNote = (checkpointId: number, data: { section_index: number; selection: string; note: string }) =>
+  api.post(`/checkpoints/${checkpointId}/notes`, data).then(r => r.data)
+
+export const updateNote = (noteId: number, note: string) =>
+  api.put(`/notes/${noteId}`, { note }).then(r => r.data)
+
+export const deleteNote = (noteId: number) =>
+  api.delete(`/notes/${noteId}`).then(r => r.data)
 
 // ── Phase 3: Exercises & Code ──
 export const listExercises = (checkpointId: number) =>

@@ -30,6 +30,7 @@ export default function CheckpointPage() {
   const [taskId, setTaskId] = useState<number | null>(null)
   const [checkpointTitle, setCheckpointTitle] = useState('')
   const [selectedText, setSelectedText] = useState('')
+  const [selectedSection, setSelectedSection] = useState(0)
   const [showWorkspace, setShowWorkspace] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [versions, setVersions] = useState<any[]>([])
@@ -195,8 +196,9 @@ export default function CheckpointPage() {
     setVersionLoading(false)
   }
 
-  const handleTextSelect = useCallback((text: string) => {
+  const handleTextSelect = useCallback((text: string, sectionIndex: number = 0) => {
     setSelectedText(text)
+    setSelectedSection(sectionIndex)
   }, [])
 
   const handleCloseWorkspace = () => {
@@ -372,6 +374,7 @@ export default function CheckpointPage() {
           <BottomWorkspace
             checkpointId={cid}
             selectedText={selectedText}
+            sectionIndex={selectedSection}
             onClose={handleCloseWorkspace}
           />
         )}

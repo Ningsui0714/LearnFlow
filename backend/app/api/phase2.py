@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task, LectureVersion
+from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task, LectureVersion, LectureNote
 from app.schemas.project import (
     AgentMessage, LectureAskRequest,
 )
@@ -308,43 +308,154 @@ async def ask_question(
     req: LectureAskRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Answer a question about selected lecture text."""
+    """Answer a question / run a quick action about selected lecture text (T9)."""
     result = await db.execute(
         select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
     )
     lecture = result.scalar_one_or_none()
 
-    checkpoint_title = ""
-    if not lecture:
-        cp_result = await db.execute(
-            select(Checkpoint).where(Checkpoint.id == checkpoint_id)
-        )
-        cp = cp_result.scalar_one_or_none()
-        checkpoint_title = cp.title if cp else ""
-    else:
-        cp_result = await db.execute(
-            select(Checkpoint).where(Checkpoint.id == checkpoint_id)
-        )
-        cp = cp_result.scalar_one_or_none()
-        checkpoint_title = cp.title if cp else ""
+    cp = (await db.execute(
+        select(Checkpoint).where(Checkpoint.id == checkpoint_id)
+    )).scalar_one_or_none()
+    checkpoint_title = cp.title if cp else ""
 
     # Find the section that contains the selected text
     section_content = ""
+    section_index = -1
     if lecture and lecture.sections:
-        for s in lecture.sections:
+        for i, s in enumerate(lecture.sections):
             if req.selection in s.get("content", ""):
                 section_content = s.get("content", "")
+                section_index = i
                 break
         if not section_content and lecture.sections:
             section_content = lecture.sections[0].get("content", "")
+            section_index = 0
+
+    # Trace: deterministic source lookup (no LLM)
+    if req.action == "trace":
+        trace = await _trace_selection(db, checkpoint_id, req.selection)
+        return {"answer": "", "kind": "trace", "trace": trace}
 
     agent = QAAgent()
-    answer = await agent.answer(
-        question=req.question,
-        selected_text=req.selection,
-        section_content=section_content,
-        checkpoint_title=checkpoint_title,
-        history=[m.model_dump() for m in req.history],
-    )
+    if req.action:
+        answer = await agent.quick_action(
+            action=req.action,
+            selected_text=req.selection,
+            section_content=section_content,
+            checkpoint_title=checkpoint_title,
+        )
+    else:
+        answer = await agent.answer(
+            question=req.question,
+            selected_text=req.selection,
+            section_content=section_content,
+            checkpoint_title=checkpoint_title,
+            history=[m.model_dump() for m in req.history],
+        )
 
-    return {"answer": answer}
+    return {"answer": answer, "kind": "chat", "section_index": section_index}
+
+
+async def _trace_selection(db: AsyncSession, checkpoint_id: int, selection: str) -> dict:
+    """Find which source chunk contains the selected text (T9 trace)."""
+    selection = (selection or "").strip()
+    if len(selection) < 4:
+        return {"found": False, "reason": "选中内容太短，无法定位"}
+    chunks = (await db.execute(
+        select(Chunk).join(CheckpointChunk)
+        .where(CheckpointChunk.checkpoint_id == checkpoint_id)
+        .order_by(Chunk.index)
+    )).scalars().all()
+    needle = selection[:60]
+    best = None
+    for c in chunks:
+        if needle in c.content:
+            best = c
+            break
+    if not best:
+        # Fallback: prefix match on any chunk of the same source
+        return {"found": False, "reason": "在关联切片中未找到该段文字（可能来自生成内容而非资料原文）"}
+    meta = best.meta_data or {}
+    idx = best.content.find(needle)
+    return {
+        "found": True,
+        "chunk_id": best.id,
+        "file": meta.get("file", ""),
+        "headings": meta.get("headings", []),
+        "heading_chain": meta.get("heading_chain", []),
+        "preview": best.content[max(0, idx - 80):idx + 160],
+    }
+
+
+# ── T9: anchored notes ──
+
+@router.get("/checkpoints/{checkpoint_id}/notes")
+async def list_notes(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    rows = (await db.execute(
+        select(LectureNote)
+        .where(LectureNote.checkpoint_id == checkpoint_id)
+        .order_by(LectureNote.id.desc())
+    )).scalars().all()
+    return [{
+        "id": n.id,
+        "checkpoint_id": n.checkpoint_id,
+        "section_index": n.section_index,
+        "selection": n.selection,
+        "note": n.note,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+        "updated_at": n.updated_at.isoformat() if n.updated_at else None,
+    } for n in rows]
+
+
+@router.post("/checkpoints/{checkpoint_id}/notes")
+async def create_note(
+    checkpoint_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    note = LectureNote(
+        checkpoint_id=checkpoint_id,
+        section_index=int(data.get("section_index", 0) or 0),
+        selection=data.get("selection", "")[:500],
+        note=data.get("note", ""),
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+    return {"id": note.id, "status": "ok"}
+
+
+@router.put("/notes/{note_id}")
+async def update_note(
+    note_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    note = (await db.execute(
+        select(LectureNote).where(LectureNote.id == note_id)
+    )).scalar_one_or_none()
+    if not note:
+        raise HTTPException(404, "Note not found")
+    if "note" in data:
+        note.note = data["note"]
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/notes/{note_id}")
+async def delete_note(
+    note_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    note = (await db.execute(
+        select(LectureNote).where(LectureNote.id == note_id)
+    )).scalar_one_or_none()
+    if not note:
+        raise HTTPException(404, "Note not found")
+    await db.delete(note)
+    await db.commit()
+    return {"status": "ok"}

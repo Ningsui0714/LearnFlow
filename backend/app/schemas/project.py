@@ -163,5 +163,6 @@ class AgentChatResponse(BaseModel):
 
 class LectureAskRequest(BaseModel):
     selection: str
-    question: str
+    question: str = ""
     history: List[AgentMessage] = []
+    action: Optional[str] = None  # explain|example|summary|translate|quiz|trace

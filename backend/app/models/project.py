@@ -79,6 +79,7 @@ class Checkpoint(Base):
     chunk_assignments = relationship("CheckpointChunk", back_populates="checkpoint", cascade="all, delete-orphan")
     lecture = relationship("Lecture", back_populates="checkpoint", uselist=False, cascade="all, delete-orphan")
     lecture_versions = relationship("LectureVersion", back_populates="checkpoint", cascade="all, delete-orphan")
+    notes = relationship("LectureNote", back_populates="checkpoint", cascade="all, delete-orphan")
     exercises = relationship("Exercise", back_populates="checkpoint", cascade="all, delete-orphan")
 
 
@@ -138,6 +139,22 @@ class LectureVersion(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="lecture_versions")
+
+
+class LectureNote(Base):
+    """Anchored note on a lecture section (T9: notes & highlights)."""
+
+    __tablename__ = "lecture_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    section_index = Column(Integer, default=0)
+    selection = Column(Text, default="")  # anchored selected text
+    note = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    checkpoint = relationship("Checkpoint", back_populates="notes")
 
 
 class Task(Base):

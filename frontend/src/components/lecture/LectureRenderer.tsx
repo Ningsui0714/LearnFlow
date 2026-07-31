@@ -14,7 +14,7 @@ interface Section {
 
 interface Props {
   sections: Section[]
-  onSelect?: (text: string) => void
+  onSelect?: (text: string, sectionIndex: number) => void
 }
 
 export default function LectureRenderer({ sections, onSelect }: Props) {
@@ -26,7 +26,18 @@ export default function LectureRenderer({ sections, onSelect }: Props) {
       const sel = window.getSelection()
       const text = sel?.toString().trim()
       if (text && text.length > 0 && onSelect) {
-        onSelect(text)
+        // Find the section container via the selection anchor
+        let node = sel?.anchorNode as HTMLElement | null
+        let sectionIndex = 0
+        while (node && node !== document.body) {
+          const attr = node.getAttribute?.('data-section-index')
+          if (attr !== undefined && attr !== null) {
+            sectionIndex = Number(attr)
+            break
+          }
+          node = node.parentElement
+        }
+        onSelect(text, sectionIndex)
       }
     }
     document.addEventListener('mouseup', handleMouseUp)
@@ -45,7 +56,7 @@ export default function LectureRenderer({ sections, onSelect }: Props) {
   return (
     <div ref={containerRef} className="prose prose-sm max-w-none px-1">
       {sections.map((section, i) => (
-        <div key={i} className="mb-10">
+        <div key={i} data-section-index={i} className="mb-10">
           {/* Section header */}
           <div className="flex items-center gap-3 mb-4 pb-3 border-b border-gray-200">
             <span className="w-7 h-7 rounded-full bg-primary-100 text-primary-700
