@@ -538,18 +538,19 @@ async def run_image_captioning(task_id: int):
                 )
             )).scalars().all()
 
-    # api mode: only needs_api images
+    # api mode: only needs_api images (python-side filter — robust across
+    # bool/string storage since SQLite json_extract turns JSON true into int 1)
     if mode == "api":
         from app.services import vision
         needs = set()
         async with async_session() as db:
             rows = (await db.execute(
-                select(Chunk).where(
-                    Chunk.source_id == source_id,
-                    Chunk.meta_data["needs_api"].as_string() == "true",
-                )
+                select(Chunk).where(Chunk.source_id == source_id)
             )).scalars().all()
-            needs = {(c.meta_data or {}).get("image_path") for c in rows}
+            for c in rows:
+                v = (c.meta_data or {}).get("needs_api")
+                if v in (True, "true", "1", 1):
+                    needs.add((c.meta_data or {}).get("image_path"))
         images = [r for r in images if r in needs]
     else:
         from app.services import vision  # noqa: F401  (kept for api mode import parity)
@@ -582,6 +583,9 @@ async def run_image_captioning(task_id: int):
         if mode == "free":
             caption, needs_api = _free_caption(rel, persist_dir, md_map)
             caption_source = "free"
+            if rel.endswith(".svg"):
+                # kimi vision can't read SVG — API enhance is raster-only
+                needs_api = False
         else:
             try:
                 caption = await asyncio.to_thread(
@@ -595,6 +599,7 @@ async def run_image_captioning(task_id: int):
 
         ref_md = md_map.get(rel, "")
         content = f"【图片】{rel}: {caption}"
+        # needs_api stored as STRING — SQLite json_extract turns JSON true into int 1
         meta = {
             "type": "image",
             "source_type": "github",
@@ -602,7 +607,7 @@ async def run_image_captioning(task_id: int):
             "image_path": rel,
             "caption": caption,
             "caption_source": caption_source,
-            "needs_api": needs_api,
+            "needs_api": "true" if needs_api else "false",
             "headings": [],
             "heading_chain": [],
         }
