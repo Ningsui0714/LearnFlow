@@ -77,7 +77,10 @@ class SourceProcessor:
     def _skip_dir(self, name: str) -> bool:
         skip = {".git", ".github", "node_modules", "__pycache__", "build", "dist",
                 "venv", ".venv", "env", ".ipynb_checkpoints", "site-packages",
-                "bower_components", "target", "vendor", ".gradle", "coverage"}
+                "bower_components", "target", "vendor", ".gradle", "coverage",
+                # multi-language translation copies (huge duplication, e.g.
+                # microsoft/ML-For-Beginners has 20+ language copies)
+                "translations", "translated_images", "i18n", "locales", "locale"}
         return name in skip or (name.startswith(".") and name not in {".", ".ci", ".devcontainer"})
 
     _READABLE_EXTS = {

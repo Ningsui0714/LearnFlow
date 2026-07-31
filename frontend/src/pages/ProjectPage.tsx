@@ -93,14 +93,15 @@ export default function ProjectPage() {
 
   const load = async () => {
     try {
-      const [p, s, c] = await Promise.all([
+      // NOTE: chunks are NOT loaded into the UI anymore (huge repos have
+      // 100k+ chunks — rendering them froze the page). Only counts are shown.
+      const [p, s] = await Promise.all([
         getProject(pid).catch(() => null),
         listSources(pid).catch(() => []),
-        listChunks(pid).catch(() => []),
       ])
       setProject(p)
       setSources(s)
-      setChunks(c)
+      setChunks([])
       loadRoadmap()
     } catch (e) {
       console.error('Failed to load project', e)
@@ -135,7 +136,7 @@ export default function ProjectPage() {
       if (result.errors?.length) {
         setNotification(`处理完成，${result.processed} 个成功，${result.errors.length} 个失败`)
       } else {
-        setNotification(`✅ 处理完成！共 ${chunks.length} 个切片`)
+        setNotification(`✅ 处理完成！`)
       }
       await load()
     } catch (e: any) {
@@ -161,7 +162,7 @@ export default function ProjectPage() {
   if (!project) return <div className="p-8 text-gray-400">加载中...</div>
 
   const hasSources = sources.length > 0
-  const hasProcessedChunks = chunks.length > 0
+  const hasProcessedChunks = sources.some(s => s.status === 'processed')
   const hasRoadmap = checkpoints.length > 0
 
   return (
@@ -302,17 +303,17 @@ export default function ProjectPage() {
             </button>
           )}
 
-          {/* Chunks preview */}
-          {chunks.length > 0 && (
+          {/* Chunk stats (list removed — 100k+ chunks froze the page) */}
+          {hasProcessedChunks && (
             <div>
               <h3 className="text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">
-                切片 ({chunks.length})
+                切片统计
               </h3>
               <div className="space-y-1 max-h-48 overflow-y-auto">
-                {chunks.map(c => (
-                  <div key={c.id} className="text-[11px] p-1.5 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
-                    <span className="text-gray-400 mr-1">#{c.index}</span>
-                    <span className="text-gray-600">{c.content.slice(0, 60)}...</span>
+                {sources.filter(s => s.status === 'processed').map(s => (
+                  <div key={s.id} className="text-[11px] p-1.5 bg-gray-50 rounded">
+                    <span className="text-gray-500">📦 {s.url?.slice(0, 30)}</span>
+                    <span className="text-primary-600 ml-1 font-medium">{s.chunk_count || 0} 块</span>
                   </div>
                 ))}
               </div>

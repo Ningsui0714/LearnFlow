@@ -114,6 +114,20 @@ class RoadmapAgent:
             fp = (c.get("meta") or {}).get("file", "") or f"chunk-{c['id']}"
             by_file.setdefault(fp, []).append(c)
 
+        async def _db_chunks(where=None, limit: int = 2000, exclude_translations: bool = True):
+            """Lazy chunk loading from DB (huge repos: 100k+ chunks / 288MB)."""
+            from app.db.database import async_session as _as
+            from app.models.project import Chunk as _Chunk
+            from sqlalchemy import select as _select
+            async with _as() as db:
+                stmt = _select(_Chunk).order_by(_Chunk.index).limit(limit)
+                if exclude_translations:
+                    stmt = stmt.where(_Chunk.meta_data["file"].as_string().not_like("translations/%"))
+                if where is not None:
+                    stmt = stmt.where(where)
+                rows = (await db.execute(stmt)).scalars().all()
+            return [{"id": c.id, "content": c.content, "meta": c.meta_data or {}} for c in rows]
+
         def first_repo_analysis() -> dict:
             for s in sources_info:
                 ra = s.get("repo_analysis")
@@ -155,36 +169,74 @@ class RoadmapAgent:
         @tool
         def list_chunks(file: str, limit: int = 10) -> str:
             """列出某个文件下的切片（id + 标题 + 预览）。file 为仓库内文件路径（支持模糊匹配）。"""
-            hits = [fp for fp in by_file if file in fp]
-            if not hits:
-                return f"未找到包含 '{file}' 的文件。可用 get_repo_structure 查看文件列表。"
-            out = []
-            for fp in hits[:3]:
-                cs = by_file[fp]
-                out.append(f"## {fp} ({len(cs)} 块)")
-                for c in cs[:limit]:
-                    meta = c.get("meta") or {}
-                    heads = " > ".join(meta.get("headings", [])[:3])
-                    out.append(f"[chunk-{c['id']}] {heads}\n  {c['content'][:200]}")
-            return "\n".join(out)
+            from sqlalchemy import select as _select, or_ as _or
+            import asyncio as _ai
+
+            async def _run():
+                from app.db.database import async_session as _as
+                from app.models.project import Chunk as _Chunk
+                async with _as() as db:
+                    rows = (await db.execute(
+                        _select(_Chunk)
+                        .where(_Chunk.meta_data["file"].as_string().like(f"%{file}%"))
+                        .order_by(_Chunk.index)
+                        .limit(60)
+                    )).scalars().all()
+                if not rows:
+                    return f"未找到包含 '{file}' 的文件。可用 get_repo_structure 查看文件列表。"
+                out = []
+                by_file = {}
+                for c in rows:
+                    by_file.setdefault((c.meta_data or {}).get("file", ""), []).append(c)
+                for fp, cs in list(by_file.items())[:3]:
+                    out.append(f"## {fp} ({len(cs)} 块)")
+                    for c in cs[:limit]:
+                        meta = c.meta_data or {}
+                        heads = " > ".join(meta.get("headings", [])[:3])
+                        out.append(f"[chunk-{c.id}] {heads}\n  {c.content[:200]}")
+                return "\n".join(out)
+            return _ai.run(_run())
 
         @tool
         def read_chunk(chunk_ids: List[int]) -> str:
             """读取指定切片的完整内容。chunk_ids 为整数列表。"""
-            out = []
-            for cid in chunk_ids:
-                c = chunk_by_id.get(cid)
-                if c:
-                    out.append(f"[chunk-{cid}]\n{c['content']}\n")
-                else:
-                    out.append(f"[chunk-{cid}] （不存在）")
-            return "\n---\n".join(out)
+            import asyncio as _ai
+
+            async def _run():
+                from app.db.database import async_session as _as
+                from app.models.project import Chunk as _Chunk
+                async with _as() as db:
+                    rows = (await db.execute(
+                        _select(_Chunk).where(_Chunk.id.in_(chunk_ids))
+                    )).scalars().all()
+                by_id = {c.id: c for c in rows}
+                out = []
+                for cid in chunk_ids:
+                    c = by_id.get(cid)
+                    if c:
+                        out.append(f"[chunk-{cid}]\n{c.content}\n")
+                    else:
+                        out.append(f"[chunk-{cid}] （不存在）")
+                return "\n---\n".join(out)
+            return _ai.run(_run())
 
         @tool
         async def search_chunks(query: str, top_k: int = 10) -> str:
-            """按语义搜索相关切片。仅在其他工具不足以定位内容时使用。"""
+            """按语义搜索相关切片。仅在其他工具不足以定位内容时使用。
+            自动排除多语言翻译副本（translations/ 目录）。"""
+            from sqlalchemy import select as _select
+            from app.db.database import async_session as _as
+            from app.models.project import Chunk as _Chunk
+            async with _as() as db:
+                rows = (await db.execute(
+                    _select(_Chunk)
+                    .where(_Chunk.meta_data["file"].as_string().not_like("translations/%"))
+                    .order_by(_Chunk.index)
+                    .limit(8000)
+                )).scalars().all()
+            pool = [{"id": c.id, "content": c.content, "meta": c.meta_data or {}} for c in rows]
             from app.services.lecture_agent import LectureAgent
-            hits = await LectureAgent()._retrieve_relevant_chunks(query, chunks, top_k=top_k)
+            hits = await LectureAgent()._retrieve_relevant_chunks(query, pool, top_k=top_k)
             if not hits:
                 return "未找到相关切片。"
             out = []
@@ -243,7 +295,11 @@ class RoadmapAgent:
         existing_roadmap: Optional[Dict] = None,
         sources_info: Optional[List[Dict]] = None,
     ) -> Dict[str, Any]:
-        """Process a chat message with tool calling; returns reply + optional roadmap."""
+        """Process a chat message with tool calling; returns reply + optional roadmap.
+
+        chunks may be omitted for huge repos — the read/list/search tools fall
+        back to DB queries (lazy loading) instead of in-memory chunk lists.
+        """
         self._existing_roadmap = existing_roadmap
         self._last_submitted_roadmap = None
         chunks = chunks or []

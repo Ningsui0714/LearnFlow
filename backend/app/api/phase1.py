@@ -434,24 +434,10 @@ async def roadmap_chat(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    # Get chunks (full content — tools read on demand, no truncation)
-    chunk_result = await db.execute(
-        select(Chunk)
-        .join(Source)
-        .where(Source.project_id == project_id)
-        .order_by(Source.id, Chunk.index)
-    )
-    chunks = chunk_result.scalars().all()
-    chunks_data = [
-        {
-            "id": c.id,
-            "source_id": c.source_id,
-            "index": c.index,
-            "content": c.content,
-            "meta": c.meta_data or {},
-        }
-        for c in chunks
-    ]
+    # Chunks are NOT loaded eagerly (huge repos: 100k+ chunks / 288MB).
+    # The agent's list_chunks/read_chunk/search_chunks tools query the DB
+    # on demand; passing an empty list keeps the request lightweight.
+    chunks_data = []
 
     # Source metadata (repo analysis + file summaries) for L0/L1 tools
     src_result = await db.execute(
