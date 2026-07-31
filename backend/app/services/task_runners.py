@@ -11,7 +11,7 @@ import os
 from sqlalchemy import select
 
 from app.db.database import async_session
-from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion, ConceptQuestion, Exercise
+from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion, ConceptQuestion, Exercise, Source
 from app.services.lecture_agent import LectureAgent
 from app.services.task_manager import update_task
 
