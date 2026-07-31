@@ -193,15 +193,20 @@ class SourceProcessor:
         return ""
 
     def chunk_text(self, text: str, source_type: str = "url") -> List[dict]:
-        """Split text into chunks with rich metadata tags.
-        
+        """Split text into chunks with rich metadata tags (T4: structure-aware).
+
         Walks through combined text line-by-line, collecting file blocks
-        at === path === markers, then chunks each file independently.
+        at === path === markers, then chunks each file independently:
+        - markdown files: split by heading hierarchy (##/###/####), merge
+          small sections into ~1500-2500 char chunks; every chunk carries its
+          full heading chain + position.
+        - code/other files: line-based recursive split.
+        Every chunk gets prev/next index within its file so downstream
+        generators can preserve the source's flow.
         """
         result = []
         chunk_index = 0
 
-        # Split into file blocks by iterating lines
         lines = text.split("\n")
         current_file = ""
         current_content = []
@@ -214,24 +219,9 @@ class SourceProcessor:
             content = "\n".join(current_content).strip()
             if not content:
                 return
-            file_chunks = self.splitter.split_text(content)
-            for fc in file_chunks:
-                if not fc.strip():
-                    continue
-                headings = self._extract_headings(fc, current_file)
-                topic_hints = self._extract_topic_hints(fc)
-                result.append({
-                    "index": chunk_index,
-                    "content": fc.strip(),
-                    "tokens": len(fc) // 4,
-                    "meta": {
-                        "source_type": source_type,
-                        "file": current_file,
-                        "headings": headings,
-                        "topic_hints": topic_hints,
-                        "chunk_index": chunk_index,
-                    },
-                })
+            for fc in self._chunk_file(content, current_file, source_type):
+                fc["meta"]["chunk_index"] = chunk_index
+                result.append(fc)
                 chunk_index += 1
 
         for line in lines:
@@ -245,8 +235,140 @@ class SourceProcessor:
                 current_content.append(line)
 
         flush_current()
-
+        self._assign_prev_next(result)
         return result
+
+    # ── Per-file chunking (T4) ──
+
+    def _chunk_file(self, content: str, file_path: str, source_type: str) -> List[dict]:
+        """Chunk a single file: markdown → heading-based; other → line split."""
+        # Markdown detection: any # heading?
+        if re.search(r"^#{1,6}\s+", content, re.MULTILINE):
+            return self._chunk_markdown(content, file_path, source_type)
+        return self._chunk_plain(content, file_path, source_type)
+
+    def _chunk_markdown(self, content: str, file_path: str, source_type: str) -> List[dict]:
+        """Heading-hierarchy chunking with full heading chain per chunk."""
+        sections = []  # (level, title, lines)
+        stack = []     # (level, title) open headings
+        preamble = []
+
+        for line in content.split("\n"):
+            m = re.match(r"^(#{1,6})\s+(.+)$", line)
+            if m:
+                level = len(m.group(1))
+                title = m.group(2).strip()
+                # Close headings deeper/equal than this one
+                while stack and stack[-1][0] >= level:
+                    stack.pop()
+                stack.append((level, title))
+                sections.append({"level": level, "title": title,
+                                 "chain": [t for _, t in stack], "lines": [line]})
+            else:
+                if not sections:
+                    preamble.append(line)
+                else:
+                    sections[-1]["lines"].append(line)
+
+        if not sections:
+            return self._chunk_plain(content, file_path, source_type)
+
+        # Preamble becomes the first section if substantial
+        if preamble and len("\n".join(preamble).strip()) > 40:
+            sections.insert(0, {"level": 0, "title": "",
+                                "chain": [], "lines": preamble})
+
+        # Group small sections into chunks of ~1500-2500 chars
+        MIN_SIZE, MAX_SIZE = 1200, 3200
+        groups = []
+        cur = {"chain": [], "lines": [], "size": 0}
+        for sec in sections:
+            sec_size = sum(len(l) + 1 for l in sec["lines"])
+            if cur["lines"] and cur["size"] + sec_size > MAX_SIZE:
+                groups.append(cur)
+                cur = {"chain": [], "lines": [], "size": 0}
+            # chain = the first section's chain (ancestor headings)
+            if not cur["lines"]:
+                cur["chain"] = list(sec["chain"])
+            cur["lines"].extend(sec["lines"])
+            cur["size"] += sec_size
+        if cur["lines"]:
+            groups.append(cur)
+
+        # Oversized single sections: split by paragraph
+        chunks = []
+        for g in groups:
+            if g["size"] > MAX_SIZE * 1.6 and len(g["lines"]) > 20:
+                para = []
+                for line in g["lines"]:
+                    para.append(line)
+                    if line.strip() == "" and sum(len(l) for l in para) > MAX_SIZE:
+                        chunks.append((list(g["chain"]), para))
+                        para = []
+                if para:
+                    chunks.append((list(g["chain"]), para))
+            else:
+                chunks.append((list(g["chain"]), g["lines"]))
+
+        result = []
+        for chain, lines in chunks:
+            text = "\n".join(lines).strip()
+            if not text:
+                continue
+            # headings = titles inside this chunk
+            headings = []
+            for ln in lines:
+                m = re.match(r"^#{1,6}\s+(.+)$", ln)
+                if m:
+                    headings.append(m.group(1).strip())
+            result.append({
+                "index": 0,  # global index assigned by caller
+                "content": text,
+                "tokens": len(text) // 4,
+                "meta": {
+                    "source_type": source_type,
+                    "file": file_path,
+                    "headings": headings[:20],
+                    "heading_chain": chain[:20],
+                    "topic_hints": self._extract_topic_hints(text),
+                    "chunk_index": 0,
+                },
+            })
+        return result
+
+    def _chunk_plain(self, content: str, file_path: str, source_type: str) -> List[dict]:
+        """Fallback for non-markdown files: recursive line split."""
+        file_chunks = self.splitter.split_text(content)
+        result = []
+        for fc in file_chunks:
+            if not fc.strip():
+                continue
+            result.append({
+                "index": 0,
+                "content": fc.strip(),
+                "tokens": len(fc) // 4,
+                "meta": {
+                    "source_type": source_type,
+                    "file": file_path,
+                    "headings": [],
+                    "heading_chain": [],
+                    "topic_hints": self._extract_topic_hints(fc),
+                    "chunk_index": 0,
+                },
+            })
+        return result
+
+    def _assign_prev_next(self, chunks: List[dict]) -> None:
+        """Set prev_index/next_index (global chunk indexes) within each file."""
+        by_file = {}
+        for c in chunks:
+            fp = c["meta"].get("file", "")
+            by_file.setdefault(fp, []).append(c)
+        for file_chunks in by_file.values():
+            for i, c in enumerate(file_chunks):
+                idx = c["meta"]["chunk_index"]
+                c["meta"]["prev_index"] = file_chunks[i - 1]["meta"]["chunk_index"] if i > 0 else None
+                c["meta"]["next_index"] = file_chunks[i + 1]["meta"]["chunk_index"] if i < len(file_chunks) - 1 else None
 
     # ── README TOC Parser (Level 1) ──
 

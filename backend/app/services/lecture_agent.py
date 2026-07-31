@@ -6,6 +6,7 @@ Two-phase process:
 2. Generate: Stream each section with full content, formulas, ASCII diagrams
 """
 import json
+import os
 import re
 from typing import AsyncGenerator, List, Dict, Optional, Any
 
@@ -39,6 +40,49 @@ PLAN_PROMPT = """你是学习内容专家。你需要为某个学习关卡规划
       "title": "小节标题",
       "keywords": ["关键词1", "关键词2"],
       "goal": "本节学习目标"
+    }}
+  ]
+}}
+```"""
+
+STRUCTURED_PLAN_PROMPT = """你是学习内容专家。你需要为某个学习关卡规划一份讲义大纲，
+**并且大纲必须尽量尊重原始学习资料的逻辑顺序**。
+
+## 学习关卡
+{checkpoint_title}: {checkpoint_description}
+
+## 学生水平
+{user_level}
+
+## 仓库结构逻辑
+{structure_logic}
+
+## 候选小节骨架（来自仓库自身结构，按文件/章节顺序排列）
+{skeleton}
+
+## 规则
+1. **默认完全保持骨架的顺序与范围**：每个候选小节对应一个讲义小节，
+   小节标题可以直接用骨架标题，也可以改得更像教学标题。
+2. 允许且仅允许以下调整，且每个调整必须给出 adjust_reason：
+   - 合并：多个骨架小节（尤其是内容短的）合并成一节，chunk_ids 取并集。
+   - 拆开：一个骨架小节内容太多时拆成多节（需在 adjust_reason 说明）。
+   - 重排：仅在骨架顺序明显不符合教学递进时重排（如定义在最后）。
+   - 新增：需要引导性/总结性的小节时，可以新增一节（source_file 留空，chunk_ids 可空）。
+3. chunk_ids 只能来自骨架中列出的切片编号，不要臆造。
+4. 输出 3-9 节。
+
+## 输出格式（JSON）
+```json
+{{
+  "sections": [
+    {{
+      "title": "小节标题",
+      "keywords": ["关键词"],
+      "goal": "本节学习目标",
+      "source_file": "对应的仓库文件路径（新增节为空）",
+      "source_heading": "对应的原小节标题（新增节为空）",
+      "chunk_ids": [整数切片编号],
+      "adjust_reason": "keep | 说明调整理由"
     }}
   ]
 }}
@@ -172,6 +216,149 @@ class LectureAgent:
             parts.append(f"[chunk-{c['id']}]\n{content}\n")
         return "\n---\n".join(parts)
 
+    # ── T4: structure-aware planning ──
+
+    @staticmethod
+    def _extract_cited_chunks(content: str) -> List[int]:
+        """Extract [chunk-N] citations from generated content."""
+        return [int(m) for m in re.findall(r"\[chunk-(\d+)\]", content or "")]
+
+    def build_structure_skeleton(self, brief: Dict, chunks: List[Dict]) -> List[Dict]:
+        """
+        Deterministic candidate-section skeleton from the repo's own structure:
+        brief.scope.files (in order) → per-file heading chains → candidates.
+        Each candidate: {title, file, heading, chunk_ids, preview}.
+        """
+        scope = (brief or {}).get("scope") or {}
+        files = scope.get("files") or []
+        if not files:
+            return []
+
+        by_file = {}
+        for c in chunks:
+            fp = (c.get("meta") or {}).get("file", "")
+            by_file.setdefault(fp, []).append(c)
+        for fp in by_file:
+            by_file[fp].sort(key=lambda c: c.get("index", 0))
+
+        skeleton = []
+        for fp in files:
+            file_chunks = by_file.get(fp)
+            if not file_chunks:
+                continue
+            # Group chunks by heading_chain prefix (chunks under same heading)
+            groups = {}  # chain_key -> {title, chain, chunk_ids}
+            order = []
+            for c in file_chunks:
+                meta = c.get("meta") or {}
+                chain = list(meta.get("heading_chain") or [])
+                key = tuple(chain) if chain else ()
+                if key not in groups:
+                    title = chain[-1] if chain else os.path.basename(fp)
+                    groups[key] = {"title": title, "chain": chain,
+                                   "file": fp, "chunk_ids": []}
+                    order.append(key)
+                groups[key]["chunk_ids"].append(c["id"])
+
+            for key in order:
+                g = groups[key]
+                preview = ""
+                for c in file_chunks:
+                    if c["id"] in g["chunk_ids"]:
+                        preview = c["content"][:120].replace("\n", " ")
+                        break
+                skeleton.append({
+                    "title": g["title"],
+                    "file": g["file"],
+                    "heading": g["chain"][-1] if g["chain"] else "",
+                    "chunk_ids": g["chunk_ids"],
+                    "preview": preview,
+                })
+        return skeleton
+
+    async def plan_lecture_structured(
+        self,
+        checkpoint_title: str,
+        checkpoint_description: str,
+        user_level: str,
+        brief: Optional[Dict],
+        chunks: List[Dict],
+        skeleton: List[Dict],
+    ) -> List[Dict]:
+        """Plan sections from the structure skeleton (dual-signal planner).
+
+        The skeleton IS the default plan: if the LLM planner fails to return
+        valid JSON, we fall back to the skeleton verbatim (deterministic).
+        """
+        scope = (brief or {}).get("scope") or {}
+        logic = scope.get("structure_logic", "mixed")
+        template = {
+            "tutorial-progression": "按章节/文件顺序推进，先基础后进阶，保持资料自身递进。",
+            "project-steps": "按项目步骤组织（环境→实现→优化），保持步骤顺序。",
+            "paper-logic": "按论文结构组织：引言→方法→实验→结论。",
+            "mixed": "按文件顺序组织，同时兼顾教学递进。",
+        }.get(logic, "按文件顺序组织，兼顾教学递进。")
+
+        skeleton_text = []
+        for i, s in enumerate(skeleton):
+            skeleton_text.append(
+                f"[{i}] 标题: {s['title']} | 文件: {s['file']} | "
+                f"切片: {s['chunk_ids']} | 预览: {s['preview'][:80]}"
+            )
+
+        prompt = self._safe_format(
+            STRUCTURED_PLAN_PROMPT,
+            checkpoint_title=checkpoint_title,
+            checkpoint_description=checkpoint_description,
+            user_level=user_level,
+            structure_logic=f"{logic} —— {template}",
+            skeleton="\n".join(skeleton_text) or "（无骨架信息，请按主题自行规划 4-8 节）",
+        )
+
+        valid_ids = set()
+        for s in skeleton:
+            valid_ids.update(s["chunk_ids"])
+
+        try:
+            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            content = response.content
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                json_str = content.split("```")[1].split("```")[0].strip()
+            else:
+                json_str = content
+            parsed = json.loads(json_str)
+            raw_sections = parsed.get("sections", [])
+
+            sections = []
+            for s in raw_sections:
+                ids = [i for i in (s.get("chunk_ids") or []) if i in valid_ids]
+                sections.append({
+                    "title": s.get("title", "") or "未命名小节",
+                    "keywords": s.get("keywords", []),
+                    "goal": s.get("goal", ""),
+                    "source_file": s.get("source_file", ""),
+                    "source_heading": s.get("source_heading", ""),
+                    "chunk_ids": ids,
+                    "adjust_reason": s.get("adjust_reason", "keep"),
+                })
+            if sections:
+                return sections
+        except Exception as e:
+            print(f"[plan_lecture_structured] LLM plan failed, using skeleton: {type(e).__name__}: {str(e)[:150]}")
+
+        # Deterministic fallback: skeleton verbatim
+        return [{
+            "title": s["title"],
+            "keywords": [],
+            "goal": f"学习 {s['title']}",
+            "source_file": s["file"],
+            "source_heading": s.get("heading", ""),
+            "chunk_ids": s["chunk_ids"],
+            "adjust_reason": "keep",
+        } for s in skeleton]
+
     async def _retrieve_relevant_chunks(
         self,
         query: str,
@@ -181,13 +368,15 @@ class LectureAgent:
         boost_ids: Optional[List[int]] = None,
         boost_weight: float = 1.5,
         scope_files: Optional[List[str]] = None,
+        pool_ids: Optional[List[int]] = None,
     ) -> List[Dict]:
         """
         Level 1-3 fallback retrieval with query expansion + dynamic top-k.
 
         T3: accepts upstream retrieval state from CheckpointBrief —
-        boost_ids get a score bonus; scope_files restricts the pool first
-        (falls back to global when the scope pool is too small).
+        boost_ids get a score bonus; scope_files restricts the pool first;
+        pool_ids (per-section chunks from the structure skeleton) take
+        highest priority. Pool widens automatically when too small.
         """
         if not chunks:
             return []
@@ -195,12 +384,20 @@ class LectureAgent:
         # Determine dynamic top-k from query complexity
         effective_k = QueryExpander.dynamic_top_k(query, top_k)
 
-        # Scope restriction (from upstream brief)
+        # Pool priority: section chunks → brief scope → global
         pool = chunks
-        if scope_files:
-            scoped = [c for c in chunks if (c.get("meta") or {}).get("file") in scope_files]
-            if len(scoped) >= max(3, int(effective_k * 0.6)):
-                pool = scoped
+        if pool_ids:
+            id_set = set(pool_ids)
+            pool = [c for c in chunks if c["id"] in id_set]
+        if len(pool) < max(3, int(effective_k * 0.6)):
+            if scope_files:
+                scoped = [c for c in chunks if (c.get("meta") or {}).get("file") in scope_files]
+                if len(scoped) >= max(3, int(effective_k * 0.6)):
+                    pool = scoped
+                else:
+                    pool = chunks
+            else:
+                pool = chunks
 
         # Expand query with synonyms
         expanded = QueryExpander.expand(query)
@@ -337,18 +534,34 @@ class LectureAgent:
         chunks: List[Dict],
         section_keywords: Optional[List[str]] = None,
         brief: Optional[Dict] = None,
+        section_chunk_ids: Optional[List[int]] = None,
     ) -> str:
-        """Generate a single section's content, using retrieved relevant chunks."""
-        # Retrieve chunks relevant to this section's title + keywords
+        """Generate a single section's content, using retrieved relevant chunks.
+
+        section_chunk_ids (from the structure skeleton) restrict the pool first
+        (T4); if retrieval comes back too sparse, retry with wider scope (T3
+        per-section policy adjustment).
+        """
         query = section.get("title", "")
         extra_kw = (section_keywords or []) + [checkpoint_title]
         rp = (brief or {}).get("retrieval_policy") or {}
+        scope_files = (brief or {}).get("scope", {}).get("files")
+
         relevant = await self._retrieve_relevant_chunks(
             query, chunks, top_k=10, extra_keywords=extra_kw,
             boost_ids=rp.get("boost_chunk_ids"),
             boost_weight=rp.get("boost_weight", 1.5),
-            scope_files=(brief or {}).get("scope", {}).get("files"),
+            scope_files=scope_files,
+            pool_ids=section_chunk_ids,
         )
+        if len(relevant) < 3 and scope_files:
+            # Sparse within section pool → relax scope for this section only
+            relevant = await self._retrieve_relevant_chunks(
+                query, chunks, top_k=10, extra_keywords=extra_kw,
+                boost_ids=rp.get("boost_chunk_ids"),
+                boost_weight=rp.get("boost_weight", 1.5),
+                scope_files=None,
+            )
         ctx = self._build_chunk_context(relevant)
 
         prompt = self._safe_format(GENERATE_SECTION_PROMPT,

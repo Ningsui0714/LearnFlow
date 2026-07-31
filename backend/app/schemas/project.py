@@ -81,6 +81,7 @@ class RoadmapNode(BaseModel):
     prerequisites: List[int]
     completed: bool
     chunk_ids: List[int]
+    brief: dict = {}
 
 
 class RoadmapOut(BaseModel):

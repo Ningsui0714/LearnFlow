@@ -42,6 +42,14 @@ async def process_source(
     source.status = "processing"
     await db.commit()
 
+    # Checkpoints affected by this source's chunks (their links will break)
+    affected_cp_ids = (await db.execute(
+        select(Checkpoint.id)
+        .join(CheckpointChunk).join(Chunk)
+        .where(Chunk.source_id == source.id)
+        .distinct()
+    )).scalars().all()
+
     try:
         # Process the source (now returns {chunks, source_meta})
         result_data = await chunker.process_source(source.type, source.url)
@@ -71,9 +79,19 @@ async def process_source(
             )
             db.add(chunk)
 
+        # Mark affected checkpoints' briefs as needing resync (chunk ids changed)
+        for cp_id in affected_cp_ids:
+            cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == cp_id))).scalar_one_or_none()
+            if cp and cp.brief:
+                new_brief = dict(cp.brief)
+                new_brief["needs_resync"] = True
+                new_brief["chunk_mapping_confidence"] = "stale"
+                cp.brief = new_brief
+
         source.status = "processed"
         await db.commit()
-        return {"status": "ok", "chunk_count": len(chunks_data)}
+        return {"status": "ok", "chunk_count": len(chunks_data),
+                "affected_checkpoints": affected_cp_ids}
 
     except Exception as e:
         source.status = "failed"
@@ -247,6 +265,13 @@ async def process_all_sources(
             source.status = "processing"
             await db.commit()
 
+            affected_cp_ids = (await db.execute(
+                select(Checkpoint.id)
+                .join(CheckpointChunk).join(Chunk)
+                .where(Chunk.source_id == source.id)
+                .distinct()
+            )).scalars().all()
+
             # New: returns {chunks, source_meta}
             result_data = await chunker.process_source(source.type, source.url)
             chunks_data = result_data["chunks"]
@@ -270,6 +295,15 @@ async def process_all_sources(
                     meta_data=cd.get("meta", {}),
                 )
                 db.add(chunk)
+
+            # Mark affected checkpoints' briefs as needing resync (chunk ids changed)
+            for cp_id in affected_cp_ids:
+                cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == cp_id))).scalar_one_or_none()
+                if cp and cp.brief:
+                    new_brief = dict(cp.brief)
+                    new_brief["needs_resync"] = True
+                    new_brief["chunk_mapping_confidence"] = "stale"
+                    cp.brief = new_brief
 
             source.status = "processed"
             await db.commit()
@@ -428,6 +462,169 @@ async def get_roadmap_history(
     return {"history": roadmap.conversation_history or []}
 
 
+def _build_brief(cp_id, order, node, files, scope_ids, seed_ids,
+                 structure_logic, structure_confidence, main_source_id) -> dict:
+    """Build the CheckpointBrief handoff contract (shared by sync/backfill)."""
+    seeds_in_scope = [i for i in seed_ids if i in scope_ids]
+    mapping_conf = (
+        "high"
+        if files and seed_ids and len(seeds_in_scope) == len(seed_ids)
+        else "medium"
+    )
+    return {
+        "version": 1,
+        "checkpoint_id": cp_id,
+        "order": order,
+        "title": node.get("title", ""),
+        "objective": node.get("description", ""),
+        "prerequisites": node.get("prerequisites", []),
+        "scope": {
+            "main_source_id": main_source_id,
+            "files": files,
+            "structure_logic": structure_logic,
+            "structure_confidence": structure_confidence,
+        },
+        "seed_chunks": seed_ids,
+        "chunk_mapping_confidence": mapping_conf,
+        "key_concepts": node.get("key_concepts", []),
+        "retrieval_policy": {
+            "boost_chunk_ids": seed_ids,
+            "boost_weight": 1.5,
+            "restrict_to_scope": bool(files),
+            "allow_fallback_global": True,
+        },
+        "practice_plan": {"concept": True, "code": True},
+    }
+
+
+@router.post("/projects/{project_id}/roadmap/briefs")
+async def backfill_briefs(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    T3/T4: backfill CheckpointBriefs for existing roadmaps (no LLM).
+    For each checkpoint, files are derived from its current chunk assignments'    meta; the brief is built deterministically.
+    """
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.project_id == project_id)
+    )).scalar_one_or_none()
+    if not roadmap:
+        raise HTTPException(404, "Roadmap not found")
+
+    all_chunks = (await db.execute(
+        select(Chunk).join(Source).where(Source.project_id == project_id)
+    )).scalars().all()
+    chunks_by_id = {c.id: c for c in all_chunks}
+    chunks_by_file = {}
+    for c in all_chunks:
+        fp = (c.meta_data or {}).get("file", "")
+        if fp:
+            chunks_by_file.setdefault(fp, []).append(c)
+
+    sources = (await db.execute(
+        select(Source).where(Source.project_id == project_id).order_by(Source.id)
+    )).scalars().all()
+    structure_logic, structure_confidence = "mixed", "low"
+    for s in sources:
+        ra = (s.meta_data or {}).get("repo_analysis") or {}
+        if ra.get("structure_logic"):
+            structure_logic = ra["structure_logic"]
+            structure_confidence = (ra.get("structure_confidence") or {}).get("level", "low")
+            break
+    main_source_id = sources[0].id if sources else None
+
+    cps = (await db.execute(
+        select(Checkpoint).where(Checkpoint.roadmap_id == roadmap.id).order_by(Checkpoint.order)
+    )).scalars().all()
+    updated = 0
+    for cp in cps:
+        cc_ids = (await db.execute(
+            select(CheckpointChunk.chunk_id).where(CheckpointChunk.checkpoint_id == cp.id)
+        )).scalars().all()
+        seed_ids = list(cc_ids)
+        files = sorted({(chunks_by_id[i].meta_data or {}).get("file", "") for i in seed_ids
+                        if i in chunks_by_id and (chunks_by_id[i].meta_data or {}).get("file")})
+        scope_ids = []
+        if files:
+            for f in files:
+                scope_ids += [c.id for c in chunks_by_file.get(f, [])]
+            scope_ids = list(dict.fromkeys(scope_ids))
+        node = {"title": cp.title, "description": cp.description,
+                "prerequisites": cp.prerequisites or [], "key_concepts": []}
+        cp.brief = _build_brief(cp.id, cp.order, node, files, scope_ids, seed_ids,
+                                structure_logic, structure_confidence, main_source_id)
+        updated += 1
+    await db.commit()
+    return {"status": "ok", "updated": updated}
+
+
+@router.post("/projects/{project_id}/roadmap/resync")
+async def resync_roadmap_chunks(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    T3/T4: deterministic re-assignment after source re-processing.
+    For each checkpoint with a brief, re-assign chunks by scope.files
+    (chunk ids change when a source is re-processed; this repairs links
+    without needing the LLM).
+    """
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.project_id == project_id)
+    )).scalar_one_or_none()
+    if not roadmap:
+        raise HTTPException(404, "Roadmap not found")
+
+    all_chunks = (await db.execute(
+        select(Chunk).join(Source).where(Source.project_id == project_id)
+    )).scalars().all()
+    chunks_by_id = {c.id: c for c in all_chunks}
+    chunks_by_file = {}
+    for c in all_chunks:
+        fp = (c.meta_data or {}).get("file", "")
+        if fp:
+            chunks_by_file.setdefault(fp, []).append(c)
+
+    cps = (await db.execute(
+        select(Checkpoint).where(Checkpoint.roadmap_id == roadmap.id).order_by(Checkpoint.order)
+    )).scalars().all()
+    resynced = skipped = 0
+    for cp in cps:
+        brief = cp.brief
+        files = (brief or {}).get("scope", {}).get("files") or []
+        if not files:
+            skipped += 1
+            continue
+        valid_files = [f for f in files if f in chunks_by_file]
+        scope_ids = []
+        for f in valid_files:
+            scope_ids += [c.id for c in chunks_by_file[f]]
+        scope_ids = list(dict.fromkeys(scope_ids))
+        if not scope_ids:
+            skipped += 1
+            continue
+        old_cc = await db.execute(
+            select(CheckpointChunk).where(CheckpointChunk.checkpoint_id == cp.id)
+        )
+        for cc in old_cc.scalars().all():
+            await db.delete(cc)
+        for cid in scope_ids:
+            db.add(CheckpointChunk(checkpoint_id=cp.id, chunk_id=cid))
+        new_brief = dict(brief)
+        new_brief.pop("needs_resync", None)
+        seed_ids = [i for i in (brief.get("seed_chunks") or []) if i in scope_ids]
+        new_brief["seed_chunks"] = seed_ids
+        rp = dict(new_brief.get("retrieval_policy") or {})
+        rp["boost_chunk_ids"] = seed_ids
+        new_brief["retrieval_policy"] = rp
+        new_brief["chunk_mapping_confidence"] = "high" if seed_ids else "medium"
+        cp.brief = new_brief
+        resynced += 1
+    await db.commit()
+    return {"status": "ok", "resynced": resynced, "skipped": skipped}
+
+
 async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dict):
     """Sync checkpoint records from roadmap JSON to DB (T2).
 
@@ -526,37 +723,10 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
         for cid in scope_ids:
             db.add(CheckpointChunk(checkpoint_id=cp.id, chunk_id=cid))
 
-        # ── CheckpointBrief (handoff contract for downstream agents) ──
-        seeds_in_scope = [i for i in seed_ids if i in scope_ids]
-        mapping_conf = (
-            "high"
-            if files and seed_ids and len(seeds_in_scope) == len(seed_ids)
-            else "medium"
+        cp.brief = _build_brief(
+            cp.id, order, node, files, scope_ids, seed_ids,
+            structure_logic, structure_confidence, main_source_id,
         )
-        cp.brief = {
-            "version": 1,
-            "checkpoint_id": cp.id,
-            "order": order,
-            "title": node.get("title", ""),
-            "objective": node.get("description", ""),
-            "prerequisites": node.get("prerequisites", []),
-            "scope": {
-                "main_source_id": main_source_id,
-                "files": files,
-                "structure_logic": structure_logic,
-                "structure_confidence": structure_confidence,
-            },
-            "seed_chunks": seed_ids,
-            "chunk_mapping_confidence": mapping_conf,
-            "key_concepts": node.get("key_concepts", []),
-            "retrieval_policy": {
-                "boost_chunk_ids": seed_ids,
-                "boost_weight": 1.5,
-                "restrict_to_scope": bool(files),
-                "allow_fallback_global": True,
-            },
-            "practice_plan": {"concept": True, "code": True},
-        }
 
     # Remove checkpoints that are no longer in the roadmap (completed are kept)
     for order, cp in existing.items():

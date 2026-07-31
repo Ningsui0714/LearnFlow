@@ -178,7 +178,7 @@ async def get_roadmap(project_id: int, db: AsyncSession = Depends(get_db)):
         nodes.append(RoadmapNode(
             id=cp.id, title=cp.title, description=cp.description or "",
             order=cp.order, prerequisites=cp.prerequisites or [],
-            completed=cp.completed, chunk_ids=chunk_ids,
+            completed=cp.completed, chunk_ids=chunk_ids, brief=cp.brief or {},
         ))
 
     return RoadmapOut(id=roadmap.id, project_id=project_id, checkpoints=nodes)

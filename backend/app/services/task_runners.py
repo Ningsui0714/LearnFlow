@@ -87,12 +87,22 @@ async def run_lecture_generation(task_id: int):
 
     agent = LectureAgent()
 
-    # ── Plan ──
+    # ── Plan (T4: structure-aware when brief has scope files) ──
     await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在规划大纲..."})
     try:
-        plan_sections = await agent.plan_lecture(
-            checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief
-        )
+        skeleton = []
+        scope_files = (brief or {}).get("scope", {}).get("files") or []
+        if scope_files:
+            skeleton = agent.build_structure_skeleton(brief, chunks)
+        if skeleton:
+            plan_sections = await agent.plan_lecture_structured(
+                checkpoint.title, checkpoint.description or "", user_level,
+                brief, chunks, skeleton,
+            )
+        else:
+            plan_sections = await agent.plan_lecture(
+                checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief
+            )
     except Exception as e:
         from app.services.task_manager import classify_error
         err = classify_error(e)
@@ -121,6 +131,7 @@ async def run_lecture_generation(task_id: int):
         saved = list(lecture.sections or [])
 
     # ── Generate each section (reuse saved ones on resume) ──
+    cited_all = []
     for i, ps in enumerate(plan_sections):
         title = ps.get("title", f"第{i+1}节")
 
@@ -134,6 +145,7 @@ async def run_lecture_generation(task_id: int):
                     checkpoint.title, ps, chunks,
                     section_keywords=ps.get("keywords", []),
                     brief=brief,
+                    section_chunk_ids=ps.get("chunk_ids"),
                 )
             except Exception as e:
                 # One retry per section, then fail the task (partial remains)
@@ -142,6 +154,7 @@ async def run_lecture_generation(task_id: int):
                         checkpoint.title, ps, chunks,
                         section_keywords=ps.get("keywords", []),
                         brief=brief,
+                        section_chunk_ids=ps.get("chunk_ids"),
                     )
                 except Exception as e2:
                     from app.services.task_manager import classify_error
@@ -154,7 +167,11 @@ async def run_lecture_generation(task_id: int):
                     return
             questions = agent._extract_questions(content)
 
+        cited_all.extend(agent._extract_cited_chunks(content))
         sec = _section_dict(title, content, ps.get("keywords", []), questions)
+        sec["source_file"] = ps.get("source_file", "")
+        sec["source_heading"] = ps.get("source_heading", "")
+        sec["cited_chunks"] = agent._extract_cited_chunks(content)
 
         # Incremental save: replace section at index (fresh) or append
         async with async_session() as db:
@@ -189,6 +206,30 @@ async def run_lecture_generation(task_id: int):
         )).scalar_one_or_none()
         if checkpoint:
             checkpoint.completed = True
+
+        # T3 write-back: citation feedback → brief retrieval policy
+        if checkpoint and checkpoint.brief:
+            cp_chunks = (await db.execute(
+                select(Chunk.id).join(CheckpointChunk)
+                .where(CheckpointChunk.checkpoint_id == checkpoint_id)
+            )).scalars().all()
+            scope_ids = set(cp_chunks)
+            cited = set(cited_all)
+            cited_in_scope = sorted(cited & scope_ids)
+            new_brief = dict(checkpoint.brief)
+            rp = dict(new_brief.get("retrieval_policy") or {})
+            old_boost = set(rp.get("boost_chunk_ids") or [])
+            rp["boost_chunk_ids"] = sorted(old_boost | set(cited_in_scope))
+            new_brief["retrieval_policy"] = rp
+            stats = dict(new_brief.get("retrieval_stats") or {})
+            new_brief["retrieval_stats"] = {
+                "version": stats.get("version", 0) + 1,
+                "cited_chunks": sorted(cited),
+                "cited_in_scope": cited_in_scope,
+                "cited_out_of_scope": sorted(cited - scope_ids),
+                "sections_count": len(plan_sections),
+            }
+            checkpoint.brief = new_brief
         await db.commit()
 
     await update_task(
