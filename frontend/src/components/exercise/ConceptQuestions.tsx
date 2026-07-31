@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  listConcepts, generateConcepts, getConceptTask, explainConcept, lectureTaskEventsUrl,
+  listConcepts, generateConcepts, getConceptTask, explainConcept, submitConcept, lectureTaskEventsUrl,
 } from '../../services/api'
 
 interface Question {
@@ -24,6 +24,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
   const [questions, setQuestions] = useState<Question[]>([])
   const [answers, setAnswers] = useState<Record<number, number[]>>({})
   const [submitted, setSubmitted] = useState<Record<number, boolean>>({})
+  const [results, setResults] = useState<Record<number, { correct: boolean; answer_indexes: number[] }>>({})
   const [explanations, setExplanations] = useState<Record<number, string>>({})
   const [explaining, setExplaining] = useState<Record<number, boolean>>({})
   const [loading, setLoading] = useState(true)
@@ -101,10 +102,16 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
     setSubmitted(prev => ({ ...prev, [qid]: false }))
   }
 
-  const handleSubmit = (qid: number) => {
+  const handleSubmit = async (qid: number) => {
     const ans = answers[qid]
     if (!ans || ans.length === 0) { alert('请先选择答案'); return }
-    setSubmitted(prev => ({ ...prev, [qid]: true }))
+    try {
+      const res = await submitConcept(checkpointId, qid, ans)
+      setResults(prev => ({ ...prev, [qid]: { correct: res.correct, answer_indexes: res.answer_indexes } }))
+      setSubmitted(prev => ({ ...prev, [qid]: true }))
+    } catch (e: any) {
+      alert('提交失败: ' + (e?.response?.data?.detail || e.message))
+    }
   }
 
   const handleExplain = async (q: Question) => {
@@ -173,22 +180,43 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
               <div className="space-y-2">
                 {q.options.map((opt, idx) => {
                   const selected = (answers[q.id] || []).includes(idx)
+                  const result = results[q.id]
+                  const isRight = result?.answer_indexes?.includes(idx)
+                  const isWrongPick = submitted[q.id] && selected && !isRight
                   return (
                     <label key={idx}
                       className={`flex items-start gap-2 p-2.5 rounded-lg border cursor-pointer text-sm transition-colors ${
-                        selected ? 'border-primary-400 bg-primary-50' : 'border-gray-200 hover:bg-gray-50'
+                        submitted[q.id] && isRight
+                          ? 'border-green-400 bg-green-50'
+                          : isWrongPick
+                            ? 'border-red-300 bg-red-50'
+                            : selected
+                              ? 'border-primary-400 bg-primary-50'
+                              : 'border-gray-200 hover:bg-gray-50'
                       }`}>
                       <input
                         type={q.q_type === 'multi' ? 'checkbox' : 'radio'}
                         checked={selected}
                         onChange={() => toggleOption(q.id, idx)}
+                        disabled={submitted[q.id]}
                         className="mt-0.5 accent-primary-600"
                       />
                       <span className="text-gray-700">{opt}</span>
+                      {submitted[q.id] && isRight && <span className="ml-auto text-green-600">✓</span>}
+                      {isWrongPick && <span className="ml-auto text-red-500">✗</span>}
                     </label>
                   )
                 })}
               </div>
+
+              {/* Result banner */}
+              {submitted[q.id] && results[q.id] && (
+                <div className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${
+                  results[q.id].correct ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                }`}>
+                  {results[q.id].correct ? '✅ 回答正确！' : '❌ 回答错误，绿色为正确答案'}
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center gap-2 mt-4">
@@ -197,7 +225,8 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
                   disabled={submitted[q.id]}
                   className="bg-gray-900 text-white px-4 py-1.5 rounded-lg text-xs hover:bg-gray-700 disabled:opacity-40 transition-colors"
                 >
-                  {submitted[q.id] ? '已提交 ✓' : '提交答案'}
+                  {submitted[q.id]
+                    ? (results[q.id]?.correct ? '✓ 已答对' : '已提交') : '提交答案'}
                 </button>
                 <button
                   onClick={() => handleExplain(q)}

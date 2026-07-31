@@ -27,8 +27,13 @@ def _section_dict(title: str, content: str, keywords, questions) -> dict:
 
 # ── T6: image path rewrite + matplotlib rendering ──
 
-def _rewrite_image_paths(content: str, source_file: str, source_id: int) -> str:
-    """Rewrite relative image refs to absolute /api/sources/{id}/files/... URLs."""
+def _rewrite_image_paths(content: str, source_file: str, source_id: int, persist_dir: str = "") -> str:
+    """Rewrite relative image refs to absolute /api/sources/{id}/files/... URLs.
+
+    Resolves against BOTH the md's directory and the repo root: some repos
+    (e.g. ML-For-Beginners) use repo-root-relative paths in md files; naive
+    md-dir resolution would double the prefix (404).
+    """
     import re as _re
     md_dir = os.path.dirname(source_file or "")
 
@@ -37,8 +42,14 @@ def _rewrite_image_paths(content: str, source_file: str, source_id: int) -> str:
         if raw.startswith(("http://", "https://", "data:", "/api/", "blob:")):
             return raw
         raw = raw.split("#")[0].split("?")[0]
-        resolved = os.path.normpath(os.path.join(md_dir, raw)).replace(os.sep, "/")
-        return f"/api/sources/{source_id}/files/{resolved}"
+        cand_md = os.path.normpath(os.path.join(md_dir, raw)).replace(os.sep, "/")
+        if persist_dir and os.path.isfile(os.path.join(persist_dir, cand_md)):
+            return f"/api/sources/{source_id}/files/{cand_md}"
+        cand_root = os.path.normpath(raw).replace(os.sep, "/")
+        if persist_dir and os.path.isfile(os.path.join(persist_dir, cand_root)):
+            return f"/api/sources/{source_id}/files/{cand_root}"
+        # fallback: md-dir resolution (avoids ".." leaking into the URL)
+        return f"/api/sources/{source_id}/files/{cand_md}"
 
     def _fix_md(m):
         return f"![{m.group(1)}]({_resolve(m.group(2))})"
@@ -103,7 +114,7 @@ def _postprocess_section(content: str, source_file: str, source_id: int, persist
         return "\n*（示意图渲染失败）*\n"
 
     content = _re.sub(r"```matplotlib\s*\n(.*?)```", _fix_mpl, content, flags=_re.DOTALL)
-    content = _rewrite_image_paths(content, source_file, source_id)
+    content = _rewrite_image_paths(content, source_file, source_id, persist_dir)
     return content
 
 

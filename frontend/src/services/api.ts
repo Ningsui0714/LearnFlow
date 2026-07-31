@@ -212,6 +212,9 @@ export const getConceptTask = (checkpointId: number) =>
 export const explainConcept = (checkpointId: number, questionId: number, userAnswerIndexes: number[]) =>
   api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/explain`, { user_answer_indexes: userAnswerIndexes }).then(r => r.data)
 
+export const submitConcept = (checkpointId: number, questionId: number, answerIndexes: number[]) =>
+  api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/submit`, { answer_indexes: answerIndexes }).then(r => r.data)
+
 // ── T8: exercise submit ──
 export const submitExercise = (exerciseId: number, code: string) =>
   api.post(`/exercises/${exerciseId}/submit`, { code }).then(r => r.data)

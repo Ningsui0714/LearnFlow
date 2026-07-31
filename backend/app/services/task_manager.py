@@ -54,6 +54,8 @@ def classify_error(e: Exception) -> dict:
         code = "context_too_long"
     elif name == "JSONDecodeError" or "json" in name.lower():
         code = "llm_format"
+    elif name == "ValueError" and ("json" in msg_lower or "no json" in msg_lower):
+        code = "llm_format"
     elif name in ("ValueError",) and ("api key" in msg_lower or "未配置" in msg_lower):
         code = "llm_not_configured"
     else:

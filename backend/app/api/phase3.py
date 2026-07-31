@@ -336,6 +336,31 @@ async def explain_concept(
     return {"explanation": answer, "base_explanation": q.explanation}
 
 
+@router.post("/checkpoints/{checkpoint_id}/concepts/{question_id}/submit")
+async def submit_concept(
+    checkpoint_id: int,
+    question_id: int,
+    data: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    """Instant grading: return correct/wrong + right answers (no LLM)."""
+    q = (await db.execute(select(ConceptQuestion).where(
+        ConceptQuestion.id == question_id,
+        ConceptQuestion.checkpoint_id == checkpoint_id,
+    ))).scalar_one_or_none()
+    if not q:
+        raise HTTPException(404, "Question not found")
+    correct = sorted(q.answer_indexes or [])
+    user = sorted(int(i) for i in (data or {}).get("answer_indexes", []))
+    is_correct = user == correct and len(user) > 0
+    return {
+        "correct": is_correct,
+        "answer_indexes": correct,
+        "user_answer_indexes": user,
+        "explanation": q.explanation or "",
+    }
+
+
 # ── Generate Exercises ──
 
 @router.post("/checkpoints/{checkpoint_id}/exercises/generate")

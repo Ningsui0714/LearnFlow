@@ -117,6 +117,8 @@ class ExerciseAgent:
         )
 
     def _extract_json(self, content: str) -> dict:
+        if not content or not content.strip():
+            raise ValueError("LLM returned empty response (no JSON)")
         m = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
         if m:
             return json.loads(m.group(1))
@@ -164,19 +166,26 @@ class ExerciseAgent:
             lecture_content=lecture_content[:4000] or "（暂无讲义）",
             chunk_context=chunk_context[:3000] or "（无）",
         )
-        resp = await self.llm.ainvoke([HumanMessage(content=prompt)])
-        data = self._extract_json(resp.content)
         items = []
-        for i, ex in enumerate(data.get("exercises", [])):
-            items.append({
-                "index": i,
-                "idea": ex.get("idea", ""),
-                "concept": ex.get("concept", ""),
-                "difficulty": ex.get("difficulty", "medium"),
-                "engineering_value": ex.get("engineering_value", "medium"),
-                "depends_on": int(ex.get("depends_on", -1)),
-            })
-        return [it for it in items if it["idea"]]
+        for attempt in range(2):  # 1 retry on transient bad output
+            try:
+                resp = await self.llm.ainvoke([HumanMessage(content=prompt)])
+                data = self._extract_json(resp.content)
+                for i, ex in enumerate(data.get("exercises", [])):
+                    items.append({
+                        "index": i,
+                        "idea": ex.get("idea", ""),
+                        "concept": ex.get("concept", ""),
+                        "difficulty": ex.get("difficulty", "medium"),
+                        "engineering_value": ex.get("engineering_value", "medium"),
+                        "depends_on": int(ex.get("depends_on", -1)),
+                    })
+                items = [it for it in items if it["idea"]]
+                if items:
+                    return items
+            except Exception as e:
+                print(f"[ExerciseAgent] blueprint failed (attempt {attempt}): {str(e)[:120]}")
+        return items
 
     async def generate_one(
         self,

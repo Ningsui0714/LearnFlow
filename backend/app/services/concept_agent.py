@@ -39,9 +39,7 @@ GENERATE_PROMPT = """你是计算机教学命题专家。根据下面的关卡�
    - single：单选概念题（理解而非记忆，考"为什么"）
    - multi：多选题（2-4 个正确选项）
    - judge：判断题（只有两个选项：正确/错误）
-   - wwpd：给一段 Python 代码问输出/行为（What Would Python Do）
-   - wwpp：给一段 Python 代码问打印结果（What Would Python Print）
-   - 至少包含 1-2 道 wwpd/wwpp（内容适合时）
+   - 如果教学内容包含代码且适合考察代码行为，可以用 wwpd/wwpp（给一段 Python 代码问输出）——内容不合适就不要用，不要硬凑。
 3. 难度递进：easy → medium → hard 各若干。
 4. 每题附简要解析（explanation），说明为什么对/错。
 5. 考察理解、关联、易错点，不考死记硬背。
