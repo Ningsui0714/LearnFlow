@@ -4,6 +4,7 @@ Source processing and text chunking service with directory analysis + chunk tagg
 import os
 import re
 import json
+import shutil
 import tempfile
 import subprocess
 from typing import List, Optional, Dict
@@ -86,7 +87,14 @@ class SourceProcessor:
         ".rs", ".go", ".rb", ".php", ".swift", ".tex", ".bib",
     }
 
-    async def clone_and_extract(self, repo_url: str) -> dict:
+    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"}
+
+    def _should_persist(self, fname: str) -> bool:
+        """Files kept in the repo cache (needed for rendering/captioning)."""
+        ext = f".{fname.split('.')[-1].lower()}" if "." in fname else ""
+        return ext in self._IMAGE_EXTS or fname.lower() in {"readme.md", "readme.rst"} or ext in {".md", ".rst"}
+
+    async def clone_and_extract(self, repo_url: str, persist_dir: str = None) -> dict:
         """
         Clone repo and return:
           text: combined content for chunking
@@ -151,6 +159,31 @@ class SourceProcessor:
                         text_parts.append(f"=== {rel_path} ===\n{content}\n")
                     except (UnicodeDecodeError, OSError):
                         continue
+
+            # Persist images + markdown into the repo cache (T6)
+            if persist_dir:
+                os.makedirs(persist_dir, exist_ok=True)
+                for root, dirs, files in os.walk(tmpdir):
+                    dirs[:] = [d for d in dirs if not self._skip_dir(d)]
+                    rel_dir = os.path.relpath(root, tmpdir)
+                    if rel_dir == ".":
+                        rel_dir = ""
+                    for fname in files:
+                        if not self._should_persist(fname):
+                            continue
+                        rel_path = f"{rel_dir}/{fname}" if rel_dir else fname
+                        src = os.path.join(root, fname)
+                        try:
+                            if os.path.getsize(src) > 5 * 1024 * 1024:
+                                continue
+                        except OSError:
+                            continue
+                        dst = os.path.join(persist_dir, rel_path)
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        try:
+                            shutil.copy2(src, dst)
+                        except OSError:
+                            pass
 
             if not text_parts:
                 raise ValueError(f"No readable content found in {repo_url}")
@@ -537,7 +570,7 @@ class SourceProcessor:
 
     # ── Full Pipeline ──
 
-    async def process_source(self, source_type: str, url: str) -> dict:
+    async def process_source(self, source_type: str, url: str, persist_dir: str = None) -> dict:
         """
         Full pipeline: fetch → extract → analyze → chunk.
         Returns {chunks: [...], source_meta: {...}}.
@@ -549,7 +582,7 @@ class SourceProcessor:
 
         if source_type == "github":
             try:
-                result = await self.clone_and_extract(clean_url)
+                result = await self.clone_and_extract(clean_url, persist_dir=persist_dir)
                 text = result["text"]
                 dir_tree = result.get("dir_tree", {})
                 readme = result.get("readme", "")

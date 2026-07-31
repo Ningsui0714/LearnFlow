@@ -201,6 +201,26 @@ export default function CheckpointPage() {
     setSelectedSection(sectionIndex)
   }, [])
 
+  // T6: delete an image from a section (removes the markdown reference, then saves)
+  const handleDeleteImage = useCallback(async (sectionIndex: number, src: string) => {
+    if (!window.confirm('删除这张图片？（可从版本历史回滚）')) return
+    const esc = src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const mdRe = new RegExp(`!\\[[^\\]]*\\]\\(${esc}\\)`)
+    const htmlRe = new RegExp(`<img[^>]*src=[\"']${esc}[\"'][^>]*/?>`)
+    setSections(prev => {
+      const next = prev.map((s, i) => {
+        if (i !== sectionIndex) return s
+        let content = s.content.replace(mdRe, '').replace(htmlRe, '')
+        content = content.replace(/\n{3,}/g, '\n\n')
+        return { ...s, content }
+      })
+      saveLecture(cid, next).then(() => setProgress('✅ 已删除图片')).catch((e: any) => {
+        setError('保存失败: ' + (e?.response?.data?.detail || e.message))
+      })
+      return next
+    })
+  }, [cid])
+
   const handleCloseWorkspace = () => {
     setShowWorkspace(false)
     setSelectedText('')
@@ -364,6 +384,7 @@ export default function CheckpointPage() {
               <LectureRenderer
                 sections={sections}
                 onSelect={handleTextSelect}
+                onDeleteImage={handleDeleteImage}
               />
             )}
           </div>

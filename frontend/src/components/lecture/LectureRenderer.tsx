@@ -15,9 +15,10 @@ interface Section {
 interface Props {
   sections: Section[]
   onSelect?: (text: string, sectionIndex: number) => void
+  onDeleteImage?: (sectionIndex: number, src: string) => void
 }
 
-export default function LectureRenderer({ sections, onSelect }: Props) {
+export default function LectureRenderer({ sections, onSelect, onDeleteImage }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Handle text selection
@@ -93,6 +94,26 @@ export default function LectureRenderer({ sections, onSelect }: Props) {
                     <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto text-sm">
                       <code className={className} {...props}>{children}</code>
                     </pre>
+                  )
+                },
+                // Images: hover to delete (T6)
+                img({ src, alt }: any) {
+                  return (
+                    <span className="relative inline-block group my-2">
+                      <img src={src} alt={alt || ''}
+                           className="max-w-full rounded-lg border border-gray-200" />
+                      {onDeleteImage && (
+                        <button
+                          onClick={() => onDeleteImage(i, src)}
+                          title="删除这张图片"
+                          className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500 text-white
+                                     text-xs opacity-0 group-hover:opacity-100 transition-opacity
+                                     shadow hover:bg-red-600"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </span>
                   )
                 },
                 // Style blockquotes (used for questions)

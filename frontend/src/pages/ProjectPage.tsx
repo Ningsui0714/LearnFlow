@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getProject, addSource, listSources, listChunks, processAllSources, getRoadmap } from '../services/api'
+import { getProject, addSource, listSources, listChunks, processAllSources, getRoadmap, startImageCaptioning, getTaskStatus } from '../services/api'
 import ChatInterface from '../components/workspace/ChatInterface'
 import CheckpointGraph from '../components/checkpoint/CheckpointGraph'
 
@@ -27,6 +27,7 @@ export default function ProjectPage() {
   const [sourceType, setSourceType] = useState('url')
   const [sourceUrl, setSourceUrl] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [captioningSource, setCaptioningSource] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'sources' | 'roadmap'>('sources')
   const [initialTabSet, setInitialTabSet] = useState(false)
 
@@ -38,6 +39,43 @@ export default function ProjectPage() {
     }
   }, [checkpoints, initialTabSet])
   const [notification, setNotification] = useState<string | null>(null)
+
+  // T6: trigger image captioning (manual) and poll the task
+  const handleCaption = async (sourceId: number) => {
+    setCaptioningSource(sourceId)
+    setNotification('正在分析图片...')
+    try {
+      const res = await startImageCaptioning(pid, sourceId)
+      setNotification('任务已启动，正在生成图片描述...')
+      // Poll task status
+      const deadline = Date.now() + 10 * 60 * 1000  // max 10 min
+      const poll = async () => {
+        try {
+          const t = await getTaskStatus(res.task_id)
+          if (t.status === 'completed') {
+            const r = t.result || {}
+            setNotification(`✅ 图片描述完成：${r.captioned ?? 0} 张成功${r.failed ? `，${r.failed} 张失败` : ''}`)
+            setCaptioningSource(null)
+          } else if (t.status === 'failed') {
+            setNotification('❌ 图片描述任务失败: ' + (t.error?.message || ''))
+            setCaptioningSource(null)
+          } else if (Date.now() < deadline) {
+            setTimeout(poll, 5000)
+          } else {
+            setNotification('⏳ 任务仍在后台进行，可稍后查看')
+            setCaptioningSource(null)
+          }
+        } catch {
+          setCaptioningSource(null)
+          setNotification('任务状态查询失败，后台任务可能仍在运行')
+        }
+      }
+      setTimeout(poll, 5000)
+    } catch (e: any) {
+      setNotification('❌ 启动失败: ' + (e?.response?.data?.detail || e.message))
+      setCaptioningSource(null)
+    }
+  }
 
   useEffect(() => { load() }, [pid])
 
@@ -213,6 +251,16 @@ export default function ProjectPage() {
                 </div>
                 {s.status === 'failed' && s.error && (
                   <p className="text-red-400 mt-1 text-[10px] leading-tight">{s.error.slice(0, 80)}</p>
+                )}
+                {s.type === 'github' && s.status === 'processed' && (
+                  <button
+                    onClick={() => handleCaption(s.id)}
+                    disabled={captioningSource === s.id}
+                    className="mt-1.5 w-full text-[10px] bg-purple-50 text-purple-600 py-1 rounded
+                               hover:bg-purple-100 disabled:opacity-50 transition-colors"
+                  >
+                    {captioningSource === s.id ? '⏳ 生成图片描述中...' : '🖼 生成图片描述'}
+                  </button>
                 )}
               </div>
             ))}

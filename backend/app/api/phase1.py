@@ -3,15 +3,17 @@ API routes for Phase 1 features:
 - Source processing
 - Roadmap agent chat
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 import json
+import os
+import shutil
 from app.core.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
 
 from app.db.database import get_db
-from app.models.project import Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk
+from app.models.project import Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk, Task
 from app.schemas.project import (
     AgentChatRequest, AgentChatResponse,
 )
@@ -20,6 +22,19 @@ from app.services.roadmap_agent import RoadmapAgent
 
 router = APIRouter()
 chunker = SourceProcessor()
+
+
+def _count_images(persist_dir: str) -> int:
+    """Count image files in the repo cache (T6)."""
+    count = 0
+    for root, dirs, files in os.walk(persist_dir):
+        if os.path.basename(root) == "generated":
+            continue
+        for fn in files:
+            ext = f".{fn.split('.')[-1].lower()}" if "." in fn else ""
+            if ext in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"}:
+                count += 1
+    return count
 
 
 # ── Source Processing ──
@@ -50,11 +65,18 @@ async def process_source(
         .distinct()
     )).scalars().all()
 
+    # Repo file cache (T6): clear old, will re-persist images/markdown
+    persist_dir = os.path.join(settings.repo_files_dir, str(source.id))
+    if os.path.exists(persist_dir):
+        shutil.rmtree(persist_dir, ignore_errors=True)
+
     try:
         # Process the source (now returns {chunks, source_meta})
-        result_data = await chunker.process_source(source.type, source.url)
+        result_data = await chunker.process_source(source.type, source.url, persist_dir=persist_dir)
         chunks_data = result_data["chunks"]
         source_meta = result_data.get("source_meta", {})
+        source_meta["repo_files_dir"] = persist_dir
+        source_meta["image_files"] = _count_images(persist_dir)
 
         # Store directory structure/toc as source metadata
         if source_meta:
@@ -98,6 +120,72 @@ async def process_source(
         source.error = str(e)
         await db.commit()
         raise HTTPException(500, f"Source processing failed: {str(e)}")
+
+
+# ── T6: repo file cache serving + image captioning ──
+
+@router.get("/sources/{source_id}/files/{file_path:path}")
+async def serve_source_file(
+    source_id: int,
+    file_path: str,
+):
+    """Serve persisted repo files (images/markdown) for rendering (T6-P0)."""
+    base = os.path.realpath(os.path.join(settings.repo_files_dir, str(source_id)))
+    full = os.path.realpath(os.path.join(base, file_path))
+    if not full.startswith(base + os.sep):
+        raise HTTPException(400, "非法路径")
+    if not os.path.isfile(full):
+        raise HTTPException(404, "文件不存在（可能需要重新处理来源）")
+    from fastapi.responses import FileResponse
+    return FileResponse(full)
+
+
+@router.post("/projects/{project_id}/sources/{source_id}/images/caption")
+async def start_image_captioning(
+    project_id: int,
+    source_id: int,
+    db: AsyncSession = Depends(get_db),
+    req: dict = Body(default={}),
+):
+    """Manual trigger: caption all repo images via Moonshot vision (T6-P1).
+
+    Creates a background task; captions become image chunks in the retrieval
+    pool (caption-as-text RAG). Idempotent per image (upsert by image_path).
+    """
+    source = (await db.execute(
+        select(Source).where(Source.id == source_id, Source.project_id == project_id)
+    )).scalar_one_or_none()
+    if not source:
+        raise HTTPException(404, "Source not found")
+    if source.type != "github":
+        raise HTTPException(400, "仅支持 GitHub 仓库的图片")
+    if not (settings.vision_api_key or settings.llm_api_key):
+        raise HTTPException(400, "请先配置 VISION_API_KEY（或 LLM_API_KEY）")
+
+    persist_dir = os.path.join(settings.repo_files_dir, str(source_id))
+    if not os.path.isdir(persist_dir):
+        raise HTTPException(400, "仓库文件缓存不存在，请先重新处理来源")
+
+    from app.services.task_manager import find_running_task, manager
+    running = await find_running_task(source_id, "image_caption")
+    if running:
+        return {"task_id": running.id, "status": running.status, "already_running": True}
+
+    task = Task(
+        project_id=project_id,
+        type="image_caption",
+        status="queued",
+        payload={"source_id": source_id, "project_id": project_id,
+                 "limit": (req or {}).get("limit")},
+        progress={"current": 0, "total": 0, "message": "排队中..."},
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    from app.services.task_runners import run_image_captioning
+    manager.submit(task.id, run_image_captioning(task.id))
+    return {"task_id": task.id, "status": task.status, "already_running": False}
 
 
 # ── L1: File Summaries (batch LLM, cached) ──
@@ -272,10 +360,16 @@ async def process_all_sources(
                 .distinct()
             )).scalars().all()
 
+            persist_dir = os.path.join(settings.repo_files_dir, str(source.id))
+            if os.path.exists(persist_dir):
+                shutil.rmtree(persist_dir, ignore_errors=True)
+
             # New: returns {chunks, source_meta}
-            result_data = await chunker.process_source(source.type, source.url)
+            result_data = await chunker.process_source(source.type, source.url, persist_dir=persist_dir)
             chunks_data = result_data["chunks"]
             source_meta = result_data.get("source_meta", {})
+            source_meta["repo_files_dir"] = persist_dir
+            source_meta["image_files"] = _count_images(persist_dir)
             if source_meta:
                 try:
                     source.meta_data = {**(source.meta_data or {}), "repo_analysis": source_meta}

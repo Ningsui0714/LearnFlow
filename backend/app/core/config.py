@@ -11,6 +11,14 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
 
+    # Vision (image understanding) — Moonshot
+    vision_api_key: str = ""
+    vision_base_url: str = "https://api.moonshot.cn/v1"
+    vision_model: str = "moonshot-v1-8k-vision-preview"
+
+    # Repo files cache (images + markdown persisted from cloned sources)
+    repo_files_dir: str = "data/repo-files"
+
     # Database
     database_url: str = "sqlite+aiosqlite:///./learnflow.db"
 

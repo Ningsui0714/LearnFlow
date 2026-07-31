@@ -117,6 +117,16 @@ GENERATE_SECTION_PROMPT = """你是学习内容专家。根据大纲生成完整
 6. 代码示例用 ```python 代码块
 7. 末尾放 1-2 个自查问题（用 > **思考题:** 开头）
 
+## 图片引用规则（重要）
+- 参考资料中可能包含「资料图片」条目，格式为：【图片】路径: 描述。
+- **只有当图片与本小节内容直接相关、且能实质帮助理解时**，才用 markdown 图片语法引用：`![简短描述](仓库内相对路径)`，例如 `![卷积运算示意图](chapter_convolutional-neural-networks/figures/conv.png)`。
+- 装饰性、与内容弱相关的图片**不要插入**。宁可少图，不可硬插图。
+- 图片路径直接复制【图片】条目中的路径，不要改写。
+
+## 可视化图（可选）
+- 需要示意图且资料中没有合适图片时，可以输出 ```matplotlib 代码块（后端会执行并渲染成图插入讲义）。
+- matplotlib 代码必须是自包含、可直接运行的（只依赖 numpy/matplotlib），不要读文件。
+
 ## 输出
 直接输出 markdown 内容，不要额外的 JSON 包裹。"""
 
@@ -562,7 +572,16 @@ class LectureAgent:
                 boost_weight=rp.get("boost_weight", 1.5),
                 scope_files=None,
             )
-        ctx = self._build_chunk_context(relevant)
+        # Split image chunks (T6): captions appended as optional figure material
+        text_chunks = [c for c in relevant if (c.get("meta") or {}).get("type") != "image"]
+        image_chunks = [c for c in relevant if (c.get("meta") or {}).get("type") == "image"]
+        ctx = self._build_chunk_context(text_chunks)
+        if image_chunks:
+            fig_lines = ["\n## 资料图片（按需引用，不要硬插）"]
+            for c in image_chunks:
+                meta = c.get("meta") or {}
+                fig_lines.append(f"【图片】{meta.get('image_path', '')}: {c.get('content', '')[:150]}")
+            ctx += "\n" + "\n".join(fig_lines)
 
         prompt = self._safe_format(GENERATE_SECTION_PROMPT,
             checkpoint_title=checkpoint_title,
