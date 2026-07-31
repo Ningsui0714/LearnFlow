@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.db.database import async_session
-from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture
+from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion
 from app.services.lecture_agent import LectureAgent
 from app.services.task_manager import update_task
 
@@ -124,6 +124,13 @@ async def run_lecture_generation(task_id: int):
             await db.commit()
             await db.refresh(lecture)
         if not resume:
+            # T5: snapshot the published lecture before it gets overwritten
+            if lecture.status == "published" and lecture.sections:
+                db.add(LectureVersion(
+                    checkpoint_id=checkpoint_id,
+                    sections=list(lecture.sections),
+                    reason="regenerate_before",
+                ))
             # Fresh generation: clear stale partial content
             lecture.sections = []
             lecture.status = "draft"

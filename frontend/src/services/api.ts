@@ -148,6 +148,12 @@ export const createLectureTask = (checkpointId: number, mode: 'fresh' | 'resume'
 export const getActiveLectureTask = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/lecture/task`).then(r => r.data)
 
+export const listLectureVersions = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/lecture/versions`).then(r => r.data)
+
+export const rollbackLecture = (checkpointId: number, versionId: number) =>
+  api.post(`/checkpoints/${checkpointId}/lecture/rollback`, { version_id: versionId }).then(r => r.data)
+
 export const getTaskStatus = (taskId: number) =>
   api.get(`/tasks/${taskId}`).then(r => r.data)
 

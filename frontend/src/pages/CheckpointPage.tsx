@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   getLecture, saveLecture,
   createLectureTask, getActiveLectureTask, cancelTask, lectureTaskEventsUrl,
+  listLectureVersions, rollbackLecture,
 } from '../services/api'
 import LectureRenderer from '../components/lecture/LectureRenderer'
 import BottomWorkspace from '../components/workspace/BottomWorkspace'
@@ -30,6 +31,9 @@ export default function CheckpointPage() {
   const [checkpointTitle, setCheckpointTitle] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [showWorkspace, setShowWorkspace] = useState(false)
+  const [showVersions, setShowVersions] = useState(false)
+  const [versions, setVersions] = useState<any[]>([])
+  const [versionLoading, setVersionLoading] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
   // ── Load lecture on mount ──
@@ -164,6 +168,33 @@ export default function CheckpointPage() {
     } catch {}
   }
 
+  // ── T5: version history + rollback ──
+  const openVersions = async () => {
+    setShowVersions(true)
+    setVersionLoading(true)
+    try {
+      const data = await listLectureVersions(cid)
+      setVersions(data || [])
+    } catch {
+      setVersions([])
+    }
+    setVersionLoading(false)
+  }
+
+  const handleRollback = async (versionId: number, preview: string) => {
+    if (!window.confirm(`确定回滚到版本「${preview || versionId}」？当前讲义会被存档后替换。`)) return
+    setVersionLoading(true)
+    try {
+      await rollbackLecture(cid, versionId)
+      await loadLecture()
+      setShowVersions(false)
+      setProgress('✅ 已回滚到历史版本')
+    } catch (e: any) {
+      setError('回滚失败: ' + (e?.response?.data?.detail || e.message))
+    }
+    setVersionLoading(false)
+  }
+
   const handleTextSelect = useCallback((text: string) => {
     setSelectedText(text)
   }, [])
@@ -227,6 +258,15 @@ export default function CheckpointPage() {
           >
             💻 练习
           </button>
+          {sections.length > 0 && !generating && (
+            <button
+              onClick={openVersions}
+              className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded-lg text-sm
+                         hover:bg-gray-200 transition-colors"
+            >
+              🕘 版本
+            </button>
+          )}
           {selectedText && !showWorkspace && (
             <button
               onClick={() => setShowWorkspace(true)}
@@ -336,6 +376,50 @@ export default function CheckpointPage() {
           />
         )}
       </div>
+
+      {/* Version history modal (T5) */}
+      {showVersions && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+             onClick={() => setShowVersions(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-[480px] max-h-[70vh] flex flex-col"
+               onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+              <h3 className="font-semibold text-gray-800">🕘 讲义版本历史</h3>
+              <button onClick={() => setShowVersions(false)}
+                      className="text-gray-400 hover:text-gray-600 text-sm px-1">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {versionLoading && <p className="text-gray-400 text-sm text-center py-6">加载中...</p>}
+              {!versionLoading && versions.length === 0 && (
+                <p className="text-gray-400 text-sm text-center py-6">
+                  暂无历史版本。重新生成讲义时会自动保存上一版。
+                </p>
+              )}
+              {versions.map((v: any, i: number) => (
+                <div key={v.id} className="border border-gray-100 rounded-lg p-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm text-gray-800 font-medium truncate">
+                      {v.preview || `版本 #${v.id}`}
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      {v.sections_count} 节 · {v.reason === 'regenerate_before' ? '重新生成前自动存档' : v.reason === 'before_rollback' ? '回滚前存档' : v.reason}
+                      {v.created_at ? ` · ${new Date(v.created_at).toLocaleString('zh-CN')}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleRollback(v.id, v.preview)}
+                    disabled={versionLoading}
+                    className="bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 rounded-lg text-xs
+                               hover:bg-amber-100 disabled:opacity-50 shrink-0"
+                  >
+                    回滚
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

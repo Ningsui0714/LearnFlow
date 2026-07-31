@@ -78,6 +78,7 @@ class Checkpoint(Base):
     roadmap = relationship("Roadmap", back_populates="checkpoints")
     chunk_assignments = relationship("CheckpointChunk", back_populates="checkpoint", cascade="all, delete-orphan")
     lecture = relationship("Lecture", back_populates="checkpoint", uselist=False, cascade="all, delete-orphan")
+    lecture_versions = relationship("LectureVersion", back_populates="checkpoint", cascade="all, delete-orphan")
     exercises = relationship("Exercise", back_populates="checkpoint", cascade="all, delete-orphan")
 
 
@@ -119,6 +120,24 @@ class Exercise(Base):
     order = Column(Integer, default=0)
 
     checkpoint = relationship("Checkpoint", back_populates="exercises")
+
+
+class LectureVersion(Base):
+    """Snapshotted lecture version (T5: versioning + rollback).
+
+    Current content lives in Lecture.sections; every destructive rewrite
+    (regenerate, rollback) snapshots the previous state here first.
+    """
+
+    __tablename__ = "lecture_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    sections = Column(JSON, default=list)
+    reason = Column(String(100), default="")  # regenerate_before | before_rollback
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    checkpoint = relationship("Checkpoint", back_populates="lecture_versions")
 
 
 class Task(Base):

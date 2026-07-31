@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task
+from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task, LectureVersion
 from app.schemas.project import (
     AgentMessage, LectureAskRequest,
 )
@@ -237,6 +237,69 @@ async def get_lecture(
         "sections": lecture.sections or [],
         "status": lecture.status,
     }
+
+
+# ── T5: Lecture versioning + rollback ──
+
+@router.get("/checkpoints/{checkpoint_id}/lecture/versions")
+async def list_lecture_versions(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """List snapshotted versions (newest first)."""
+    rows = (await db.execute(
+        select(LectureVersion)
+        .where(LectureVersion.checkpoint_id == checkpoint_id)
+        .order_by(LectureVersion.id.desc())
+    )).scalars().all()
+    return [{
+        "id": v.id,
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+        "reason": v.reason or "",
+        "sections_count": len(v.sections or []),
+        "preview": ((v.sections or [{}])[0].get("title", "") if v.sections else ""),
+    } for v in rows]
+
+
+@router.post("/checkpoints/{checkpoint_id}/lecture/rollback")
+async def rollback_lecture(
+    checkpoint_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a previous version. Current content is snapshotted first."""
+    version_id = (data or {}).get("version_id")
+    if not version_id:
+        raise HTTPException(400, "缺少 version_id")
+    version = (await db.execute(
+        select(LectureVersion).where(
+            LectureVersion.id == version_id,
+            LectureVersion.checkpoint_id == checkpoint_id,
+        )
+    )).scalar_one_or_none()
+    if not version:
+        raise HTTPException(404, "Version not found")
+
+    lecture = (await db.execute(
+        select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+    )).scalar_one_or_none()
+    if not lecture:
+        lecture = Lecture(checkpoint_id=checkpoint_id, sections=[], status="draft")
+        db.add(lecture)
+        await db.flush()
+
+    # Snapshot current state before replacing (safety)
+    if lecture.sections:
+        db.add(LectureVersion(
+            checkpoint_id=checkpoint_id,
+            sections=list(lecture.sections),
+            reason="before_rollback",
+        ))
+
+    lecture.sections = list(version.sections or [])
+    lecture.status = "published"
+    await db.commit()
+    return {"status": "ok", "sections": len(lecture.sections or [])}
 
 
 @router.post("/checkpoints/{checkpoint_id}/ask")

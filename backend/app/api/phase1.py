@@ -497,6 +497,49 @@ def _build_brief(cp_id, order, node, files, scope_ids, seed_ids,
     }
 
 
+def _match_files_by_keywords(title: str, description: str, summaries: dict) -> list:
+    """Deterministic file suggestion: checkpoint title keywords × file summaries.
+
+    Returns up to 8 file paths whose summary/path matches the title tokens.
+    """
+    import re as _re
+    stopwords = {"基础", "入门", "快速", "扫过", "核心", "高级", "技巧", "简单",
+                 "实战", "常用", "与", "和", "及", "以及", "的", "中", "从", "到",
+                 "于", "and", "the", "of", "with", "for", "in", "on"}
+    tokens = set()
+    blob = f"{title} {description or ''}"
+    # English / numbers / underscores
+    tokens |= {t.lower() for t in _re.findall(r"[A-Za-z0-9_]{2,}", blob)}
+    # Chinese: 2-4 char substrings of runs (keeps 线性回归, 卷积, 感知机…)
+    cjk_runs = _re.findall(r"[\u4e00-\u9fff]{2,}", blob)
+    for run in cjk_runs:
+        if len(run) <= 4:
+            tokens.add(run)
+        else:
+            tokens.add(run[:2])
+            tokens.add(run[:4])
+            tokens.add(run[-2:])
+            tokens.add(run[-4:])
+    tokens -= stopwords
+    tokens = {t for t in tokens if len(t) >= 2}
+    if not tokens:
+        return []
+
+    scored = []
+    for fp, sm in summaries.items():
+        hay = f"{fp.lower()} {str(sm).lower()}"
+        score = 0
+        for t in tokens:
+            if t in fp.lower():
+                score += 2
+            elif t in str(sm).lower():
+                score += 1
+        if score > 0:
+            scored.append((score, fp))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [fp for _, fp in scored[:8]]
+
+
 @router.post("/projects/{project_id}/roadmap/briefs")
 async def backfill_briefs(
     project_id: int,
@@ -504,7 +547,9 @@ async def backfill_briefs(
 ):
     """
     T3/T4: backfill CheckpointBriefs for existing roadmaps (no LLM).
-    For each checkpoint, files are derived from its current chunk assignments'    meta; the brief is built deterministically.
+    File derivation order: existing chunk links → keyword × file-summary
+    matching → (fallback) one batched LLM call for checkpoints still empty.
+    Also applies the scope assignments (equivalent to /roadmap/resync).
     """
     roadmap = (await db.execute(
         select(Roadmap).where(Roadmap.project_id == project_id)
@@ -526,18 +571,21 @@ async def backfill_briefs(
         select(Source).where(Source.project_id == project_id).order_by(Source.id)
     )).scalars().all()
     structure_logic, structure_confidence = "mixed", "low"
+    summaries = {}
     for s in sources:
         ra = (s.meta_data or {}).get("repo_analysis") or {}
         if ra.get("structure_logic"):
             structure_logic = ra["structure_logic"]
             structure_confidence = (ra.get("structure_confidence") or {}).get("level", "low")
-            break
+        summaries.update(ra.get("file_summaries") or {})
     main_source_id = sources[0].id if sources else None
 
     cps = (await db.execute(
         select(Checkpoint).where(Checkpoint.roadmap_id == roadmap.id).order_by(Checkpoint.order)
     )).scalars().all()
-    updated = 0
+
+    # Pass 1: derive files deterministically
+    cp_files = {}  # cp.id -> [files]
     for cp in cps:
         cc_ids = (await db.execute(
             select(CheckpointChunk.chunk_id).where(CheckpointChunk.checkpoint_id == cp.id)
@@ -545,18 +593,78 @@ async def backfill_briefs(
         seed_ids = list(cc_ids)
         files = sorted({(chunks_by_id[i].meta_data or {}).get("file", "") for i in seed_ids
                         if i in chunks_by_id and (chunks_by_id[i].meta_data or {}).get("file")})
+        if not files and summaries:
+            files = _match_files_by_keywords(cp.title, cp.description or "", summaries)
+        cp_files[cp.id] = (seed_ids, files)
+
+    # Pass 2: LLM batch for still-empty checkpoints
+    empty = [(cp, cp_files[cp.id][1]) for cp in cps if not cp_files[cp.id][1]]
+    if empty and summaries and settings.llm_api_key and settings.llm_api_key != "***":
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+        llm = ChatOpenAI(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            temperature=0.2,
+            timeout=90,
+            max_retries=0,
+        )
+        cp_lines = [f"- {cp.title}: {cp.description or ''}" for cp, _ in empty]
+        sum_lines = [f"- {fp}: {sm}" for fp, sm in list(summaries.items())[:300]]
+        prompt = (
+            "你是学习资料组织者。下面是一个学习路线的关卡列表，以及仓库中所有文件的摘要。\n"
+            "请为每个关卡选择 2-8 个最相关的文件（只从文件列表中选择，不要编造路径）。\n\n"
+            "## 关卡\n" + "\n".join(cp_lines) + "\n\n## 文件\n" + "\n".join(sum_lines) + "\n\n"
+            "输出 JSON：{\"关卡标题\": [\"文件路径\", ...], ...}。只输出 JSON。"
+        )
+        try:
+            resp = await llm.ainvoke([HumanMessage(content=prompt)])
+            content = resp.content
+            import re as _re
+            m = _re.search(r"```json\s*(.*?)\s*```", content, _re.DOTALL)
+            raw = m.group(1) if m else content
+            start, end = raw.find("{"), raw.rfind("}")
+            if start != -1 and end > start:
+                mapping = json.loads(raw[start:end + 1])
+                for cp, _ in empty:
+                    picked = [f for f in (mapping.get(cp.title) or []) if f in chunks_by_file]
+                    if picked:
+                        cp_files[cp.id] = (cp_files[cp.id][0], picked[:8])
+        except Exception as e:
+            print(f"[backfill_briefs] LLM file mapping failed: {type(e).__name__}: {str(e)[:150]}")
+
+    # Apply: assign chunks by files + write briefs
+    updated = assigned = 0
+    for cp in cps:
+        seed_ids, files = cp_files[cp.id]
+        valid_files = [f for f in files if f in chunks_by_file]
         scope_ids = []
-        if files:
-            for f in files:
-                scope_ids += [c.id for c in chunks_by_file.get(f, [])]
+        if valid_files:
+            for f in valid_files:
+                scope_ids += [c.id for c in chunks_by_file[f]]
             scope_ids = list(dict.fromkeys(scope_ids))
+        if not scope_ids:
+            scope_ids = [i for i in seed_ids if i in chunks_by_id]
+
+        if valid_files and scope_ids:
+            old_cc = await db.execute(
+                select(CheckpointChunk).where(CheckpointChunk.checkpoint_id == cp.id)
+            )
+            for cc in old_cc.scalars().all():
+                await db.delete(cc)
+            for cid in scope_ids:
+                db.add(CheckpointChunk(checkpoint_id=cp.id, chunk_id=cid))
+            assigned += 1
+
         node = {"title": cp.title, "description": cp.description,
                 "prerequisites": cp.prerequisites or [], "key_concepts": []}
-        cp.brief = _build_brief(cp.id, cp.order, node, files, scope_ids, seed_ids,
+        cp.brief = _build_brief(cp.id, cp.order, node, valid_files, scope_ids, seed_ids,
                                 structure_logic, structure_confidence, main_source_id)
         updated += 1
     await db.commit()
-    return {"status": "ok", "updated": updated}
+    return {"status": "ok", "updated": updated, "assigned": assigned,
+            "files_by_checkpoint": {cp.id: cp_files[cp.id][1] for cp in cps}}
 
 
 @router.post("/projects/{project_id}/roadmap/resync")
