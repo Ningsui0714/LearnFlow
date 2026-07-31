@@ -3,8 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom'
 import SplitPane from "../components/layout/SplitPane"
 import Editor from '@monaco-editor/react'
 import {
-  listExercises, getExercise, runCode, reviewCode,
+  listExercises, getExercise, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
 } from '../services/api'
+import ConceptQuestions from '../components/exercise/ConceptQuestions'
 
 interface CodeMsg {
   role: 'user' | 'assistant'
@@ -31,6 +32,11 @@ export default function ExercisePage() {
   const [wsLoading, setWsLoading] = useState(false)
   const [selectedCode, setSelectedCode] = useState('')
   const [showDesc, setShowDesc] = useState(true)
+  const [tab, setTab] = useState<'concepts' | 'code'>('code')
+  const [submitResult, setSubmitResult] = useState<any>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [genTaskId, setGenTaskId] = useState<number | null>(null)
+  const [genProgress, setGenProgress] = useState('')
   const wsEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -67,24 +73,41 @@ export default function ExercisePage() {
     try {
       const { default: api } = await import('../services/api')
       const res = await api.post(`/checkpoints/${cid}/exercises/generate`)
-      if (res.data.exercises) {
-        await loadExercises()
-      } else {
-        const msg = res.data.error || '未知错误'
-        const raw = res.data.raw
-        if (raw) {
-          alert(`生成失败: ${msg}
-
-AI 返回的原始内容:
-${raw.slice(0, 500)}`)
-        } else {
-          alert(`生成失败: ${msg}`)
-        }
+      setGenTaskId(res.data.task_id)
+      setGenProgress('排队中...')
+      // subscribe SSE
+      const es = new EventSource(lectureTaskEventsUrl(res.data.task_id))
+      es.onmessage = (ev) => {
+        try {
+          const snap = JSON.parse(ev.data)
+          if (snap.progress?.message) setGenProgress(snap.progress.message)
+          if (snap.status === 'completed') {
+            setGenProgress('✅ 完成')
+            es.close()
+            loadExercises()
+          } else if (snap.status === 'failed') {
+            setGenProgress('❌ ' + (snap.error?.guidance || snap.error?.message || '失败'))
+            es.close()
+          }
+        } catch {}
       }
     } catch (e: any) {
       alert('生成失败: ' + (e?.response?.data?.detail || e.message))
     }
     setLoading(false)
+  }
+
+  const handleSubmit = async () => {
+    if (!activeEx || !code.trim()) return
+    setSubmitting(true)
+    setSubmitResult(null)
+    try {
+      const result = await submitExercise(activeEx.id, code)
+      setSubmitResult(result)
+    } catch (e: any) {
+      setSubmitResult({ error: e?.response?.data?.detail || e.message })
+    }
+    setSubmitting(false)
   }
 
   const handleRun = async () => {
@@ -160,18 +183,46 @@ ${raw.slice(0, 500)}`)
             ← 返回讲义
           </button>
           <span className="text-gray-300">|</span>
-          <h1 className="text-lg font-semibold text-gray-900">代码练习</h1>
-          {exercises.length === 0 && (
-            <button onClick={handleGenerateEx}
-              className="bg-primary-600 text-white px-3 py-1 rounded text-sm ml-auto
-                         hover:bg-primary-700 transition-colors">
-              🤖 生成习题
+          <h1 className="text-lg font-semibold text-gray-900">练习</h1>
+          {/* Tabs */}
+          <div className="flex bg-gray-100 rounded-lg p-0.5 ml-2">
+            <button
+              onClick={() => setTab('concepts')}
+              className={`px-3 py-1 rounded-md text-xs transition-colors ${
+                tab === 'concepts' ? 'bg-white shadow text-primary-700 font-medium' : 'text-gray-500'
+              }`}
+            >
+              🧠 概念题
             </button>
-          )}
+            <button
+              onClick={() => setTab('code')}
+              className={`px-3 py-1 rounded-md text-xs transition-colors ${
+                tab === 'code' ? 'bg-white shadow text-primary-700 font-medium' : 'text-gray-500'
+              }`}
+            >
+              💻 代码题
+            </button>
+          </div>
         </div>
+        {tab === 'code' && exercises.length === 0 && !genTaskId && (
+          <button onClick={handleGenerateEx}
+            className="bg-primary-600 text-white px-3 py-1 rounded text-sm ml-auto
+                       hover:bg-primary-700 transition-colors">
+            🤖 生成习题
+          </button>
+        )}
+        {tab === 'code' && genTaskId && (
+          <span className="text-xs text-primary-600 flex items-center gap-2 ml-auto">
+            <span className="w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
+            {genProgress || '生成中...'}
+          </span>
+        )}
       </div>
 
-      {/* Main area: resizable vertical split between editor+output and workspace */}
+      {/* Main area */}
+      {tab === 'concepts' ? (
+        <ConceptQuestions checkpointId={cid} />
+      ) : (
       <div className="flex-1 flex overflow-hidden">
         <SplitPane
           direction="vertical"
@@ -260,6 +311,10 @@ ${raw.slice(0, 500)}`)
                                 className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:bg-gray-300">
                                 {running ? '运行中...' : '▶ 运行'}
                               </button>
+                              <button onClick={handleSubmit} disabled={submitting || !code.trim()}
+                                className="bg-gray-900 text-white px-3 py-1 rounded text-xs hover:bg-gray-700 disabled:bg-gray-300">
+                                {submitting ? '判题中...' : '📋 提交判题'}
+                              </button>
                               <button onClick={handleReview} disabled={wsLoading}
                                 className="bg-primary-600 text-white px-3 py-1 rounded text-xs hover:bg-primary-700 disabled:bg-gray-300">
                                 ✔ 审阅
@@ -275,10 +330,36 @@ ${raw.slice(0, 500)}`)
                         right={
                           <div className="h-full bg-gray-900 text-gray-100 text-xs font-mono p-3 overflow-y-auto">
                             <div className="text-gray-500 text-[10px] uppercase mb-2">输出面板</div>
+                            {submitResult && (
+                              <div className={`mb-3 rounded p-2 ${submitResult.error ? 'bg-red-900/40 text-red-300' : 'bg-gray-800'}`}>
+                                {submitResult.error ? (
+                                  <p>❌ {submitResult.error}</p>
+                                ) : (
+                                  <>
+                                    <p className={`font-bold mb-1 ${submitResult.passed === submitResult.total ? 'text-green-400' : 'text-amber-400'}`}>
+                                      {submitResult.passed === submitResult.total
+                                        ? `✅ 全部通过 (${submitResult.passed}/${submitResult.total})`
+                                        : `❌ ${submitResult.passed}/${submitResult.total} 通过`}
+                                    </p>
+                                    {submitResult.results?.map((r: any, i: number) => (
+                                      <div key={i} className={`mt-1 ${r.passed ? 'text-green-400' : 'text-red-400'}`}>
+                                        {r.passed ? '✓' : '✗'} 用例 {i + 1}
+                                        {!r.passed && (
+                                          <span className="text-gray-400">
+                                            {' '}期望 {r.expected} → 实际 {r.actual}
+                                            {r.stderr ? `（${r.stderr.slice(0, 60)}）` : ''}
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </>
+                                )}
+                              </div>
+                            )}
                             {stdout && <pre className="whitespace-pre-wrap">{stdout}</pre>}
                             {stderr && <pre className="whitespace-pre-wrap text-red-400">{stderr}</pre>}
-                            {!stdout && !stderr && (
-                              <div className="text-gray-600">点击「▶ 运行」执行代码</div>
+                            {!stdout && !stderr && !submitResult && (
+                              <div className="text-gray-600">点击「▶ 运行」执行代码，或「📋 提交判题」跑测试用例</div>
                             )}
                           </div>
                         }
@@ -336,6 +417,7 @@ ${raw.slice(0, 500)}`)
           }
         />
       </div>
+      )}
     </div>
   )
 }

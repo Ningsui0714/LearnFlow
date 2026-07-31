@@ -4,15 +4,17 @@ Phase 3 API routes:
 - Code execution
 - Code review agent
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
-from app.models.project import Checkpoint, Exercise
+from app.core.config import settings
+from app.models.project import Checkpoint, Exercise, ConceptQuestion, Task, Roadmap
 from app.schemas.project import ExerciseOut, CodeRunRequest, CodeRunResult
 from app.services.code_executor import execute_code
 from app.services.code_agent import CodeAgent
+from app.services.concept_agent import ConceptAgent
 from langchain_core.messages import HumanMessage
 
 router = APIRouter()
@@ -226,6 +228,114 @@ async def index_embeddings(
     return {"status": "ok", "indexed": indexed, "errors": errors, "total": total}
 
 
+# ── Concept Questions (T7) ──
+
+@router.get("/checkpoints/{checkpoint_id}/concepts")
+async def list_concepts(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    rows = (await db.execute(
+        select(ConceptQuestion)
+        .where(ConceptQuestion.checkpoint_id == checkpoint_id)
+        .order_by(ConceptQuestion.order)
+    )).scalars().all()
+    return [{
+        "id": q.id,
+        "checkpoint_id": q.checkpoint_id,
+        "question": q.question,
+        "options": q.options or [],
+        "q_type": q.q_type,
+        "difficulty": q.difficulty,
+        "code": q.code,
+        "order": q.order,
+        # answers hidden from list; only used by explain/submit endpoints
+    } for q in rows]
+
+
+@router.post("/checkpoints/{checkpoint_id}/concepts/generate")
+async def generate_concepts(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a background concept-question generation task (T7)."""
+    if not settings.llm_api_key or settings.llm_api_key == "***":
+        raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
+    cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))).scalar_one_or_none()
+    if not cp:
+        raise HTTPException(404, "Checkpoint not found")
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.id == cp.roadmap_id)
+    )).scalar_one_or_none()
+
+    from app.services.task_manager import find_running_task, manager
+    running = await find_running_task(checkpoint_id, "concept_generate")
+    if running:
+        return {"task_id": running.id, "status": running.status, "already_running": True}
+
+    task = Task(
+        project_id=roadmap.project_id if roadmap else None,
+        checkpoint_id=checkpoint_id,
+        type="concept_generate",
+        status="queued",
+        payload={"checkpoint_id": checkpoint_id},
+        progress={"current": 0, "total": 0, "message": "排队中..."},
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    from app.services.task_runners import run_concept_generation
+    manager.submit(task.id, run_concept_generation(task.id))
+    return {"task_id": task.id, "status": task.status, "already_running": False}
+
+
+@router.get("/checkpoints/{checkpoint_id}/concepts/task")
+async def get_concept_task(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Task)
+        .where(Task.checkpoint_id == checkpoint_id, Task.type == "concept_generate")
+        .order_by(Task.id.desc())
+        .limit(1)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"task_id": None}
+    from app.api.tasks import _snapshot
+    return _snapshot(task)
+
+
+@router.post("/checkpoints/{checkpoint_id}/concepts/{question_id}/explain")
+async def explain_concept(
+    checkpoint_id: int,
+    question_id: int,
+    data: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lazy AI explanation for one question, with the user's answer."""
+    q = (await db.execute(select(ConceptQuestion).where(
+        ConceptQuestion.id == question_id,
+        ConceptQuestion.checkpoint_id == checkpoint_id,
+    ))).scalar_one_or_none()
+    if not q:
+        raise HTTPException(404, "Question not found")
+    agent = ConceptAgent()
+    answer = await agent.explain(
+        {
+            "question": q.question,
+            "options": q.options or [],
+            "answer_indexes": q.answer_indexes or [],
+            "q_type": q.q_type,
+            "expected_output": q.expected_output,
+            "explanation": q.explanation,
+        },
+        user_answer=[int(i) for i in (data or {}).get("user_answer_indexes", [])],
+    )
+    return {"explanation": answer, "base_explanation": q.explanation}
+
+
 # ── Generate Exercises ──
 
 @router.post("/checkpoints/{checkpoint_id}/exercises/generate")
@@ -233,117 +343,74 @@ async def generate_exercises(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate coding exercises via LLM based on checkpoint content."""
-    from app.models.project import Checkpoint, Chunk, CheckpointChunk, Lecture
-    from app.services.lecture_agent import LectureAgent
-
-    # Get checkpoint
+    """T8: background exercise generation — blueprint → per-exercise →
+    executable verification (solution × test_cases must all pass)."""
+    if not settings.llm_api_key or settings.llm_api_key == "***":
+        raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
     cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))).scalar_one_or_none()
     if not cp:
         raise HTTPException(404, "Checkpoint not found")
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.id == cp.roadmap_id)
+    )).scalar_one_or_none()
 
-    # Get lecture content as context
-    lecture = (await db.execute(select(Lecture).where(Lecture.checkpoint_id == checkpoint_id))).scalar_one_or_none()
-    lecture_text = ""
-    if lecture and lecture.sections:
-        for s in lecture.sections[:2]:
-            lecture_text += s.get("content", "")[:1000] + "\n"
+    from app.services.task_manager import find_running_task, manager
+    running = await find_running_task(checkpoint_id, "exercise_generate")
+    if running:
+        return {"task_id": running.id, "status": running.status, "already_running": True}
 
-    # Get chunks
-    chunks_raw = (await db.execute(
-        select(Chunk).join(CheckpointChunk)
-        .where(CheckpointChunk.checkpoint_id == checkpoint_id)
-        .limit(5)
-    )).scalars().all()
-    chunk_text = "\n".join([c.content[:500] for c in chunks_raw])
-
-    context = f"## 关卡\n{cp.title}: {cp.description}\n\n## 讲义内容\n{lecture_text}\n\n## 参考资料\n{chunk_text}"
-
-    prompt = f"""根据以下学习内容，生成 2 个 Python 编程练习题。
-
-{context}
-
-## 输出格式 (JSON)
-```json
-[
-  {{
-    "title": "题目名称",
-    "description": "题目描述，含公式",
-    "starter_code": "带有 TODO 的 Python 代码框架",
-    "solution": "完整参考解答",
-    "hints": ["提示1", "提示2"]
-  }}
-]
-```
-
-要求：
-- 题目与学习内容强相关
-- starter_code 包含 TODO 标记
-- 用 KaTeX 公式
-- 难度递进
-- **重要：JSON 字符串中的所有双引号必须用反斜杠转义！**
-  例如 title 中含引号，应写为: \"列表的\\"引用\\"行为\""""
-
-    from langchain_openai import ChatOpenAI
-    from app.core.config import settings
-    llm = ChatOpenAI(model=settings.llm_model, api_key=settings.llm_api_key,
-                     base_url=settings.llm_base_url, temperature=0.7, timeout=30)
-
-    resp = await llm.ainvoke([__import__("langchain_core.messages", fromlist=["HumanMessage"]).HumanMessage(content=prompt)])
-    content = resp.content
-
-    # Parse JSON from response
-    import re, json as j
-    m = re.search(r"```json\s*(.*?)\s*```", content, re.DOTALL)
-    if not m:
-        m = re.search(r"```\s*(.*?)\s*```", content, re.DOTALL)
-    if not m:
-        return {"error": "LLM did not return valid JSON", "raw": content[:500]}
-
-    try:
-        # Try strict parse first
-        exercises_data = j.loads(m.group(1))
-    except j.JSONDecodeError as e:
-        # Attempt to repair common JSON issues (unescaped quotes in strings)
-        import re
-        raw = m.group(1)
-        # Replace unescaped quotes inside string values (crude but often works)
-        # Focus on quoted strings that span multiple lines
-        try:
-            # More lenient parse with strict=False
-            exercises_data = j.loads(raw, strict=False)
-        except j.JSONDecodeError:
-            # Return detailed error
-            raw_content = content[:2000]
-            return {
-                "error": f"LLM 返回了无法解析的 JSON: {e}",
-                "raw": raw_content,
-                "hint": "JSON 格式错误，常见原因：字符串中的双引号未转义。请重试。"
-            }
-        # Return both the error and the raw LLM output for debugging
-        raw_content = content[:2000]  # limit raw output size
-        return {
-            "error": f"LLM 返回了无法解析的 JSON: {e}",
-            "raw": raw_content,
-            "hint": "这个错误说明 AI 生成的响应格式有问题。请再试一次，如果持续出现请联系开发者。"
-        }
-
-    # Save to DB
-    saved = []
-    from app.models.project import Exercise
-    for i, ex in enumerate(exercises_data):
-        exercise = Exercise(
-            checkpoint_id=checkpoint_id,
-            title=ex.get("title", f"练习 {i+1}"),
-            description=ex.get("description", ""),
-            starter_code=ex.get("starter_code", ""),
-            solution=ex.get("solution", ""),
-            hints=ex.get("hints", []),
-            order=i + 1,
-        )
-        db.add(exercise)
-        await db.flush()
-        saved.append({"id": exercise.id, "title": exercise.title})
-
+    task = Task(
+        project_id=roadmap.project_id if roadmap else None,
+        checkpoint_id=checkpoint_id,
+        type="exercise_generate",
+        status="queued",
+        payload={"checkpoint_id": checkpoint_id},
+        progress={"current": 0, "total": 0, "message": "排队中..."},
+    )
+    db.add(task)
     await db.commit()
-    return {"status": "ok", "exercises": saved}
+    await db.refresh(task)
+    from app.services.task_runners import run_exercise_generation
+    manager.submit(task.id, run_exercise_generation(task.id))
+    return {"task_id": task.id, "status": task.status, "already_running": False}
+
+
+@router.get("/checkpoints/{checkpoint_id}/exercises/task")
+async def get_exercise_task(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Task)
+        .where(Task.checkpoint_id == checkpoint_id, Task.type == "exercise_generate")
+        .order_by(Task.id.desc())
+        .limit(1)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"task_id": None}
+    from app.api.tasks import _snapshot
+    return _snapshot(task)
+
+
+@router.post("/exercises/{exercise_id}/submit")
+async def submit_exercise(
+    exercise_id: int,
+    req: CodeRunRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """T8: judge user code against the exercise's test cases.
+    Returns per-case results (passed/expected/actual)."""
+    exercise = (await db.execute(
+        select(Exercise).where(Exercise.id == exercise_id)
+    )).scalar_one_or_none()
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    test_cases = exercise.test_cases or []
+    if not test_cases:
+        return {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}
+
+    from app.services.exercise_agent import ExerciseAgent
+    results = ExerciseAgent.verify_exercise(req.code, test_cases)
+    passed = sum(1 for r in results if r["passed"])
+    return {"passed": passed, "total": len(results), "results": results}

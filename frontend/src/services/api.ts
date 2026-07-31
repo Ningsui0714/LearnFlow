@@ -199,4 +199,24 @@ export const reviewCode = (exerciseId: number, code: string, selection?: string)
 export const askCodeQuestion = (data: { code: string; selection: string; question: string; context?: string }) =>
   api.post('/code/ask', data).then(r => r.data)
 
+// ── T7: Concept questions ──
+export const listConcepts = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/concepts`).then(r => r.data)
+
+export const generateConcepts = (checkpointId: number) =>
+  api.post(`/checkpoints/${checkpointId}/concepts/generate`).then(r => r.data)
+
+export const getConceptTask = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/concepts/task`).then(r => r.data)
+
+export const explainConcept = (checkpointId: number, questionId: number, userAnswerIndexes: number[]) =>
+  api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/explain`, { user_answer_indexes: userAnswerIndexes }).then(r => r.data)
+
+// ── T8: exercise submit ──
+export const submitExercise = (exerciseId: number, code: string) =>
+  api.post(`/exercises/${exerciseId}/submit`, { code }).then(r => r.data)
+
+export const getExerciseTask = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/exercises/task`).then(r => r.data)
+
 export default api

@@ -11,7 +11,7 @@ import os
 from sqlalchemy import select
 
 from app.db.database import async_session
-from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion
+from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion, ConceptQuestion, Exercise
 from app.services.lecture_agent import LectureAgent
 from app.services.task_manager import update_task
 
@@ -661,5 +661,194 @@ async def run_image_captioning(task_id: int):
         progress={"current": total, "total": total,
                   "message": f"完成：{captioned} 张已处理（跳过 {skipped}，失败 {failed}）"},
         result={"captioned": captioned, "failed": failed, "skipped": skipped, "images": total},
+        finished_at=datetime.utcnow(),
+    )
+
+
+# ── T7: concept question generation ──
+
+async def run_concept_generation(task_id: int):
+    """Generate verified concept questions (WWPD/WWPP answers checked by execution)."""
+    task = await update_task(task_id, status="running", started_at=datetime.utcnow())
+    if not task:
+        return
+    checkpoint_id = (task.payload or {}).get("checkpoint_id")
+    if not checkpoint_id:
+        await update_task(task_id, status="failed",
+                          error={"code": "internal", "message": "payload 缺少 checkpoint_id",
+                                 "guidance": "内部错误", "retryable": False},
+                          finished_at=datetime.utcnow())
+        return
+
+    checkpoint, user_level, chunks, brief = await _load_lecture_context(checkpoint_id)
+    if not chunks:
+        await update_task(task_id, status="failed",
+                          error={"code": "retrieval_empty",
+                                 "message": "该关卡没有关联的参考资料切片",
+                                 "guidance": "请确认来源已处理完成、路线规划已分配切片",
+                                 "retryable": True},
+                          finished_at=datetime.utcnow())
+        return
+
+    # Lecture sections for context
+    async with async_session() as db:
+        lecture = (await db.execute(
+            select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+        )).scalar_one_or_none()
+        sections = lecture.sections or [] if lecture else []
+
+    # Retrieve the most relevant chunks for question context
+    from app.services.lecture_agent import LectureAgent
+    agent = LectureAgent()
+    rp = (brief or {}).get("retrieval_policy") or {}
+    relevant = await agent._retrieve_relevant_chunks(
+        f"{checkpoint.title} {checkpoint.description or ''}", chunks, top_k=12,
+        boost_ids=rp.get("boost_chunk_ids"),
+        boost_weight=rp.get("boost_weight", 1.5),
+        scope_files=(brief or {}).get("scope", {}).get("files"),
+    )
+
+    await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在命题并校验..."})
+    from app.services.concept_agent import ConceptAgent
+    cagent = ConceptAgent()
+    questions = await cagent.generate(
+        checkpoint.title, checkpoint.description or "", user_level,
+        sections, relevant,
+    )
+
+    if not questions:
+        await update_task(
+            task_id, status="failed",
+            error={"code": "llm_format",
+                   "message": "命题失败：没有生成有效题目（可能 WWPD 代码校验未通过）",
+                   "guidance": "请重试；若持续出现，可能是内容不适合出题",
+                   "retryable": True},
+            progress={"current": 0, "total": 0, "message": "命题失败"},
+            finished_at=datetime.utcnow())
+        return
+
+    # Replace old questions (fresh generation)
+    async with async_session() as db:
+        old = (await db.execute(
+            select(ConceptQuestion).where(ConceptQuestion.checkpoint_id == checkpoint_id)
+        )).scalars().all()
+        for q in old:
+            await db.delete(q)
+        for i, q in enumerate(questions):
+            db.add(ConceptQuestion(
+                checkpoint_id=checkpoint_id,
+                question=q["question"],
+                options=q["options"],
+                answer_indexes=q["answer_indexes"],
+                q_type=q["q_type"],
+                difficulty=q["difficulty"],
+                explanation=q["explanation"],
+                code=q["code"],
+                expected_output=q["expected_output"],
+                order=i + 1,
+            ))
+        await db.commit()
+
+    await update_task(
+        task_id, status="completed",
+        progress={"current": len(questions), "total": len(questions),
+                  "message": f"完成！共 {len(questions)} 道概念题"},
+        result={"questions_count": len(questions)},
+        finished_at=datetime.utcnow(),
+    )
+
+
+# ── T8: exercise generation (blueprint → verify) ──
+
+async def run_exercise_generation(task_id: int):
+    """Generate coding exercises with executable verification (T8)."""
+    task = await update_task(task_id, status="running", started_at=datetime.utcnow())
+    if not task:
+        return
+    checkpoint_id = (task.payload or {}).get("checkpoint_id")
+    if not checkpoint_id:
+        await update_task(task_id, status="failed",
+                          error={"code": "internal", "message": "payload 缺少 checkpoint_id",
+                                 "guidance": "内部错误", "retryable": False},
+                          finished_at=datetime.utcnow())
+        return
+
+    checkpoint, user_level, chunks, brief = await _load_lecture_context(checkpoint_id)
+    if not chunks:
+        await update_task(task_id, status="failed",
+                          error={"code": "retrieval_empty",
+                                 "message": "该关卡没有关联的参考资料切片",
+                                 "guidance": "请确认来源已处理完成、路线规划已分配切片",
+                                 "retryable": True},
+                          finished_at=datetime.utcnow())
+        return
+
+    async with async_session() as db:
+        lecture = (await db.execute(
+            select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+        )).scalar_one_or_none()
+        sections = lecture.sections or [] if lecture else []
+
+    from app.services.lecture_agent import LectureAgent
+    agent = LectureAgent()
+    rp = (brief or {}).get("retrieval_policy") or {}
+    relevant = await agent._retrieve_relevant_chunks(
+        f"{checkpoint.title} {checkpoint.description or ''}", chunks, top_k=12,
+        boost_ids=rp.get("boost_chunk_ids"),
+        boost_weight=rp.get("boost_weight", 1.5),
+        scope_files=(brief or {}).get("scope", {}).get("files"),
+    )
+
+    lecture_text = "\n\n".join(s.get("content", "")[:1200] for s in sections[:3])
+    chunk_text = "\n".join(c["content"][:600] for c in relevant[:6])
+
+    await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在命题蓝图..."})
+    from app.services.exercise_agent import ExerciseAgent
+    eagent = ExerciseAgent()
+    try:
+        exercises = await eagent.generate_all(
+            checkpoint.title, checkpoint.description or "", lecture_text, chunk_text)
+    except Exception as e:
+        from app.services.task_manager import classify_error
+        err = classify_error(e)
+        await update_task(task_id, status="failed", error=err, finished_at=datetime.utcnow())
+        return
+
+    if not exercises:
+        await update_task(
+            task_id, status="failed",
+            error={"code": "llm_format",
+                   "message": "命题失败：没有题目通过可执行验证",
+                   "guidance": "请重试；若持续出现，可能是内容不适合出编程题",
+                   "retryable": True},
+            progress={"current": 0, "total": 0, "message": "命题失败"},
+            finished_at=datetime.utcnow())
+        return
+
+    # Replace old exercises (fresh generation)
+    async with async_session() as db:
+        old = (await db.execute(
+            select(Exercise).where(Exercise.checkpoint_id == checkpoint_id)
+        )).scalars().all()
+        for e in old:
+            await db.delete(e)
+        for i, ex in enumerate(exercises):
+            db.add(Exercise(
+                checkpoint_id=checkpoint_id,
+                title=ex["title"],
+                description=ex["description"],
+                starter_code=ex["starter_code"],
+                solution=ex["solution"],
+                test_cases=ex["test_cases"],
+                hints=ex["hints"],
+                order=i + 1,
+            ))
+        await db.commit()
+
+    await update_task(
+        task_id, status="completed",
+        progress={"current": len(exercises), "total": len(exercises),
+                  "message": f"完成！{len(exercises)} 道题通过验证"},
+        result={"exercises_count": len(exercises)},
         finished_at=datetime.utcnow(),
     )

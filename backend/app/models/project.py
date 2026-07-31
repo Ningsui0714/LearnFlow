@@ -80,6 +80,7 @@ class Checkpoint(Base):
     lecture = relationship("Lecture", back_populates="checkpoint", uselist=False, cascade="all, delete-orphan")
     lecture_versions = relationship("LectureVersion", back_populates="checkpoint", cascade="all, delete-orphan")
     notes = relationship("LectureNote", back_populates="checkpoint", cascade="all, delete-orphan")
+    concept_questions = relationship("ConceptQuestion", back_populates="checkpoint", cascade="all, delete-orphan")
     exercises = relationship("Exercise", back_populates="checkpoint", cascade="all, delete-orphan")
 
 
@@ -155,6 +156,33 @@ class LectureNote(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="notes")
+
+
+class ConceptQuestion(Base):
+    """Concept check question (T7): single/multi/judge/WWPD/WWPP.
+
+    WWPD (What Would Python Do) / WWPP (What Would Python Print): the user
+    predicts the output of a code snippet; the expected output is verified by
+    executing the code (code_executor) at generation time.
+    """
+
+    __tablename__ = "concept_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    question = Column(Text, nullable=False)
+    options = Column(JSON, default=list)        # list[str]
+    answer_indexes = Column(JSON, default=list) # list[int] (multi supports >1)
+    q_type = Column(String(20), default="single")  # single | multi | judge | wwpd | wwpp
+    difficulty = Column(String(10), default="medium")  # easy | medium | hard
+    explanation = Column(Text, default="")
+    source_chunk_ids = Column(JSON, default=list)
+    code = Column(Text, default="")            # wwpd/wwpp reference code
+    expected_output = Column(Text, default="") # verified by code execution
+    order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    checkpoint = relationship("Checkpoint", back_populates="concept_questions")
 
 
 class Task(Base):
