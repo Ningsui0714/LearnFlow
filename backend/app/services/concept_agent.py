@@ -89,6 +89,24 @@ EXPLAIN_PROMPT = """你是学习辅导助手。学生回答了一道概念题，
 - 用 KaTeX 写公式（如有）"""
 
 
+GRAPH_PROMPT = """你是知识图谱专家。根据讲义的章节结构，提取一份**概念知识图谱**。
+
+## 讲义小节
+{section_outline}
+
+## 概念图谱要求
+1. 节点 = 核心概念/方法/术语（8-25 个），每个节点标注它出自哪个小节（section_index）。
+2. 边 = 概念之间的关系，关系词用简短动词/介词：使用、基于、应用于、区别于、包含、前置、改进、类比等。
+3. 只保留有价值的关系（教学上能帮助学生理解概念联系），不要全连接。
+4. 概念用中文（英文术语保留原文，如 "梯度下降"、"Tensor"）。
+
+## 输出格式（JSON，只输出 JSON）
+{{
+  "nodes": [{{"id": "c1", "label": "概念名", "section_index": 0}}],
+  "edges": [{{"source": "c1", "target": "c2", "relation": "使用"}}]
+}}"""
+
+
 class ConceptAgent:
     def __init__(self):
         self.llm = ChatOpenAI(
@@ -274,3 +292,47 @@ class ConceptAgent:
             return resp.content
         except Exception as e:
             return f"解析生成失败：{type(e).__name__}: {str(e)[:120]}"
+
+    async def generate_graph(self, sections: List[Dict]) -> dict:
+        """Extract a concept knowledge graph from lecture sections (single LLM call)."""
+        outline = []
+        for i, s in enumerate(sections or []):
+            title = s.get("title", "")
+            content = s.get("content", "")[:500].replace("\n", " ")
+            outline.append(f"[{i}] {title}: {content[:300]}")
+        prompt = GRAPH_PROMPT.format(
+            section_outline="\n".join(outline) or "（无讲义内容）",
+        )
+        try:
+            resp = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            data = self._extract_json(resp.content)
+        except Exception as e:
+            print(f"[ConceptAgent] graph failed: {type(e).__name__}: {str(e)[:150]}")
+            return {"nodes": [], "edges": []}
+
+        nodes, edges = [], []
+        seen = set()
+        for n in data.get("nodes") or []:
+            label = str(n.get("label", "")).strip()
+            if not label or label in seen:
+                continue
+            seen.add(label)
+            nodes.append({
+                "id": str(n.get("id", f"c{len(nodes)}")),
+                "label": label[:30],
+                "section_index": int(n.get("section_index", 0) or 0),
+            })
+        id_by_label = {n["label"]: n["id"] for n in nodes}
+        for e in data.get("edges") or []:
+            src = str(e.get("source", ""))
+            tgt = str(e.get("target", ""))
+            # accept label references or ids
+            src_id = src if src in {n["id"] for n in nodes} else id_by_label.get(src)
+            tgt_id = tgt if tgt in {n["id"] for n in nodes} else id_by_label.get(tgt)
+            if src_id and tgt_id and src_id != tgt_id:
+                edges.append({
+                    "source": src_id,
+                    "target": tgt_id,
+                    "relation": str(e.get("relation", "相关")).strip()[:12] or "相关",
+                })
+        return {"nodes": nodes, "edges": edges}

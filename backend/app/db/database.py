@@ -34,6 +34,7 @@ EXTRA_COLUMNS = {
     ],
     "lectures": [
         ("plan", "TEXT"),        # T10: persisted section plan (resume stability)
+        ("concept_graph", "TEXT"),  # concept map {nodes, edges}
     ],
 }
 

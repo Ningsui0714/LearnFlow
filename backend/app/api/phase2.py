@@ -236,7 +236,64 @@ async def get_lecture(
         "checkpoint_id": lecture.checkpoint_id,
         "sections": lecture.sections or [],
         "status": lecture.status,
+        "concept_graph": lecture.concept_graph or {},
     }
+
+
+# ── Concept graph (concept map) ──
+
+@router.post("/checkpoints/{checkpoint_id}/concept-graph/generate")
+async def generate_concept_graph(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a background concept-graph generation task."""
+    if not settings.llm_api_key or settings.llm_api_key == "***":
+        raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
+    cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))).scalar_one_or_none()
+    if not cp:
+        raise HTTPException(404, "Checkpoint not found")
+    roadmap = (await db.execute(
+        select(Roadmap).where(Roadmap.id == cp.roadmap_id)
+    )).scalar_one_or_none()
+
+    from app.services.task_manager import find_running_task, manager
+    running = await find_running_task(checkpoint_id, "concept_graph")
+    if running:
+        return {"task_id": running.id, "status": running.status, "already_running": True}
+
+    task = Task(
+        project_id=roadmap.project_id if roadmap else None,
+        checkpoint_id=checkpoint_id,
+        type="concept_graph",
+        status="queued",
+        payload={"checkpoint_id": checkpoint_id},
+        progress={"current": 0, "total": 0, "message": "排队中..."},
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    from app.services.task_runners import run_concept_graph_generation
+    manager.submit(task.id, run_concept_graph_generation(task.id))
+    return {"task_id": task.id, "status": task.status, "already_running": False}
+
+
+@router.get("/checkpoints/{checkpoint_id}/concept-graph/task")
+async def get_concept_graph_task(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Task)
+        .where(Task.checkpoint_id == checkpoint_id, Task.type == "concept_graph")
+        .order_by(Task.id.desc())
+        .limit(1)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"task_id": None}
+    from app.api.tasks import _snapshot
+    return _snapshot(task)
 
 
 # ── T5: Lecture versioning + rollback ──

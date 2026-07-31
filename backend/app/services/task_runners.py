@@ -929,3 +929,61 @@ async def run_exercise_generation(task_id: int):
         result={"exercises_count": len(exercises)},
         finished_at=datetime.utcnow(),
     )
+
+
+# ── Concept graph generation (concept map) ──
+
+async def run_concept_graph_generation(task_id: int):
+    """Extract a concept knowledge graph from the lecture (single LLM call)."""
+    task = await update_task(task_id, status="running", started_at=datetime.utcnow())
+    if not task:
+        return
+    checkpoint_id = (task.payload or {}).get("checkpoint_id")
+    if not checkpoint_id:
+        await update_task(task_id, status="failed",
+                          error={"code": "internal", "message": "payload 缺少 checkpoint_id",
+                                 "guidance": "内部错误", "retryable": False},
+                          finished_at=datetime.utcnow())
+        return
+
+    async with async_session() as db:
+        lecture = (await db.execute(
+            select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+        )).scalar_one_or_none()
+        if not lecture or not lecture.sections:
+            await update_task(task_id, status="failed",
+                              error={"code": "retrieval_empty",
+                                     "message": "该关卡还没有讲义，无法生成概念图谱",
+                                     "guidance": "请先生成讲义",
+                                     "retryable": True},
+                              finished_at=datetime.utcnow())
+            return
+        sections = lecture.sections
+
+    await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在提取概念与关系..."})
+    from app.services.concept_agent import ConceptAgent
+    graph = await ConceptAgent().generate_graph(sections)
+    if not graph.get("nodes"):
+        await update_task(task_id, status="failed",
+                          error={"code": "llm_format",
+                                 "message": "概念提取失败",
+                                 "guidance": "请重试",
+                                 "retryable": True},
+                          finished_at=datetime.utcnow())
+        return
+
+    async with async_session() as db:
+        lecture = (await db.execute(
+            select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+        )).scalar_one_or_none()
+        if lecture:
+            lecture.concept_graph = graph
+            await db.commit()
+
+    await update_task(
+        task_id, status="completed",
+        progress={"current": len(graph["nodes"]), "total": len(graph["nodes"]),
+                  "message": f"完成！{len(graph['nodes'])} 个概念，{len(graph['edges'])} 条关系"},
+        result={"nodes": len(graph["nodes"]), "edges": len(graph["edges"])},
+        finished_at=datetime.utcnow(),
+    )

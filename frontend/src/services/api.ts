@@ -59,6 +59,12 @@ export const getRoadmapHistory = (projectId: number) =>
 export const getLecture = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/lecture`).then(r => r.data)
 
+export const generateConceptGraph = (checkpointId: number) =>
+  api.post(`/checkpoints/${checkpointId}/concept-graph/generate`).then(r => r.data)
+
+export const getConceptGraphTask = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/concept-graph/task`).then(r => r.data)
+
 // SSE stream for lecture generation — uses fetch for proper error handling
 // Deprecated in favor of task-based generation (createLectureTask + lectureTaskEventsUrl)
 export function subscribeLectureSSE(

@@ -7,6 +7,7 @@ import {
 } from '../services/api'
 import LectureRenderer from '../components/lecture/LectureRenderer'
 import BottomWorkspace from '../components/workspace/BottomWorkspace'
+import ConceptGraphModal from '../components/lecture/ConceptGraphModal'
 
 interface Section {
   title: string
@@ -35,6 +36,8 @@ export default function CheckpointPage() {
   const [showVersions, setShowVersions] = useState(false)
   const [versions, setVersions] = useState<any[]>([])
   const [versionLoading, setVersionLoading] = useState(false)
+  const [showGraph, setShowGraph] = useState(false)
+  const [conceptGraph, setConceptGraph] = useState<any>(null)
   const esRef = useRef<EventSource | null>(null)
 
   // ── Load lecture on mount ──
@@ -80,6 +83,7 @@ export default function CheckpointPage() {
       if (data.sections && data.sections.length > 0) {
         setSections(data.sections)
         setStatus(data.status || 'published')
+        if (data.concept_graph?.nodes?.length) setConceptGraph(data.concept_graph)
       } else {
         setSections([])
         setStatus('none')
@@ -281,13 +285,22 @@ export default function CheckpointPage() {
             💻 练习
           </button>
           {sections.length > 0 && !generating && (
-            <button
-              onClick={openVersions}
-              className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded-lg text-sm
-                         hover:bg-gray-200 transition-colors"
-            >
-              🕘 版本
-            </button>
+            <>
+              <button
+                onClick={() => setShowGraph(true)}
+                className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded-lg text-sm
+                           hover:bg-gray-200 transition-colors"
+              >
+                🕸 概念图谱
+              </button>
+              <button
+                onClick={openVersions}
+                className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded-lg text-sm
+                           hover:bg-gray-200 transition-colors"
+              >
+                🕘 版本
+              </button>
+            </>
           )}
           {selectedText && !showWorkspace && (
             <button
@@ -400,6 +413,17 @@ export default function CheckpointPage() {
           />
         )}
       </div>
+
+      {/* Concept graph modal */}
+      {showGraph && (
+        <ConceptGraphModal
+          checkpointId={cid}
+          graph={conceptGraph}
+          sections={sections}
+          onClose={() => setShowGraph(false)}
+          onGraphUpdate={g => { setConceptGraph(g); setShowGraph(false) }}
+        />
+      )}
 
       {/* Version history modal (T5) */}
       {showVersions && (
