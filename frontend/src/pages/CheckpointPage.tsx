@@ -244,14 +244,14 @@ export default function CheckpointPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {status !== 'published' && !generating && (
+          {!generating && (
             <>
               <button
                 onClick={() => handleGenerate('fresh')}
                 className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm
                            hover:bg-primary-700 transition-colors"
               >
-                📝 生成讲义
+                {status === 'published' ? '🔄 重新生成' : '📝 生成讲义'}
               </button>
               {canResume && (
                 <button
