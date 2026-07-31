@@ -13,6 +13,7 @@ interface Settings {
   vision_api_key: string
   vision_base_url: string
   vision_model: string
+  vision_api_enhance: boolean
   has_key: boolean
 }
 
@@ -30,6 +31,7 @@ export default function SettingsPage() {
   const [editVisionKey, setEditVisionKey] = useState('')
   const [editVisionUrl, setEditVisionUrl] = useState('')
   const [editVisionModel, setEditVisionModel] = useState('')
+  const [editVisionEnhance, setEditVisionEnhance] = useState(false)
   const [visionTesting, setVisionTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -53,6 +55,7 @@ export default function SettingsPage() {
       setEditEmbModel(s.embedding_model)
       setEditVisionUrl(s.vision_base_url)
       setEditVisionModel(s.vision_model)
+      setEditVisionEnhance(!!s.vision_api_enhance)
     } catch { /* ignore */ }
   }
 
@@ -102,6 +105,7 @@ export default function SettingsPage() {
         embedding_base_url: editEmbUrl,
         vision_base_url: editVisionUrl,
         vision_model: editVisionModel,
+        vision_api_enhance: editVisionEnhance,
       }
       if (editKey) body.llm_api_key = editKey
       if (editEmbKey) body.embedding_api_key = editEmbKey
@@ -320,8 +324,8 @@ export default function SettingsPage() {
         <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
           <h2 className="font-semibold text-gray-900 mb-1">🖼 图片理解 (Vision)</h2>
           <p className="text-xs text-gray-500 mb-4">
-            用于仓库图片的描述生成（图片进讲义 / RAG）。推荐 Moonshot kimi 系列，
-            已实测 kimi-k2.7-code-highspeed 最快（~4s/张）。留空则尝试复用 LLM Key。
+            仓库图片描述默认走<b>免费管线</b>：md 上下文 + 本地 OCR (Apple Vision) + SVG 结构解析，零成本。
+            只有标记为「纯图形/照片」的图片可选地走付费 API 理解（kimi），幂等可随时切换。
           </p>
 
           <div className="space-y-4">
@@ -380,6 +384,19 @@ export default function SettingsPage() {
                   Kimi K2.6 (~106s/张)
                 </button>
               </div>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editVisionEnhance}
+                  onChange={e => setEditVisionEnhance(e.target.checked)}
+                  className="w-4 h-4 accent-primary-600"
+                />
+                <span className="text-sm font-medium text-gray-700">允许付费 API 图片增强</span>
+                <span className="text-xs text-gray-400 font-normal">仅处理免费管线无法理解的纯图形/照片（kimi，~4s/张，可随时关闭，已处理结果保留）</span>
+              </label>
             </div>
 
             <div className="flex gap-3 pt-2">

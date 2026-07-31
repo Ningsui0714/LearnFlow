@@ -342,14 +342,14 @@ async def run_lecture_generation(task_id: int):
     )
 
 
-# ── T6: image captioning (Moonshot vision) → image chunks ──
+# ── T6: image captioning — free tier (md-context + OCR + SVG) / api enhance ──
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_OCR_EXTS = {".png", ".jpg", ".jpeg"}
 
 
-def _scan_images(persist_dir: str) -> List[str]:
-    """List image files (repo-relative paths), skipping generated/ and SVG
-    (Moonshot vision rejects SVG; they are still served/rendered in lectures)."""
+def _scan_images(persist_dir: str, include_svg: bool = False) -> List[str]:
+    """List image files (repo-relative paths), skipping generated/."""
     out = []
     for root, dirs, files in os.walk(persist_dir):
         if os.path.basename(root) == "generated":
@@ -357,10 +357,102 @@ def _scan_images(persist_dir: str) -> List[str]:
         rel_dir = os.path.relpath(root, persist_dir)
         for fn in files:
             ext = f".{fn.split('.')[-1].lower()}" if "." in fn else ""
-            if ext in _IMAGE_EXTS:
+            if ext in _IMAGE_EXTS or (include_svg and ext == ".svg"):
                 rel = os.path.join(rel_dir, fn) if rel_dir != "." else fn
                 out.append(rel.replace(os.sep, "/"))
     return sorted(out)
+
+
+def _ocr_image(path: str) -> List[str]:
+    """Apple Vision OCR (local, free): extract in-image text terms."""
+    try:
+        from ocrmac import ocrmac
+        res = ocrmac.OCR(path).recognize()
+        terms = []
+        for t, conf, _box in res:
+            t = (t or "").strip()
+            if conf < 0.3 or len(t) < 2:
+                continue
+            if t not in terms:
+                terms.append(t)
+        return terms[:12]
+    except Exception as e:
+        print(f"[ocr] {os.path.basename(path)} failed: {type(e).__name__}: {str(e)[:100]}")
+        return []
+
+
+def _svg_analysis(path: str):
+    """Structure stats for SVG diagrams (free, deterministic)."""
+    try:
+        import xml.etree.ElementTree as ET
+        from collections import Counter
+        tree = ET.parse(path)
+        root = tree.getroot()
+        counts = Counter(el.tag.split("}")[-1] for el in root.iter())
+        nodes = counts.get("rect", 0) + counts.get("circle", 0) + counts.get("ellipse", 0) + counts.get("polygon", 0)
+        lines = counts.get("path", 0) + counts.get("line", 0)
+        texts = sum(1 for t in root.findall(".//{*}text") if (t.text or "").strip())
+        stem = os.path.basename(path)[:-4]
+        return (f"SVG 结构图：{nodes} 个节点形状，{lines} 条线/路径，{texts} 处文本标注"
+                f"（文件名: {stem}）")
+    except Exception:
+        return None
+
+
+def _extract_md_context(md_rel: str, image_rel: str, persist_dir: str):
+    """Heading + surrounding text + alt from the md file referencing the image."""
+    import re as _re
+    full = os.path.join(persist_dir, md_rel)
+    try:
+        with open(full, encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    except OSError:
+        return None
+    md_dir = os.path.dirname(md_rel)
+    for m in _re.finditer(r"!\[([^\]]*)\]\(\s*([^)]+?)\s*\)", content):
+        raw = m.group(2).strip()
+        if raw.startswith(("http://", "https://", "data:")):
+            continue
+        resolved = os.path.normpath(os.path.join(md_dir, raw)).replace(os.sep, "/")
+        if resolved == image_rel or image_rel in resolved or resolved in image_rel:
+            pre = content[:m.start()]
+            heads = _re.findall(r"^#{1,6}\s+(.+)$", pre, _re.MULTILINE)
+            heading = heads[-1] if heads else ""
+            alt = m.group(1).strip()
+            before = content[max(0, m.start() - 120):m.start()].strip()
+            after = content[m.end():m.end() + 120].strip()
+            ctx = " ".join(x for x in (before, after) if x).strip()[:240]
+            return {"heading": heading, "alt": alt, "context": ctx}
+    return None
+
+
+def _free_caption(rel: str, persist_dir: str, md_map: dict) -> tuple:
+    """Free-tier caption: md context + OCR/SVG structure. Returns (caption, needs_api)."""
+    md_rel = md_map.get(rel)
+    ctx = _extract_md_context(md_rel, rel, persist_dir) if md_rel else None
+    ext = rel.split(".")[-1].lower()
+    if ext == ".svg":
+        struct = _svg_analysis(os.path.join(persist_dir, rel))
+        ocr_terms = []
+    elif ext in _OCR_EXTS:
+        ocr_terms = _ocr_image(os.path.join(persist_dir, rel))
+        struct = None
+    else:  # gif/webp/bmp: no OCR, context only
+        ocr_terms, struct = [], None
+
+    parts = []
+    if ctx:
+        head = f"（{ctx['heading']}）" if ctx["heading"] else ""
+        parts.append(f"{md_rel}{head}配图")
+        if ctx["context"]:
+            parts.append(ctx["context"])
+    if ocr_terms:
+        parts.append("图内标注: " + ", ".join(ocr_terms))
+    if struct:
+        parts.append(struct)
+    if not (ctx or ocr_terms or struct):
+        return "（纯图形/照片，无文字标注）", True
+    return "；".join(parts)[:300], False
 
 
 def _map_images_to_md(persist_dir: str) -> dict:
@@ -390,7 +482,13 @@ def _map_images_to_md(persist_dir: str) -> dict:
 
 
 async def run_image_captioning(task_id: int):
-    """Caption all repo images → upsert as image chunks (caption-as-text RAG)."""
+    """Caption repo images → upsert as image chunks (caption-as-text RAG).
+
+    mode=free (default): md-context + Apple Vision OCR + SVG structure — zero cost.
+    mode=api: only images flagged needs_api get Moonshot vision captions.
+    Idempotent: free mode skips already-captioned images; api mode only touches
+    needs_api ones; toggling between modes never destroys existing captions.
+    """
     task = await update_task(task_id, status="running", started_at=datetime.utcnow())
     if not task:
         return
@@ -404,16 +502,11 @@ async def run_image_captioning(task_id: int):
 
     from app.core.config import settings as _settings
     persist_dir = os.path.join(_settings.repo_files_dir, str(source_id))
-    images = _scan_images(persist_dir)
+    mode = (task.payload or {}).get("mode", "free")
+    images = _scan_images(persist_dir, include_svg=(mode == "free"))
     limit = (task.payload or {}).get("limit")
     if limit:
         images = images[: int(limit)]
-    total = len(images)
-    if total == 0:
-        await update_task(task_id, status="completed",
-                          progress={"current": 0, "total": 0, "message": "没有发现图片文件"},
-                          result={"captioned": 0, "images": 0}, finished_at=datetime.utcnow())
-        return
 
     md_map = _map_images_to_md(persist_dir)
     project_id = (task.payload or {}).get("project_id")
@@ -430,31 +523,75 @@ async def run_image_captioning(task_id: int):
                 if files:
                     cp_scope[cp.id] = files
 
-    from app.services import vision
     from sqlalchemy import func as _func
     async with async_session() as db:
         next_index = (await db.execute(
             select(_func.max(Chunk.index)).where(Chunk.source_id == source_id)
         )).scalar() or 0
 
-    captioned = failed = 0
-    sem = asyncio.Semaphore(3)  # 轻并发，highspeed 模型无压力
+    async def _get_existing(rel: str):
+        async with async_session() as db:
+            return (await db.execute(
+                select(Chunk).where(
+                    Chunk.source_id == source_id,
+                    Chunk.meta_data["image_path"].as_string() == rel,
+                )
+            )).scalars().all()
 
-    async def _caption_one(rel: str) -> str:
-        async with sem:
-            return await asyncio.to_thread(
-                vision.caption_image, os.path.join(persist_dir, rel))
+    # api mode: only needs_api images
+    if mode == "api":
+        from app.services import vision
+        needs = set()
+        async with async_session() as db:
+            rows = (await db.execute(
+                select(Chunk).where(
+                    Chunk.source_id == source_id,
+                    Chunk.meta_data["needs_api"].as_string() == "true",
+                )
+            )).scalars().all()
+            needs = {(c.meta_data or {}).get("image_path") for c in rows}
+        images = [r for r in images if r in needs]
+    else:
+        from app.services import vision  # noqa: F401  (kept for api mode import parity)
+
+    total = len(images)
+    if total == 0:
+        msg = {"free": "没有需要处理的图片（全部已有描述或无需处理）",
+               "api": "没有标记为需要 API 理解的图片（免费管线已覆盖）"}.get(mode, "无待处理图片")
+        await update_task(task_id, status="completed",
+                          progress={"current": 0, "total": 0, "message": msg},
+                          result={"captioned": 0, "failed": 0, "skipped": 0, "images": 0},
+                          finished_at=datetime.utcnow())
+        return
+
+    captioned = failed = skipped = 0
+    sem = asyncio.Semaphore(3 if mode == "api" else 2)
 
     for i, rel in enumerate(images):
         await update_task(task_id, progress={
-            "current": i, "total": total, "message": f"理解图片 {i + 1}/{total}: {rel[-40:]}",
+            "current": i, "total": total,
+            "message": f"{'理解' if mode == 'api' else '分析'}图片 {i + 1}/{total}: {rel[-40:]}",
         })
-        try:
-            caption = await _caption_one(rel)
-        except Exception as e:
-            failed += 1
-            print(f"[caption] {rel} failed: {type(e).__name__}: {str(e)[:120]}")
+
+        # Idempotency: free mode keeps existing captions (kimi/free) untouched
+        existing = await _get_existing(rel)
+        if mode == "free" and existing and (existing[0].meta_data or {}).get("caption"):
+            skipped += 1
             continue
+
+        if mode == "free":
+            caption, needs_api = _free_caption(rel, persist_dir, md_map)
+            caption_source = "free"
+        else:
+            try:
+                caption = await asyncio.to_thread(
+                    vision.caption_image, os.path.join(persist_dir, rel))
+                caption_source = "api"
+                needs_api = False
+            except Exception as e:
+                failed += 1
+                print(f"[caption/api] {rel} failed: {type(e).__name__}: {str(e)[:120]}")
+                continue
 
         ref_md = md_map.get(rel, "")
         content = f"【图片】{rel}: {caption}"
@@ -464,17 +601,12 @@ async def run_image_captioning(task_id: int):
             "file": ref_md or rel,
             "image_path": rel,
             "caption": caption,
+            "caption_source": caption_source,
+            "needs_api": needs_api,
             "headings": [],
             "heading_chain": [],
-            "caption_model": _settings.vision_model,
         }
         async with async_session() as db:
-            existing = (await db.execute(
-                select(Chunk).where(
-                    Chunk.source_id == source_id,
-                    Chunk.meta_data["image_path"].as_string() == rel,
-                )
-            )).scalars().all()
             if existing:
                 chunk = existing[0]
                 chunk.content = content
@@ -508,7 +640,8 @@ async def run_image_captioning(task_id: int):
 
     await update_task(
         task_id, status="completed",
-        progress={"current": total, "total": total, "message": f"完成：{captioned} 张图片已生成描述"},
-        result={"captioned": captioned, "failed": failed, "images": total},
+        progress={"current": total, "total": total,
+                  "message": f"完成：{captioned} 张已处理（跳过 {skipped}，失败 {failed}）"},
+        result={"captioned": captioned, "failed": failed, "skipped": skipped, "images": total},
         finished_at=datetime.utcnow(),
     )

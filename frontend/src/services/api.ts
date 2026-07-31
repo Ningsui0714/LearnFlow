@@ -28,8 +28,8 @@ export const processSource = (projectId: number, sourceId: number) =>
 export const processAllSources = (projectId: number) =>
   api.post(`/projects/${projectId}/sources/process-all`).then(r => r.data)
 
-export const startImageCaptioning = (projectId: number, sourceId: number, limit?: number) =>
-  api.post(`/projects/${projectId}/sources/${sourceId}/images/caption`, { limit }).then(r => r.data)
+export const startImageCaptioning = (projectId: number, sourceId: number, limit?: number, mode: 'free' | 'api' = 'free') =>
+  api.post(`/projects/${projectId}/sources/${sourceId}/images/caption`, { limit, mode }).then(r => r.data)
 
 // ── Chunk ──
 export const listChunks = (projectId: number) =>

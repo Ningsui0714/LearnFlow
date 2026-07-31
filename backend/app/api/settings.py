@@ -23,6 +23,7 @@ class SettingsUpdate(BaseModel):
     vision_api_key: Optional[str] = None
     vision_base_url: Optional[str] = None
     vision_model: Optional[str] = None
+    vision_api_enhance: Optional[bool] = None
 
 
 def _read_env() -> dict:
@@ -102,6 +103,7 @@ async def get_settings():
         "vision_api_key": _mask_key(vision_key) if vision_key else "",
         "vision_base_url": raw.get("VISION_BASE_URL", app_settings.vision_base_url),
         "vision_model": raw.get("VISION_MODEL", app_settings.vision_model),
+        "vision_api_enhance": raw.get("VISION_API_ENHANCE", "true").lower() in ("1", "true", "yes") if raw.get("VISION_API_ENHANCE") else bool(app_settings.vision_api_enhance),
         "has_key": bool(app_settings.llm_api_key and app_settings.llm_api_key not in ("", "sk-your-key-here")),
     }
 
@@ -190,11 +192,12 @@ async def save_settings(data: SettingsUpdate):
         "vision_api_key": "VISION_API_KEY",
         "vision_base_url": "VISION_BASE_URL",
         "vision_model": "VISION_MODEL",
+        "vision_api_enhance": "VISION_API_ENHANCE",
     }
     for field, env_key in mapping.items():
         val = getattr(data, field, None)
         if val is not None:
-            updates[env_key] = val
+            updates[env_key] = "true" if val is True else ("false" if val is False else val)
 
     if not updates:
         raise HTTPException(400, "No settings to update")

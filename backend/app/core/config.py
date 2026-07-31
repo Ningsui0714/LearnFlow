@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     vision_api_key: str = ""
     vision_base_url: str = "https://api.moonshot.cn/v1"
     vision_model: str = "moonshot-v1-8k-vision-preview"
+    vision_api_enhance: bool = False  # allow paid API captioning of pure graphics
 
     # Repo files cache (images + markdown persisted from cloned sources)
     repo_files_dir: str = "data/repo-files"

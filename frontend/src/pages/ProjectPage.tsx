@@ -28,6 +28,14 @@ export default function ProjectPage() {
   const [sourceUrl, setSourceUrl] = useState('')
   const [processing, setProcessing] = useState(false)
   const [captioningSource, setCaptioningSource] = useState<number | null>(null)
+  const [visionEnhanceEnabled, setVisionEnhanceEnabled] = useState(false)
+
+  // Check whether paid API enhance is allowed (settings)
+  useEffect(() => {
+    fetch('/api/settings').then(r => r.json()).then((s: any) => {
+      setVisionEnhanceEnabled(!!s.vision_api_enhance)
+    }).catch(() => {})
+  }, [])
   const [activeTab, setActiveTab] = useState<'sources' | 'roadmap'>('sources')
   const [initialTabSet, setInitialTabSet] = useState(false)
 
@@ -40,12 +48,12 @@ export default function ProjectPage() {
   }, [checkpoints, initialTabSet])
   const [notification, setNotification] = useState<string | null>(null)
 
-  // T6: trigger image captioning (manual) and poll the task
-  const handleCaption = async (sourceId: number) => {
+  // T6: trigger image captioning (manual, idempotent) and poll the task
+  const handleCaption = async (sourceId: number, mode: 'free' | 'api' = 'free') => {
     setCaptioningSource(sourceId)
-    setNotification('正在分析图片...')
+    setNotification(mode === 'api' ? '正在用 API 增强图片描述...' : '正在分析图片...')
     try {
-      const res = await startImageCaptioning(pid, sourceId)
+      const res = await startImageCaptioning(pid, sourceId, undefined, mode)
       setNotification('任务已启动，正在生成图片描述...')
       // Poll task status
       const deadline = Date.now() + 10 * 60 * 1000  // max 10 min
@@ -253,14 +261,27 @@ export default function ProjectPage() {
                   <p className="text-red-400 mt-1 text-[10px] leading-tight">{s.error.slice(0, 80)}</p>
                 )}
                 {s.type === 'github' && s.status === 'processed' && (
-                  <button
-                    onClick={() => handleCaption(s.id)}
-                    disabled={captioningSource === s.id}
-                    className="mt-1.5 w-full text-[10px] bg-purple-50 text-purple-600 py-1 rounded
-                               hover:bg-purple-100 disabled:opacity-50 transition-colors"
-                  >
-                    {captioningSource === s.id ? '⏳ 生成图片描述中...' : '🖼 生成图片描述'}
-                  </button>
+                  <div className="mt-1.5 flex gap-1">
+                    <button
+                      onClick={() => handleCaption(s.id, 'free')}
+                      disabled={captioningSource === s.id}
+                      className="flex-1 text-[10px] bg-purple-50 text-purple-600 py-1 rounded
+                                 hover:bg-purple-100 disabled:opacity-50 transition-colors"
+                    >
+                      {captioningSource === s.id ? '⏳ 处理中...' : '🖼 免费描述'}
+                    </button>
+                    {visionEnhanceEnabled && (
+                      <button
+                        onClick={() => handleCaption(s.id, 'api')}
+                        disabled={captioningSource === s.id}
+                        title="仅处理免费管线无法理解的纯图形/照片"
+                        className="flex-1 text-[10px] bg-amber-50 text-amber-600 py-1 rounded
+                                   hover:bg-amber-100 disabled:opacity-50 transition-colors"
+                      >
+                        ✨ API 增强
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             ))}

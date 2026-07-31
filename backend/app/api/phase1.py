@@ -147,10 +147,11 @@ async def start_image_captioning(
     db: AsyncSession = Depends(get_db),
     req: dict = Body(default={}),
 ):
-    """Manual trigger: caption all repo images via Moonshot vision (T6-P1).
+    """Trigger image captioning (T6).
 
-    Creates a background task; captions become image chunks in the retrieval
-    pool (caption-as-text RAG). Idempotent per image (upsert by image_path).
+    mode=free (default): md-context + local OCR + SVG structure — zero cost.
+    mode=api: Moonshot vision for images flagged needs_api (pure graphics/photos),
+    only when API enhancement is enabled in settings (idempotent toggle).
     """
     source = (await db.execute(
         select(Source).where(Source.id == source_id, Source.project_id == project_id)
@@ -159,8 +160,14 @@ async def start_image_captioning(
         raise HTTPException(404, "Source not found")
     if source.type != "github":
         raise HTTPException(400, "仅支持 GitHub 仓库的图片")
-    if not (settings.vision_api_key or settings.llm_api_key):
-        raise HTTPException(400, "请先配置 VISION_API_KEY（或 LLM_API_KEY）")
+
+    mode = (req or {}).get("mode", "free")
+    if mode == "api":
+        from app.core.config import settings as _s
+        if not (_s.vision_api_enhance):
+            raise HTTPException(400, "未开启 API 图片增强：请在设置页开启「允许 API 图片理解」")
+        if not (_s.vision_api_key or _s.llm_api_key):
+            raise HTTPException(400, "请先配置 VISION_API_KEY（或 LLM_API_KEY）")
 
     persist_dir = os.path.join(settings.repo_files_dir, str(source_id))
     if not os.path.isdir(persist_dir):
@@ -176,7 +183,7 @@ async def start_image_captioning(
         type="image_caption",
         status="queued",
         payload={"source_id": source_id, "project_id": project_id,
-                 "limit": (req or {}).get("limit")},
+                 "mode": mode, "limit": (req or {}).get("limit")},
         progress={"current": 0, "total": 0, "message": "排队中..."},
     )
     db.add(task)
