@@ -37,6 +37,13 @@ export default function ExercisePage() {
   const [submitting, setSubmitting] = useState(false)
   const [genTaskId, setGenTaskId] = useState<number | null>(null)
   const [genProgress, setGenProgress] = useState('')
+  // IDE extras
+  const editorRef = useRef<any>(null)
+  const vimDisposeRef = useRef<any>(null)
+  const [vimEnabled, setVimEnabled] = useState(false)
+  const [darkTheme, setDarkTheme] = useState(true)
+  const [fontSize, setFontSize] = useState(13)
+  const [vimLoading, setVimLoading] = useState(false)
   const wsEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -161,14 +168,44 @@ export default function ExercisePage() {
     setWsLoading(false)
   }
 
-  // Monaco Editor mount & selection handler
+  // Monaco Editor mount & selection handler + IDE extras
   const handleEditorMount = (editor: any) => {
+    editorRef.current = editor
     editor.onDidChangeCursorSelection(() => {
       const selection = editor.getModel()?.getValueInRange(editor.getSelection())
       if (selection) {
         setSelectedCode(selection)
       }
     })
+  }
+
+  const editorAction = (cmd: string) => {
+    editorRef.current?.trigger('ide-toolbar', cmd, null)
+  }
+
+  const toggleVim = async () => {
+    if (!editorRef.current) return
+    if (vimDisposeRef.current) {
+      vimDisposeRef.current.dispose()
+      vimDisposeRef.current = null
+      setVimEnabled(false)
+      return
+    }
+    setVimLoading(true)
+    try {
+      const { initVimMode } = await import('monaco-vim')
+      vimDisposeRef.current = initVimMode(editorRef.current, document.getElementById('vim-status'))
+      setVimEnabled(true)
+    } catch (e: any) {
+      alert('Vim 模式加载失败: ' + e.message)
+    }
+    setVimLoading(false)
+  }
+
+  const changeFontSize = (delta: number) => {
+    const next = Math.min(24, Math.max(10, fontSize + delta))
+    setFontSize(next)
+    editorRef.current?.updateOptions({ fontSize: next })
   }
 
   if (loading) return <div className="p-8 text-gray-400">加载中...</div>
@@ -294,18 +331,53 @@ export default function ExercisePage() {
                               <Editor
                                 height="100%"
                                 defaultLanguage="python"
-                                theme="vs-dark"
+                                theme={darkTheme ? 'vs-dark' : 'light'}
                                 value={code}
                                 onChange={val => setCode(val || '')}
                                 onMount={handleEditorMount}
                                 options={{
                                   minimap: { enabled: false },
-                                  fontSize: 13,
+                                  fontSize,
                                   lineNumbers: 'on',
                                   scrollBeyondLastLine: false,
+                                  renderWhitespace: 'none',
                                 }}
                               />
                             </div>
+                            {/* IDE toolbar: undo/redo/vim/theme/font */}
+                            <div className="border-t border-gray-200 px-3 py-1 flex items-center gap-1 bg-gray-50 shrink-0">
+                              <button onClick={() => editorAction('undo')} title="撤销 (Ctrl+Z)"
+                                className="text-[11px] bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-100">↩️ 撤销</button>
+                              <button onClick={() => editorAction('redo')} title="重做 (Ctrl+Shift+Z)"
+                                className="text-[11px] bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-100">↪️ 重做</button>
+                              <span className="w-px h-4 bg-gray-200 mx-1" />
+                              <button onClick={toggleVim} disabled={vimLoading}
+                                className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+                                  vimEnabled
+                                    ? 'bg-violet-600 text-white'
+                                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-100'
+                                } disabled:opacity-50`}
+                                title="Vim 键位模式 (Esc 切回 NORMAL)">
+                                {vimLoading ? '加载中...' : (vimEnabled ? 'Vim: ON' : 'Vim: OFF')}
+                              </button>
+                              <span className="w-px h-4 bg-gray-200 mx-1" />
+                              <button onClick={() => setDarkTheme(!darkTheme)} title="切换主题"
+                                className="text-[11px] bg-white border border-gray-200 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-100">
+                                {darkTheme ? '☀️' : '🌙'}
+                              </button>
+                              <button onClick={() => changeFontSize(-1)} title="缩小字号"
+                                className="text-[11px] bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded hover:bg-gray-100">A-</button>
+                              <span className="text-[10px] text-gray-400 w-7 text-center">{fontSize}</span>
+                              <button onClick={() => changeFontSize(1)} title="放大字号"
+                                className="text-[11px] bg-white border border-gray-200 text-gray-600 px-1.5 py-0.5 rounded hover:bg-gray-100">A+</button>
+                            </div>
+                            {/* Vim status bar */}
+                            {vimEnabled && (
+                              <div id="vim-status"
+                                   className="border-t border-violet-200 bg-violet-50 text-violet-700 text-[10px] font-mono px-3 py-0.5 shrink-0">
+                                -- NORMAL --
+                              </div>
+                            )}
                             <div className="border-t border-gray-200 px-3 py-1.5 flex gap-2 bg-white shrink-0">
                               <button onClick={handleRun} disabled={running}
                                 className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:bg-gray-300">
