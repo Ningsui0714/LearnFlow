@@ -104,6 +104,7 @@ class Lecture(Base):
     id = Column(Integer, primary_key=True, index=True)
     checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, unique=True)
     sections = Column(JSON, default=list)  # list of {title, content, keywords, questions}
+    plan = Column(JSON, default=list)      # persisted section plan (T10 resume stability)
     status = Column(String(50), default="draft")  # draft, published
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

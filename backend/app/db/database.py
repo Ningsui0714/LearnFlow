@@ -32,6 +32,9 @@ EXTRA_COLUMNS = {
     "sources": [
         ("role", "TEXT"),        # T10: main | auxiliary
     ],
+    "lectures": [
+        ("plan", "TEXT"),        # T10: persisted section plan (resume stability)
+    ],
 }
 
 

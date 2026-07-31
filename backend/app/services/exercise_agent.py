@@ -222,43 +222,67 @@ class ExerciseAgent:
         checkpoint_description: str,
         lecture_content: str,
         chunk_context: str,
+        progress_cb=None,
     ) -> List[dict]:
-        """Blueprint → per-exercise → verify; keep only passing exercises."""
+        """Blueprint → parallel per-exercise generation → verify.
+
+        Depends_on chain: independent exercises generate concurrently
+        (Semaphore 3); dependent ones wait for their prerequisite solution.
+        """
+        import asyncio as _ai
         bp = await self.blueprint(checkpoint_title, checkpoint_description,
                                   lecture_content, chunk_context)
         if not bp:
             return []
 
-        solutions = {}  # item index -> verified solution (for depends_on)
-        done = []
-        for item in bp:
-            # depends_on resolution: reuse previous verified solution
-            prev = ""
-            if item.get("depends_on", -1) >= 0:
-                prev = solutions.get(item["depends_on"], "")
+        sem = _ai.Semaphore(3)
+        solutions = {}   # item index -> verified solution
+        results = {}     # item index -> exercise dict or None
+        total = len(bp)
 
-            exercise = None
-            for attempt in range(2):  # 1 retry
-                try:
-                    exercise = await self.generate_one(
-                        checkpoint_title, item, lecture_content, chunk_context, prev)
-                except Exception as e:
-                    print(f"[ExerciseAgent] gen failed (attempt {attempt}): {str(e)[:120]}")
-                    continue
-                if not exercise.get("title") or not exercise.get("solution") or not exercise.get("test_cases"):
-                    continue
-                results = self.verify_exercise(exercise["solution"], exercise["test_cases"])
-                passed_count = sum(1 for r in results if r["passed"])
-                if passed_count == len(results) and passed_count >= 2:
-                    exercise["verification"] = {"passed": passed_count, "total": len(results)}
-                    done.append(exercise)
-                    solutions[item["index"]] = exercise["solution"]
-                    break
-                # auto-repair: retry once with the failing cases as feedback
-                if attempt == 0:
-                    failing = [r for r in results if not r["passed"]][:2]
-                    item = {**item, "verify_feedback": json.dumps(failing, ensure_ascii=False)[:800]}
+        async def _do(item: dict):
+            # wait for prerequisite first
+            dep = item.get("depends_on", -1)
+            if dep >= 0:
+                for _ in range(200):  # up to ~100s
+                    if dep in results:
+                        break
+                    await _ai.sleep(0.5)
+                prev = solutions.get(dep, "")
             else:
-                continue  # exercise failed verification twice → drop it
+                prev = ""
+            async with sem:
+                exercise = None
+                for attempt in range(2):  # 1 retry
+                    try:
+                        exercise = await self.generate_one(
+                            checkpoint_title, item, lecture_content, chunk_context, prev)
+                    except Exception as e:
+                        print(f"[ExerciseAgent] gen failed (attempt {attempt}): {str(e)[:120]}")
+                        continue
+                    if not exercise.get("title") or not exercise.get("solution") or not exercise.get("test_cases"):
+                        continue
+                    v = self.verify_exercise(exercise["solution"], exercise["test_cases"])
+                    if sum(1 for r in v if r["passed"]) == len(v) and len(v) >= 2:
+                        exercise["verification"] = {"passed": len(v), "total": len(v)}
+                        solutions[item["index"]] = exercise["solution"]
+                        results[item["index"]] = exercise
+                        return
+                    if attempt == 0:
+                        failing = [r for r in v if not r["passed"]][:2]
+                        item = {**item, "verify_feedback": json.dumps(failing, ensure_ascii=False)[:800]}
+                results[item["index"]] = None
 
-        return done
+        # Layer by layer: independent items first, dependents after
+        remaining = list(bp)
+        while remaining:
+            layer = [it for it in remaining
+                     if it.get("depends_on", -1) < 0 or it.get("depends_on") in results]
+            if not layer:
+                layer = remaining  # circular/unknown dep → just do them
+            await _ai.gather(*[_do(it) for it in layer])
+            remaining = [it for it in remaining if it not in layer]
+            if progress_cb:
+                progress_cb(len([k for k in results if results[k]]), total)
+
+        return [results[i] for i in sorted(results) if results[i]]

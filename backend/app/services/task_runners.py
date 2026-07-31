@@ -27,15 +27,21 @@ def _section_dict(title: str, content: str, keywords, questions) -> dict:
 
 # ── T6: image path rewrite + matplotlib rendering ──
 
-def _rewrite_image_paths(content: str, source_file: str, source_id: int, persist_dir: str = "") -> str:
-    """Rewrite relative image refs to absolute /api/sources/{id}/files/... URLs.
+def _rewrite_image_paths(content: str, source_file: str, source_id: int,
+                         persist_dir: str = "", all_source_ids: list = None) -> str:
+    """Rewrite relative image refs to absolute /api/sources/{sid}/files/... URLs.
 
     Resolves against BOTH the md's directory and the repo root: some repos
     (e.g. ML-For-Beginners) use repo-root-relative paths in md files; naive
-    md-dir resolution would double the prefix (404).
+    md-dir resolution would double the prefix (404). With all_source_ids, the
+    file is looked up in every source's cache, so images from auxiliary
+    sources resolve to their own /api/sources/{sid}/ URL (T10 multi-source).
     """
     import re as _re
+    from app.core.config import settings as _settings
     md_dir = os.path.dirname(source_file or "")
+    repo_root = _settings.repo_files_dir
+    source_ids = all_source_ids or [source_id]
 
     def _resolve(raw: str) -> str:
         raw = raw.strip()
@@ -43,12 +49,13 @@ def _rewrite_image_paths(content: str, source_file: str, source_id: int, persist
             return raw
         raw = raw.split("#")[0].split("?")[0]
         cand_md = os.path.normpath(os.path.join(md_dir, raw)).replace(os.sep, "/")
-        if persist_dir and os.path.isfile(os.path.join(persist_dir, cand_md)):
-            return f"/api/sources/{source_id}/files/{cand_md}"
         cand_root = os.path.normpath(raw).replace(os.sep, "/")
-        if persist_dir and os.path.isfile(os.path.join(persist_dir, cand_root)):
-            return f"/api/sources/{source_id}/files/{cand_root}"
-        # fallback: md-dir resolution (avoids ".." leaking into the URL)
+        # 1) try every source cache, md-dir resolution first
+        for cand in (cand_md, cand_root):
+            for sid in source_ids:
+                if os.path.isfile(os.path.join(repo_root, str(sid), cand)):
+                    return f"/api/sources/{sid}/files/{cand}"
+        # 2) fallback: md-dir resolution on the main source (avoids "..")
         return f"/api/sources/{source_id}/files/{cand_md}"
 
     def _fix_md(m):
@@ -100,7 +107,8 @@ def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
             pass
 
 
-def _postprocess_section(content: str, source_file: str, source_id: int, persist_dir: str) -> str:
+def _postprocess_section(content: str, source_file: str, source_id: int,
+                         persist_dir: str, all_source_ids: list = None) -> str:
     """Rewrite image paths + render matplotlib blocks (T6)."""
     import re as _re
     if not content:
@@ -114,7 +122,7 @@ def _postprocess_section(content: str, source_file: str, source_id: int, persist
         return "\n*（示意图渲染失败）*\n"
 
     content = _re.sub(r"```matplotlib\s*\n(.*?)```", _fix_mpl, content, flags=_re.DOTALL)
-    content = _rewrite_image_paths(content, source_file, source_id, persist_dir)
+    content = _rewrite_image_paths(content, source_file, source_id, persist_dir, all_source_ids)
     return content
 
 
@@ -177,6 +185,18 @@ async def run_lecture_generation(task_id: int):
         main_source_id = chunks[0].get("source_id")
     persist_dir = os.path.join(_settings.repo_files_dir, str(main_source_id)) if main_source_id else ""
 
+    # T10: all project source ids for cross-source image resolution
+    all_source_ids = []
+    async with async_session() as db:
+        roadmap = (await db.execute(
+            select(Roadmap).where(Roadmap.id == checkpoint.roadmap_id)
+        )).scalar_one_or_none()
+        if roadmap:
+            srcs = (await db.execute(
+                select(Source).where(Source.project_id == roadmap.project_id)
+            )).scalars().all()
+            all_source_ids = [s.id for s in srcs]
+
     if not chunks:
         await update_task(
             task_id, status="failed",
@@ -189,27 +209,47 @@ async def run_lecture_generation(task_id: int):
 
     agent = LectureAgent()
 
-    # ── Plan (T4: structure-aware when brief has scope files) ──
-    await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在规划大纲..."})
-    try:
-        skeleton = []
-        scope_files = (brief or {}).get("scope", {}).get("files") or []
-        if scope_files:
-            skeleton = agent.build_structure_skeleton(brief, chunks)
-        if skeleton:
-            plan_sections = await agent.plan_lecture_structured(
-                checkpoint.title, checkpoint.description or "", user_level,
-                brief, chunks, skeleton,
-            )
-        else:
-            plan_sections = await agent.plan_lecture(
-                checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief
-            )
-    except Exception as e:
-        from app.services.task_manager import classify_error
-        err = classify_error(e)
-        await update_task(task_id, status="failed", error=err, finished_at=datetime.utcnow())
-        return
+    # ── Plan ──
+    # Resume: reuse the persisted plan (stable section reuse — T10).
+    # Fresh: replan and persist the new plan.
+    plan_sections = None
+    if resume:
+        async with async_session() as db:
+            lec = (await db.execute(
+                select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+            )).scalar_one_or_none()
+            if lec and lec.plan:
+                plan_sections = lec.plan
+
+    if plan_sections is None:
+        await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在规划大纲..."})
+        try:
+            skeleton = []
+            scope_files = (brief or {}).get("scope", {}).get("files") or []
+            if scope_files:
+                skeleton = agent.build_structure_skeleton(brief, chunks)
+            if skeleton:
+                plan_sections = await agent.plan_lecture_structured(
+                    checkpoint.title, checkpoint.description or "", user_level,
+                    brief, chunks, skeleton,
+                )
+            else:
+                plan_sections = await agent.plan_lecture(
+                    checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief
+                )
+        except Exception as e:
+            from app.services.task_manager import classify_error
+            err = classify_error(e)
+            await update_task(task_id, status="failed", error=err, finished_at=datetime.utcnow())
+            return
+
+    # Filter chunk_ids that no longer exist (sources may have been re-processed)
+    if plan_sections:
+        valid_ids = {c["id"] for c in chunks}
+        for ps in plan_sections:
+            ids = ps.get("chunk_ids") or []
+            ps["chunk_ids"] = [i for i in ids if i in valid_ids]
+
     total = len(plan_sections)
     if total == 0:
         plan_sections = [{"title": checkpoint.title, "keywords": [], "goal": checkpoint.description or ""}]
@@ -233,8 +273,9 @@ async def run_lecture_generation(task_id: int):
                     sections=list(lecture.sections),
                     reason="regenerate_before",
                 ))
-            # Fresh generation: clear stale partial content
+            # Fresh generation: clear stale partial content + persist new plan
             lecture.sections = []
+            lecture.plan = plan_sections
             lecture.status = "draft"
             await db.commit()
         saved = list(lecture.sections or [])
@@ -291,7 +332,8 @@ async def run_lecture_generation(task_id: int):
             questions = agent._extract_questions(content)
             # T6: rewrite image paths + render matplotlib blocks
             content = _postprocess_section(
-                content, ps.get("source_file", ""), main_source_id or 0, persist_dir)
+                content, ps.get("source_file", ""), main_source_id or 0,
+                persist_dir, all_source_ids)
             # Hard dedup: drop image refs already used in earlier sections
             content = _dedup_images(content)
             questions = agent._extract_questions(content)
@@ -836,8 +878,13 @@ async def run_exercise_generation(task_id: int):
     from app.services.exercise_agent import ExerciseAgent
     eagent = ExerciseAgent()
     try:
+        def _cb(done, total):
+            asyncio.create_task(update_task(
+                task_id, progress={"current": done, "total": total,
+                                   "message": f"生成中... {done}/{total} 题通过验证"}))
         exercises = await eagent.generate_all(
-            checkpoint.title, checkpoint.description or "", lecture_text, chunk_text)
+            checkpoint.title, checkpoint.description or "", lecture_text, chunk_text,
+            progress_cb=_cb)
     except Exception as e:
         from app.services.task_manager import classify_error
         err = classify_error(e)
