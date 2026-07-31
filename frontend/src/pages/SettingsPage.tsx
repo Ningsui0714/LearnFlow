@@ -10,6 +10,9 @@ interface Settings {
   llm_model: string
   embedding_backend: string
   embedding_model: string
+  vision_api_key: string
+  vision_base_url: string
+  vision_model: string
   has_key: boolean
 }
 
@@ -24,6 +27,10 @@ export default function SettingsPage() {
   const [editEmbModel, setEditEmbModel] = useState('')
   const [editEmbKey, setEditEmbKey] = useState('')
   const [editEmbUrl, setEditEmbUrl] = useState('')
+  const [editVisionKey, setEditVisionKey] = useState('')
+  const [editVisionUrl, setEditVisionUrl] = useState('')
+  const [editVisionModel, setEditVisionModel] = useState('')
+  const [visionTesting, setVisionTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ type: 'ok' | 'error' | ''; msg: string }>({ type: '', msg: '' })
@@ -44,6 +51,8 @@ export default function SettingsPage() {
       setEditModel(s.llm_model)
       setEditEmbBackend(s.embedding_backend)
       setEditEmbModel(s.embedding_model)
+      setEditVisionUrl(s.vision_base_url)
+      setEditVisionModel(s.vision_model)
     } catch { /* ignore */ }
   }
 
@@ -91,9 +100,12 @@ export default function SettingsPage() {
         embedding_backend: editEmbBackend,
         embedding_model: editEmbModel,
         embedding_base_url: editEmbUrl,
+        vision_base_url: editVisionUrl,
+        vision_model: editVisionModel,
       }
       if (editKey) body.llm_api_key = editKey
       if (editEmbKey) body.embedding_api_key = editEmbKey
+      if (editVisionKey) body.vision_api_key = editVisionKey
 
       const res = await api.put('/settings', body)
       setSaveMsg(`✅ 已保存: ${res.data.updated.join(', ')}`)
@@ -147,6 +159,22 @@ export default function SettingsPage() {
       setTestResult({ type: 'error', msg: `❌ ${e?.response?.data?.detail || e.message}` })
     }
     setTesting(false)
+  }
+
+  const handleTestVision = async () => {
+    setVisionTesting(true)
+    setTestResult({ type: '', msg: '' })
+    try {
+      const res = await api.post('/settings/test-vision', {
+        api_key: editVisionKey || 'use_current',
+        base_url: editVisionUrl,
+        model: editVisionModel,
+      })
+      setTestResult({ type: 'ok', msg: `✅ 图片理解可用！模型: ${res.data.model} — ${res.data.message}` })
+    } catch (e: any) {
+      setTestResult({ type: 'error', msg: `❌ ${e?.response?.data?.detail || e.message}` })
+    }
+    setVisionTesting(false)
   }
 
   if (!settings) return <div className="p-8 text-gray-400">加载中...</div>
@@ -283,6 +311,82 @@ export default function SettingsPage() {
                 className="bg-primary-600 text-white px-5 py-2 rounded-lg text-sm
                            hover:bg-primary-700 disabled:bg-gray-300 transition-colors">
                 {saving ? '保存中...' : '💾 保存设置'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Vision Settings (T6: image understanding) */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
+          <h2 className="font-semibold text-gray-900 mb-1">🖼 图片理解 (Vision)</h2>
+          <p className="text-xs text-gray-500 mb-4">
+            用于仓库图片的描述生成（图片进讲义 / RAG）。推荐 Moonshot kimi 系列，
+            已实测 kimi-k2.7-code-highspeed 最快（~4s/张）。留空则尝试复用 LLM Key。
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Vision API Key
+                <span className="text-gray-400 font-normal ml-2">可选，留空复用 LLM Key</span>
+              </label>
+              <input
+                type="password"
+                value={editVisionKey}
+                onChange={e => setEditVisionKey(e.target.value)}
+                placeholder={settings.vision_api_key ? `当前: ${settings.vision_api_key}（输入新值替换）` : 'sk-...'}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-primary-400 font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Base URL</label>
+              <input
+                type="text" value={editVisionUrl}
+                onChange={e => setEditVisionUrl(e.target.value)}
+                placeholder="https://api.moonshot.cn/v1"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-primary-400"
+              />
+              <div className="flex gap-2 mt-1.5">
+                <button onClick={() => setEditVisionUrl('https://api.moonshot.cn/v1')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  Moonshot
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">视觉模型</label>
+              <input
+                type="text" value={editVisionModel}
+                onChange={e => setEditVisionModel(e.target.value)}
+                placeholder="kimi-k2.7-code-highspeed"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
+                           focus:outline-none focus:ring-2 focus:ring-primary-400"
+              />
+              <div className="flex gap-2 mt-1.5">
+                <button onClick={() => setEditVisionModel('kimi-k2.7-code-highspeed')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  🚀 最快 (~4s/张)
+                </button>
+                <button onClick={() => setEditVisionModel('kimi-k3')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  Kimi K3 (~16s/张)
+                </button>
+                <button onClick={() => setEditVisionModel('kimi-k2.6')}
+                  className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
+                  Kimi K2.6 (~106s/张)
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button onClick={handleTestVision} disabled={visionTesting || !editVisionModel}
+                className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm
+                           hover:bg-gray-200 disabled:opacity-50 transition-colors">
+                {visionTesting ? '测试中...' : '🔌 测试图片理解'}
               </button>
             </div>
           </div>
