@@ -62,7 +62,11 @@ export default function ProjectPage() {
           const t = await getTaskStatus(res.task_id)
           if (t.status === 'completed') {
             const r = t.result || {}
-            setNotification(`✅ 图片描述完成：${r.captioned ?? 0} 张成功${r.failed ? `，${r.failed} 张失败` : ''}`)
+            const parts: string[] = []
+            if (r.captioned) parts.push(`${r.captioned} 张新描述`)
+            if (r.skipped) parts.push(`${r.skipped} 张已有描述跳过`)
+            if (r.failed) parts.push(`${r.failed} 张失败`)
+            setNotification(`✅ 图片描述完成：${parts.join('，') || '无需处理（全部已有描述）'}`)
             setCaptioningSource(null)
           } else if (t.status === 'failed') {
             setNotification('❌ 图片描述任务失败: ' + (t.error?.message || ''))
