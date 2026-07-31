@@ -150,7 +150,7 @@ class LectureAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.7,
-            timeout=30,
+            timeout=90,
             max_retries=0,
         )
         self.gen_llm = ChatOpenAI(
@@ -178,15 +178,29 @@ class LectureAgent:
         chunks: List[Dict],
         top_k: int = 15,
         extra_keywords: Optional[List[str]] = None,
+        boost_ids: Optional[List[int]] = None,
+        boost_weight: float = 1.5,
+        scope_files: Optional[List[str]] = None,
     ) -> List[Dict]:
         """
         Level 1-3 fallback retrieval with query expansion + dynamic top-k.
+
+        T3: accepts upstream retrieval state from CheckpointBrief —
+        boost_ids get a score bonus; scope_files restricts the pool first
+        (falls back to global when the scope pool is too small).
         """
         if not chunks:
             return []
 
         # Determine dynamic top-k from query complexity
         effective_k = QueryExpander.dynamic_top_k(query, top_k)
+
+        # Scope restriction (from upstream brief)
+        pool = chunks
+        if scope_files:
+            scoped = [c for c in chunks if (c.get("meta") or {}).get("file") in scope_files]
+            if len(scoped) >= max(3, int(effective_k * 0.6)):
+                pool = scoped
 
         # Expand query with synonyms
         expanded = QueryExpander.expand(query)
@@ -195,7 +209,7 @@ class LectureAgent:
         expanded = list(dict.fromkeys(expanded))  # uniquify
 
         if not expanded:
-            return chunks[:effective_k]
+            return pool[:effective_k]
 
         scored = []
         # Try to load embeddings for vector search
@@ -209,7 +223,7 @@ class LectureAgent:
         except Exception:
             pass
 
-        for c in chunks:
+        for c in pool:
             meta = c.get("meta", {}) if isinstance(c.get("meta"), dict) else {}
             score = 0.0
 
@@ -244,6 +258,10 @@ class LectureAgent:
                     vec_score = cosine_similarity(query_emb, cache[key])
                     score += vec_score * 10.0
 
+            # Upstream boost (T3: high-relevance chunks from upstream agents)
+            if boost_ids and c["id"] in boost_ids:
+                score += boost_weight
+
             scored.append((score, c))
 
         # Sort by score descending, take top_k
@@ -252,7 +270,7 @@ class LectureAgent:
 
         # If no meaningful scores, fallback to first chunks
         if all(s[0] == 0 for s in scored):
-            return chunks[:min(top_k, len(chunks))]
+            return pool[:min(top_k, len(pool))]
 
         return top
 
@@ -273,11 +291,18 @@ class LectureAgent:
         checkpoint_description: str,
         user_level: str,
         chunks: List[Dict],
+        brief: Optional[Dict] = None,
     ) -> List[Dict]:
         """Plan lecture outline using retrieved relevant chunks."""
         # Retrieve top chunks matching the topic
         query = f"{checkpoint_title} {checkpoint_description}"
-        relevant = await self._retrieve_relevant_chunks(query, chunks, top_k=15)
+        rp = (brief or {}).get("retrieval_policy") or {}
+        relevant = await self._retrieve_relevant_chunks(
+            query, chunks, top_k=15,
+            boost_ids=rp.get("boost_chunk_ids"),
+            boost_weight=rp.get("boost_weight", 1.5),
+            scope_files=(brief or {}).get("scope", {}).get("files"),
+        )
         ctx = "\n".join([c["content"][:800] for c in relevant])
 
         prompt = self._safe_format(PLAN_PROMPT,
@@ -311,13 +336,18 @@ class LectureAgent:
         section: Dict,
         chunks: List[Dict],
         section_keywords: Optional[List[str]] = None,
+        brief: Optional[Dict] = None,
     ) -> str:
         """Generate a single section's content, using retrieved relevant chunks."""
         # Retrieve chunks relevant to this section's title + keywords
         query = section.get("title", "")
         extra_kw = (section_keywords or []) + [checkpoint_title]
+        rp = (brief or {}).get("retrieval_policy") or {}
         relevant = await self._retrieve_relevant_chunks(
-            query, chunks, top_k=10, extra_keywords=extra_kw
+            query, chunks, top_k=10, extra_keywords=extra_kw,
+            boost_ids=rp.get("boost_chunk_ids"),
+            boost_weight=rp.get("boost_weight", 1.5),
+            scope_files=(brief or {}).get("scope", {}).get("files"),
         )
         ctx = self._build_chunk_context(relevant)
 

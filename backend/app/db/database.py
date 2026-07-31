@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import text
 
 from app.core.config import settings
 
@@ -19,7 +20,29 @@ async def get_db():
             await session.close()
 
 
+# Lightweight migrations: columns added to existing models after the table
+# was created. create_all() does not alter existing tables, so we add them
+# explicitly (SQLite ADD COLUMN).
+EXTRA_COLUMNS = {
+    "checkpoints": [
+        ("brief", "TEXT"),  # CheckpointBrief handoff contract (T2)
+    ],
+}
+
+
+async def _ensure_columns():
+    async with engine.begin() as conn:
+        for table, cols in EXTRA_COLUMNS.items():
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            existing = {row[1] for row in result.fetchall()}
+            for col, coltype in cols:
+                if col not in existing:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}"))
+                    print(f"[migrate] added column {table}.{col} ({coltype})")
+
+
 async def init_db():
     async with engine.begin() as conn:
         from app.models import project  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
+    await _ensure_columns()

@@ -48,6 +48,7 @@ export const getLecture = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/lecture`).then(r => r.data)
 
 // SSE stream for lecture generation — uses fetch for proper error handling
+// Deprecated in favor of task-based generation (createLectureTask + lectureTaskEventsUrl)
 export function subscribeLectureSSE(
   checkpointId: number,
   onSection: (data: any) => void,
@@ -139,6 +140,21 @@ export function subscribeLectureSSE(
 
 export const saveLecture = (checkpointId: number, sections: any[]) =>
   api.post(`/checkpoints/${checkpointId}/lecture/save`, { sections }).then(r => r.data)
+
+// ── Tasks (T1: background jobs) ──
+export const createLectureTask = (checkpointId: number, mode: 'fresh' | 'resume' = 'fresh') =>
+  api.post(`/checkpoints/${checkpointId}/lecture/generate`, { mode }).then(r => r.data)
+
+export const getActiveLectureTask = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/lecture/task`).then(r => r.data)
+
+export const getTaskStatus = (taskId: number) =>
+  api.get(`/tasks/${taskId}`).then(r => r.data)
+
+export const cancelTask = (taskId: number) =>
+  api.post(`/tasks/${taskId}/cancel`).then(r => r.data)
+
+export const lectureTaskEventsUrl = (taskId: number) => `/api/tasks/${taskId}/events`
 
 export const askQuestion = (checkpointId: number, data: { selection: string; question: string; history: any[] }) =>
   api.post(`/checkpoints/${checkpointId}/ask`, data).then(r => r.data)

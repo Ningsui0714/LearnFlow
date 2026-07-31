@@ -72,6 +72,7 @@ class Checkpoint(Base):
     order = Column(Integer, nullable=False)
     prerequisites = Column(JSON, default=list)  # list of checkpoint ids
     completed = Column(Boolean, default=False)
+    brief = Column(JSON, default=dict)  # CheckpointBrief handoff contract (see docs/design)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     roadmap = relationship("Roadmap", back_populates="checkpoints")
@@ -118,3 +119,27 @@ class Exercise(Base):
     order = Column(Integer, default=0)
 
     checkpoint = relationship("Checkpoint", back_populates="exercises")
+
+
+class Task(Base):
+    """Background job record (T1: task/job layer).
+
+    Execution runs in an in-process asyncio task; DB rows are the source of
+    truth for status/progress so SSE subscribers can reconnect at any time.
+    """
+
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    type = Column(String(50), nullable=False, index=True)  # lecture_generate | ...
+    status = Column(String(50), default="queued", index=True)  # queued running completed failed canceled
+    payload = Column(JSON, default=dict)
+    progress = Column(JSON, default=dict)  # {current, total, message}
+    result = Column(JSON, default=dict)
+    error = Column(JSON, default=dict)  # {code, message, guidance, retryable}
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

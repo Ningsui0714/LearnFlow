@@ -338,6 +338,81 @@ class SourceProcessor:
 
         return {"groups": result, "total_files": len(files)}
 
+    # ── Structure Confidence (L0) + Logic Type ──
+
+    def _normalize_title(self, s: str) -> str:
+        """Normalize a title for fuzzy comparison."""
+        import unicodedata
+        s = unicodedata.normalize("NFKC", s or "").lower().strip()
+        s = re.sub(r"[\s\-_./\\:：·、,，()（）\[\]\d]+", "", s)
+        return s
+
+    def compute_structure_confidence(self, readme_toc: list, dir_groups: list) -> dict:
+        """
+        Multi-strategy agreement check (L0):
+        - README TOC vs directory groups overlap → high/medium/low.
+        - "high" means the roadmap agent can trust the structure; "low" means
+          it should read actual files before planning.
+        """
+        reasons = []
+        if not readme_toc:
+            return {"level": "low", "reasons": ["README 没有可解析的目录"]}
+        if not dir_groups:
+            return {"level": "low", "reasons": ["仓库没有明显的分组目录"]}
+
+        toc_norm = {self._normalize_title(t.get("title", "")) for t in readme_toc}
+        group_norm = {self._normalize_title(g.get("name", "")) for g in dir_groups}
+        group_norm |= {self._normalize_title(g.get("dir", "")) for g in dir_groups}
+
+        if not toc_norm:
+            return {"level": "low", "reasons": ["README 目录为空"]}
+
+        overlap = len(toc_norm & group_norm)
+        ratio = overlap / len(toc_norm)
+        reasons.append(f"TOC {len(toc_norm)} 项与目录分组重叠 {overlap} 项（{ratio:.0%}）")
+
+        if ratio >= 0.7:
+            level = "high"
+            reasons.append("TOC 与目录结构高度一致")
+        elif ratio >= 0.4:
+            level = "medium"
+            reasons.append("TOC 与目录结构部分一致，规划时需抽样核对文件")
+        else:
+            level = "low"
+            reasons.append("TOC 与目录结构不一致，规划前应读取实际文件")
+
+        return {"level": level, "reasons": reasons}
+
+    def detect_structure_logic(self, dir_groups: list, readme_toc: list = None) -> str:
+        """
+        Detect the repo's organizational logic:
+        - tutorial-progression: chapter/lesson/module dirs
+        - project-steps: src/code + step/part/task naming
+        - paper-logic: paper/arxiv/section naming
+        Returns one of: tutorial-progression | project-steps | paper-logic | mixed
+        """
+        dir_names = " ".join(g.get("dir", "").lower() for g in (dir_groups or []))
+        toc_text = " ".join(t.get("title", "").lower() for t in (readme_toc or []))
+        blob = dir_names + " " + toc_text
+
+        score = {"tutorial-progression": 0, "project-steps": 0, "paper-logic": 0}
+        for kw in ("chapter", "lesson", "sec", "part", "module", "unit", "课程", "章节"):
+            if kw in blob:
+                score["tutorial-progression"] += 1
+        for kw in ("src", "code", "step", "task", "stage", "阶段", "步骤", "实现"):
+            if kw in blob:
+                score["project-steps"] += 1
+        for kw in ("paper", "arxiv", "section", "abstract", "论文", "定理", "证明"):
+            if kw in blob:
+                score["paper-logic"] += 1
+
+        best = max(score, key=score.get)
+        if score[best] == 0:
+            return "mixed"
+        if score[best] - sorted(score.values(), reverse=True)[1] <= 0 and score[best] <= 2:
+            return "mixed"
+        return best
+
     # ── Full Pipeline ──
 
     async def process_source(self, source_type: str, url: str) -> dict:
@@ -363,11 +438,17 @@ class SourceProcessor:
                 # Level 2: Directory analysis
                 dir_analysis = self.analyze_directory_structure(dir_tree)
 
+                # L0: structure confidence + logic type
+                confidence = self.compute_structure_confidence(readme_toc, dir_analysis["groups"])
+                logic = self.detect_structure_logic(dir_analysis["groups"], readme_toc)
+
                 source_meta = {
                     "dir_tree_keys": list(dir_tree.keys())[:500],
                     "readme_toc": readme_toc,
                     "dir_groups": dir_analysis["groups"],
                     "total_files": dir_analysis["total_files"],
+                    "structure_confidence": confidence,
+                    "structure_logic": logic,
                 }
 
                 chunks = self.chunk_text(text, source_type="github")

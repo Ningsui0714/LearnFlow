@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  getLecture, subscribeLectureSSE, saveLecture,
+  getLecture, saveLecture,
+  createLectureTask, getActiveLectureTask, cancelTask, lectureTaskEventsUrl,
 } from '../services/api'
 import LectureRenderer from '../components/lecture/LectureRenderer'
 import BottomWorkspace from '../components/workspace/BottomWorkspace'
@@ -24,20 +25,43 @@ export default function CheckpointPage() {
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
+  const [taskError, setTaskError] = useState<any>(null)  // structured {code, message, guidance}
+  const [taskId, setTaskId] = useState<number | null>(null)
   const [checkpointTitle, setCheckpointTitle] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [showWorkspace, setShowWorkspace] = useState(false)
-  const sectionsRef = useRef<Section[]>([])
+  const esRef = useRef<EventSource | null>(null)
 
+  // ── Load lecture on mount ──
   useEffect(() => {
     loadLecture()
+    // Recover: if a generation task is still running, re-subscribe
+    getActiveLectureTask(cid).then((snap: any) => {
+      if (snap?.task_id && ['queued', 'running'].includes(snap.status)) {
+        setTaskId(snap.task_id)
+        setGenerating(true)
+        setProgress(snap.progress?.message || '生成中...')
+        if (snap.sections?.length) setSections(snap.sections)
+        subscribeTask(snap.task_id)
+      } else if (snap?.status === 'failed' && snap.sections?.length) {
+        setTaskError(snap.error)
+        setError(snap.error?.message || '上次生成失败')
+      }
+    }).catch(() => {})
+    return () => closeEventSource()
   }, [cid])
+
+  const closeEventSource = () => {
+    if (esRef.current) {
+      esRef.current.close()
+      esRef.current = null
+    }
+  }
 
   const loadLecture = async () => {
     setStatus('loading')
     setError('')
     try {
-      // Load checkpoint order and title from roadmap
       try {
         const rmResp = await fetch(`/api/projects/${pid}/roadmap`)
         const rm = await rmResp.json()
@@ -50,9 +74,9 @@ export default function CheckpointPage() {
       const data = await getLecture(cid)
       if (data.sections && data.sections.length > 0) {
         setSections(data.sections)
-        sectionsRef.current = data.sections
-        setStatus('published')
+        setStatus(data.status || 'published')
       } else {
+        setSections([])
         setStatus('none')
       }
     } catch {
@@ -60,68 +84,85 @@ export default function CheckpointPage() {
     }
   }
 
-  const handleGenerate = () => {
-    setGenerating(true)
-    setSections([])
-    sectionsRef.current = []
-    setProgress('规划大纲中...')
-    setError('')  // 清除旧错误
+  // ── Task subscription (EventSource auto-reconnects on network drops) ──
+  const subscribeTask = (id: number) => {
+    closeEventSource()
+    const es = new EventSource(lectureTaskEventsUrl(id))
+    esRef.current = es
 
-    const conn = subscribeLectureSSE(
-      cid,
-      // onSection
-      (data) => {
-        setError('')  // 有数据来了，清除错误
-        const newSection: Section = {
-          title: data.title,
-          content: data.content,
-          keywords: data.keywords || [],
-          questions: data.questions || [],
+    es.onmessage = (ev) => {
+      try {
+        const snap = JSON.parse(ev.data)
+        if (snap.type === 'snapshot') {
+          if (snap.sections) setSections(snap.sections)
+          if (snap.progress?.message) setProgress(snap.progress.message)
+
+          if (snap.status === 'completed') {
+            setGenerating(false)
+            setTaskError(null)
+            setError('')
+            setProgress(`✅ ${snap.progress?.message || '完成！'}`)
+            setStatus('published')
+            // Sections already applied from snapshot; sync status
+            closeEventSource()
+            saveLecture(cid, snap.sections || []).catch(() => {})
+          } else if (snap.status === 'failed') {
+            setGenerating(false)
+            setTaskError(snap.error)
+            setError(snap.error?.message || '生成失败')
+            setProgress(`❌ ${snap.error?.guidance || '生成失败'}`)
+            if (snap.sections?.length) setStatus('draft')
+            closeEventSource()
+          } else if (snap.status === 'canceled') {
+            setGenerating(false)
+            setProgress('已取消')
+            setStatus(snap.sections?.length ? 'draft' : 'none')
+            closeEventSource()
+          }
         }
-        sectionsRef.current = [...sectionsRef.current, newSection]
-        setSections([...sectionsRef.current])
-        setProgress(`生成中... ${data.index + 1}/${data.total}`)
-      },
-      // onDone
-      async (data) => {
-        setGenerating(false)
-        setProgress(`✅ 完成！共 ${data.sections_count} 节`)
-        setStatus('published')
+      } catch {}
+    }
 
-        // Save to backend
-        try {
-          await saveLecture(cid, sectionsRef.current)
-        } catch (e: any) {
-          console.error('Save failed', e)
-          setError('讲义保存失败: ' + (e?.response?.data?.detail || e.message))
-        }
-      },
-      // onError
-      (msg) => {
-        setGenerating(false)
-        setProgress(`❌ ${msg}`)
-        setError(msg)
-      },
-      // onStatus — 进度状态
-      (msg) => {
-        setProgress(msg)
-      },
-    )
-
-    // Store for cleanup
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    if (typeof window !== 'undefined') {
-      ;(window as any).__lf_lecture_close = conn.close
+    es.onerror = () => {
+      // EventSource retries automatically; only surface if connection is dead
+      // and we're still marked as generating (task may still be running server-side)
     }
   }
 
-  // Cleanup SSE on unmount
-  useEffect(() => {
-    return () => {
-      const close = (window as any).__lf_lecture_close
-      if (close) { close(); (window as any).__lf_lecture_close = null }
+  const handleGenerate = (mode: 'fresh' | 'resume' = 'fresh') => {
+    setGenerating(true)
+    setError('')
+    setTaskError(null)
+    if (mode === 'fresh') {
+      setSections([])
+      setProgress('排队中...')
+    } else {
+      setProgress('从上次进度续生成...')
     }
-  }, [])
+
+    createLectureTask(cid, mode)
+      .then((res: any) => {
+        setTaskId(res.task_id)
+        if (res.already_running) {
+          setProgress('检测到进行中的任务，正在恢复...')
+        }
+        subscribeTask(res.task_id)
+      })
+      .catch((e: any) => {
+        setGenerating(false)
+        const msg = e?.response?.data?.detail || e.message
+        setError(msg)
+        setProgress(`❌ ${msg}`)
+      })
+  }
+
+  const handleCancel = async () => {
+    if (!taskId) return
+    try {
+      await cancelTask(taskId)
+      setProgress('正在取消...')
+    } catch {}
+  }
 
   const handleTextSelect = useCallback((text: string) => {
     setSelectedText(text)
@@ -131,6 +172,8 @@ export default function CheckpointPage() {
     setShowWorkspace(false)
     setSelectedText('')
   }
+
+  const canResume = status === 'draft' && sections.length > 0 && !generating
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -148,14 +191,33 @@ export default function CheckpointPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {status !== 'published' && (
+          {status !== 'published' && !generating && (
+            <>
+              <button
+                onClick={() => handleGenerate('fresh')}
+                className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm
+                           hover:bg-primary-700 transition-colors"
+              >
+                📝 生成讲义
+              </button>
+              {canResume && (
+                <button
+                  onClick={() => handleGenerate('resume')}
+                  className="bg-amber-500 text-white px-4 py-1.5 rounded-lg text-sm
+                             hover:bg-amber-600 transition-colors"
+                >
+                  ⏯ 续生成（{sections.length} 节）
+                </button>
+              )}
+            </>
+          )}
+          {generating && (
             <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm
-                         hover:bg-primary-700 disabled:bg-gray-300 transition-colors"
+              onClick={handleCancel}
+              className="bg-red-50 text-red-600 px-4 py-1.5 rounded-lg text-sm
+                         hover:bg-red-100 transition-colors"
             >
-              {generating ? '生成中...' : '📝 生成讲义'}
+              ⏹ 取消
             </button>
           )}
           <button
@@ -177,12 +239,12 @@ export default function CheckpointPage() {
         </div>
       </div>
 
-      {/* Progress / error bar — 无论 generating 状态都显示 */}
+      {/* Progress / error bar */}
       {(generating || progress) && (
         <div className={`px-6 py-2 text-sm border-b shrink-0 ${
           error ? 'bg-red-50 text-red-700 border-red-200' :
           generating ? 'bg-primary-50 text-primary-700 border-primary-200' :
-          progress.includes('❌') ? 'bg-red-50 text-red-700 border-red-200' :
+          progress.includes('❌') || progress.includes('已取消') ? 'bg-amber-50 text-amber-700 border-amber-200' :
           'bg-green-50 text-green-700 border-green-200'
         }`}>
           <div className="flex items-center gap-2">
@@ -212,14 +274,12 @@ export default function CheckpointPage() {
               <div className="text-center py-16">
                 <p className="text-4xl mb-3">⚠️</p>
                 <p className="text-red-600 font-medium mb-2">讲义生成失败</p>
-                <p className="text-gray-500 text-sm mb-4">{error}</p>
-                <p className="text-gray-400 text-xs">
-                  请检查 API Key 配置（backend/.env），然后重试。
-                  <br />
-                  如果问题持续，按 F12 打开开发者工具查看 Console 日志。
-                </p>
+                <p className="text-gray-500 text-sm mb-2">{error}</p>
+                {taskError?.guidance && (
+                  <p className="text-gray-400 text-xs mb-4">{taskError.guidance}</p>
+                )}
                 <button
-                  onClick={handleGenerate}
+                  onClick={() => handleGenerate('fresh')}
                   className="mt-4 bg-primary-600 text-white px-5 py-2 rounded-lg text-sm
                              hover:bg-primary-700 transition-colors"
                 >
@@ -228,8 +288,30 @@ export default function CheckpointPage() {
               </div>
             )}
 
+            {/* Partial failure banner (some sections saved) */}
+            {error && sections.length > 0 && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                <p className="font-medium mb-1">⚠️ 生成中断：已保留 {sections.length} 节内容</p>
+                <p className="text-xs text-amber-700 mb-2">{taskError?.guidance || error}</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleGenerate('resume')}
+                    className="bg-amber-500 text-white px-3 py-1 rounded text-xs hover:bg-amber-600"
+                  >
+                    ⏯ 续生成
+                  </button>
+                  <button
+                    onClick={() => handleGenerate('fresh')}
+                    className="bg-white border border-amber-300 text-amber-700 px-3 py-1 rounded text-xs hover:bg-amber-50"
+                  >
+                    重新生成
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Loading */}
-            {status === 'loading' && (
+            {status === 'loading' && sections.length === 0 && (
               <div className="text-center text-gray-400 py-20">
                 <span className="animate-pulse">加载中...</span>
               </div>

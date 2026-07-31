@@ -5,14 +5,14 @@ Phase 2 API routes:
 - Q&A agent for selected text
 """
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture
+from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task
 from app.schemas.project import (
     AgentMessage, LectureAskRequest,
 )
@@ -21,12 +21,85 @@ from app.services.lecture_agent import LectureAgent, QAAgent
 router = APIRouter()
 
 
+@router.post("/checkpoints/{checkpoint_id}/lecture/generate")
+async def generate_lecture_task(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+    req: dict = Body(default={}),
+):
+    """Create a background lecture-generation task (T1).
+
+    Returns {task_id, status}. If a task is already running for this
+    checkpoint, returns the existing one (frontend subscribes to it).
+    mode: "fresh" (default) clears partial content; "resume" reuses saved sections.
+    """
+    mode = (req or {}).get("mode", "fresh")
+    if not settings.llm_api_key or settings.llm_api_key == "***":
+        raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
+
+    result = await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))
+    checkpoint = result.scalar_one_or_none()
+    if not checkpoint:
+        raise HTTPException(404, "Checkpoint not found")
+
+    from app.models.project import Project, Roadmap
+    roadmap = (await db.execute(select(Roadmap).where(Roadmap.id == checkpoint.roadmap_id))).scalar_one_or_none()
+    project_id = roadmap.project_id if roadmap else None
+
+    # Deduplicate: reuse an already-running task
+    from app.services.task_manager import find_running_task, manager
+    running = await find_running_task(checkpoint_id, "lecture_generate")
+    if running:
+        return {"task_id": running.id, "status": running.status, "already_running": True}
+
+    task = Task(
+        project_id=project_id,
+        checkpoint_id=checkpoint_id,
+        type="lecture_generate",
+        status="queued",
+        payload={"checkpoint_id": checkpoint_id, "resume": mode == "resume"},
+        progress={"current": 0, "total": 0, "message": "排队中..."},
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    from app.services.task_runners import run_lecture_generation
+    manager.submit(task.id, run_lecture_generation(task.id))
+
+    return {"task_id": task.id, "status": task.status, "already_running": False}
+
+
+@router.get("/checkpoints/{checkpoint_id}/lecture/task")
+async def get_lecture_task(
+    checkpoint_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Latest generation task for a checkpoint (used on page load / reconnect)."""
+    result = await db.execute(
+        select(Task)
+        .where(Task.checkpoint_id == checkpoint_id, Task.type == "lecture_generate")
+        .order_by(Task.id.desc())
+        .limit(1)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        return {"task_id": None}
+    from app.api.tasks import _snapshot
+    lecture = (await db.execute(
+        select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
+    )).scalar_one_or_none()
+    sections = [s for s in (lecture.sections if lecture and lecture.sections else []) if s]
+    return _snapshot(task, sections)
+
+
 @router.get("/checkpoints/{checkpoint_id}/lecture/generate")
 async def generate_lecture_stream(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate lecture for a checkpoint, streaming via SSE."""
+    """Legacy direct-SSE generation endpoint (kept for compatibility; use POST + /tasks/{id}/events)."""
+    from app.api.tasks import _snapshot as _unused  # noqa: F401
     try:
         # Quick API key check
         if not settings.llm_api_key or settings.llm_api_key == "***":
