@@ -241,11 +241,11 @@ export default function ExercisePage() {
             </button>
           </div>
         </div>
-        {tab === 'code' && exercises.length === 0 && !genTaskId && (
+        {tab === 'code' && !genTaskId && (
           <button onClick={handleGenerateEx}
             className="bg-primary-600 text-white px-3 py-1 rounded text-sm ml-auto
                        hover:bg-primary-700 transition-colors">
-            🤖 生成习题
+            {exercises.length > 0 ? '🔄 重新生成习题' : '🤖 生成习题'}
           </button>
         )}
         {tab === 'code' && genTaskId && (
