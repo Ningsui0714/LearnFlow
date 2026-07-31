@@ -22,7 +22,7 @@ from langchain_core.tools import tool
 
 from app.core.config import settings
 
-MAX_TOOL_ROUNDS = 8
+MAX_TOOL_ROUNDS = 12
 
 SYSTEM_PROMPT = """你是一名学习路线规划专家。你的任务是帮助用户为特定学习主题规划一条循序渐进的学习路线。
 
@@ -54,7 +54,9 @@ SYSTEM_PROMPT = """你是一名学习路线规划专家。你的任务是帮助�
 - files 只写仓库中真实存在的文件路径。
 - 已完成的关卡不可删除、不可改名（提交时系统会校验并拒绝）。
 - 未确认前不要调用 submit_roadmap；确认后只调用一次。
-- 关卡间用 prerequisites 表达先修关系。"""
+- 关卡间用 prerequisites 表达先修关系。
+- **不要输出过渡语**（如"让我查看...""我先看看..."）。要么直接调用工具，要么输出给用户的正式回复——所有文本输出都会被视为正式回复。
+- **仓库可能包含多语言翻译副本**（如 translations/ 或不同语言子目录），同一内容会出现多次。规划路线时只依据主语言版本（通常是 en/ 或根目录），忽略翻译副本，不要在回复中展示翻译副本。"""
 
 
 class RoadmapAgent:
@@ -294,8 +296,23 @@ class RoadmapAgent:
                     result = f"工具调用失败: {type(e).__name__}: {str(e)[:200]}"
                 messages.append(ToolMessage(content=result, tool_call_id=tc.get("id")))
 
-        last = messages[-1]
-        reply = last.content if isinstance(last.content, str) else str(last.content)
+        # Tool rounds exhausted while still calling tools → force a final text
+        # answer so the user never sees raw tool output as the reply.
+        if isinstance(messages[-1], ToolMessage):
+            messages.append(HumanMessage(
+                content="请基于以上工具结果，直接给出完整、自然的回复，不要再调用工具。"))
+            resp = await llm.ainvoke(messages)
+            messages.append(resp)
+
+        # Reply = last assistant text message (never raw tool output)
+        reply = ""
+        for m in reversed(messages):
+            if isinstance(m, AIMessage) and m.content and str(m.content).strip():
+                reply = m.content if isinstance(m.content, str) else str(m.content)
+                break
+        if not reply:
+            reply = ("我已经查看了相关资料，接下来想先了解你的基础："
+                     "你更熟悉 Python 吗？希望每天投入多少时间学习？")
         return {
             "message": reply,
             "updated_roadmap": self._last_submitted_roadmap,
