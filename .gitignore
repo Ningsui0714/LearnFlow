@@ -21,3 +21,9 @@ frontend/dist/
 # Logs
 *.log
 data/
+
+# Project-mode runtime (venv + workspaces)
+backend/runtime/
+# Build artifacts & backups
+frontend/*.tsbuildinfo
+backend/*.db.bak*

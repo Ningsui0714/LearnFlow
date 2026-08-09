@@ -23,6 +23,7 @@ export default function CheckpointPage() {
   const pid = Number(projectId)
 
   const [sections, setSections] = useState<Section[]>([])
+  const [animations, setAnimations] = useState<Record<number, any>>({})
   const [status, setStatus] = useState<'loading' | 'none' | 'draft' | 'published'>('loading')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
@@ -38,6 +39,7 @@ export default function CheckpointPage() {
   const [versionLoading, setVersionLoading] = useState(false)
   const [showGraph, setShowGraph] = useState(false)
   const [conceptGraph, setConceptGraph] = useState<any>(null)
+  const [feedback, setFeedback] = useState('')
   const esRef = useRef<EventSource | null>(null)
 
   // ── Load lecture on mount ──
@@ -87,6 +89,12 @@ export default function CheckpointPage() {
       } else {
         setSections([])
         setStatus('none')
+      }
+      // process-animator: 讲义内嵌动画映射 {id -> animation}
+      if (data.animations?.length) {
+        const map: Record<number, any> = {}
+        data.animations.forEach((a: any) => { map[a.id] = a })
+        setAnimations(map)
       }
     } catch {
       setStatus('none')
@@ -149,7 +157,7 @@ export default function CheckpointPage() {
       setProgress('从上次进度续生成...')
     }
 
-    createLectureTask(cid, mode)
+    createLectureTask(cid, mode, feedback)
       .then((res: any) => {
         setTaskId(res.task_id)
         if (res.already_running) {
@@ -250,6 +258,16 @@ export default function CheckpointPage() {
         <div className="flex items-center gap-3">
           {!generating && (
             <>
+              <input
+                type="text"
+                value={feedback}
+                onChange={e => setFeedback(e.target.value)}
+                placeholder="生成偏好提示词（可选），如：方案要中国大陆可用"
+                className="w-64 text-sm border border-gray-200 rounded-lg px-3 py-1.5
+                           focus:outline-none focus:border-primary-400 focus:ring-1 focus:ring-primary-200
+                           placeholder:text-gray-400"
+                title="重新生成讲义时，这个提示词会被注入到生成 prompt 中"
+              />
               <button
                 onClick={() => handleGenerate('fresh')}
                 className="bg-primary-600 text-white px-4 py-1.5 rounded-lg text-sm
@@ -396,6 +414,7 @@ export default function CheckpointPage() {
             {sections.length > 0 && (
               <LectureRenderer
                 sections={sections}
+                animations={animations}
                 onSelect={handleTextSelect}
                 onDeleteImage={handleDeleteImage}
               />

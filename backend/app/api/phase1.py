@@ -110,6 +110,21 @@ async def process_source(
                 new_brief["chunk_mapping_confidence"] = "stale"
                 cp.brief = new_brief
 
+        # Auto-generate L1 file summaries so roadmap planning & brief backfill
+        # can match files by keyword. Best-effort: never fail the whole process.
+        try:
+            meta = dict(source.meta_data or {})
+            ra = dict(meta.get("repo_analysis") or {})
+            if (source.type == "github" and ra.get("dir_groups")
+                    and not ra.get("file_summaries")
+                    and settings.llm_api_key and settings.llm_api_key != "***"):
+                summaries = await _generate_file_summaries(db, source)
+                if summaries:
+                    await _save_file_summaries(db, source, summaries)
+                    print(f"[process] auto file_summaries: {len(summaries)} files for source {source.id}")
+        except Exception as e:
+            print(f"[process] auto file_summaries skipped (source {source.id}): {type(e).__name__}: {e}")
+
         source.status = "processed"
         await db.commit()
         return {"status": "ok", "chunk_count": len(chunks_data),
@@ -275,8 +290,38 @@ async def summarize_source_files(
     if not settings.llm_api_key or settings.llm_api_key == "***":
         raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
 
+    summaries = await _generate_file_summaries(db, source)
+
+    if not summaries:
+        raise HTTPException(502, "文件摘要生成失败，请重试或检查 LLM 配置")
+
+    await _save_file_summaries(db, source, summaries)
+
+    return {"status": "ok", "cached": False, "files_count": len(summaries), "summaries": summaries}
+
+
+async def _generate_file_summaries(db: AsyncSession, source) -> dict:
+    """L1 repo understanding: one-line summary per file (LLM, batched).
+    Returns summaries dict (possibly partial/empty). No DB writes;
+    callers decide how to handle empty results.
+    """
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import HumanMessage
+
+    if not settings.llm_api_key or settings.llm_api_key == "***":
+        return {}
+
+    chunk_result = await db.execute(
+        select(Chunk).where(Chunk.source_id == source.id).order_by(Chunk.index)
+    )
+    chunks = chunk_result.scalars().all()
+    by_file = {}
+    for c in chunks:
+        fp = (c.meta_data or {}).get("file", "") or f"chunk-{c.id}"
+        by_file.setdefault(fp, []).append(c)
+    if not by_file:
+        return {}
+
     llm = ChatOpenAI(
         model=settings.llm_model,
         api_key=settings.llm_api_key,
@@ -322,17 +367,21 @@ async def summarize_source_files(
         except Exception as e:
             print(f"[Summarize] batch {i // BATCH} failed: {e}")
 
-    if not summaries:
-        raise HTTPException(502, "文件摘要生成失败，请重试或检查 LLM 配置")
+    return summaries
 
-    repo_analysis["file_summaries"] = summaries
+
+async def _save_file_summaries(db: AsyncSession, source, summaries: dict) -> None:
+    """Persist file_summaries into source.meta_data.repo_analysis (idempotent)."""
+    if not summaries:
+        return
+    meta = dict(source.meta_data or {})
+    repo_analysis = dict(meta.get("repo_analysis") or {})
     # CRITICAL: JSON columns are compared with == at flush time. If we mutate
     # the loaded dict in place, the "new" value equals the original → no UPDATE.
     # Always copy on read, then assign a fresh dict.
+    repo_analysis["file_summaries"] = summaries
     source.meta_data = {**meta, "repo_analysis": repo_analysis}
     await db.commit()
-
-    return {"status": "ok", "cached": False, "files_count": len(summaries), "summaries": summaries}
 
 
 # ── Process All Sources ──
@@ -405,6 +454,20 @@ async def process_all_sources(
                     new_brief["needs_resync"] = True
                     new_brief["chunk_mapping_confidence"] = "stale"
                     cp.brief = new_brief
+
+            # Auto-generate L1 file summaries (best-effort, see process_source)
+            try:
+                meta = dict(source.meta_data or {})
+                ra = dict(meta.get("repo_analysis") or {})
+                if (source.type == "github" and ra.get("dir_groups")
+                        and not ra.get("file_summaries")
+                        and settings.llm_api_key and settings.llm_api_key != "***"):
+                    summaries = await _generate_file_summaries(db, source)
+                    if summaries:
+                        await _save_file_summaries(db, source, summaries)
+                        print(f"[process-all] auto file_summaries: {len(summaries)} files for source {source.id}")
+            except Exception as e:
+                print(f"[process-all] auto file_summaries skipped (source {source.id}): {type(e).__name__}: {e}")
 
             source.status = "processed"
             await db.commit()

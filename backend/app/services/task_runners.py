@@ -169,6 +169,7 @@ async def run_lecture_generation(task_id: int):
         return
     checkpoint_id = (task.payload or {}).get("checkpoint_id")
     resume = bool((task.payload or {}).get("resume"))
+    feedback = (task.payload or {}).get("feedback") or ""
     if not checkpoint_id:
         await update_task(task_id, status="failed",
                           error={"code": "internal", "message": "payload 缺少 checkpoint_id",
@@ -196,6 +197,7 @@ async def run_lecture_generation(task_id: int):
                 select(Source).where(Source.project_id == roadmap.project_id)
             )).scalars().all()
             all_source_ids = [s.id for s in srcs]
+        project_id = roadmap.project_id if roadmap else None
 
     if not chunks:
         await update_task(
@@ -208,6 +210,8 @@ async def run_lecture_generation(task_id: int):
         return
 
     agent = LectureAgent()
+    from app.services.animation_agent import AnimationAgent
+    anim_agent = AnimationAgent()
 
     # ── Plan ──
     # Resume: reuse the persisted plan (stable section reuse — T10).
@@ -231,11 +235,11 @@ async def run_lecture_generation(task_id: int):
             if skeleton:
                 plan_sections = await agent.plan_lecture_structured(
                     checkpoint.title, checkpoint.description or "", user_level,
-                    brief, chunks, skeleton,
+                    brief, chunks, skeleton, feedback=feedback,
                 )
             else:
                 plan_sections = await agent.plan_lecture(
-                    checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief
+                    checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief, feedback=feedback
                 )
         except Exception as e:
             from app.services.task_manager import classify_error
@@ -309,6 +313,7 @@ async def run_lecture_generation(task_id: int):
                     brief=brief,
                     section_chunk_ids=ps.get("chunk_ids"),
                     used_images=used_images,
+                    feedback=feedback,
                 )
             except Exception as e:
                 # One retry per section, then fail the task (partial remains)
@@ -319,6 +324,7 @@ async def run_lecture_generation(task_id: int):
                         brief=brief,
                         section_chunk_ids=ps.get("chunk_ids"),
                         used_images=used_images,
+                        feedback=feedback,
                     )
                 except Exception as e2:
                     from app.services.task_manager import classify_error
@@ -337,6 +343,16 @@ async def run_lecture_generation(task_id: int):
             # Hard dedup: drop image refs already used in earlier sections
             content = _dedup_images(content)
             questions = agent._extract_questions(content)
+
+            # ── process-animator：内容 → 动画/静态图，注入占位符（失败不阻塞） ──
+            try:
+                async with async_session() as adb:
+                    vis = await anim_agent.maybe_create_visual(
+                        project_id, checkpoint_id, i, content, adb)
+                    if vis:
+                        content = content.rstrip() + f"\n\n:::process-anim {vis['id']}\n"
+            except Exception:
+                pass
 
         cited_all.extend(agent._extract_cited_chunks(content))
         sec = _section_dict(title, content, ps.get("keywords", []), questions)

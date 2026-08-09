@@ -57,10 +57,10 @@ check_deps() {
 }
 
 start_services() {
-  echo -e "${BLUE}━━━ 启动后端 (端口 8000) ━━━${NC}"
+  echo -e "${BLUE}━━━ 启动后端 (端口 8010) ━━━${NC}"
   cd "$BACKEND_DIR"
   source venv/bin/activate
-  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload &
+  uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload &
   BACK_PID=$!
   echo $BACK_PID > "$PID_FILE"
 
@@ -74,7 +74,7 @@ start_services() {
   echo -e "${GREEN}✅ LearnFlow 已启动！${NC}"
   echo ""
   echo -e "   ${BLUE}前端:${NC}  http://localhost:5173"
-  echo -e "   ${BLUE}后端:${NC}  http://localhost:8000"
+  echo -e "   ${BLUE}后端:${NC}  http://localhost:8010"
   echo ""
   echo -e "   ${YELLOW}停止:${NC}  bash start.sh stop"
   echo ""

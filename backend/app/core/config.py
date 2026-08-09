@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Repo files cache (images + markdown persisted from cloned sources)
     repo_files_dir: str = "data/repo-files"
 
+    # Project-mode runtime (venv + workspaces for multi-file exercises)
+    runtime_dir: str = ""  # empty → <backend>/runtime
+
     # Database
     database_url: str = "sqlite+aiosqlite:///./learnflow.db"
 

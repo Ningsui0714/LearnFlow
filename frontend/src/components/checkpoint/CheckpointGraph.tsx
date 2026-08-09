@@ -101,10 +101,13 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
   }))
 
   const initialEdges: Edge[] = []
-  const visibleIds = new Set(visible.map(c => c.id))
+  // NOTE: prerequisites 存的是 order（后端全链路语义），需映射到真实 checkpoint id
+  const orderToId: Record<number, number> = {}
+  for (const cp of visible) orderToId[cp.order] = cp.id
   for (const cp of visible) {
-    for (const prereqId of cp.prerequisites) {
-      if (!visibleIds.has(prereqId)) continue
+    for (const prereqOrder of cp.prerequisites) {
+      const prereqId = orderToId[prereqOrder]
+      if (prereqId === undefined) continue
       initialEdges.push({
         id: `e${prereqId}-${cp.id}`,
         source: String(prereqId),
@@ -186,10 +189,8 @@ function layoutCheckpoints(
       return 0
     }
     const maxPrereqLevel = Math.max(
-      ...cp.prerequisites.map(p => {
-        const prereqOrder = checkpoints.find(c => c.id === p)?.order
-        return prereqOrder ? getLevel(prereqOrder) : 0
-      })
+      // prerequisites 是 order，直接按 order 递归求层级
+      ...cp.prerequisites.map(p => getLevel(p))
     )
     orderToLevel[order] = maxPrereqLevel + 1
     return orderToLevel[order]

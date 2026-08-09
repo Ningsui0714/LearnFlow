@@ -619,6 +619,49 @@ class SourceProcessor:
                     text = await self.fetch_github_readme(clean_url)
                 chunks = self.chunk_text(text, source_type="github")
                 return {"chunks": chunks, "source_meta": {}}
+        elif source_type == "file":
+            # Local file/dir source: read .md/.py/.txt etc. directly.
+            # url 字段存本地路径（绝对路径或相对 backend 目录）。
+            import os as _os
+            base = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+            raw = clean_url
+            if not _os.path.isabs(raw):
+                raw = _os.path.join(base, raw)
+            if not _os.path.exists(raw):
+                raise ValueError(f"本地路径不存在: {raw}")
+
+            text_parts = []
+            skip_dirs = {"node_modules", "__pycache__", ".git", ".venv", "venv", "runtime", "dist", "build", "data"}
+            paths = []
+            if _os.path.isdir(raw):
+                for root, dirs, files in _os.walk(raw):
+                    dirs[:] = [d for d in dirs if d not in skip_dirs]
+                    for fn in sorted(files):
+                        if fn.startswith("."):
+                            continue
+                        paths.append(_os.path.join(root, fn))
+            else:
+                paths = [raw]
+
+            for p in sorted(paths):
+                ext = f".{p.split('.')[-1].lower()}" if "." in p else ""
+                if ext not in self._READABLE_EXTS and ext not in {".md", ".py", ".txt", ".json"}:
+                    continue
+                try:
+                    with open(p, encoding="utf-8", errors="replace") as fh:
+                        content = fh.read()
+                    if len(content.strip()) < 20:
+                        continue
+                    rel = _os.path.relpath(p, raw if _os.path.isdir(raw) else _os.path.dirname(raw))
+                    text_parts.append(f"=== {rel} ===\n{content}\n")
+                except Exception:
+                    continue
+
+            if not text_parts:
+                raise ValueError(f"No readable content in {raw}")
+            text = "\n".join(text_parts)
+            chunks = self.chunk_text(text, source_type="file")
+            return {"chunks": chunks, "source_meta": {"local_path": raw}}
         else:
             text = await self.fetch_url(clean_url)
             chunks = self.chunk_text(text, source_type="url")

@@ -23,6 +23,9 @@ PLAN_PROMPT = """你是学习内容专家。你需要为某个学习关卡规划
 ## 学生水平
 {user_level}
 
+## 用户反馈（重新生成时提供的个人要求，如无则忽略）
+{user_feedback}
+
 ## 参考资料
 {chunk_context}
 
@@ -53,6 +56,9 @@ STRUCTURED_PLAN_PROMPT = """你是学习内容专家。你需要为某个学习�
 
 ## 学生水平
 {user_level}
+
+## 用户反馈（重新生成时提供的个人要求，如无则忽略）
+{user_feedback}
 
 ## 仓库结构逻辑
 {structure_logic}
@@ -102,11 +108,20 @@ GENERATE_SECTION_PROMPT = """你是学习内容专家。根据大纲生成完整
 ## 参考资料
 {chunk_context}
 
+## 用户反馈（重新生成时提供的个人要求，如无则忽略）
+{user_feedback}
+
 ## 生成要求
 1. 用 **markdown 格式** 输出
 2. 关键公式用 KaTeX 语法：
    - 行内公式: $E = mc^2$
    - 块级公式: $$L(θ) = \\frac{1}{n}\\sum_{i=1}^n (y_i - \\hat{y}_i)^2$$
+   - **块级公式的 `$$` 必须独占一行（`$$` 前后各留一个空行）**，不要写成 `$$\\begin{aligned}...\\end{aligned}$$`，要写成：
+     ```
+     $$
+     \\begin{aligned} ... \\end{aligned}
+     $$
+     ```
 3. 复杂结构用 ASCII 图，例如：
    ```
        层1    层2    输出
@@ -213,7 +228,7 @@ class LectureAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.8,
-            timeout=60,
+            timeout=120,
             max_retries=0,
         )
 
@@ -295,6 +310,7 @@ class LectureAgent:
         brief: Optional[Dict],
         chunks: List[Dict],
         skeleton: List[Dict],
+        feedback: str = "",
     ) -> List[Dict]:
         """Plan sections from the structure skeleton (dual-signal planner).
 
@@ -324,6 +340,7 @@ class LectureAgent:
             user_level=user_level,
             structure_logic=f"{logic} —— {template}",
             skeleton="\n".join(skeleton_text) or "（无骨架信息，请按主题自行规划 4-8 节）",
+            user_feedback=feedback or "（无）",
         )
 
         valid_ids = set()
@@ -500,6 +517,7 @@ class LectureAgent:
         user_level: str,
         chunks: List[Dict],
         brief: Optional[Dict] = None,
+        feedback: str = "",
     ) -> List[Dict]:
         """Plan lecture outline using retrieved relevant chunks."""
         # Retrieve top chunks matching the topic
@@ -518,6 +536,7 @@ class LectureAgent:
             checkpoint_description=checkpoint_description,
             user_level=user_level,
             chunk_context=ctx,
+            user_feedback=feedback or "（无）",
         )
 
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
@@ -547,6 +566,7 @@ class LectureAgent:
         brief: Optional[Dict] = None,
         section_chunk_ids: Optional[List[int]] = None,
         used_images: Optional[set] = None,
+        feedback: str = "",
     ) -> str:
         """Generate a single section's content, using retrieved relevant chunks.
 
@@ -595,6 +615,7 @@ class LectureAgent:
             keywords=", ".join(section.get("keywords", [])),
             goal=section.get("goal", ""),
             chunk_context=ctx,
+            user_feedback=feedback or "（无）",
         )
 
         response = await self.gen_llm.ainvoke([HumanMessage(content=prompt)])

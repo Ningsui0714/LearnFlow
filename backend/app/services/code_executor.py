@@ -15,6 +15,19 @@ MAX_EXECUTION_TIME = 10  # seconds
 MAX_OUTPUT_SIZE = 100 * 1024  # 100KB
 
 
+def _python_binary() -> str:
+    """Prefer the project-mode runtime venv python (has torch etc.),
+    fall back to system python3."""
+    try:
+        from app.services.project_runner import venv_dir
+        py = os.path.join(venv_dir(), "bin", "python")
+        if os.path.isfile(py):
+            return py
+    except Exception:
+        pass
+    return "python3"
+
+
 def execute_code(
     code: str,
     test_input: str = "",
@@ -35,7 +48,7 @@ def execute_code(
     try:
         start = time.time()
         process = subprocess.Popen(
-            ["python3", fpath],
+            [_python_binary(), fpath],
             stdin=subprocess.PIPE if test_input else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

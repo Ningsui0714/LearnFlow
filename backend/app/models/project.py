@@ -85,6 +85,7 @@ class Checkpoint(Base):
     notes = relationship("LectureNote", back_populates="checkpoint", cascade="all, delete-orphan")
     concept_questions = relationship("ConceptQuestion", back_populates="checkpoint", cascade="all, delete-orphan")
     exercises = relationship("Exercise", back_populates="checkpoint", cascade="all, delete-orphan")
+    animations = relationship("ProcessAnimation", back_populates="checkpoint", cascade="all, delete-orphan")
 
 
 class CheckpointChunk(Base):
@@ -125,6 +126,12 @@ class Exercise(Base):
     test_cases = Column(JSON, default=list)
     hints = Column(JSON, default=list)
     order = Column(Integer, default=0)
+    # ── Project-mode exercises (pilot: PyTorch 训练循环) ──
+    files = Column(JSON, default=list)       # [{name, content, read_only}]
+    entrypoint = Column(String(255), default="")   # main file to run
+    requirements = Column(JSON, default=list)       # ["torch", "scikit-learn"]
+    judge_mode = Column(String(50), default="test_cases")  # test_cases | stdout_check
+    judge_config = Column(JSON, default=dict)       # {pattern, min_accuracy} for stdout_check
 
     checkpoint = relationship("Checkpoint", back_populates="exercises")
 
@@ -188,6 +195,29 @@ class ConceptQuestion(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="concept_questions")
+
+
+class ProcessAnimation(Base):
+    """process-animator：讲义/手动生成的可交互分步动画（steps 为 JSON）。
+
+    source: lecture（讲义自动生成，section_index 指向讲义小节）| manual（工作台手动）
+    """
+
+    __tablename__ = "process_animations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    source = Column(String(20), default="manual")  # manual | lecture
+    kind = Column(String(20), default="animation")  # animation | static
+    section_index = Column(Integer, default=0)
+    title = Column(String(255), default="")
+    subtitle = Column(Text, default="")
+    legend = Column(JSON, default=list)   # [[color, label], ...]
+    steps = Column(JSON, default=list)    # [{title, text, bars?, svg?}, ...]
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    checkpoint = relationship("Checkpoint", back_populates="animations")
 
 
 class Task(Base):

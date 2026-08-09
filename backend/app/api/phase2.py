@@ -6,15 +6,15 @@ Phase 2 API routes:
 """
 import json
 from fastapi import APIRouter, Depends, HTTPException, Body
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task, LectureVersion, LectureNote
+from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task, LectureVersion, LectureNote, ProcessAnimation
 from app.schemas.project import (
-    AgentMessage, LectureAskRequest,
+    AgentMessage, LectureAskRequest, AnimationGenerateRequest,
 )
 from app.services.lecture_agent import LectureAgent, QAAgent
 
@@ -34,6 +34,7 @@ async def generate_lecture_task(
     mode: "fresh" (default) clears partial content; "resume" reuses saved sections.
     """
     mode = (req or {}).get("mode", "fresh")
+    feedback = (req or {}).get("feedback") or ""
     if not settings.llm_api_key or settings.llm_api_key == "***":
         raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
 
@@ -57,7 +58,7 @@ async def generate_lecture_task(
         checkpoint_id=checkpoint_id,
         type="lecture_generate",
         status="queued",
-        payload={"checkpoint_id": checkpoint_id, "resume": mode == "resume"},
+        payload={"checkpoint_id": checkpoint_id, "resume": mode == "resume", "feedback": feedback},
         progress={"current": 0, "total": 0, "message": "排队中..."},
     )
     db.add(task)
@@ -237,6 +238,61 @@ async def get_lecture(
         "sections": lecture.sections or [],
         "status": lecture.status,
         "concept_graph": lecture.concept_graph or {},
+        "animations": [
+            {
+                "id": a.id,
+                "section_index": a.section_index,
+                "source": a.source,
+                "kind": a.kind or "animation",
+                "title": a.title,
+                "subtitle": a.subtitle,
+                "legend": a.legend or [],
+                "steps": a.steps or [],
+            }
+            for a in (
+                await db.execute(
+                    select(ProcessAnimation)
+                    .where(ProcessAnimation.checkpoint_id == checkpoint_id)
+                    .order_by(ProcessAnimation.id)
+                )
+            ).scalars().all()
+        ],
+    }
+
+
+# ── Process animations (process-animator) ──
+
+@router.post("/animations/generate")
+async def generate_animation(req: AnimationGenerateRequest):
+    """手动/工作台：过程文本 → 动画 JSON（不落库，前端预览用）。"""
+    if not req.text or not req.text.strip():
+        raise HTTPException(400, "text 不能为空")
+    if len(req.text) > 8000:
+        raise HTTPException(400, "text 过长（≤8000 字符）")
+    from app.services.animation_agent import AnimationAgent
+    try:
+        data = await AnimationAgent().extract_steps(req.text)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+    return {"ok": True, "animation": data}
+
+
+@router.get("/animations/{animation_id}")
+async def get_animation(animation_id: int, db: AsyncSession = Depends(get_db)):
+    """按 id 取动画（LectureRenderer 懒加载用）。"""
+    anim = await db.get(ProcessAnimation, animation_id)
+    if not anim:
+        raise HTTPException(404, "动画不存在")
+    return {
+        "id": anim.id,
+        "checkpoint_id": anim.checkpoint_id,
+        "section_index": anim.section_index,
+        "source": anim.source,
+        "kind": anim.kind or "animation",
+        "title": anim.title,
+        "subtitle": anim.subtitle,
+        "legend": anim.legend or [],
+        "steps": anim.steps or [],
     }
 
 

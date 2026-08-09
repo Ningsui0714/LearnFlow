@@ -39,6 +39,9 @@ async def list_exercises(
             id=e.id, checkpoint_id=e.checkpoint_id, title=e.title,
             description=e.description, starter_code=e.starter_code,
             test_cases=e.test_cases or [], hints=e.hints or [], order=e.order,
+            files=e.files or [], entrypoint=e.entrypoint or "",
+            requirements=e.requirements or [], judge_mode=e.judge_mode or "test_cases",
+            judge_config=e.judge_config or {},
         )
         for e in exercises
     ]
@@ -64,6 +67,11 @@ async def create_exercise(
         test_cases=data.get("test_cases", []),
         hints=data.get("hints", []),
         order=data.get("order", 0),
+        files=data.get("files", []),
+        entrypoint=data.get("entrypoint", ""),
+        requirements=data.get("requirements", []),
+        judge_mode=data.get("judge_mode", "test_cases"),
+        judge_config=data.get("judge_config", {}),
     )
     db.add(exercise)
     await db.commit()
@@ -74,6 +82,10 @@ async def create_exercise(
         starter_code=exercise.starter_code,
         test_cases=exercise.test_cases or [],
         hints=exercise.hints or [], order=exercise.order,
+        files=exercise.files or [], entrypoint=exercise.entrypoint or "",
+        requirements=exercise.requirements or [],
+        judge_mode=exercise.judge_mode or "test_cases",
+        judge_config=exercise.judge_config or {},
     )
 
 
@@ -91,7 +103,46 @@ async def get_exercise(
         id=e.id, checkpoint_id=e.checkpoint_id, title=e.title,
         description=e.description, starter_code=e.starter_code,
         test_cases=e.test_cases or [], hints=e.hints or [], order=e.order,
+        files=e.files or [], entrypoint=e.entrypoint or "",
+        requirements=e.requirements or [], judge_mode=e.judge_mode or "test_cases",
+        judge_config=e.judge_config or {},
     )
+
+
+# ── Project-mode: save user files (pilot) ──
+
+@router.put("/exercises/{exercise_id}/files")
+async def save_exercise_files(
+    exercise_id: int,
+    req: CodeRunRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist user's edited files for a project-mode exercise."""
+    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
+    exercise = result.scalar_one_or_none()
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    if not req.files:
+        raise HTTPException(400, "files 不能为空")
+
+    # Merge: keep read_only files' original content, update editable ones
+    originals = {f["name"]: f for f in (exercise.files or [])}
+    merged = []
+    for f in req.files:
+        name = f.get("name", "")
+        orig = originals.get(name, {})
+        merged.append({
+            "name": name,
+            "content": f.get("content", ""),
+            "read_only": bool(f.get("read_only", orig.get("read_only", False))),
+        })
+    exercise.files = merged
+    await db.commit()
+
+    # Also persist to workspace so runs are consistent
+    from app.services import project_runner
+    project_runner.write_project_files(exercise_id, merged)
+    return {"status": "ok", "saved": [f["name"] for f in merged]}
 
 
 # ── Code Execution ──
@@ -102,14 +153,39 @@ async def run_code(
     req: CodeRunRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Execute code for an exercise."""
-    # Verify exercise exists
+    """Execute code for an exercise.
+
+    - Project-mode (exercise.files non-empty): run whole project in runtime venv.
+    - Classic mode: run single code snippet.
+    """
     result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
-    if not result.scalar_one_or_none():
+    exercise = result.scalar_one_or_none()
+    if not exercise:
         raise HTTPException(404, "Exercise not found")
 
-    # Run the code
-    return execute_code(req.code)
+    files = exercise.files or []
+    if files:
+        from app.services.project_runner import run_project
+        # Merge client-sent files (latest edits) with read_only originals
+        client = {f.get("name"): f for f in req.files if f.get("name")}
+        merged = []
+        for f in files:
+            name = f.get("name", "")
+            if name in client and not f.get("read_only"):
+                merged.append({**f, "content": client[name].get("content", f.get("content", ""))})
+            else:
+                merged.append(f)
+        res = run_project(exercise_id, merged, exercise.entrypoint or "main.py",
+                          exercise.requirements or [])
+        return CodeRunResult(
+            stdout=res["stdout"], stderr=res["stderr"],
+            passed=res["exit_code"] == 0, elapsed=res["elapsed"], env=res["env"],
+        )
+
+    # Classic single-file mode
+    res = execute_code(req.code)
+    return CodeRunResult(stdout=res["stdout"], stderr=res["stderr"],
+                         passed=res["exit_code"] == 0, elapsed=res["elapsed"])
 
 
 @router.post("/exercises/run", response_model=CodeRunResult)
@@ -117,7 +193,30 @@ async def run_standalone_code(
     req: CodeRunRequest,
 ):
     """Execute arbitrary Python code (no exercise context)."""
-    return execute_code(req.code)
+    res = execute_code(req.code)
+    return CodeRunResult(stdout=res["stdout"], stderr=res["stderr"],
+                         passed=res["exit_code"] == 0, elapsed=res["elapsed"])
+
+
+# ── Project-mode: env status (pilot) ──
+
+@router.get("/exercises/{exercise_id}/env")
+async def exercise_env_status(
+    exercise_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Report runtime env readiness for a project-mode exercise."""
+    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
+    exercise = result.scalar_one_or_none()
+    if not exercise:
+        raise HTTPException(404, "Exercise not found")
+    from app.services import project_runner
+    return {
+        "ready": project_runner.venv_ready(),
+        "requirements": exercise.requirements or [],
+        "installed": project_runner.installed_requirements(),
+        "has_files": bool(exercise.files),
+    }
 
 
 # ── Code Review Agent ──
@@ -433,6 +532,34 @@ async def submit_exercise(
     )).scalar_one_or_none()
     if not exercise:
         raise HTTPException(404, "Exercise not found")
+
+    # Project-mode judging: run the whole project, check stdout
+    if (exercise.files or []) and exercise.judge_mode == "stdout_check":
+        from app.services.project_runner import run_project, check_stdout
+        client = {f.get("name"): f for f in req.files if f.get("name")}
+        merged = []
+        for f in (exercise.files or []):
+            name = f.get("name", "")
+            if name in client and not f.get("read_only"):
+                merged.append({**f, "content": client[name].get("content", f.get("content", ""))})
+            else:
+                merged.append(f)
+        res = run_project(exercise_id, merged, exercise.entrypoint or "main.py",
+                          exercise.requirements or [])
+        if res["exit_code"] != 0 and not res["timed_out"]:
+            return {"passed": 0, "total": 1, "results": [
+                {"passed": False, "expected": "正常运行", "actual": f"退出码 {res['exit_code']}",
+                 "stderr": res["stderr"][:200]}
+            ], "error": None}
+        check = check_stdout(res["stdout"], exercise.judge_config or {})
+        if check["passed"]:
+            from app.services.progress import record_exercise_solved
+            await record_exercise_solved(exercise.checkpoint_id, exercise.id)
+        return {"passed": 1 if check["passed"] else 0, "total": 1,
+                "results": [{"passed": check["passed"], "expected": check["expected"],
+                              "actual": check["actual"], "detail": check["detail"]}],
+                "stdout": res["stdout"][-1000:]}
+
     test_cases = exercise.test_cases or []
     if not test_cases:
         return {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}

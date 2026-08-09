@@ -4,6 +4,7 @@ import SplitPane from "../components/layout/SplitPane"
 import Editor from '@monaco-editor/react'
 import {
   listExercises, getExercise, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
+  runProject, saveExerciseFiles, submitProject, getExerciseEnv,
 } from '../services/api'
 import ConceptQuestions from '../components/exercise/ConceptQuestions'
 
@@ -21,6 +22,12 @@ export default function ExercisePage() {
   const [exercises, setExercises] = useState<any[]>([])
   const [activeEx, setActiveEx] = useState<any>(null)
   const [code, setCode] = useState('')
+  // ── Project-mode (multi-file) ──
+  const [files, setFiles] = useState<any[]>([])
+  const [activeFileName, setActiveFileName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState('')
+  const [envReady, setEnvReady] = useState<boolean | null>(null)
   const [stdout, setStdout] = useState('')
   const [stderr, setStderr] = useState('')
   const [running, setRunning] = useState(false)
@@ -68,11 +75,49 @@ export default function ExercisePage() {
 
   const selectExercise = (ex: any) => {
     setActiveEx(ex)
-    setCode(ex.starter_code || '')
     setStdout('')
     setStderr('')
     setWsMessages([])
     setSelectedCode('')
+    setSubmitResult(null)
+    setSaveMsg('')
+    // Project-mode: load multi-file project
+    if (ex.files && ex.files.length > 0) {
+      setFiles(ex.files)
+      setActiveFileName(ex.files[0].name)
+      setCode('')
+      getExerciseEnv(ex.id).then(env => setEnvReady(env.ready)).catch(() => setEnvReady(null))
+    } else {
+      setFiles([])
+      setActiveFileName('')
+      setCode(ex.starter_code || '')
+      setEnvReady(null)
+    }
+  }
+
+  const isProjectMode = () => activeEx?.files?.length > 0
+
+  const activeFileContent = () => {
+    const f = files.find(f => f.name === activeFileName)
+    return f ? f.content : ''
+  }
+
+  const updateActiveFile = (content: string) => {
+    setFiles(prev => prev.map(f => f.name === activeFileName ? { ...f, content } : f))
+  }
+
+  const handleSave = async () => {
+    if (!activeEx || files.length === 0) return
+    setSaving(true)
+    setSaveMsg('')
+    try {
+      const res = await saveExerciseFiles(activeEx.id, files)
+      setSaveMsg(`✅ 已保存 ${res.saved?.length || 0} 个文件`)
+      setEnvReady(true)
+    } catch (e: any) {
+      setSaveMsg('❌ 保存失败: ' + (e?.response?.data?.detail || e.message))
+    }
+    setSaving(false)
   }
 
   const handleGenerateEx = async () => {
@@ -105,11 +150,15 @@ export default function ExercisePage() {
   }
 
   const handleSubmit = async () => {
-    if (!activeEx || !code.trim()) return
+    if (!activeEx) return
+    if (isProjectMode() && files.length === 0) return
+    if (!isProjectMode() && !code.trim()) return
     setSubmitting(true)
     setSubmitResult(null)
     try {
-      const result = await submitExercise(activeEx.id, code)
+      const result = isProjectMode()
+        ? await submitProject(activeEx.id, files)
+        : await submitExercise(activeEx.id, code)
       setSubmitResult(result)
     } catch (e: any) {
       setSubmitResult({ error: e?.response?.data?.detail || e.message })
@@ -121,10 +170,20 @@ export default function ExercisePage() {
     setRunning(true)
     setStdout('')
     setStderr('')
+    setSubmitResult(null)
     try {
-      const result = await runCode(code, activeEx?.id)
-      setStdout(result.stdout || '')
-      setStderr(result.stderr || '')
+      if (isProjectMode()) {
+        const result = await runProject(activeEx.id, files)
+        setStdout(result.stdout || '')
+        setStderr(result.stderr || '')
+        if (result.env && !result.env.ready) {
+          setStderr(prev => (prev ? prev + '\n' : '') + '⚠️ 环境未就绪: ' + (result.env.message || ''))
+        }
+      } else {
+        const result = await runCode(code, activeEx?.id)
+        setStdout(result.stdout || '')
+        setStderr(result.stderr || '')
+      }
     } catch (e: any) {
       setStderr(String(e?.response?.data?.detail || e.message))
     }
@@ -134,10 +193,11 @@ export default function ExercisePage() {
   const handleReview = async () => {
     if (!activeEx) return
     setWsLoading(true)
-    const msg: CodeMsg = { role: 'user', content: '请审阅这段代码' }
+    const reviewCodeText = isProjectMode() ? activeFileContent() : code
+    const msg: CodeMsg = { role: 'user', content: `请审阅这段代码 (${activeFileName || activeEx.title})` }
     setWsMessages(prev => [...prev, msg])
     try {
-      const result = await reviewCode(activeEx.id, code, selectedCode)
+      const result = await reviewCode(activeEx.id, reviewCodeText, selectedCode)
       setWsMessages(prev => [...prev, { role: 'assistant', content: result.answer }])
     } catch (e: any) {
       setWsMessages(prev => [...prev, { role: 'assistant', content: '❌ ' + (e?.response?.data?.detail || '请求失败') }])
@@ -156,7 +216,7 @@ export default function ExercisePage() {
     try {
       const { askCodeQuestion } = await import('../services/api')
       const result = await askCodeQuestion({
-        code,
+        code: isProjectMode() ? activeFileContent() : code,
         selection: selectedCode,
         question: text,
         context: activeEx?.title || '',
@@ -327,13 +387,47 @@ export default function ExercisePage() {
                         minRight={180}
                         left={
                           <div className="h-full flex flex-col">
+                            {/* Project-mode: file tabs */}
+                            {isProjectMode() && (
+                              <div className="flex items-center gap-1 px-2 pt-1.5 pb-1 bg-gray-100 border-b border-gray-200 shrink-0 flex-wrap">
+                                {files.map(f => (
+                                  <button
+                                    key={f.name}
+                                    onClick={() => setActiveFileName(f.name)}
+                                    className={`text-[11px] font-mono px-2.5 py-1 rounded-t transition-colors ${
+                                      activeFileName === f.name
+                                        ? 'bg-white text-primary-700 font-semibold border border-b-0 border-gray-200'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                    }`}
+                                  >
+                                    {f.name}
+                                    {f.read_only && <span className="text-gray-400 ml-1 text-[9px]">🔒</span>}
+                                  </button>
+                                ))}
+                                <div className="ml-auto flex items-center gap-2">
+                                  {envReady === false && (
+                                    <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded">
+                                      ⚙️ 首次运行将自动准备环境（安装依赖，约 1-2 分钟）
+                                    </span>
+                                  )}
+                                  <button onClick={handleSave} disabled={saving}
+                                    className="text-[11px] bg-primary-600 text-white px-2.5 py-0.5 rounded hover:bg-primary-700 disabled:bg-gray-300">
+                                    {saving ? '保存中...' : '💾 保存'}
+                                  </button>
+                                  {saveMsg && <span className="text-[10px] text-gray-500">{saveMsg}</span>}
+                                </div>
+                              </div>
+                            )}
                             <div className="flex-1">
                               <Editor
                                 height="100%"
                                 defaultLanguage="python"
                                 theme={darkTheme ? 'vs-dark' : 'light'}
-                                value={code}
-                                onChange={val => setCode(val || '')}
+                                value={isProjectMode() ? activeFileContent() : code}
+                                onChange={val => {
+                                  if (isProjectMode()) updateActiveFile(val || '')
+                                  else setCode(val || '')
+                                }}
                                 onMount={handleEditorMount}
                                 options={{
                                   minimap: { enabled: false },
@@ -341,6 +435,9 @@ export default function ExercisePage() {
                                   lineNumbers: 'on',
                                   scrollBeyondLastLine: false,
                                   renderWhitespace: 'none',
+                                  readOnly: isProjectMode()
+                                    ? (files.find(f => f.name === activeFileName)?.read_only || false)
+                                    : false,
                                 }}
                               />
                             </div>
@@ -383,7 +480,7 @@ export default function ExercisePage() {
                                 className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:bg-gray-300">
                                 {running ? '运行中...' : '▶ 运行'}
                               </button>
-                              <button onClick={handleSubmit} disabled={submitting || !code.trim()}
+                              <button onClick={handleSubmit} disabled={submitting || (isProjectMode() ? files.length === 0 : !code.trim())}
                                 className="bg-gray-900 text-white px-3 py-1 rounded text-xs hover:bg-gray-700 disabled:bg-gray-300">
                                 {submitting ? '判题中...' : '📋 提交判题'}
                               </button>
@@ -391,6 +488,11 @@ export default function ExercisePage() {
                                 className="bg-primary-600 text-white px-3 py-1 rounded text-xs hover:bg-primary-700 disabled:bg-gray-300">
                                 ✔ 审阅
                               </button>
+                              {isProjectMode() && (
+                                <span className="text-[10px] text-gray-400 self-center">
+                                  📁 项目模式：保存后运行整个项目
+                                </span>
+                              )}
                               {selectedCode && (
                                 <span className="text-[10px] text-gray-400 self-center">
                                   已选中 {selectedCode.length} 字符

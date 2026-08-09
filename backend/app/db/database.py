@@ -36,6 +36,16 @@ EXTRA_COLUMNS = {
         ("plan", "TEXT"),        # T10: persisted section plan (resume stability)
         ("concept_graph", "TEXT"),  # concept map {nodes, edges}
     ],
+    "exercises": [
+        ("files", "TEXT"),        # project-mode: [{name, content, read_only}]
+        ("entrypoint", "TEXT"),   # main file to run
+        ("requirements", "TEXT"), # ["torch", "scikit-learn"]
+        ("judge_mode", "TEXT"),  # test_cases | stdout_check
+        ("judge_config", "TEXT"),# {pattern, min_accuracy} for stdout_check
+    ],
+    "process_animations": [
+        ("kind", "TEXT"),         # animation | static（表已存在时补列）
+    ],
 }
 
 

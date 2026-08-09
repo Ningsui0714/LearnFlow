@@ -59,6 +59,29 @@ export const getRoadmapHistory = (projectId: number) =>
 export const getLecture = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/lecture`).then(r => r.data)
 
+// ── Process animations (process-animator) ──
+export interface AnimationStep {
+  title: string
+  text: string
+  bars?: { values: number[]; highlight?: number[]; pivot?: number[]; sorted?: number[]; done?: number[] }
+  svg?: string
+}
+export interface ProcessAnimation {
+  id?: number
+  checkpoint_id?: number
+  section_index?: number
+  source?: string
+  kind?: 'animation' | 'static'
+  title?: string
+  subtitle?: string
+  legend?: [string, string][]
+  steps: AnimationStep[]
+}
+export const generateAnimation = (text: string) =>
+  api.post('/animations/generate', { text }).then(r => r.data)
+export const getAnimation = (id: number) =>
+  api.get(`/animations/${id}`).then(r => r.data)
+
 export const generateConceptGraph = (checkpointId: number) =>
   api.post(`/checkpoints/${checkpointId}/concept-graph/generate`).then(r => r.data)
 
@@ -160,8 +183,8 @@ export const saveLecture = (checkpointId: number, sections: any[]) =>
   api.post(`/checkpoints/${checkpointId}/lecture/save`, { sections }).then(r => r.data)
 
 // ── Tasks (T1: background jobs) ──
-export const createLectureTask = (checkpointId: number, mode: 'fresh' | 'resume' = 'fresh') =>
-  api.post(`/checkpoints/${checkpointId}/lecture/generate`, { mode }).then(r => r.data)
+export const createLectureTask = (checkpointId: number, mode: 'fresh' | 'resume' = 'fresh', feedback?: string) =>
+  api.post(`/checkpoints/${checkpointId}/lecture/generate`, { mode, feedback: feedback || '' }).then(r => r.data)
 
 export const getActiveLectureTask = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/lecture/task`).then(r => r.data)
@@ -207,6 +230,19 @@ export const runCode = (code: string, exerciseId?: number) => {
   const url = exerciseId ? `/exercises/${exerciseId}/run` : '/exercises/run'
   return api.post(url, { code }).then(r => r.data)
 }
+
+// ── Project-mode exercises (multi-file, pilot) ──
+export const runProject = (exerciseId: number, files: any[]) =>
+  api.post(`/exercises/${exerciseId}/run`, { code: '', files }).then(r => r.data)
+
+export const saveExerciseFiles = (exerciseId: number, files: any[]) =>
+  api.put(`/exercises/${exerciseId}/files`, { code: '', files }).then(r => r.data)
+
+export const getExerciseEnv = (exerciseId: number) =>
+  api.get(`/exercises/${exerciseId}/env`).then(r => r.data)
+
+export const submitProject = (exerciseId: number, files: any[]) =>
+  api.post(`/exercises/${exerciseId}/submit`, { code: '', files }).then(r => r.data)
 
 export const reviewCode = (exerciseId: number, code: string, selection?: string) =>
   api.post(`/exercises/${exerciseId}/review`, { code, selection }).then(r => r.data)

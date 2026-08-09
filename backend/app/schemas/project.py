@@ -119,6 +119,12 @@ class ExerciseOut(BaseModel):
     test_cases: List[dict]
     hints: List[str]
     order: int
+    # project-mode fields
+    files: List[dict] = []
+    entrypoint: str = ""
+    requirements: List[str] = []
+    judge_mode: str = "test_cases"
+    judge_config: dict = {}
 
     class Config:
         from_attributes = True
@@ -127,12 +133,15 @@ class ExerciseOut(BaseModel):
 class CodeRunRequest(BaseModel):
     code: str
     selection: str = ""
+    files: List[dict] = []
 
 
 class CodeRunResult(BaseModel):
     stdout: str
     stderr: str
     passed: bool = False
+    elapsed: float = 0.0
+    env: dict = {}
 
 
 class CodeReviewRequest(BaseModel):
@@ -168,3 +177,27 @@ class LectureAskRequest(BaseModel):
     question: str = ""
     history: List[AgentMessage] = []
     action: Optional[str] = None  # explain|example|summary|translate|quiz|trace
+
+
+# ── Process animations (process-animator) ──
+
+class AnimationStep(BaseModel):
+    title: str = ""
+    text: str = ""
+    bars: Optional[dict] = None
+    svg: Optional[str] = None
+
+
+class ProcessAnimationOut(BaseModel):
+    id: int
+    checkpoint_id: Optional[int] = None
+    section_index: int = 0
+    source: str = "manual"
+    title: str = ""
+    subtitle: str = ""
+    legend: list = []
+    steps: List[AnimationStep] = []
+
+
+class AnimationGenerateRequest(BaseModel):
+    text: str
