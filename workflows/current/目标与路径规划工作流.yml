@@ -1,0 +1,444 @@
+flowMeta:
+  name: 目标与路径规划工作流
+  description: 接收学习目标、知识状态与前置关系，规划目标拆解与 3-10 节点学习路径。
+  avatarIcon: ''
+  avatarColor: '#E8F3FF'
+  advancedConfig: '{"prologue":{"enabled":false},"needGuide":false}'
+  dslVersion: v1
+flowData:
+  nodes:
+  - id: node-start::80244eb5-3804-5008-bb8c-a0dd067614f1
+    type: 开始节点
+    position: {x: 0, y: 200}
+    positionAbsolute: {x: 0, y: 200}
+    width: 256
+    height: 74
+    data:
+      allowInputReference: false
+      allowOutputReference: true
+      label: 开始
+      nodeMeta: {aliasName: 开始节点, nodeType: 基础节点}
+      inputs: []
+      outputs:
+      - id: 44dee2a7-1ebe-526f-821d-e4489aacd901
+        name: AGENT_USER_INPUT
+        schema:
+          type: string
+          default: 包含 student_id、goal_description、knowledge_state、prerequisite_graph 的 JSON 字符串
+        required: true
+        deleteDisabled: true
+        nameErrMsg: ''
+      nodeParam: {}
+      updatable: false
+      status: ''
+      icon: https://oss-beijing-m8.openstorage.cn/pro-bucket/sparkBot/common/workflow/icon/start-node-icon.png
+      description: 工作流的开启节点，用于定义流程调用所需的业务变量信息。
+    dragging: false
+    selected: false
+  - id: ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e
+    type: 代码
+    position: {x: 380, y: 200}
+    positionAbsolute: {x: 380, y: 200}
+    width: 362
+    height: 100
+    data:
+      allowInputReference: true
+      allowOutputReference: true
+      label: 解析输入与前置缺口
+      nodeMeta: {aliasName: 代码, nodeType: 工具}
+      inputs:
+      - id: add99e8c-a117-5169-beaf-2c4abb39dd1b
+        name: raw_input
+        schema:
+          type: string
+          value:
+            type: ref
+            content:
+              name: AGENT_USER_INPUT
+              id: 44dee2a7-1ebe-526f-821d-e4489aacd901
+              nodeId: node-start::80244eb5-3804-5008-bb8c-a0dd067614f1
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      outputs:
+      - id: 765ab029-d825-5cfa-aeac-70304b43b5a1
+        name: context_json
+        schema: {type: string, default: ''}
+        nameErrMsg: ''
+        required: false
+      - id: 8d6eb14a-1f45-593b-a650-67cebb3db079
+        name: strategy_json
+        schema: {type: string, default: ''}
+        nameErrMsg: ''
+        required: false
+      - id: af1da062-d4de-59e3-8967-6fbc8edcbfcb
+        name: student_profile_json
+        schema: {type: string, default: ''}
+        nameErrMsg: ''
+        required: false
+      - id: 0df8a374-058a-5cb9-9da7-ad1f75c9b07a
+        name: kb_text
+        schema: {type: string, default: ''}
+        nameErrMsg: ''
+        required: false
+      nodeParam:
+        code: |-
+          import json
+
+
+          def main(raw_input):
+              data = json.loads(str(raw_input or "{}"), strict=False)
+              if not isinstance(data, dict):
+                  raise ValueError("输入必须是 JSON 对象")
+              student_id = str(data.get("student_id", "")).strip()
+              goal_description = str(data.get("goal_description", "")).strip()
+              if not goal_description:
+                  raise ValueError("goal_description 不能为空")
+              knowledge_state = data.get("knowledge_state", {})
+              if not isinstance(knowledge_state, dict):
+                  knowledge_state = {}
+              items = knowledge_state.get("items")
+              if not isinstance(items, list):
+                  items = knowledge_state.get("learning_path", {}).get("items", [])
+                  if not isinstance(items, list):
+                      items = []
+              graph = data.get("prerequisite_graph", {})
+              if not isinstance(graph, dict):
+                  graph = {}
+              knowledge_ids = []
+              gaps = []
+              for item in items:
+                  if not isinstance(item, dict):
+                      continue
+                  item_id = str(item.get("knowledge_point_id", "")).strip()
+                  if item_id:
+                      knowledge_ids.append(item_id)
+                  mastery = int(item.get("mastery", 0) or 0)
+                  prereqs = item.get("prerequisites", [])
+                  if not isinstance(prereqs, list):
+                      prereqs = []
+                  missing = []
+                  for prereq in prereqs:
+                      if isinstance(prereq, dict):
+                          prereq_id = str(prereq.get("knowledge_point_id", "")).strip()
+                      else:
+                          prereq_id = str(prereq).strip()
+                      if prereq_id and prereq_id not in knowledge_ids and mastery < 60:
+                          missing.append(prereq_id)
+                  if missing:
+                      gaps.append({
+                          "knowledge_point_id": item_id,
+                          "mastery": mastery,
+                          "missing_prerequisites": missing,
+                      })
+              context = {
+                  "student_id": student_id,
+                  "goal_description": goal_description,
+                  "knowledge_state": knowledge_state,
+                  "knowledge_ids": knowledge_ids,
+                  "prerequisite_gap": gaps,
+              }
+              return {
+                  "context_json": json.dumps(context, ensure_ascii=False, separators=(",", ":")),
+                  "strategy_json": json.dumps({"planning_hint": "先补前置缺口，再按依赖顺序排路径"}, ensure_ascii=False, separators=(",", ":")),
+                  "student_profile_json": json.dumps({}, ensure_ascii=False, separators=(",", ":")),
+                  "kb_text": "可用知识点：" + ("、".join(knowledge_ids) if knowledge_ids else "空") + "。前置缺口：" + json.dumps(gaps, ensure_ascii=False),
+              }
+        appId: 12a0a7e2
+        uid: '21880654528'
+        codeErrMsg: ''
+      updatable: false
+      status: ''
+      references: []
+      labelEdit: false
+      icon: https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-question.svg
+      description: 面向开发者提供 Python 代码执行能力。
+    dragging: false
+    selected: false
+  - id: spark-llm::a599dc6a-fba7-5aab-82ce-37019ea80ca8
+    type: 大模型
+    position: {x: 820, y: 200}
+    positionAbsolute: {x: 820, y: 200}
+    width: 362
+    height: 100
+    data:
+      allowInputReference: true
+      allowOutputReference: true
+      label: 规划目标与学习路径
+      nodeMeta: {aliasName: 大模型, nodeType: 基础节点}
+      inputs:
+      - id: 9abc1ea7-d8b7-589d-ae5d-abf113460ab4
+        name: context
+        schema:
+          type: string
+          value:
+            type: ref
+            content: {name: context_json, id: 765ab029-d825-5cfa-aeac-70304b43b5a1, nodeId: 'ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e'}
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      - id: fa01b309-d664-5f54-8f2e-43524069af86
+        name: strategy
+        schema:
+          type: string
+          value:
+            type: ref
+            content: {name: strategy_json, id: 8d6eb14a-1f45-593b-a650-67cebb3db079, nodeId: 'ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e'}
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      - id: f9e3e7df-4455-5017-9e45-d2eb8d3443cd
+        name: student_profile
+        schema:
+          type: string
+          value:
+            type: ref
+            content: {name: student_profile_json, id: af1da062-d4de-59e3-8967-6fbc8edcbfcb, nodeId: 'ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e'}
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      - id: 2b241fda-e60c-5b3d-9652-06cf6a228378
+        name: kb_text
+        schema:
+          type: string
+          value:
+            type: ref
+            content: {name: kb_text, id: 0df8a374-058a-5cb9-9da7-ad1f75c9b07a, nodeId: 'ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e'}
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      outputs:
+      - id: 82ff860b-4882-5c04-897a-da339c0a6609
+        name: output
+        schema: {type: string, default: ''}
+        nameErrMsg: ''
+        required: false
+      nodeParam:
+        topK: 4
+        template: |-
+          学习目标与知识状态
+          {{context}}
+
+          规划策略
+          {{strategy}}
+
+          学生画像
+          {{student_profile}}
+
+          知识点依据
+          {{kb_text}}
+        enableChatHistoryV2: {isEnabled: false, rounds: 1}
+        auditing: default
+        llmId: 110
+        url: wss://spark-api.xf-yun.com/v4.0/chat
+        domain: 4.0Ultra
+        maxTokens: 2048
+        temperature: 0.35
+        model: spark
+        serviceId: bm4
+        respFormat: 0
+        systemTemplate: |-
+          你是职业教育学习路径规划师。根据学习目标、知识状态、前置缺口和可用知识点，制定目标拆解与学习路径。
+
+          必须遵守：
+          1. 只使用输入 context.knowledge_ids 中出现的知识点，不编造知识点。
+          2. 先排前置缺口（context.prerequisite_gap 中 missing_prerequisites 对应的知识点），再按依赖顺序排其余节点。
+          3. 路径 3-10 个节点，无重复、无环。
+          4. 每个节点 status 只能取 current|pending|completed，且整条路径只有第一个节点为 current。
+          5. learning_goal.subgoals 为目标拆解（2-4 个），goal_name 来自 goal_description。
+          6. reasons 引用具体证据（前置缺口、掌握度、目标要求），不写空泛理由。
+          7. estimated_days 为合理估算天数（3-60）。
+
+          只输出一个合法 JSON 对象，不输出 Markdown 代码块：
+          {
+            "learning_goal": {"goal_id":"GOAL-...","goal_name":"目标名称","subgoals":["子目标1"]},
+            "learning_path": {"items":[{"knowledge_point_id":"...","knowledge_point_name":"...","status":"current|pending|completed"}]},
+            "estimated_days": 14,
+            "reasons": ["因前置缺口 ... 未达 60%，先补 ..."]
+          }
+        appId: 12a0a7e2
+        uid: '21880654528'
+        patchId: '0'
+        llmIdErrMsg: ''
+        templateErrMsg: ''
+      retryConfig: {shouldRetry: true, errorStrategy: 0}
+      updatable: false
+      status: ''
+      references: []
+      labelEdit: false
+      icon: https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-model.svg
+      description: 根据输入的提示词调用选定的大模型并生成回答。
+    dragging: false
+    selected: false
+  - id: ifly-code::5fd16e9e-0e8b-52e0-90ea-b46f5de2c21b
+    type: 代码
+    position: {x: 1260, y: 200}
+    positionAbsolute: {x: 1260, y: 200}
+    width: 362
+    height: 100
+    data:
+      allowInputReference: true
+      allowOutputReference: true
+      label: 校验目标与路径输出
+      nodeMeta: {aliasName: 代码, nodeType: 工具}
+      inputs:
+      - id: f111b705-f227-5f1d-9f0f-38bcd8f9829e
+        name: model_output
+        schema:
+          type: string
+          value:
+            type: ref
+            content: {name: output, id: 82ff860b-4882-5c04-897a-da339c0a6609, nodeId: 'spark-llm::a599dc6a-fba7-5aab-82ce-37019ea80ca8'}
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      - id: 5b05020f-e428-5d1e-b6e2-c63aa19e629d
+        name: knowledge_ids_json
+        schema:
+          type: string
+          value:
+            type: ref
+            content:
+              name: context_json
+              id: 765ab029-d825-5cfa-aeac-70304b43b5a1
+              nodeId: ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      outputs:
+      - id: 9e306771-6f84-5a6c-ae5f-0da12bd7751a
+        name: final_result_json
+        schema: {type: string, default: ''}
+        nameErrMsg: ''
+        required: false
+      nodeParam:
+        code: |-
+          import json
+          import re
+
+
+          def _has_cycle(items):
+              by_id = {item.get("knowledge_point_id"): item for item in items}
+              visited = set()
+              visiting = set()
+
+              def visit(item_id):
+                  if item_id in visiting:
+                      return True
+                  if item_id in visited:
+                      return False
+                  visiting.add(item_id)
+                  item = by_id.get(item_id, {})
+                  prereqs = item.get("prerequisites", [])
+                  if not isinstance(prereqs, list):
+                      prereqs = []
+                  for prereq in prereqs:
+                      if isinstance(prereq, dict):
+                          prereq_id = prereq.get("knowledge_point_id")
+                      else:
+                          prereq_id = prereq
+                      if prereq_id and visit(prereq_id):
+                          return True
+                  visiting.discard(item_id)
+                  visited.add(item_id)
+                  return False
+
+              for item_id in by_id:
+                  if visit(item_id):
+                      return True
+              return False
+
+
+          def main(model_output, knowledge_ids_json):
+              try:
+                  text = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(model_output or "").strip(), flags=re.I)
+                  start, end = text.find("{"), text.rfind("}")
+                  if start < 0 or end < start:
+                      raise ValueError("大模型输出中未找到 JSON 对象")
+                  result = json.loads(text[start:end + 1], strict=False)
+                  goal = result.get("learning_goal")
+                  path = result.get("learning_path")
+                  if not isinstance(goal, dict) or not str(goal.get("goal_name", "")).strip():
+                      raise ValueError("learning_goal.goal_name 不能为空")
+                  if not isinstance(path, dict) or not isinstance(path.get("items"), list):
+                      raise ValueError("learning_path.items 必须是数组")
+                  items = path["items"]
+                  if not (3 <= len(items) <= 10):
+                      raise ValueError("路径节点数量必须在 3-10 之间")
+                  knowledge_ids = []
+                  try:
+                      parsed_ids = json.loads(str(knowledge_ids_json or "[]"))
+                  except (TypeError, ValueError, json.JSONDecodeError):
+                      parsed_ids = []
+                  if isinstance(parsed_ids, dict):
+                      knowledge_ids = parsed_ids.get("knowledge_ids", [])
+                  elif isinstance(parsed_ids, list):
+                      knowledge_ids = parsed_ids
+                  if not isinstance(knowledge_ids, list):
+                      knowledge_ids = []
+                  knowledge_ids = [str(item).strip() for item in knowledge_ids]
+                  ids = [str(item.get("knowledge_point_id", "")).strip() for item in items]
+                  if any(not item_id for item_id in ids):
+                      raise ValueError("路径节点缺少 knowledge_point_id")
+                  if len(set(ids)) != len(ids):
+                      raise ValueError("路径节点不能重复")
+                  if knowledge_ids and any(item_id not in knowledge_ids for item_id in ids):
+                      raise ValueError("路径节点必须来自可用知识点列表")
+                  if _has_cycle(items):
+                      raise ValueError("路径存在环")
+                  result["status"] = "ok"
+                  return {"final_result_json": json.dumps(result, ensure_ascii=False, separators=(",", ":"))}
+              except Exception:
+                  fallback = {
+                      "status": "system_retryable",
+                      "learning_path": {"items": [], "error_message": "路径校验未通过，正在重新规划"},
+                      "reasons": ["路径规划正在重新生成"],
+                  }
+                  return {"final_result_json": json.dumps(fallback, ensure_ascii=False, separators=(",", ":"))}
+        appId: 12a0a7e2
+        uid: '21880654528'
+        codeErrMsg: ''
+      updatable: false
+      status: ''
+      references: []
+      labelEdit: false
+      icon: https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-question.svg
+      description: 面向开发者提供 Python 代码执行能力。
+    dragging: false
+    selected: false
+  - id: node-end::b03654ff-cda8-5974-bc38-87345cc0332e
+    type: 结束节点
+    position: {x: 1700, y: 200}
+    positionAbsolute: {x: 1700, y: 200}
+    width: 362
+    height: 74
+    data:
+      allowInputReference: true
+      allowOutputReference: false
+      label: 结束
+      nodeMeta: {aliasName: 结束节点, nodeType: 基础节点}
+      inputs:
+      - id: 00515ae7-29a1-5787-b472-87afb5b2338b
+        name: result_json
+        schema:
+          type: string
+          value:
+            type: ref
+            content: {name: final_result_json, id: 9e306771-6f84-5a6c-ae5f-0da12bd7751a, nodeId: 'ifly-code::5fd16e9e-0e8b-52e0-90ea-b46f5de2c21b'}
+            contentErrMsg: ''
+        nameErrMsg: ''
+        fileType: ''
+      outputs: []
+      nodeParam: {template: '', streamOutput: true, outputMode: 0}
+      updatable: false
+      status: ''
+      references: []
+      icon: https://oss-beijing-m8.openstorage.cn/pro-bucket/sparkBot/common/workflow/icon/end-node-icon.png
+      description: 工作流的结束节点，用于输出工作流运行后的最终结果。
+    dragging: false
+    selected: false
+  edges:
+  - {source: 'node-start::80244eb5-3804-5008-bb8c-a0dd067614f1', sourceHandle: '', target: 'ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e', type: customEdge, id: 'reactflow__edge-node-start::80244eb5-3804-5008-bb8c-a0dd067614f1-ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
+  - {source: 'ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e', sourceHandle: '', target: 'spark-llm::a599dc6a-fba7-5aab-82ce-37019ea80ca8', type: customEdge, id: 'reactflow__edge-ifly-code::1e16613d-8e31-5491-a6e2-e41ff423715e-spark-llm::a599dc6a-fba7-5aab-82ce-37019ea80ca8', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
+  - {source: 'spark-llm::a599dc6a-fba7-5aab-82ce-37019ea80ca8', sourceHandle: '', target: 'ifly-code::5fd16e9e-0e8b-52e0-90ea-b46f5de2c21b', type: customEdge, id: 'reactflow__edge-spark-llm::a599dc6a-fba7-5aab-82ce-37019ea80ca8-ifly-code::5fd16e9e-0e8b-52e0-90ea-b46f5de2c21b', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
+  - {source: 'ifly-code::5fd16e9e-0e8b-52e0-90ea-b46f5de2c21b', sourceHandle: '', target: 'node-end::b03654ff-cda8-5974-bc38-87345cc0332e', type: customEdge, id: 'reactflow__edge-ifly-code::5fd16e9e-0e8b-52e0-90ea-b46f5de2c21b-node-end::b03654ff-cda8-5974-bc38-87345cc0332e', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}

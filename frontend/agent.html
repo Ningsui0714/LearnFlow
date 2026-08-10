@@ -1,0 +1,961 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>知行课径 Agent · 个性化学习助手</title>
+  <script src="vendor/lucide.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f2f4f0;
+      --surface: #ffffff;
+      --surface-soft: #f8faf7;
+      --ink: #18201d;
+      --muted: #57615c;
+      --muted-soft: #aeb9b3;
+      --line: #dce2dd;
+      --line-strong: #c6cec8;
+      --green: #1f6b55;
+      --green-soft: #e7f2ec;
+      --green-strong: #195a47;
+      --blue: #2859c5;
+      --blue-soft: #e9effc;
+      --amber: #b96b18;
+      --amber-soft: #fff2df;
+      --red: #ae3b3b;
+      --red-soft: #fbeaea;
+      --shadow: 0 8px 22px rgba(24, 32, 29, 0.08);
+      --shadow-lg: 0 16px 40px rgba(24, 32, 29, 0.16);
+      --radius: 12px;
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+    button, textarea, input { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    svg { display: block; width: 18px; height: 18px; stroke-width: 1.8; }
+    [hidden] { display: none !important; }
+
+    .app { display: flex; flex-direction: column; height: 100vh; }
+
+    .topbar {
+      height: 54px; flex: none; display: flex; align-items: center; gap: 12px;
+      padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); z-index: 30;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-mark {
+      width: 30px; height: 30px; border-radius: 9px; background: var(--green); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .brand-copy strong { font-size: 15px; display: block; line-height: 1.2; }
+    .brand-copy small { color: var(--muted-soft); font-size: 11px; }
+    .topbar-spacer { flex: 1; }
+    .conn-state { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+    .conn-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .topbar-user { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+    .avatar {
+      width: 30px; height: 30px; border-radius: 50%; background: var(--green-soft);
+      color: var(--green-strong); font-size: 13px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .layout { flex: 1; display: grid; grid-template-columns: 290px minmax(0, 1fr) 400px; min-height: 0; }
+
+    .sidebar { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .sidebar-head { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .sidebar-head strong { font-size: 13px; color: var(--muted); letter-spacing: 1px; }
+    .new-project-btn { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; background: var(--green); color: #fff; border: none; border-radius: 8px; padding: 6px 10px; }
+    .new-project-btn:hover { background: var(--green-strong); }
+    .project-tree { flex: 1; overflow-y: auto; padding: 10px 8px; }
+
+    .tree-empty { padding: 26px 16px; text-align: center; color: var(--muted-soft); font-size: 13px; line-height: 1.7; }
+    .tree-empty svg { width: 30px; height: 30px; margin: 0 auto 8px; opacity: .5; }
+
+    .project-node { margin-bottom: 6px; border-radius: 10px; }
+    .project-node.open { background: var(--surface-soft); }
+    .project-header {
+      width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 10px;
+      background: none; border: none; border-radius: 10px; text-align: left; font-size: 13px; font-weight: 600;
+    }
+    .project-header:hover { background: var(--surface-soft); }
+    .project-header .chev { color: var(--muted-soft); transition: transform .18s; }
+    .project-node.open .chev { transform: rotate(90deg); }
+    .project-header .folder { color: var(--green); }
+    .project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .project-meta { font-size: 11px; color: var(--muted-soft); font-weight: 400; }
+
+    .path-list { list-style: none; margin: 2px 0 8px; padding: 0; }
+    .path-item button {
+      width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 10px 8px 16px;
+      background: none; border: none; border-radius: 9px; text-align: left; font-size: 12.5px; color: var(--ink-soft);
+    }
+    .path-item button:hover { background: var(--green-soft); }
+    .path-item.active button { background: var(--green-soft); color: var(--green-strong); font-weight: 600; }
+    .path-state {
+      flex: none; width: 18px; height: 18px; border-radius: 50%; font-size: 10px;
+      display: flex; align-items: center; justify-content: center; background: var(--line); color: var(--muted);
+    }
+    .path-item.current .path-state { background: var(--amber); color: #fff; }
+    .path-item.learning .path-state { background: var(--green); color: #fff; }
+    .path-item.pending .path-state { background: transparent; color: var(--muted-soft); }
+    .path-copy { flex: 1; min-width: 0; }
+    .path-copy small { display: block; font-size: 10.5px; color: var(--muted-soft); margin-bottom: 1px; }
+    .path-copy strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    .path-mastery { font-size: 10.5px; color: var(--muted-soft); flex: none; min-width: 34px; text-align: right; }
+    .path-item.current .path-mastery { color: var(--amber); font-weight: 600; }
+
+    .sidebar-foot { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+    .sidebar-foot small { color: var(--muted-soft); display: block; }
+
+    .profile-entry {
+      width: calc(100% - 16px); margin: 4px 8px 6px; display: flex; align-items: center; gap: 8px;
+      background: var(--surface-soft); border: 1px solid var(--line); border-radius: 9px;
+      padding: 9px 12px; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); text-align: left;
+    }
+    .profile-entry:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
+    .profile-entry svg { width: 16px; height: 16px; }
+
+    .profile-view { max-width: 640px; margin: 0 auto; padding: 40px 24px; }
+    .profile-back { display: inline-flex; align-items: center; gap: 5px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 9px; padding: 8px 14px; font-size: 12.5px; font-weight: 600; margin-bottom: 14px; }
+    .profile-back:hover { border-color: var(--green); color: var(--green-strong); }
+    .profile-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
+    .profile-top { display: flex; gap: 16px; align-items: center; margin-bottom: 22px; }
+    .profile-avatar-lg { width: 64px; height: 64px; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
+    .profile-top h1 { margin: 0 0 4px; font-size: 20px; }
+    .profile-top p { margin: 2px 0; color: var(--muted); font-size: 12.5px; }
+    .profile-top .profile-program { color: var(--green-strong); }
+    .profile-stats { display: flex; gap: 12px; margin-bottom: 22px; }
+    .profile-stat { flex: 1; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; padding: 14px; text-align: center; }
+    .profile-stat strong { display: block; font-size: 22px; color: var(--green-strong); }
+    .profile-stat small { color: var(--muted); font-size: 12px; }
+    .profile-guide { border-top: 1px solid var(--line); padding-top: 16px; }
+    .profile-guide p { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; }
+    .legacy-link { display: inline-flex; align-items: center; gap: 6px; color: var(--blue); font-size: 13px; text-decoration: none; font-weight: 600; }
+    .legacy-link:hover { text-decoration: underline; }
+
+    .stage { min-height: 0; overflow-y: auto; background: var(--bg); }
+
+    .welcome { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; }
+    .welcome-icon { width: 64px; height: 64px; border-radius: 20px; background: var(--green); color: #fff; display: flex; align-items: center; justify-content: center; margin-bottom: 18px; box-shadow: var(--shadow); }
+    .welcome-icon svg { width: 30px; height: 30px; }
+    .welcome h1 { margin: 0 0 8px; font-size: 22px; }
+    .welcome p { margin: 0 0 26px; color: var(--muted); max-width: 440px; line-height: 1.7; font-size: 13.5px; }
+    .welcome-steps { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+    .welcome-step { width: 200px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; text-align: left; box-shadow: var(--shadow); }
+    .welcome-step .num { width: 24px; height: 24px; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+    .welcome-step strong { font-size: 13.5px; display: block; margin-bottom: 5px; }
+    .welcome-step small { color: var(--muted); font-size: 12px; line-height: 1.6; display: block; }
+
+    .lesson { max-width: 780px; margin: 0 auto; padding: 28px 32px 60px; }
+    .lesson-crumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-soft); margin-bottom: 14px; }
+    .lesson-crumb .sep { opacity: .6; }
+    .lesson-crumb button { background: none; border: none; color: var(--green); font-size: 12px; padding: 0; }
+    .lesson-head { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px 24px; box-shadow: var(--shadow); }
+    .lesson-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--green-strong); background: var(--green-soft); border-radius: 999px; padding: 3px 10px; margin-bottom: 10px; }
+    .lesson-head h1 { margin: 0 0 8px; font-size: 21px; }
+    .lesson-objective { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+    .lesson-meta { display: flex; gap: 16px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+    .lesson-meta span { display: inline-flex; align-items: center; gap: 5px; }
+
+    .lesson-body { margin-top: 16px; }
+    .lesson-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px; box-shadow: var(--shadow); }
+    .lesson-card h3 { margin: 0 0 12px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+    .lesson-card h3 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex: none; }
+    .lesson-card p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.85; color: var(--ink-soft); }
+    .lesson-card ul, .lesson-card ol { margin: 0 0 10px; padding-left: 20px; font-size: 13.5px; line-height: 1.85; color: var(--ink-soft); }
+    .lesson-card li { margin-bottom: 5px; }
+    .block-source { margin-top: 10px; font-size: 11.5px; color: var(--muted-soft); display: flex; align-items: center; gap: 5px; }
+
+    .video-card { display: flex; align-items: center; gap: 14px; background: var(--surface-soft); border: 1px dashed var(--line-strong); border-radius: 10px; padding: 14px 16px; margin-top: 8px; }
+    .video-card .play { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--amber-soft); color: var(--amber); display: flex; align-items: center; justify-content: center; }
+    .video-card strong { font-size: 13px; display: block; margin-bottom: 3px; }
+    .video-card small { color: var(--muted); font-size: 12px; }
+    .video-card a { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 5px; background: var(--amber); color: #fff; text-decoration: none; font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 8px 14px; }
+    .video-card a:hover { background: #a35f14; }
+
+    .chat { background: var(--surface); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .chat-head { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+    .chat-head .bot-icon { width: 32px; height: 32px; border-radius: 10px; background: var(--green); color: #fff; display: flex; align-items: center; justify-content: center; flex: none; }
+    .chat-head strong { font-size: 13.5px; display: block; }
+    .chat-head small { font-size: 11px; color: var(--green); display: flex; align-items: center; gap: 4px; }
+    .chat-head small::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+    .chat-messages { flex: 1; overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+    .msg { display: flex; gap: 10px; max-width: 100%; }
+    .msg .bubble-avatar { flex: none; width: 28px; height: 28px; border-radius: 9px; font-size: 12px; display: flex; align-items: center; justify-content: center; background: var(--green-soft); color: var(--green-strong); }
+    .msg.bot .bubble-avatar { background: var(--green); color: #fff; }
+    .msg .bubble { background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.75; color: var(--ink-soft); min-width: 0; box-shadow: var(--shadow); }
+    .msg.user { flex-direction: row-reverse; }
+    .msg.user .bubble { background: var(--green); border-color: var(--green); color: #fff; border-top-right-radius: 4px; }
+    .msg.bot .bubble { border-top-left-radius: 4px; }
+    .msg .bubble p { margin: 0 0 8px; }
+    .msg .bubble p:last-child { margin-bottom: 0; }
+    .msg .bubble strong { color: var(--ink); }
+    .msg.user .bubble strong { color: #fff; }
+
+    .suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
+    .suggestion-chip { font-size: 11.5px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 11px; color: var(--muted); }
+    .suggestion-chip:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
+
+    .chat-input-box { padding: 10px 14px 14px; border-top: 1px solid var(--line); }
+    .chat-input { display: flex; align-items: flex-end; gap: 8px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 12px; padding: 8px 8px 8px 14px; }
+    .chat-input:focus-within { border-color: var(--green); }
+    .chat-input textarea { flex: 1; border: none; background: none; resize: none; outline: none; font-size: 13px; line-height: 1.6; min-height: 22px; max-height: 120px; padding: 4px 0; }
+    .send-btn { flex: none; width: 34px; height: 34px; border-radius: 10px; border: none; background: var(--green); color: #fff; display: flex; align-items: center; justify-content: center; }
+    .send-btn:hover { background: var(--green-strong); }
+    .send-btn:disabled { background: var(--line); cursor: default; }
+
+    .quiz-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 8px; }
+
+    .chat-answer { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 2px; }
+    .ca-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted-soft); margin-bottom: 8px; }
+    .ca-text { margin: 0 0 10px; font-size: 13px; line-height: 1.85; color: var(--ink-soft); }
+    .chat-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-top: 1px dashed var(--line); padding-top: 10px; }
+    .chat-sources small { color: var(--muted-soft); font-size: 11px; }
+    .source-chip { font-size: 11px; background: var(--green-soft); color: var(--green-strong); border-radius: 999px; padding: 3px 9px; }
+    .quiz-card .qc-head { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+    .quiz-card .qc-head svg { color: var(--blue); }
+    .quiz-card p { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
+    .quiz-actions { display: flex; align-items: center; gap: 10px; }
+    .primary-btn { display: inline-flex; align-items: center; gap: 6px; background: var(--green); color: #fff; border: none; border-radius: 9px; padding: 9px 16px; font-size: 13px; font-weight: 600; }
+    .primary-btn:hover { background: var(--green-strong); }
+    .primary-btn.blue { background: var(--blue); }
+    .primary-btn.blue:hover { background: #1f47a3; }
+    .primary-btn:disabled { background: var(--line); cursor: default; }
+
+    .analysis-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-top: 8px; }
+    .analysis-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .analysis-head .ah-icon { width: 42px; height: 42px; border-radius: 12px; background: var(--green-soft); color: var(--green); display: flex; align-items: center; justify-content: center; flex: none; }
+    .analysis-head .ah-copy { flex: 1; }
+    .analysis-head .ah-copy strong { font-size: 14px; display: block; margin-bottom: 3px; }
+    .analysis-head .ah-copy small { color: var(--muted); font-size: 12px; }
+    .weak-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+    .weak-tag { font-size: 11.5px; background: var(--red-soft); color: var(--red); border-radius: 999px; padding: 4px 10px; }
+    .analysis-note { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.7; }
+    .analysis-note b { color: var(--green-strong); }
+
+    .typing { display: inline-flex; gap: 4px; align-items: center; padding: 4px 2px; }
+    .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-soft); animation: blink 1.2s infinite; }
+    .typing i:nth-child(2) { animation-delay: .2s; }
+    .typing i:nth-child(3) { animation-delay: .4s; }
+    @keyframes blink { 0%, 70%, 100% { opacity: .25; } 35% { opacity: 1; } }
+
+    .drawer-backdrop { position: fixed; inset: 0; background: rgba(24, 32, 29, .32); z-index: 40; opacity: 0; transition: opacity .25s; }
+    .drawer-backdrop.show { opacity: 1; }
+    .quiz-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 92vw; z-index: 50; background: var(--surface); box-shadow: var(--shadow-lg); transform: translateX(102%); transition: transform .3s cubic-bezier(.2, .8, .25, 1); display: flex; flex-direction: column; }
+    .quiz-drawer.open { transform: translateX(0); }
+    .quiz-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+    .quiz-head .qh-icon { color: var(--blue); }
+    .quiz-head strong { flex: 1; font-size: 14.5px; }
+    .quiz-head .close-btn { background: none; border: none; color: var(--muted); padding: 4px; border-radius: 8px; }
+    .quiz-head .close-btn:hover { background: var(--surface-soft); color: var(--ink); }
+    .quiz-progress-track { height: 4px; background: var(--line); }
+    .quiz-progress-bar { height: 100%; background: var(--blue); transition: width .25s; }
+    .quiz-body { flex: 1; overflow-y: auto; padding: 22px 22px 12px; }
+    .quiz-body .q-index { font-size: 12px; color: var(--muted-soft); margin-bottom: 8px; }
+    .quiz-body h2 { font-size: 16px; margin: 0 0 18px; line-height: 1.6; }
+    .option { width: 100%; display: flex; align-items: flex-start; gap: 11px; text-align: left; background: var(--surface-soft); border: 1.5px solid var(--line); border-radius: 11px; padding: 13px 15px; margin-bottom: 10px; font-size: 13.5px; line-height: 1.6; }
+    .option:hover { border-color: var(--blue); }
+    .option.selected { border-color: var(--blue); background: var(--blue-soft); }
+    .option .opt-key { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line-strong); font-size: 11.5px; font-weight: 700; color: var(--muted); display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+    .option.selected .opt-key { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .quiz-foot { padding: 14px 22px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+    .quiz-error { color: var(--red); font-size: 12px; padding: 0 22px 8px; }
+
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 250px minmax(0, 1fr) 340px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"><i data-lucide="route"></i></span>
+        <span class="brand-copy"><strong>知行课径 Agent</strong><small>个性化自适应学习助手</small></span>
+      </div>
+      <div class="topbar-spacer"></div>
+      <span class="conn-state" id="conn-state">连接服务中</span>
+      <div class="topbar-user"><span class="avatar" id="user-avatar">学</span><span id="user-name">学习者</span></div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <strong>项目</strong>
+          <button class="new-project-btn" id="new-project-btn"><i data-lucide="plus"></i> 新建项目</button>
+        </div>
+        <div class="project-tree" id="project-tree"></div>
+        <button class="profile-entry" id="profile-entry"><i data-lucide="user"></i> 个人中心</button>
+        <div class="sidebar-foot">
+          <span class="avatar">学</span>
+          <div><span id="foot-student-name">学习者</span><small>软件技术专业 · Java 应用开发</small></div>
+        </div>
+      </aside>
+
+      <main class="stage" id="stage">
+        <div class="welcome" id="welcome-view">
+          <div class="welcome-icon"><i data-lucide="sparkles"></i></div>
+          <h1>开始你的学习之旅</h1>
+          <p>在右侧对话框告诉助手你的学习目标，系统会通过测评了解你的掌握情况，为你生成个性化学习路径。</p>
+          <div class="welcome-steps">
+            <div class="welcome-step"><div class="num">1</div><strong>对话定目标</strong><small>告诉助手你想学什么、学到什么程度</small></div>
+            <div class="welcome-step"><div class="num">2</div><strong>测评摸底</strong><small>完成能力测评，系统分析你的薄弱点</small></div>
+            <div class="welcome-step"><div class="num">3</div><strong>路径学习</strong><small>按个性化路径逐章学习，视频资源一键跳转</small></div>
+          </div>
+        </div>
+        <section class="profile-view" id="profile-view" hidden>
+          <div class="profile-card">
+            <button class="profile-back" id="profile-back"><i data-lucide="chevron-left"></i> 返回</button>
+            <div class="profile-top">
+              <span class="profile-avatar-lg" id="profile-avatar">学</span>
+              <div>
+                <h1 id="profile-name">学习者</h1>
+                <p id="profile-id">STU-DEMO-001</p>
+                <p class="profile-program" id="profile-program">软件技术专业 · Java 应用开发</p>
+              </div>
+            </div>
+            <div class="profile-stats">
+              <div class="profile-stat"><strong id="stat-projects">0</strong><small>学习项目</small></div>
+              <div class="profile-stat"><strong id="stat-explanations">0</strong><small>讲解会话</small></div>
+              <div class="profile-stat"><strong id="stat-attempts">0</strong><small>练习作答</small></div>
+            </div>
+            <div class="profile-guide">
+              <p>在右侧对话框输入新的学习目标，即可创建新项目并重新测评。</p>
+              <a class="legacy-link" href="index.html"><i data-lucide="library"></i> 打开经典版：题库 / 用户画像 / 成长轨迹 / 学习记录</a>
+            </div>
+          </div>
+        </section>
+        <article class="lesson" id="lesson-view" hidden>
+          <div class="lesson-crumb">
+            <button id="crumb-home">项目</button><span class="sep">/</span>
+            <span id="crumb-project">—</span><span class="sep">/</span>
+            <span id="crumb-lesson">—</span>
+          </div>
+          <div class="lesson-head">
+            <span class="lesson-tag" id="lesson-tag">知识点</span>
+            <h1 id="lesson-title">—</h1>
+            <p class="lesson-objective" id="lesson-objective"></p>
+            <div class="lesson-meta" id="lesson-meta"></div>
+          </div>
+          <div class="lesson-body" id="lesson-body"></div>
+        </article>
+      </main>
+
+      <aside class="chat">
+        <div class="chat-head">
+          <span class="bot-icon"><i data-lucide="sparkles"></i></span>
+          <div><strong>知行课径助手</strong><small>在线 · 已接入领域知识库</small></div>
+        </div>
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="suggestions" id="suggestions" hidden></div>
+        <div class="chat-input-box">
+          <div class="chat-input">
+            <textarea id="chat-textarea" rows="1" placeholder="输入你的学习目标，例如：我想掌握 Java 面向对象编程…"></textarea>
+            <button class="send-btn" id="send-btn" title="发送"><i data-lucide="send"></i></button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    <aside class="quiz-drawer" id="quiz-drawer" aria-label="能力测评">
+      <div class="quiz-head">
+        <span class="qh-icon"><i data-lucide="clipboard-list"></i></span>
+        <strong id="quiz-title">能力测评</strong>
+        <button class="close-btn" id="quiz-close" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="quiz-progress-track"><div class="quiz-progress-bar" id="quiz-progress-bar" style="width:0%"></div></div>
+      <div class="quiz-body" id="quiz-body"></div>
+      <div class="quiz-error" id="quiz-error" hidden></div>
+      <div class="quiz-foot">
+        <button class="primary-btn" id="quiz-prev" disabled><i data-lucide="chevron-left"></i> 上一题</button>
+        <button class="primary-btn blue" id="quiz-next" disabled>开始测评</button>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    /* ================= 基础 ================= */
+    const STUDENT_ID = localStorage.getItem("learning.student_id") || "STU-DEMO-001";
+    const $ = (id) => document.getElementById(id);
+    const messagesEl = $("chat-messages");
+    const treeEl = $("project-tree");
+    const welcomeEl = $("welcome-view");
+    const lessonEl = $("lesson-view");
+    const drawerEl = $("quiz-drawer");
+    const backdropEl = $("drawer-backdrop");
+    const stageEl = $("stage");
+    const profileEl = $("profile-view");
+
+    const state = {
+      projects: [],        // 项目摘要列表（左栏）
+      current: null,       // 当前项目（对话上下文）
+      quiz: null,          // { project_id, questions, index, answers[] }
+      busy: false,         // 输入锁定
+    };
+
+    function icons() { if (window.lucide) lucide.createIcons(); }
+    function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+    function escapeHtml(s) {
+      return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        method: options.method || "GET",
+        headers: { "Content-Type": "application/json" },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+      let data = {};
+      try { data = await response.json(); } catch (_) { /* 非 JSON 响应 */ }
+      if (!response.ok) {
+        throw new Error(data.message || `请求失败（HTTP ${response.status}）`);
+      }
+      return data;
+    }
+
+    /* ================= 对话 ================= */
+    function scrollChat() { messagesEl.scrollTop = messagesEl.scrollHeight; }
+
+    function addMsg(role, html) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      const avatar = role === "bot"
+        ? '<span class="bubble-avatar"><i data-lucide="sparkles"></i></span>'
+        : '<span class="bubble-avatar">我</span>';
+      div.innerHTML = avatar + '<div class="bubble">' + html + "</div>";
+      messagesEl.appendChild(div);
+      icons();
+      scrollChat();
+      return div;
+    }
+
+    function setInputEnabled(on) {
+      state.busy = !on;
+      $("send-btn").disabled = !on;
+      $("chat-textarea").disabled = !on;
+    }
+
+    function showSuggestions(chips) {
+      const box = $("suggestions");
+      box.hidden = false;
+      box.innerHTML = "";
+      (chips || DEFAULT_CHIPS).forEach((c) => {
+        const b = document.createElement("button");
+        b.className = "suggestion-chip";
+        b.textContent = c;
+        b.onclick = () => sendGoal(c);
+        box.appendChild(b);
+      });
+    }
+    function hideSuggestions() { $("suggestions").hidden = true; }
+
+    const DEFAULT_CHIPS = [
+      "我想系统掌握 Java 面向对象编程",
+      "备战世界职业院校技能大赛",
+      "我想考 1+X Java 应用开发认证",
+    ];
+
+    /* ================= 对话流程：问答分流 ================= */
+    const QUESTION_WORDS = ["什么", "哪些", "怎么", "如何", "为什么", "区别", "啥", "吗", "？", "?", "讲解", "介绍", "说说", "报错", "错误", "用法"];
+    function isQuestion(text) { return QUESTION_WORDS.some((w) => text.includes(w)); }
+
+    async function renderChatAnswer(result) {
+      const sources = result.sources || [];
+      const sourceHtml = sources.length
+        ? '<div class="chat-sources"><small>依据：</small>' + sources.map((s) =>
+            '<span class="source-chip">' + escapeHtml(s.title || s.quote_text || "知识库") +
+            (s.locator ? " · " + escapeHtml(s.locator) : "") + "</span>").join("") + "</div>"
+        : "";
+      addMsg("bot",
+        '<div class="chat-answer">' +
+          '<div class="ca-badge"><i data-lucide="sparkles"></i> AI 生成 · 依据领域知识库</div>' +
+          '<p class="ca-text">' + escapeHtml(result.answer).replace(/\n/g, "<br/>") + "</p>" +
+          sourceHtml +
+        "</div>");
+    }
+
+    async function askChat(message, showMiss = false) {
+      let result;
+      try {
+        result = await api("/api/chat", { method: "POST", body: { student_id: STUDENT_ID, message } });
+      } catch (error) {
+        addMsg("bot", "<p><strong>出错了：</strong>" + escapeHtml(error.message) + "</p>");
+        return false;
+      }
+      if (result.status === "needs_clarification") {
+        const msgEl = addMsg("bot", "<p>" + escapeHtml(result.message || "你的问题有点笼统，先确认一下方向：") + "</p>");
+        const options = result.clarify_options || [];
+        if (options.length) {
+          const box = document.createElement("div");
+          box.className = "quiz-actions";
+          options.forEach((opt) => {
+            const b = document.createElement("button");
+            b.className = "primary-btn blue";
+            b.style.padding = "7px 12px";
+            b.style.fontSize = "12px";
+            b.textContent = opt.label;
+            b.onclick = () => askChat(opt.label);
+            box.appendChild(b);
+          });
+          msgEl.querySelector(".bubble").appendChild(box);
+        }
+        return false;
+      }
+      if (result.status === "ok" && result.answer && (result.ai_generated || (result.sources || []).length)) {
+        await renderChatAnswer(result);
+        return true;
+      }
+      // 知识库未命中：仅在纯问答路径展示提示，目标兜底路径由调用方决定文案
+      if (result.answer && showMiss) {
+        addMsg("bot", "<p>" + escapeHtml(result.answer) + "</p>");
+      }
+      return false;
+    }
+
+    async function sendGoal(text) {
+      const value = (text || $("chat-textarea").value).trim();
+      if (!value || state.busy) return;
+      $("chat-textarea").value = "";
+      hideSuggestions();
+      setInputEnabled(false);
+      addMsg("user", "<strong>" + escapeHtml(value) + "</strong>");
+      await sleep(400);
+
+      // 问答分流：疑问句直接走知识问答（/api/chat）
+      if (isQuestion(value)) {
+        await askChat(value, true);
+        setInputEnabled(true);
+        showSuggestions();
+        return;
+      }
+
+      let result;
+      try {
+        result = await api("/api/projects", { method: "POST", body: { student_id: STUDENT_ID, text: value } });
+      } catch (error) {
+        addMsg("bot", "<p><strong>出错了：</strong>" + escapeHtml(error.message) + "</p>");
+        setInputEnabled(true);
+        showSuggestions();
+        return;
+      }
+
+      if (result.status === "needs_clarification") {
+        // 创建目标失败：先尝试按知识问答兜底，答不上再返回目标澄清
+        const answered = await askChat(value);
+        if (!answered) {
+          addMsg("bot", "<p>" + escapeHtml(result.clarification) + "</p>");
+        }
+        setInputEnabled(true);
+        showSuggestions();
+        return;
+      }
+
+      state.current = result.project;
+      await refreshProjects();
+      const project = result.project;
+      addMsg("bot",
+        "<p><strong>目标已创建为项目：</strong>" + escapeHtml(project.goal_name) + "</p>" +
+        "<p>为了给你生成真正个性化的学习路径，请先完成一次能力测评（约 3 分钟）。</p>" +
+        '<div class="quiz-card">' +
+          '<div class="qc-head"><i data-lucide="clipboard-list"></i> 能力测评 · 根据目标取样</div>' +
+          "<p>覆盖数据类型、类与对象、封装、继承等核心知识点。完成后系统将立即分析你的薄弱环节。</p>" +
+          '<div class="quiz-actions">' +
+            '<button class="primary-btn blue" id="start-quiz-btn"><i data-lucide="play"></i> 开始测评</button>' +
+            '<button class="ghost-link" id="later-quiz-btn" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">稍后测评</button>' +
+          "</div>" +
+        "</div>");
+      const last = messagesEl.lastElementChild;
+      last.querySelector("#start-quiz-btn").onclick = startQuiz;
+      last.querySelector("#later-quiz-btn").onclick = () => {
+        addMsg("bot", "<p>好的，路径已经生成在<b>左侧项目树</b>中，你可以直接点击章节开始学习，也可以随时回来测评以获得更精准的路径。</p>");
+      };
+      setInputEnabled(true);
+      showSuggestions();
+    }
+
+    /* ================= 测评抽屉 ================= */
+    async function startQuiz() {
+      if (!state.current) return;
+      setInputEnabled(false);
+      try {
+        const result = await api("/api/projects/" + state.current.project_id + "/diagnosis/start", {
+          method: "POST",
+          body: { student_id: STUDENT_ID },
+        });
+        state.quiz = {
+          project_id: state.current.project_id,
+          questions: result.questions,
+          index: 0,
+          answers: new Array(result.questions.length).fill(null),
+        };
+        $("quiz-title").textContent = "能力测评 · " + state.current.goal_name;
+        renderQuiz();
+        openDrawer();
+      } catch (error) {
+        addMsg("bot", "<p><strong>测评启动失败：</strong>" + escapeHtml(error.message) + "</p>");
+      }
+      setInputEnabled(true);
+    }
+
+    function openDrawer() {
+      backdropEl.hidden = false;
+      requestAnimationFrame(() => backdropEl.classList.add("show"));
+      drawerEl.classList.add("open");
+    }
+    function closeDrawer() {
+      drawerEl.classList.remove("open");
+      backdropEl.classList.remove("show");
+      setTimeout(() => { backdropEl.hidden = true; }, 250);
+    }
+    $("quiz-close").onclick = closeDrawer;
+    backdropEl.onclick = closeDrawer;
+
+    function renderQuiz() {
+      const quiz = state.quiz;
+      if (!quiz) return;
+      const i = quiz.index;
+      const q = quiz.questions[i];
+      if (!q) return;
+      const optionKeys = Object.keys(q.options || {});
+      $("quiz-progress-bar").style.width = ((i + 1) / quiz.questions.length) * 100 + "%";
+      $("quiz-body").innerHTML =
+        '<div class="q-index">第 ' + (i + 1) + " / " + quiz.questions.length + " 题</div>" +
+        "<h2>" + escapeHtml(q.title) + "</h2>" +
+        optionKeys.map((key, k) =>
+          '<button class="option' + (quiz.answers[i] === k ? " selected" : "") + '" data-k="' + k + '">' +
+            '<span class="opt-key">' + key.toUpperCase() + "</span><span>" + escapeHtml(q.options[key]) + "</span></button>"
+        ).join("");
+      $("quiz-body").querySelectorAll(".option").forEach((b) => {
+        b.onclick = () => { quiz.answers[i] = Number(b.dataset.k); renderQuiz(); };
+      });
+      $("quiz-prev").disabled = i === 0;
+      const nextBtn = $("quiz-next");
+      nextBtn.disabled = quiz.answers[i] === null;
+      if (i === quiz.questions.length - 1) {
+        nextBtn.innerHTML = '提交测评 <i data-lucide="check"></i>';
+      } else {
+        nextBtn.innerHTML = '下一题 <i data-lucide="chevron-right"></i>';
+      }
+      $("quiz-error").hidden = true;
+      icons();
+    }
+
+    $("quiz-prev").onclick = () => { state.quiz.index--; renderQuiz(); };
+    $("quiz-next").onclick = async () => {
+      const quiz = state.quiz;
+      const i = quiz.index;
+      const selected = quiz.answers[i];
+      if (selected === null) return;
+      const nextBtn = $("quiz-next");
+      nextBtn.disabled = true;
+      $("quiz-error").hidden = true;
+      try {
+        const optionKeys = Object.keys(quiz.questions[i].options || {});
+        const letter = optionKeys[selected] || "a";
+        const result = await api("/api/projects/" + quiz.project_id + "/diagnosis/answer", {
+          method: "POST",
+          body: { student_id: STUDENT_ID, selected: letter },
+        });
+        if (result.status === "completed") {
+          closeDrawer();
+          await showAnalysis(result.summary);
+        } else {
+          quiz.index++;
+          renderQuiz();
+        }
+      } catch (error) {
+        $("quiz-error").textContent = "提交失败：" + error.message;
+        $("quiz-error").hidden = false;
+        nextBtn.disabled = false;
+      }
+    };
+
+    /* ================= 分析结果 ================= */
+    async function showAnalysis(summary) {
+      setInputEnabled(false);
+      const typing = addMsg("bot", '<div class="typing"><i></i><i></i><i></i></div>');
+      await sleep(1400);
+      typing.remove();
+
+      const weak = summary.weak_points || [];
+      const weakTags = weak.length
+        ? '<div class="weak-tags">' + weak.map((w) =>
+            '<span class="weak-tag">' + escapeHtml(w.knowledge_point_name) + "</span>").join("") + "</div>"
+        : '<div class="weak-tags"><span class="weak-tag" style="background:var(--green-soft);color:var(--green-strong)">暂无明显薄弱点</span></div>';
+      addMsg("bot",
+        '<div class="analysis-card">' +
+          '<div class="analysis-head">' +
+            '<span class="ah-icon"><i data-lucide="chart-pie"></i></span>' +
+            '<div class="ah-copy"><strong>测评分析完成</strong><small>已依据本次作答更新掌握度</small></div>' +
+          "</div>" +
+          "<p class=\"analysis-note\">" + escapeHtml(summary.feedback || "已生成个性化学习路径。") + "</p>" +
+          weakTags +
+          '<p class="analysis-note">路径已生成在<b>左侧项目树</b>中，点击章节即可打开讲解页。</p>' +
+        "</div>");
+      state.quiz = null;
+      await refreshProjects();
+      setInputEnabled(true);
+      showSuggestions();
+    }
+
+    /* ================= 左栏项目树 ================= */
+    async function refreshProjects() {
+      try {
+        const result = await api("/api/projects?student_id=" + encodeURIComponent(STUDENT_ID));
+        state.projects = result.projects || [];
+      } catch (_) { /* 网络异常时保留旧数据 */ }
+      renderProjectTree();
+    }
+
+    async function selectProject(projectId) {
+      try {
+        const result = await api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID));
+        const project = result.project;
+        state.current = {
+          project_id: project.project_id,
+          goal_name: project.goal_name,
+        };
+        renderProjectTree();
+        addMsg("bot",
+          "<p>已切换到项目：<strong>" + escapeHtml(project.goal_name) + "</strong></p>" +
+          "<p>点击左侧章节开始学习；也可以输入新的目标创建新项目。</p>");
+        scrollChat();
+      } catch (error) {
+        addMsg("bot", "<p><strong>加载项目失败：</strong>" + escapeHtml(error.message) + "</p>");
+      }
+    }
+
+    function renderProjectTree() {
+      if (!state.projects.length) {
+        treeEl.innerHTML =
+          '<div class="tree-empty"><i data-lucide="folder-open"></i>' +
+          "<div>还没有项目<br/>在右侧对话框输入学习目标，<br/>即可创建项目并生成学习路径</div></div>";
+        icons();
+        return;
+      }
+      treeEl.innerHTML = state.projects.map((project) => {
+        const isCurrent = state.current && state.current.project_id === project.project_id;
+        const expanded = isCurrent || project.diagnosis_state === "not_started";
+        const progress = project.progress || 0;
+        return '<div class="project-node' + (expanded ? " open" : "") + '" data-project="' + project.project_id + '">' +
+          '<button class="project-header" data-project="' + project.project_id + '">' +
+            '<span class="chev"><i data-lucide="chevron-right"></i></span>' +
+            '<span class="folder"><i data-lucide="folder"></i></span>' +
+            '<span class="project-name">' + escapeHtml(project.goal_name) + "</span>" +
+            '<span class="project-meta">' + progress + "%</span>" +
+          "</button>" +
+          '<ul class="path-list" data-path="' + project.project_id + '"></ul>' +
+        "</div>";
+      }).join("");
+      icons();
+      treeEl.querySelectorAll(".project-header").forEach((button) => {
+        button.onclick = () => {
+          const node = button.closest(".project-node");
+          node.classList.toggle("open");
+          selectProject(node.dataset.project);
+        };
+      });
+      // 异步加载各项目路径
+      state.projects.forEach((project) => loadProjectPath(project.project_id));
+    }
+
+    async function loadProjectPath(projectId) {
+      const listEl = treeEl.querySelector('[data-path="' + projectId + '"]');
+      if (!listEl) return;
+      try {
+        const result = await api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID));
+        const path = result.project.learning_path || { items: [] };
+        const weakIds = new Set((result.project.weak_points || []).map((w) => w.knowledge_point_id));
+        listEl.innerHTML = (path.items || []).map((item) => {
+          const status = item.status || "pending";
+          const stateIcon = status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
+            : status === "learning" ? '<i data-lucide="book-open"></i>'
+            : '<i data-lucide="lock-keyhole"></i>';
+          const statusLabel = status === "current" ? "当前" : status === "learning" ? "进行中" : "待解锁";
+          const weakMark = weakIds.has(item.knowledge_point_id) ? " · 薄弱" : "";
+          return '<li class="path-item ' + status + '">' +
+            '<button data-project="' + projectId + '" data-kp="' + escapeHtml(item.knowledge_point_id) + '">' +
+              '<span class="path-state">' + stateIcon + "</span>" +
+              '<span class="path-copy"><small>' + escapeHtml(item.knowledge_point_name) + statusLabel + weakMark + "</small><strong>" + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
+              '<span class="path-mastery">' + (item.mastery || 0) + "%</span>" +
+            "</button></li>";
+        }).join("") || '<li class="path-item pending"><button><span class="path-state"><i data-lucide="lock-keyhole"></i></span><span class="path-copy"><strong>路径生成中…</strong></span></button></li>';
+        icons();
+        listEl.querySelectorAll("button[data-kp]").forEach((button) => {
+          button.onclick = () => openLesson(projectId, button.dataset.kp);
+        });
+      } catch (_) { /* 单项目加载失败不阻塞整体 */ }
+    }
+
+    /* ================= 中央讲解页 ================= */
+    async function openLesson(projectId, knowledgePointId) {
+      setInputEnabled(false);
+      welcomeEl.hidden = true;
+      profileEl.hidden = true;
+      lessonEl.hidden = false;
+      $("lesson-title").textContent = "正在加载讲解…";
+      $("lesson-body").innerHTML = "";
+      $("lesson-objective").textContent = "";
+      $("lesson-meta").innerHTML = "";
+      $("lesson-tag").textContent = "知识点";
+      const project = state.projects.find((p) => p.project_id === projectId);
+      $("crumb-project").textContent = project ? project.goal_name : "项目";
+      $("crumb-lesson").textContent = knowledgePointId;
+      stageEl.scrollTop = 0;
+
+      try {
+        const result = await api("/api/projects/" + encodeURIComponent(projectId) + "/explain", {
+          method: "POST",
+          body: { student_id: STUDENT_ID, knowledge_point_id: knowledgePointId },
+        });
+        $("lesson-title").textContent = result.lesson_title || knowledgePointId;
+        $("crumb-lesson").textContent = result.lesson_title || knowledgePointId;
+        $("lesson-tag").textContent = "章节讲解 · 依据课程知识库";
+        if (result.lesson_objective) {
+          $("lesson-objective").textContent = result.lesson_objective;
+        }
+        const modes = (result.alternative_modes || []).slice(0, 3);
+        $("lesson-meta").innerHTML =
+          '<span><i data-lucide="book-open"></i> 知识点讲解</span>' +
+          '<span><i data-lucide="shield-check"></i> 内容带来源标注</span>' +
+          (modes.length ? '<span><i data-lucide="refresh-cw"></i> 支持换种讲法</span>' : "");
+
+        const body = $("lesson-body");
+        body.innerHTML = "";
+        (result.content_blocks || []).forEach((block) => renderBlock(body, block));
+
+        // 视频资源
+        const videos = (result.resources || []).filter((r) => r.type === "video" && r.url);
+        if (videos.length) {
+          const card = document.createElement("div");
+          card.className = "lesson-card";
+          card.innerHTML = '<h3><span class="dot"></span>视频讲解</h3>';
+          videos.forEach((video) => {
+            const item = document.createElement("div");
+            item.className = "video-card";
+            item.innerHTML =
+              '<span class="play"><i data-lucide="play"></i></span>' +
+              "<div><strong>" + escapeHtml(video.title || "视频讲解") + "</strong><small>" + escapeHtml(video.source || "外部视频资源") + "</small></div>" +
+              '<a href="' + escapeHtml(video.url) + '" target="_blank" rel="noopener"><i data-lucide="external-link"></i> 观看视频</a>';
+            card.appendChild(item);
+          });
+          body.appendChild(card);
+        }
+        icons();
+        // 刷新路径状态（讲解会把章节置为 learning）
+        await refreshProjects();
+        await loadProjectPath(projectId);
+      } catch (error) {
+        $("lesson-title").textContent = "讲解加载失败";
+        $("lesson-body").innerHTML = '<div class="lesson-card"><p>' + escapeHtml(error.message) + "</p></div>";
+      }
+      setInputEnabled(true);
+    }
+
+    function renderBlock(container, block) {
+      const card = document.createElement("div");
+      card.className = "lesson-card";
+      const title = block.title || { weakness_connection: "为什么先学这一点", concept: "核心概念", steps: "学习步骤", example: "示例", warning: "常见误区", workplace: "岗位场景", standard: "规范依据", safety: "安全提示" }[block.type] || "讲解内容";
+      card.innerHTML = '<h3><span class="dot"></span>' + escapeHtml(title) + "</h3>";
+      if (Array.isArray(block.items)) {
+        const list = document.createElement("ol");
+        block.items.forEach((item) => {
+          const li = document.createElement("li");
+          li.textContent = item;
+          list.appendChild(li);
+        });
+        card.appendChild(list);
+      } else if (block.content) {
+        const p = document.createElement("p");
+        p.textContent = block.content;
+        card.appendChild(p);
+      }
+      if (block.source) {
+        const source = document.createElement("div");
+        source.className = "block-source";
+        source.innerHTML = '<i data-lucide="book-marked"></i> 依据：' + escapeHtml(block.source);
+        card.appendChild(source);
+      }
+      container.appendChild(card);
+    }
+
+    $("crumb-home").onclick = () => {
+      lessonEl.hidden = true;
+      profileEl.hidden = true;
+      welcomeEl.hidden = false;
+    };
+
+    /* ================= 个人中心 ================= */
+    async function openProfile() {
+      welcomeEl.hidden = true;
+      lessonEl.hidden = true;
+      profileEl.hidden = false;
+      stageEl.scrollTop = 0;
+      try {
+        const [profile, records] = await Promise.all([
+          api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null),
+          api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/records").catch(() => null),
+        ]);
+        const p = profile && profile.profile;
+        if (p) {
+          const name = p.display_name || "学习者";
+          $("profile-name").textContent = name;
+          $("profile-avatar").textContent = name.slice(0, 1);
+          $("profile-id").textContent = p.student_id || STUDENT_ID;
+          if (p.program_name) $("profile-program").textContent = p.program_name;
+        }
+        $("stat-projects").textContent = state.projects.length;
+        $("stat-explanations").textContent = records ? (records.explanations || []).length : 0;
+        $("stat-attempts").textContent = records ? (records.attempts || []).length : 0;
+      } catch (_) { /* 统计加载失败时保留默认值 */ }
+      icons();
+    }
+    $("profile-entry").onclick = openProfile;
+    $("profile-back").onclick = () => {
+      profileEl.hidden = true;
+      welcomeEl.hidden = false;
+    };
+
+    /* ================= 输入与新建 ================= */
+    $("send-btn").onclick = () => sendGoal();
+    $("chat-textarea").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendGoal(); }
+    });
+    $("chat-textarea").addEventListener("input", function () {
+      this.style.height = "auto";
+      this.style.height = Math.min(this.scrollHeight, 120) + "px";
+    });
+    $("new-project-btn").onclick = () => {
+      $("chat-textarea").focus();
+      addMsg("bot", "<p>告诉我你的学习目标，我来为你创建新项目。</p>");
+    };
+
+    /* ================= 启动 ================= */
+    async function boot() {
+      try {
+        await refreshProjects();
+        const user = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/settings");
+        $("conn-state").textContent = "服务已连接";
+        if (user.settings && user.settings.display_name) {
+          $("user-name").textContent = user.settings.display_name;
+          $("foot-student-name").textContent = user.settings.display_name;
+          $("user-avatar").textContent = user.settings.display_name.slice(0, 1);
+        }
+      } catch (_) {
+        $("conn-state").textContent = "服务未连接（请通过后端启动页面）";
+      }
+      const hasProjects = state.projects.length > 0;
+      addMsg("bot",
+        "<p><strong>你好，我是知行课径助手。</strong> 我可以把你的学习目标转化为个性化学习路径。</p>" +
+        (hasProjects
+          ? "<p>你已有 " + state.projects.length + " 个项目：点击左侧项目可查看路径与进度；也可以输入新目标创建新项目。</p>"
+          : "<p>创建一个项目后，我会先用测评题了解你的掌握情况，再为你规划学习顺序。</p>"));
+      showSuggestions();
+    }
+    boot();
+  </script>
+</body>
+</html>
