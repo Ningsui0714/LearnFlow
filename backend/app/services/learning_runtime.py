@@ -16,36 +16,14 @@ from app.models.learning import (
     KernelMutation, MemoryArchive,
 )
 from app.models.project import Project, Roadmap, Checkpoint, Lecture
+from app.services.architecture_registry import (
+    KERNEL_NAMES,
+    SEMANTIC_MEMORY_KEYS,
+    normalize_event_provenance,
+)
 
 
-KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 LOCAL_LEARNER_KEY = "local-default"
-
-# Semantic observations are intentionally narrower than deterministic runtime
-# state. This keeps the LLM from putting a goal in the path model or a project
-# position in the learner's concept model.
-SEMANTIC_MEMORY_KEYS = {
-    "structure": {
-        "path_position", "path_dependencies", "resume_anchor",
-        "focus_transition", "deferred_threads", "navigation_blocker",
-    },
-    "knowledge": {
-        "concept_understanding", "knowledge_gap", "pending_question",
-        "misconceptions", "active_concepts", "recent_errors",
-    },
-    "human": {
-        "affect", "cognitive_load", "attention", "frustration",
-        "pace_preference", "format_preference", "support_need",
-    },
-    "value": {
-        "current_priority", "current_motivation", "goal_candidate",
-        "interest_signal", "relevance_reason",
-    },
-    "practice": {
-        "current_attempt", "assistance_level", "artifact_state",
-        "recent_feedback", "transfer_readiness",
-    },
-}
 
 PUBLIC_EVENT_TYPES = {
     "project_selected", "checkpoint_entered", "lecture_viewed",
@@ -165,7 +143,7 @@ async def record_event(
         payload=payload or {},
         artifact_refs=artifact_refs or [],
         confidence=max(0.0, min(float(confidence), 1.0)),
-        provenance=provenance or {},
+        provenance=normalize_event_provenance(event_type, source, provenance),
         client_event_id=client_event_id,
         occurred_at=occurred_at or recorded_at,
         learner_seq=await next_learner_sequence(db, learner_id),
@@ -529,6 +507,122 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             db, event, "practice",
             {"assistance_level": level, "recent_feedback": et},
             "记录当前尝试的辅助程度",
+        )
+        return
+
+    if et == "remediation_started":
+        await _apply_patch(
+            db, event, "knowledge",
+            {
+                "active_remediation_case_id": p.get("case_id"),
+                "pending_question": p.get("misconception_tag") or "答错后需要纠错",
+                "recent_misconception": {
+                    "tag": p.get("misconception_tag", ""),
+                    "error_class": p.get("error_class", ""),
+                    "item_id": p.get("item_id"),
+                    "source_evidence_id": p.get("source_evidence_id"),
+                },
+            },
+            "已验证的错误启动显式纠错闭环",
+        )
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "remediation_status": "explaining",
+                "remediation_case_id": p.get("case_id"),
+                "recent_feedback": p.get("delivery_mode", ""),
+            },
+            "纠错案例进入证据讲解阶段",
+        )
+        return
+
+    if et == "remediation_mode_rejected":
+        human = await _kernel(db, event.learner_id, "human")
+        ineffective = list((human.short_term or {}).get("ineffective_explanation_modes") or [])
+        mode = p.get("ineffective_mode")
+        if mode and mode not in ineffective:
+            ineffective.append(mode)
+        await _apply_patch(
+            db, event, "human",
+            {
+                "ineffective_explanation_modes": ineffective[-8:],
+                "last_requested_explanation_mode": p.get("next_mode", ""),
+            },
+            "学习者明确要求换一种讲法，记录当前上下文中的无效表征",
+        )
+        return
+
+    if et == "remediation_explanation_requested":
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "remediation_status": "explaining",
+                "remediation_case_id": p.get("case_id"),
+                "assistance_level": "guided",
+                "recent_feedback": p.get("delivery_mode", ""),
+            },
+            "记录纠错讲解的显式表征选择",
+        )
+        return
+
+    if et == "remediation_retry_evaluated":
+        passed = bool(p.get("passed"))
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "remediation_status": "variant_ready" if passed else "explaining",
+                "remediation_case_id": p.get("case_id"),
+                "current_attempt": p.get("attempt_id"),
+                "recent_feedback": "retry_passed" if passed else "retry_failed",
+            },
+            "原题重做结果回写纠错闭环",
+        )
+        if passed:
+            await _apply_patch(
+                db, event, "knowledge",
+                {"pending_question": "", "remediation_retry_verified": True},
+                "原题重做通过，但仍需变式验证后闭环",
+            )
+        return
+
+    if et == "remediation_variant_evaluated":
+        correct = bool(p.get("correct"))
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "remediation_status": "completed" if correct else "variant_ready",
+                "remediation_case_id": p.get("case_id"),
+                "current_attempt": p.get("attempt_id"),
+                "recent_feedback": "variant_passed" if correct else "variant_failed",
+            },
+            "变式作答验证纠错规则是否可迁移",
+        )
+        return
+
+    if et == "remediation_completed":
+        await _apply_patch(
+            db, event, "knowledge",
+            {
+                "active_remediation_case_id": None,
+                "pending_question": "",
+                "last_completed_remediation": {
+                    "case_id": p.get("case_id"),
+                    "evidence_event_ids": p.get("evidence_event_ids", []),
+                },
+            },
+            "原题重做与变式均通过，纠错闭环形成可追溯证据",
+        )
+        await _apply_patch(
+            db, event, "human",
+            {"last_effective_explanation_mode": p.get("delivery_mode", "")},
+            "成功完成纠错与迁移，保留本次有效讲法证据",
+        )
+        await _apply_patch(
+            db, event, "practice",
+            {"remediation_status": "completed",
+             "remediation_case_id": p.get("case_id"),
+             "remediation_evidence_event_ids": p.get("evidence_event_ids", [])},
+            "显式纠错闭环完成并回写实践证据",
         )
         return
 

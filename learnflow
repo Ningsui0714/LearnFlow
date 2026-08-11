@@ -2,6 +2,7 @@
 # LearnFlow CLI
 # 安装: ln -s "$(pwd)/learnflow" /usr/local/bin/learnflow
 # 使用: learnflow        → 启动
+#       learnflow demo   → 离线比赛演示
 #       learnflow stop   → 停止
 #       learnflow status → 查看状态
 

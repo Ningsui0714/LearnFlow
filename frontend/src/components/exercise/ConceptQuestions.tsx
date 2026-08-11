@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  listConcepts, generateConcepts, getConceptTask, explainConcept, submitConcept, lectureTaskEventsUrl,
+  listConcepts, listRemediationCases, generateConcepts, getConceptTask, explainConcept, submitConcept, lectureTaskEventsUrl,
 } from '../../services/api'
+import RemediationPanel from './RemediationPanel'
 
 interface Question {
   id: number
@@ -29,6 +30,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
   const [explanations, setExplanations] = useState<Record<number, string>>({})
   const [explaining, setExplaining] = useState<Record<number, boolean>>({})
   const [assisted, setAssisted] = useState<Record<number, boolean>>({})
+  const [remediations, setRemediations] = useState<Record<number, any>>({})
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
@@ -50,8 +52,18 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
   const load = async () => {
     setLoading(true)
     try {
-      const data = await listConcepts(checkpointId)
+      const [data, cases] = await Promise.all([
+        listConcepts(checkpointId),
+        listRemediationCases(checkpointId).catch(() => []),
+      ])
       setQuestions(data || [])
+      const latestByQuestion: Record<number, any> = {}
+      for (const item of cases || []) {
+        if (item.item_type === 'concept' && !latestByQuestion[item.item_id]) {
+          latestByQuestion[item.item_id] = item
+        }
+      }
+      setRemediations(latestByQuestion)
     } catch { setQuestions([]) }
     setLoading(false)
   }
@@ -108,12 +120,35 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
     const ans = answers[qid]
     if (!ans || ans.length === 0) { alert('请先选择答案'); return }
     try {
-      const res = await submitConcept(checkpointId, qid, ans, assisted[qid] ? 'guided' : 'none')
+      const remediation = remediations[qid]
+      const retrying = remediation?.status === 'explaining'
+      const res = await submitConcept(
+        checkpointId,
+        qid,
+        ans,
+        retrying || assisted[qid] ? 'guided' : 'none',
+        retrying ? remediation.id : undefined,
+        retrying ? 'retry' : 'original',
+      )
       setResults(prev => ({ ...prev, [qid]: { correct: res.correct, answer_indexes: res.answer_indexes } }))
       setSubmitted(prev => ({ ...prev, [qid]: true }))
+      if (res.remediation) {
+        setRemediations(prev => ({ ...prev, [qid]: res.remediation }))
+        setAssisted(prev => ({ ...prev, [qid]: true }))
+      }
     } catch (e: any) {
       alert('提交失败: ' + (e?.response?.data?.detail || e.message))
     }
+  }
+
+  const retryQuestion = (qid: number) => {
+    setAnswers(prev => ({ ...prev, [qid]: [] }))
+    setSubmitted(prev => ({ ...prev, [qid]: false }))
+    setResults(prev => {
+      const next = { ...prev }
+      delete next[qid]
+      return next
+    })
   }
 
   const handleExplain = async (q: Question) => {
@@ -225,11 +260,13 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
               <div className="flex items-center gap-2 mt-4">
                 <button
                   onClick={() => handleSubmit(q.id)}
-                  disabled={submitted[q.id]}
+                  disabled={submitted[q.id] || remediations[q.id]?.status === 'variant_ready'}
                   className="bg-gray-900 text-white px-4 py-1.5 rounded-lg text-xs hover:bg-gray-700 disabled:opacity-40 transition-colors"
                 >
-                  {submitted[q.id]
-                    ? (results[q.id]?.correct ? '✓ 已答对' : '已提交') : '提交答案'}
+                  {remediations[q.id]?.status === 'variant_ready'
+                    ? '请先完成变式'
+                    : submitted[q.id]
+                      ? (results[q.id]?.correct ? '✓ 已答对' : '已提交') : '提交答案'}
                 </button>
                 <button
                   onClick={() => handleExplain(q)}
@@ -244,6 +281,16 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
               {explanations[q.id] && (
                 <div className="mt-3 bg-primary-50/50 border border-primary-100 rounded-lg p-3 text-xs text-gray-700 whitespace-pre-wrap">
                   {explanations[q.id]}
+                </div>
+              )}
+
+              {remediations[q.id] && (
+                <div className="mt-3">
+                  <RemediationPanel
+                    remediation={remediations[q.id]}
+                    onChange={next => setRemediations(prev => ({ ...prev, [q.id]: next }))}
+                    onRetry={() => retryQuestion(q.id)}
+                  />
                 </div>
               )}
             </div>

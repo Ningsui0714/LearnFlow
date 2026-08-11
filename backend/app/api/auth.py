@@ -15,6 +15,7 @@ from app.services.auth import (
 )
 from app.services.learning_runtime import ensure_kernel_states, record_event
 from app.services.profile import award_career_goal
+from app.services.demo_seed import DEMO_USERNAME, demo_manifest
 
 
 router = APIRouter(tags=["Authentication"])
@@ -150,6 +151,47 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 @router.get("/auth/me")
 async def me(current: CurrentLearner = Depends(get_current_learner)):
     return _account_view(current)
+
+
+@router.get("/demo/status")
+async def competition_demo_status():
+    return {"enabled": settings.competition_demo_mode, "offline": True}
+
+
+@router.post("/demo/login")
+async def competition_demo_login(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.competition_demo_mode:
+        raise HTTPException(404, "Not found")
+    account = (await db.execute(select(UserAccount).where(
+        UserAccount.username_normalized == DEMO_USERNAME,
+        UserAccount.status == "active",
+    ))).scalar_one_or_none()
+    if not account:
+        raise HTTPException(503, "演示数据尚未初始化，请重新运行 bash start.sh demo")
+    learner = (await db.execute(select(Learner).where(
+        Learner.user_id == account.id,
+    ))).scalar_one()
+    profile = await db.get(LearnerProfile, learner.id)
+    token = await create_auth_session(db, account, is_dev_login=True)
+    await db.commit()
+    set_auth_cookie(response, token)
+    return _account_view(CurrentLearner(account, learner, profile, is_dev_login=True))
+
+
+@router.get("/demo/manifest")
+async def competition_demo_manifest(
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    if not settings.competition_demo_mode:
+        raise HTTPException(404, "Not found")
+    manifest = await demo_manifest(db, current.learner.id)
+    if not manifest:
+        raise HTTPException(503, "演示数据尚未初始化")
+    return manifest
 
 
 def _require_dev():

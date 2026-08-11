@@ -17,6 +17,8 @@ Built as a learning tool — not a chatbot wrapper. Every feature is designed ar
 | **💻 IDE Training** | Monaco Editor built in. Run code, get AI review, ask questions about selected code |
 | **🧠 RAG Retrieval** | 4-level fallback: file path → headings → keyword density → vector similarity (gte-small) |
 | **🧩 Graph Checkpoints** | React Flow renders the learning path as an interactive DAG. Click to enter each checkpoint |
+| **🧭 Remediation Loop** | Wrong answer → deterministic remediation → retry → transfer variant → evidence writeback |
+| **🎬 Seeded Demo** | One command, isolated SQLite data, no LLM or network required |
 
 ---
 
@@ -45,8 +47,20 @@ npm install
 cd ..
 bash start.sh
 # → Frontend: http://localhost:5173
-# → Backend:  http://localhost:8000
+# → Backend:  http://localhost:8010
 ```
+
+For an offline, repeatable competition demo:
+
+```bash
+bash start.sh demo
+# → opens http://localhost:5173/demo
+```
+
+Architecture ownership and the fused capability catalog are documented in
+[`docs/ARCHITECTURE_AUTHORITY.md`](docs/ARCHITECTURE_AUTHORITY.md) and
+[`docs/FUSION_CATALOG.md`](docs/FUSION_CATALOG.md). Competition runbooks and
+submission templates live in [`docs/competition/`](docs/competition/README.md).
 
 ### macOS App
 

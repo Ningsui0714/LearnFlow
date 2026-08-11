@@ -1,0 +1,40 @@
+# LearnFlow 比赛维护包
+
+本目录用于比赛演示、离线验收和最终提交维护。演示主线固定为：
+
+```text
+答错 -> 错误证据 -> 确定性纠错策略 -> 换讲法/步骤/示例
+     -> 重做原题 -> 变式验证 -> EvidenceEvent 回写五核与记忆图谱
+```
+
+## 一键运行
+
+```bash
+bash start.sh demo
+# 或 make demo
+```
+
+脚本会安全重建专用的 `backend/data/competition-demo.db`，不会修改日常数据库，因此每次都从相同状态开始；同时清空 LLM key、关闭外部资源搜索和自动记忆综合，seed 完成后打开 `/demo`。如果日常实例已占用 8010/5173，脚本会自动选择成对的可用端口，并让前端代理到本次 demo 后端。`/demo` 自动进入隔离演示账号和预置关卡。
+
+## 文档索引
+
+- `DEMO_RUNBOOK.md`：3–5 分钟讲解和故障切换。
+- `SUBMISSION_CHECKLIST.md`：按比赛材料编号维护交付物。
+- `USER_TEST_TEMPLATE.md`：2–3 名学生或教师试用的证据模板。
+- `ETHICS_AND_DATA_TEMPLATE.md`：数据、AI 标识和学术诚信声明底稿。
+- `../ARCHITECTURE_AUTHORITY.md`：团队分工和架构变更规则。
+- `../FUSION_CATALOG.md`：两仓库的能力映射与去重决策。
+
+## 可复现验收
+
+```bash
+cd backend
+venv/bin/python -m pytest tests/test_architecture_registry.py tests/test_remediation.py -q
+
+cd ../frontend
+npm run build
+```
+
+演示版本还应记录 `GET /api/architecture/registry` 返回的 `version` 和 `digest`。它们能证明现场运行的是哪一版 Agent/五核/能力/事件契约。
+
+比赛规则以官方最新通知为准。本维护包依据参考仓库中的 2026 比赛方案整理，提交前必须再次核对日期、命名、平台编号和盖章要求。

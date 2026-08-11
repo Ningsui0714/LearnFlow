@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     github_token: str = ""
     github_resource_search_enabled: bool = True
     dev_test_login_enabled: bool = True
+    competition_demo_mode: bool = False
     auth_cookie_name: str = "learnflow_session"
     auth_session_days: int = 7
     auth_cookie_secure: bool = False

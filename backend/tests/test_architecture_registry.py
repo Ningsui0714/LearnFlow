@@ -1,0 +1,39 @@
+from app.services.action_board import ACTION_BOARD
+from app.services.architecture_registry import (
+    AGENTS,
+    CAPABILITY_OWNERS,
+    EVENTS,
+    KERNEL_NAMES,
+    normalize_event_provenance,
+    registry_manifest,
+    validate_registry,
+)
+
+
+def test_registry_has_three_agents_five_kernels_and_no_drift():
+    assert len(AGENTS) == 3
+    assert KERNEL_NAMES == ("structure", "knowledge", "human", "value", "practice")
+    assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
+    assert validate_registry() == []
+    manifest = registry_manifest()
+    assert manifest["validation_errors"] == []
+    assert len(manifest["digest"]) == 64
+
+
+def test_remediation_events_have_standard_authority_provenance():
+    expected = {
+        "remediation_started",
+        "remediation_mode_rejected",
+        "remediation_explanation_requested",
+        "remediation_retry_evaluated",
+        "remediation_variant_evaluated",
+        "remediation_completed",
+    }
+    assert expected <= set(EVENTS)
+    provenance = normalize_event_provenance(
+        "remediation_completed", "assessment", {"provider": "local"},
+    )
+    assert provenance["owner_agent"] == "practice_agent"
+    assert provenance["tool"] == "deterministic_assessment"
+    assert provenance["kernel_targets"] == ["knowledge", "human", "practice"]
+    assert provenance["provider"] == "local"

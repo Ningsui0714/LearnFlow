@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  devLogin, getCurrentUser, loginUser, logoutUser, registerUser,
+  competitionDemoLogin, devLogin, getCurrentUser, loginUser, logoutUser, registerUser,
 } from '../services/api'
 import type { AuthUser, RegisterPayload } from '../services/api'
 
@@ -11,6 +11,7 @@ interface AuthContextValue {
   login: (username: string, password: string) => Promise<AuthUser>
   register: (data: RegisterPayload) => Promise<AuthUser>
   enterDevAccount: (accountId: number) => Promise<AuthUser>
+  enterCompetitionDemo: () => Promise<AuthUser>
   logout: () => Promise<void>
   refresh: () => Promise<void>
 }
@@ -56,6 +57,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(next)
       return next
     },
+    enterCompetitionDemo: async () => {
+      const next = await competitionDemoLogin()
+      setUser(next)
+      return next
+    },
     logout: async () => {
       await logoutUser()
       setUser(null)
@@ -71,4 +77,3 @@ export function useAuth() {
   if (!value) throw new Error('useAuth must be used inside AuthProvider')
   return value
 }
-

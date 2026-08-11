@@ -487,7 +487,7 @@ async def submit_concept(
     user = sorted(int(i) for i in (data or {}).get("answer_indexes", []))
     is_correct = user == correct and len(user) > 0
     from app.services.progress import record_concept_answer
-    await record_concept_answer(checkpoint_id, question_id, is_correct)
+    await record_concept_answer(checkpoint_id, question_id, is_correct, db=db)
     assistance_level = str((data or {}).get("assistance_level") or "none")
     from app.services.learning_runtime import (
         create_attempt, record_event, evaluate_checkpoint_status,
@@ -504,7 +504,7 @@ async def submit_concept(
     )
     cp = await db.get(Checkpoint, checkpoint_id)
     roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
-    await record_event(
+    evaluation_event = await record_event(
         db, event_type="concept_attempt_evaluated", source="assessment",
         learner_id=current.learner.id,
         project_id=roadmap.project_id if roadmap else None,
@@ -520,6 +520,42 @@ async def submit_concept(
         provenance={"grader": "exact_match", "question_type": q.q_type},
         client_event_id=f"attempt:{attempt.id}:evaluated",
     )
+    remediation_payload = None
+    from app.services.remediation import (
+        apply_retry_result, create_remediation_case, load_owned_case, serialize_case,
+    )
+    remediation_case_id = (data or {}).get("remediation_case_id")
+    if remediation_case_id:
+        remediation = await load_owned_case(
+            db, current.learner.id, int(remediation_case_id),
+        )
+        if not remediation or remediation.item_type != "concept" or remediation.item_id != question_id:
+            raise HTTPException(400, "纠错案例与当前概念题不匹配")
+        if remediation.status != "explaining":
+            raise HTTPException(409, "当前纠错案例不在原题重做阶段")
+        remediation = await apply_retry_result(
+            db, remediation=remediation, attempt=attempt,
+            passed=is_correct, evidence_event_id=evaluation_event.id,
+        )
+        remediation_payload = serialize_case(remediation)
+    elif not is_correct:
+        remediation = await create_remediation_case(
+            db,
+            attempt=attempt,
+            evidence_event_id=evaluation_event.id,
+            item_snapshot={
+                "question": q.question,
+                "options": q.options or [],
+                "explanation": q.explanation or "",
+                "source_chunk_ids": q.source_chunk_ids or [],
+                "assessment_meta": q.assessment_meta or {},
+            },
+            evaluation={
+                "answer_indexes": correct,
+                "user_answer_indexes": user,
+            },
+        )
+        remediation_payload = serialize_case(remediation)
     await evaluate_checkpoint_status(db, checkpoint_id, learner_id=current.learner.id)
     if roadmap:
         await evaluate_project_badge(
@@ -533,6 +569,7 @@ async def submit_concept(
         "explanation": q.explanation or "",
         "attempt_id": attempt.id,
         "assistance_level": assistance_level,
+        "remediation": remediation_payload,
     }
 
 
@@ -640,7 +677,7 @@ async def submit_exercise(
         )
         cp = await db.get(Checkpoint, exercise.checkpoint_id)
         roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
-        await record_event(
+        evaluation_event = await record_event(
             db, event_type="exercise_attempt_evaluated", source="assessment",
             learner_id=current.learner.id,
             project_id=roadmap.project_id if roadmap else None,
@@ -654,6 +691,38 @@ async def submit_exercise(
             provenance={"grader": exercise.judge_mode or "test_cases"},
             client_event_id=f"attempt:{attempt.id}:evaluated",
         )
+        from app.services.remediation import (
+            apply_retry_result, create_remediation_case, load_owned_case, serialize_case,
+        )
+        remediation_payload = None
+        if req.remediation_case_id:
+            remediation = await load_owned_case(
+                db, current.learner.id, int(req.remediation_case_id),
+            )
+            if not remediation or remediation.item_type != "exercise" or remediation.item_id != exercise.id:
+                raise HTTPException(400, "纠错案例与当前代码题不匹配")
+            if remediation.status != "explaining":
+                raise HTTPException(409, "当前纠错案例不在原题重做阶段")
+            remediation = await apply_retry_result(
+                db, remediation=remediation, attempt=attempt,
+                passed=passed_ok, evidence_event_id=evaluation_event.id,
+            )
+            remediation_payload = serialize_case(remediation)
+        elif not passed_ok:
+            remediation = await create_remediation_case(
+                db,
+                attempt=attempt,
+                evidence_event_id=evaluation_event.id,
+                item_snapshot={
+                    "title": exercise.title,
+                    "description": exercise.description,
+                    "hints": exercise.hints or [],
+                    "judge_mode": exercise.judge_mode or "test_cases",
+                    "assessment_meta": exercise.assessment_meta or {},
+                },
+                evaluation=response,
+            )
+            remediation_payload = serialize_case(remediation)
         await evaluate_checkpoint_status(
             db, exercise.checkpoint_id, learner_id=current.learner.id,
         )
@@ -662,7 +731,7 @@ async def submit_exercise(
                 db, learner_id=current.learner.id, project_id=roadmap.project_id,
             )
         await db.commit()
-        return attempt.id
+        return attempt.id, remediation_payload
 
     # Project-mode judging: run the whole project, check stdout
     if (exercise.files or []) and exercise.judge_mode == "stdout_check":
@@ -682,23 +751,23 @@ async def submit_exercise(
                 {"passed": False, "expected": "正常运行", "actual": f"退出码 {res['exit_code']}",
                  "stderr": res["stderr"][:200]}
             ], "error": None}
-            response["attempt_id"] = await persist_attempt(response, False)
+            response["attempt_id"], response["remediation"] = await persist_attempt(response, False)
             return response
         check = check_stdout(res["stdout"], exercise.judge_config or {})
         if check["passed"]:
             from app.services.progress import record_exercise_solved
-            await record_exercise_solved(exercise.checkpoint_id, exercise.id)
+            await record_exercise_solved(exercise.checkpoint_id, exercise.id, db=db)
         response = {"passed": 1 if check["passed"] else 0, "total": 1,
                 "results": [{"passed": check["passed"], "expected": check["expected"],
                               "actual": check["actual"], "detail": check["detail"]}],
                 "stdout": res["stdout"][-1000:]}
-        response["attempt_id"] = await persist_attempt(response, bool(check["passed"]))
+        response["attempt_id"], response["remediation"] = await persist_attempt(response, bool(check["passed"]))
         return response
 
     test_cases = exercise.test_cases or []
     if not test_cases:
         response = {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}
-        response["attempt_id"] = await persist_attempt(response, False)
+        response["attempt_id"], response["remediation"] = await persist_attempt(response, False)
         return response
 
     from app.services.exercise_agent import ExerciseAgent
@@ -706,9 +775,9 @@ async def submit_exercise(
     passed = sum(1 for r in results if r["passed"])
     if passed == len(results) and passed > 0:
         from app.services.progress import record_exercise_solved
-        await record_exercise_solved(exercise.checkpoint_id, exercise.id)
+        await record_exercise_solved(exercise.checkpoint_id, exercise.id, db=db)
     response = {"passed": passed, "total": len(results), "results": results}
-    response["attempt_id"] = await persist_attempt(
+    response["attempt_id"], response["remediation"] = await persist_attempt(
         response, passed == len(results) and passed > 0
     )
     return response
