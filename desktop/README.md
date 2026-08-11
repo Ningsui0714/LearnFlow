@@ -23,3 +23,12 @@ session ends.
 The generated target-triple sidecar and Rust/Node build output are ignored by
 Git. macOS signing, Windows signing, and store credentials are intentionally
 outside this repository stage.
+
+## Internal packages
+
+`.github/workflows/desktop-internal.yml` builds unsigned macOS and Windows
+packages on GitHub-hosted runners and uploads each `bundle/` directory as a
+workflow artifact. It first runs the workspace/Tutor/registry contract tests,
+then the frontend build, PyInstaller sidecar build, and Tauri build. Run the
+workflow manually for release candidates; pull requests touching desktop,
+backend, or frontend code also exercise the same matrix.

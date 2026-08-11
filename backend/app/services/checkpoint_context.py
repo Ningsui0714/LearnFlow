@@ -130,6 +130,7 @@ async def checkpoint_artifacts(
                 {"name": value.get("name"), "read_only": bool(value.get("read_only"))}
                 for value in (item.files or []) if isinstance(value, dict)
             ],
+            "workspace_bindings": list(item.workspace_bindings or []),
         } for item in exercises],
         "authority": {
             "lecture_and_exercise": "database",
@@ -234,6 +235,7 @@ async def build_checkpoint_tutor_context(
                 {"name": value.get("name"), "read_only": bool(value.get("read_only"))}
                 for value in (item.files or []) if isinstance(value, dict)
             ],
+            "workspace_bindings": list(item.workspace_bindings or []),
         } for item in exercises],
         "project_file_tree": workspace_nodes,
         "current_surface": allowed_surface,

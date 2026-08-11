@@ -59,6 +59,7 @@ EXTRA_COLUMNS = {
         ("judge_mode", "TEXT"),  # test_cases | stdout_check
         ("judge_config", "TEXT"),# {pattern, min_accuracy} for stdout_check
         ("assessment_meta", "TEXT"),
+        ("workspace_bindings", "TEXT"),
     ],
     "concept_questions": [
         ("assessment_meta", "TEXT"),
@@ -78,9 +79,13 @@ EXTRA_COLUMNS = {
     "learning_attempts": [
         ("remediation_case_id", "INTEGER"),
         ("attempt_role", "TEXT DEFAULT 'original'"),
+        ("client_submission_id", "TEXT"),
     ],
     "process_animations": [
         ("kind", "TEXT"),         # animation | static（表已存在时补列）
+    ],
+    "project_workspaces": [
+        ("runtime_config", "TEXT"),
     ],
 }
 
@@ -90,6 +95,7 @@ USER_ISOLATION_MIGRATION = "v4-user-isolation-profile-badges"
 MEMORY_GRAPH_MIGRATION = "v5-inspectable-memory-graph"
 DESKTOP_WORKSPACE_MIGRATION = "v6-desktop-workspace"
 CHECKPOINT_TUTOR_MIGRATION = "v7-checkpoint-tutor-sessions"
+WORKSPACE_RUNTIME_MIGRATION = "v8-workspace-runtime-bindings"
 
 
 def _sqlite_path() -> Path | None:
@@ -329,6 +335,42 @@ def _backup_before_checkpoint_tutor_migration():
     print(f"[migrate] backup created: {backup_path}")
 
 
+def _backup_before_workspace_runtime_migration():
+    path = _sqlite_path()
+    if (
+        not path or not path.exists() or path.stat().st_size == 0
+        or _migration_applied(path, WORKSPACE_RUNTIME_MIGRATION)
+    ):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-workspace-runtime-v8{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
 async def _ensure_columns():
     async with engine.begin() as conn:
         for table, cols in EXTRA_COLUMNS.items():
@@ -351,9 +393,13 @@ async def _ensure_columns():
             ("ix_evidence_events_actor_type", "evidence_events", "actor_type"),
             ("ix_learning_attempts_remediation_case_id", "learning_attempts", "remediation_case_id"),
             ("ix_learning_attempts_attempt_role", "learning_attempts", "attempt_role"),
+            ("ix_learning_attempts_client_submission_id", "learning_attempts", "client_submission_id"),
         ]
         for name, table, column in indexes:
-            unique = "UNIQUE " if name == "ix_agent_messages_idempotency_key" else ""
+            unique = "UNIQUE " if name in {
+                "ix_agent_messages_idempotency_key",
+                "ix_learning_attempts_client_submission_id",
+            } else ""
             await conn.execute(text(
                 f"CREATE {unique}INDEX IF NOT EXISTS {name} ON {table} ({column})"
             ))
@@ -763,6 +809,20 @@ async def _mark_checkpoint_tutor_migration():
         print(f"[migrate] applied {CHECKPOINT_TUTOR_MIGRATION}")
 
 
+async def _mark_workspace_runtime_migration():
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == WORKSPACE_RUNTIME_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=WORKSPACE_RUNTIME_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {WORKSPACE_RUNTIME_MIGRATION}")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -770,6 +830,7 @@ async def init_db():
     _backup_before_memory_graph_migration()
     _backup_before_desktop_workspace_migration()
     _backup_before_checkpoint_tutor_migration()
+    _backup_before_workspace_runtime_migration()
     async with engine.begin() as conn:
         from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -780,3 +841,4 @@ async def init_db():
     await _backfill_inspectable_memory_graph()
     await _mark_desktop_workspace_migration()
     await _mark_checkpoint_tutor_migration()
+    await _mark_workspace_runtime_migration()

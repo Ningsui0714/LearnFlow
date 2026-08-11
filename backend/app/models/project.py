@@ -141,6 +141,7 @@ class Exercise(Base):
     judge_mode = Column(String(50), default="test_cases")  # test_cases | stdout_check
     judge_config = Column(JSON, default=dict)       # {pattern, min_accuracy} for stdout_check
     assessment_meta = Column(JSON, default=dict)   # targets, rubric, evidence contract
+    workspace_bindings = Column(JSON, default=list)  # [{path, exercise_file?, bound_sha256}]
 
     checkpoint = relationship("Checkpoint", back_populates="exercises")
 
@@ -262,6 +263,7 @@ class ProjectWorkspace(Base):
     root_path = Column(Text, nullable=False)
     status = Column(String(30), default="linked", nullable=False, index=True)
     platform = Column(String(30), default="unknown")
+    runtime_config = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

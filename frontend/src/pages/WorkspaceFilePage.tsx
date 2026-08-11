@@ -1,14 +1,16 @@
 import Editor from '@monaco-editor/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, Binary, ExternalLink, FileCode2, Loader2, RefreshCw, Save,
+  AlertTriangle, Binary, Braces, ExternalLink, FileCode2, Loader2, Play, RefreshCw, Save,
 } from 'lucide-react'
 import { useLocation, useParams, useSearchParams } from 'react-router-dom'
 import { useWorkspace, useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import {
-  getWorkspaceFile, revealWorkspaceItem, saveWorkspaceFile, type WorkspaceFile,
+  confirmWorkspaceOperation, getWorkspaceFile, getWorkspaceRuntimeConfig,
+  revealWorkspaceItem, runWorkspacePython, saveWorkspaceFile, setWorkspaceRuntimeConfig,
+  type WorkspaceFile, type WorkspaceOperation, type WorkspaceRuntimeConfig,
 } from '../services/api'
-import { getDesktopRuntime } from '../services/desktopRuntime'
+import { choosePythonInterpreter, getDesktopRuntime } from '../services/desktopRuntime'
 
 
 const languageByExtension: Record<string, string> = {
@@ -51,10 +53,15 @@ export default function WorkspaceFilePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [runtime, setRuntime] = useState<WorkspaceRuntimeConfig | null>(null)
+  const [runtimeBusy, setRuntimeBusy] = useState(false)
+  const [runArgs, setRunArgs] = useState('[]')
+  const [runOperation, setRunOperation] = useState<WorkspaceOperation | null>(null)
   const saveKeyRef = useRef<string | null>(null)
   const title = path.split('/').pop() || '项目文件'
   const tabId = useMemo(() => `${location.pathname}${location.search}`, [location.pathname, location.search])
   const dirty = Boolean(file?.kind === 'workspace_text' && content !== savedContent)
+  const isPython = path.toLowerCase().endsWith('.py')
 
   useWorkspaceTitle(title, { kind: 'file', projectId: pid, workspacePath: path })
 
@@ -77,6 +84,10 @@ export default function WorkspaceFilePage() {
   }, [desktop.available, path, pid])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    if (!desktop.available || !pid || !isPython) return
+    getWorkspaceRuntimeConfig(pid).then(setRuntime).catch(() => setRuntime(null))
+  }, [desktop.available, isPython, pid])
   useEffect(() => {
     setTabDirty(tabId, dirty)
     return () => setTabDirty(tabId, false)
@@ -130,6 +141,67 @@ export default function WorkspaceFilePage() {
     return () => window.removeEventListener('keydown', keyboardSave)
   }, [save])
 
+  const chooseInterpreter = async () => {
+    const selected = await choosePythonInterpreter()
+    if (!selected) return
+    setRuntimeBusy(true)
+    setMessage('')
+    try {
+      setRuntime(await setWorkspaceRuntimeConfig(pid, selected))
+      setMessage('Python 解释器已更新')
+    } catch (error) {
+      setMessage(errorMessage(error))
+    } finally {
+      setRuntimeBusy(false)
+    }
+  }
+
+  const proposeRun = async (mode: 'syntax' | 'run') => {
+    if (!runtime?.configured) {
+      setMessage('请先选择项目 Python 解释器')
+      return
+    }
+    if (dirty) {
+      setMessage('请先保存文件，再生成运行计划')
+      return
+    }
+    let args: string[] = []
+    try {
+      const parsed = JSON.parse(runArgs || '[]')
+      if (!Array.isArray(parsed) || parsed.some(value => typeof value !== 'string')) throw new Error()
+      args = parsed
+    } catch {
+      setMessage('参数必须是 JSON 字符串数组，例如 ["--seed", "7"]')
+      return
+    }
+    setRuntimeBusy(true)
+    try {
+      setRunOperation(await runWorkspacePython(pid, {
+        actor: 'user', mode, path, args, confirmed: false,
+        idempotency_key: crypto.randomUUID(),
+      }))
+      setMessage('请核对运行计划并确认')
+    } catch (error) {
+      setMessage(errorMessage(error))
+    } finally {
+      setRuntimeBusy(false)
+    }
+  }
+
+  const confirmRun = async () => {
+    if (!runOperation) return
+    setRuntimeBusy(true)
+    try {
+      const completed = await confirmWorkspaceOperation(pid, runOperation.id)
+      setRunOperation(completed)
+      setMessage(completed.result.passed ? '运行完成' : '运行结束，请检查输出')
+    } catch (error) {
+      setMessage(errorMessage(error))
+    } finally {
+      setRuntimeBusy(false)
+    }
+  }
+
   if (!desktop.available) {
     return (
       <div className="flex h-full items-center justify-center bg-slate-950 p-8 text-center text-sm text-slate-300">
@@ -175,7 +247,47 @@ export default function WorkspaceFilePage() {
           {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
           保存
         </button>
+        {isPython && (
+          <>
+            <button type="button" onClick={() => void chooseInterpreter()} disabled={runtimeBusy} title={runtime?.interpreter_path || '选择 Python 解释器'} className="flex h-7 items-center gap-1 rounded border border-slate-600 px-2 text-[10px] text-slate-300 hover:bg-slate-700 disabled:opacity-50">
+              <Braces size={12} />{runtime?.configured ? runtime.version || 'Python' : '选择解释器'}
+            </button>
+            <button type="button" onClick={() => void proposeRun('syntax')} disabled={runtimeBusy || dirty} className="h-7 rounded border border-sky-700 px-2 text-[10px] text-sky-300 hover:bg-sky-950 disabled:opacity-40">语法检查</button>
+            <button type="button" onClick={() => void proposeRun('run')} disabled={runtimeBusy || dirty} className="flex h-7 items-center gap-1 rounded bg-sky-700 px-2 text-[10px] font-semibold text-white hover:bg-sky-600 disabled:opacity-40"><Play size={11} />运行</button>
+          </>
+        )}
       </header>
+
+      {isPython && (
+        <div className="shrink-0 border-b border-slate-700 bg-slate-900 px-3 py-2 text-[10px] text-slate-300">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500">参数 JSON</span>
+            <input value={runArgs} onChange={event => setRunArgs(event.target.value)} className="h-6 min-w-0 flex-1 rounded border border-slate-700 bg-slate-950 px-2 font-mono outline-none focus:border-sky-600" />
+            <span className="text-amber-300">可信本地执行，不是容器沙箱；不会自动安装依赖</span>
+          </div>
+          {runOperation?.status === 'proposed' && (
+            <div className="mt-2 grid grid-cols-[72px_1fr_auto] gap-x-2 gap-y-1 rounded border border-amber-800 bg-amber-950/30 p-2">
+              <span className="text-slate-500">解释器</span><code className="break-all">{runOperation.result.plan?.interpreter?.interpreter_path}</code><span />
+              <span className="text-slate-500">脚本</span><code>{runOperation.result.plan?.script}</code><span />
+              <span className="text-slate-500">工作目录</span><code className="break-all">{runOperation.result.plan?.working_directory}</code><span />
+              <span className="text-slate-500">参数</span><code>{JSON.stringify(runOperation.result.plan?.args || [])}</code>
+              <div className="flex gap-1">
+                <button type="button" onClick={() => setRunOperation(null)} className="rounded px-2 py-1 text-slate-400 hover:bg-slate-800">取消</button>
+                <button type="button" onClick={() => void confirmRun()} disabled={runtimeBusy} className="rounded bg-amber-600 px-2 py-1 font-semibold text-white hover:bg-amber-500 disabled:opacity-50">确认执行</button>
+              </div>
+            </div>
+          )}
+          {runOperation?.status === 'applied' && (
+            <div className="mt-2 max-h-36 overflow-auto rounded border border-slate-700 bg-slate-950 p-2 font-mono">
+              <p className={runOperation.result.passed ? 'text-emerald-400' : 'text-red-400'}>
+                {runOperation.result.passed ? '执行成功' : `退出码 ${runOperation.result.exit_code ?? '超时'}`} · {runOperation.result.elapsed}s
+              </p>
+              {runOperation.result.stdout && <pre className="mt-1 whitespace-pre-wrap text-slate-200">{runOperation.result.stdout}</pre>}
+              {runOperation.result.stderr && <pre className="mt-1 whitespace-pre-wrap text-red-300">{runOperation.result.stderr}</pre>}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1">
         {loading && (

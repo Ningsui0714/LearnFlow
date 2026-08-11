@@ -128,6 +128,7 @@ class ExerciseOut(BaseModel):
     requirements: List[str] = []
     judge_mode: str = "test_cases"
     judge_config: dict = {}
+    workspace_bindings: List[dict] = []
 
     class Config:
         from_attributes = True
@@ -140,6 +141,7 @@ class CodeRunRequest(BaseModel):
     assistance_level: str = "none"
     remediation_case_id: Optional[int] = None
     attempt_role: str = "original"
+    client_submission_id: Optional[str] = None
 
 
 class CodeRunResult(BaseModel):

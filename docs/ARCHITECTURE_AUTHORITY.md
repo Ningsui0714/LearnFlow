@@ -94,7 +94,9 @@
 - `checkpoint` 会话以 `learner_id + project_id + checkpoint_id` 唯一恢复，建立后作用域不可原地切换。
 - 同一关讲义和练习显示同一个关卡 Tutor；学习设计与实践验证 Agent 仍是内部能力接口，不成为第四类主 Agent，也不维护另一份聊天历史。
 - 关卡上下文只装配本关 brief、分配资源摘要、讲义/练习摘要、项目文件树和本关消息；文件正文必须按需读取，其他关卡资源与聊天不得进入。
-- `workspace_linked`、`workspace_change_applied` 属于零 kernel target 的操作事件。
+- `workspace_linked`、`workspace_change_applied`、`workspace_file_run` 属于零 kernel target 的操作事件。
 - 文件保存和运行不能写入掌握证据；正式练习提交继续走既有 `LearningAttempt -> EvidenceEvent` 链。
+- `workspace_runtime` 只按用户确认的解释器、脚本、工作目录和参数数组启动本地 Python，不经过 shell，也不安装依赖。
+- 练习绑定只登记普通项目文件引用；正式提交才冻结内容快照并判题，重复 `client_submission_id` 只产生一次尝试与评估事件。
 
 桌面令牌、路径规范化、符号链接和恢复规则见 `docs/DESKTOP_WORKSPACE_SECURITY.md`。任何放宽 WebView 文件权限、允许访问 `.learnflow`、或把文件运行当作学习证据的改动，均视为架构契约变更。

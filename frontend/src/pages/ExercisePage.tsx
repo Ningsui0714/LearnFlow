@@ -5,16 +5,24 @@ import Editor from '@monaco-editor/react'
 import {
   listExercises, getExercise, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
   runProject, saveExerciseFiles, submitProject, getExerciseEnv,
-  recordLearningEvent, listRemediationCases,
+  bindExerciseWorkspaceFile, getWorkspaceTree, recordLearningEvent, listRemediationCases,
+  unbindExerciseWorkspaceFile, type WorkspaceNode,
 } from '../services/api'
 import ConceptQuestions from '../components/exercise/ConceptQuestions'
 import RemediationPanel from '../components/exercise/RemediationPanel'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
+import { getDesktopRuntime } from '../services/desktopRuntime'
 
 interface CodeMsg {
   role: 'user' | 'assistant'
   content: string
+}
+
+function flattenWorkspaceText(nodes: WorkspaceNode[]): string[] {
+  return nodes.flatMap(node => node.is_directory
+    ? flattenWorkspaceText(node.children || [])
+    : node.kind === 'workspace_text' ? [node.path] : [])
 }
 
 export default function ExercisePage() {
@@ -36,6 +44,10 @@ export default function ExercisePage() {
   const [stderr, setStderr] = useState('')
   const [running, setRunning] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([])
+  const [bindingPath, setBindingPath] = useState('')
+  const [bindingBusy, setBindingBusy] = useState(false)
+  const desktopAvailable = getDesktopRuntime().available
 
   // Code workspace
   const [wsMessages, setWsMessages] = useState<CodeMsg[]>([])
@@ -67,6 +79,15 @@ export default function ExercisePage() {
   useEffect(() => {
     loadExercises()
   }, [cid])
+
+  useEffect(() => {
+    if (!desktopAvailable || !pid) return
+    getWorkspaceTree(pid).then(tree => {
+      const paths = flattenWorkspaceText(tree.nodes)
+      setWorkspaceFiles(paths)
+      setBindingPath(current => current || paths.find(path => path.toLowerCase().endsWith('.py')) || paths[0] || '')
+    }).catch(() => setWorkspaceFiles([]))
+  }, [desktopAvailable, pid])
 
   useEffect(() => {
     wsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -192,14 +213,17 @@ export default function ExercisePage() {
     setSubmitResult(null)
     try {
       const retrying = activeRemediation?.status === 'explaining'
+      const clientSubmissionId = globalThis.crypto?.randomUUID?.() || `exercise-submit-${activeEx.id}-${Date.now()}`
       const result = isProjectMode()
         ? await submitProject(
             activeEx.id, files, retrying ? 'guided' : assistanceLevel,
             retrying ? activeRemediation.id : undefined, retrying ? 'retry' : 'original',
+            clientSubmissionId,
           )
         : await submitExercise(
             activeEx.id, code, retrying ? 'guided' : assistanceLevel,
             retrying ? activeRemediation.id : undefined, retrying ? 'retry' : 'original',
+            clientSubmissionId,
           )
       setSubmitResult(result)
       if (result.remediation) {
@@ -211,6 +235,35 @@ export default function ExercisePage() {
       setSubmitResult({ error: e?.response?.data?.detail || e.message })
     }
     setSubmitting(false)
+  }
+
+  const bindWorkspaceFile = async () => {
+    if (!activeEx || !bindingPath) return
+    setBindingBusy(true)
+    try {
+      const editableVirtual = (activeEx.files || []).find((item: any) => !item.read_only)?.name
+      const bindings = await bindExerciseWorkspaceFile(activeEx.id, bindingPath, editableVirtual)
+      const next = { ...activeEx, workspace_bindings: bindings }
+      setActiveEx(next)
+      setExercises(current => current.map(item => item.id === next.id ? next : item))
+    } catch (e: any) {
+      setSaveMsg('❌ 绑定失败: ' + (e?.response?.data?.detail?.message || e?.response?.data?.detail || e.message))
+    } finally {
+      setBindingBusy(false)
+    }
+  }
+
+  const unbindWorkspaceFile = async (path: string) => {
+    if (!activeEx) return
+    setBindingBusy(true)
+    try {
+      const bindings = await unbindExerciseWorkspaceFile(activeEx.id, path)
+      const next = { ...activeEx, workspace_bindings: bindings }
+      setActiveEx(next)
+      setExercises(current => current.map(item => item.id === next.id ? next : item))
+    } finally {
+      setBindingBusy(false)
+    }
   }
 
   const retryExercise = () => {
@@ -429,6 +482,28 @@ export default function ExercisePage() {
                           )}
                           {assistanceLevel !== 'none' && (
                             <p className="text-[10px] text-gray-400">本次提交会标记为辅助完成</p>
+                          )}
+                          {desktopAvailable && workspaceFiles.length > 0 && (
+                            <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 p-2">
+                              <div className="flex items-center gap-2">
+                                <span className="shrink-0 text-[10px] font-semibold text-sky-800">绑定项目文件</span>
+                                <select value={bindingPath} onChange={event => setBindingPath(event.target.value)} className="h-7 min-w-0 flex-1 rounded border border-sky-200 bg-white px-2 font-mono text-[10px]">
+                                  {workspaceFiles.map(path => <option key={path} value={path}>{path}</option>)}
+                                </select>
+                                <button type="button" onClick={() => void bindWorkspaceFile()} disabled={bindingBusy || !bindingPath} className="h-7 rounded bg-sky-700 px-2 text-[10px] font-semibold text-white hover:bg-sky-600 disabled:opacity-50">绑定</button>
+                              </div>
+                              <p className="mt-1 text-[10px] text-sky-700">运行与编辑不写掌握证据；正式提交时才冻结路径、SHA-256 和内容快照。</p>
+                              {!!activeEx.workspace_bindings?.length && (
+                                <div className="mt-1.5 flex flex-wrap gap-1">
+                                  {activeEx.workspace_bindings.map((binding: any) => (
+                                    <span key={binding.path} className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 font-mono text-[10px] text-sky-800">
+                                      {binding.path}
+                                      <button type="button" onClick={() => void unbindWorkspaceFile(binding.path)} disabled={bindingBusy} title="解除绑定" className="text-sky-400 hover:text-red-500">×</button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}

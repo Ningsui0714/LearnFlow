@@ -102,3 +102,30 @@ class WorkspaceOperationResponse(BaseModel):
 
 class WorkspaceOperationListResponse(BaseModel):
     operations: list[WorkspaceOperationResponse]
+
+
+class WorkspaceRuntimeConfigRequest(BaseModel):
+    interpreter_path: str = Field(min_length=1)
+
+
+class WorkspaceRuntimeConfigResponse(BaseModel):
+    interpreter_path: str | None = None
+    version: str | None = None
+    configured: bool = False
+    mode: str = "trusted_local_execution"
+
+
+class WorkspaceRunRequest(BaseModel):
+    actor: Literal["user", "agent"] = "user"
+    mode: Literal["syntax", "run"] = "run"
+    path: str = Field(min_length=1)
+    args: list[str] = Field(default_factory=list, max_length=32)
+    checkpoint_id: int | None = None
+    session_id: int | None = None
+    confirmed: bool = False
+    idempotency_key: str = Field(min_length=1, max_length=160)
+
+
+class ExerciseWorkspaceBindingRequest(BaseModel):
+    path: str = Field(min_length=1)
+    exercise_file: str | None = None

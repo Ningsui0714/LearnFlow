@@ -774,6 +774,7 @@ async def create_attempt(
     submission: dict,
     result: dict,
     assistance_level: str = "none",
+    client_submission_id: str | None = None,
 ) -> LearningAttempt:
     if learner_id is None:
         learner_id = (await get_default_learner(db)).id
@@ -800,6 +801,7 @@ async def create_attempt(
         submission=submission,
         result=result,
         assistance_level=assistance_level,
+        client_submission_id=client_submission_id,
         submitted_at=now,
         evaluated_at=now,
     )

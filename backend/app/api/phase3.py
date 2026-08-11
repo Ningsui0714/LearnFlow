@@ -4,14 +4,21 @@ Phase 3 API routes:
 - Code execution
 - Code review agent
 """
-from fastapi import APIRouter, Depends, HTTPException, Body
+from pathlib import Path
+import hashlib
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
 from app.core.config import settings
-from app.models.project import Checkpoint, Exercise, ConceptQuestion, Task, Roadmap
+from app.models.learning import LearningAttempt
+from app.models.project import (
+    Checkpoint, Exercise, ConceptQuestion, Task, Roadmap, ProjectWorkspace,
+)
 from app.schemas.project import ExerciseOut, CodeRunRequest, CodeRunResult
+from app.schemas.workspace import ExerciseWorkspaceBindingRequest
 from app.services.code_executor import execute_code
 from app.services.code_agent import CodeAgent
 from app.services.concept_agent import ConceptAgent
@@ -20,6 +27,8 @@ from app.services.auth import (
     require_owned_exercise, require_owned_project,
 )
 from app.services.profile import evaluate_project_badge
+from app.services.workspace_files import WorkspaceError, read_workspace_file
+from app.api.workspace import require_desktop_token
 from langchain_core.messages import HumanMessage
 
 router = APIRouter()
@@ -49,6 +58,7 @@ async def list_exercises(
             files=e.files or [], entrypoint=e.entrypoint or "",
             requirements=e.requirements or [], judge_mode=e.judge_mode or "test_cases",
             judge_config=e.judge_config or {},
+            workspace_bindings=e.workspace_bindings or [],
         )
         for e in exercises
     ]
@@ -82,6 +92,7 @@ async def create_exercise(
         requirements=data.get("requirements", []),
         judge_mode=data.get("judge_mode", "test_cases"),
         judge_config=data.get("judge_config", {}),
+        workspace_bindings=data.get("workspace_bindings", []),
     )
     db.add(exercise)
     await db.commit()
@@ -96,6 +107,7 @@ async def create_exercise(
         requirements=exercise.requirements or [],
         judge_mode=exercise.judge_mode or "test_cases",
         judge_config=exercise.judge_config or {},
+        workspace_bindings=exercise.workspace_bindings or [],
     )
 
 
@@ -114,7 +126,90 @@ async def get_exercise(
         files=e.files or [], entrypoint=e.entrypoint or "",
         requirements=e.requirements or [], judge_mode=e.judge_mode or "test_cases",
         judge_config=e.judge_config or {},
+        workspace_bindings=e.workspace_bindings or [],
     )
+
+
+async def _exercise_workspace(
+    db: AsyncSession, learner_id: int, exercise: Exercise,
+) -> tuple[int, ProjectWorkspace]:
+    checkpoint = await db.get(Checkpoint, exercise.checkpoint_id)
+    roadmap = await db.get(Roadmap, checkpoint.roadmap_id) if checkpoint else None
+    if not roadmap:
+        raise HTTPException(404, "Exercise project not found")
+    workspace = (await db.execute(select(ProjectWorkspace).where(
+        ProjectWorkspace.project_id == roadmap.project_id,
+        ProjectWorkspace.learner_id == learner_id,
+        ProjectWorkspace.status == "linked",
+    ))).scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(409, "当前项目尚未关联本地工作区")
+    return roadmap.project_id, workspace
+
+
+@router.put(
+    "/exercises/{exercise_id}/workspace-bindings",
+    dependencies=[Depends(require_desktop_token)],
+)
+async def bind_exercise_workspace_file(
+    exercise_id: int,
+    data: ExerciseWorkspaceBindingRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
+    _, workspace = await _exercise_workspace(db, current.learner.id, exercise)
+    virtual = {item.get("name"): item for item in (exercise.files or []) if isinstance(item, dict)}
+    if data.exercise_file:
+        target = virtual.get(data.exercise_file)
+        if not target:
+            raise HTTPException(400, "绑定目标不是当前练习的虚拟文件")
+        if target.get("read_only"):
+            raise HTTPException(403, "只读题面、测试或答案文件不能绑定为用户答案")
+    try:
+        file = read_workspace_file(Path(workspace.root_path), data.path, actor="user")
+    except WorkspaceError as exc:
+        raise HTTPException(exc.status_code, {"code": exc.code, "message": exc.detail}) from exc
+    if file["kind"] != "workspace_text":
+        raise HTTPException(400, "练习只能绑定 UTF-8 文本文件")
+    binding = {
+        "path": file["path"],
+        "exercise_file": data.exercise_file,
+        "bound_sha256": file["sha256"],
+    }
+    existing = [
+        item for item in (exercise.workspace_bindings or [])
+        if (
+            isinstance(item, dict)
+            and item.get("path") != file["path"]
+            and not (
+                data.exercise_file
+                and item.get("exercise_file") == data.exercise_file
+            )
+        )
+    ]
+    exercise.workspace_bindings = [*existing, binding]
+    await db.commit()
+    return {"bindings": exercise.workspace_bindings}
+
+
+@router.delete(
+    "/exercises/{exercise_id}/workspace-bindings",
+    dependencies=[Depends(require_desktop_token)],
+)
+async def unbind_exercise_workspace_file(
+    exercise_id: int,
+    path: str,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
+    exercise.workspace_bindings = [
+        item for item in (exercise.workspace_bindings or [])
+        if isinstance(item, dict) and item.get("path") != path
+    ]
+    await db.commit()
+    return {"bindings": exercise.workspace_bindings}
 
 
 # ── Project-mode: save user files (pilot) ──
@@ -639,19 +734,76 @@ async def get_exercise_task(
 async def submit_exercise(
     exercise_id: int,
     req: CodeRunRequest,
+    desktop_token: str | None = Header(default=None, alias="X-LearnFlow-Desktop-Token"),
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
     """T8: judge user code against the exercise's test cases.
     Returns per-case results (passed/expected/actual)."""
     exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
+    if exercise.workspace_bindings:
+        require_desktop_token(desktop_token)
+
+    submission_key = None
+    if req.client_submission_id:
+        raw_key = f"exercise:{current.learner.id}:{exercise_id}:{req.client_submission_id}"
+        submission_key = raw_key if len(raw_key) <= 160 else (
+            f"exercise:{current.learner.id}:sha256:{hashlib.sha256(raw_key.encode()).hexdigest()}"
+        )
+        replay = (await db.execute(select(LearningAttempt).where(
+            LearningAttempt.learner_id == current.learner.id,
+            LearningAttempt.client_submission_id == submission_key,
+        ))).scalar_one_or_none()
+        if replay:
+            return {**dict(replay.result or {}), "attempt_id": replay.id, "idempotent_replay": True}
+
+    bound_snapshots: list[dict] = []
+    if exercise.workspace_bindings:
+        _, workspace = await _exercise_workspace(db, current.learner.id, exercise)
+        for binding in exercise.workspace_bindings or []:
+            if not isinstance(binding, dict) or not binding.get("path"):
+                continue
+            try:
+                value = read_workspace_file(
+                    Path(workspace.root_path), str(binding["path"]), actor="user",
+                )
+            except WorkspaceError as exc:
+                raise HTTPException(
+                    exc.status_code,
+                    {"code": exc.code, "message": f"绑定文件不可用：{exc.detail}"},
+                ) from exc
+            if value["kind"] != "workspace_text":
+                raise HTTPException(400, "绑定文件必须是 UTF-8 文本")
+            bound_snapshots.append({
+                "relative_path": value["path"],
+                "exercise_file": binding.get("exercise_file"),
+                "sha256": value["sha256"],
+                "content": value["content"],
+                "size": value["size"],
+            })
+
+    effective_code = req.code
+    if bound_snapshots and not (exercise.files or []):
+        python_snapshot = next(
+            (item for item in bound_snapshots if item["relative_path"].casefold().endswith(".py")),
+            bound_snapshots[0],
+        )
+        effective_code = str(python_snapshot["content"])
+
+    bound_clients = {
+        str(item.get("exercise_file") or Path(item["relative_path"]).name): {
+            "name": str(item.get("exercise_file") or Path(item["relative_path"]).name),
+            "content": item["content"],
+            "read_only": False,
+        }
+        for item in bound_snapshots
+    }
 
     async def persist_attempt(response: dict, passed_ok: bool):
-        import hashlib
         from app.services.learning_runtime import (
             create_attempt, record_event, evaluate_checkpoint_status,
         )
-        code_bytes = (req.code or "").encode("utf-8")
+        code_bytes = (effective_code or "").encode("utf-8")
         file_refs = [
             {
                 "name": f.get("name", ""),
@@ -660,10 +812,11 @@ async def submit_exercise(
             for f in (req.files or []) if f.get("name")
         ]
         submission = {
-            "code": req.code[:65536],
+            "code": effective_code[:65536],
             "code_sha256": hashlib.sha256(code_bytes).hexdigest(),
             "truncated": len(code_bytes) > 65536,
             "files": file_refs,
+            "workspace_bindings": bound_snapshots,
         }
         attempt = await create_attempt(
             db,
@@ -674,6 +827,7 @@ async def submit_exercise(
             submission=submission,
             result=response,
             assistance_level=req.assistance_level or "none",
+            client_submission_id=submission_key,
         )
         cp = await db.get(Checkpoint, exercise.checkpoint_id)
         roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
@@ -730,6 +884,11 @@ async def submit_exercise(
             await evaluate_project_badge(
                 db, learner_id=current.learner.id, project_id=roadmap.project_id,
             )
+        attempt.result = {
+            **response,
+            "attempt_id": attempt.id,
+            "remediation": remediation_payload,
+        }
         await db.commit()
         return attempt.id, remediation_payload
 
@@ -737,6 +896,7 @@ async def submit_exercise(
     if (exercise.files or []) and exercise.judge_mode == "stdout_check":
         from app.services.project_runner import run_project, check_stdout
         client = {f.get("name"): f for f in req.files if f.get("name")}
+        client.update(bound_clients)
         merged = []
         for f in (exercise.files or []):
             name = f.get("name", "")
@@ -771,7 +931,7 @@ async def submit_exercise(
         return response
 
     from app.services.exercise_agent import ExerciseAgent
-    results = ExerciseAgent.verify_exercise(req.code, test_cases)
+    results = ExerciseAgent.verify_exercise(effective_code, test_cases)
     passed = sum(1 for r in results if r["passed"])
     if passed == len(results) and passed > 0:
         from app.services.progress import record_exercise_solved

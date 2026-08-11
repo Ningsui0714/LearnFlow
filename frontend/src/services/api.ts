@@ -212,7 +212,7 @@ export interface WorkspaceOperation {
   id: number
   project_id: number
   actor: 'user' | 'agent'
-  operation: 'create' | 'write' | 'mkdir' | 'rename' | 'move' | 'delete' | 'restore'
+  operation: 'create' | 'write' | 'mkdir' | 'rename' | 'move' | 'delete' | 'restore' | 'run'
   status: string
   target_path: string
   destination_path?: string
@@ -273,6 +273,46 @@ export const listWorkspaceOperations = (
 
 export const revealWorkspaceItem = (projectId: number, path: string) =>
   api.post(`/projects/${projectId}/workspace/reveal`, { path }).then(r => r.data)
+
+export interface WorkspaceRuntimeConfig {
+  interpreter_path?: string
+  version?: string
+  configured: boolean
+  mode: 'trusted_local_execution'
+}
+
+export const getWorkspaceRuntimeConfig = (projectId: number) =>
+  api.get(`/projects/${projectId}/workspace/runtime/config`)
+    .then(r => r.data as WorkspaceRuntimeConfig)
+
+export const setWorkspaceRuntimeConfig = (projectId: number, interpreterPath: string) =>
+  api.put(`/projects/${projectId}/workspace/runtime/config`, { interpreter_path: interpreterPath })
+    .then(r => r.data as WorkspaceRuntimeConfig)
+
+export const runWorkspacePython = (
+  projectId: number,
+  data: {
+    actor: 'user' | 'agent'
+    mode: 'syntax' | 'run'
+    path: string
+    args: string[]
+    checkpoint_id?: number
+    session_id?: number
+    confirmed: boolean
+    idempotency_key: string
+  },
+) => api.post(`/projects/${projectId}/workspace/runs`, data)
+  .then(r => r.data as WorkspaceOperation)
+
+export const bindExerciseWorkspaceFile = (
+  exerciseId: number, path: string, exerciseFile?: string,
+) => api.put(`/exercises/${exerciseId}/workspace-bindings`, {
+  path, exercise_file: exerciseFile,
+}).then(r => r.data.bindings as Array<Record<string, any>>)
+
+export const unbindExerciseWorkspaceFile = (exerciseId: number, path: string) =>
+  api.delete(`/exercises/${exerciseId}/workspace-bindings`, { params: { path } })
+    .then(r => r.data.bindings as Array<Record<string, any>>)
 
 // ── Source ──
 export const addSource = (projectId: number, data: { type: string; url?: string }) =>
@@ -624,9 +664,11 @@ export const submitProject = (
   assistanceLevel: string = 'none',
   remediationCaseId?: number,
   attemptRole: string = 'original',
+  clientSubmissionId?: string,
 ) => api.post(`/exercises/${exerciseId}/submit`, {
   code: '', files, assistance_level: assistanceLevel,
   remediation_case_id: remediationCaseId, attempt_role: attemptRole,
+  client_submission_id: clientSubmissionId,
 }).then(r => r.data)
 
 export const reviewCode = (exerciseId: number, code: string, selection?: string) =>
@@ -669,11 +711,13 @@ export const submitExercise = (
   assistanceLevel: string = 'none',
   remediationCaseId?: number,
   attemptRole: string = 'original',
+  clientSubmissionId?: string,
 ) => api.post(`/exercises/${exerciseId}/submit`, {
   code,
   assistance_level: assistanceLevel,
   remediation_case_id: remediationCaseId,
   attempt_role: attemptRole,
+  client_submission_id: clientSubmissionId,
 }).then(r => r.data)
 
 // ── Explicit remediation loop ──

@@ -130,6 +130,21 @@ ACTION_BOARD = {
             {},
             ("inspect_workspace_files",),
         ),
+        ActionDefinition(
+            "configure_workspace_runtime", "选择项目 Python 解释器", "write", "explicit",
+            {},
+            ("run_workspace_file",),
+        ),
+        ActionDefinition(
+            "run_workspace_file", "运行本地 Python 文件", "execution", "explicit",
+            {},
+            ("inspect_workspace_files", "evaluate_attempt"),
+        ),
+        ActionDefinition(
+            "bind_exercise_file", "绑定练习与项目文件", "write", "explicit",
+            {},
+            ("evaluate_attempt",),
+        ),
     )
 }
 

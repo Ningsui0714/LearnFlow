@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import sys
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -9,8 +10,8 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.db.database import async_session
 from app.main import app
-from app.models.learning import AgentSession, EvidenceEvent, KernelMutation
-from app.models.project import Checkpoint, Project, Roadmap, WorkspaceOperation
+from app.models.learning import AgentSession, EvidenceEvent, KernelMutation, LearningAttempt
+from app.models.project import Checkpoint, Exercise, Project, Roadmap, WorkspaceOperation
 
 
 DESKTOP_TOKEN = "workspace-test-token"
@@ -385,3 +386,159 @@ def test_traversal_links_protected_paths_delete_restore_and_user_isolation(tmp_p
                 ))
 
         assert asyncio.run(operation_count()) == 2
+
+
+def test_python_runtime_and_bound_formal_submission_are_separate_evidence_paths(
+    tmp_path, monkeypatch,
+):
+    enable_desktop(monkeypatch)
+    root = tmp_path / "runtime-project"
+    root.mkdir()
+    script = root / "answer.py"
+    script.write_text("import sys\nprint(sys.argv[1] if len(sys.argv) > 1 else 2)\n", encoding="utf-8")
+
+    with TestClient(app) as client:
+        registered = client.post("/api/auth/register", json=registration("workspace_runtime_user"))
+        learner_id = registered.json()["learner_id"]
+        project = create_project(client, "Runtime Project")
+        project_id = project["id"]
+        assert link_workspace(client, project_id, root).status_code == 200
+
+        configured = client.put(
+            f"/api/projects/{project_id}/workspace/runtime/config",
+            headers=DESKTOP_HEADERS,
+            json={"interpreter_path": sys.executable},
+        )
+        assert configured.status_code == 200, configured.text
+        assert configured.json()["configured"] is True
+        assert "Python" in configured.json()["version"]
+
+        syntax = client.post(
+            f"/api/projects/{project_id}/workspace/runs",
+            headers=DESKTOP_HEADERS,
+            json={
+                "actor": "user", "mode": "syntax", "path": "answer.py", "args": [],
+                "confirmed": True, "idempotency_key": "syntax-answer-1",
+            },
+        )
+        assert syntax.status_code == 200, syntax.text
+        assert syntax.json()["status"] == "applied"
+        assert syntax.json()["result"]["passed"] is True
+
+        async def seed_exercise_scope():
+            async with async_session() as db:
+                roadmap = Roadmap(project_id=project_id, raw_json={})
+                db.add(roadmap)
+                await db.flush()
+                checkpoint = Checkpoint(roadmap_id=roadmap.id, title="Runtime", order=1, brief={})
+                db.add(checkpoint)
+                await db.flush()
+                exercise = Exercise(
+                    checkpoint_id=checkpoint.id,
+                    title="Bound answer",
+                    starter_code="print(0)",
+                    test_cases=[{"input": "", "expected": "2"}],
+                    order=1,
+                )
+                session = AgentSession(
+                    learner_id=learner_id, session_type="checkpoint",
+                    project_id=project_id, checkpoint_id=checkpoint.id,
+                    title="Checkpoint Tutor",
+                )
+                db.add_all([exercise, session])
+                await db.commit()
+                return checkpoint.id, exercise.id, session.id
+
+        checkpoint_id, exercise_id, session_id = asyncio.run(seed_exercise_scope())
+        proposed = client.post(
+            f"/api/projects/{project_id}/workspace/runs",
+            headers=DESKTOP_HEADERS,
+            json={
+                "actor": "agent", "mode": "run", "path": "answer.py",
+                "args": ["$(touch should-not-exist)"], "confirmed": True,
+                "checkpoint_id": checkpoint_id, "session_id": session_id,
+                "idempotency_key": "agent-run-answer-1",
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        assert proposed.json()["status"] == "proposed"
+        plan = proposed.json()["result"]["plan"]
+        assert plan["script"] == "answer.py"
+        assert plan["working_directory"] == str(root.resolve())
+        assert plan["args"] == ["$(touch should-not-exist)"]
+        assert "command" not in plan
+        confirmed = client.post(
+            f"/api/projects/{project_id}/workspace/operations/{proposed.json()['id']}/confirm",
+            headers=DESKTOP_HEADERS,
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        assert "$(touch should-not-exist)" in confirmed.json()["result"]["stdout"]
+        assert not (root / "should-not-exist").exists()
+
+        binding = client.put(
+            f"/api/exercises/{exercise_id}/workspace-bindings",
+            headers=DESKTOP_HEADERS,
+            json={"path": "answer.py"},
+        )
+        assert binding.status_code == 200, binding.text
+        assert binding.json()["bindings"][0]["path"] == "answer.py"
+
+        script.write_text("print(2)\n", encoding="utf-8")
+        submission_id = "formal-bound-submit-1"
+        submitted = client.post(
+            f"/api/exercises/{exercise_id}/submit",
+            headers=DESKTOP_HEADERS,
+            json={
+                "code": "print(0)", "files": [], "client_submission_id": submission_id,
+            },
+        )
+        assert submitted.status_code == 200, submitted.text
+        assert submitted.json()["passed"] == 1
+        replay = client.post(
+            f"/api/exercises/{exercise_id}/submit",
+            headers=DESKTOP_HEADERS,
+            json={
+                "code": "print(999)", "files": [], "client_submission_id": submission_id,
+            },
+        )
+        assert replay.status_code == 200
+        assert replay.json()["idempotent_replay"] is True
+        assert replay.json()["attempt_id"] == submitted.json()["attempt_id"]
+        monkeypatch.setattr(settings, "desktop_mode", False)
+        monkeypatch.setattr(settings, "desktop_token", "")
+        hidden_in_browser = client.post(
+            f"/api/exercises/{exercise_id}/submit",
+            json={
+                "code": "print(2)", "files": [],
+                "client_submission_id": "browser-must-not-read-binding",
+            },
+        )
+        assert hidden_in_browser.status_code == 404
+        enable_desktop(monkeypatch)
+
+        async def verify_ledgers():
+            async with async_session() as db:
+                attempt = await db.get(LearningAttempt, submitted.json()["attempt_id"])
+                binding_snapshot = (attempt.submission or {})["workspace_bindings"][0]
+                run_events = list((await db.execute(select(EvidenceEvent).where(
+                    EvidenceEvent.learner_id == learner_id,
+                    EvidenceEvent.event_type == "workspace_file_run",
+                ))).scalars().all())
+                run_event_ids = [item.id for item in run_events]
+                run_mutations = list((await db.execute(select(KernelMutation).where(
+                    KernelMutation.event_id.in_(run_event_ids),
+                ))).scalars().all()) if run_event_ids else []
+                assessment_events = list((await db.execute(select(EvidenceEvent).where(
+                    EvidenceEvent.learner_id == learner_id,
+                    EvidenceEvent.event_type == "exercise_attempt_evaluated",
+                    EvidenceEvent.payload["attempt_id"].as_integer() == attempt.id,
+                ))).scalars().all())
+                return binding_snapshot, len(run_events), len(run_mutations), len(assessment_events)
+
+        snapshot, run_count, run_mutations, assessment_count = asyncio.run(verify_ledgers())
+        assert snapshot["relative_path"] == "answer.py"
+        assert snapshot["content"] == "print(2)\n"
+        assert len(snapshot["sha256"]) == 64
+        assert run_count == 2
+        assert run_mutations == 0
+        assert assessment_count == 1

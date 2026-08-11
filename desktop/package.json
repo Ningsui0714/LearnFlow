@@ -5,9 +5,9 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "build:sidecar": "python3 scripts/build_sidecar.py"
+    "build:sidecar": "python scripts/build_sidecar.py"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.8.4"
+    "@tauri-apps/cli": "^2.8.5"
   }
 }

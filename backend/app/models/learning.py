@@ -166,6 +166,7 @@ class LearningAttempt(Base):
         Integer, ForeignKey("remediation_cases.id"), nullable=True, index=True,
     )
     attempt_role = Column(String(30), default="original", index=True)
+    client_submission_id = Column(String(160), nullable=True, unique=True, index=True)
     started_at = Column(DateTime, default=datetime.utcnow)
     submitted_at = Column(DateTime, nullable=True)
     evaluated_at = Column(DateTime, nullable=True)
