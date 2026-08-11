@@ -9,18 +9,19 @@
 Codex 必须先完成以下检查，再提出方案或修改文件：
 
 1. 读取本文件和当前工作目录到仓库根目录之间所有适用的 `AGENTS.md`。
-2. 读取用户指定的 GitHub Issue、PR 或任务说明，提取目标、范围、验收标准和非目标。
-3. 执行 `git status -sb`，识别当前分支及已有未提交改动；已有改动默认属于用户，不得覆盖、删除或重置。
-4. 根据任务阅读最少但足够的权威资料。涉及架构或跨模块契约时，至少阅读：
+2. 涉及 GitHub 协作、分支、提交、发布或交接时，完整阅读 `docs/GITHUB_COLLABORATION.md`。
+3. 读取用户指定的 GitHub Issue、PR 或任务说明，提取目标、范围、验收标准和非目标。
+4. 执行 `git status -sb`，识别当前分支及已有未提交改动；已有改动默认属于用户，不得覆盖、删除或重置。
+5. 根据任务阅读最少但足够的权威资料。涉及架构或跨模块契约时，至少阅读：
    - `docs/ARCHITECTURE_AUTHORITY.md`
    - `docs/AGENT_ARCHITECTURE_GUIDE.md`
    - `backend/app/services/architecture_registry.py`
-5. 涉及五核、学习者状态或证据写回时，继续阅读：
+6. 涉及五核、学习者状态或证据写回时，继续阅读：
    - `docs/FIVE_KERNEL_MEMORY_GRAPH.md`
    - `backend/app/services/learning_runtime.py`
    - `backend/app/services/memory_graph.py`
-6. 涉及学习状态快速获取模块时，完整阅读 `docs/LEARNER_STATE_DISCOVERY_AGENT_BRIEF.md`。
-7. 涉及比赛或 seeded demo 时，阅读 `docs/competition/README.md` 与 `docs/competition/DEMO_RUNBOOK.md`。
+7. 涉及学习状态快速获取模块时，完整阅读 `docs/LEARNER_STATE_DISCOVERY_AGENT_BRIEF.md`。
+8. 涉及比赛或 seeded demo 时，阅读 `docs/competition/README.md` 与 `docs/competition/DEMO_RUNBOOK.md`。
 
 如果用户的直接指令、GitHub Issue 与现有文档存在实质冲突，停止扩大修改范围，明确指出冲突并请求架构裁决。不得以私有实现绕过冲突。
 

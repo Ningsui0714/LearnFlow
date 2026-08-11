@@ -20,7 +20,13 @@ export default function DemoEntryPage() {
         await enterCompetitionDemo()
         setMessage('正在定位纠错闭环演示关卡…')
         const manifest = await getCompetitionDemoManifest()
-        if (active) navigate(manifest.entry_path, { replace: true })
+        if (active) {
+          // The seeded demo must start from a deterministic IDE layout too.
+          Object.keys(localStorage)
+            .filter(key => key.startsWith('learnflow.workspace.v1.'))
+            .forEach(key => localStorage.removeItem(key))
+          navigate(manifest.entry_path, { replace: true })
+        }
       } catch (requestError: any) {
         if (active) setError(requestError?.response?.data?.detail || requestError.message)
       }

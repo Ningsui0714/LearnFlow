@@ -9,6 +9,8 @@ import {
 } from '../services/api'
 import ConceptQuestions from '../components/exercise/ConceptQuestions'
 import RemediationPanel from '../components/exercise/RemediationPanel'
+import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
 
 interface CodeMsg {
   role: 'user' | 'assistant'
@@ -37,7 +39,6 @@ export default function ExercisePage() {
 
   // Code workspace
   const [wsMessages, setWsMessages] = useState<CodeMsg[]>([])
-  const [wsInput, setWsInput] = useState('')
   const [wsLoading, setWsLoading] = useState(false)
   const [selectedCode, setSelectedCode] = useState('')
   const [showDesc, setShowDesc] = useState(true)
@@ -58,6 +59,10 @@ export default function ExercisePage() {
   const [fontSize, setFontSize] = useState(13)
   const [vimLoading, setVimLoading] = useState(false)
   const wsEndRef = useRef<HTMLDivElement>(null)
+
+  useWorkspaceTitle(activeEx?.title ? `练习 · ${activeEx.title}` : `练习 · 关卡 ${cid}`, {
+    kind: 'exercise', projectId: pid, checkpointId: cid,
+  })
 
   useEffect(() => {
     loadExercises()
@@ -120,6 +125,17 @@ export default function ExercisePage() {
     const f = files.find(f => f.name === activeFileName)
     return f ? f.content : ''
   }
+
+  useEffect(() => {
+    publishWorkspaceAgentContext({
+      kind: 'practice',
+      checkpointId: cid,
+      exerciseId: activeEx?.id,
+      title: activeEx?.title || `关卡 ${cid} 练习`,
+      selection: selectedCode,
+      code: activeEx?.files?.length ? activeFileContent() : code,
+    })
+  }, [activeEx?.files?.length, activeEx?.id, activeEx?.title, activeFileName, cid, code, files, selectedCode])
 
   const updateActiveFile = (content: string) => {
     setFiles(prev => prev.map(f => f.name === activeFileName ? { ...f, content } : f))
@@ -238,30 +254,6 @@ export default function ExercisePage() {
     setWsMessages(prev => [...prev, msg])
     try {
       const result = await reviewCode(activeEx.id, reviewCodeText, selectedCode)
-      setWsMessages(prev => [...prev, { role: 'assistant', content: result.answer }])
-    } catch (e: any) {
-      setWsMessages(prev => [...prev, { role: 'assistant', content: '❌ ' + (e?.response?.data?.detail || '请求失败') }])
-    }
-    setWsLoading(false)
-  }
-
-  const handleAskInWorkspace = async () => {
-    if (!wsInput.trim() || wsLoading) return
-    const text = wsInput.trim()
-    setWsInput('')
-    const msg: CodeMsg = { role: 'user', content: text }
-    setWsMessages(prev => [...prev, msg])
-    setWsLoading(true)
-    setAssistanceLevel('guided')
-
-    try {
-      const { askCodeQuestion } = await import('../services/api')
-      const result = await askCodeQuestion({
-        code: isProjectMode() ? activeFileContent() : code,
-        selection: selectedCode,
-        question: text,
-        context: activeEx?.title || '',
-      })
       setWsMessages(prev => [...prev, { role: 'assistant', content: result.answer }])
     } catch (e: any) {
       setWsMessages(prev => [...prev, { role: 'assistant', content: '❌ ' + (e?.response?.data?.detail || '请求失败') }])
@@ -613,7 +605,7 @@ export default function ExercisePage() {
               <div className="flex items-center justify-between px-4 py-1.5 border-b border-gray-100 shrink-0">
                 <div className="flex items-center gap-2 text-xs">
                   <span className="w-2 h-2 rounded-full bg-primary-400" />
-                  <span className="font-medium text-gray-700">代码工作区</span>
+                  <span className="font-medium text-gray-700">纠错与审阅记录</span>
                   {selectedCode && (
                     <span className="text-gray-400 truncate max-w-[200px]">
                       「{selectedCode.slice(0, 40)}...」
@@ -636,7 +628,7 @@ export default function ExercisePage() {
                 )}
                 {wsMessages.length === 0 && (
                   <div className="text-gray-400 text-center py-4">
-                    选中代码后提问，或点击「审阅」获取反馈
+                    点击编辑器下方「审阅」记录代码反馈；自由追问请使用右侧 Agent 对话
                   </div>
                 )}
                 {wsMessages.map((m, i) => (
@@ -650,18 +642,6 @@ export default function ExercisePage() {
                 ))}
                 {wsLoading && <div className="text-gray-400 animate-pulse">思考中...</div>}
                 <div ref={wsEndRef} />
-              </div>
-              <div className="border-t border-gray-100 px-4 py-1.5 shrink-0 flex gap-2">
-                <input type="text" value={wsInput}
-                  onChange={e => setWsInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleAskInWorkspace()}
-                  placeholder="输入问题... (Enter 发送)"
-                  className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary-400"
-                />
-                <button onClick={handleAskInWorkspace} disabled={wsLoading || !wsInput.trim()}
-                  className="bg-primary-600 text-white px-2.5 py-1 rounded text-xs hover:bg-primary-700 disabled:bg-gray-300">
-                  发送
-                </button>
               </div>
             </div>
           }
