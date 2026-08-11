@@ -6,7 +6,8 @@
 
 - 浏览器部署的 `DESKTOP_MODE` 必须保持 `false`，本地文件接口对浏览器返回 404。
 - Tauri 每次启动生成新的高熵桌面令牌，并在随机 loopback 端口启动 FastAPI sidecar。
-- 每个文件请求同时校验登录 cookie、项目 `learner_id` 归属和 `X-LearnFlow-Desktop-Token`。
+- 每个文件请求同时校验登录会话、项目 `learner_id` 归属和 `X-LearnFlow-Desktop-Token`。
+- 浏览器继续使用 HTTP-only cookie。由于 Tauri WebView 与 loopback sidecar 可能跨站，只有桌面令牌校验成功的登录/注册请求才会额外返回桌面 Bearer；Bearer 仅保存在该窗口的 `sessionStorage`，服务端接受它时仍要求本次启动令牌。
 - WebView 只有目录选择能力，没有 `$HOME/**` 或任意文件系统权限。真正的项目根约束由 FastAPI 再次执行。
 - sidecar 只允许绑定 `127.0.0.1`、`::1` 或 `localhost`；桌面令牌不得写入仓库、日志或数据库。
 
@@ -50,6 +51,8 @@
 - 删除、重命名和移动均使用 `WorkspaceOperation`；删除进入 `.learnflow/trash/op-<id>/`，不做永久删除。
 - 覆盖前的内容进入 `.learnflow/history/op-<id>/`；同一幂等键或同一确认重复调用只应用一次。
 - 提案默认 30 分钟过期；基础 hash 变化后状态变为 `stale`，必须重新读取和提案。
+
+桌面 Explorer 将数据库权威的“关卡资料”和磁盘权威的“项目文件”分成两个逻辑组，不展示 `.learnflow`。普通文本由 Monaco 打开，可使用多标签、最多三个编辑组和 `⌘S/Ctrl+S`；二进制或大型文件只显示大小与 hash。创建、重命名、移动、删除、恢复及 Finder/Explorer 定位都经同一受控 API。
 
 文件系统与 SQLite 无法形成跨介质原子事务，因此磁盘变更先产生回滚快照，再登记 applied 状态和事件。异常操作保留 `failed/stale` 记录，不能伪装成功。
 

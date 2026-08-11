@@ -6,8 +6,24 @@ const api = axios.create({
   withCredentials: true,
 })
 
+const DESKTOP_AUTH_STORAGE_KEY = 'learnflow.desktop.auth-token'
+
+export function configureDesktopApi(baseURL: string, desktopToken: string) {
+  api.defaults.baseURL = baseURL
+  api.defaults.headers.common['X-LearnFlow-Desktop-Token'] = desktopToken
+  const authToken = sessionStorage.getItem(DESKTOP_AUTH_STORAGE_KEY)
+  if (authToken) api.defaults.headers.common.Authorization = `Bearer ${authToken}`
+}
+
 api.interceptors.response.use(
-  response => response,
+  response => {
+    const desktopAuthToken = response?.data?.desktop_auth_token
+    if (typeof desktopAuthToken === 'string' && desktopAuthToken) {
+      sessionStorage.setItem(DESKTOP_AUTH_STORAGE_KEY, desktopAuthToken)
+      api.defaults.headers.common.Authorization = `Bearer ${desktopAuthToken}`
+    }
+    return response
+  },
   error => {
     if (error?.response?.status === 401) {
       window.dispatchEvent(new CustomEvent('learnflow:unauthorized'))
@@ -24,6 +40,7 @@ export interface AuthUser {
   is_legacy_demo: boolean
   is_dev_login: boolean
   dev_test_login_enabled: boolean
+  desktop_auth_token?: string
   profile: {
     education_stage: string
     background: string
@@ -53,7 +70,11 @@ export const loginUser = (username: string, password: string) =>
   api.post('/auth/login', { username, password }).then(r => r.data as AuthUser)
 export const registerUser = (data: RegisterPayload) =>
   api.post('/auth/register', data).then(r => r.data as AuthUser)
-export const logoutUser = () => api.post('/auth/logout').then(r => r.data)
+export const logoutUser = () => api.post('/auth/logout').then(r => {
+  sessionStorage.removeItem(DESKTOP_AUTH_STORAGE_KEY)
+  delete api.defaults.headers.common.Authorization
+  return r.data
+})
 export const listDevAccounts = () => api.get('/dev/accounts').then(r => r.data)
 export const devLogin = (accountId: number) =>
   api.post(`/dev/accounts/${accountId}/login`).then(r => r.data as AuthUser)
@@ -150,6 +171,108 @@ export const listProjects = () =>
 
 export const getProject = (id: number) =>
   api.get(`/projects/${id}`).then(r => r.data)
+
+// ── Desktop project workspace ──
+export type WorkspaceNodeKind =
+  | 'managed_lecture'
+  | 'managed_exercise'
+  | 'workspace_text'
+  | 'workspace_binary'
+  | 'protected'
+
+export interface WorkspaceNode {
+  name: string
+  path: string
+  kind: WorkspaceNodeKind
+  is_directory: boolean
+  size?: number
+  modified_at?: string
+  protected_reason?: string
+  children: WorkspaceNode[]
+}
+
+export interface WorkspaceTree {
+  workspace_id: number
+  project_id: number
+  root_name: string
+  nodes: WorkspaceNode[]
+}
+
+export interface WorkspaceFile {
+  path: string
+  kind: WorkspaceNodeKind
+  content?: string
+  sha256?: string
+  size: number
+  modified_at: string
+  read_only: boolean
+}
+
+export interface WorkspaceOperation {
+  id: number
+  project_id: number
+  actor: 'user' | 'agent'
+  operation: 'create' | 'write' | 'mkdir' | 'rename' | 'move' | 'delete' | 'restore'
+  status: string
+  target_path: string
+  destination_path?: string
+  base_hash?: string
+  result: Record<string, any>
+  expires_at?: string
+  created_at: string
+  confirmed_at?: string
+  applied_at?: string
+}
+
+const workspaceFileUrl = (projectId: number, path: string) =>
+  `/projects/${projectId}/workspace/files/${path.split('/').map(encodeURIComponent).join('/')}`
+
+export const linkProjectWorkspace = (
+  projectId: number,
+  data: { root_path: string; platform: string; create: boolean; client_request_id: string },
+) => api.post(`/projects/${projectId}/workspace/link`, data).then(r => r.data)
+
+export const getWorkspaceTree = (projectId: number) =>
+  api.get(`/projects/${projectId}/workspace/tree`).then(r => r.data as WorkspaceTree)
+
+export const getWorkspaceFile = (projectId: number, path: string) =>
+  api.get(workspaceFileUrl(projectId, path)).then(r => r.data as WorkspaceFile)
+
+export const saveWorkspaceFile = (
+  projectId: number,
+  path: string,
+  data: { content: string; base_hash?: string; idempotency_key: string },
+) => api.put(workspaceFileUrl(projectId, path), data).then(r => r.data as WorkspaceOperation)
+
+export const proposeWorkspaceOperation = (
+  projectId: number,
+  data: {
+    actor: 'user' | 'agent'
+    operation: WorkspaceOperation['operation']
+    target_path: string
+    destination_path?: string
+    content?: string
+    base_hash?: string
+    checkpoint_id?: number
+    session_id?: number
+    source_operation_id?: number
+    idempotency_key: string
+  },
+) => api.post(`/projects/${projectId}/workspace/operations/propose`, data)
+  .then(r => r.data as WorkspaceOperation)
+
+export const confirmWorkspaceOperation = (projectId: number, operationId: number) =>
+  api.post(`/projects/${projectId}/workspace/operations/${operationId}/confirm`)
+    .then(r => r.data as WorkspaceOperation)
+
+export const listWorkspaceOperations = (
+  projectId: number,
+  params: { operation?: string; status?: string } = {},
+) => api.get(`/projects/${projectId}/workspace/operations`, { params })
+  .then(r => r.data.operations as WorkspaceOperation[])
+
+export const revealWorkspaceItem = (projectId: number, path: string) =>
+  api.post(`/projects/${projectId}/workspace/reveal`, { path }).then(r => r.data)
 
 // ── Source ──
 export const addSource = (projectId: number, data: { type: string; url?: string }) =>

@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import hashlib
 import hmac
 from pathlib import Path
+import subprocess
+import sys
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -17,8 +19,8 @@ from app.models.project import (
 )
 from app.schemas.workspace import (
     WorkspaceFileResponse, WorkspaceFileWriteRequest, WorkspaceLinkRequest,
-    WorkspaceLinkResponse, WorkspaceOperationRequest, WorkspaceOperationResponse,
-    WorkspaceTreeResponse,
+    WorkspaceLinkResponse, WorkspaceOperationListResponse, WorkspaceOperationRequest,
+    WorkspaceOperationResponse, WorkspaceRevealRequest, WorkspaceTreeResponse,
 )
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_checkpoint, require_owned_project,
@@ -221,6 +223,40 @@ async def get_workspace_file(
     return WorkspaceFileResponse(**result)
 
 
+@router.post(
+    "/projects/{project_id}/workspace/reveal",
+    dependencies=[Depends(require_desktop_token)],
+)
+async def reveal_workspace_item(
+    project_id: int,
+    data: WorkspaceRevealRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    workspace = await _owned_workspace(db, current.learner.id, project_id)
+    try:
+        relative, target = resolve_workspace_path(Path(workspace.root_path), data.path)
+    except WorkspaceError as exc:
+        _raise_workspace_error(exc)
+    if sys.platform == "darwin":
+        command = ["open", "-R", str(target)]
+    elif sys.platform == "win32":
+        command = ["explorer.exe", str(target) if target.is_dir() else f"/select,{target}"]
+    else:
+        command = ["xdg-open", str(target if target.is_dir() else target.parent)]
+    try:
+        subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError as exc:
+        raise HTTPException(500, "Unable to open the system file manager") from exc
+    return {"status": "opened", "path": relative}
+
+
 @router.put(
     "/projects/{project_id}/workspace/files/{file_path:path}",
     response_model=WorkspaceOperationResponse,
@@ -346,6 +382,7 @@ async def propose_workspace_operation(
             if not deleted or not (deleted.result or {}).get("trash_path"):
                 raise WorkspaceError(404, "找不到可恢复的删除记录", "delete_operation_missing")
             payload["restore_source"] = deleted.result["trash_path"]
+            payload["source_operation_id"] = deleted.id
             payload["target_path"] = data.target_path or deleted.target_path
             resolve_workspace_path(root, payload["target_path"], actor=data.actor, allow_missing_leaf=True)
         else:
@@ -383,6 +420,33 @@ async def propose_workspace_operation(
     await db.commit()
     await db.refresh(operation)
     return operation
+
+
+@router.get(
+    "/projects/{project_id}/workspace/operations",
+    response_model=WorkspaceOperationListResponse,
+    dependencies=[Depends(require_desktop_token)],
+)
+async def list_workspace_operations(
+    project_id: int,
+    operation: str | None = None,
+    status: str | None = None,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    workspace = await _owned_workspace(db, current.learner.id, project_id)
+    query = select(WorkspaceOperation).where(
+        WorkspaceOperation.workspace_id == workspace.id,
+        WorkspaceOperation.learner_id == current.learner.id,
+    )
+    if operation:
+        query = query.where(WorkspaceOperation.operation == operation)
+    if status:
+        query = query.where(WorkspaceOperation.status == status)
+    rows = list((await db.execute(
+        query.order_by(WorkspaceOperation.created_at.desc()).limit(100)
+    )).scalars().all())
+    return WorkspaceOperationListResponse(operations=rows)
 
 
 @router.post(
@@ -427,6 +491,14 @@ async def confirm_workspace_operation(
     operation.confirmed_at = now
     operation.applied_at = now
     operation.result = result
+    if operation.operation == "restore" and (operation.payload or {}).get("source_operation_id"):
+        deleted = await db.get(WorkspaceOperation, operation.payload["source_operation_id"])
+        if deleted and deleted.workspace_id == workspace.id:
+            deleted.result = {
+                **(deleted.result or {}),
+                "restorable": False,
+                "restored_by_operation_id": operation.id,
+            }
     await record_event(
         db,
         learner_id=current.learner.id,

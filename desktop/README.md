@@ -6,6 +6,12 @@ a fresh desktop token for every launch. The WebView has directory-picker
 permission, but no broad filesystem permission; project file access is
 validated again by the sidecar.
 
+The browser keeps its HTTP-only cookie flow. Desktop login additionally uses
+a bearer token returned only when the per-launch desktop token is valid; the
+sidecar requires both tokens on subsequent bearer-authenticated requests.
+The bearer is kept in WebView session storage and is discarded when the app
+session ends.
+
 ## Local build
 
 1. Install the backend dependencies and `desktop/requirements-build.txt`.

@@ -65,6 +65,10 @@ class WorkspaceFileWriteRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=160)
 
 
+class WorkspaceRevealRequest(BaseModel):
+    path: str = Field(min_length=1)
+
+
 class WorkspaceOperationRequest(BaseModel):
     actor: Literal["user", "agent"] = "agent"
     operation: WorkspaceMutation
@@ -94,3 +98,7 @@ class WorkspaceOperationResponse(BaseModel):
     created_at: datetime
     confirmed_at: datetime | None = None
     applied_at: datetime | None = None
+
+
+class WorkspaceOperationListResponse(BaseModel):
+    operations: list[WorkspaceOperationResponse]

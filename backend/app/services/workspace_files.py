@@ -275,6 +275,10 @@ def scan_workspace_tree(root: Path) -> list[dict]:
             raise WorkspaceError(403, "无法读取项目目录", "directory_unreadable") from exc
         for entry in entries:
             relative = f"{prefix}/{entry.name}" if prefix else entry.name
+            if entry.name == INTERNAL_DIR:
+                # Managed implementation details are projected separately as
+                # learning artifacts and never exposed in the ordinary tree.
+                continue
             try:
                 info = entry.stat(follow_symlinks=False)
             except OSError:

@@ -99,6 +99,9 @@ async def current_learner_from_request(
     required: bool = True,
 ) -> CurrentLearner | None:
     raw_token = request.cookies.get(settings.auth_cookie_name)
+    authorization = request.headers.get("authorization", "")
+    if not raw_token and authorization.lower().startswith("bearer ") and valid_desktop_request(request):
+        raw_token = authorization[7:].strip()
     if not raw_token:
         if required:
             raise HTTPException(401, "请先登录")
@@ -126,6 +129,27 @@ async def current_learner_from_request(
         account=account, learner=learner, profile=profile,
         is_dev_login=bool(session.is_dev_login),
     )
+
+
+def valid_desktop_request(request: Request) -> bool:
+    supplied = request.headers.get("x-learnflow-desktop-token", "")
+    return bool(
+        settings.desktop_mode
+        and settings.desktop_token
+        and supplied
+        and hmac.compare_digest(supplied, settings.desktop_token)
+    )
+
+
+def auth_token_from_request(request: Request) -> str | None:
+    raw = request.cookies.get(settings.auth_cookie_name)
+    if raw:
+        return raw
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer ") and valid_desktop_request(request):
+        token = authorization[7:].strip()
+        return token or None
+    return None
 
 
 async def get_current_learner(

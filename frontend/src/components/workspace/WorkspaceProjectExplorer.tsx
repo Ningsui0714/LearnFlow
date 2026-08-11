@@ -7,6 +7,7 @@ import { useLocation } from 'react-router-dom'
 import { getRoadmap, listProjects } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { useWorkspace } from './WorkspaceContext'
+import WorkspaceFileExplorer from './WorkspaceFileExplorer'
 
 interface ProjectSummary {
   id: number
@@ -147,7 +148,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
           const total = project.checkpoint_count || checkpoints.length
           const progress = total ? Math.round(completed * 100 / total) : 0
           return (
-            <section key={project.id} className={`mb-1 overflow-hidden rounded-lg ${expanded ? 'bg-slate-50' : ''}`}>
+            <section key={project.id} className={`mb-1 overflow-visible rounded-lg ${expanded ? 'bg-slate-50' : ''}`}>
               <button
                 type="button"
                 onClick={() => toggleProject(project)}
@@ -177,7 +178,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
                   </button>
 
                   <p className="mb-1 mt-2 flex items-center gap-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                    <Route size={10} /> 个性化学习路径
+                    <Route size={10} /> 关卡资料
                   </p>
                   {loadingIds.includes(project.id) && (
                     <p className="px-2 py-2 text-[10px] text-slate-400">正在读取路径…</p>
@@ -229,6 +230,19 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
                       )
                     })}
                   </div>
+                  <WorkspaceFileExplorer
+                    projectId={project.id}
+                    projectName={project.name}
+                    onOpen={workspacePath => open(
+                      `/projects/${project.id}/workspace?path=${encodeURIComponent(workspacePath)}`,
+                      {
+                        title: workspacePath.split('/').pop() || '项目文件',
+                        kind: 'file',
+                        projectId: project.id,
+                        workspacePath,
+                      },
+                    )}
+                  />
                 </div>
               )}
             </section>

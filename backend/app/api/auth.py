@@ -10,8 +10,9 @@ from app.models.learning import AuthSession, Learner, LearnerProfile, UserAccoun
 from app.models.project import Project
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services.auth import (
-    CurrentLearner, clear_auth_cookie, create_auth_session, get_current_learner,
-    hash_password, normalize_username, set_auth_cookie, verify_password,
+    CurrentLearner, auth_token_from_request, clear_auth_cookie, create_auth_session,
+    get_current_learner, hash_password, normalize_username, set_auth_cookie,
+    valid_desktop_request, verify_password,
 )
 from app.services.learning_runtime import ensure_kernel_states, record_event
 from app.services.profile import award_career_goal
@@ -22,8 +23,8 @@ router = APIRouter(tags=["Authentication"])
 dev_router = APIRouter(prefix="/dev", tags=["Development"])
 
 
-def _account_view(current: CurrentLearner) -> dict:
-    return {
+def _account_view(current: CurrentLearner, desktop_auth_token: str | None = None) -> dict:
+    result = {
         "id": current.account.id,
         "username": current.account.username,
         "display_name": current.learner.display_name,
@@ -41,11 +42,15 @@ def _account_view(current: CurrentLearner) -> dict:
         "dev_test_login_enabled": settings.dev_test_login_enabled,
         "is_dev_login": current.is_dev_login,
     }
+    if desktop_auth_token:
+        result["desktop_auth_token"] = desktop_auth_token
+    return result
 
 
 @router.post("/auth/register")
 async def register(
     data: RegisterRequest,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
@@ -110,12 +115,16 @@ async def register(
     token = await create_auth_session(db, account)
     await db.commit()
     set_auth_cookie(response, token)
-    return _account_view(CurrentLearner(account, learner, profile))
+    return _account_view(
+        CurrentLearner(account, learner, profile),
+        token if valid_desktop_request(request) else None,
+    )
 
 
 @router.post("/auth/login")
 async def login(
     data: LoginRequest,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
@@ -130,12 +139,15 @@ async def login(
     token = await create_auth_session(db, account)
     await db.commit()
     set_auth_cookie(response, token)
-    return _account_view(CurrentLearner(account, learner, profile))
+    return _account_view(
+        CurrentLearner(account, learner, profile),
+        token if valid_desktop_request(request) else None,
+    )
 
 
 @router.post("/auth/logout")
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    raw = request.cookies.get(settings.auth_cookie_name)
+    raw = auth_token_from_request(request)
     if raw:
         from app.services.auth import _token_hash
         session = (await db.execute(select(AuthSession).where(
@@ -160,6 +172,7 @@ async def competition_demo_status():
 
 @router.post("/demo/login")
 async def competition_demo_login(
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
@@ -178,7 +191,10 @@ async def competition_demo_login(
     token = await create_auth_session(db, account, is_dev_login=True)
     await db.commit()
     set_auth_cookie(response, token)
-    return _account_view(CurrentLearner(account, learner, profile, is_dev_login=True))
+    return _account_view(
+        CurrentLearner(account, learner, profile, is_dev_login=True),
+        token if valid_desktop_request(request) else None,
+    )
 
 
 @router.get("/demo/manifest")
@@ -223,6 +239,7 @@ async def list_dev_accounts(db: AsyncSession = Depends(get_db)):
 @dev_router.post("/accounts/{account_id}/login")
 async def dev_login(
     account_id: int,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
@@ -237,4 +254,7 @@ async def dev_login(
     token = await create_auth_session(db, account, is_dev_login=True)
     await db.commit()
     set_auth_cookie(response, token)
-    return _account_view(CurrentLearner(account, learner, profile, is_dev_login=True))
+    return _account_view(
+        CurrentLearner(account, learner, profile, is_dev_login=True),
+        token if valid_desktop_request(request) else None,
+    )

@@ -66,10 +66,31 @@ def test_browser_mode_hides_local_filesystem_routes(tmp_path, monkeypatch):
     with TestClient(app) as client:
         registered = client.post("/api/auth/register", json=registration("workspace_browser_hidden"))
         assert registered.status_code == 200
+        assert "desktop_auth_token" not in registered.json()
         project = create_project(client)
         response = link_workspace(client, project["id"], tmp_path)
         assert response.status_code == 404
         assert not (tmp_path / ".learnflow").exists()
+
+
+def test_desktop_bearer_requires_the_per_launch_token(monkeypatch):
+    enable_desktop(monkeypatch)
+    with TestClient(app) as login_client, TestClient(app) as bearer_client:
+        registered = login_client.post(
+            "/api/auth/register",
+            headers=DESKTOP_HEADERS,
+            json=registration("workspace_desktop_bearer"),
+        )
+        assert registered.status_code == 200
+        auth_token = registered.json()["desktop_auth_token"]
+        bearer_headers = {
+            **DESKTOP_HEADERS,
+            "Authorization": f"Bearer {auth_token}",
+        }
+        assert bearer_client.get("/api/projects", headers=bearer_headers).status_code == 200
+        assert bearer_client.get(
+            "/api/projects", headers={"Authorization": f"Bearer {auth_token}"},
+        ).status_code == 401
 
 
 def test_link_tree_text_write_hash_and_zero_kernel_mutations(tmp_path, monkeypatch):
@@ -96,7 +117,7 @@ def test_link_tree_text_write_hash_and_zero_kernel_mutations(tmp_path, monkeypat
         by_name = {item["name"]: item for item in tree.json()["nodes"]}
         assert by_name["main.py"]["kind"] == "workspace_text"
         assert by_name["asset.bin"]["kind"] == "workspace_binary"
-        assert by_name[".learnflow"]["kind"] == "protected"
+        assert ".learnflow" not in by_name
 
         current = client.get(
             f"/api/projects/{project_id}/workspace/files/main.py", headers=DESKTOP_HEADERS,
@@ -335,6 +356,13 @@ def test_traversal_links_protected_paths_delete_restore_and_user_isolation(tmp_p
         )
         assert restored.status_code == 200, restored.text
         assert (root / "delete-me.txt").read_text(encoding="utf-8") == "recover me"
+        delete_history = alice.get(
+            f"/api/projects/{project_id}/workspace/operations",
+            params={"operation": "delete", "status": "applied"},
+            headers=DESKTOP_HEADERS,
+        )
+        assert delete_history.status_code == 200
+        assert delete_history.json()["operations"][0]["result"]["restorable"] is False
 
         async def operation_count():
             async with async_session() as db:

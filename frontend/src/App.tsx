@@ -13,6 +13,7 @@ import ProjectPage from './pages/ProjectPage'
 import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
 import DemoEntryPage from './pages/DemoEntryPage'
+import WorkspaceFilePage from './pages/WorkspaceFilePage'
 
 function DevSettingsRoute() {
   const { user } = useAuth()
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/projects/:projectId" element={<ProjectPage />} />
           <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />
           <Route path="/projects/:projectId/checkpoints/:checkpointId/exercises" element={<ExercisePage />} />
+          <Route path="/projects/:projectId/workspace" element={<WorkspaceFilePage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/agent" replace />} />
