@@ -188,6 +188,56 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(by_id[first["project_id"]]["diagnosis_state"], "in_progress")
         self.assertEqual(by_id[second["project_id"]]["diagnosis_state"], "not_started")
 
+    # ---------- Tutor Agent 统一编排 ----------
+
+    def agent_turn(self, message, project_id=""):
+        return self.request_json(
+            "POST",
+            "/api/agent/turn",
+            {
+                "student_id": self.student_id,
+                "session_id": "agent-test",
+                "project_id": project_id,
+                "message": message,
+            },
+        )
+
+    def test_agent_turn_creates_project_and_recommends_assessment(self):
+        result = self.agent_turn("我想系统掌握 Java 面向对象编程")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "create_project")
+        self.assertEqual(result["action"], "project_created")
+        self.assertIn("project_id", result["project"])
+        self.assertEqual(result["next_interaction"]["type"], "choice")
+
+    def test_agent_turn_answers_knowledge_question_with_sources(self):
+        result = self.agent_turn("什么是 Java 封装？")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "knowledge_question")
+        self.assertEqual(result["action"], "reply")
+        self.assertTrue(result["answer"])
+        self.assertTrue(result["sources"])
+
+    def test_agent_turn_clarifies_unknown_intent(self):
+        result = self.agent_turn("随便来点")
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["action"], "ask_clarification")
+        self.assertTrue(result["clarify_options"])
+
+    def test_agent_turn_starts_assessment_in_current_project(self):
+        project = self.agent_turn("备战世界职业院校技能大赛")["project"]
+        result = self.agent_turn("开始能力测评", project["project_id"])
+        self.assertEqual(result["action"], "show_assessment")
+        self.assertEqual(result["artifact"]["type"], "assessment")
+        self.assertGreaterEqual(result["artifact"]["data"]["total"], 1)
+
+    def test_agent_turn_opens_named_lesson(self):
+        project = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
+        result = self.agent_turn("开始学习类的定义与对象创建", project["project_id"])
+        self.assertEqual(result["action"], "open_lesson")
+        self.assertEqual(result["artifact"]["type"], "lesson")
+        self.assertTrue(result["artifact"]["data"]["content_blocks"])
+
     # ---------- 生成式题库 ----------
 
     def test_generated_quiz_goes_through_validation_and_persistence(self):

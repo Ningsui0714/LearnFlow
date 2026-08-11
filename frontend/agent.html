@@ -60,7 +60,7 @@
       display: flex; align-items: center; justify-content: center;
     }
 
-    .layout { flex: 1; display: grid; grid-template-columns: 290px minmax(0, 1fr) 400px; min-height: 0; }
+    .layout { flex: 1; display: grid; grid-template-columns: 272px minmax(520px, 1fr) 372px; min-height: 0; overflow-x: auto; }
 
     .sidebar { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; position: relative; }
     .sidebar-head { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
@@ -74,6 +74,7 @@
 
     .project-node { margin-bottom: 6px; border-radius: 10px; }
     .project-node.open { background: var(--surface-soft); }
+    .project-node:not(.open) .project-sections { display: none; }
     .project-header {
       width: 100%; display: flex; align-items: center; gap: 8px; padding: 9px 10px;
       background: none; border: none; border-radius: 10px; text-align: left; font-size: 13px; font-weight: 600;
@@ -85,9 +86,24 @@
     .project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .project-meta { font-size: 11px; color: var(--muted-soft); font-weight: 400; }
 
-    .path-list { list-style: none; margin: 2px 0 8px; padding: 0; }
+    .project-sections { padding: 0 8px 8px 34px; }
+    .tree-section-label {
+      display: flex; align-items: center; gap: 6px; margin: 7px 0 4px; color: var(--muted-soft);
+      font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase;
+    }
+    .tree-section-label svg { width: 12px; height: 12px; }
+    .session-row {
+      width: 100%; display: flex; align-items: center; gap: 7px; border: none; border-radius: 8px;
+      background: transparent; color: var(--muted); padding: 7px 8px; text-align: left; font-size: 11.5px;
+    }
+    .session-row:hover, .session-row.active { background: var(--green-soft); color: var(--green-strong); }
+    .session-row svg { width: 14px; height: 14px; flex: none; }
+    .session-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .session-row small { color: var(--muted-soft); font-size: 9.5px; }
+
+    .path-list { list-style: none; margin: 2px 0 4px; padding: 0; }
     .path-item button {
-      width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 10px 8px 16px;
+      width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 8px;
       background: none; border: none; border-radius: 9px; text-align: left; font-size: 12.5px; color: var(--ink-soft);
     }
     .path-item button:hover { background: var(--green-soft); }
@@ -262,9 +278,76 @@
     .legacy-link { display: inline-flex; align-items: center; gap: 6px; color: var(--blue); font-size: 13px; text-decoration: none; font-weight: 600; }
     .legacy-link:hover { text-decoration: underline; }
 
-    .stage { min-height: 0; overflow-y: auto; background: var(--bg); }
+    .stage {
+      min-height: 0; overflow-x: auto; overflow-y: hidden; background: #191b1d;
+      display: flex; align-items: stretch; gap: 1px; position: relative;
+    }
 
-    .welcome { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; }
+    .learning-editor {
+      height: 100%; min-width: 340px; flex: 1 1 520px; display: flex; flex-direction: column; overflow: hidden;
+      background: var(--surface); border: none; border-radius: 0; box-shadow: none;
+    }
+    .editor-tabbar {
+      height: 40px; flex: none; display: flex; align-items: stretch; min-width: 0;
+      background: #181a1b; border-bottom: 1px solid #2f3437;
+    }
+    .editor-tabs { flex: 1; min-width: 0; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden; }
+    .editor-tab {
+      position: relative; min-width: 150px; max-width: 260px; height: 40px; display: flex; align-items: center;
+      gap: 7px; padding: 0 10px; color: #aeb4b8; background: #1d2022; border: none;
+      border-right: 1px solid #303437; font-size: 11.5px; text-align: left;
+    }
+    .editor-tab:hover { color: #eef1f2; background: #222629; }
+    .editor-tab[draggable="true"] { cursor: grab; }
+    .editor-tab[draggable="true"]:active { cursor: grabbing; }
+    .editor-tab.active { color: #ffffff; background: #24282b; }
+    .editor-tab.active::before {
+      content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: #69a7ff;
+    }
+    .editor-tab svg { width: 14px; height: 14px; flex: none; color: #72c69a; }
+    .editor-tab.assessment-tab svg { color: #c68cff; }
+    .editor-tab > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .editor-tab-close {
+      width: 20px; height: 20px; flex: none; display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: 4px; background: transparent; color: #9ca3a7; padding: 0;
+    }
+    .editor-tab-close:hover { background: #3a3f42; color: #fff; }
+    .editor-tab-close svg { width: 13px; height: 13px; color: inherit; }
+    .editor-new-tab {
+      width: 38px; flex: none; display: flex; align-items: center; justify-content: center;
+      border: none; border-right: 1px solid #303437; background: #181a1b; color: #9ca3a7;
+    }
+    .editor-new-tab:hover { background: #25292c; color: #fff; }
+    .editor-new-tab svg { width: 15px; height: 15px; }
+    .editor-runtime {
+      flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px;
+      color: #9fb3a9; background: #181a1b; font-size: 10px; white-space: nowrap;
+    }
+    .editor-runtime svg { width: 12px; height: 12px; color: #72c69a; }
+    .editor-page { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); }
+
+    .stage.drag-active::after {
+      content: "松开鼠标，在新的编辑组中并排打开";
+      position: absolute; z-index: 20; top: 54px; right: 18px; bottom: 18px; width: min(42%, 420px);
+      display: flex; align-items: center; justify-content: center; padding: 24px; text-align: center;
+      color: #dce9ff; background: rgba(47, 93, 157, .82); border: 2px dashed #8bb9ff;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, .28); font-size: 13px; font-weight: 700;
+      pointer-events: none;
+    }
+    .stage.drag-active .editor-page { filter: brightness(.9); }
+
+    .detached-editor {
+      height: 100%; min-width: 340px; flex: 1 1 420px; display: flex; flex-direction: column;
+      overflow: hidden; background: var(--surface); border-left: 1px solid #303437;
+    }
+    .detached-editor .editor-tabbar { flex: none; }
+    .detached-editor .editor-tab { min-width: 210px; max-width: 100%; }
+    .detached-content { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); }
+    .detached-content .lesson { display: block !important; }
+    .detached-content .lesson-crumb button { pointer-events: none; color: var(--muted); }
+    .detached-content .video-card a { pointer-events: none; opacity: .7; }
+
+    .welcome { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; }
     .welcome-icon { width: 64px; height: 64px; border-radius: 20px; background: var(--green); color: #fff; display: flex; align-items: center; justify-content: center; margin-bottom: 18px; box-shadow: var(--shadow); }
     .welcome-icon svg { width: 30px; height: 30px; }
     .welcome h1 { margin: 0 0 8px; font-size: 22px; }
@@ -309,6 +392,12 @@
     .chat-head small { font-size: 11px; color: var(--green); display: flex; align-items: center; gap: 4px; }
     .chat-head small::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 
+    .workbench-context { padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+    .workbench-context small { display: block; color: var(--muted-soft); font-size: 10px; margin-bottom: 5px; }
+    .context-project { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--ink-soft); font-size: 11.5px; font-weight: 600; }
+    .context-project svg { width: 14px; height: 14px; color: var(--green); flex: none; }
+    .context-project span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
     .chat-messages { flex: 1; overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; }
     .msg { display: flex; gap: 10px; max-width: 100%; }
     .msg .bubble-avatar { flex: none; width: 28px; height: 28px; border-radius: 9px; font-size: 12px; display: flex; align-items: center; justify-content: center; background: var(--green-soft); color: var(--green-strong); }
@@ -326,7 +415,14 @@
     .suggestion-chip { font-size: 11.5px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 11px; color: var(--muted); }
     .suggestion-chip:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
 
-    .chat-input-box { padding: 10px 14px 14px; border-top: 1px solid var(--line); }
+    .chat-input-box { padding: 9px 14px 12px; border-top: 1px solid var(--line); }
+    .chat-tools { display: flex; align-items: center; gap: 5px; margin-bottom: 7px; }
+    .chat-tool {
+      display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 7px;
+      padding: 5px 8px; background: var(--surface); color: var(--muted); font-size: 10.5px;
+    }
+    .chat-tool svg { width: 13px; height: 13px; }
+    .chat-tool[aria-pressed="true"] { border-color: #b9d8c8; background: var(--green-soft); color: var(--green-strong); }
     .chat-input { display: flex; align-items: flex-end; gap: 8px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 12px; padding: 8px 8px 8px 14px; }
     .chat-input:focus-within { border-color: var(--green); }
     .chat-input textarea { flex: 1; border: none; background: none; resize: none; outline: none; font-size: 13px; line-height: 1.6; min-height: 22px; max-height: 120px; padding: 4px 0; }
@@ -369,10 +465,11 @@
     .typing i:nth-child(3) { animation-delay: .4s; }
     @keyframes blink { 0%, 70%, 100% { opacity: .25; } 35% { opacity: 1; } }
 
-    .drawer-backdrop { position: fixed; inset: 0; background: rgba(24, 32, 29, .32); z-index: 40; opacity: 0; transition: opacity .25s; }
-    .drawer-backdrop.show { opacity: 1; }
-    .quiz-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 480px; max-width: 92vw; z-index: 50; background: var(--surface); box-shadow: var(--shadow-lg); transform: translateX(102%); transition: transform .3s cubic-bezier(.2, .8, .25, 1); display: flex; flex-direction: column; }
-    .quiz-drawer.open { transform: translateX(0); }
+    .quiz-drawer {
+      width: min(820px, calc(100% - 48px)); min-height: calc(100% - 48px); margin: 24px auto;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+      box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden;
+    }
     .quiz-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
     .quiz-head .qh-icon { color: var(--blue); }
     .quiz-head strong { flex: 1; font-size: 14.5px; }
@@ -380,7 +477,7 @@
     .quiz-head .close-btn:hover { background: var(--surface-soft); color: var(--ink); }
     .quiz-progress-track { height: 4px; background: var(--line); }
     .quiz-progress-bar { height: 100%; background: var(--blue); transition: width .25s; }
-    .quiz-body { flex: 1; overflow-y: auto; padding: 22px 22px 12px; }
+    .quiz-body { flex: 1; overflow-y: auto; padding: 28px 34px 18px; }
     .quiz-body .q-index { font-size: 12px; color: var(--muted-soft); margin-bottom: 8px; }
     .quiz-body h2 { font-size: 16px; margin: 0 0 18px; line-height: 1.6; }
     .option { width: 100%; display: flex; align-items: flex-start; gap: 11px; text-align: left; background: var(--surface-soft); border: 1.5px solid var(--line); border-radius: 11px; padding: 13px 15px; margin-bottom: 10px; font-size: 13.5px; line-height: 1.6; }
@@ -388,11 +485,12 @@
     .option.selected { border-color: var(--blue); background: var(--blue-soft); }
     .option .opt-key { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line-strong); font-size: 11.5px; font-weight: 700; color: var(--muted); display: flex; align-items: center; justify-content: center; margin-top: 1px; }
     .option.selected .opt-key { background: var(--blue); border-color: var(--blue); color: #fff; }
-    .quiz-foot { padding: 14px 22px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+    .quiz-foot { padding: 14px 34px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
     .quiz-error { color: var(--red); font-size: 12px; padding: 0 22px 8px; }
 
     @media (max-width: 1180px) {
-      .layout { grid-template-columns: 250px minmax(0, 1fr) 340px; }
+      .layout { grid-template-columns: 240px minmax(500px, 1fr) 340px; }
+      .editor-runtime { display: none; }
     }
   </style>
 </head>
@@ -411,7 +509,7 @@
     <div class="layout">
       <aside class="sidebar">
         <div class="sidebar-head">
-          <strong>项目</strong>
+          <strong>会话与项目</strong>
           <button class="new-project-btn" id="new-project-btn"><i data-lucide="plus"></i> 新建项目</button>
         </div>
         <div class="project-tree" id="project-tree"></div>
@@ -427,30 +525,58 @@
       </aside>
 
       <main class="stage" id="stage">
-        <div class="welcome" id="welcome-view">
-          <div class="welcome-icon"><i data-lucide="sparkles"></i></div>
-          <h1>开始你的学习之旅</h1>
-          <p>在右侧对话框告诉助手你的学习目标，系统会通过测评了解你的掌握情况，为你生成个性化学习路径。</p>
-          <div class="welcome-steps">
-            <div class="welcome-step"><div class="num">1</div><strong>对话定目标</strong><small>告诉助手你想学什么、学到什么程度</small></div>
-            <div class="welcome-step"><div class="num">2</div><strong>测评摸底</strong><small>完成能力测评，系统分析你的薄弱点</small></div>
-            <div class="welcome-step"><div class="num">3</div><strong>路径学习</strong><small>按个性化路径逐章学习，视频资源一键跳转</small></div>
+        <section class="learning-editor" aria-label="学习页面工作台">
+          <div class="editor-tabbar">
+            <div class="editor-tabs" role="tablist" aria-label="已打开的学习页面">
+              <div class="editor-tab active" id="editor-tab-home" role="tab" tabindex="0" aria-selected="true">
+                <i data-lucide="layout-dashboard"></i>
+                <span>学习工作台</span>
+              </div>
+            </div>
+            <button class="editor-new-tab" id="editor-new-tab" type="button" title="新建学习页"><i data-lucide="plus"></i></button>
+            <span class="editor-runtime" title="把章节标签拖到右侧即可拆成独立编辑组"><i data-lucide="columns-2"></i>拖动章节标签可并排</span>
           </div>
-        </div>
-        <article class="lesson" id="lesson-view" hidden>
-          <div class="lesson-crumb">
-            <button id="crumb-home">项目</button><span class="sep">/</span>
-            <span id="crumb-project">—</span><span class="sep">/</span>
-            <span id="crumb-lesson">—</span>
+          <div class="editor-page" id="editor-page">
+            <div class="welcome" id="welcome-view">
+              <div class="welcome-icon"><i data-lucide="sparkles"></i></div>
+              <h1>开始你的学习之旅</h1>
+              <p>在右侧对话工作台输入学习目标。系统会分析目标所需知识、生成测评，并在这里打开题目、课程与实训页面。</p>
+              <div class="welcome-steps">
+                <div class="welcome-step"><div class="num">1</div><strong>对话定目标</strong><small>告诉助手你想学什么、面向哪个岗位或任务</small></div>
+                <div class="welcome-step"><div class="num">2</div><strong>中间做测评</strong><small>题目在学习画布打开，系统分析作答证据</small></div>
+                <div class="welcome-step"><div class="num">3</div><strong>按路径学习</strong><small>左侧生成个性化课程路径，点击即打开页面</small></div>
+              </div>
+            </div>
+            <article class="lesson" id="lesson-view" hidden>
+              <div class="lesson-crumb">
+                <button id="crumb-home">项目</button><span class="sep">/</span>
+                <span id="crumb-project">—</span><span class="sep">/</span>
+                <span id="crumb-lesson">—</span>
+              </div>
+              <div class="lesson-head">
+                <span class="lesson-tag" id="lesson-tag">知识点</span>
+                <h1 id="lesson-title">—</h1>
+                <p class="lesson-objective" id="lesson-objective"></p>
+                <div class="lesson-meta" id="lesson-meta"></div>
+              </div>
+              <div class="lesson-body" id="lesson-body"></div>
+            </article>
+            <section class="quiz-drawer" id="quiz-drawer" hidden aria-label="能力测评">
+              <div class="quiz-head">
+                <span class="qh-icon"><i data-lucide="clipboard-list"></i></span>
+                <strong id="quiz-title">能力测评</strong>
+                <button class="close-btn" id="quiz-close" title="返回学习工作台"><i data-lucide="x"></i></button>
+              </div>
+              <div class="quiz-progress-track"><div class="quiz-progress-bar" id="quiz-progress-bar" style="width:0%"></div></div>
+              <div class="quiz-body" id="quiz-body"></div>
+              <div class="quiz-error" id="quiz-error" hidden></div>
+              <div class="quiz-foot">
+                <button class="primary-btn" id="quiz-prev" disabled><i data-lucide="chevron-left"></i> 上一题</button>
+                <button class="primary-btn blue" id="quiz-next" disabled>开始测评</button>
+              </div>
+            </section>
           </div>
-          <div class="lesson-head">
-            <span class="lesson-tag" id="lesson-tag">知识点</span>
-            <h1 id="lesson-title">—</h1>
-            <p class="lesson-objective" id="lesson-objective"></p>
-            <div class="lesson-meta" id="lesson-meta"></div>
-          </div>
-          <div class="lesson-body" id="lesson-body"></div>
-        </article>
+        </section>
       </main>
 
       <!-- 全屏：个人中心（独立页面） -->
@@ -562,32 +688,26 @@
           <span class="bot-icon"><i data-lucide="sparkles"></i></span>
           <div><strong>知行课径助手</strong><small>在线 · 已接入领域知识库</small></div>
         </div>
+        <div class="workbench-context">
+          <small>当前工作台上下文</small>
+          <div class="context-project"><i data-lucide="folder-kanban"></i><span id="workbench-project">新项目 · 等待输入学习目标</span></div>
+        </div>
         <div class="chat-messages" id="chat-messages"></div>
         <div class="suggestions" id="suggestions" hidden></div>
         <div class="chat-input-box">
+          <div class="chat-tools" aria-label="工作台工具">
+            <button class="chat-tool" type="button" aria-pressed="true"><i data-lucide="database"></i>领域知识库</button>
+            <button class="chat-tool" type="button" aria-pressed="true"><i data-lucide="globe-2"></i>联网检索</button>
+            <button class="chat-tool" type="button" aria-pressed="false"><i data-lucide="paperclip"></i>学习资料</button>
+          </div>
           <div class="chat-input">
-            <textarea id="chat-textarea" rows="1" placeholder="输入你的学习目标，例如：我想掌握 Java 面向对象编程…"></textarea>
+            <textarea id="chat-textarea" rows="1" placeholder="输入学习目标、知识问题，或让 Tutor 开始测评…"></textarea>
             <button class="send-btn" id="send-btn" title="发送"><i data-lucide="send"></i></button>
           </div>
         </div>
       </aside>
     </div>
 
-    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
-    <aside class="quiz-drawer" id="quiz-drawer" aria-label="能力测评">
-      <div class="quiz-head">
-        <span class="qh-icon"><i data-lucide="clipboard-list"></i></span>
-        <strong id="quiz-title">能力测评</strong>
-        <button class="close-btn" id="quiz-close" title="关闭"><i data-lucide="x"></i></button>
-      </div>
-      <div class="quiz-progress-track"><div class="quiz-progress-bar" id="quiz-progress-bar" style="width:0%"></div></div>
-      <div class="quiz-body" id="quiz-body"></div>
-      <div class="quiz-error" id="quiz-error" hidden></div>
-      <div class="quiz-foot">
-        <button class="primary-btn" id="quiz-prev" disabled><i data-lucide="chevron-left"></i> 上一题</button>
-        <button class="primary-btn blue" id="quiz-next" disabled>开始测评</button>
-      </div>
-    </aside>
   </div>
 
   <script>
@@ -599,8 +719,9 @@
     const welcomeEl = $("welcome-view");
     const lessonEl = $("lesson-view");
     const drawerEl = $("quiz-drawer");
-    const backdropEl = $("drawer-backdrop");
     const stageEl = $("stage");
+    const editorPageEl = $("editor-page");
+    const editorTabsEl = document.querySelector(".editor-tabs");
     const profileEl = $("fullpage-profile");
 
     const state = {
@@ -608,12 +729,151 @@
       current: null,       // 当前项目（对话上下文）
       quiz: null,          // { project_id, questions, index, answers[] }
       busy: false,         // 输入锁定
+      currentView: "welcome",
+      tabs: [],            // 多章节/测评标签
+      activeTabId: "home",
+      draggingTabId: null,
     };
 
     function icons() { if (window.lucide) lucide.createIcons(); }
     function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
     function escapeHtml(s) {
       return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function setWorkspaceVisibility(view) {
+      state.currentView = view;
+      welcomeEl.hidden = view !== "welcome";
+      lessonEl.hidden = view !== "lesson";
+      drawerEl.hidden = view !== "quiz";
+    }
+
+    function workspaceTab(tabId) {
+      return state.tabs.find((tab) => tab.id === tabId) || null;
+    }
+
+    function renderEditorTabs() {
+      editorTabsEl.querySelectorAll("[data-workspace-tab]").forEach((tab) => tab.remove());
+      const homeTab = $("editor-tab-home");
+      const homeActive = state.activeTabId === "home";
+      homeTab.classList.toggle("active", homeActive);
+      homeTab.setAttribute("aria-selected", String(homeActive));
+
+      state.tabs.forEach((tab) => {
+        const tabEl = document.createElement("div");
+        tabEl.className = "editor-tab" +
+          (state.activeTabId === tab.id ? " active" : "") +
+          (tab.view === "quiz" ? " assessment-tab" : "");
+        tabEl.dataset.workspaceTab = tab.id;
+        tabEl.setAttribute("role", "tab");
+        tabEl.setAttribute("tabindex", "0");
+        tabEl.setAttribute("aria-selected", String(state.activeTabId === tab.id));
+        tabEl.draggable = tab.view === "lesson";
+        tabEl.title = tab.view === "lesson" ? "拖到右侧可拆分为并排页面" : tab.title;
+        tabEl.innerHTML =
+          '<i data-lucide="' + (tab.view === "quiz" ? "clipboard-list" : "file-text") + '"></i>' +
+          "<span>" + escapeHtml(tab.title) + "</span>" +
+          '<button class="editor-tab-close" type="button" title="关闭标签页"><i data-lucide="x"></i></button>';
+        tabEl.onclick = () => activateWorkspaceTab(tab.id);
+        tabEl.onkeydown = (event) => {
+          if (event.key === "Enter" || event.key === " ") activateWorkspaceTab(tab.id);
+        };
+        tabEl.querySelector(".editor-tab-close").onclick = (event) => {
+          event.stopPropagation();
+          closeWorkspaceTab(tab.id);
+        };
+        if (tab.view === "lesson") {
+          tabEl.addEventListener("dragstart", (event) => {
+            state.draggingTabId = tab.id;
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", tab.id);
+            stageEl.classList.add("drag-active");
+          });
+          tabEl.addEventListener("dragend", () => {
+            state.draggingTabId = null;
+            stageEl.classList.remove("drag-active");
+          });
+        }
+        editorTabsEl.appendChild(tabEl);
+      });
+      icons();
+      const activeTab = editorTabsEl.querySelector(".editor-tab.active");
+      if (activeTab) activeTab.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+
+    function syncActivePathItem(tab) {
+      treeEl.querySelectorAll(".path-item").forEach((item) => item.classList.remove("active"));
+      if (!tab || tab.view !== "lesson") return;
+      treeEl.querySelectorAll("button[data-project][data-kp]").forEach((button) => {
+        if (button.dataset.project === tab.projectId && button.dataset.kp === tab.knowledgePointId) {
+          button.closest(".path-item").classList.add("active");
+        }
+      });
+    }
+
+    function activateWorkspaceTab(tabId) {
+      const previous = workspaceTab(state.activeTabId);
+      if (previous) previous.scrollTop = editorPageEl.scrollTop;
+      state.activeTabId = tabId;
+      if (tabId === "home") {
+        setWorkspaceVisibility("welcome");
+        renderEditorTabs();
+        syncActivePathItem(null);
+        editorPageEl.scrollTop = 0;
+        return;
+      }
+      const tab = workspaceTab(tabId);
+      if (!tab) {
+        activateWorkspaceTab("home");
+        return;
+      }
+      setWorkspaceVisibility(tab.view);
+      renderEditorTabs();
+      syncActivePathItem(tab);
+      if (tab.view === "lesson") renderLessonTab(tab);
+      if (tab.view === "quiz") renderQuiz();
+      editorPageEl.scrollTop = tab.scrollTop || 0;
+    }
+
+    function upsertWorkspaceTab(tab) {
+      const existing = workspaceTab(tab.id);
+      if (existing) Object.assign(existing, tab);
+      else state.tabs.push({ scrollTop: 0, ...tab });
+      activateWorkspaceTab(tab.id);
+      return workspaceTab(tab.id);
+    }
+
+    function showWorkspaceView(view, options = {}) {
+      if (view === "welcome") {
+        activateWorkspaceTab("home");
+        return;
+      }
+      const fallbackId = view === "quiz"
+        ? "quiz:" + (options.projectId || (state.quiz && state.quiz.project_id) || "current")
+        : options.tabId;
+      if (!fallbackId) return;
+      upsertWorkspaceTab({
+        id: fallbackId,
+        view,
+        title: options.title || (view === "quiz" ? "能力测评" : "课程讲解"),
+        projectId: options.projectId || (state.quiz && state.quiz.project_id) || "",
+      });
+    }
+
+    function closeWorkspaceTab(tabId = state.activeTabId) {
+      const index = state.tabs.findIndex((tab) => tab.id === tabId);
+      if (index < 0) {
+        activateWorkspaceTab("home");
+        return;
+      }
+      const wasActive = state.activeTabId === tabId;
+      state.tabs.splice(index, 1);
+      if (wasActive) {
+        const next = state.tabs[index] || state.tabs[index - 1];
+        activateWorkspaceTab(next ? next.id : "home");
+      } else {
+        renderEditorTabs();
+      }
     }
 
     async function api(path, options = {}) {
@@ -672,9 +932,7 @@
       "我想考 1+X Java 应用开发认证",
     ];
 
-    /* ================= 对话流程：问答分流 ================= */
-    const QUESTION_WORDS = ["什么", "哪些", "怎么", "如何", "为什么", "区别", "啥", "吗", "？", "?", "讲解", "介绍", "说说", "报错", "错误", "用法"];
-    function isQuestion(text) { return QUESTION_WORDS.some((w) => text.includes(w)); }
+    /* ================= Tutor Agent 统一对话 ================= */
 
     async function renderChatAnswer(result) {
       const sources = result.sources || [];
@@ -691,144 +949,152 @@
         "</div>");
     }
 
-    async function askChat(message, showMiss = false) {
-      let result;
-      try {
-        result = await api("/api/chat", {
-          method: "POST",
-          body: { student_id: STUDENT_ID, session_id: "agent-main", message },
-        });
-      } catch (error) {
-        addMsg("bot", "<p><strong>出错了：</strong>" + escapeHtml(error.message) + "</p>");
-        return false;
+    function renderAgentChoices(messageEl, options) {
+      if (!options || !options.length) return;
+      const box = document.createElement("div");
+      box.className = "quiz-actions";
+      options.forEach((option) => {
+        const button = document.createElement("button");
+        button.className = "primary-btn blue";
+        button.style.padding = "7px 12px";
+        button.style.fontSize = "12px";
+        button.textContent = option.label || option.prompt;
+        button.onclick = async () => {
+          if (option.project_id) await selectProject(option.project_id);
+          await sendGoal(option.prompt || option.label);
+        };
+        box.appendChild(button);
+      });
+      messageEl.querySelector(".bubble").appendChild(box);
+      icons();
+    }
+
+    async function renderProjectCreated(result) {
+      const project = result.project;
+      state.current = project;
+      $("workbench-project").textContent = project.goal_name + " · 目标规划会话";
+      await refreshProjects();
+      addMsg("bot",
+        "<p><strong>目标已创建为项目：</strong>" + escapeHtml(project.goal_name) + "</p>" +
+        "<p>为了给你生成真正个性化的学习路径，请先完成一次能力测评（约 3 分钟）。</p>" +
+        '<div class="quiz-card">' +
+          '<div class="qc-head"><i data-lucide="clipboard-list"></i> 能力测评 · 根据目标取样</div>' +
+          "<p>系统会按目标抽取知识点，分析作答证据并更新薄弱项与学习顺序。</p>" +
+          '<div class="quiz-actions">' +
+            '<button class="primary-btn blue" id="start-quiz-btn"><i data-lucide="play"></i> 开始测评</button>' +
+            '<button class="ghost-link" id="later-quiz-btn" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">先看学习路径</button>' +
+          "</div>" +
+        "</div>");
+      const last = messagesEl.lastElementChild;
+      last.querySelector("#start-quiz-btn").onclick = startQuiz;
+      last.querySelector("#later-quiz-btn").onclick = () => sendGoal("查看学习路径");
+    }
+
+    async function handleAgentResult(result) {
+      if (result.status === "needs_clarification" || result.action === "ask_clarification") {
+        const messageEl = addMsg("bot", "<p>" + escapeHtml(result.message || "请再补充一点信息。") + "</p>");
+        renderAgentChoices(messageEl, result.clarify_options || []);
+        return;
       }
-      if (result.status === "needs_clarification") {
-        const msgEl = addMsg("bot", "<p>" + escapeHtml(result.message || "你的问题有点笼统，先确认一下方向：") + "</p>");
-        const options = result.clarify_options || [];
-        if (options.length) {
-          const box = document.createElement("div");
-          box.className = "quiz-actions";
-          options.forEach((opt) => {
-            const b = document.createElement("button");
-            b.className = "primary-btn blue";
-            b.style.padding = "7px 12px";
-            b.style.fontSize = "12px";
-            b.textContent = opt.label;
-            b.onclick = () => askChat(opt.label);
-            box.appendChild(b);
-          });
-          msgEl.querySelector(".bubble").appendChild(box);
+
+      if (result.project) {
+        state.current = result.project;
+        $("workbench-project").textContent = result.project.goal_name + " · Tutor 工作会话";
+      }
+
+      if (result.action === "reply") {
+        if (result.answer && (result.ai_generated || (result.sources || []).length)) {
+          await renderChatAnswer(result);
+        } else {
+          addMsg("bot", "<p>" + escapeHtml(result.answer || result.message) + "</p>");
         }
-        return false;
+        return;
       }
-      if (result.status === "ok" && result.answer && (result.ai_generated || (result.sources || []).length)) {
-        await renderChatAnswer(result);
-        return true;
+      if (result.action === "project_created") {
+        await renderProjectCreated(result);
+        return;
       }
-      // 知识库未命中：仅在纯问答路径展示提示，目标兜底路径由调用方决定文案
-      if (result.answer && showMiss) {
-        addMsg("bot", "<p>" + escapeHtml(result.answer) + "</p>");
+      if (result.action === "show_assessment") {
+        const assessment = ((result.artifact || {}).data) || {};
+        state.quiz = {
+          project_id: result.project.project_id,
+          questions: assessment.questions || [],
+          index: 0,
+          answers: new Array((assessment.questions || []).length).fill(null),
+        };
+        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>");
+        $("quiz-title").textContent = "能力测评 · " + result.project.goal_name;
+        renderQuiz();
+        openDrawer();
+        return;
       }
-      return false;
+      if (result.action === "show_path") {
+        await refreshProjects();
+        renderProjectTree();
+        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>");
+        return;
+      }
+      if (result.action === "open_lesson") {
+        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>");
+        await openLesson(
+          result.project.project_id,
+          result.knowledge_point_id,
+          result.knowledge_point_name,
+          ((result.artifact || {}).data) || null,
+        );
+        return;
+      }
+      addMsg("bot", "<p>" + escapeHtml(result.message || "已完成本轮操作。") + "</p>");
+    }
+
+    async function requestAgentTurn(message, showUser = true) {
+      if (!message || state.busy) return;
+      hideSuggestions();
+      setInputEnabled(false);
+      if (showUser) addMsg("user", "<strong>" + escapeHtml(message) + "</strong>");
+      await sleep(250);
+      try {
+        const result = await api("/api/agent/turn", {
+          method: "POST",
+          body: {
+            student_id: STUDENT_ID,
+            session_id: "agent-main",
+            project_id: state.current ? state.current.project_id : "",
+            message,
+          },
+        });
+        await handleAgentResult(result);
+      } catch (error) {
+        addMsg("bot", "<p><strong>Tutor 暂时无法完成操作：</strong>" + escapeHtml(error.message) + "</p>");
+      } finally {
+        setInputEnabled(true);
+        showSuggestions();
+      }
     }
 
     async function sendGoal(text) {
       const value = (text || $("chat-textarea").value).trim();
       if (!value || state.busy) return;
       $("chat-textarea").value = "";
-      hideSuggestions();
-      setInputEnabled(false);
-      addMsg("user", "<strong>" + escapeHtml(value) + "</strong>");
-      await sleep(400);
-
-      // 问答分流：疑问句直接走知识问答（/api/chat）
-      if (isQuestion(value)) {
-        await askChat(value, true);
-        setInputEnabled(true);
-        showSuggestions();
-        return;
-      }
-
-      let result;
-      try {
-        result = await api("/api/projects", { method: "POST", body: { student_id: STUDENT_ID, text: value } });
-      } catch (error) {
-        addMsg("bot", "<p><strong>出错了：</strong>" + escapeHtml(error.message) + "</p>");
-        setInputEnabled(true);
-        showSuggestions();
-        return;
-      }
-
-      if (result.status === "needs_clarification") {
-        // 创建目标失败：先尝试按知识问答兜底，答不上再返回目标澄清
-        const answered = await askChat(value);
-        if (!answered) {
-          addMsg("bot", "<p>" + escapeHtml(result.clarification) + "</p>");
-        }
-        setInputEnabled(true);
-        showSuggestions();
-        return;
-      }
-
-      state.current = result.project;
-      await refreshProjects();
-      const project = result.project;
-      addMsg("bot",
-        "<p><strong>目标已创建为项目：</strong>" + escapeHtml(project.goal_name) + "</p>" +
-        "<p>为了给你生成真正个性化的学习路径，请先完成一次能力测评（约 3 分钟）。</p>" +
-        '<div class="quiz-card">' +
-          '<div class="qc-head"><i data-lucide="clipboard-list"></i> 能力测评 · 根据目标取样</div>' +
-          "<p>覆盖数据类型、类与对象、封装、继承等核心知识点。完成后系统将立即分析你的薄弱环节。</p>" +
-          '<div class="quiz-actions">' +
-            '<button class="primary-btn blue" id="start-quiz-btn"><i data-lucide="play"></i> 开始测评</button>' +
-            '<button class="ghost-link" id="later-quiz-btn" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">稍后测评</button>' +
-          "</div>" +
-        "</div>");
-      const last = messagesEl.lastElementChild;
-      last.querySelector("#start-quiz-btn").onclick = startQuiz;
-      last.querySelector("#later-quiz-btn").onclick = () => {
-        addMsg("bot", "<p>好的，路径已经生成在<b>左侧项目树</b>中，你可以直接点击章节开始学习，也可以随时回来测评以获得更精准的路径。</p>");
-      };
-      setInputEnabled(true);
-      showSuggestions();
+      await requestAgentTurn(value);
     }
 
-    /* ================= 测评抽屉 ================= */
+    /* ================= 中央能力测评 ================= */
     async function startQuiz() {
       if (!state.current) return;
-      setInputEnabled(false);
-      try {
-        const result = await api("/api/projects/" + state.current.project_id + "/diagnosis/start", {
-          method: "POST",
-          body: { student_id: STUDENT_ID },
-        });
-        state.quiz = {
-          project_id: state.current.project_id,
-          questions: result.questions,
-          index: 0,
-          answers: new Array(result.questions.length).fill(null),
-        };
-        $("quiz-title").textContent = "能力测评 · " + state.current.goal_name;
-        renderQuiz();
-        openDrawer();
-      } catch (error) {
-        addMsg("bot", "<p><strong>测评启动失败：</strong>" + escapeHtml(error.message) + "</p>");
-      }
-      setInputEnabled(true);
+      await requestAgentTurn("开始能力测评", false);
     }
 
     function openDrawer() {
-      backdropEl.hidden = false;
-      requestAnimationFrame(() => backdropEl.classList.add("show"));
-      drawerEl.classList.add("open");
+      showWorkspaceView("quiz", {
+        title: "能力测评 · " + (state.current ? state.current.goal_name : "学习目标"),
+        projectId: state.current ? state.current.project_id : "",
+      });
     }
     function closeDrawer() {
-      drawerEl.classList.remove("open");
-      backdropEl.classList.remove("show");
-      setTimeout(() => { backdropEl.hidden = true; }, 250);
+      closeWorkspaceTab();
     }
     $("quiz-close").onclick = closeDrawer;
-    backdropEl.onclick = closeDrawer;
 
     function renderQuiz() {
       const quiz = state.quiz;
@@ -935,6 +1201,7 @@
           project_id: project.project_id,
           goal_name: project.goal_name,
         };
+        $("workbench-project").textContent = project.goal_name + " · 持续学习会话";
         renderProjectTree();
         addMsg("bot",
           "<p>已切换到项目：<strong>" + escapeHtml(project.goal_name) + "</strong></p>" +
@@ -964,7 +1231,14 @@
             '<span class="project-name">' + escapeHtml(project.goal_name) + "</span>" +
             '<span class="project-meta">' + progress + "%</span>" +
           "</button>" +
-          '<ul class="path-list" data-path="' + project.project_id + '"></ul>' +
+          '<div class="project-sections">' +
+            '<div class="tree-section-label"><i data-lucide="messages-square"></i>项目会话</div>' +
+            '<button class="session-row' + (isCurrent ? " active" : "") + '" data-session-project="' + project.project_id + '">' +
+              '<i data-lucide="message-circle"></i><span>目标规划与学习助手</span><small>持续</small>' +
+            "</button>" +
+            '<div class="tree-section-label"><i data-lucide="route"></i>个性化学习路径</div>' +
+            '<ul class="path-list" data-path="' + project.project_id + '"></ul>' +
+          "</div>" +
         "</div>";
       }).join("");
       icons();
@@ -974,6 +1248,9 @@
           node.classList.toggle("open");
           selectProject(node.dataset.project);
         };
+      });
+      treeEl.querySelectorAll(".session-row").forEach((button) => {
+        button.onclick = () => selectProject(button.dataset.sessionProject);
       });
       // 异步加载各项目路径
       state.projects.forEach((project) => loadProjectPath(project.project_id));
@@ -985,88 +1262,133 @@
       try {
         const result = await api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID));
         const path = result.project.learning_path || { items: [] };
+        const pathItems = path.items || [];
         const weakIds = new Set((result.project.weak_points || []).map((w) => w.knowledge_point_id));
-        listEl.innerHTML = (path.items || []).map((item) => {
+        listEl.innerHTML = pathItems.map((item, index) => {
           const status = item.status || "pending";
+          const isActive = state.activeTabId === lessonTabId(projectId, item.knowledge_point_id);
           const stateIcon = status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
             : status === "learning" ? '<i data-lucide="book-open"></i>'
             : '<i data-lucide="lock-keyhole"></i>';
           const statusLabel = status === "current" ? "当前" : status === "learning" ? "进行中" : "待解锁";
           const weakMark = weakIds.has(item.knowledge_point_id) ? " · 薄弱" : "";
-          return '<li class="path-item ' + status + '">' +
+          return '<li class="path-item ' + status + (isActive ? " active" : "") + '">' +
             '<button data-project="' + projectId + '" data-kp="' + escapeHtml(item.knowledge_point_id) + '">' +
               '<span class="path-state">' + stateIcon + "</span>" +
-              '<span class="path-copy"><small>' + escapeHtml(item.knowledge_point_name) + statusLabel + weakMark + "</small><strong>" + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
+              '<span class="path-copy"><small>第 ' + (index + 1) + " 课 · " + statusLabel + weakMark + "</small><strong>" + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
               '<span class="path-mastery">' + (item.mastery || 0) + "%</span>" +
             "</button></li>";
         }).join("") || '<li class="path-item pending"><button><span class="path-state"><i data-lucide="lock-keyhole"></i></span><span class="path-copy"><strong>路径生成中…</strong></span></button></li>';
         icons();
-        listEl.querySelectorAll("button[data-kp]").forEach((button) => {
-          button.onclick = () => openLesson(projectId, button.dataset.kp);
+        listEl.querySelectorAll("button[data-kp]").forEach((button, index) => {
+          const item = pathItems[index];
+          button.onclick = () => openLesson(projectId, button.dataset.kp, item && item.knowledge_point_name);
         });
       } catch (_) { /* 单项目加载失败不阻塞整体 */ }
     }
 
     /* ================= 中央讲解页 ================= */
-    async function openLesson(projectId, knowledgePointId) {
-      setInputEnabled(false);
-      welcomeEl.hidden = true;
-      lessonEl.hidden = false;
-      $("lesson-title").textContent = "正在加载讲解…";
-      $("lesson-body").innerHTML = "";
+    function lessonTabId(projectId, knowledgePointId) {
+      return "lesson:" + projectId + ":" + knowledgePointId;
+    }
+
+    function renderLessonTab(tab) {
+      const project = state.projects.find((item) => item.project_id === tab.projectId);
+      $("crumb-project").textContent = project ? project.goal_name : (tab.projectName || "项目");
+      $("crumb-lesson").textContent = tab.title || tab.knowledgePointId;
+      $("lesson-title").textContent = tab.loading
+        ? "正在加载讲解…"
+        : tab.error
+          ? "讲解加载失败"
+          : tab.title;
       $("lesson-objective").textContent = "";
       $("lesson-meta").innerHTML = "";
-      $("lesson-tag").textContent = "知识点";
-      const project = state.projects.find((p) => p.project_id === projectId);
-      $("crumb-project").textContent = project ? project.goal_name : "项目";
-      $("crumb-lesson").textContent = knowledgePointId;
-      stageEl.scrollTop = 0;
+      $("lesson-tag").textContent = tab.loading ? "知识点" : "章节讲解 · 依据课程知识库";
+      const body = $("lesson-body");
+      body.innerHTML = "";
 
+      if (tab.loading) return;
+      if (tab.error) {
+        body.innerHTML = '<div class="lesson-card"><p>' + escapeHtml(tab.error) + "</p></div>";
+        return;
+      }
+      const result = tab.result || {};
+      if (result.lesson_objective) $("lesson-objective").textContent = result.lesson_objective;
+      const modes = (result.alternative_modes || []).slice(0, 3);
+      $("lesson-meta").innerHTML =
+        '<span><i data-lucide="book-open"></i> 知识点讲解</span>' +
+        '<span><i data-lucide="shield-check"></i> 内容带来源标注</span>' +
+        (modes.length ? '<span><i data-lucide="refresh-cw"></i> 支持换种讲法</span>' : "");
+      (result.content_blocks || []).forEach((block) => renderBlock(body, block));
+
+      const videos = (result.resources || []).filter((resource) => resource.type === "video" && resource.url);
+      if (videos.length) {
+        const card = document.createElement("div");
+        card.className = "lesson-card";
+        card.innerHTML = '<h3><span class="dot"></span>视频讲解</h3>';
+        videos.forEach((video) => {
+          const item = document.createElement("div");
+          item.className = "video-card";
+          item.innerHTML =
+            '<span class="play"><i data-lucide="play"></i></span>' +
+            "<div><strong>" + escapeHtml(video.title || "视频讲解") + "</strong><small>" + escapeHtml(video.source || "外部视频资源") + "</small></div>" +
+            '<a href="' + escapeHtml(video.url) + '" target="_blank" rel="noopener"><i data-lucide="external-link"></i> 观看视频</a>';
+          card.appendChild(item);
+        });
+        body.appendChild(card);
+      }
+      icons();
+    }
+
+    async function openLesson(projectId, knowledgePointId, knowledgePointName, prefetchedResult = null) {
+      const initialTitle = knowledgePointName || knowledgePointId;
+      const tabId = lessonTabId(projectId, knowledgePointId);
+      let tab = workspaceTab(tabId);
+      if (tab && !prefetchedResult) {
+        activateWorkspaceTab(tabId);
+        return;
+      }
+
+      tab = upsertWorkspaceTab({
+        id: tabId,
+        view: "lesson",
+        title: initialTitle,
+        projectId,
+        knowledgePointId,
+        projectName: (state.projects.find((project) => project.project_id === projectId) || {}).goal_name || "项目",
+        loading: !prefetchedResult,
+        error: "",
+        result: prefetchedResult || null,
+      });
+
+      if (prefetchedResult) {
+        tab.title = prefetchedResult.lesson_title || initialTitle;
+        tab.loading = false;
+        renderEditorTabs();
+        renderLessonTab(tab);
+        await refreshProjects();
+        await loadProjectPath(projectId);
+        return;
+      }
+
+      setInputEnabled(false);
       try {
         const result = await api("/api/projects/" + encodeURIComponent(projectId) + "/explain", {
           method: "POST",
           body: { student_id: STUDENT_ID, knowledge_point_id: knowledgePointId },
         });
-        $("lesson-title").textContent = result.lesson_title || knowledgePointId;
-        $("crumb-lesson").textContent = result.lesson_title || knowledgePointId;
-        $("lesson-tag").textContent = "章节讲解 · 依据课程知识库";
-        if (result.lesson_objective) {
-          $("lesson-objective").textContent = result.lesson_objective;
-        }
-        const modes = (result.alternative_modes || []).slice(0, 3);
-        $("lesson-meta").innerHTML =
-          '<span><i data-lucide="book-open"></i> 知识点讲解</span>' +
-          '<span><i data-lucide="shield-check"></i> 内容带来源标注</span>' +
-          (modes.length ? '<span><i data-lucide="refresh-cw"></i> 支持换种讲法</span>' : "");
-
-        const body = $("lesson-body");
-        body.innerHTML = "";
-        (result.content_blocks || []).forEach((block) => renderBlock(body, block));
-
-        // 视频资源
-        const videos = (result.resources || []).filter((r) => r.type === "video" && r.url);
-        if (videos.length) {
-          const card = document.createElement("div");
-          card.className = "lesson-card";
-          card.innerHTML = '<h3><span class="dot"></span>视频讲解</h3>';
-          videos.forEach((video) => {
-            const item = document.createElement("div");
-            item.className = "video-card";
-            item.innerHTML =
-              '<span class="play"><i data-lucide="play"></i></span>' +
-              "<div><strong>" + escapeHtml(video.title || "视频讲解") + "</strong><small>" + escapeHtml(video.source || "外部视频资源") + "</small></div>" +
-              '<a href="' + escapeHtml(video.url) + '" target="_blank" rel="noopener"><i data-lucide="external-link"></i> 观看视频</a>';
-            card.appendChild(item);
-          });
-          body.appendChild(card);
-        }
-        icons();
-        // 刷新路径状态（讲解会把章节置为 learning）
+        tab.title = result.lesson_title || initialTitle;
+        tab.result = result;
+        tab.loading = false;
+        if (state.activeTabId === tabId) renderLessonTab(tab);
+        renderEditorTabs();
         await refreshProjects();
         await loadProjectPath(projectId);
       } catch (error) {
-        $("lesson-title").textContent = "讲解加载失败";
-        $("lesson-body").innerHTML = '<div class="lesson-card"><p>' + escapeHtml(error.message) + "</p></div>";
+        tab.loading = false;
+        tab.error = error.message;
+        if (state.activeTabId === tabId) renderLessonTab(tab);
+        renderEditorTabs();
       }
       setInputEnabled(true);
     }
@@ -1099,9 +1421,73 @@
     }
 
     $("crumb-home").onclick = () => {
-      lessonEl.hidden = true;
-      welcomeEl.hidden = false;
+      showWorkspaceView("welcome");
     };
+
+    function detachLessonTab(tabId) {
+      const tab = workspaceTab(tabId);
+      if (!tab || tab.view !== "lesson" || !tab.result) return false;
+      const existingPane = Array.from(stageEl.querySelectorAll(".detached-editor"))
+        .find((pane) => pane.dataset.tabId === tabId);
+      if (existingPane) {
+        existingPane.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "end" });
+        return true;
+      }
+      const currentCount = stageEl.querySelectorAll(".detached-editor").length;
+      if (currentCount >= 3) {
+        addMsg("bot", "<p>当前已并排打开 3 个章节。关闭一个独立页面后，可以继续拆分。</p>");
+        return false;
+      }
+
+      activateWorkspaceTab(tabId);
+      const title = tab.title || "章节讲解";
+      const pane = document.createElement("section");
+      pane.className = "detached-editor";
+      pane.dataset.tabId = tabId;
+      pane.innerHTML =
+        '<div class="editor-tabbar">' +
+          '<div class="editor-tabs">' +
+            '<div class="editor-tab active">' +
+              '<i data-lucide="file-text"></i><span>' + escapeHtml(title) + "</span>" +
+              '<button class="editor-tab-close" type="button" title="关闭独立页面"><i data-lucide="x"></i></button>' +
+            "</div>" +
+          "</div>" +
+        "</div>" +
+        '<div class="detached-content"></div>';
+
+      const clonedLesson = lessonEl.cloneNode(true);
+      clonedLesson.hidden = false;
+      clonedLesson.removeAttribute("id");
+      clonedLesson.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+      pane.querySelector(".detached-content").appendChild(clonedLesson);
+      pane.querySelector(".editor-tab-close").onclick = () => pane.remove();
+      stageEl.appendChild(pane);
+      icons();
+      pane.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "end" });
+      return true;
+    }
+
+    $("editor-tab-home").onclick = () => activateWorkspaceTab("home");
+    $("editor-new-tab").onclick = () => {
+      activateWorkspaceTab("home");
+      $("workbench-project").textContent = "新项目 · 等待输入学习目标";
+      $("chat-textarea").focus();
+    };
+    stageEl.addEventListener("dragover", (event) => {
+      if (!state.draggingTabId) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+    stageEl.addEventListener("drop", (event) => {
+      if (!state.draggingTabId) return;
+      event.preventDefault();
+      const bounds = stageEl.getBoundingClientRect();
+      const droppedInSplitZone = event.clientX >= bounds.left + bounds.width * 0.45;
+      const draggedTabId = state.draggingTabId;
+      state.draggingTabId = null;
+      stageEl.classList.remove("drag-active");
+      if (droppedInSplitZone) detachLessonTab(draggedTabId);
+    });
 
     /* ================= 全屏独立页面：个人中心 / 用户画像 / 设置 ================= */
     const userMenuEl = $("user-menu");
@@ -1307,9 +1693,13 @@
       this.style.height = Math.min(this.scrollHeight, 120) + "px";
     });
     $("new-project-btn").onclick = () => {
+      $("workbench-project").textContent = "新项目 · 等待输入学习目标";
       $("chat-textarea").focus();
       addMsg("bot", "<p>告诉我你的学习目标，我来为你创建新项目。</p>");
     };
+    document.querySelectorAll(".chat-tool").forEach((button) => {
+      button.onclick = () => button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));
+    });
 
     /* ================= 启动 ================= */
     async function boot() {

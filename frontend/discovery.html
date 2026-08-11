@@ -1,0 +1,496 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学习状态发现工作台 · Learner State Discovery</title>
+<style>
+:root{
+  --bg:#f2f4f0; --surface:#ffffff; --surface-soft:#f8faf7; --ink:#18201d;
+  --muted:#57615c; --line:#dce2dd; --line-strong:#c6cec8; --green:#1f6b55;
+  --green-soft:#e7f2ec; --blue:#2859c5; --blue-soft:#e9effc; --amber:#b96b18;
+  --amber-soft:#fff2df; --red:#ae3b3b; --red-soft:#fbeaea; --shadow:0 8px 22px rgba(24,32,29,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55}
+header.top{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--line)}
+header.top h1{font-size:16px;font-weight:700}
+header.top .conn{font-size:12px;color:var(--muted)}
+header.top .learner{margin-left:auto;display:flex;gap:8px;align-items:center}
+input,select,textarea,button{font-family:inherit;font-size:14px}
+input,select,textarea{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;background:#fff}
+button{border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;padding:7px 14px;cursor:pointer;font-weight:600}
+button:hover{border-color:var(--green)}
+button.primary{background:var(--green);border-color:var(--green);color:#fff}
+button.primary:hover{background:var(--green-strong)}
+button.ghost{background:var(--surface-soft)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.layout{display:grid;grid-template-columns:minmax(420px,5fr) minmax(360px,4fr);gap:16px;padding:16px;max-width:1440px;margin:0 auto}
+@media (max-width:960px){.layout{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+.card h2{font-size:14px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.card h2 .tag{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px}
+.tag.kind-clarification{background:var(--amber-soft);color:var(--amber)}
+.tag.kind-question{background:var(--blue-soft);color:var(--blue)}
+.tag.kind-reasoning_probe,.tag.kind-prerequisite_probe{background:var(--amber-soft);color:var(--amber)}
+.tag.kind-complete{background:var(--green-soft);color:var(--green)}
+.muted{color:var(--muted);font-size:12px}
+.stack{display:flex;flex-direction:column;gap:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.question{background:var(--surface-soft);border:1px solid var(--line);border-radius:10px;padding:12px}
+.question .title{font-weight:600;margin-bottom:8px}
+.option{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;background:#fff}
+.option:hover{border-color:var(--green)}
+.option.selected{border-color:var(--green);background:var(--green-soft)}
+.obs{border-left:3px solid var(--green);padding:6px 10px;background:var(--surface-soft);border-radius:0 8px 8px 0;margin-bottom:6px}
+.obs.knowledge{border-color:var(--blue)} .obs.practice{border-color:var(--green)}
+.obs.value{border-color:var(--amber)} .obs.human{border-color:var(--red)}
+.unc{display:flex;justify-content:space-between;padding:6px 8px;border-bottom:1px dashed var(--line);font-size:13px}
+.kernel-block{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+.kernel-block h3{font-size:13px;font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between}
+.kc{display:flex;justify-content:space-between;align-items:center;padding:4px 6px;border-radius:6px;font-size:12.5px;margin-bottom:3px}
+.kc .status{font-weight:700;font-size:11px;padding:1px 8px;border-radius:999px}
+.status-untested{color:var(--muted);background:var(--surface-soft)}
+.status-candidate{color:var(--amber);background:var(--amber-soft)}
+.status-verified_once{color:var(--blue);background:var(--blue-soft)}
+.status-stable{color:var(--green);background:var(--green-soft)}
+.ev{display:flex;gap:8px;align-items:flex-start;padding:8px;border-bottom:1px dashed var(--line);font-size:12.5px}
+.ev .dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin-top:6px;flex:none}
+.ev .dot.knowledge{background:var(--blue)} .ev .dot.value{background:var(--amber)} .ev .dot.structure{background:var(--muted)} .ev .dot.human{background:var(--red)}
+.claim{background:var(--green-soft);border:1px solid var(--green-line);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:13px}
+.claim.remediation{background:var(--red-soft);border-color:var(--red-line)}
+.claim.insufficient{background:var(--amber-soft);border-color:var(--amber-line)}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+.badge.ok{background:var(--green-soft);color:var(--green)}
+.badge.warn{background:var(--amber-soft);color:var(--amber)}
+.badge.err{background:var(--red-soft);color:var(--red)}
+#feed{max-height:340px;overflow:auto}
+#ledger{max-height:300px;overflow:auto}
+textarea{width:100%;min-height:70px}
+.hidden{display:none}
+footer{padding:14px 20px;color:var(--muted);font-size:12px;text-align:center}
+.toast{position:fixed;right:18px;bottom:18px;background:var(--charcoal);color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .25s;z-index:99}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>🧭 学习状态发现工作台</h1>
+  <span class="conn" id="conn">连接服务中…</span>
+  <div class="learner">
+    <label class="muted">学习者</label>
+    <input id="learner-id" value="STU-DEMO-001" style="width:150px">
+  </div>
+</header>
+
+<div class="layout">
+  <div class="stack">
+    <div class="card" id="create-card">
+      <h2>① 新建发现会话</h2>
+      <div class="stack">
+        <div>
+          <div class="muted">学习目标（自由输入）</div>
+          <input id="goal-candidate" style="width:100%" value="想学 Java 面向对象，能独立完成成绩管理实训" placeholder="例如：想学 Java 面向对象，能独立完成成绩管理实训">
+        </div>
+        <div class="row">
+          <div style="flex:1">
+            <div class="muted">期望产物</div>
+            <input id="goal-outcome" style="width:100%" value="独立完成成绩管理实训">
+          </div>
+          <div style="flex:1">
+            <div class="muted">项目 id（可选）</div>
+            <input id="project-id" style="width:100%" placeholder="留空则仅做学习者级发现">
+          </div>
+        </div>
+        <div class="row">
+          <button class="primary" id="btn-create">开始发现</button>
+          <button class="ghost" id="btn-reset">重置（新学习者）</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="session-card">
+      <h2>② 当前交互 <span class="tag" id="phase-tag"></span></h2>
+      <div class="muted" id="session-meta"></div>
+      <div class="stack" style="margin-top:10px" id="interaction-area"></div>
+    </div>
+
+    <div class="card hidden" id="obs-card">
+      <h2>③ 观察与证据 <span class="tag kind-question">observations</span></h2>
+      <div id="feed"></div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card" id="unc-card">
+      <h2>不确定性（信息缺口）</h2>
+      <div id="unc-list" class="muted">暂无会话</div>
+    </div>
+    <div class="card hidden" id="proj-card">
+      <h2>五核投影 <span class="tag kind-complete">kernel projection</span></h2>
+      <div id="projection"></div>
+    </div>
+    <div class="card hidden" id="graph-card">
+      <h2>Memory Graph（可追溯结论）</h2>
+      <div id="graph"></div>
+    </div>
+    <div class="card hidden" id="ledger-card">
+      <h2>证据账本（append-only）</h2>
+      <div id="ledger"></div>
+    </div>
+  </div>
+</div>
+<footer>Learner State Discovery · 行为 → EvidenceEvent → five_kernel_reducer → KernelState → Memory Graph · 边界：不直接写 KernelState</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const state = { sessionId: null, learner: "STU-DEMO-001", questions: {}, lastResult: null };
+
+const $ = (id) => document.getElementById(id);
+function toast(msg) {
+  const el = $("toast"); el.textContent = msg; el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2200);
+}
+async function api(method, path, payload) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.user_message || data.error_code || "请求失败");
+  return data;
+}
+function qs() { return `?learner_id=${encodeURIComponent(state.learner)}`; }
+
+async function refresh() {
+  if (!state.sessionId) return;
+  const data = await api("GET", `/api/discovery/sessions/${state.sessionId}${qs()}`);
+  const projection = await api("GET", `/api/discovery/sessions/${state.sessionId}/projection${qs()}`);
+  const ledger = await api("GET", `/api/learners/${state.learner}/discovery/events${qs()}&session_id=${state.sessionId}`);
+  renderSession(data);
+  renderProjection(projection.projection);
+  renderGraph(projection.memory_graph);
+  renderLedger(ledger.events);
+  renderUncertainties(data.uncertainties);
+  renderFeed(data);
+}
+
+function renderSession(data) {
+  $("session-card").classList.remove("hidden");
+  $("obs-card").classList.remove("hidden");
+  $("unc-card").classList.remove("hidden");
+  const s = data.session;
+  const ni = data.next_interaction || {};
+  const kind = ni.kind || "complete";
+  const phaseLabel = { clarification: "目标/澄清", question: "选题", reasoning_probe: "理由追问", prerequisite_probe: "前置追问", complete: "完成" }[kind] || kind;
+  $("phase-tag").textContent = phaseLabel;
+  $("phase-tag").className = "tag kind-" + kind;
+  $("session-meta").textContent =
+    `会话 ${s.session_id} · 阶段 ${s.phase || "-"} · 状态 ${s.status} · 目标 ${s.goal_id || "未确认"} · 种子 ${s.seed}`;
+  const area = $("interaction-area");
+  area.innerHTML = "";
+  const purpose = document.createElement("div");
+  purpose.className = "muted";
+  purpose.textContent = "本轮目的：" + (ni.purpose || "");
+  area.appendChild(purpose);
+
+  if (kind === "clarification") {
+    const content = ni.content || {};
+    const box = document.createElement("div"); box.className = "question";
+    box.innerHTML = `<div class="title">${esc(content.prompt || "请确认学习目标与期望产物")}</div>`;
+    const inp = document.createElement("input"); inp.id = "clarify-text"; inp.value = content.candidate || ""; inp.style.width = "100%";
+    const out = document.createElement("input"); out.id = "clarify-outcome"; out.placeholder = "期望产物（可选）"; out.style.width = "100%";
+    const row = document.createElement("div"); row.className = "row"; row.style.marginTop = "8px";
+    const ok = document.createElement("button"); ok.className = "primary"; ok.textContent = "确认目标";
+    ok.onclick = () => submitClarification("confirm");
+    const more = document.createElement("button"); more.className = "ghost"; more.textContent = "进一步澄清";
+    more.onclick = () => submitClarification("clarify");
+    const pref = document.createElement("button"); pref.className = "ghost"; pref.textContent = "补充偏好";
+    pref.onclick = () => submitPreference();
+    row.append(ok, more, pref);
+    box.append(inp, out, row);
+    area.appendChild(box);
+  } else if (kind === "question") {
+    const content = ni.content || {};
+    const box = document.createElement("div"); box.className = "question";
+    box.innerHTML = `<div class="title">${esc(content.title || "")}</div>
+      <div class="muted">知识点：${esc(content.knowledge_point_name || "")}（${esc(content.knowledge_point_id || "")}）· 难度 ${content.difficulty ?? "-"}</div>`;
+    let selected = null;
+    Object.entries(content.options || {}).forEach(([key, label]) => {
+      const opt = document.createElement("div"); opt.className = "option";
+      opt.innerHTML = `<span style="font-weight:700;color:var(--green)">${esc(key)}.</span><span>${esc(label)}</span>`;
+      opt.onclick = () => { document.querySelectorAll(".option").forEach(o => o.classList.remove("selected")); opt.classList.add("selected"); selected = key; };
+      box.appendChild(opt);
+    });
+    const row = document.createElement("div"); row.className = "row"; row.style.marginTop = "10px";
+    const submit = document.createElement("button"); submit.className = "primary"; submit.textContent = "提交答案";
+    submit.onclick = () => { if (!selected) return toast("请先选择答案"); submitAnswer(selected, false); };
+    const assist = document.createElement("button"); assist.textContent = "需要提示（辅助作答）";
+    assist.onclick = () => { if (!selected) return toast("请先选择答案"); submitAnswer(selected, true); };
+    const skip = document.createElement("button"); skip.className = "ghost"; skip.textContent = "跳过";
+    skip.onclick = () => submitAction("skip");
+    const hazy = document.createElement("button"); hazy.className = "ghost"; hazy.textContent = "回答含糊";
+    hazy.onclick = () => submitAction("hazy");
+    row.append(submit, assist, skip, hazy);
+    box.appendChild(row);
+    area.appendChild(box);
+  } else if (kind === "reasoning_probe" || kind === "prerequisite_probe") {
+    const content = ni.content || {};
+    const box = document.createElement("div"); box.className = "question";
+    box.innerHTML = `<div class="title">${esc(content.prompt || "请说明你的思路")}</div>
+      <div class="muted">题目：${esc(content.title || "")}</div>`;
+    const ta = document.createElement("textarea"); ta.id = "probe-text"; ta.placeholder = "输入你的解释或卡点…";
+    const row = document.createElement("div"); row.className = "row"; row.style.marginTop = "8px";
+    const ok = document.createElement("button"); ok.className = "primary"; ok.textContent = "提交解释";
+    ok.onclick = () => submitProbe();
+    row.appendChild(ok);
+    box.append(ta, row);
+    area.appendChild(box);
+  } else if (kind === "complete") {
+    const content = ni.content || {};
+    const box = document.createElement("div"); box.className = "question";
+    const status = content.status === "completed" ? "✅ 证据已足够" : (content.status === "insufficient_evidence" ? "⚠️ 证据不足" : "⏹ 已结束");
+    box.innerHTML = `<div class="title">${status}</div>
+      <div class="muted">${esc(ni.purpose || "")}（原因：${esc(content.reason || "-")}）</div>`;
+    const action = document.createElement("div"); action.style.marginTop = "10px";
+    const map = { begin_learning: "建议：进入学习路径", start_remediation: "建议：先纠错再继续", continue_discovery: "建议：继续发现", request_confirmation: "建议：确认目标" };
+    action.innerHTML = `<span class="badge ok">${esc(map[data.recommended_next_action] || data.recommended_next_action || "-")}</span>`;
+    box.appendChild(action);
+    area.appendChild(box);
+    $("btn-create").textContent = "再建一个会话";
+  } else {
+    area.innerHTML = `<div class="muted">等待下一步…</div>`;
+  }
+}
+
+function renderUncertainties(list) {
+  const el = $("unc-list"); el.innerHTML = "";
+  if (!list || !list.length) { el.textContent = "暂无高不确定性项"; return; }
+  list.slice(0, 10).forEach(u => {
+    const row = document.createElement("div"); row.className = "unc";
+    row.innerHTML = `<span><b>${esc(u.kernel)}</b> · ${esc(u.subject)}</span><span class="muted">${esc(u.reason)} · ${u.priority}</span>`;
+    el.appendChild(row);
+  });
+}
+
+function renderProjection(proj) {
+  $("proj-card").classList.remove("hidden");
+  const el = $("projection"); el.innerHTML = "";
+  const kernels = proj.kernels || {};
+  const versions = proj.versions || {};
+
+  const knowledge = document.createElement("div"); knowledge.className = "kernel-block";
+  knowledge.innerHTML = `<h3>knowledge <span class="muted">v${versions.knowledge ?? 0}</span></h3>`;
+  const kcs = Object.values(kernels.knowledge?.kcs || {});
+  if (!kcs.length) knowledge.innerHTML += `<div class="muted">暂无知识点证据</div>`;
+  kcs.forEach(kc => {
+    const div = document.createElement("div"); div.className = "kc";
+    const e = kc.evidence || {};
+    div.innerHTML = `<span>${esc(kc.kc_id)}</span><span class="status status-${esc(kc.status)}">${esc(kc.status)} · ${kc.confidence}</span>
+      <span class="muted" style="font-size:11px">独立✓${e.distinct_independent_correct ?? 0} 错${e.wrong ?? 0} 助${e.assisted ?? 0}</span>`;
+    knowledge.appendChild(div);
+  });
+  el.appendChild(knowledge);
+
+  const practice = document.createElement("div"); practice.className = "kernel-block";
+  practice.innerHTML = `<h3>practice <span class="muted">v${versions.practice ?? 0}</span></h3>`;
+  const ind = kernels.practice?.independence || {};
+  if (!Object.keys(ind).length) practice.innerHTML += `<div class="muted">暂无独立实践证据</div>`;
+  Object.entries(ind).forEach(([kc, v]) => {
+    const div = document.createElement("div"); div.className = "kc";
+    div.innerHTML = `<span>${esc(kc)}</span><span class="status status-${esc(v.level)}">${esc(v.level)}</span>`;
+    practice.appendChild(div);
+  });
+  el.appendChild(practice);
+
+  const value = document.createElement("div"); value.className = "kernel-block";
+  const vv = kernels.value || {};
+  value.innerHTML = `<h3>value <span class="muted">v${versions.value ?? 0}</span></h3>
+    <div class="muted">已确认目标：${esc(vv.confirmed_goal || "未确认")}</div>
+    <div class="muted">期望产物：${esc(vv.confirmed_outcome || "-")}</div>`;
+  el.appendChild(value);
+
+  const human = document.createElement("div"); human.className = "kernel-block";
+  human.innerHTML = `<h3>human <span class="muted">v${versions.human ?? 0}</span></h3>`;
+  const prefs = kernels.human?.preferences || [];
+  if (!prefs.length) human.innerHTML += `<div class="muted">暂无明确偏好</div>`;
+  prefs.forEach(p => human.innerHTML += `<div class="muted">· ${esc(p.mode)}（${esc(p.status)}）</div>`);
+  el.appendChild(human);
+
+  const structure = document.createElement("div"); structure.className = "kernel-block";
+  structure.innerHTML = `<h3>structure <span class="muted">v${versions.structure ?? 0}</span></h3>`;
+  const pos = kernels.structure?.position || {};
+  structure.innerHTML += `<div class="muted">session_status=${esc(pos.session_status || "-")} · index=${pos.question_index ?? "-"}/${pos.total_questions ?? "-"}</div>`;
+  el.appendChild(structure);
+}
+
+function renderGraph(graph) {
+  $("graph-card").classList.remove("hidden");
+  const el = $("graph"); el.innerHTML = "";
+  const claims = graph.claims || [];
+  claims.forEach(c => {
+    const cls = c.kernel === "knowledge" && c.statement.includes("纠错") ? "claim remediation" :
+      c.statement.includes("证据仍不足") ? "claim insufficient" : "claim";
+    const div = document.createElement("div"); div.className = cls;
+    div.innerHTML = `<b>${esc(c.kernel)}</b> · ${esc(c.statement)} <span class="muted">(${esc(c.status)})</span>`;
+    el.appendChild(div);
+  });
+  if (!claims.length) el.innerHTML = `<div class="muted">暂无综合结论</div>`;
+  const facts = graph.facts || [];
+  const factBox = document.createElement("div"); factBox.style.marginTop = "8px";
+  facts.slice(0, 8).forEach(f => {
+    const div = document.createElement("div"); div.className = "ev";
+    div.innerHTML = `<span class="dot ${esc(f.kernel)}"></span><span>${esc(f.kernel)} · ${esc(f.claim)}<br><span class="muted">证据引用：${esc((f.evidence_refs || []).join(", ") || "无")}</span></span>`;
+    factBox.appendChild(div);
+  });
+  el.appendChild(factBox);
+}
+
+function renderLedger(events) {
+  $("ledger-card").classList.remove("hidden");
+  const el = $("ledger"); el.innerHTML = "";
+  if (!events || !events.length) { el.textContent = "暂无事件"; return; }
+  events.slice().reverse().forEach(ev => {
+    const div = document.createElement("div"); div.className = "ev";
+    const dot = document.createElement("span"); dot.className = "dot " + (ev.kernel_targets?.[0] || "");
+    const body = document.createElement("span");
+    body.innerHTML = `<b>${esc(ev.event_type)}</b> <span class="muted">${esc(ev.created_at ? ev.created_at.slice(11, 19) : "")}</span><br>
+      <span class="muted">目标：${esc((ev.kernel_targets || []).join(", "))} · 角色：${esc(ev.evidence_role)}</span>`;
+    if (ev.event_type === "answer_submitted" && ev.payload) {
+      body.innerHTML += `<br>KC：${esc(ev.payload.knowledge_point_id || "-")} · correct=${ev.payload.correct}`;
+    }
+    const wrap = document.createElement("div"); wrap.style.flex = "1";
+    const row = document.createElement("div"); row.className = "row"; row.style.marginTop = "4px";
+    row.innerHTML = `<span class="muted" style="font-size:11px">${esc(ev.event_id)}</span>`;
+    if (ev.event_type === "answer_submitted") {
+      const fix = document.createElement("button"); fix.className = "ghost"; fix.style.padding = "2px 8px"; fix.style.fontSize = "12px";
+      fix.textContent = "纠正此条";
+      fix.onclick = () => correctEvent(ev.event_id);
+      row.appendChild(fix);
+    }
+    body.appendChild(row);
+    wrap.appendChild(body);
+    div.appendChild(dot); div.appendChild(wrap);
+    el.appendChild(div);
+  });
+}
+
+function renderFeed(data) {
+  const el = $("feed");
+  const obs = data.observations || [];
+  obs.forEach(o => {
+    const div = document.createElement("div"); div.className = `obs ${esc(o.kernel)}`;
+    div.innerHTML = `<b>${esc(o.kernel)}</b> · ${esc(o.claim)}<br><span class="muted">status=${esc(o.status)} · confidence=${o.confidence} · ${esc((o.evidence_refs || []).join(","))}</span>`;
+    el.prepend(div);
+  });
+}
+
+function esc(value) {
+  return String(value == null ? "" : value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function cid(prefix) { return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`; }
+
+async function submitClarification(action) {
+  const payload = { learner_id: state.learner, session_id: state.sessionId, action, client_event_id: cid(action) };
+  if (action === "clarify") {
+    payload.text = $("clarify-text").value || "";
+    payload.desired_outcome = $("clarify-outcome").value || "";
+  }
+  const result = await api("POST", `/api/discovery/sessions/${state.sessionId}/answer`, payload);
+  state.lastResult = result;
+  await refresh();
+}
+
+async function submitPreference() {
+  const mode = prompt("补充教学偏好（如 example_driven / step_by_step / analogy_first）：", "example_driven");
+  if (!mode) return;
+  await api("POST", `/api/discovery/sessions/${state.sessionId}/answer`, {
+    learner_id: state.learner, session_id: state.sessionId, action: "preference", mode,
+    client_event_id: cid("pref"),
+  });
+  await refresh();
+}
+
+async function submitAnswer(selected, assisted) {
+  const result = await api("POST", `/api/discovery/sessions/${state.sessionId}/answer`, {
+    learner_id: state.learner, session_id: state.sessionId, action: "answer",
+    selected, assisted, client_event_id: cid("ans"),
+  });
+  state.lastResult = result;
+  await refresh();
+}
+
+async function submitAction(action) {
+  const result = await api("POST", `/api/discovery/sessions/${state.sessionId}/answer`, {
+    learner_id: state.learner, session_id: state.sessionId, action, client_event_id: cid(action),
+  });
+  state.lastResult = result;
+  await refresh();
+}
+
+async function submitProbe() {
+  const text = $("probe-text").value;
+  if (!text) return toast("请输入解释");
+  const result = await api("POST", `/api/discovery/sessions/${state.sessionId}/answer`, {
+    learner_id: state.learner, session_id: state.sessionId, action: "probe_answer", text,
+    client_event_id: cid("probe"),
+  });
+  state.lastResult = result;
+  await refresh();
+}
+
+async function correctEvent(eventId) {
+  const reason = prompt("纠正原因（可选）：", "误操作");
+  if (reason === null) return;
+  await api("POST", `/api/discovery/sessions/${state.sessionId}/correct`, {
+    learner_id: state.learner, session_id: state.sessionId,
+    target_event_id: eventId, reason, client_event_id: cid("corr"),
+  });
+  toast("已纠正该证据，五核投影已重算");
+  await refresh();
+}
+
+$("btn-create").onclick = async () => {
+  const goal = $("goal-candidate").value.trim();
+  if (!goal) return toast("请先输入学习目标");
+  try {
+    const created = await api("POST", "/api/discovery/sessions", {
+      learner_id: state.learner,
+      project_id: $("project-id").value.trim() || null,
+      goal_candidate: goal,
+      desired_outcome: $("goal-outcome").value.trim(),
+      policy: { interaction_budget: 10, followup_budget: 2, skip_limit: 2, complete_coverage: 0.5, seed: 20260811 },
+    });
+    state.sessionId = created.session.session_id;
+    $("btn-create").textContent = "开始发现";
+    toast("会话已创建");
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  }
+};
+
+$("btn-reset").onclick = () => {
+  state.sessionId = null;
+  state.learner = "STU-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+  $("learner-id").value = state.learner;
+  $("goal-candidate").value = "想学 Java 面向对象";
+  ["session-card", "obs-card", "proj-card", "graph-card", "ledger-card"].forEach(id => $(id).classList.add("hidden"));
+  $("unc-list").textContent = "暂无会话";
+  $("feed").innerHTML = "";
+  toast("已重置为新的学习者");
+};
+
+(async function init() {
+  try {
+    const health = await api("GET", "/api/health");
+    $("conn").textContent = "已连接服务";
+  } catch (error) {
+    $("conn").textContent = "服务未连接（请先启动 backend/server.py）";
+  }
+})();
+</script>
+</body>
+</html>

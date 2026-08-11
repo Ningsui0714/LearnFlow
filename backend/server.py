@@ -28,6 +28,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 try:
     from backend.domain import LearningDomainStore, StudentModelCache
 except ModuleNotFoundError:
@@ -40,7 +44,7 @@ try:
         resolve_learning_goal,
     )
 except ModuleNotFoundError:
-    from goal_engine import path_for_learning_goal, resolve_learning_goal
+    from goal_engine import build_learning_path, path_for_learning_goal, resolve_learning_goal
 
 try:
     from backend.data.diagnosis_bank import (
@@ -65,9 +69,13 @@ try:
     from backend.data.error_cards import default_error_card_for, error_cards_for
 except ModuleNotFoundError:
     from data.error_cards import default_error_card_for, error_cards_for
+try:
+    from backend.learner_discovery.session import DiscoveryError, DiscoveryService
+except ModuleNotFoundError:
+    from learner_discovery.session import DiscoveryError, DiscoveryService
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = PROJECT_ROOT
 FRONTEND_DIR = ROOT / "frontend"
 DEFAULT_DATABASE = ROOT / "backend" / "data" / "learning_app.db"
 MAX_BODY_BYTES = 2 * 1024 * 1024
@@ -1918,6 +1926,7 @@ class LearningApplication:
         self.domain = domain
         self.student_models = student_models
         self.knowledge_cache = knowledge_cache
+        self.discovery = DiscoveryService(settings.database_path)
         self._profile_refreshing: set[str] = set()
         self._profile_refresh_lock = threading.RLock()
         self._video_cache: dict[str, dict[str, Any]] = {}
@@ -3259,6 +3268,374 @@ class LearningApplication:
                 "weak_points": as_list(state.get("weak_points")),
             },
         }
+
+    def agent_turn(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        """Tutor Agent 统一入口：理解意图并编排项目、测评、路径、讲解与问答。"""
+        student_id = str(incoming.get("student_id") or "").strip()
+        message = str(incoming.get("message") or incoming.get("text") or "").strip()
+        session_id = str(incoming.get("session_id") or "agent-main").strip()
+        project_id = str(incoming.get("project_id") or "").strip()
+        if not student_id:
+            raise ApiError(400, "MISSING_STUDENT_ID", "student_id 不能为空")
+        if not message:
+            raise ApiError(400, "MISSING_MESSAGE", "请输入学习目标或问题")
+
+        project = self._agent_project(student_id, project_id)
+        intent = self._classify_agent_intent(message)
+
+        if intent == "create_project":
+            created = self.create_project({"student_id": student_id, "text": message})
+            if created.get("status") != "ok":
+                return {
+                    "status": "needs_clarification",
+                    "intent": "clarify_goal",
+                    "action": "ask_clarification",
+                    "message": created.get("clarification", "请补充更具体的学习目标。"),
+                    "clarify_options": self._goal_clarify_options(),
+                }
+            new_project = as_dict(created.get("project"))
+            return {
+                "status": "ok",
+                "intent": "create_project",
+                "action": "project_created",
+                "message": (
+                    f"已把“{new_project.get('goal_name', message)}”创建为学习项目。"
+                    "下一步建议先做一次能力测评，我会据此调整学习路径。"
+                ),
+                "project": new_project,
+                "next_interaction": {
+                    "type": "choice",
+                    "options": [
+                        {"id": "start_assessment", "label": "开始能力测评", "prompt": "开始能力测评"},
+                        {"id": "show_path", "label": "先看学习路径", "prompt": "查看学习路径"},
+                    ],
+                },
+            }
+
+        if intent in {"start_assessment", "show_path", "open_lesson"}:
+            project = project or self._single_recent_project(student_id)
+            if not project:
+                projects = self.store.list_projects(student_id)
+                if projects:
+                    return self._project_choice_response(message, projects)
+                return {
+                    "status": "needs_clarification",
+                    "intent": "select_project",
+                    "action": "ask_clarification",
+                    "message": "还没有可操作的学习项目，请先告诉我你想达成什么目标。",
+                    "clarify_options": self._goal_clarify_options(),
+                }
+
+        if intent == "start_assessment":
+            assessment = self.project_diagnosis_start(
+                {"student_id": student_id, "project_id": project["project_id"]}
+            )
+            project_payload = self._project_payload(
+                project["project_id"],
+                str(project["goal_name"]),
+                "diagnosis",
+                as_dict(self.store.get_project(project["project_id"])["state"]),
+            )
+            return {
+                "status": "ok",
+                "intent": "start_assessment",
+                "action": "show_assessment",
+                "message": f"已为“{project['goal_name']}”准备好 {assessment['total']} 道诊断题。",
+                "project": project_payload,
+                "artifact": {"type": "assessment", "data": assessment},
+                "next_interaction": {"type": "assessment_answer"},
+            }
+
+        if intent == "show_path":
+            detail = self.get_project(
+                {"student_id": student_id, "project_id": project["project_id"]}
+            )["project"]
+            path = as_dict(detail.get("learning_path"))
+            return {
+                "status": "ok",
+                "intent": "show_path",
+                "action": "show_path",
+                "message": (
+                    f"“{detail['goal_name']}”当前总体进度为 "
+                    f"{self._project_progress(path)}%。路径已在左侧展开，可点击章节学习。"
+                ),
+                "project": self._project_payload(
+                    detail["project_id"], detail["goal_name"], detail["status"],
+                    as_dict(self.store.get_project(detail["project_id"])["state"]),
+                ),
+                "artifact": {"type": "learning_path", "data": path},
+            }
+
+        if intent == "open_lesson":
+            state = as_dict(project.get("state"))
+            target = self._agent_lesson_target(message, state)
+            if not target:
+                options = [
+                    {
+                        "id": str(item.get("knowledge_point_id") or ""),
+                        "label": str(item.get("knowledge_point_name") or "学习章节"),
+                        "prompt": f"学习{item.get('knowledge_point_name', '')}",
+                    }
+                    for item in as_list(as_dict(state.get("learning_path")).get("items"))[:4]
+                    if isinstance(item, dict)
+                ]
+                return {
+                    "status": "needs_clarification",
+                    "intent": "select_lesson",
+                    "action": "ask_clarification",
+                    "message": "你想打开哪一个章节？",
+                    "clarify_options": options,
+                }
+            lesson = self.project_explain(
+                {
+                    "student_id": student_id,
+                    "project_id": project["project_id"],
+                    "knowledge_point_id": target["knowledge_point_id"],
+                }
+            )
+            return {
+                "status": "ok",
+                "intent": "open_lesson",
+                "action": "open_lesson",
+                "message": f"已在中间学习区打开“{target['knowledge_point_name']}”。",
+                "project": self._project_payload(
+                    project["project_id"],
+                    str(project["goal_name"]),
+                    str(project["status"]),
+                    as_dict(self.store.get_project(project["project_id"])["state"]),
+                ),
+                "knowledge_point_id": target["knowledge_point_id"],
+                "knowledge_point_name": target["knowledge_point_name"],
+                "artifact": {"type": "lesson", "data": lesson},
+            }
+
+        if intent == "knowledge_question":
+            answer = self.chat(
+                {
+                    "student_id": student_id,
+                    "session_id": session_id,
+                    "message": message,
+                }
+            )
+            return {
+                **answer,
+                "intent": "knowledge_question",
+                "action": (
+                    "ask_clarification"
+                    if answer.get("status") == "needs_clarification"
+                    else "reply"
+                ),
+                "message": answer.get("message") or answer.get("answer") or "",
+                "artifact": {"type": "answer", "data": answer},
+            }
+
+        return {
+            "status": "needs_clarification",
+            "intent": "clarify_intent",
+            "action": "ask_clarification",
+            "message": (
+                "我还不能确定你是要建立学习目标、咨询知识点，还是操作当前项目。"
+                "请选一个方向，或把目标说得更具体一些。"
+            ),
+            "clarify_options": self._agent_clarify_options(project),
+        }
+
+    def _classify_agent_intent(self, message: str) -> str:
+        lowered = message.lower().strip()
+        question_words = (
+            "什么", "哪些", "怎么", "如何", "为什么", "区别", "是否", "能否",
+            "吗", "么", "？", "?", "报错", "错误", "用法", "介绍", "解释",
+        )
+        is_question = any(word in lowered for word in question_words)
+        goal_words = (
+            "我想", "我要", "目标", "计划", "备战", "准备考", "想考", "系统掌握",
+            "完成实训", "完成 java", "提升技能", "学习项目",
+        )
+        assessment_words = ("开始测评", "能力测评", "重新测评", "做测评", "测一下", "诊断一下")
+        path_words = ("查看学习路径", "学习路径", "课程安排", "学习计划", "下一步学什么")
+        lesson_words = ("开始学习", "继续学习", "打开课程", "打开章节", "学习章节", "下一课")
+
+        if any(word in lowered for word in goal_words) and not is_question:
+            return "create_project"
+        if any(word in lowered for word in assessment_words) and not is_question:
+            return "start_assessment"
+        if any(word in lowered for word in path_words):
+            return "show_path"
+        if any(word in lowered for word in lesson_words) or (
+            "学习" in lowered and not is_question
+        ):
+            return "open_lesson"
+        if is_question:
+            return "knowledge_question"
+        if resolve_learning_goal({"goal_name": message}) or self._match_goal_keywords(message).get("matched"):
+            return "create_project"
+        if self.domain.search_knowledge(query=message, limit=1):
+            return "knowledge_question"
+        return "clarify_intent"
+
+    def _agent_project(self, student_id: str, project_id: str) -> dict[str, Any] | None:
+        if not project_id:
+            return None
+        return self._require_project(student_id, project_id)
+
+    def _single_recent_project(self, student_id: str) -> dict[str, Any] | None:
+        projects = self.store.list_projects(student_id)
+        return projects[0] if len(projects) == 1 else None
+
+    @staticmethod
+    def _goal_clarify_options() -> list[dict[str, str]]:
+        return [
+            {"id": "course", "label": "掌握 Java 面向对象", "prompt": "我想系统掌握 Java 面向对象编程"},
+            {"id": "competition", "label": "备战技能大赛", "prompt": "备战世界职业院校技能大赛"},
+            {"id": "certification", "label": "备考 1+X 认证", "prompt": "我想考 1+X Java 应用开发认证"},
+        ]
+
+    def _agent_clarify_options(
+        self, project: dict[str, Any] | None
+    ) -> list[dict[str, str]]:
+        if not project:
+            return self._goal_clarify_options()
+        return [
+            {"id": "assessment", "label": "开始能力测评", "prompt": "开始能力测评"},
+            {"id": "path", "label": "查看学习路径", "prompt": "查看学习路径"},
+            {"id": "lesson", "label": "继续学习", "prompt": "继续学习"},
+        ]
+
+    @staticmethod
+    def _project_choice_response(
+        message: str, projects: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "status": "needs_clarification",
+            "intent": "select_project",
+            "action": "ask_clarification",
+            "message": "你有多个学习项目，请先选择本次要操作的项目。",
+            "clarify_options": [
+                {
+                    "id": str(project.get("project_id") or ""),
+                    "label": str(project.get("goal_name") or "学习项目"),
+                    "prompt": message,
+                    "project_id": str(project.get("project_id") or ""),
+                }
+                for project in projects[:5]
+            ],
+        }
+
+    @staticmethod
+    def _agent_lesson_target(
+        message: str, state: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        items = [
+            item
+            for item in as_list(as_dict(state.get("learning_path")).get("items"))
+            if isinstance(item, dict)
+        ]
+        lowered = message.lower()
+        for item in items:
+            point_id = str(item.get("knowledge_point_id") or "")
+            point_name = str(item.get("knowledge_point_name") or point_id)
+            if point_id.lower() in lowered or point_name.lower() in lowered:
+                return item
+        if any(word in message for word in ("开始学习", "继续学习", "下一课")):
+            weak_ids = {
+                str(item.get("knowledge_point_id") or "")
+                for item in as_list(state.get("weak_points"))
+                if isinstance(item, dict)
+            }
+            for item in items:
+                if str(item.get("knowledge_point_id") or "") in weak_ids:
+                    return item
+            for item in items:
+                if str(item.get("status") or "") in {"current", "learning"}:
+                    return item
+            return items[0] if items else None
+        return None
+
+    # ------------------------------------------------------------------
+    # Learner State Discovery 模块（学习信息快速获取）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _discovery_identity(incoming):
+        learner_id = str(
+            incoming.get("learner_id") or incoming.get("student_id") or ""
+        ).strip()
+        if not learner_id:
+            raise ApiError(400, "MISSING_LEARNER_ID", "learner_id 不能为空")
+        return learner_id
+
+    def _discovery_call(self, fn):
+        try:
+            return fn()
+        except DiscoveryError as error:
+            status = 404 if error.code == "SESSION_NOT_FOUND" else (
+                403 if error.code == "FORBIDDEN" else 400
+            )
+            raise ApiError(status, error.code, error.message)
+
+    def discovery_create(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        project_id = str(incoming.get("project_id") or "").strip() or None
+        if project_id:
+            self._require_project(learner_id, project_id)
+        return self._discovery_call(lambda: self.discovery.create_session(
+            learner_id=learner_id,
+            project_id=project_id,
+            checkpoint_id=str(incoming.get("checkpoint_id") or "").strip() or None,
+            goal_candidate=str(
+                incoming.get("goal_candidate") or incoming.get("text") or ""
+            ).strip(),
+            desired_outcome=str(incoming.get("desired_outcome") or "").strip(),
+            goal_id=str(incoming.get("goal_id") or "").strip() or None,
+            seed=incoming.get("seed"),
+            policy=incoming.get("policy"),
+        ))
+
+    def discovery_answer(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        session_id = str(incoming.get("session_id") or "").strip()
+        if not session_id:
+            raise ApiError(400, "MISSING_SESSION_ID", "session_id 不能为空")
+        return self._discovery_call(
+            lambda: self.discovery.answer(session_id, learner_id, incoming)
+        )
+
+    def discovery_get(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        session_id = str(incoming.get("session_id") or "").strip()
+        if not session_id:
+            raise ApiError(400, "MISSING_SESSION_ID", "session_id 不能为空")
+        return self._discovery_call(
+            lambda: self.discovery.get_session(session_id, learner_id)
+        )
+
+    def discovery_projection(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        session_id = str(incoming.get("session_id") or "").strip()
+        if not session_id:
+            raise ApiError(400, "MISSING_SESSION_ID", "session_id 不能为空")
+        return self._discovery_call(
+            lambda: self.discovery.get_projection(session_id, learner_id)
+        )
+
+    def discovery_correct(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        session_id = str(incoming.get("session_id") or "").strip()
+        if not session_id:
+            raise ApiError(400, "MISSING_SESSION_ID", "session_id 不能为空")
+        return self._discovery_call(
+            lambda: self.discovery.correct_event(session_id, learner_id, incoming)
+        )
+
+    def discovery_events(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        session_id = str(incoming.get("session_id") or "").strip() or None
+        return self.discovery.export_events(learner_id, session_id)
+
+    def discovery_sessions(self, incoming):
+        learner_id = self._discovery_identity(incoming)
+        return self.discovery.list_sessions(learner_id)
+
 
     def project_diagnosis_start(self, incoming: dict[str, Any]) -> dict[str, Any]:
         student_id = str(incoming.get("student_id", "")).strip()
@@ -5695,6 +6072,54 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 student_id = unquote(parsed.path[len(prefix) : -len(suffix)]).strip("/")
                 self._send_json(200, self.application.learning_state(student_id))
                 return
+            discovery_session_match = re.fullmatch(
+                r"/api/discovery/sessions/([^/]+)/projection", parsed.path
+            )
+            if discovery_session_match:
+                query_params = parse_qs(parsed.query)
+                self._send_json(
+                    200,
+                    self.application.discovery_projection({
+                        "learner_id": query_params.get("learner_id", [""])[0],
+                        "session_id": unquote(discovery_session_match.group(1)),
+                    }),
+                )
+                return
+            discovery_session_match = re.fullmatch(
+                r"/api/discovery/sessions/([^/]+)", parsed.path
+            )
+            if discovery_session_match:
+                query_params = parse_qs(parsed.query)
+                self._send_json(
+                    200,
+                    self.application.discovery_get({
+                        "learner_id": query_params.get("learner_id", [""])[0],
+                        "session_id": unquote(discovery_session_match.group(1)),
+                    }),
+                )
+                return
+            if parsed.path == "/api/discovery/sessions":
+                query_params = parse_qs(parsed.query)
+                self._send_json(
+                    200,
+                    self.application.discovery_sessions({
+                        "learner_id": query_params.get("learner_id", [""])[0],
+                    }),
+                )
+                return
+            discovery_events_match = re.fullmatch(
+                r"/api/learners/([^/]+)/discovery/events", parsed.path
+            )
+            if discovery_events_match:
+                query_params = parse_qs(parsed.query)
+                self._send_json(
+                    200,
+                    self.application.discovery_events({
+                        "learner_id": unquote(discovery_events_match.group(1)),
+                        "session_id": query_params.get("session_id", [""])[0],
+                    }),
+                )
+                return
             if parsed.path.startswith("/api/"):
                 raise ApiError(404, "API_NOT_FOUND", "接口不存在")
             self._serve_static(parsed.path)
@@ -5721,6 +6146,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 result = self.application.ask_explanation(unquote(ask_match.group(1)), payload)
             elif parsed.path == "/api/explanations":
                 result = self.application.run_explanation(payload)
+            elif parsed.path == "/api/agent/turn":
+                result = self.application.agent_turn(payload)
             elif parsed.path == "/api/chat":
                 result = self.application.chat(payload)
             elif parsed.path == "/api/practice/questions":
@@ -5743,7 +6170,13 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 result = self.application.ingest_upstream(demo_upstream_payload())
             elif parsed.path == "/api/projects":
                 result = self.application.create_project(payload)
+            elif parsed.path == "/api/discovery/sessions":
+                result = self.application.discovery_create(payload)
             else:
+                discovery_action = re.fullmatch(
+                    r"/api/discovery/sessions/([^/]+)/(answer|correct)",
+                    parsed.path,
+                )
                 project_action = re.fullmatch(
                     r"/api/projects/([^/]+)/(diagnosis/start|diagnosis/answer|explain)",
                     parsed.path,
@@ -5756,7 +6189,15 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 notification_match = re.fullmatch(
                     r"/api/students/([^/]+)/notifications/([^/]+)/read", parsed.path
                 )
-                if project_action:
+                if discovery_action:
+                    session_id = unquote(discovery_action.group(1))
+                    action = discovery_action.group(2)
+                    payload["session_id"] = session_id
+                    if action == "answer":
+                        result = self.application.discovery_answer(payload)
+                    else:
+                        result = self.application.discovery_correct(payload)
+                elif project_action:
                     project_id = unquote(project_action.group(1))
                     action = project_action.group(2)
                     request = {**payload, "project_id": project_id}

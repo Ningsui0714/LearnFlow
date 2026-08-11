@@ -1,0 +1,336 @@
+flowMeta:
+  name: 对话问答工作流
+  description: 对话问答：多轮上下文 + 知识库生成回答（生成上平台、检索留本地）
+  avatarIcon: ''
+  avatarColor: '#EAF7EE'
+  advancedConfig: '{"prologue":{"enabled":false},"needGuide":false}'
+  dslVersion: v1
+flowData:
+  nodes:
+    - id: 'node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69'
+      type: 开始节点
+      position: {x: 0, y: 200}
+      positionAbsolute: {x: 0, y: 200}
+      width: 256
+      height: 74
+      data:
+        allowInputReference: false
+        allowOutputReference: true
+        label: 开始
+        nodeMeta: {aliasName: 开始节点, nodeType: 基础节点}
+        inputs: []
+        outputs:
+          - id: 'out::3a62a731-ba03-4dde-8688-07f8a067d91e'
+            name: AGENT_USER_INPUT
+            schema:
+              type: string
+              default: '包含 message/student_id/kb_text/history_memory 的 JSON 字符串'
+            required: true
+            deleteDisabled: true
+            nameErrMsg: ''
+        nodeParam: {}
+        updatable: false
+        status: ''
+        icon: https://oss-beijing-m8.openstorage.cn/pro-bucket/sparkBot/common/workflow/icon/start-node-icon.png
+        description: 工作流的开启节点，用于定义流程调用所需的业务变量信息。
+      dragging: false
+      selected: false
+    - id: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'
+      type: 代码
+      position: {x: 380, y: 200}
+      positionAbsolute: {x: 380, y: 200}
+      width: 362
+      height: 100
+      data:
+        allowInputReference: true
+        allowOutputReference: true
+        label: 解析提问与上下文
+        nodeMeta: {aliasName: 代码, nodeType: 工具}
+        inputs:
+          - id: 'in::c81280bf-4e93-4f49-9cec-303976af661c'
+            name: raw_input
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: AGENT_USER_INPUT, id: 'out::3a62a731-ba03-4dde-8688-07f8a067d91e', nodeId: 'node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+        outputs:
+          - id: 'out::5ec32e5c-13a5-4372-998d-6f7929a98b4a'
+            name: message
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+          - id: 'out::d5b240a8-84ea-4fcd-9543-bd8fc7f9e96c'
+            name: student_id
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+          - id: 'out::ab8300dd-e30f-40b4-aa9e-2d64e3debcc1'
+            name: kb_text
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+          - id: 'out::af8274eb-a72a-4421-999b-b0de7b973cfd'
+            name: history_memory
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+        nodeParam:
+          code: |-
+            import json
+            
+            def main(raw_input):
+                try:
+                    data = json.loads(str(raw_input or "{}"))
+                    if not isinstance(data, dict):
+                        data = {}
+                except Exception:
+                    data = {}
+                message = str(data.get("message") or "").strip()
+                if not message:
+                    raise ValueError("message 不能为空")
+                student_id = str(data.get("student_id") or "")
+                kb_text = str(data.get("kb_text") or "")
+                history = data.get("history_memory") or []
+                if not isinstance(history, list):
+                    history = []
+                return {
+                    "message": message,
+                    "student_id": student_id,
+                    "kb_text": kb_text,
+                    "history_memory": json.dumps(history, ensure_ascii=False),
+                }
+          appId: 12a0a7e2
+          uid: '21880654528'
+          codeErrMsg: ''
+        updatable: false
+        status: ''
+        references: []
+        labelEdit: false
+        icon: https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-question.svg
+        description: 面向开发者提供 Python 代码执行能力。
+      dragging: false
+      selected: false
+    - id: 'spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f'
+      type: 大模型
+      position: {x: 760, y: 200}
+      positionAbsolute: {x: 760, y: 200}
+      width: 362
+      height: 100
+      data:
+        allowInputReference: true
+        allowOutputReference: true
+        label: 生成对话回答
+        nodeMeta: {aliasName: 大模型, nodeType: 基础节点}
+        inputs:
+          - id: 'in::aadd527f-ed3c-4c8d-a5f7-80730e76bca6'
+            name: message
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: message, id: 'out::7c666084-3b8f-4534-a15e-5b9ed0cabdf1', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: 'in::5d3eb853-ca9a-49f9-83b6-05f6ca53492a'
+            name: student_id
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: student_id, id: 'out::9f097803-694f-4d4d-a189-be888a578d25', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: 'in::423e2740-6f23-4a3f-8964-9113ca8467bb'
+            name: kb_text
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: kb_text, id: 'out::de037047-ee23-489b-bb5b-21ac616ec3b3', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: 'in::82083de3-03e4-4519-9a92-5b4cea89bb56'
+            name: history_memory
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: history_memory, id: 'out::b5f6ed28-4939-49e6-9d80-2afd347a3904', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+        outputs:
+          - id: 'out::5fce8329-ce47-4022-88d5-e507cd908f60'
+            name: output
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+        nodeParam:
+          topK: 4
+          template: |-
+              学生提问
+              {{message}}
+              
+              本地知识库检索结果（仅此为依据，不得使用外部知识）
+              {{kb_text}}
+              
+              最近对话历史
+              {{history_memory}}
+          enableChatHistoryV2: {isEnabled: false, rounds: 1}
+          auditing: default
+          llmId: 110
+          url: 'wss://spark-api.xf-yun.com/v4.0/chat'
+          domain: 4.0Ultra
+          maxTokens: 2048
+          temperature: 0.4
+          model: spark
+          serviceId: bm4
+          respFormat: 0
+          systemTemplate: |-
+              你是职业教育"Java 面向对象程序设计"课程的智能辅导助手。
+              
+              回答要求：
+              1. 只用 {{kb_text}} 中的内容回答，不得编造 kb_text 之外的知识；kb_text 为空时明确告知"知识库暂未覆盖，建议先进入学情诊断"，并给出 2-3 个可追问的方向。
+              2. 语言口语化、分步骤，贴合高职学生认知；避免术语堆砌；必要时给出一行 Java 代码示例。
+              3. 结合 {{history_memory}} 中的上文：若学生用"那/它/这个"等指代提问，按上文主题作答；不要重复上轮已回答的内容。
+              4. 若学生提问与 Java/课程无关，礼貌说明本助手专注该课程范围。
+              5. 只输出一个合法 JSON 对象（不输出 Markdown 代码块），格式严格如下：
+              {"answer": "口语化回答，不超过 500 字", "sources": [{"title": "依据的知识库条目标题", "locator": "来源定位"}]}
+              sources 最多 3 条，必须来自 kb_text；无依据时 sources 为空数组。
+          appId: 12a0a7e2
+          uid: '21880654528'
+          patchId: '0'
+          llmIdErrMsg: ''
+          templateErrMsg: ''
+        retryConfig: {shouldRetry: true, errorStrategy: 0}
+        updatable: false
+        status: ''
+        references: []
+        labelEdit: false
+        icon: https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-model.svg
+        description: 根据输入的提示词调用选定的大模型并生成回答。
+      dragging: false
+      selected: false
+    - id: 'ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022'
+      type: 代码
+      position: {x: 1140, y: 200}
+      positionAbsolute: {x: 1140, y: 200}
+      width: 362
+      height: 100
+      data:
+        allowInputReference: true
+        allowOutputReference: true
+        label: 校验回答输出
+        nodeMeta: {aliasName: 代码, nodeType: 工具}
+        inputs:
+          - id: 'in::08f0d1ee-f1d2-4465-9317-2bab02fd594e'
+            name: model_output
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: output, id: 'out::9a003b90-1915-4bee-9904-b099780dff19', nodeId: 'spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: 'in::9e3dd933-5cfb-4d4f-b2a8-849431bb1e1c'
+            name: message
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: message, id: 'out::7c666084-3b8f-4534-a15e-5b9ed0cabdf1', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+        outputs:
+          - id: 'out::a2af24ca-6a7c-4431-8783-7a62f0f756a4'
+            name: final_result_json
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+        nodeParam:
+          code: |-
+            import json
+            import re
+            
+            def main(model_output, message):
+                text = str(model_output or "").strip()
+                text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I)
+                start, end = text.find("{"), text.rfind("}")
+                if start < 0 or end < start:
+                    raise ValueError("大模型输出中未找到 JSON 对象")
+                try:
+                    result = json.loads(text[start:end + 1], strict=False)
+                except Exception:
+                    result = {}
+                answer = str(result.get("answer") or "").strip()
+                if not answer:
+                    answer = "知识库暂未覆盖该问题，建议先进入学情诊断定位薄弱知识点。"
+                if len(answer) > 2000:
+                    answer = answer[:2000]
+                sources = result.get("sources") or []
+                if not isinstance(sources, list):
+                    sources = []
+                output = {
+                    "status": "ok",
+                    "message": answer,
+                    "ai_generated": True,
+                    "sources": sources[:3],
+                    "original_question": message,
+                }
+                return {"final_result_json": json.dumps(output, ensure_ascii=False, separators=(",", ":"))}
+          appId: 12a0a7e2
+          uid: '21880654528'
+          codeErrMsg: ''
+        updatable: false
+        status: ''
+        references: []
+        labelEdit: false
+        icon: https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-question.svg
+        description: 面向开发者提供 Python 代码执行能力。
+      dragging: false
+      selected: false
+    - id: 'node-end::840ee1fc-d2fe-40cb-b882-b06983307fad'
+      type: 结束节点
+      position: {x: 1520, y: 200}
+      positionAbsolute: {x: 1520, y: 200}
+      width: 362
+      height: 74
+      data:
+        allowInputReference: true
+        allowOutputReference: false
+        label: 结束
+        nodeMeta: {aliasName: 结束节点, nodeType: 基础节点}
+        inputs:
+          - id: 'in::7a78a544-25a0-478b-89f1-26632fa2de7f'
+            name: result_json
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: final_result_json, id: 'out::ab8a3fd2-db6a-4614-99ed-26e5a6633f89', nodeId: 'ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+        outputs: []
+        nodeParam: {template: '', streamOutput: true, outputMode: 0}
+        updatable: false
+        status: ''
+        references: []
+        icon: https://oss-beijing-m8.openstorage.cn/pro-bucket/sparkBot/common/workflow/icon/end-node-icon.png
+        description: 工作流的结束节点，用于输出工作流运行后的最终结果。
+      dragging: false
+      selected: false
+  edges:
+    - {source: 'node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69', sourceHandle: '', target: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0', type: customEdge, id: 'reactflow__edge-node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69-ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
+    - {source: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0', sourceHandle: '', target: 'spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f', type: customEdge, id: 'reactflow__edge-ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0-spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
+    - {source: 'spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f', sourceHandle: '', target: 'ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022', type: customEdge, id: 'reactflow__edge-spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f-ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
+    - {source: 'ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022', sourceHandle: '', target: 'node-end::840ee1fc-d2fe-40cb-b882-b06983307fad', type: customEdge, id: 'reactflow__edge-ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022-node-end::840ee1fc-d2fe-40cb-b882-b06983307fad', markerEnd: {color: '#6356EA', type: arrow}, data: {edgeType: curve}}
