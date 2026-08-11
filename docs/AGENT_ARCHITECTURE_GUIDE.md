@@ -231,6 +231,21 @@ Action Board 是所有聊天按钮和页面按钮共享的语义事务层。每�
 - 重复 URL、重复请求和重复确认必须保持幂等。
 - 页面按钮和聊天指令 SHOULD 经过同一个 ActionService，避免两套行为语义。
 
+### 8.1 桌面文件工作台
+
+桌面工作区复用 Tutor 控制平面，不增加主 Agent 类型。文件能力链固定为：
+
+```text
+link_project_workspace
+  -> inspect_workspace_files
+  -> propose_workspace_change
+  -> apply_workspace_change
+```
+
+Agent 文件提案 MUST 绑定 `learner_id + project_id + checkpoint_id + session_id`，携带基础文件 SHA-256，并先返回 diff。确认前不落盘；确认时若文件已变化，提案自动失效。`.learnflow` 内的受管学习对象只能通过版本化领域能力修改，普通文件工具不得绕过。
+
+文件关联与变更事件的 kernel target 为空。编辑成功、保存成功和本地程序运行成功都不是掌握证据；只有显式绑定后的正式练习提交可进入评估链。安全细节以 `docs/DESKTOP_WORKSPACE_SECURITY.md` 为准。
+
 ## 9. 五核学习者模型
 
 五核是状态维度，不是五个聊天 Agent。

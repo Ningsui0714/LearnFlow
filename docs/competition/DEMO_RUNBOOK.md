@@ -6,6 +6,7 @@
 2. 确认浏览器进入启动脚本打印的 `/demo` 地址，并自动跳到“边界条件：安全平均值”练习页。
 3. 确认后端 `GET /api/demo/status` 返回 `enabled: true`。
 4. 确认 `GET /api/architecture/validate` 返回 `valid: true`。
+5. 如演示桌面内部包，另建一个无敏感信息的临时项目目录；浏览器 seeded demo 不要求本地目录权限。
 
 ## 0.5 多项目学习工作台（约 30 秒）
 
@@ -45,6 +46,7 @@ if not values:
 - 三类主 Agent 都不能直接写五核；唯一写入链是 EvidenceEvent 到确定性 reducer。
 - 星辰/Mock 工作流是可替换内容 adapter。离线 demo 不依赖它们，也不依赖外部网络。
 - 注册表 API 把 Agent、kernel、capability、tool、skill、workbench 和重要事件放在同一可校验快照中。
+- 桌面文件保存与运行是零 kernel target 的操作事件；只有正式判题能成为掌握证据。
 
 ## 4. 现场故障切换
 
@@ -53,3 +55,4 @@ if not values:
 - 浏览器未跳转：手动打开启动脚本打印的前端地址并追加 `/demo`。
 - 端口占用：先执行 `bash start.sh stop`，确认旧进程结束后重启。
 - 需要证明版本：打开 `/api/architecture/registry`，记录 version、digest 和 validation_errors。
+- 桌面目录不可用：切回浏览器 `/demo`；桌面文件能力与 seeded 学习闭环相互隔离。

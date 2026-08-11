@@ -88,6 +88,7 @@ FIVE_KERNEL_MIGRATION = "v2-five-kernel-tutor"
 PROJECT_PROPOSAL_MIGRATION = "v3-evolving-project-proposals"
 USER_ISOLATION_MIGRATION = "v4-user-isolation-profile-badges"
 MEMORY_GRAPH_MIGRATION = "v5-inspectable-memory-graph"
+DESKTOP_WORKSPACE_MIGRATION = "v6-desktop-workspace"
 
 
 def _sqlite_path() -> Path | None:
@@ -230,6 +231,41 @@ def _backup_before_memory_graph_migration():
     backup_dir = path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{path.stem}-pre-memory-graph-v5{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
+def _backup_before_desktop_workspace_migration():
+    path = _sqlite_path()
+    if not path or not path.exists() or path.stat().st_size == 0:
+        return
+    if _migration_applied(path, DESKTOP_WORKSPACE_MIGRATION):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-desktop-workspace-v6{path.suffix}"
     if backup_path.exists():
         return
     required = path.stat().st_size + 64 * 1024 * 1024
@@ -657,11 +693,26 @@ async def _backfill_inspectable_memory_graph():
         print(f"[migrate] applied {MEMORY_GRAPH_MIGRATION}: {counts}")
 
 
+async def _mark_desktop_workspace_migration():
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == DESKTOP_WORKSPACE_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=DESKTOP_WORKSPACE_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {DESKTOP_WORKSPACE_MIGRATION}")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
     _backup_before_user_isolation_migration()
     _backup_before_memory_graph_migration()
+    _backup_before_desktop_workspace_migration()
     async with engine.begin() as conn:
         from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -670,3 +721,4 @@ async def init_db():
     await _mark_project_proposal_migration()
     await _backfill_user_isolation()
     await _backfill_inspectable_memory_graph()
+    await _mark_desktop_workspace_migration()

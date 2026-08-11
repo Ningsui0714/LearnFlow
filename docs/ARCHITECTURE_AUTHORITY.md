@@ -83,3 +83,15 @@
 6. 更新架构/融合/比赛文档，提升注册表版本，并运行注册漂移、后端、前端与 demo 验收。
 
 破坏性接口调整必须保留迁移说明。仅增加讲法、模型或供应商 adapter，不应改变 EvidenceEvent 和五核语义。
+
+## 6. 桌面工作区的权威边界
+
+`desktop_workspace` 是 Tutor 控制 Agent 所有的产品工作台，不是第四类主 Agent。`workspace_file_service` 可读取和修改用户明确关联的项目目录，但没有五核写权限。
+
+- 普通项目文件以本地磁盘为权威。
+- 讲义、练习、测试和判题规则以数据库为权威；`.lflecture/.lfexercise` 只是受管引用。
+- Agent 修改普通文件必须形成 `WorkspaceOperation` diff，并由用户确认；不能直接写文件。
+- `workspace_linked`、`workspace_change_applied` 属于零 kernel target 的操作事件。
+- 文件保存和运行不能写入掌握证据；正式练习提交继续走既有 `LearningAttempt -> EvidenceEvent` 链。
+
+桌面令牌、路径规范化、符号链接和恢复规则见 `docs/DESKTOP_WORKSPACE_SECURITY.md`。任何放宽 WebView 文件权限、允许访问 `.learnflow`、或把文件运行当作学习证据的改动，均视为架构契约变更。

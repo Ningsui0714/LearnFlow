@@ -110,6 +110,26 @@ ACTION_BOARD = {
             {"structure": "checkpoint_entered"},
             ("generate_lecture", "generate_assessment"),
         ),
+        ActionDefinition(
+            "link_project_workspace", "关联本地项目目录", "write", "explicit",
+            {},
+            ("inspect_workspace_files",),
+        ),
+        ActionDefinition(
+            "inspect_workspace_files", "查看项目文件", "none", "none",
+            {},
+            ("propose_workspace_change",),
+        ),
+        ActionDefinition(
+            "propose_workspace_change", "提出项目文件修改", "proposal", "none",
+            {},
+            ("apply_workspace_change",),
+        ),
+        ActionDefinition(
+            "apply_workspace_change", "确认并应用项目文件修改", "write", "explicit",
+            {},
+            ("inspect_workspace_files",),
+        ),
     )
 }
 

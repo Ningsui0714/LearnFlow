@@ -24,6 +24,7 @@ bash start.sh demo
 - `ETHICS_AND_DATA_TEMPLATE.md`：数据、AI 标识和学术诚信声明底稿。
 - `../ARCHITECTURE_AUTHORITY.md`：团队分工和架构变更规则。
 - `../FUSION_CATALOG.md`：两仓库的能力映射与去重决策。
+- `../DESKTOP_WORKSPACE_SECURITY.md`：桌面文件工作区、sidecar、路径和证据边界。
 
 ## 可复现验收
 
@@ -36,5 +37,7 @@ npm run build
 ```
 
 演示版本还应记录 `GET /api/architecture/registry` 返回的 `version` 和 `digest`。它们能证明现场运行的是哪一版 Agent/五核/能力/事件契约。
+
+桌面内部包验收时另行记录操作系统、安装包 hash、随机 loopback 端口、目录关联、hash 冲突和删除恢复结果。浏览器 seeded demo 仍是无桌面依赖的保底演示，不能因为本地文件权限失败而失效。
 
 比赛规则以官方最新通知为准。本维护包依据参考仓库中的 2026 比赛方案整理，提交前必须再次核对日期、命名、平台编号和盖章要求。

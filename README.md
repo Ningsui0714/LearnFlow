@@ -19,6 +19,7 @@ Built as a learning tool — not a chatbot wrapper. Every feature is designed ar
 | **🧩 Graph Checkpoints** | React Flow renders the learning path as an interactive DAG. Click to enter each checkpoint |
 | **🧭 Remediation Loop** | Wrong answer → deterministic remediation → retry → transfer variant → evidence writeback |
 | **🎬 Seeded Demo** | One command, isolated SQLite data, no LLM or network required |
+| **🗂️ Desktop Workspace** | Tauri 2 shell, real local project folders, hash-safe edits, recoverable file operations |
 
 ---
 
@@ -67,7 +68,13 @@ committing, pushing, or opening a pull request.
 
 ### macOS App
 
-Double-click `LearnFlow.app` in `/Applications` after first run, or install as a **PWA** via Safari/Chrome for a native-feeling experience.
+The browser/PWA build remains available. The internal Tauri 2 desktop shell is
+maintained in [`desktop/`](desktop/README.md); it packages FastAPI as a sidecar
+for real local project folders on macOS and Windows. Signing and store release
+credentials are intentionally not included.
+
+The desktop filesystem trust model and evidence boundary are documented in
+[`docs/DESKTOP_WORKSPACE_SECURITY.md`](docs/DESKTOP_WORKSPACE_SECURITY.md).
 
 ---
 

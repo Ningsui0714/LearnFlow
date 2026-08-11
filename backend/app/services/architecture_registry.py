@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-11.1"
+REGISTRY_VERSION = "2026-08-11.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -192,6 +192,8 @@ TOOLS = {
         ToolContract("workflow_validator", "Workflow Builder + Validator", "learning_design_agent", "companion", "maintenance"),
         ToolContract("seeded_demo", "Seeded Competition Demo", "tutor_agent", "fused", "demo"),
         ToolContract("task_runtime", "Idempotent Background Task Runtime", "tutor_agent", "learnflow", "execution"),
+        ToolContract("workspace_file_service", "Desktop Workspace File Service", "tutor_agent", "learnflow", "filesystem",
+                     (), (), "confirmed WorkspaceOperation only"),
     )
 }
 
@@ -219,6 +221,10 @@ SKILLS = {
         SkillContract("external_workflow_rendering", "星辰/Mock 教学内容适配", "learning_design_agent",
                       ("workflow_gateway", "workflow_validator"),
                       "validated content artifact; no direct kernel mutation", "LearnFlow contract", "companion"),
+        SkillContract("workspace_file_management", "受控本地项目文件管理", "tutor_agent",
+                      ("workspace_file_service", "evidence_ledger"),
+                      "hash-bound diff proposal + explicit confirmation + operational event",
+                      "WorkspaceOperation state machine"),
     )
 }
 
@@ -239,6 +245,8 @@ WORKBENCHES = {
         WorkbenchContract("memory", "Inspectable Memory", "/memory", "tutor_agent", ()),
         WorkbenchContract("competition_demo", "Seeded Demo Entry", "/demo", "tutor_agent",
                           ("evaluate_attempt", "request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
+        WorkbenchContract("desktop_workspace", "Desktop File Workspace", "tauri://workspace", "tutor_agent",
+                          ("link_project_workspace", "inspect_workspace_files", "propose_workspace_change", "apply_workspace_change")),
         WorkbenchContract("xingchen_studio", "Xingchen Workflow Studio", "external", "learning_design_agent",
                           ("generate_lecture", "request_remediation_explanation"), "companion"),
     )
@@ -265,6 +273,10 @@ CAPABILITY_OWNERS = {
     "request_remediation_explanation": ("practice_agent", "deterministic_remediation", "remediation"),
     "retry_attempt": ("practice_agent", "deterministic_assessment", "remediation"),
     "evaluate_transfer_variant": ("practice_agent", "deterministic_assessment", "remediation"),
+    "link_project_workspace": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "inspect_workspace_files": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "propose_workspace_change": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "apply_workspace_change": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
 }
 
 
@@ -305,6 +317,8 @@ EVENTS = {
         _event("remediation_variant_evaluated", "evaluate_transfer_variant", ("knowledge", "practice"), "transfer_evidence", origin="fused"),
         _event("remediation_completed", "evaluate_transfer_variant", ("knowledge", "human", "practice"), "evidence_writeback", origin="fused"),
         _event("project_completed", "advance_checkpoint", ("structure", "value", "practice"), "milestone"),
+        _event("workspace_linked", "link_project_workspace", (), "operational"),
+        _event("workspace_change_applied", "apply_workspace_change", (), "operational"),
         _event("tool_failed", "evaluate_attempt", (), "operational"),
     )
 }

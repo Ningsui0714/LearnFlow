@@ -17,6 +17,10 @@ class Project(Base):
 
     sources = relationship("Source", back_populates="project", cascade="all, delete-orphan")
     roadmap = relationship("Roadmap", back_populates="project", uselist=False, cascade="all, delete-orphan")
+    workspace = relationship(
+        "ProjectWorkspace", back_populates="project", uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class Source(Base):
@@ -245,3 +249,51 @@ class Task(Base):
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectWorkspace(Base):
+    """A desktop-only link from a learning project to one local folder."""
+
+    __tablename__ = "project_workspaces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, unique=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    root_path = Column(Text, nullable=False)
+    status = Column(String(30), default="linked", nullable=False, index=True)
+    platform = Column(String(30), default="unknown")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    project = relationship("Project", back_populates="workspace")
+    operations = relationship(
+        "WorkspaceOperation", back_populates="workspace", cascade="all, delete-orphan",
+    )
+
+
+class WorkspaceOperation(Base):
+    """Auditable proposal/application record for every managed file mutation."""
+
+    __tablename__ = "workspace_operations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("project_workspaces.id"), nullable=False, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=True, index=True)
+    actor = Column(String(20), default="user", nullable=False, index=True)
+    operation = Column(String(30), nullable=False, index=True)
+    status = Column(String(30), default="proposed", nullable=False, index=True)
+    target_path = Column(Text, nullable=False)
+    destination_path = Column(Text, nullable=True)
+    base_hash = Column(String(64), nullable=True)
+    payload = Column(JSON, default=dict)
+    result = Column(JSON, default=dict)
+    idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+
+    workspace = relationship("ProjectWorkspace", back_populates="operations")

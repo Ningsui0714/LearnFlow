@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     github_resource_search_enabled: bool = True
     dev_test_login_enabled: bool = True
     competition_demo_mode: bool = False
+    # Desktop sidecar mode. Keep disabled in browser/server deployments.
+    desktop_mode: bool = False
+    desktop_token: str = ""
     auth_cookie_name: str = "learnflow_session"
     auth_session_days: int = 7
     auth_cookie_secure: bool = False
