@@ -7,8 +7,9 @@ import {
   getAcceptedProjectProposal, getProjectProposal, refreshProjectProposalSources,
 } from '../services/api'
 import type { ProjectProposal, ProjectProposalSource } from '../services/api'
-import TutorPanel from '../components/tutor/TutorPanel'
 import CheckpointGraph from '../components/checkpoint/CheckpointGraph'
+import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
 
 interface CheckpointNode {
   id: number
@@ -62,6 +63,8 @@ export default function ProjectPage() {
   }, [checkpoints, initialTabSet])
   const [notification, setNotification] = useState<string | null>(null)
 
+  useWorkspaceTitle(project?.name || `学习项目 ${pid}`, { kind: 'project', projectId: pid })
+
   // T10: source main/aux role + reconcile
   const handleSetRole = async (sourceId: number, role: 'main' | 'auxiliary') => {
     try {
@@ -95,6 +98,7 @@ export default function ProjectPage() {
       setNotification(`✅ 已整合：新增 ${res.inserted} 关，扩展 ${res.extended} 关`)
       setReconcileSuggestion(null)
       await load()
+      window.dispatchEvent(new CustomEvent('learnflow:roadmap-changed', { detail: { projectId: pid } }))
     } catch (e: any) {
       setNotification('❌ ' + (e?.response?.data?.detail || e.message))
     }
@@ -257,8 +261,9 @@ export default function ProjectPage() {
     if (roadmap.checkpoints) {
       setCheckpoints(roadmap.checkpoints)
       setActiveTab('roadmap')
+      window.dispatchEvent(new CustomEvent('learnflow:roadmap-changed', { detail: { projectId: pid } }))
     }
-  }, [])
+  }, [pid])
 
   const handleCheckpointClick = (checkpointId: number) => {
     import('../services/api').then(({ recordLearningEvent }) => recordLearningEvent({
@@ -270,6 +275,23 @@ export default function ProjectPage() {
     })).catch(() => {})
     navigate(`/projects/${pid}/checkpoints/${checkpointId}`)
   }
+
+  useEffect(() => {
+    publishWorkspaceAgentContext({
+      kind: 'project_tutor',
+      projectId: pid,
+      projectProposal,
+      projectSources: sources,
+      candidateSourcesRefreshing: refreshingCandidates,
+      addingCandidateUrl,
+      onRefreshCandidateSources: handleRefreshCandidateSources,
+      onAddCandidateSource: handleAddCandidateSource,
+      onRoadmapUpdate: handleRoadmapUpdate,
+    })
+  }, [
+    addingCandidateUrl, handleRoadmapUpdate, pid, projectProposal,
+    refreshingCandidates, sources,
+  ])
 
   if (!project) return <div className="p-8 text-gray-400">加载中...</div>
 
@@ -484,17 +506,14 @@ export default function ProjectPage() {
         <div className="flex min-h-[540px] flex-1 overflow-hidden md:min-h-0">
           {/* Tabs: empty state */}
           {!hasProcessedChunks && (
-            <div className="flex-1 p-4">
-              <TutorPanel
-                projectId={pid}
-                className="h-full"
-                projectProposal={projectProposal}
-                projectSources={sources}
-                candidateSourcesRefreshing={refreshingCandidates}
-                addingCandidateUrl={addingCandidateUrl}
-                onRefreshCandidateSources={handleRefreshCandidateSources}
-                onAddCandidateSource={handleAddCandidateSource}
-              />
+            <div className="flex flex-1 items-center justify-center p-6">
+              <div className="max-w-md rounded-xl border border-gray-200 bg-white p-6 text-center shadow-sm">
+                <p className="text-3xl">💬</p>
+                <h2 className="mt-3 text-sm font-semibold text-gray-800">项目 Tutor 已固定在右侧对话窗口</h2>
+                <p className="mt-2 text-xs leading-6 text-gray-500">
+                  可直接与 Tutor 确认目标、选择候选来源和规划路线；主编辑区继续用于来源与学习产物。
+                </p>
+              </div>
             </div>
           )}
 
@@ -521,7 +540,7 @@ export default function ProjectPage() {
                       : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  学习 Tutor
+                  Agent 对话
                 </button>
               </div>
 
@@ -550,19 +569,11 @@ export default function ProjectPage() {
                 )}
 
                 {activeTab === 'sources' && (
-                  <div className="h-full p-4">
-                    <TutorPanel
-                      projectId={pid}
-                      className="h-full"
-                      onRoadmapUpdate={handleRoadmapUpdate}
-                      onCheckpointChange={checkpoint => navigate(`/projects/${pid}/checkpoints/${checkpoint.id}`)}
-                      projectProposal={projectProposal}
-                      projectSources={sources}
-                      candidateSourcesRefreshing={refreshingCandidates}
-                      addingCandidateUrl={addingCandidateUrl}
-                      onRefreshCandidateSources={handleRefreshCandidateSources}
-                      onAddCandidateSource={handleAddCandidateSource}
-                    />
+                  <div className="flex h-full items-center justify-center p-6">
+                    <div className="max-w-md rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
+                      <p className="text-sm font-semibold text-gray-800">项目会话在右侧保持打开</p>
+                      <p className="mt-2 text-xs leading-6 text-gray-500">收起时点击右侧窄条即可继续；项目会话不会与主 Agent 或其他 Agent 合并。</p>
+                    </div>
                   </div>
                 )}
               </div>

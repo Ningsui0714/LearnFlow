@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import {
   getLecture, saveLecture,
   createLectureTask, getActiveLectureTask, cancelTask, lectureTaskEventsUrl,
   listLectureVersions, rollbackLecture,
-  recordLearningEvent,
+  recordLearningEvent, listNotes, createNote, updateNote, deleteNote,
 } from '../services/api'
-import LectureRenderer from '../components/lecture/LectureRenderer'
-import BottomWorkspace from '../components/workspace/BottomWorkspace'
+import LectureRenderer, { type LectureNote } from '../components/lecture/LectureRenderer'
 import ConceptGraphModal from '../components/lecture/ConceptGraphModal'
 import TutorPanel from '../components/tutor/TutorPanel'
+import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
 
 interface Section {
   title: string
@@ -20,6 +21,7 @@ interface Section {
 
 export default function CheckpointPage() {
   const { projectId, checkpointId } = useParams()
+  const location = useLocation()
   const navigate = useNavigate()
   const cid = Number(checkpointId)
   const pid = Number(projectId)
@@ -35,7 +37,7 @@ export default function CheckpointPage() {
   const [checkpointTitle, setCheckpointTitle] = useState('')
   const [selectedText, setSelectedText] = useState('')
   const [selectedSection, setSelectedSection] = useState(0)
-  const [showWorkspace, setShowWorkspace] = useState(false)
+  const [notes, setNotes] = useState<LectureNote[]>([])
   const [showVersions, setShowVersions] = useState(false)
   const [versions, setVersions] = useState<any[]>([])
   const [versionLoading, setVersionLoading] = useState(false)
@@ -44,6 +46,33 @@ export default function CheckpointPage() {
   const [feedback, setFeedback] = useState('')
   const [showTutor, setShowTutor] = useState(false)
   const esRef = useRef<EventSource | null>(null)
+  const embedded = new URLSearchParams(location.search).get('embed') === '1'
+
+  useWorkspaceTitle(checkpointTitle || `讲义 · 关卡 ${cid}`, {
+    kind: 'lecture', projectId: pid, checkpointId: cid,
+  })
+
+  const refreshNotes = useCallback(async () => {
+    try {
+      setNotes(await listNotes(cid) || [])
+    } catch {
+      setNotes([])
+    }
+  }, [cid])
+
+  useEffect(() => {
+    refreshNotes()
+  }, [refreshNotes])
+
+  useEffect(() => {
+    publishWorkspaceAgentContext({
+      kind: 'learning_design',
+      checkpointId: cid,
+      title: checkpointTitle || `关卡 ${cid}`,
+      selection: selectedText,
+      sectionIndex: selectedSection,
+    })
+  }, [cid, checkpointTitle, selectedSection, selectedText])
 
   // ── Load lecture on mount ──
   useEffect(() => {
@@ -89,13 +118,15 @@ export default function CheckpointPage() {
         setSections(data.sections)
         setStatus(data.status || 'published')
         if (data.concept_graph?.nodes?.length) setConceptGraph(data.concept_graph)
-        recordLearningEvent({
-          client_event_id: `lecture-view-${cid}-${data.id || 'draft'}`,
-          event_type: 'lecture_viewed',
-          project_id: pid,
-          checkpoint_id: cid,
-          payload: { lecture_id: data.id, sections_count: data.sections.length },
-        }).catch(() => {})
+        if (!embedded) {
+          recordLearningEvent({
+            client_event_id: `lecture-view-${cid}-${data.id || 'draft'}`,
+            event_type: 'lecture_viewed',
+            project_id: pid,
+            checkpoint_id: cid,
+            payload: { lecture_id: data.id, sections_count: data.sections.length },
+          }).catch(() => {})
+        }
       } else {
         setSections([])
         setStatus('none')
@@ -222,6 +253,49 @@ export default function CheckpointPage() {
     setSelectedSection(sectionIndex)
   }, [])
 
+  const handleAskSelection = useCallback((text: string, sectionIndex: number = 0) => {
+    setSelectedText(text)
+    setSelectedSection(sectionIndex)
+    publishWorkspaceAgentContext({
+      kind: 'learning_design',
+      checkpointId: cid,
+      title: checkpointTitle || `关卡 ${cid}`,
+      selection: text,
+      sectionIndex,
+    })
+    window.dispatchEvent(new CustomEvent('learnflow:agent-open'))
+  }, [checkpointTitle, cid])
+
+  const handleCreateAnchoredNote = useCallback(async (selection: string, sectionIndex: number, note: string) => {
+    try {
+      await createNote(cid, { section_index: sectionIndex, selection: selection.slice(0, 500), note })
+      await refreshNotes()
+    } catch (error: any) {
+      alert('保存笔记失败：' + (error?.response?.data?.detail || error.message))
+      throw error
+    }
+  }, [cid, refreshNotes])
+
+  const handleUpdateAnchoredNote = useCallback(async (noteId: number, note: string) => {
+    try {
+      await updateNote(noteId, note)
+      await refreshNotes()
+    } catch (error: any) {
+      alert('修改笔记失败：' + (error?.response?.data?.detail || error.message))
+      throw error
+    }
+  }, [refreshNotes])
+
+  const handleDeleteAnchoredNote = useCallback(async (noteId: number) => {
+    try {
+      await deleteNote(noteId)
+      await refreshNotes()
+    } catch (error: any) {
+      alert('删除笔记失败：' + (error?.response?.data?.detail || error.message))
+      throw error
+    }
+  }, [refreshNotes])
+
   // T6: delete an image from a section (removes the markdown reference, then saves)
   const handleDeleteImage = useCallback(async (sectionIndex: number, src: string) => {
     if (!window.confirm('删除这张图片？（可从版本历史回滚）')) return
@@ -241,11 +315,6 @@ export default function CheckpointPage() {
       return next
     })
   }, [cid])
-
-  const handleCloseWorkspace = () => {
-    setShowWorkspace(false)
-    setSelectedText('')
-  }
 
   const canResume = status === 'draft' && sections.length > 0 && !generating
 
@@ -335,13 +404,13 @@ export default function CheckpointPage() {
               </button>
             </>
           )}
-          {selectedText && !showWorkspace && (
+          {selectedText && (
             <button
-              onClick={() => setShowWorkspace(true)}
+              onClick={() => handleAskSelection(selectedText, selectedSection)}
               className="bg-primary-50 text-primary-700 px-3 py-1.5 rounded-lg text-sm
                          hover:bg-primary-100 transition-colors"
             >
-              💬 追问选中内容
+              💬 在右侧追问
             </button>
           )}
         </div>
@@ -442,21 +511,17 @@ export default function CheckpointPage() {
                 sections={sections}
                 animations={animations}
                 onSelect={handleTextSelect}
+                onAskSelection={handleAskSelection}
+                notes={notes}
+                onCreateNote={handleCreateAnchoredNote}
+                onUpdateNote={handleUpdateAnchoredNote}
+                onDeleteNote={handleDeleteAnchoredNote}
                 onDeleteImage={handleDeleteImage}
               />
             )}
           </div>
         </div>
 
-        {/* Bottom workspace */}
-        {showWorkspace && (
-          <BottomWorkspace
-            checkpointId={cid}
-            selectedText={selectedText}
-            sectionIndex={selectedSection}
-            onClose={handleCloseWorkspace}
-          />
-        )}
       </div>
 
       {/* Concept graph modal */}

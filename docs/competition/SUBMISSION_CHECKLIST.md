@@ -13,6 +13,7 @@
 - [ ] `bash start.sh demo` 在一台未配置 LLM key 的机器上可运行。
 - [ ] Demo 地址、星辰 Agent/Workflow 编号（如使用）和操作说明完整。
 - [ ] 录屏覆盖答错、纠错、讲法切换、重做、变式和证据回写。
+- [ ] 录屏展示项目树、多标签/并排编辑组，以及可完整展开、缩回并随操作自动切换的 Agent 对话窗口；确认三类对话仍使用各自原接口，不合并会话、handoff 与五核边界。
 - [ ] 记录 architecture registry version/digest。
 
 ## 03 作品方案

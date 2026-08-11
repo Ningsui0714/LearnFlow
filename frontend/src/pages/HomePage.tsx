@@ -10,6 +10,7 @@ import {
   recordLearningEvent,
 } from '../services/api'
 import type { ProjectProposal } from '../services/api'
+import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 
 interface ProjectSummary {
   id: number
@@ -66,6 +67,7 @@ export default function HomePage() {
   const [acceptingProposal, setAcceptingProposal] = useState(false)
   const [proposals, setProposals] = useState<ProjectProposal[]>([])
   const navigate = useNavigate()
+  useWorkspaceTitle('学习项目', { kind: 'projects' })
 
   useEffect(() => {
     loadProjects()
@@ -91,6 +93,7 @@ export default function HomePage() {
     try {
       await import('../services/api').then(module => module.default.delete(`/projects/${id}`))
       setProjects(previous => previous.filter(project => project.id !== id))
+      window.dispatchEvent(new CustomEvent('learnflow:projects-changed'))
     } catch (error: any) {
       alert('删除失败: ' + (error?.response?.data?.detail || error.message))
     }
@@ -105,6 +108,7 @@ export default function HomePage() {
       setName('')
       setDescription('')
       await loadProjects()
+      window.dispatchEvent(new CustomEvent('learnflow:projects-changed'))
       navigate(`/projects/${project.id}`)
     } catch (error: any) {
       alert(error?.response?.data?.detail || '创建失败')
@@ -129,6 +133,7 @@ export default function HomePage() {
       const project = data.executed_action?.result?.project
       setProposals(items => items.filter(item => item.id !== proposalId))
       await loadProjects()
+      window.dispatchEvent(new CustomEvent('learnflow:projects-changed'))
       if (project?.id) navigate(`/projects/${project.id}`)
     } catch (error: any) {
       alert(error?.response?.data?.detail || '项目提案没有创建成功')

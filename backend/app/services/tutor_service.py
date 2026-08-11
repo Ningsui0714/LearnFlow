@@ -141,6 +141,17 @@ def _is_confirmation(message: str) -> bool:
     )
 
 
+def _is_project_proposal_confirmation(message: str) -> bool:
+    """Accept continuation wording only at the project-proposal boundary.
+
+    "继续" is deliberately not a general confirmation word: inside a project it means
+    resume the learning path.  In a global session with a ready proposal, however,
+    it is the explicit handoff the UI and Tutor invite the learner to make.
+    """
+    normalized = message.strip().lower().rstrip("。.!！")
+    return _is_confirmation(message) or normalized in {"继续", "继续吧"}
+
+
 def _looks_like_create_command(message: str) -> bool:
     return bool(CREATE_RE.search(message)) or bool(re.search(r"(?:创建|新建|建立).{0,8}项目", message))
 
@@ -828,7 +839,8 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
                 "source": {"id": source.id, "url": source.url, "status": source.status},
                 "navigate_to_project": True,
                 "user_message": (
-                    f"已建立并进入「{project.name}」项目，来源已接入并开始处理。"
+                    f"已建立并进入「{project.name}」，来源正在处理；"
+                    "项目 Tutor 与路径规划 Agent 已接手。"
                     if session.session_type == "global"
                     else f"已建立并进入「{project.name}」，来源已接入并开始处理。"
                 ),
@@ -847,7 +859,8 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             "project": {"id": project.id, "name": project.name},
             "navigate_to_project": True,
             "user_message": (
-                f"已建立并进入「{project.name}」项目，由项目 Tutor 接手来源、路线与后续学习。"
+                f"已建立并进入「{project.name}」，"
+                "项目 Tutor 与路径规划 Agent 已接手。"
                 if session.session_type == "global"
                 else f"已建立并进入「{project.name}」。下一步可以添加资料，或直接告诉我你想先学什么。"
             ),
@@ -1843,7 +1856,7 @@ async def process_turn(
                 )
         if not action:
             action = await _explicit_action(db, session, message, context)
-        if not action and _is_confirmation(message):
+        if not action and _is_project_proposal_confirmation(message):
             proposal_for_action = await get_latest_active_proposal(db, session.id)
             if proposal_for_action:
                 action = await proposal_acceptance_action(db, proposal_for_action)

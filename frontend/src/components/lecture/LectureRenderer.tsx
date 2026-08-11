@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -100,17 +100,112 @@ interface Section {
   questions?: string[]
 }
 
+export interface LectureNote {
+  id: number
+  section_index: number
+  selection: string
+  note: string
+  created_at?: string
+  updated_at?: string
+}
+
+interface SelectionToolbarState {
+  text: string
+  sectionIndex: number
+  left: number
+  top: number
+  mode: 'actions' | 'note'
+}
+
 interface Props {
   sections: Section[]
   animations?: Record<number, ProcessAnimation>
   onSelect?: (text: string, sectionIndex: number) => void
+  onAskSelection?: (text: string, sectionIndex: number) => void
+  notes?: LectureNote[]
+  onCreateNote?: (selection: string, sectionIndex: number, note: string) => void | Promise<void>
+  onUpdateNote?: (noteId: number, note: string) => void | Promise<void>
+  onDeleteNote?: (noteId: number) => void | Promise<void>
   onDeleteImage?: (sectionIndex: number, src: string) => void
 }
 
-export default function LectureRenderer({ sections, animations, onSelect, onDeleteImage }: Props) {
+function anchoredNotesPlugin(notes: LectureNote[]) {
+  const grouped = new Map<string, number[]>()
+  notes.forEach(note => {
+    const selection = note.selection.trim()
+    if (!selection) return
+    grouped.set(selection, [...(grouped.get(selection) || []), note.id])
+  })
+  const candidates = [...grouped.entries()]
+    .map(([selection, ids]) => ({ selection, ids }))
+    .sort((a, b) => b.selection.length - a.selection.length)
+
+  return () => (tree: any) => {
+    const used = new Set<number>()
+    const blockedTags = new Set(['code', 'pre', 'script', 'style', 'svg', 'math'])
+
+    const visit = (node: any, blocked = false) => {
+      if (!node?.children || !Array.isArray(node.children)) return
+      const nextBlocked = blocked || blockedTags.has(node.tagName)
+      const nextChildren: any[] = []
+
+      node.children.forEach((child: any) => {
+        if (child.type !== 'text' || nextBlocked) {
+          visit(child, nextBlocked)
+          nextChildren.push(child)
+          return
+        }
+
+        let remaining = String(child.value || '')
+        while (remaining) {
+          let match: { index: number; selection: string; ids: number[] } | null = null
+          candidates.forEach(candidate => {
+            if (candidate.ids.every(id => used.has(id))) return
+            const index = remaining.indexOf(candidate.selection)
+            if (index < 0) return
+            if (!match || index < match.index || (index === match.index && candidate.selection.length > match.selection.length)) {
+              match = { index, selection: candidate.selection, ids: candidate.ids }
+            }
+          })
+
+          if (!match) {
+            nextChildren.push({ type: 'text', value: remaining })
+            break
+          }
+          const found = match as { index: number; selection: string; ids: number[] }
+          if (found.index > 0) nextChildren.push({ type: 'text', value: remaining.slice(0, found.index) })
+          nextChildren.push({
+            type: 'element',
+            tagName: 'mark',
+            properties: { dataNoteIds: found.ids.join(',') },
+            children: [{ type: 'text', value: found.selection }],
+          })
+          found.ids.forEach(id => used.add(id))
+          remaining = remaining.slice(found.index + found.selection.length)
+        }
+      })
+
+      node.children = nextChildren
+    }
+
+    visit(tree)
+  }
+}
+
+export default function LectureRenderer({
+  sections, animations, onSelect, onAskSelection, notes = [],
+  onCreateNote, onUpdateNote, onDeleteNote, onDeleteImage,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const toolbarRef = useRef<HTMLDivElement>(null)
   // 懒加载：讲义里出现但 props 里没有的动画（快照流/续生成场景）按 id 拉取
   const [lazy, setLazy] = useState<Record<number, ProcessAnimation>>({})
+  const [selectionToolbar, setSelectionToolbar] = useState<SelectionToolbarState | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
+  const [expandedNoteIds, setExpandedNoteIds] = useState<Set<number>>(() => new Set())
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null)
+  const [editDraft, setEditDraft] = useState('')
 
   useEffect(() => {
     const need: number[] = []
@@ -133,12 +228,17 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sections, animations])
 
-  // Handle text selection
+  const notesById = useMemo(() => new Map(notes.map(note => [note.id, note])), [notes])
+
+  // Handle text selection and show the contextual action menu below the range.
   useEffect(() => {
-    const handleMouseUp = () => {
+    const handleMouseUp = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('[data-lecture-note-ui], [data-selection-toolbar]')) return
       const sel = window.getSelection()
       const text = sel?.toString().trim()
-      if (text && text.length > 0 && onSelect) {
+      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null
+      if (text && range && containerRef.current?.contains(range.commonAncestorContainer)) {
         // Find the section container via the selection anchor
         let node = sel?.anchorNode as HTMLElement | null
         let sectionIndex = 0
@@ -150,12 +250,89 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
           }
           node = node.parentElement
         }
-        onSelect(text, sectionIndex)
+        const rect = range.getBoundingClientRect()
+        const left = Math.max(112, Math.min(window.innerWidth - 112, rect.left + rect.width / 2))
+        const top = Math.max(8, Math.min(window.innerHeight - 170, rect.bottom + 8))
+        onSelect?.(text, sectionIndex)
+        setNoteDraft('')
+        setSelectionToolbar({ text, sectionIndex, left, top, mode: 'actions' })
       }
     }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (toolbarRef.current?.contains(event.target as Node)) return
+      setSelectionToolbar(null)
+    }
+    const handleScroll = () => setSelectionToolbar(null)
     document.addEventListener('mouseup', handleMouseUp)
-    return () => document.removeEventListener('mouseup', handleMouseUp)
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('scroll', handleScroll, true)
+    return () => {
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('scroll', handleScroll, true)
+    }
   }, [onSelect])
+
+  const clearBrowserSelection = () => window.getSelection()?.removeAllRanges()
+
+  const askSelection = () => {
+    if (!selectionToolbar) return
+    onAskSelection?.(selectionToolbar.text, selectionToolbar.sectionIndex)
+    clearBrowserSelection()
+    setSelectionToolbar(null)
+  }
+
+  const saveNewNote = async () => {
+    if (!selectionToolbar || !noteDraft.trim() || !onCreateNote || savingNote) return
+    setSavingNote(true)
+    try {
+      await onCreateNote(selectionToolbar.text, selectionToolbar.sectionIndex, noteDraft.trim())
+      clearBrowserSelection()
+      setSelectionToolbar(null)
+      setNoteDraft('')
+    } finally {
+      setSavingNote(false)
+    }
+  }
+
+  const toggleNote = (ids: number[]) => {
+    setExpandedNoteIds(current => {
+      const next = new Set(current)
+      const shouldExpand = ids.some(id => !next.has(id))
+      ids.forEach(id => shouldExpand ? next.add(id) : next.delete(id))
+      return next
+    })
+    setEditingNoteId(null)
+  }
+
+  const startEditing = (note: LectureNote) => {
+    setExpandedNoteIds(current => new Set(current).add(note.id))
+    setEditingNoteId(note.id)
+    setEditDraft(note.note)
+  }
+
+  const saveEdit = async (noteId: number) => {
+    if (!editDraft.trim() || !onUpdateNote || savingNote) return
+    setSavingNote(true)
+    try {
+      await onUpdateNote(noteId, editDraft.trim())
+      setEditingNoteId(null)
+      setEditDraft('')
+    } finally {
+      setSavingNote(false)
+    }
+  }
+
+  const removeNote = async (noteId: number) => {
+    if (!onDeleteNote || !window.confirm('删除这条笔记？')) return
+    await onDeleteNote(noteId)
+    setExpandedNoteIds(current => {
+      const next = new Set(current)
+      next.delete(noteId)
+      return next
+    })
+    if (editingNoteId === noteId) setEditingNoteId(null)
+  }
 
   if (!sections || sections.length === 0) {
     return (
@@ -167,11 +344,61 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
   }
 
   // markdown 渲染配置（每个小节闭包 i，用于图片删除/选中定位）
-  const renderMarkdown = (content: string, i: number) => (
+  const renderMarkdown = (content: string, i: number) => {
+    const sectionNotes = notes.filter(note => note.section_index === i && note.selection.trim())
+    const notePlugin = anchoredNotesPlugin(sectionNotes)
+    return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
+      rehypePlugins={[rehypeKatex, notePlugin]}
       components={{
+        mark({ node, children }: any) {
+          const rawIds = node?.properties?.dataNoteIds ?? node?.properties?.['data-note-ids'] ?? ''
+          const ids = String(rawIds).split(',').map(Number).filter(Boolean)
+          const anchored = ids.map(id => notesById.get(id)).filter(Boolean) as LectureNote[]
+          const expanded = anchored.some(note => expandedNoteIds.has(note.id))
+          return (
+            <span data-lecture-note-ui className="not-prose inline">
+              <button
+                type="button"
+                onClick={() => toggleNote(ids)}
+                title={expanded ? '收起笔记' : '展开笔记'}
+                className="rounded-sm bg-amber-50/70 px-0.5 text-inherit decoration-amber-500 decoration-dashed underline decoration-1 underline-offset-4 hover:bg-amber-100"
+              >
+                {children}
+              </button>
+              {expanded && anchored.map(note => (
+                <span key={note.id} className="my-2 block rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-slate-700 shadow-sm">
+                  {editingNoteId === note.id ? (
+                    <span className="block">
+                      <textarea
+                        autoFocus
+                        aria-label="修改笔记"
+                        rows={3}
+                        value={editDraft}
+                        onChange={event => setEditDraft(event.target.value)}
+                        className="block w-full resize-y rounded-md border border-amber-300 bg-white px-2.5 py-2 text-sm outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                      />
+                      <span className="mt-2 flex justify-end gap-2">
+                        <button type="button" onClick={() => setEditingNoteId(null)} className="rounded px-2.5 py-1 text-xs text-slate-500 hover:bg-white">取消</button>
+                        <button type="button" onClick={() => saveEdit(note.id)} disabled={savingNote || !editDraft.trim()} className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:bg-slate-300">保存修改</button>
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="flex items-start gap-2">
+                      <button type="button" onClick={() => startEditing(note)} className="min-w-0 flex-1 whitespace-pre-wrap text-left leading-6" title="点击修改笔记">
+                        <span className="mr-1.5 text-amber-600">笔记</span>{note.note}
+                      </button>
+                      {onDeleteNote && (
+                        <button type="button" onClick={() => removeNote(note.id)} className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-white hover:text-red-600">删除</button>
+                      )}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </span>
+          )
+        },
         pre({ children }: any) {
           return (
             <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto text-sm">
@@ -220,7 +447,8 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
     >
       {normalizeMarkdown(content)}
     </ReactMarkdown>
-  )
+    )
+  }
 
   return (
     <div ref={containerRef} className="prose prose-sm max-w-none px-1">
@@ -282,6 +510,48 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
           </div>
         )
       })}
+
+      {selectionToolbar && (
+        <div
+          ref={toolbarRef}
+          data-selection-toolbar
+          className="not-prose fixed z-[70] w-56 -translate-x-1/2 rounded-xl border border-slate-200 bg-white p-2 shadow-2xl"
+          style={{ left: selectionToolbar.left, top: selectionToolbar.top }}
+        >
+          {selectionToolbar.mode === 'actions' ? (
+            <div className="grid grid-cols-2 gap-1.5">
+              <button type="button" onClick={askSelection} className="rounded-lg bg-sky-50 px-3 py-2 text-xs font-medium text-sky-800 hover:bg-sky-100">追问</button>
+              <button
+                type="button"
+                onClick={() => setSelectionToolbar(current => current ? { ...current, mode: 'note' } : current)}
+                className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 hover:bg-amber-100"
+              >
+                笔记
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="mb-2 truncate text-[10px] text-slate-400">锚定：{selectionToolbar.text}</p>
+              <textarea
+                autoFocus
+                aria-label="笔记内容"
+                rows={3}
+                value={noteDraft}
+                onChange={event => setNoteDraft(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) saveNewNote()
+                }}
+                placeholder="写下笔记…"
+                className="block w-full resize-none rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-100"
+              />
+              <div className="mt-2 flex justify-end gap-1.5">
+                <button type="button" onClick={() => setSelectionToolbar(current => current ? { ...current, mode: 'actions' } : current)} className="rounded px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-100">返回</button>
+                <button type="button" onClick={saveNewNote} disabled={savingNote || !noteDraft.trim()} className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:bg-slate-300">{savingNote ? '保存中…' : '保存'}</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

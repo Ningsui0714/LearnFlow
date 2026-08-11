@@ -20,7 +20,7 @@ from app.services.profile import memory_projection
 from app.services.task_manager import manager
 from app.services.auth import load_current_learner
 from app.services.roadmap_agent import RoadmapAgent, SubmittedRoadmap
-from app.services.tutor_service import _decode_tutor_content
+from app.services.tutor_service import _decode_tutor_content, get_or_create_session
 from app.services.task_runners import _repair_markdown_fences
 from app.services import project_proposals as proposal_service
 from app.api.phase1 import _roadmap_planning_context
@@ -783,6 +783,92 @@ def test_action_confirmation_is_not_repeated(client: TestClient):
     assert turn.json()["executed_action"]["status"] == "completed"
     assert turn.json()["proposal_update"]["id"] == proposal_id
     assert turn.json()["proposal_update"]["status"] == "accepted"
+
+
+def test_continue_accepts_project_proposal_without_main_agent_teaching(
+    client: TestClient,
+    monkeypatch,
+):
+    session_id = new_session(client)
+    proposal_key = f"continue-handoff-{uuid.uuid4().hex[:12]}"
+
+    async def seed_proposal():
+        async with async_session() as db:
+            learner_id = await legacy_learner_id()
+            proposal = LearningProjectProposal(
+                learner_id=learner_id,
+                session_id=session_id,
+                proposal_key=proposal_key,
+                proposal_type="build",
+                status="ready",
+                action_type="create",
+                artifact={
+                    "title": "RL Gymnasium 热身",
+                    "learning_goal": "理解 Gymnasium 中环境与智能体的交互循环",
+                    "practice_goal": "完成可运行的 CartPole 随机策略",
+                    "learner_start": ["会 Python，尚未使用 Gymnasium"],
+                    "estimated_effort": "每周 2–3 小时",
+                    "milestones": [{"id": "warmup", "title": "Gymnasium 热身"}],
+                    "acceptance_criteria": ["能独立运行 CartPole 循环"],
+                    "risks": ["环境安装问题"],
+                },
+            )
+            db.add(proposal)
+            await db.commit()
+            await db.refresh(proposal)
+            return proposal.id
+
+    proposal_id = asyncio.run(seed_proposal())
+
+    async def fail_if_llm_is_called(*_args, **_kwargs):
+        raise AssertionError("项目确认回合不应调用主 Agent LLM")
+
+    monkeypatch.setattr(
+        "app.services.tutor_service._generate_tutor_reply",
+        fail_if_llm_is_called,
+    )
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json={
+            "message": "继续",
+            "client_turn_id": f"accept-{proposal_key}",
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    project = body["executed_action"]["result"]["project"]
+    assert body["executed_action"]["status"] == "completed"
+    assert body["executed_action"]["result"]["navigate_to_project"] is True
+    assert body["proposal_update"]["id"] == proposal_id
+    assert body["proposal_update"]["status"] == "accepted"
+    assert body["message"] == (
+        "已建立并进入「RL Gymnasium 热身」，"
+        "项目 Tutor 与路径规划 Agent 已接手。"
+    )
+
+    async def load_handoff_and_planning_context():
+        async with async_session() as db:
+            project_session = await get_or_create_session(
+                db,
+                learner_id=await legacy_learner_id(),
+                session_type="project",
+                project_id=project["id"],
+            )
+            await db.commit()
+            current = await load_current_learner(db, await legacy_learner_id())
+            planning_context = await _roadmap_planning_context(
+                db, current, project["id"],
+            )
+            return project_session.context_summary, planning_context
+
+    handoff, planning_context = asyncio.run(load_handoff_and_planning_context())
+    assert handoff["handoff"]["from_session_id"] == session_id
+    assert handoff["handoff"]["message_refs"]
+    assert handoff["handoff"]["evidence_refs"]
+    assert planning_context["proposal_reference"]["proposal_id"] == proposal_id
+    assert planning_context["proposal_reference"]["learning_goal"].startswith("理解 Gymnasium")
+    assert planning_context["proposal_reference"]["practice_goal"].startswith("完成可运行")
+    assert planning_context["proposal_reference"]["estimated_effort"] == "每周 2–3 小时"
 
 
 def test_gpt_goal_creates_and_evolves_one_build_proposal(client: TestClient, no_background_tasks):

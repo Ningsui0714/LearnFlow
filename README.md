@@ -61,6 +61,9 @@ Architecture ownership and the fused capability catalog are documented in
 [`docs/ARCHITECTURE_AUTHORITY.md`](docs/ARCHITECTURE_AUTHORITY.md) and
 [`docs/FUSION_CATALOG.md`](docs/FUSION_CATALOG.md). Competition runbooks and
 submission templates live in [`docs/competition/`](docs/competition/README.md).
+Team members and their Codex agents must follow [`AGENTS.md`](AGENTS.md) and
+the [`GitHub collaboration rules`](docs/GITHUB_COLLABORATION.md) before editing,
+committing, pushing, or opening a pull request.
 
 ### macOS App
 
