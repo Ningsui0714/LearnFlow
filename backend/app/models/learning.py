@@ -162,9 +162,54 @@ class LearningAttempt(Base):
     submission = Column(JSON, default=dict)
     result = Column(JSON, default=dict)
     assistance_level = Column(String(30), default="none")
+    remediation_case_id = Column(
+        Integer, ForeignKey("remediation_cases.id"), nullable=True, index=True,
+    )
+    attempt_role = Column(String(30), default="original", index=True)
     started_at = Column(DateTime, default=datetime.utcnow)
     submitted_at = Column(DateTime, nullable=True)
     evaluated_at = Column(DateTime, nullable=True)
+
+
+class RemediationCase(Base):
+    """Explicit wrong-answer remediation state machine.
+
+    A case starts from one evaluated attempt and remains linked to every retry,
+    explanation-mode decision, transfer variant, and evidence writeback.
+    Strategy selection is deterministic; generated text is a presentation of
+    already-verified evidence rather than an LLM-owned decision.
+    """
+
+    __tablename__ = "remediation_cases"
+    __table_args__ = (
+        UniqueConstraint("source_attempt_id", name="uq_remediation_source_attempt"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    source_attempt_id = Column(
+        Integer, ForeignKey("learning_attempts.id"), nullable=False, index=True,
+    )
+    item_type = Column(String(30), nullable=False, index=True)
+    item_id = Column(Integer, nullable=True, index=True)
+    status = Column(String(30), default="explaining", nullable=False, index=True)
+    error_fingerprint = Column(String(64), nullable=False, index=True)
+    error_class = Column(String(50), nullable=False)
+    misconception_tag = Column(String(100), default="")
+    evidence = Column(JSON, default=dict)
+    evidence_event_ids = Column(JSON, default=list)
+    strategy = Column(JSON, default=dict)
+    current_delivery_mode = Column(String(40), default="contrast")
+    ineffective_modes = Column(JSON, default=list)
+    explanation_history = Column(JSON, default=list)
+    retry_attempt_id = Column(Integer, ForeignKey("learning_attempts.id"), nullable=True)
+    variant_attempt_id = Column(Integer, ForeignKey("learning_attempts.id"), nullable=True)
+    variant_payload = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class KernelState(Base):

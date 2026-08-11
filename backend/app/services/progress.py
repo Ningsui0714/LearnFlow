@@ -15,6 +15,7 @@ Checkpoint.progress JSON:
 All updates are copy-on-read (SQLAlchemy JSON columns compare by == at flush).
 """
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import async_session
 from app.models.project import Checkpoint
@@ -28,33 +29,57 @@ async def get_progress(checkpoint_id: int) -> dict:
         return dict(cp.progress or {}) if cp else {}
 
 
-async def _update(checkpoint_id: int, mutate):
-    async with async_session() as db:
-        cp = (await db.execute(
-            select(Checkpoint).where(Checkpoint.id == checkpoint_id)
-        )).scalar_one_or_none()
-        if not cp:
-            return
-        p = dict(cp.progress or {})
-        mutate(p)
-        cp.progress = p
-        await db.commit()
+async def _apply_update(db: AsyncSession, checkpoint_id: int, mutate) -> None:
+    cp = (await db.execute(
+        select(Checkpoint).where(Checkpoint.id == checkpoint_id)
+    )).scalar_one_or_none()
+    if not cp:
+        return
+    p = dict(cp.progress or {})
+    mutate(p)
+    cp.progress = p
+
+
+async def _update(checkpoint_id: int, mutate, db: AsyncSession | None = None):
+    """Update progress in the caller transaction when one is available.
+
+    API handlers already own a transaction. Reusing it keeps the progress write
+    atomic with its learning attempt and avoids a second SQLite writer lock.
+    Background callers may omit ``db`` and retain the original self-committing
+    behavior.
+    """
+    if db is not None:
+        await _apply_update(db, checkpoint_id, mutate)
+        return
+
+    async with async_session() as owned_db:
+        await _apply_update(owned_db, checkpoint_id, mutate)
+        await owned_db.commit()
 
 
 async def mark_lecture_generated(checkpoint_id: int):
     await _update(checkpoint_id, lambda p: p.update({"lecture_generated": True}))
 
 
-async def record_exercise_solved(checkpoint_id: int, exercise_id: int):
+async def record_exercise_solved(
+    checkpoint_id: int,
+    exercise_id: int,
+    db: AsyncSession | None = None,
+):
     def m(p):
         ids = set(p.get("solved_exercise_ids") or [])
         ids.add(exercise_id)
         p["solved_exercise_ids"] = sorted(ids)
         p["exercises_done"] = len(ids)
-    await _update(checkpoint_id, m)
+    await _update(checkpoint_id, m, db=db)
 
 
-async def record_concept_answer(checkpoint_id: int, question_id: int, correct: bool):
+async def record_concept_answer(
+    checkpoint_id: int,
+    question_id: int,
+    correct: bool,
+    db: AsyncSession | None = None,
+):
     def m(p):
         submitted = set(p.get("submitted_question_ids") or [])
         correct_ids = set(p.get("correct_question_ids") or [])
@@ -67,7 +92,7 @@ async def record_concept_answer(checkpoint_id: int, question_id: int, correct: b
         p["correct_question_ids"] = sorted(correct_ids)
         p["concept_total"] = len(submitted)
         p["concept_correct"] = len(correct_ids)
-    await _update(checkpoint_id, m)
+    await _update(checkpoint_id, m, db=db)
 
 
 async def update_notes_count(checkpoint_id: int, count: int):

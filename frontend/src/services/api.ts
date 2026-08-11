@@ -495,8 +495,16 @@ export const saveExerciseFiles = (exerciseId: number, files: any[]) =>
 export const getExerciseEnv = (exerciseId: number) =>
   api.get(`/exercises/${exerciseId}/env`).then(r => r.data)
 
-export const submitProject = (exerciseId: number, files: any[], assistanceLevel: string = 'none') =>
-  api.post(`/exercises/${exerciseId}/submit`, { code: '', files, assistance_level: assistanceLevel }).then(r => r.data)
+export const submitProject = (
+  exerciseId: number,
+  files: any[],
+  assistanceLevel: string = 'none',
+  remediationCaseId?: number,
+  attemptRole: string = 'original',
+) => api.post(`/exercises/${exerciseId}/submit`, {
+  code: '', files, assistance_level: assistanceLevel,
+  remediation_case_id: remediationCaseId, attempt_role: attemptRole,
+}).then(r => r.data)
 
 export const reviewCode = (exerciseId: number, code: string, selection?: string) =>
   api.post(`/exercises/${exerciseId}/review`, { code, selection }).then(r => r.data)
@@ -517,12 +525,60 @@ export const getConceptTask = (checkpointId: number) =>
 export const explainConcept = (checkpointId: number, questionId: number, userAnswerIndexes: number[]) =>
   api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/explain`, { user_answer_indexes: userAnswerIndexes }).then(r => r.data)
 
-export const submitConcept = (checkpointId: number, questionId: number, answerIndexes: number[], assistanceLevel: string = 'none') =>
-  api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/submit`, { answer_indexes: answerIndexes, assistance_level: assistanceLevel }).then(r => r.data)
+export const submitConcept = (
+  checkpointId: number,
+  questionId: number,
+  answerIndexes: number[],
+  assistanceLevel: string = 'none',
+  remediationCaseId?: number,
+  attemptRole: string = 'original',
+) => api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/submit`, {
+  answer_indexes: answerIndexes,
+  assistance_level: assistanceLevel,
+  remediation_case_id: remediationCaseId,
+  attempt_role: attemptRole,
+}).then(r => r.data)
 
 // ── T8: exercise submit ──
-export const submitExercise = (exerciseId: number, code: string, assistanceLevel: string = 'none') =>
-  api.post(`/exercises/${exerciseId}/submit`, { code, assistance_level: assistanceLevel }).then(r => r.data)
+export const submitExercise = (
+  exerciseId: number,
+  code: string,
+  assistanceLevel: string = 'none',
+  remediationCaseId?: number,
+  attemptRole: string = 'original',
+) => api.post(`/exercises/${exerciseId}/submit`, {
+  code,
+  assistance_level: assistanceLevel,
+  remediation_case_id: remediationCaseId,
+  attempt_role: attemptRole,
+}).then(r => r.data)
+
+// ── Explicit remediation loop ──
+export const getRemediationCase = (caseId: number) =>
+  api.get(`/remediation/${caseId}`).then(r => r.data)
+
+export const listRemediationCases = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/remediation-cases`).then(r => r.data)
+
+export const changeRemediationExplanation = (
+  caseId: number, action: 'switch' | 'steps' | 'example',
+) => api.post(`/remediation/${caseId}/explanations`, { action }).then(r => r.data)
+
+export const createRemediationVariant = (caseId: number) =>
+  api.post(`/remediation/${caseId}/variant`).then(r => r.data)
+
+export const submitRemediationVariant = (
+  caseId: number, data: { answer_indexes?: number[]; answer_text?: string },
+) => api.post(`/remediation/${caseId}/variant/submit`, data).then(r => r.data)
+
+export const getCompetitionDemoStatus = () =>
+  api.get('/demo/status').then(r => r.data)
+
+export const competitionDemoLogin = () =>
+  api.post('/demo/login').then(r => r.data)
+
+export const getCompetitionDemoManifest = () =>
+  api.get('/demo/manifest').then(r => r.data)
 
 export const getExerciseTask = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/exercises/task`).then(r => r.data)

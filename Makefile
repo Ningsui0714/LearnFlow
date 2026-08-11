@@ -1,4 +1,4 @@
-.PHONY: start stop restart setup
+.PHONY: start stop restart demo setup
 
 # ── 启动 ──
 
@@ -10,6 +10,9 @@ stop:
 
 restart:
 	@bash start.sh restart
+
+demo:
+	@bash start.sh demo
 
 # ── 一次配置 ──
 

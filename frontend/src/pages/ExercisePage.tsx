@@ -5,9 +5,10 @@ import Editor from '@monaco-editor/react'
 import {
   listExercises, getExercise, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
   runProject, saveExerciseFiles, submitProject, getExerciseEnv,
-  recordLearningEvent,
+  recordLearningEvent, listRemediationCases,
 } from '../services/api'
 import ConceptQuestions from '../components/exercise/ConceptQuestions'
+import RemediationPanel from '../components/exercise/RemediationPanel'
 
 interface CodeMsg {
   role: 'user' | 'assistant'
@@ -44,6 +45,8 @@ export default function ExercisePage() {
   const [assistanceLevel, setAssistanceLevel] = useState<'none' | 'hint' | 'guided'>('none')
   const [tab, setTab] = useState<'concepts' | 'code'>('code')
   const [submitResult, setSubmitResult] = useState<any>(null)
+  const [activeRemediation, setActiveRemediation] = useState<any>(null)
+  const [remediationCases, setRemediationCases] = useState<Record<number, any>>({})
   const [submitting, setSubmitting] = useState(false)
   const [genTaskId, setGenTaskId] = useState<number | null>(null)
   const [genProgress, setGenProgress] = useState('')
@@ -67,22 +70,33 @@ export default function ExercisePage() {
   const loadExercises = async () => {
     setLoading(true)
     try {
-      const data = await listExercises(cid)
+      const [data, cases] = await Promise.all([
+        listExercises(cid),
+        listRemediationCases(cid).catch(() => []),
+      ])
+      const latestByExercise: Record<number, any> = {}
+      for (const item of cases || []) {
+        if (item.item_type === 'exercise' && !latestByExercise[item.item_id]) {
+          latestByExercise[item.item_id] = item
+        }
+      }
       setExercises(data)
+      setRemediationCases(latestByExercise)
       if (data.length > 0) {
-        selectExercise(data[0])
+        selectExercise(data[0], latestByExercise)
       }
     } catch { /* no exercises yet */ }
     setLoading(false)
   }
 
-  const selectExercise = (ex: any) => {
+  const selectExercise = (ex: any, knownCases: Record<number, any> = remediationCases) => {
     setActiveEx(ex)
     setStdout('')
     setStderr('')
     setWsMessages([])
     setSelectedCode('')
     setSubmitResult(null)
+    setActiveRemediation(knownCases[ex.id] || null)
     setSaveMsg('')
     setRevealedHints(0)
     setAssistanceLevel('none')
@@ -161,14 +175,34 @@ export default function ExercisePage() {
     setSubmitting(true)
     setSubmitResult(null)
     try {
+      const retrying = activeRemediation?.status === 'explaining'
       const result = isProjectMode()
-        ? await submitProject(activeEx.id, files, assistanceLevel)
-        : await submitExercise(activeEx.id, code, assistanceLevel)
+        ? await submitProject(
+            activeEx.id, files, retrying ? 'guided' : assistanceLevel,
+            retrying ? activeRemediation.id : undefined, retrying ? 'retry' : 'original',
+          )
+        : await submitExercise(
+            activeEx.id, code, retrying ? 'guided' : assistanceLevel,
+            retrying ? activeRemediation.id : undefined, retrying ? 'retry' : 'original',
+          )
       setSubmitResult(result)
+      if (result.remediation) {
+        setActiveRemediation(result.remediation)
+        setRemediationCases(prev => ({ ...prev, [activeEx.id]: result.remediation }))
+        setAssistanceLevel('guided')
+      }
     } catch (e: any) {
       setSubmitResult({ error: e?.response?.data?.detail || e.message })
     }
     setSubmitting(false)
+  }
+
+  const retryExercise = () => {
+    setSubmitResult(null)
+    setStdout('')
+    setStderr('')
+    setAssistanceLevel('guided')
+    editorRef.current?.focus()
   }
 
   const handleRun = async () => {
@@ -510,9 +544,9 @@ export default function ExercisePage() {
                                 className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:bg-gray-300">
                                 {running ? '运行中...' : '▶ 运行'}
                               </button>
-                              <button onClick={handleSubmit} disabled={submitting || (isProjectMode() ? files.length === 0 : !code.trim())}
+                              <button onClick={handleSubmit} disabled={submitting || activeRemediation?.status === 'variant_ready' || (isProjectMode() ? files.length === 0 : !code.trim())}
                                 className="bg-gray-900 text-white px-3 py-1 rounded text-xs hover:bg-gray-700 disabled:bg-gray-300">
-                                {submitting ? '判题中...' : '📋 提交判题'}
+                                {submitting ? '判题中...' : activeRemediation?.status === 'variant_ready' ? '请先完成变式' : '📋 提交判题'}
                               </button>
                               <button onClick={handleReview} disabled={wsLoading}
                                 className="bg-primary-600 text-white px-3 py-1 rounded text-xs hover:bg-primary-700 disabled:bg-gray-300">
@@ -588,6 +622,18 @@ export default function ExercisePage() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto px-4 py-1.5 space-y-1.5 text-xs">
+                {activeRemediation && (
+                  <div className="mb-3">
+                    <RemediationPanel
+                      remediation={activeRemediation}
+                      onChange={next => {
+                        setActiveRemediation(next)
+                        if (activeEx) setRemediationCases(prev => ({ ...prev, [activeEx.id]: next }))
+                      }}
+                      onRetry={retryExercise}
+                    />
+                  </div>
+                )}
                 {wsMessages.length === 0 && (
                   <div className="text-gray-400 text-center py-4">
                     选中代码后提问，或点击「审阅」获取反馈

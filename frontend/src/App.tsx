@@ -12,6 +12,7 @@ import ProfilePage from './pages/ProfilePage'
 import ProjectPage from './pages/ProjectPage'
 import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
+import DemoEntryPage from './pages/DemoEntryPage'
 
 function DevSettingsRoute() {
   const { user } = useAuth()
@@ -23,6 +24,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/demo" element={<DemoEntryPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/agent" replace />} />

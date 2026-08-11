@@ -75,6 +75,10 @@ EXTRA_COLUMNS = {
         ("learner_seq", "INTEGER"),
         ("actor_type", "TEXT"),
     ],
+    "learning_attempts": [
+        ("remediation_case_id", "INTEGER"),
+        ("attempt_role", "TEXT DEFAULT 'original'"),
+    ],
     "process_animations": [
         ("kind", "TEXT"),         # animation | static（表已存在时补列）
     ],
@@ -272,6 +276,8 @@ async def _ensure_columns():
             ("ix_evidence_events_occurred_at", "evidence_events", "occurred_at"),
             ("ix_evidence_events_learner_seq", "evidence_events", "learner_seq"),
             ("ix_evidence_events_actor_type", "evidence_events", "actor_type"),
+            ("ix_learning_attempts_remediation_case_id", "learning_attempts", "remediation_case_id"),
+            ("ix_learning_attempts_attempt_role", "learning_attempts", "attempt_role"),
         ]
         for name, table, column in indexes:
             unique = "UNIQUE " if name == "ix_agent_messages_idempotency_key" else ""

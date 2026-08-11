@@ -138,6 +138,8 @@ class CodeRunRequest(BaseModel):
     selection: str = ""
     files: List[dict] = []
     assistance_level: str = "none"
+    remediation_case_id: Optional[int] = None
+    attempt_role: str = "original"
 
 
 class CodeRunResult(BaseModel):

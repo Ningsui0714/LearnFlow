@@ -83,6 +83,21 @@ ACTION_BOARD = {
         ActionDefinition(
             "evaluate_attempt", "评估本次尝试", "evidence", "explicit",
             {"knowledge": "graded_attempt", "practice": "verified_artifact"},
+            ("request_remediation_explanation", "advance_checkpoint"),
+        ),
+        ActionDefinition(
+            "request_remediation_explanation", "请求确定性纠错讲解", "evidence", "explicit",
+            {"knowledge": "error_evidence", "human": "explanation_effect"},
+            ("retry_attempt",),
+        ),
+        ActionDefinition(
+            "retry_attempt", "重做原任务", "evidence", "explicit",
+            {"knowledge": "retry_result", "practice": "assisted_attempt"},
+            ("evaluate_transfer_variant", "advance_checkpoint"),
+        ),
+        ActionDefinition(
+            "evaluate_transfer_variant", "完成变式验证", "evidence", "explicit",
+            {"knowledge": "transfer_result", "practice": "transfer_attempt"},
             ("advance_checkpoint",),
         ),
         ActionDefinition(

@@ -16,6 +16,8 @@ from app.api.agent import router as agent_router, events_router
 from app.api.auth import router as auth_router, dev_router
 from app.api.profile import router as profile_router
 from app.api.memory import router as memory_router
+from app.api.remediation import router as remediation_router
+from app.api.architecture import router as architecture_router
 
 
 @asynccontextmanager
@@ -63,3 +65,5 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(dev_router, prefix="/api")
 app.include_router(profile_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
+app.include_router(remediation_router, prefix="/api")
+app.include_router(architecture_router, prefix="/api")

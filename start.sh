@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # LearnFlow 一键启动脚本
 # 使用: bash start.sh         (启动 + 自动打开浏览器)
+#       bash start.sh demo    (隔离数据库 + 离线比赛演示)
 #       bash start.sh stop   (停止)
 
 set -e
@@ -9,7 +10,12 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 VENV_DIR="$BACKEND_DIR/venv"
-PID_FILE="/tmp/learnflow-pids"
+REGULAR_PID_FILE="/tmp/learnflow-pids"
+DEMO_PID_FILE="/tmp/learnflow-demo-pids"
+PID_FILE="$REGULAR_PID_FILE"
+BACKEND_PORT=8010
+FRONTEND_PORT=5173
+OPEN_URL="http://localhost:$FRONTEND_PORT"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -56,40 +62,96 @@ check_deps() {
   fi
 }
 
+prepare_competition_demo() {
+  local demo_data_dir="$BACKEND_DIR/data"
+  local demo_database="$demo_data_dir/competition-demo.db"
+  mkdir -p "$demo_data_dir"
+  export COMPETITION_DEMO_MODE=true
+  export DATABASE_URL="sqlite+aiosqlite:///$demo_database"
+  export LLM_API_KEY=""
+  export GITHUB_RESOURCE_SEARCH_ENABLED=false
+  export MEMORY_AUTO_SYNTHESIS_ENABLED=false
+  PID_FILE="$DEMO_PID_FILE"
+  BACKEND_PORT="$(next_available_port 8010)"
+  FRONTEND_PORT="$(next_available_port 5173)"
+  export VITE_API_PROXY="http://127.0.0.1:$BACKEND_PORT"
+  OPEN_URL="http://localhost:$FRONTEND_PORT/demo"
+
+  echo -e "${BLUE}━━━ 初始化离线比赛演示 ━━━${NC}"
+  cd "$BACKEND_DIR"
+  "$VENV_DIR/bin/python" scripts/seed_competition_demo.py --reset
+  echo -e "${GREEN}✅ 演示数据已就绪（独立数据库，不影响日常数据）${NC}"
+}
+
+next_available_port() {
+  local candidate="$1"
+  while command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; do
+    candidate=$((candidate + 1))
+  done
+  printf '%s' "$candidate"
+}
+
+stop_pid_file() {
+  local target_pid_file="$1"
+  [ -f "$target_pid_file" ] || return 1
+  local pid
+  while read -r pid; do
+    case "$pid" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    if [ "$pid" -gt 1 ]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done < "$target_pid_file"
+  rm -f "$target_pid_file"
+  return 0
+}
+
+stop_previous_demo() {
+  if stop_pid_file "$DEMO_PID_FILE"; then
+    echo -e "${GREEN}✅ 已停止上一份比赛演示实例${NC}"
+  fi
+}
+
 start_services() {
-  echo -e "${BLUE}━━━ 启动后端 (端口 8010) ━━━${NC}"
+  echo -e "${BLUE}━━━ 启动后端 (端口 $BACKEND_PORT) ━━━${NC}"
   cd "$BACKEND_DIR"
   source venv/bin/activate
-  uvicorn app.main:app --host 0.0.0.0 --port 8010 --reload &
+  uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload &
   BACK_PID=$!
   echo $BACK_PID > "$PID_FILE"
 
-  echo -e "${BLUE}━━━ 启动前端 (端口 5173) ━━━${NC}"
+  echo -e "${BLUE}━━━ 启动前端 (端口 $FRONTEND_PORT) ━━━${NC}"
   cd "$FRONTEND_DIR"
-  npm run dev &
+  npm run dev -- --port "$FRONTEND_PORT" --strictPort &
   FRONT_PID=$!
   echo $FRONT_PID >> "$PID_FILE"
 
   echo ""
   echo -e "${GREEN}✅ LearnFlow 已启动！${NC}"
   echo ""
-  echo -e "   ${BLUE}前端:${NC}  http://localhost:5173"
-  echo -e "   ${BLUE}后端:${NC}  http://localhost:8010"
+  echo -e "   ${BLUE}前端:${NC}  http://localhost:$FRONTEND_PORT"
+  echo -e "   ${BLUE}后端:${NC}  http://localhost:$BACKEND_PORT"
   echo ""
   echo -e "   ${YELLOW}停止:${NC}  bash start.sh stop"
   echo ""
 
   # Auto-open browser after a short delay
-  (sleep 3 && open http://localhost:5173) &
+  (sleep 3 && open "$OPEN_URL") &
 }
 
 stop_services() {
-  if [ -f "$PID_FILE" ]; then
+  local found=false
+  local target_pid_file
+  for target_pid_file in "$REGULAR_PID_FILE" "$DEMO_PID_FILE"; do
+    if [ ! -f "$target_pid_file" ]; then
+      continue
+    fi
+    found=true
     echo -e "${YELLOW}正在停止 LearnFlow...${NC}"
-    while read -r pid; do
-      kill "$pid" 2>/dev/null || true
-    done < "$PID_FILE"
-    rm -f "$PID_FILE"
+    stop_pid_file "$target_pid_file"
+  done
+  if [ "$found" = true ]; then
     echo -e "${GREEN}✅ 已停止${NC}"
   else
     pkill -f "uvicorn app.main:app" 2>/dev/null || true
@@ -107,6 +169,13 @@ case "${1:-}" in
     sleep 1
     banner
     check_deps
+    start_services
+    ;;
+  demo)
+    banner
+    stop_previous_demo
+    check_deps
+    prepare_competition_demo
     start_services
     ;;
   *)
