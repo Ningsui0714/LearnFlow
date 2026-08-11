@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-11.2"
+REGISTRY_VERSION = "2026-08-11.3"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -117,7 +117,7 @@ AGENTS = {
     item.id: item for item in (
         AgentContract(
             "tutor_agent", "Tutor 控制 Agent", "control",
-            ("global_main_agent", "project_tutor"),
+            ("global_main_agent", "project_tutor", "checkpoint_tutor"),
             ("current_learner", "page_context", "five_kernel_projection", "recent_evidence"),
             ("structured_intent", "reply", "action_proposal", "handoff_refs"),
             "read projections; emit events through Action Board",
@@ -170,6 +170,8 @@ TOOLS = {
                      KERNEL_NAMES, (), "EvidenceEvent"),
         ToolContract("tutor_context", "Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
+        ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
+                     KERNEL_NAMES),
         ToolContract("source_ingestion", "Source Ingestion + Chunking", "learning_design_agent", "learnflow", "artifact"),
         ToolContract("hierarchical_rag", "Hierarchical RAG", "learning_design_agent", "learnflow", "read",
                      ("knowledge", "structure")),
@@ -203,6 +205,10 @@ SKILLS = {
         SkillContract("intent_and_handoff", "意图理解与跨空间交接", "tutor_agent",
                       ("tutor_context", "action_board", "evidence_ledger"),
                       "structured intent + auditable action/handoff", "Action Board"),
+        SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
+                      ("checkpoint_context", "hierarchical_rag", "workspace_file_service"),
+                      "checkpoint-scoped Tutor reply + internal design/practice handoff",
+                      "immutable checkpoint session scope"),
         SkillContract("learning_path_planning", "来源约束的学习路线规划", "learning_design_agent",
                       ("source_ingestion", "hierarchical_rag", "content_generation"),
                       "roadmap proposal with checkpoint dependencies and provenance", "confirmed proposal"),
@@ -235,9 +241,9 @@ WORKBENCHES = {
                           ("search_projects", "draft_learning_project", "create_project")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
                           ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint")),
-        WorkbenchContract("lecture", "Checkpoint Lecture", "/projects/:projectId/checkpoints/:checkpointId", "learning_design_agent",
+        WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
-        WorkbenchContract("assessment", "Concept + Code Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "practice_agent",
+        WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
                           ("evaluate_attempt", "retry_attempt", "evaluate_transfer_variant")),
         WorkbenchContract("remediation", "Remediation Panel", "RemediationPanel", "practice_agent",
                           ("request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),

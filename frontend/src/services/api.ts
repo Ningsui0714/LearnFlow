@@ -315,7 +315,7 @@ export const getRoadmapHistory = (projectId: number) =>
   api.get(`/projects/${projectId}/roadmap/history`).then(r => r.data)
 
 // ── Main Tutor ──
-export const createTutorSession = (data: { session_type?: 'global' | 'project'; project_id?: number; checkpoint_id?: number }) =>
+export const createTutorSession = (data: { session_type?: 'global' | 'project' | 'checkpoint'; project_id?: number; checkpoint_id?: number }) =>
   api.post('/agent/sessions', data).then(r => r.data)
 
 export const getTutorSession = (sessionId: number) =>

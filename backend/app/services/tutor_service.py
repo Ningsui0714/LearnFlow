@@ -28,6 +28,7 @@ from app.services.project_proposals import (
     evolve_project_proposal, get_latest_active_proposal, list_session_proposals,
     proposal_view, start_resource_search,
 )
+from app.services.checkpoint_context import build_checkpoint_tutor_context
 
 
 CONFIRM_WORDS = {
@@ -71,6 +72,14 @@ GLOBAL_MAIN_AGENT_PROMPT = """当前是 global 主 Agent 会话。你的主要�
 项目列表、最近活跃项目、关卡位置以及结构/知识短期记忆都只是理解学习者的参考，不代表你正在负责那个项目。不要自称某个项目的负责人，不要主动续接某个项目的当前关卡、路线、来源或课前后辅导，也不要把最近活跃项目当作本轮默认主题。涉及正式路线、关卡学习、深入练习或项目推进时，说明应由对应项目 Tutor 或关卡承接。除非用户明确要求操作某个项目，否则保持全局视角。"""
 
 PROJECT_TUTOR_PROMPT = """当前是 project 项目 Tutor 会话。你只负责当前绑定项目，并持续承接它的来源、正式路线、路线修订、阶段推进和课前后答疑。其他项目及全局记忆只能作为背景参考，不能替换当前项目上下文。正式教学与验证必须落入路线关卡。"""
+
+CHECKPOINT_TUTOR_PROMPT = """当前是 checkpoint 关卡 Tutor 会话。你只负责当前绑定关卡，并在本关讲义、练习和项目文件之间保持同一段会话历史。
+- 学习设计与实践验证是你按需调用的内部能力，不要把自己切换或介绍成另一个主 Agent。
+- 只使用当前关卡上下文；不要引用其他关卡的讲义、练习或聊天。
+- 文件树只表示文件存在。需要正文时必须按需读取，不得假设内容。
+- 官方讲义和练习由数据库领域能力维护；不得用普通文件写入绕过版本、测试、答案或判题保护。
+- 编辑文件或运行成功不代表掌握；只有正式判题结果可以形成掌握证据。
+- 回答围绕用户当前选中的讲义、练习或文件，最多给一个明确下一步。"""
 
 
 def _normalize_url(value: str) -> str:
@@ -411,7 +420,14 @@ async def get_or_create_session(
         AgentSession.session_type == session_type,
         AgentSession.status == "active",
     )
-    if session_type == "project":
+    if session_type == "checkpoint":
+        if not project_id or not checkpoint_id:
+            raise ValueError("checkpoint session requires project_id and checkpoint_id")
+        query = query.where(
+            AgentSession.project_id == project_id,
+            AgentSession.checkpoint_id == checkpoint_id,
+        )
+    elif session_type == "project":
         query = query.where(AgentSession.project_id == project_id)
     else:
         query = query.where(AgentSession.project_id.is_(None))
@@ -453,14 +469,15 @@ async def get_or_create_session(
             session_type=session_type,
             project_id=project_id,
             checkpoint_id=checkpoint_id,
-            title="项目 Tutor" if project_id else "学习 Tutor",
+            title=(
+                "关卡 Tutor" if session_type == "checkpoint"
+                else "项目 Tutor" if project_id else "学习 Tutor"
+            ),
             status="active",
             context_summary=context_summary,
         )
         db.add(session)
         await db.flush()
-    elif checkpoint_id is not None:
-        session.checkpoint_id = checkpoint_id
     await _ensure_project_welcome_message(db, session)
     return session
 
@@ -558,10 +575,12 @@ async def get_session_state_summary(
     """Return UI state without presenting remembered projects as global scope."""
     state = await get_state_summary(
         db,
-        session.project_id if session.session_type == "project" else None,
-        session.checkpoint_id if session.session_type == "project" else None,
+        session.project_id if session.session_type in {"project", "checkpoint"} else None,
+        session.checkpoint_id if session.session_type == "checkpoint" else None,
         learner_id=session.learner_id,
     )
+    if session.session_type == "checkpoint":
+        return {**state, "session_scope": "checkpoint", "tutor_role": "checkpoint_tutor"}
     if session.session_type == "project":
         return {**state, "session_scope": "project", "tutor_role": "project_tutor"}
 
@@ -1221,6 +1240,21 @@ async def _explicit_action(
     message: str,
     context: dict | None = None,
 ) -> AgentAction | None:
+    if session.session_type == "checkpoint":
+        if _looks_like_lecture_command(message):
+            return await _new_action(
+                db, session, "generate_lecture",
+                {"checkpoint_id": session.checkpoint_id, "explicit": True},
+                "running",
+            )
+        if _looks_like_assessment_command(message):
+            mode = "practice" if any(word in message for word in ("练习", "代码", "实践")) else "concept"
+            return await _new_action(
+                db, session, "generate_assessment",
+                {"checkpoint_id": session.checkpoint_id, "mode": mode, "explicit": True},
+                "running",
+            )
+        return None
     url = _extract_url(message) or await _source_url_from_context(db, session.learner_id, context)
     if _looks_like_create_command(message):
         name = _extract_project_name(message)
@@ -1338,10 +1372,11 @@ async def _generate_tutor_reply(
     projects = (await db.execute(
         select(Project).where(Project.learner_id == session.learner_id)
         .order_by(Project.updated_at.desc()).limit(20)
-    )).scalars().all()
+    )).scalars().all() if session.session_type != "checkpoint" else []
     proposals = await list_session_proposals(db, session.id)
     project_workspace: dict[str, Any] = {}
-    if session.project_id:
+    checkpoint_workspace: dict[str, Any] = {}
+    if session.session_type == "project" and session.project_id:
         active_project = (await db.execute(select(Project).where(
             Project.id == session.project_id,
             Project.learner_id == session.learner_id,
@@ -1410,13 +1445,29 @@ async def _generate_tutor_reply(
                 ],
             } if accepted_proposal else None,
         }
+    elif session.session_type == "checkpoint" and session.project_id and session.checkpoint_id:
+        latest = await get_messages(db, session.id, limit=1)
+        latest_context = dict(latest[-1].meta_data or {}) if latest else {}
+        checkpoint_workspace = await build_checkpoint_tutor_context(
+            db,
+            learner_id=session.learner_id,
+            project_id=session.project_id,
+            checkpoint_id=session.checkpoint_id,
+            surface_context=latest_context,
+        )
+        prompt_projection = checkpoint_workspace["five_kernel_projection"]
+    role = {
+        "global": "main_agent",
+        "project": "project_tutor",
+        "checkpoint": "checkpoint_tutor",
+    }.get(session.session_type, "main_agent")
     context = {
         "session_scope": {
             "type": session.session_type,
-            "role": "project_tutor" if session.session_type == "project" else "main_agent",
+            "role": role,
             "project_information_policy": (
-                "current_project_workspace"
-                if session.session_type == "project"
+                "current_checkpoint_only" if session.session_type == "checkpoint"
+                else "current_project_workspace" if session.session_type == "project"
                 else "portfolio_and_memory_reference_only"
             ),
         },
@@ -1426,6 +1477,7 @@ async def _generate_tutor_reply(
         "session_handoff": dict(session.context_summary or {}) if session.session_type == "project" else {},
         "recent_project_reference": dict(session.context_summary or {}) if session.session_type == "global" else {},
         "project_workspace": project_workspace,
+        "checkpoint_workspace": checkpoint_workspace,
         "active_project_proposals": [
             {
                 "proposal_key": item.proposal_key,
@@ -1439,7 +1491,11 @@ async def _generate_tutor_reply(
             for item in proposals
         ],
     }
-    scope_prompt = PROJECT_TUTOR_PROMPT if session.session_type == "project" else GLOBAL_MAIN_AGENT_PROMPT
+    scope_prompt = (
+        CHECKPOINT_TUTOR_PROMPT if session.session_type == "checkpoint"
+        else PROJECT_TUTOR_PROMPT if session.session_type == "project"
+        else GLOBAL_MAIN_AGENT_PROMPT
+    )
     system = (
         TUTOR_SYSTEM_PROMPT
         + "\n\n"
@@ -1616,7 +1672,14 @@ async def process_turn(
         if cached_response:
             return cached_response
 
-    if project_id is not None:
+    if session.session_type == "checkpoint":
+        if project_id is not None and project_id != session.project_id:
+            raise ValueError("关卡 Tutor 不能切换到其他项目")
+        if checkpoint_id is not None and checkpoint_id != session.checkpoint_id:
+            raise ValueError("关卡 Tutor 不能切换到其他关卡")
+        project_id = session.project_id
+        checkpoint_id = session.checkpoint_id
+    if project_id is not None and session.session_type != "checkpoint":
         project = await _project_for_context(db, session, project_id)
         if not project:
             raise ValueError("学习项目不存在")
@@ -1626,7 +1689,8 @@ async def process_turn(
         checkpoint = await _checkpoint_for_learner(db, session.learner_id, checkpoint_id)
         if not checkpoint:
             raise ValueError("检查点不存在")
-        session.checkpoint_id = checkpoint.id
+        if session.session_type == "checkpoint" and checkpoint.id != session.checkpoint_id:
+            raise ValueError("关卡 Tutor 作用域不可修改")
         if checkpoint.learning_status in (None, "", "not_started"):
             checkpoint.learning_status = "in_progress"
 
@@ -1635,7 +1699,10 @@ async def process_turn(
     message_context = {}
     if isinstance(incoming_context.get("selected_text"), str):
         message_context["selected_text"] = incoming_context["selected_text"][:12000]
-    for key in ("selected_source_id", "selected_source_url"):
+    for key in (
+        "selected_source_id", "selected_source_url", "surface", "resource_kind",
+        "resource_id", "title", "section_index", "selected_path", "open_file", "language",
+    ):
         if key in incoming_context:
             message_context[key] = incoming_context[key]
     if candidate_sources_completed:
@@ -1937,7 +2004,7 @@ async def process_turn(
         candidates=major_event_candidates,
     )
     proposal_update = None
-    if not candidate_sources_completed:
+    if not candidate_sources_completed and session.session_type != "checkpoint":
         proposal_update = await evolve_project_proposal(
             db, session,
             message=message,

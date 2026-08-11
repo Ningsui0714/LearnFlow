@@ -182,6 +182,7 @@ def test_agent_diff_requires_checkpoint_scope_and_explicit_confirmation(tmp_path
     root.mkdir()
     target = root / "lesson.py"
     target.write_text("value = 1\n", encoding="utf-8")
+    (root / ".env.development").write_text("TOKEN=secret\n", encoding="utf-8")
 
     with TestClient(app) as client:
         registered = client.post("/api/auth/register", json=registration("workspace_agent_scope"))
@@ -232,6 +233,19 @@ def test_agent_diff_requires_checkpoint_scope_and_explicit_confirmation(tmp_path
                 return checkpoint.id, session.id
 
         checkpoint_id, session_id = asyncio.run(create_scope())
+        agent_read = client.get(
+            f"/api/projects/{project_id}/workspace/agent-files/lesson.py",
+            headers=DESKTOP_HEADERS,
+            params={"checkpoint_id": checkpoint_id, "session_id": session_id},
+        )
+        assert agent_read.status_code == 200
+        assert agent_read.json()["content"] == "value = 1\n"
+        secret_read = client.get(
+            f"/api/projects/{project_id}/workspace/agent-files/.env.development",
+            headers=DESKTOP_HEADERS,
+            params={"checkpoint_id": checkpoint_id, "session_id": session_id},
+        )
+        assert secret_read.status_code == 403
         secret_denied = client.post(
             f"/api/projects/{project_id}/workspace/operations/propose",
             headers=DESKTOP_HEADERS,

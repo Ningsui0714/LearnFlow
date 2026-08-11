@@ -8,7 +8,7 @@ from app.db.database import get_db
 from app.models.learning import (
     AgentSession, AgentMessage, AgentAction, LearningProjectProposal,
 )
-from app.models.project import Project, Checkpoint, Task
+from app.models.project import Project, Roadmap, Checkpoint, Task
 from app.schemas.agent import (
     AgentSessionCreate, TutorTurnRequest, LearningEventRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
@@ -88,15 +88,26 @@ async def create_or_resume_session(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    if data.project_id is not None:
-        await require_owned_project(db, current.learner.id, data.project_id)
+    project_id = data.project_id
+    session_type = data.session_type
+    if project_id is not None:
+        await require_owned_project(db, current.learner.id, project_id)
     if data.checkpoint_id is not None:
-        await require_owned_checkpoint(db, current.learner.id, data.checkpoint_id)
+        checkpoint = await require_owned_checkpoint(db, current.learner.id, data.checkpoint_id)
+        roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
+        if not roadmap:
+            raise HTTPException(404, "Checkpoint roadmap not found")
+        if project_id is not None and project_id != roadmap.project_id:
+            raise HTTPException(400, "Checkpoint does not belong to project")
+        project_id = roadmap.project_id
+        session_type = "checkpoint"
+    elif session_type == "checkpoint":
+        raise HTTPException(400, "checkpoint session requires checkpoint_id")
     session = await get_or_create_session(
         db,
         learner_id=current.learner.id,
-        session_type="project" if data.project_id else data.session_type,
-        project_id=data.project_id,
+        session_type="project" if project_id and session_type == "global" else session_type,
+        project_id=project_id,
         checkpoint_id=data.checkpoint_id,
     )
     await db.commit()
@@ -145,6 +156,11 @@ async def tutor_turn(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     session = await _owned_session(db, current.learner.id, session_id)
+    if session.session_type == "checkpoint":
+        if data.project_id is not None and data.project_id != session.project_id:
+            raise HTTPException(409, "Checkpoint Tutor project scope is immutable")
+        if data.checkpoint_id is not None and data.checkpoint_id != session.checkpoint_id:
+            raise HTTPException(409, "Checkpoint Tutor scope is immutable")
     if data.project_id is not None:
         await require_owned_project(db, current.learner.id, data.project_id)
     if data.checkpoint_id is not None:

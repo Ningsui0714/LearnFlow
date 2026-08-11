@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class AgentSessionCreate(BaseModel):
-    session_type: Literal["global", "project"] = "global"
+    session_type: Literal["global", "project", "checkpoint"] = "global"
     project_id: Optional[int] = None
     checkpoint_id: Optional[int] = None
 

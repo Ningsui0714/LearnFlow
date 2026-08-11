@@ -7,6 +7,7 @@ updates Task progress + incremental results as it goes.
 from datetime import datetime
 import asyncio
 import os
+from typing import List
 
 from sqlalchemy import select
 

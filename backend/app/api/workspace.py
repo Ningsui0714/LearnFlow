@@ -26,6 +26,7 @@ from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_checkpoint, require_owned_project,
 )
 from app.services.learning_runtime import record_event
+from app.services.checkpoint_context import checkpoint_artifacts
 from app.services.workspace_files import (
     DESCRIPTOR_SCHEMA, WorkspaceError, apply_operation, build_write_preview,
     canonical_root, initialize_managed_layout, read_workspace_file,
@@ -101,10 +102,27 @@ async def _validate_agent_scope(
     session = (await db.execute(select(AgentSession).where(
         AgentSession.id == session_id,
         AgentSession.learner_id == current.learner.id,
+        AgentSession.session_type == "checkpoint",
         AgentSession.project_id == project_id,
+        AgentSession.checkpoint_id == checkpoint_id,
     ))).scalar_one_or_none()
-    if not session or (session.checkpoint_id is not None and session.checkpoint_id != checkpoint_id):
+    if not session:
         raise HTTPException(404, "Checkpoint Tutor session not found")
+
+
+@router.get("/checkpoints/{checkpoint_id}/workspace/artifacts")
+async def get_checkpoint_workspace_artifacts(
+    checkpoint_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
+    result = await checkpoint_artifacts(
+        db, learner_id=current.learner.id, checkpoint_id=checkpoint_id,
+    )
+    if not result:
+        raise HTTPException(404, "Checkpoint not found")
+    return result
 
 
 def _operation_key(learner_id: int, request_key: str) -> str:
@@ -218,6 +236,30 @@ async def get_workspace_file(
     workspace = await _owned_workspace(db, current.learner.id, project_id)
     try:
         result = read_workspace_file(Path(workspace.root_path), file_path)
+    except WorkspaceError as exc:
+        _raise_workspace_error(exc)
+    return WorkspaceFileResponse(**result)
+
+
+@router.get(
+    "/projects/{project_id}/workspace/agent-files/{file_path:path}",
+    response_model=WorkspaceFileResponse,
+    dependencies=[Depends(require_desktop_token)],
+)
+async def get_workspace_file_for_checkpoint_tutor(
+    project_id: int,
+    file_path: str,
+    checkpoint_id: int,
+    session_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    await _validate_agent_scope(
+        db, current, project_id, checkpoint_id, session_id,
+    )
+    workspace = await _owned_workspace(db, current.learner.id, project_id)
+    try:
+        result = read_workspace_file(Path(workspace.root_path), file_path, actor="agent")
     except WorkspaceError as exc:
         _raise_workspace_error(exc)
     return WorkspaceFileResponse(**result)

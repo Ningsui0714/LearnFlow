@@ -17,7 +17,7 @@
 
 | 主契约 | 包含的实现 | 主要输入 | 结构化输出 | 禁止事项 |
 |---|---|---|---|---|
-| Tutor 控制 Agent | Global Main Agent、Project Tutor | CurrentLearner、页面上下文、五核只读投影、近期证据 | 意图、自然回复、Action、handoff 引用 | 直接写库、宣布掌握、绕过确认策略 |
+| Tutor 控制 Agent | Global Main Agent、Project Tutor、Checkpoint Tutor | CurrentLearner、页面上下文、有作用域的五核只读投影、近期证据 | 意图、自然回复、Action、handoff 引用 | 直接写库、宣布掌握、绕过确认策略 |
 | 学习设计 Agent | Roadmap、Lecture、Concept、Animation | 项目 brief、已处理来源、学习者投影、provenance | 路线提案、讲义、评估规格、视觉产物 | 未确认应用路线、伪造来源、写五核 |
 | 实践与验证 Agent | Exercise、Code、Remediation renderer | 评估规格、提交、测试结果、错误证据 | 实践任务、反馈、讲解段落 | 选择纠错策略、覆盖确定性评分、写五核 |
 
@@ -91,6 +91,9 @@
 - 普通项目文件以本地磁盘为权威。
 - 讲义、练习、测试和判题规则以数据库为权威；`.lflecture/.lfexercise` 只是受管引用。
 - Agent 修改普通文件必须形成 `WorkspaceOperation` diff，并由用户确认；不能直接写文件。
+- `checkpoint` 会话以 `learner_id + project_id + checkpoint_id` 唯一恢复，建立后作用域不可原地切换。
+- 同一关讲义和练习显示同一个关卡 Tutor；学习设计与实践验证 Agent 仍是内部能力接口，不成为第四类主 Agent，也不维护另一份聊天历史。
+- 关卡上下文只装配本关 brief、分配资源摘要、讲义/练习摘要、项目文件树和本关消息；文件正文必须按需读取，其他关卡资源与聊天不得进入。
 - `workspace_linked`、`workspace_change_applied` 属于零 kernel target 的操作事件。
 - 文件保存和运行不能写入掌握证据；正式练习提交继续走既有 `LearningAttempt -> EvidenceEvent` 链。
 
