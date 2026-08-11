@@ -390,6 +390,20 @@ class LearningDomainStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_knowledge_point
                     ON knowledge_entries(knowledge_point_id, category);
+                CREATE TABLE IF NOT EXISTS generated_questions (
+                    question_id TEXT PRIMARY KEY,
+                    knowledge_point_id TEXT NOT NULL,
+                    knowledge_point_name TEXT NOT NULL,
+                    difficulty INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    options_json TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    explanation TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_generated_questions_kp
+                    ON generated_questions(knowledge_point_id, created_at DESC);
                 """
             )
             resume_token_columns = {
@@ -1312,6 +1326,107 @@ class LearningDomainStore:
             "explanations": [dict(row) for row in explanation_rows],
             "attempts": [dict(row) for row in attempt_rows],
         }
+
+    def save_generated_questions(self, questions: list[dict[str, Any]]) -> int:
+        """生成式题库：工作流出题并通过本地校验的题目入库（幂等）。
+
+        返回实际写入条数；同 question_id 重复写入被忽略。
+        """
+        if not questions:
+            return 0
+        now = utc_now()
+        saved = 0
+        with self._lock, closing(self._connect()) as connection:
+            for q in questions:
+                question_id = str(q.get("question_id") or "").strip() or new_id("GEN")
+                try:
+                    cursor = connection.execute(
+                        """
+                        INSERT OR IGNORE INTO generated_questions(
+                            question_id, knowledge_point_id, knowledge_point_name,
+                            difficulty, title, options_json, answer, explanation,
+                            source, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            question_id,
+                            str(q.get("knowledge_point_id") or ""),
+                            str(q.get("knowledge_point_name") or ""),
+                            int(q.get("difficulty", 1) or 1),
+                            str(q.get("title") or ""),
+                            json_text(as_dict(q.get("options"))),
+                            str(q.get("answer") or ""),
+                            str(q.get("explanation") or ""),
+                            str(q.get("source") or "工作流生成（本地校验通过）"),
+                            now,
+                        ),
+                    )
+                    saved += cursor.rowcount
+                except (sqlite3.Error, ValueError):
+                    continue
+            connection.commit()
+        return saved
+
+    def recent_generated_questions(
+        self, knowledge_point_id: str = "", limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """最近生成并入库的题目（可按知识点过滤），供诊断复用。"""
+        with self._lock, closing(self._connect()) as connection:
+            if knowledge_point_id:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM generated_questions
+                    WHERE knowledge_point_id = ?
+                    ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (knowledge_point_id, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM generated_questions
+                    ORDER BY created_at DESC LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        questions = []
+        for row in rows:
+            q = dict(row)
+            try:
+                q["options"] = json.loads(q.pop("options_json"))
+            except (json.JSONDecodeError, KeyError):
+                q["options"] = {}
+            questions.append(q)
+        return questions
+
+    def knowledge_evidence_stats(self, student_id: str) -> dict[str, dict[str, Any]]:
+        """按知识点统计作答证据（真实 attempts）：次数与最近作答时间。
+
+        用于画像 knowledge 节点的 evidence_count / last_evidence_at；
+        无作答记录的知识点不出现（调用方按 null 缺省，不虚构）。
+        """
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT q.knowledge_point_id, COUNT(*) AS count,
+                       MAX(a.created_at) AS last_at
+                FROM attempts a JOIN question_instances q
+                  ON q.question_instance_id = a.question_instance_id
+                WHERE a.student_id = ?
+                GROUP BY q.knowledge_point_id
+                """,
+                (student_id,),
+            ).fetchall()
+        stats: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            kp_id = str(row["knowledge_point_id"] or "").strip()
+            if not kp_id:
+                continue
+            stats[kp_id] = {
+                "count": int(row["count"] or 0),
+                "last_at": str(row["last_at"] or ""),
+            }
+        return stats
 
     def record_choice_attempt(
         self,

@@ -62,7 +62,7 @@
 
     .layout { flex: 1; display: grid; grid-template-columns: 290px minmax(0, 1fr) 400px; min-height: 0; }
 
-    .sidebar { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+    .sidebar { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; position: relative; }
     .sidebar-head { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
     .sidebar-head strong { font-size: 13px; color: var(--muted); letter-spacing: 1px; }
     .new-project-btn { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; background: var(--green); color: #fff; border: none; border-radius: 8px; padding: 6px 10px; }
@@ -105,8 +105,30 @@
     .path-mastery { font-size: 10.5px; color: var(--muted-soft); flex: none; min-width: 34px; text-align: right; }
     .path-item.current .path-mastery { color: var(--amber); font-weight: 600; }
 
-    .sidebar-foot { padding: 10px 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+    .sidebar-foot {
+      padding: 10px 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 9px;
+      font-size: 12.5px; background: none; border-left: none; border-right: none; border-bottom: none;
+      width: 100%; text-align: left; cursor: pointer;
+    }
+    .sidebar-foot:hover { background: var(--surface-soft); }
     .sidebar-foot small { color: var(--muted-soft); display: block; }
+    .sidebar-foot > div { flex: 1; min-width: 0; }
+    .user-card-chev { color: var(--muted-soft); transition: transform .18s; }
+    .sidebar-foot[aria-expanded="true"] .user-card-chev { transform: rotate(180deg); }
+
+    .user-menu {
+      position: absolute; left: 8px; right: 8px; bottom: 62px; z-index: 35;
+      background: var(--surface); border: 1px solid var(--line-strong); border-radius: 12px;
+      box-shadow: var(--shadow-lg); padding: 6px;
+    }
+    .user-menu button {
+      width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px 12px;
+      background: none; border: none; border-radius: 8px; font-size: 13px; font-weight: 600;
+      color: var(--ink-soft); text-align: left;
+    }
+    .user-menu button:hover { background: var(--green-soft); color: var(--green-strong); }
+    .user-menu button svg { color: var(--muted); }
+    .user-menu button:hover svg { color: var(--green-strong); }
 
     .profile-entry {
       width: calc(100% - 16px); margin: 4px 8px 6px; display: flex; align-items: center; gap: 8px;
@@ -116,9 +138,115 @@
     .profile-entry:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
     .profile-entry svg { width: 16px; height: 16px; }
 
-    .profile-view { max-width: 640px; margin: 0 auto; padding: 40px 24px; }
-    .profile-back { display: inline-flex; align-items: center; gap: 5px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 9px; padding: 8px 14px; font-size: 12.5px; font-weight: 600; margin-bottom: 14px; }
-    .profile-back:hover { border-color: var(--green); color: var(--green-strong); }
+    .page-head { max-width: 640px; margin: 0 auto; padding: 34px 24px 4px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .page-head .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); letter-spacing: 1px; margin-bottom: 6px; }
+    .page-head .eyebrow svg { width: 14px; height: 14px; }
+    .page-head h1 { margin: 0; font-size: 22px; }
+    .page-back {
+      display: inline-flex; align-items: center; gap: 5px; background: var(--surface);
+      border: 1px solid var(--line-strong); border-radius: 9px; padding: 8px 14px;
+      font-size: 12.5px; font-weight: 600; margin-top: 4px;
+    }
+    .page-back:hover { border-color: var(--green); color: var(--green-strong); }
+
+    /* ---------- 全屏独立页面（个人中心 / 用户画像 / 设置） ---------- */
+    .fullpage {
+      position: fixed; inset: 0; z-index: 60; background: var(--bg);
+      display: flex; flex-direction: column; overflow-y: auto;
+    }
+    .fullpage-head {
+      position: sticky; top: 0; z-index: 2; background: var(--surface);
+      border-bottom: 1px solid var(--line); padding: 12px 20px;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .fullpage-back {
+      display: inline-flex; align-items: center; gap: 5px; background: var(--surface-soft);
+      border: 1px solid var(--line-strong); border-radius: 9px; padding: 8px 14px;
+      font-size: 12.5px; font-weight: 600; color: var(--ink-soft);
+    }
+    .fullpage-back:hover { border-color: var(--green); color: var(--green-strong); }
+    .fullpage-title .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); letter-spacing: 1px; margin-bottom: 3px; }
+    .fullpage-title .eyebrow svg { width: 14px; height: 14px; }
+    .fullpage-title h1 { margin: 0; font-size: 18px; }
+    .fullpage-body { flex: 1; width: 100%; max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; }
+
+    .fp-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+    .profile-hero { display: flex; align-items: center; gap: 18px; padding: 22px 24px; margin-bottom: 14px; }
+    .profile-avatar-xl { width: 72px; height: 72px; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 28px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
+    .profile-hero-copy h2 { margin: 0 0 4px; font-size: 20px; }
+    .profile-hero-copy p { margin: 2px 0; color: var(--muted); font-size: 13px; }
+    .profile-hero-copy .fp-program { color: var(--green-strong); }
+
+    .fp-stats { display: flex; gap: 12px; margin-bottom: 14px; }
+    .fp-stat { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 14px; text-align: center; box-shadow: var(--shadow); }
+    .fp-stat strong { display: block; font-size: 24px; color: var(--green-strong); }
+    .fp-stat small { color: var(--muted); font-size: 12px; }
+
+    .fp-tiles { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+    .fp-tile {
+      display: flex; align-items: center; gap: 14px; background: var(--surface);
+      border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; text-align: left;
+      box-shadow: var(--shadow); width: 100%;
+    }
+    .fp-tile:hover { border-color: var(--green); background: var(--green-soft); }
+    .fp-tile-icon { width: 42px; height: 42px; border-radius: 12px; background: var(--green-soft); color: var(--green); display: flex; align-items: center; justify-content: center; flex: none; }
+    .fp-tile-copy { flex: 1; }
+    .fp-tile-copy strong { font-size: 14px; display: block; margin-bottom: 3px; }
+    .fp-tile-copy small { color: var(--muted); font-size: 12px; }
+    .fp-tile > svg { color: var(--muted-soft); }
+    .fp-guide { color: var(--muted); font-size: 12.5px; text-align: center; }
+
+    .portrait-kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: center; box-shadow: var(--shadow); }
+    .kpi-card strong { display: block; font-size: 22px; color: var(--green-strong); }
+    .kpi-card small { color: var(--muted); font-size: 12px; }
+    .portrait-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .portrait-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; box-shadow: var(--shadow); }
+    .portrait-card h3 { margin: 0 0 14px; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
+    .portrait-card h3 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+    .radar-svg { width: 100%; max-width: 320px; height: auto; display: block; margin: 0 auto; }
+    .style-block p { margin: 0 0 10px; font-size: 13px; color: var(--ink-soft); }
+    .style-bars { display: flex; flex-direction: column; gap: 7px; }
+    .style-bar { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+    .style-bar .bar-track { flex: 1; height: 8px; background: var(--surface-soft); border-radius: 99px; overflow: hidden; }
+    .style-bar .bar-fill { display: block; height: 100%; background: var(--green); border-radius: 99px; }
+    .weak-item { padding: 9px 0; border-bottom: 1px dashed var(--line); }
+    .weak-item:last-child { border-bottom: none; }
+    .weak-item strong { font-size: 13px; display: block; margin-bottom: 3px; }
+    .weak-item small { color: var(--muted); font-size: 12px; }
+    .point-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 12.5px; }
+    .point-row .point-name { width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .point-row .bar-track { flex: 1; height: 8px; background: var(--surface-soft); border-radius: 99px; overflow: hidden; }
+    .point-row .bar-fill { display: block; height: 100%; background: var(--green); border-radius: 99px; }
+    .point-row .point-val { width: 40px; text-align: right; color: var(--muted); }
+
+    @media (max-width: 860px) {
+      .portrait-kpi { grid-template-columns: repeat(2, 1fr); }
+      .portrait-grid { grid-template-columns: 1fr; }
+    }
+
+    .settings-view { min-height: 100%; }
+    .settings-form {
+      max-width: 640px; margin: 0 auto; padding: 20px 24px 60px; display: flex; flex-direction: column; gap: 16px;
+    }
+    .settings-form > label {
+      display: flex; flex-direction: column; gap: 6px; background: var(--surface);
+      border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+      font-size: 13.5px; font-weight: 600; box-shadow: var(--shadow);
+    }
+    .settings-form > label > span { font-size: 12px; color: var(--muted); font-weight: 400; }
+    .settings-form select {
+      margin-top: 4px; padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: 9px;
+      background: var(--surface-soft); font-size: 13px; outline: none;
+    }
+    .settings-form select:focus { border-color: var(--green); }
+    .settings-form .switch-row {
+      flex-direction: row; align-items: center; justify-content: space-between;
+    }
+    .switch-row .switch-hint { display: block; margin-top: 3px; }
+    .switch-row input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--green); }
+    .settings-actions { display: flex; align-items: center; gap: 12px; }
+    .settings-saved { color: var(--green-strong); font-size: 13px; font-weight: 600; }
     .profile-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: var(--shadow); }
     .profile-top { display: flex; gap: 16px; align-items: center; margin-bottom: 22px; }
     .profile-avatar-lg { width: 64px; height: 64px; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
@@ -287,10 +415,14 @@
           <button class="new-project-btn" id="new-project-btn"><i data-lucide="plus"></i> 新建项目</button>
         </div>
         <div class="project-tree" id="project-tree"></div>
-        <button class="profile-entry" id="profile-entry"><i data-lucide="user"></i> 个人中心</button>
-        <div class="sidebar-foot">
-          <span class="avatar">学</span>
+        <button class="sidebar-foot" id="user-card" title="账户">
+          <span class="avatar" id="foot-avatar">学</span>
           <div><span id="foot-student-name">学习者</span><small>软件技术专业 · Java 应用开发</small></div>
+          <i data-lucide="chevron-up" class="user-card-chev"></i>
+        </button>
+        <div class="user-menu" id="user-menu" hidden>
+          <button data-action="profile"><i data-lucide="user"></i> 个人中心</button>
+          <button data-action="settings"><i data-lucide="settings"></i> 设置</button>
         </div>
       </aside>
 
@@ -305,28 +437,6 @@
             <div class="welcome-step"><div class="num">3</div><strong>路径学习</strong><small>按个性化路径逐章学习，视频资源一键跳转</small></div>
           </div>
         </div>
-        <section class="profile-view" id="profile-view" hidden>
-          <div class="profile-card">
-            <button class="profile-back" id="profile-back"><i data-lucide="chevron-left"></i> 返回</button>
-            <div class="profile-top">
-              <span class="profile-avatar-lg" id="profile-avatar">学</span>
-              <div>
-                <h1 id="profile-name">学习者</h1>
-                <p id="profile-id">STU-DEMO-001</p>
-                <p class="profile-program" id="profile-program">软件技术专业 · Java 应用开发</p>
-              </div>
-            </div>
-            <div class="profile-stats">
-              <div class="profile-stat"><strong id="stat-projects">0</strong><small>学习项目</small></div>
-              <div class="profile-stat"><strong id="stat-explanations">0</strong><small>讲解会话</small></div>
-              <div class="profile-stat"><strong id="stat-attempts">0</strong><small>练习作答</small></div>
-            </div>
-            <div class="profile-guide">
-              <p>在右侧对话框输入新的学习目标，即可创建新项目并重新测评。</p>
-              <a class="legacy-link" href="index.html"><i data-lucide="library"></i> 打开经典版：题库 / 用户画像 / 成长轨迹 / 学习记录</a>
-            </div>
-          </div>
-        </section>
         <article class="lesson" id="lesson-view" hidden>
           <div class="lesson-crumb">
             <button id="crumb-home">项目</button><span class="sep">/</span>
@@ -342,6 +452,110 @@
           <div class="lesson-body" id="lesson-body"></div>
         </article>
       </main>
+
+      <!-- 全屏：个人中心（独立页面） -->
+      <section class="fullpage" id="fullpage-profile" hidden>
+        <header class="fullpage-head">
+          <button class="fullpage-back" id="fp-profile-back"><i data-lucide="chevron-left"></i> 返回</button>
+          <div class="fullpage-title">
+            <div class="eyebrow"><i data-lucide="user"></i> 个人中心</div>
+            <h1>我的学习空间</h1>
+          </div>
+        </header>
+        <div class="fullpage-body">
+          <div class="fp-card profile-hero">
+            <span class="profile-avatar-xl" id="fp-avatar">学</span>
+            <div class="profile-hero-copy">
+              <h2 id="fp-name">学习者</h2>
+              <p id="fp-id">STU-DEMO-001</p>
+              <p class="fp-program" id="fp-program">软件技术专业 · Java 应用开发</p>
+            </div>
+          </div>
+          <div class="fp-stats">
+            <div class="fp-stat"><strong id="fp-stat-projects">0</strong><small>学习项目</small></div>
+            <div class="fp-stat"><strong id="fp-stat-explanations">0</strong><small>讲解会话</small></div>
+            <div class="fp-stat"><strong id="fp-stat-attempts">0</strong><small>练习作答</small></div>
+          </div>
+          <div class="fp-tiles">
+            <button class="fp-tile" id="fp-tile-portrait">
+              <span class="fp-tile-icon"><i data-lucide="user-round"></i></span>
+              <span class="fp-tile-copy"><strong>用户画像</strong><small>能力雷达 · 知识点掌握 · 补强建议</small></span>
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+          <p class="fp-guide">在右侧对话框输入新的学习目标，即可创建新项目并重新测评。</p>
+        </div>
+      </section>
+
+      <!-- 全屏：用户画像（独立页面） -->
+      <section class="fullpage" id="fullpage-portrait" hidden>
+        <header class="fullpage-head">
+          <button class="fullpage-back" id="fp-portrait-back"><i data-lucide="chevron-left"></i> 返回</button>
+          <div class="fullpage-title">
+            <div class="eyebrow"><i data-lucide="user-round"></i> 用户画像</div>
+            <h1>我的能力画像</h1>
+          </div>
+        </header>
+        <div class="fullpage-body portrait-body">
+          <div class="portrait-kpi" id="portrait-kpi"></div>
+          <div class="portrait-grid">
+            <div class="portrait-card">
+              <h3><span class="dot"></span>能力雷达</h3>
+              <svg class="radar-svg" id="radar-svg" viewBox="0 0 320 320" role="img" aria-label="能力雷达图"></svg>
+            </div>
+            <div class="portrait-card">
+              <h3><span class="dot"></span>学习风格</h3>
+              <div class="style-block" id="portrait-style"></div>
+            </div>
+            <div class="portrait-card">
+              <h3><span class="dot"></span>补强建议</h3>
+              <div id="portrait-weak"></div>
+            </div>
+            <div class="portrait-card">
+              <h3><span class="dot"></span>知识点掌握</h3>
+              <div id="portrait-points"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 全屏：设置（独立页面） -->
+      <section class="fullpage" id="fullpage-settings" hidden>
+        <header class="fullpage-head">
+          <button class="fullpage-back" id="fp-settings-back"><i data-lucide="chevron-left"></i> 返回</button>
+          <div class="fullpage-title">
+            <div class="eyebrow"><i data-lucide="settings"></i> 学习偏好</div>
+            <h1>设置</h1>
+          </div>
+        </header>
+        <div class="fullpage-body">
+          <form class="settings-form" id="settings-form">
+            <label>默认教学方式<span>用于新讲解的首选呈现形式</span>
+              <select name="preferred_delivery_mode">
+                <option value="text">互动图文</option>
+                <option value="video">视频教学</option>
+              </select>
+            </label>
+            <label>讲解深度<span>控制默认步骤密度</span>
+              <select name="explanation_depth">
+                <option value="guided">引导式</option>
+                <option value="standard">标准</option>
+                <option value="concise">精简</option>
+              </select>
+            </label>
+            <label class="switch-row"><span>减少动效<span class="switch-hint">降低页面过渡动画</span></span>
+              <input type="checkbox" name="reduced_motion">
+            </label>
+            <label class="switch-row"><span>自动播放视频<span class="switch-hint">打开讲解时自动加载视频资源</span></span>
+              <input type="checkbox" name="auto_play_video">
+            </label>
+            <div class="settings-actions">
+              <button type="submit" class="primary-btn" id="settings-save">保存设置</button>
+              <span class="settings-saved" id="settings-saved" hidden>已保存 ✓</span>
+            </div>
+          </form>
+        </div>
+      </section>
 
       <aside class="chat">
         <div class="chat-head">
@@ -387,7 +601,7 @@
     const drawerEl = $("quiz-drawer");
     const backdropEl = $("drawer-backdrop");
     const stageEl = $("stage");
-    const profileEl = $("profile-view");
+    const profileEl = $("fullpage-profile");
 
     const state = {
       projects: [],        // 项目摘要列表（左栏）
@@ -480,7 +694,10 @@
     async function askChat(message, showMiss = false) {
       let result;
       try {
-        result = await api("/api/chat", { method: "POST", body: { student_id: STUDENT_ID, message } });
+        result = await api("/api/chat", {
+          method: "POST",
+          body: { student_id: STUDENT_ID, session_id: "agent-main", message },
+        });
       } catch (error) {
         addMsg("bot", "<p><strong>出错了：</strong>" + escapeHtml(error.message) + "</p>");
         return false;
@@ -794,7 +1011,6 @@
     async function openLesson(projectId, knowledgePointId) {
       setInputEnabled(false);
       welcomeEl.hidden = true;
-      profileEl.hidden = true;
       lessonEl.hidden = false;
       $("lesson-title").textContent = "正在加载讲解…";
       $("lesson-body").innerHTML = "";
@@ -884,16 +1100,30 @@
 
     $("crumb-home").onclick = () => {
       lessonEl.hidden = true;
-      profileEl.hidden = true;
       welcomeEl.hidden = false;
     };
 
-    /* ================= 个人中心 ================= */
+    /* ================= 全屏独立页面：个人中心 / 用户画像 / 设置 ================= */
+    const userMenuEl = $("user-menu");
+    const settingsViewEl = $("fullpage-settings");
+    const portraitEl = $("fullpage-portrait");
+
+    function hideUserMenu() {
+      userMenuEl.hidden = true;
+      $("user-card").setAttribute("aria-expanded", "false");
+    }
+
+    function hideFullpages() {
+      profileEl.hidden = true;
+      portraitEl.hidden = true;
+      settingsViewEl.hidden = true;
+    }
+
     async function openProfile() {
-      welcomeEl.hidden = true;
-      lessonEl.hidden = true;
+      hideUserMenu();
+      hideFullpages();
       profileEl.hidden = false;
-      stageEl.scrollTop = 0;
+      profileEl.scrollTop = 0;
       try {
         const [profile, records] = await Promise.all([
           api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null),
@@ -902,22 +1132,170 @@
         const p = profile && profile.profile;
         if (p) {
           const name = p.display_name || "学习者";
-          $("profile-name").textContent = name;
-          $("profile-avatar").textContent = name.slice(0, 1);
-          $("profile-id").textContent = p.student_id || STUDENT_ID;
-          if (p.program_name) $("profile-program").textContent = p.program_name;
+          $("fp-name").textContent = name;
+          $("fp-avatar").textContent = name.slice(0, 1);
+          $("fp-id").textContent = p.student_id || STUDENT_ID;
+          if (p.program_name) $("fp-program").textContent = p.program_name;
         }
-        $("stat-projects").textContent = state.projects.length;
-        $("stat-explanations").textContent = records ? (records.explanations || []).length : 0;
-        $("stat-attempts").textContent = records ? (records.attempts || []).length : 0;
+        $("fp-stat-projects").textContent = state.projects.length;
+        $("fp-stat-explanations").textContent = records ? (records.explanations || []).length : 0;
+        $("fp-stat-attempts").textContent = records ? (records.attempts || []).length : 0;
       } catch (_) { /* 统计加载失败时保留默认值 */ }
       icons();
     }
-    $("profile-entry").onclick = openProfile;
-    $("profile-back").onclick = () => {
-      profileEl.hidden = true;
-      welcomeEl.hidden = false;
+
+    async function openSettings() {
+      hideUserMenu();
+      hideFullpages();
+      settingsViewEl.hidden = false;
+      settingsViewEl.scrollTop = 0;
+      $("settings-saved").hidden = true;
+      try {
+        const result = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/settings");
+        const s = result.settings || {};
+        const form = $("settings-form");
+        form.elements.preferred_delivery_mode.value = s.preferred_delivery_mode || "text";
+        form.elements.explanation_depth.value = s.explanation_depth || "guided";
+        form.elements.reduced_motion.checked = Boolean(s.reduced_motion);
+        form.elements.auto_play_video.checked = Boolean(s.auto_play_video);
+      } catch (_) { /* 加载失败保留默认值 */ }
+      icons();
+    }
+
+    /* ---------- 用户画像 ---------- */
+    async function openPortrait() {
+      hideFullpages();
+      portraitEl.hidden = false;
+      portraitEl.scrollTop = 0;
+      $("portrait-kpi").innerHTML = '<p class="fp-guide">正在加载画像…</p>';
+      $("portrait-style").innerHTML = "";
+      $("portrait-weak").innerHTML = "";
+      $("portrait-points").innerHTML = "";
+      $("radar-svg").innerHTML = "";
+      try {
+        const result = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/portrait");
+        renderPortrait(result);
+      } catch (error) {
+        $("portrait-kpi").innerHTML = '<p class="fp-guide">画像加载失败：' + escapeHtml(error.message) + "</p>";
+      }
+      icons();
+    }
+
+    function renderPortrait(portrait) {
+      const identity = portrait.identity || {};
+      const kpi = identity.kpi || {};
+      $("portrait-kpi").innerHTML =
+        '<div class="kpi-card"><strong>' + (kpi.overall_mastery || 0) + "%</strong><small>总体掌握度</small></div>" +
+        '<div class="kpi-card"><strong>' + escapeHtml(kpi.mastered_knowledge_points || "0/0") + "</strong><small>掌握知识点</small></div>" +
+        '<div class="kpi-card"><strong>' + (kpi.streak_days || 0) + " 天</strong><small>连续学习</small></div>" +
+        '<div class="kpi-card"><strong>' + (kpi.lesson_count_this_month || 0) + "</strong><small>本月讲解</small></div>";
+
+      const dimensions = (portrait.abilities || {}).dimensions || [];
+      drawRadar(dimensions);
+
+      const style = portrait.learning_style || {};
+      const styleNames = { visual: "视觉", auditory: "听觉", kinesthetic: "动觉", reading: "阅读" };
+      const styleHtml = Object.keys(styleNames).map((key) => {
+        const value = Math.round(Math.max(0, Math.min(1, Number(style[key] || 0))) * 100);
+        return '<div class="style-bar"><span>' + styleNames[key] + "</span>" +
+          '<span class="bar-track"><span class="bar-fill" style="width:' + value + '%"></span></span>' +
+          "<span>" + value + "%</span></div>";
+      }).join("");
+      $("portrait-style").innerHTML =
+        "<p>" + escapeHtml(style.summary || "偏好均衡，适合图文与案例结合") + "</p>" +
+        '<div class="style-bars">' + styleHtml + "</div>";
+
+      const recommendations = portrait.recommendations || [];
+      $("portrait-weak").innerHTML = recommendations.length
+        ? recommendations.map((r) =>
+            '<div class="weak-item"><strong>' + escapeHtml(r.title || "") + "</strong>" +
+            "<small>" + escapeHtml(r.reason || "") + "</small></div>").join("")
+        : '<p class="fp-guide">暂无补强建议</p>';
+
+      const nodes = (portrait.knowledge_mastery || {}).nodes || [];
+      $("portrait-points").innerHTML = nodes.length
+        ? nodes.map((n) =>
+            '<div class="point-row"><span class="point-name">' + escapeHtml(n.name || n.id) + "</span>" +
+            '<span class="bar-track"><span class="bar-fill" style="width:' + (n.mastery || 0) + '%"></span></span>' +
+            '<span class="point-val">' + (n.mastery || 0) + "%</span></div>").join("")
+        : '<p class="fp-guide">暂无知识点数据</p>';
+    }
+
+    function drawRadar(dimensions) {
+      const svg = $("radar-svg");
+      svg.innerHTML = "";
+      if (!dimensions.length) return;
+      const cx = 160, cy = 160, r = 105, n = dimensions.length;
+      const angle = (i) => -Math.PI / 2 + (2 * Math.PI * i) / n;
+      const point = (i, scale) => [cx + r * scale * Math.cos(angle(i)), cy + r * scale * Math.sin(angle(i))];
+      let markup = "";
+      [0.33, 0.66, 1].forEach((layer) => {
+        markup += '<polygon points="' + Array.from({ length: n }, (_, i) => point(i, layer).join(",")).join(" ") +
+          '" fill="none" stroke="#dce2dd" stroke-width="1"/>';
+      });
+      for (let i = 0; i < n; i++) {
+        const [x, y] = point(i, 1);
+        markup += '<line x1="' + cx + '" y1="' + cy + '" x2="' + x + '" y2="' + y + '" stroke="#dce2dd" stroke-width="1"/>';
+      }
+      const dataPoints = dimensions.map((d, i) => point(i, Math.max(0.05, Math.min(1, Number(d.score || 0) / 100))));
+      markup += '<polygon points="' + dataPoints.map((p) => p.join(",")).join(" ") +
+        '" fill="rgba(31,107,85,.25)" stroke="#1f6b55" stroke-width="2"/>';
+      dataPoints.forEach((p) => {
+        markup += '<circle cx="' + p[0] + '" cy="' + p[1] + '" r="3" fill="#1f6b55"/>';
+      });
+      dimensions.forEach((d, i) => {
+        const [x, y] = point(i, 1.2);
+        markup += '<text x="' + x + '" y="' + y + '" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#57615c">' +
+          escapeHtml(d.name || "") + "</text>";
+      });
+      svg.innerHTML = markup;
+    }
+
+    $("user-card").onclick = (event) => {
+      event.stopPropagation();
+      const open = userMenuEl.hidden;
+      userMenuEl.hidden = !open;
+      $("user-card").setAttribute("aria-expanded", String(open));
     };
+    userMenuEl.querySelectorAll("button").forEach((button) => {
+      button.onclick = () => {
+        if (button.dataset.action === "settings") openSettings();
+        else openProfile();
+      };
+    });
+    document.addEventListener("click", (event) => {
+      if (!userMenuEl.hidden && !userMenuEl.contains(event.target) && event.target.id !== "user-card") {
+        hideUserMenu();
+      }
+    });
+    $("fp-profile-back").onclick = () => { profileEl.hidden = true; };
+    $("fp-portrait-back").onclick = () => {
+      portraitEl.hidden = true;
+      profileEl.hidden = false;  // 从个人中心进入画像，返回回到个人中心
+    };
+    $("fp-settings-back").onclick = () => { settingsViewEl.hidden = true; };
+    $("fp-tile-portrait").onclick = openPortrait;
+    $("settings-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.target;
+      const saved = $("settings-saved");
+      saved.hidden = true;
+      try {
+        await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/settings", {
+          method: "POST",
+          body: {
+            preferred_delivery_mode: form.elements.preferred_delivery_mode.value,
+            explanation_depth: form.elements.explanation_depth.value,
+            reduced_motion: form.elements.reduced_motion.checked,
+            auto_play_video: form.elements.auto_play_video.checked,
+          },
+        });
+        saved.hidden = false;
+      } catch (error) {
+        saved.textContent = "保存失败：" + error.message;
+        saved.hidden = false;
+      }
+    });
 
     /* ================= 输入与新建 ================= */
     $("send-btn").onclick = () => sendGoal();
@@ -937,12 +1315,15 @@
     async function boot() {
       try {
         await refreshProjects();
-        const user = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/settings");
+        const profile = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null);
+        const p = profile && profile.profile;
         $("conn-state").textContent = "服务已连接";
-        if (user.settings && user.settings.display_name) {
-          $("user-name").textContent = user.settings.display_name;
-          $("foot-student-name").textContent = user.settings.display_name;
-          $("user-avatar").textContent = user.settings.display_name.slice(0, 1);
+        if (p) {
+          const name = p.display_name || "学习者";
+          $("user-name").textContent = name;
+          $("foot-student-name").textContent = name;
+          $("user-avatar").textContent = name.slice(0, 1);
+          $("foot-avatar").textContent = name.slice(0, 1);
         }
       } catch (_) {
         $("conn-state").textContent = "服务未连接（请通过后端启动页面）";

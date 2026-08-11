@@ -188,6 +188,70 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(by_id[first["project_id"]]["diagnosis_state"], "in_progress")
         self.assertEqual(by_id[second["project_id"]]["diagnosis_state"], "not_started")
 
+    # ---------- 生成式题库 ----------
+
+    def test_generated_quiz_goes_through_validation_and_persistence(self):
+        """mock 出题走"生成→校验→入库"链路：provider=workflow，题库可查。"""
+        created = self.create_project("备战世界职业院校技能大赛")
+        project_id = created["project"]["project_id"]
+        started = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/diagnosis/start",
+            {"student_id": self.student_id},
+        )
+        self.assertEqual(started["status"], "ok")
+        self.assertEqual(started["provider"], "workflow")
+        self.assertGreaterEqual(len(started["questions"]), 1)
+        # 生成的题已入库（幂等写入，可复用）
+        application = self.server.RequestHandlerClass.application
+        persisted = application.domain.recent_generated_questions(limit=50)
+        self.assertGreaterEqual(len(persisted), len(started["questions"]))
+        persisted_ids = {q["question_id"] for q in persisted}
+        for question in started["questions"]:
+            self.assertIn(question["question_id"], persisted_ids)
+
+    def test_quiz_validation_filters_invalid_questions(self):
+        """校验器：答案不在选项 / 选项不足 / 缺字段的生成题被丢弃。"""
+        application = self.server.RequestHandlerClass.application
+        questions = [
+            {"question_id": "Q-OK-1", "knowledge_point_id": "KN_JAVA_CLASS",
+             "title": "合法题", "options": {"a": "1", "b": "2", "c": "3"},
+             "answer": "b", "explanation": "解析", "difficulty": 2},
+            {"question_id": "Q-BAD-1", "knowledge_point_id": "KN_JAVA_CLASS",
+             "title": "答案不在选项", "options": {"a": "1", "b": "2", "c": "3"},
+             "answer": "z", "explanation": "解析", "difficulty": 1},
+            {"question_id": "Q-BAD-2", "knowledge_point_id": "KN_JAVA_CLASS",
+             "title": "选项不足", "options": {"a": "1", "b": "2"},
+             "answer": "a", "explanation": "解析", "difficulty": 1},
+            {"question_id": "Q-BAD-3", "knowledge_point_id": "",
+             "title": "无知识点绑定", "options": {"a": "1", "b": "2", "c": "3"},
+             "answer": "a", "explanation": "解析", "difficulty": 1},
+            "not-a-dict",
+        ]
+        valid, dropped = application._validate_quiz_questions(questions)
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(dropped, 4)
+        self.assertEqual(valid[0]["question_id"], "Q-OK-1")
+
+    def test_quiz_generation_falls_back_to_local_bank(self):
+        """工作流出题异常 → 自动回落本地取样，诊断流程不中断。"""
+        from unittest.mock import patch
+
+        application = self.server.RequestHandlerClass.application
+        created = self.create_project("备战世界职业院校技能大赛")
+        project_id = created["project"]["project_id"]
+        with patch.object(
+            application.gateway, "invoke_quiz_workflow", side_effect=RuntimeError("platform down")
+        ):
+            started = self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/diagnosis/start",
+                {"student_id": self.student_id},
+            )
+        self.assertEqual(started["status"], "ok")
+        self.assertEqual(started["provider"], "local_fallback")
+        self.assertGreaterEqual(len(started["questions"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

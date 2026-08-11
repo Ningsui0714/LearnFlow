@@ -62,9 +62,9 @@ except ModuleNotFoundError:
     )
 
 try:
-    from backend.data.error_cards import default_error_card_for
+    from backend.data.error_cards import default_error_card_for, error_cards_for
 except ModuleNotFoundError:
-    from data.error_cards import default_error_card_for
+    from data.error_cards import default_error_card_for, error_cards_for
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1131,7 +1131,7 @@ class XingchenGateway:
 
     def invoke_quiz_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.mode == "mock":
-            return {"status": "ok", "workflow_mode": "quiz", "questions": []}
+            return self._mock_quiz(payload)
         self._require_remote_mode()
         return self._invoke_remote(
             "quiz", payload, self.settings.quiz_flow_id or self.settings.flow_id
@@ -1324,6 +1324,47 @@ class XingchenGateway:
                 return {}
             self._resume_contexts.pop(token, None)
         return dict(stored[3])
+
+    def _mock_quiz(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """mock 出题：从本地题库按目标取样，薄弱点知识点优先。
+
+        remote 模式下该职责由星辰"测评出题工作流"承担（大模型按薄弱点
+        动态生成）；mock 用本地题库模拟"生成 → 校验 → 入库"链路的入口，
+        保证演示路径与 remote 一致（校验/入库在本地 LearningApplication）。
+        """
+        goal = str(payload.get("goal") or "daily").strip()
+        weak_points = [
+            item for item in as_list(payload.get("weak_points")) if isinstance(item, dict)
+        ]
+        weak_ids = {
+            str(item.get("knowledge_point_id"))
+            for item in weak_points
+            if str(item.get("knowledge_point_id", "")).strip()
+        }
+        picked = select_diagnosis_questions(goal)
+        # 薄弱点知识点优先，其余保持原顺序（取样集合不变，仅调整顺序）
+        picked.sort(key=lambda item: 0 if item["knowledge_point_id"] in weak_ids else 1)
+        questions = [
+            {
+                "question_id": item["id"],
+                "knowledge_point_id": item["knowledge_point_id"],
+                "knowledge_point_name": item["knowledge_point_name"],
+                "title": item["title"],
+                "options": item["options"],
+                "answer": item["answer"],
+                "explanation": item["explanation"],
+                "difficulty": item["difficulty"],
+                "source": "本地题库（mock 出题，平台工作流接入后由大模型生成）",
+            }
+            for item in picked
+        ]
+        return {
+            "status": "ok",
+            "workflow_mode": "quiz",
+            "provider": "mock_bank",
+            "goal": goal,
+            "questions": questions,
+        }
 
     def _mock_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
         history = as_dict(payload.get("teaching_history"))
@@ -2792,12 +2833,12 @@ class LearningApplication:
         if not goal_config:
             raise ApiError(400, "UNKNOWN_GOAL", f"不支持的目标：{goal}")
 
-        # 取样逻辑在数据模块（P1-2）：每知识点先取一题，再用剩余题补足目标数量
-        picked = select_diagnosis_questions(goal)
+        # 生成式出题：工作流 → 本地校验 → 入库；失败回落本地取样（前端无需改动）
+        generated, provider = self._generate_diagnosis_questions(student_id, goal, [])
 
         questions = [
             {
-                "question_id": item["id"],
+                "question_id": item["question_id"],
                 "knowledge_point_id": item["knowledge_point_id"],
                 "knowledge_point_name": item["knowledge_point_name"],
                 "title": item["title"],
@@ -2806,7 +2847,7 @@ class LearningApplication:
                 "answer": item["answer"],
                 "explanation": item["explanation"],
             }
-            for item in picked
+            for item in generated
         ]
         state = self.store.get_student_state(student_id) or {}
         rounds = int(state.get("diagnosis_rounds", 0) or 0) + 1
@@ -2986,6 +3027,113 @@ class LearningApplication:
         "GOAL-JAVA-DAILY": "daily",
     }
 
+    # ---------- 生成式题库（工作流出题 → 本地校验 → 入库）----------
+
+    def _validate_quiz_questions(
+        self, questions: list[Any]
+    ) -> tuple[list[dict[str, Any]], int]:
+        """本地审核工作流出题：答案确定性、选项合法性、知识点绑定。
+
+        返回 (valid, dropped)。任何不满足确定性/完整性规则的题直接丢弃，
+        宁可少题也不让非法题进入诊断（比赛"内容专业准确性"的本地防线）。
+        """
+        valid: list[dict[str, Any]] = []
+        dropped = 0
+        for raw in questions:
+            if not isinstance(raw, dict):
+                dropped += 1
+                continue
+            title = str(raw.get("title") or "").strip()
+            options = as_dict(raw.get("options"))
+            answer = str(raw.get("answer") or "").strip().lower()
+            explanation = str(raw.get("explanation") or "").strip()
+            kp_id = str(raw.get("knowledge_point_id") or "").strip()
+            try:
+                difficulty = int(raw.get("difficulty", 1) or 1)
+            except (TypeError, ValueError):
+                difficulty = 1
+            if not title or not kp_id:
+                dropped += 1
+                continue
+            if not options or answer not in options or len(options) < 3:
+                dropped += 1
+                continue
+            valid.append(
+                {
+                    "question_id": str(raw.get("question_id") or "").strip()
+                    or f"GEN-{uuid.uuid4().hex[:10]}",
+                    "knowledge_point_id": kp_id,
+                    "knowledge_point_name": str(raw.get("knowledge_point_name") or kp_id),
+                    "title": title,
+                    "options": options,
+                    "answer": answer,
+                    "explanation": explanation or "（未提供解析，请以知识库为准）",
+                    "difficulty": max(1, min(3, difficulty)),
+                    "source": str(raw.get("source") or "工作流生成（本地校验通过）"),
+                }
+            )
+        return valid, dropped
+
+    def _generate_diagnosis_questions(
+        self, student_id: str, goal: str, weak_points: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], str]:
+        """生成式出题：星辰工作流 → 本地校验 → 入库；失败/不足回落本地取样。
+
+        返回 (questions, provider)，provider ∈ {"workflow", "local_fallback"}。
+        """
+        generated: list[dict[str, Any]] = []
+        try:
+            result = self.gateway.invoke_quiz_workflow(
+                {"student_id": student_id, "goal": goal, "weak_points": weak_points}
+            )
+            generated, _dropped = self._validate_quiz_questions(
+                as_list(result.get("questions"))
+            )
+        except Exception:
+            generated = []
+        if generated:
+            try:
+                self.domain.save_generated_questions(generated)
+            except Exception:
+                pass  # 入库失败不影响本轮使用
+            target_size = int(DIAGNOSIS_GOALS.get(goal, {}).get("size", len(generated)))
+            if len(generated) < target_size:
+                existing_ids = {q["question_id"] for q in generated}
+                for item in select_diagnosis_questions(goal):
+                    if len(generated) >= target_size:
+                        break
+                    if item["id"] in existing_ids:
+                        continue
+                    generated.append(
+                        {
+                            "question_id": item["id"],
+                            "knowledge_point_id": item["knowledge_point_id"],
+                            "knowledge_point_name": item["knowledge_point_name"],
+                            "title": item["title"],
+                            "options": item["options"],
+                            "answer": item["answer"],
+                            "explanation": item["explanation"],
+                            "difficulty": item["difficulty"],
+                            "source": "本地题库补足（生成题不足目标题量）",
+                        }
+                    )
+            return generated, "workflow"
+        picked = select_diagnosis_questions(goal)
+        return [
+            {
+                "question_id": item["id"],
+                "knowledge_point_id": item["knowledge_point_id"],
+                "knowledge_point_name": item["knowledge_point_name"],
+                "title": item["title"],
+                "options": item["options"],
+                "answer": item["answer"],
+                "explanation": item["explanation"],
+                "difficulty": item["difficulty"],
+                "source": "本地题库（工作流不可用/校验未通过时回落）",
+            }
+            for item in picked
+        ], "local_fallback"
+
     def _require_project(self, student_id: str, project_id: str) -> dict[str, Any]:
         project = self.store.get_project(project_id)
         if not project or str(project.get("student_id", "")) != student_id:
@@ -3123,10 +3271,15 @@ class LearningApplication:
         goal_config = DIAGNOSIS_GOALS.get(goal_key)
         if not goal_config:
             raise ApiError(400, "UNKNOWN_GOAL", f"不支持的目标：{goal_key}")
-        picked = select_diagnosis_questions(goal_key)
+        weak_points = [
+            item for item in as_list(state.get("weak_points")) if isinstance(item, dict)
+        ]
+        generated, provider = self._generate_diagnosis_questions(
+            student_id, goal_key, weak_points
+        )
         questions = [
             {
-                "question_id": item["id"],
+                "question_id": item["question_id"],
                 "knowledge_point_id": item["knowledge_point_id"],
                 "knowledge_point_name": item["knowledge_point_name"],
                 "title": item["title"],
@@ -3135,7 +3288,7 @@ class LearningApplication:
                 "answer": item["answer"],
                 "explanation": item["explanation"],
             }
-            for item in picked
+            for item in generated
         ]
         state["diagnosis_session"] = {
             "goal": goal_key,
@@ -3157,6 +3310,7 @@ class LearningApplication:
             "project_id": project_id,
             "goal": goal_key,
             "goal_label": goal_config["label"],
+            "provider": provider,
             "questions": public_questions,
             "total": len(public_questions),
         }
@@ -4007,21 +4161,32 @@ class LearningApplication:
         }
 
     def chat(self, incoming: dict[str, Any]) -> dict[str, Any]:
-        """对话页：模糊提问澄清 + 知识库 RAG 回答（比赛硬要求）。
+        """对话页：多轮上下文 + 模糊提问澄清 + 知识库 RAG 回答（比赛硬要求）。
 
-        输入：message（学生提问）
+        输入：message（学生提问）、session_id（可选，默认 default）
         输出：
         - 模糊提问（"这个怎么弄"等）→ status=needs_clarification + clarify_options
         - 明确提问 → status=ok + answer（AI 生成标识）+ sources[]（知识库命中，带来源）
-        说明：此实现走本地知识库 RAG；接入星辰工作流后可将 answer 生成改为
-        workflow 节点（生成类上平台），检索与来源核验留在本地。
+        多轮：按 (student_id, session_id) 保存最近 8 轮问答；短消息/指代词
+        自动拼接上一轮提问作为检索上下文（如"那 getter 方法呢"承接"封装是什么"）。
         """
         message = str(incoming.get("message") or "").strip()
         if not message:
             raise ApiError(400, "MISSING_MESSAGE", "请输入要咨询的问题")
         student_id = str(incoming.get("student_id") or "").strip()
+        session_id = str(incoming.get("session_id") or "default").strip()
 
-        # 1) 模糊提问识别：疑问词 + 缺少领域知识点关键词 → 引导澄清
+        # 多轮上下文：读取会话历史，指代消解
+        state = self.store.get_student_state(student_id)
+        history = [
+            item
+            for item in as_list(state.get("chat_history"))
+            if isinstance(item, dict) and str(item.get("content") or "").strip()
+        ]
+        resolved = self._resolve_reference(message, history)
+        items = self.domain.search_knowledge(query=resolved, limit=3)
+
+        # 1) 模糊提问识别：疑问词 + 缺少领域知识点关键词 → 引导澄清（用原始消息判断）
         vague_words = ("怎么弄", "怎么办", "怎么做", "咋办", "啥意思", "是什么呀", "怎么用", "怎么实现")
         knowledge_hint = ("java", "类", "对象", "封装", "继承", "多态", "接口", "集合",
                           "异常", "io", "成绩", "平均分", "缺考", "getter", "构造器", "数组")
@@ -4038,7 +4203,7 @@ class LearningApplication:
                 ],
             }
 
-        # 2) remote 模式：生成类上平台（对话问答工作流）
+        # 2) remote 模式：生成类上平台（对话问答工作流，携带多轮历史）
         if self.gateway.mode == "remote":
             try:
                 result = self.gateway.invoke_chat_workflow({
@@ -4048,13 +4213,16 @@ class LearningApplication:
                     "kb_text": "\n".join(
                         f"【{i.get('title')}】{i.get('content')}" for i in items
                     ) if items else "",
+                    "history_memory": history[-6:],
                 })
                 answer = str(as_dict(result).get("message") or "").strip()
                 if answer:
+                    self._save_chat_history(student_id, state, history, message, answer)
                     return {
                         "status": "ok",
                         "answer": answer,
                         "ai_generated": True,
+                        "session_id": session_id,
                         "sources": [
                             {
                                 "title": str(i.get("source") or "知识库"),
@@ -4070,11 +4238,11 @@ class LearningApplication:
                 pass
 
         # 3) 明确提问（本地 RAG 兜底 / mock 模式）：知识库检索（按知识点优先，命中前 3）
-        items = self.domain.search_knowledge(query=message, limit=3)
         if not items:
             # 3.1) 白名单联网检索兜底（方案 A：检索留本地、白名单域名、来源引用）
-            web_answer = self._chat_web_search(message)
+            web_answer = self._chat_web_search(resolved)
             if web_answer:
+                self._save_chat_history(student_id, state, history, message, web_answer["answer"])
                 return web_answer
             return {
                 "status": "ok",
@@ -4089,10 +4257,12 @@ class LearningApplication:
             extra = [str(i.get("title") or "") for i in items[1:] if i.get("title")]
             if extra:
                 answer += "\n\n（延伸参考：" + "、".join(extra) + "）"
+        self._save_chat_history(student_id, state, history, message, answer)
         return {
             "status": "ok",
             "answer": answer,
             "ai_generated": True,
+            "session_id": session_id,
             "sources": [
                 {
                     "title": str(i.get("source") or "知识库"),
@@ -4103,6 +4273,48 @@ class LearningApplication:
                 for i in items
             ],
         }
+
+    def _resolve_reference(self, message: str, history: list[dict[str, Any]]) -> str:
+        """多轮指代消解：短消息或指代词开头时，拼接最近一次用户提问作为检索上下文。
+
+        例：先问"封装是什么"，再问"那 getter 方法呢" → 检索"封装是什么 那 getter 方法呢"，
+        使第二问命中封装相关条目而非泛泛查询。
+        """
+        user_msgs = [
+            str(item.get("content") or "").strip()
+            for item in history
+            if item.get("role") == "user" and str(item.get("content") or "").strip()
+        ]
+        if not user_msgs:
+            return message
+        stripped = message.strip()
+        if len(stripped) > 10 and not any(
+            stripped.startswith(word) for word in ("那", "它", "这个", "这些", "其", "然后")
+        ):
+            return message
+        # 提取短消息核心词（去掉指代词/疑问词），优先命中本轮主题
+        core = stripped
+        for word in ("那", "呢", "是什么", "是啥", "怎么", "如何", "这个", "这些", "它", "的", "呀", "吗"):
+            core = core.replace(word, " ")
+        core = " ".join(core.split())
+        previous = user_msgs[-1]
+        if core and core != stripped:
+            return f"{core} {previous}".strip()
+        return f"{previous} {stripped}".strip()
+
+    def _save_chat_history(
+        self,
+        student_id: str,
+        state: dict[str, Any],
+        history: list[dict[str, Any]],
+        message: str,
+        answer: str,
+    ) -> None:
+        """把本轮问答写入会话历史（保留最近 8 轮 = 16 条），按 student 持久化。"""
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": answer})
+        state["chat_history"] = history[-16:]
+        self.store.save_student_state(student_id, state)
 
     def _chat_web_search(self, message: str) -> dict[str, Any] | None:
         """chat 联网检索兜底：白名单域名（bing RSS）+ 来源引用。
@@ -4592,6 +4804,8 @@ class LearningApplication:
                     "name": label,
                     "score": round(score, 1),
                     "confidence": round(confidence, 2),
+                    "trend": None,
+                    "evidence_count": None,
                 }
             )
         if len(dimensions) == len(self._dimension_names()):
@@ -4612,6 +4826,9 @@ class LearningApplication:
                         max(0.0, min(100.0, base_scores[key] + (4.0 if pace > 1 else -4.0))),
                         1,
                     ),
+                    "confidence": None,
+                    "trend": None,
+                    "evidence_count": None,
                 }
                 for key, label in zip(
                     ["understanding", "applying", "reasoning", "expressing", "reviewing", "transferring"],
@@ -4666,12 +4883,62 @@ class LearningApplication:
         if not error_breakdown:
             error_breakdown = [{"error_type": "mixed", "count": max(1, len(weak_points))}]
 
+        # 薄弱点来源：上游诊断 + 各学习项目诊断（多项目模型下学生级画像应收敛全部项目）
+        for project in self.store.list_projects(student_id):
+            for point in as_list(as_dict(project.get("state")).get("weak_points")):
+                if isinstance(point, dict) and str(point.get("knowledge_point_id") or "").strip():
+                    weak_points.append(point)
+
+        # misconceptions 细分（对齐 LearnerState v1）：薄弱点知识点 × 错误卡，替代 mixed×N
+        weak_counts: dict[str, int] = {}
+        for point in weak_points:
+            kp_id = str(point.get("knowledge_point_id") or "").strip()
+            if not kp_id:
+                continue
+            weak_counts[kp_id] = weak_counts.get(kp_id, 0) + int(
+                point.get("error_count", 1) or 1
+            )
+        misconception_items: list[dict[str, Any]] = []
+        for kp_id, occurrence in weak_counts.items():
+            for card in error_cards_for(kp_id):
+                misconception_items.append(
+                    {
+                        "kc_id": kp_id,
+                        "misconception_id": str(card.get("error_id") or ""),
+                        "type": str(card.get("error_type") or "mixed"),
+                        "description": str(
+                            card.get("root_cause") or card.get("misconception_tag") or ""
+                        ),
+                        "severity": str(card.get("severity") or "medium"),
+                        "confidence": (
+                            float(card["confidence"])
+                            if card.get("confidence") is not None
+                            else None
+                        ),
+                        "occurrence_count": occurrence,
+                        "status": "active",
+                        "evidence": "诊断归因（错误卡匹配）",
+                    }
+                )
+
+        evidence = self.domain.knowledge_evidence_stats(student_id)
         nodes = [
             {
                 "id": str(item.get("knowledge_point_id") or f"KN-{index}"),
                 "name": str(item.get("knowledge_point_name") or f"学习节点 {index}"),
                 "mastery": int(item.get("mastery", 0) or 0),
                 "type": str(item.get("knowledge_type") or "conceptual"),
+                "status": str(item.get("status") or "pending"),
+                "confidence": None,
+                "trend": None,
+                "evidence_count": evidence.get(
+                    str(item.get("knowledge_point_id") or f"KN-{index}"), {}
+                ).get("count"),
+                "last_evidence_at": evidence.get(
+                    str(item.get("knowledge_point_id") or f"KN-{index}"), {}
+                ).get("last_at")
+                or None,
+                "is_estimated": None,
             }
             for index, item in enumerate(items, start=1)
         ]
@@ -4824,6 +5091,32 @@ class LearningApplication:
             },
             "updated_at": state.get("updated_at") or utc_now(),
             "data_evidence": self._portrait_evidence(student_id),
+            # ---- LearnerState v1 对齐字段（如实缺省，不虚构） ----
+            "schema_version": "1.0",
+            "progress": round(overall_mastery / 100, 2),
+            "summary": {
+                "overall_mastery": round(overall_mastery / 100, 2),
+                "mastered_kc_count": completed,
+                "total_kc_count": len(items),
+                "activity_count_30d": len(activity),
+                "streak_days": streak,
+            },
+            "misconceptions": {
+                "raw_summary": (
+                    "mixed×" + str(len(weak_points)) if not misconception_items else ""
+                ),
+                "items": misconception_items,
+            },
+            "history_quality": {
+                "mastery_before_after_available": True,
+                "currently_estimated_only": True,
+                "note": "confidence/trend 字段如实缺省为 null；evidence_count/last_evidence_at 来自真实作答记录",
+            },
+            "metadata": {
+                "profile_version": "1.0",
+                "source": "partner_learner_model",
+                "generated_at": utc_now(),
+            },
         }
 
     def _portrait_evidence(self, student_id: str, limit: int = 8) -> list[dict[str, Any]]:

@@ -1660,6 +1660,45 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertIn("data_evidence", portrait)
         self.assertTrue(all("type" in e and "title" in e for e in portrait["data_evidence"]))
 
+    def test_portrait_aligns_learner_state_v1_schema(self):
+        """画像接口对齐 LearnerState v1：summary / misconceptions 细分 / 证据字段。"""
+        self.request_json("POST", "/api/upstream/assessment-result", demo_upstream_payload())
+        portrait = self.request_json("GET", "/api/students/STU-DEMO-001/portrait")
+        self.assertEqual(portrait["status"], "ok")
+
+        # schema_version + summary（进度/掌握 KC 数/30 天活跃/连续天数）
+        self.assertEqual(portrait.get("schema_version"), "1.0")
+        summary = portrait.get("summary", {})
+        self.assertIn("overall_mastery", summary)
+        self.assertIn("mastered_kc_count", summary)
+        self.assertIn("activity_count_30d", summary)
+        self.assertIn("streak_days", summary)
+
+        # knowledge 节点：confidence/trend/is_estimated 如实 null，evidence 字段存在
+        nodes = portrait["knowledge_mastery"]["nodes"]
+        self.assertTrue(nodes, "画像节点不应为空")
+        for node in nodes:
+            self.assertIn("evidence_count", node)
+            self.assertIn("last_evidence_at", node)
+            self.assertIn("status", node)
+            self.assertIsNone(node.get("confidence"))
+            self.assertIsNone(node.get("trend"))
+
+        # misconceptions 细分：错误卡映射（kc_id/misconception_id/occurrence_count）
+        misconceptions = portrait["misconceptions"]["items"]
+        self.assertIn("misconceptions", portrait)
+        if portrait["weak_points"]["error_breakdown"]:
+            self.assertGreaterEqual(len(misconceptions), 1)
+            for item in misconceptions:
+                self.assertTrue(item["kc_id"])
+                self.assertTrue(item["misconception_id"])
+                self.assertIn("type", item)
+                self.assertGreaterEqual(item["occurrence_count"], 1)
+
+        # metadata / history_quality
+        self.assertEqual(portrait["metadata"]["profile_version"], "1.0")
+        self.assertIn("history_quality", portrait)
+
     def test_portrait_consumes_workflow_ability_scores_and_style_distribution(self):
         refreshed = self.request_json(
             "POST",
@@ -1845,6 +1884,29 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertTrue(clear.get("answer"))
         self.assertIn("ai_generated", clear)
         self.assertGreaterEqual(len(clear.get("sources", [])), 1)
+
+    def test_chat_multi_turn_reference_resolution(self):
+        """多轮上下文：第二问"那 getter 方法呢"应承接第一问"封装是什么"的语境。"""
+        student = "STU-MT-001"
+        first = self.request_json(
+            "POST",
+            "/api/chat",
+            {"student_id": student, "session_id": "S-MT-001", "message": "封装是什么"},
+        )
+        self.assertEqual(first["status"], "ok")
+        second = self.request_json(
+            "POST",
+            "/api/chat",
+            {"student_id": student, "session_id": "S-MT-001", "message": "那 getter 方法呢"},
+        )
+        self.assertEqual(second["status"], "ok")
+        self.assertIn("session_id", second)
+        # 指代消解后命中封装语境（而非泛泛查询）
+        combined = second["answer"] + "".join(s.get("title", "") for s in second["sources"])
+        self.assertTrue(
+            "封装" in combined or "getter" in combined.lower() or "private" in combined.lower(),
+            f"第二问未承接上文语境：{second['answer'][:60]}",
+        )
 
     def test_chat_web_search_fallback(self):
         """知识库未命中 + 白名单联网检索开启 → 返回联网结果与白名单来源。"""
