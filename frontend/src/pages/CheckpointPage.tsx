@@ -4,10 +4,12 @@ import {
   getLecture, saveLecture,
   createLectureTask, getActiveLectureTask, cancelTask, lectureTaskEventsUrl,
   listLectureVersions, rollbackLecture,
+  recordLearningEvent,
 } from '../services/api'
 import LectureRenderer from '../components/lecture/LectureRenderer'
 import BottomWorkspace from '../components/workspace/BottomWorkspace'
 import ConceptGraphModal from '../components/lecture/ConceptGraphModal'
+import TutorPanel from '../components/tutor/TutorPanel'
 
 interface Section {
   title: string
@@ -40,6 +42,7 @@ export default function CheckpointPage() {
   const [showGraph, setShowGraph] = useState(false)
   const [conceptGraph, setConceptGraph] = useState<any>(null)
   const [feedback, setFeedback] = useState('')
+  const [showTutor, setShowTutor] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
   // ── Load lecture on mount ──
@@ -86,6 +89,13 @@ export default function CheckpointPage() {
         setSections(data.sections)
         setStatus(data.status || 'published')
         if (data.concept_graph?.nodes?.length) setConceptGraph(data.concept_graph)
+        recordLearningEvent({
+          client_event_id: `lecture-view-${cid}-${data.id || 'draft'}`,
+          event_type: 'lecture_viewed',
+          project_id: pid,
+          checkpoint_id: cid,
+          payload: { lecture_id: data.id, sections_count: data.sections.length },
+        }).catch(() => {})
       } else {
         setSections([])
         setStatus('none')
@@ -120,9 +130,8 @@ export default function CheckpointPage() {
             setError('')
             setProgress(`✅ ${snap.progress?.message || '完成！'}`)
             setStatus('published')
-            // Sections already applied from snapshot; sync status
+            // Sections were saved incrementally by the task runner.
             closeEventSource()
-            saveLecture(cid, snap.sections || []).catch(() => {})
           } else if (snap.status === 'failed') {
             setGenerating(false)
             setTaskError(snap.error)
@@ -245,6 +254,12 @@ export default function CheckpointPage() {
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-3 shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowTutor(true)}
+            className="border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 rounded-lg"
+          >
+            Tutor
+          </button>
           <button onClick={() => navigate(`/projects/${pid}`)}
             className="text-sm text-gray-400 hover:text-gray-600">
             ← 返回项目
@@ -331,6 +346,17 @@ export default function CheckpointPage() {
           )}
         </div>
       </div>
+
+      {showTutor && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onClick={() => setShowTutor(false)}>
+          <div className="h-full w-full max-w-md bg-white p-3 shadow-xl" onClick={event => event.stopPropagation()}>
+            <div className="mb-2 flex justify-end">
+              <button onClick={() => setShowTutor(false)} className="h-8 w-8 text-gray-500 hover:bg-gray-100 rounded">×</button>
+            </div>
+            <TutorPanel projectId={pid} checkpointId={cid} className="h-[calc(100%_-_2.5rem)]" />
+          </div>
+        </div>
+      )}
 
       {/* Progress / error bar */}
       {(generating || progress) && (

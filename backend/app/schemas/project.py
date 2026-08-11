@@ -19,6 +19,7 @@ class ProjectOut(BaseModel):
     source_count: int = 0
     checkpoint_count: int = 0
     completed_count: int = 0
+    verification_due_count: int = 0
     created_at: datetime
 
     class Config:
@@ -84,6 +85,8 @@ class RoadmapNode(BaseModel):
     brief: dict = {}
     archived: bool = False
     progress: dict = {}
+    learning_status: str = "not_started"
+    learning_contract: dict = {}
 
 
 class RoadmapOut(BaseModel):
@@ -134,6 +137,7 @@ class CodeRunRequest(BaseModel):
     code: str
     selection: str = ""
     files: List[dict] = []
+    assistance_level: str = "none"
 
 
 class CodeRunResult(BaseModel):
@@ -165,6 +169,7 @@ class AgentMessage(BaseModel):
 class AgentChatRequest(BaseModel):
     message: str
     history: List[AgentMessage] = []
+    require_submission: bool = False
 
 
 class AgentChatResponse(BaseModel):

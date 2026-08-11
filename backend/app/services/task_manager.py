@@ -79,7 +79,11 @@ async def update_task(task_id: int, **fields) -> Optional[Task]:
             setattr(task, k, v)
         await db.commit()
         await db.refresh(task)
-        return task
+        result = task
+    if result.status in TERMINAL_STATUSES and result.agent_action_id:
+        from app.services.tutor_service import finalize_action_for_task
+        await finalize_action_for_task(result)
+    return result
 
 
 async def get_task(task_id: int) -> Optional[Task]:
@@ -118,6 +122,10 @@ async def mark_stale_tasks_failed():
             t.finished_at = datetime.utcnow()
         if tasks:
             await db.commit()
+    for task in tasks:
+        if task.agent_action_id:
+            from app.services.tutor_service import finalize_action_for_task
+            await finalize_action_for_task(task)
 
 
 class TaskManager:

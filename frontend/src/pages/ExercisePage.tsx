@@ -5,6 +5,7 @@ import Editor from '@monaco-editor/react'
 import {
   listExercises, getExercise, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
   runProject, saveExerciseFiles, submitProject, getExerciseEnv,
+  recordLearningEvent,
 } from '../services/api'
 import ConceptQuestions from '../components/exercise/ConceptQuestions'
 
@@ -39,6 +40,8 @@ export default function ExercisePage() {
   const [wsLoading, setWsLoading] = useState(false)
   const [selectedCode, setSelectedCode] = useState('')
   const [showDesc, setShowDesc] = useState(true)
+  const [revealedHints, setRevealedHints] = useState(0)
+  const [assistanceLevel, setAssistanceLevel] = useState<'none' | 'hint' | 'guided'>('none')
   const [tab, setTab] = useState<'concepts' | 'code'>('code')
   const [submitResult, setSubmitResult] = useState<any>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -81,6 +84,8 @@ export default function ExercisePage() {
     setSelectedCode('')
     setSubmitResult(null)
     setSaveMsg('')
+    setRevealedHints(0)
+    setAssistanceLevel('none')
     // Project-mode: load multi-file project
     if (ex.files && ex.files.length > 0) {
       setFiles(ex.files)
@@ -157,8 +162,8 @@ export default function ExercisePage() {
     setSubmitResult(null)
     try {
       const result = isProjectMode()
-        ? await submitProject(activeEx.id, files)
-        : await submitExercise(activeEx.id, code)
+        ? await submitProject(activeEx.id, files, assistanceLevel)
+        : await submitExercise(activeEx.id, code, assistanceLevel)
       setSubmitResult(result)
     } catch (e: any) {
       setSubmitResult({ error: e?.response?.data?.detail || e.message })
@@ -193,6 +198,7 @@ export default function ExercisePage() {
   const handleReview = async () => {
     if (!activeEx) return
     setWsLoading(true)
+    setAssistanceLevel('guided')
     const reviewCodeText = isProjectMode() ? activeFileContent() : code
     const msg: CodeMsg = { role: 'user', content: `请审阅这段代码 (${activeFileName || activeEx.title})` }
     setWsMessages(prev => [...prev, msg])
@@ -212,6 +218,7 @@ export default function ExercisePage() {
     const msg: CodeMsg = { role: 'user', content: text }
     setWsMessages(prev => [...prev, msg])
     setWsLoading(true)
+    setAssistanceLevel('guided')
 
     try {
       const { askCodeQuestion } = await import('../services/api')
@@ -226,6 +233,19 @@ export default function ExercisePage() {
       setWsMessages(prev => [...prev, { role: 'assistant', content: '❌ ' + (e?.response?.data?.detail || '请求失败') }])
     }
     setWsLoading(false)
+  }
+
+  const revealHint = () => {
+    if (!activeEx?.hints?.length || revealedHints >= activeEx.hints.length) return
+    setRevealedHints(current => current + 1)
+    setAssistanceLevel(current => current === 'guided' ? 'guided' : 'hint')
+    recordLearningEvent({
+      client_event_id: `hint-${activeEx.id}-${revealedHints + 1}-${Date.now()}`,
+      event_type: 'hint_requested',
+      project_id: pid,
+      checkpoint_id: cid,
+      payload: { exercise_id: activeEx.id, hint_index: revealedHints },
+    }).catch(() => {})
   }
 
   // Monaco Editor mount & selection handler + IDE extras
@@ -369,10 +389,20 @@ export default function ExercisePage() {
                       {showDesc && (
                         <div className="px-4 pb-2 max-h-32 overflow-y-auto text-xs space-y-1">
                           <p className="text-gray-600 whitespace-pre-wrap">{activeEx.description}</p>
-                          {activeEx.hints?.length > 0 && (
-                            <div className="text-yellow-700 bg-yellow-50 rounded px-2 py-1">
-                              💡 {activeEx.hints.join(' | ')}
+                          {revealedHints > 0 && (
+                            <div className="space-y-1 border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-800 rounded-lg">
+                              {activeEx.hints.slice(0, revealedHints).map((hint: string, index: number) => (
+                                <p key={index}>{index + 1}. {hint}</p>
+                              ))}
                             </div>
+                          )}
+                          {activeEx.hints?.length > revealedHints && (
+                            <button onClick={revealHint} className="border border-amber-300 bg-white px-2.5 py-1 text-amber-700 hover:bg-amber-50 rounded">
+                              查看下一条提示
+                            </button>
+                          )}
+                          {assistanceLevel !== 'none' && (
+                            <p className="text-[10px] text-gray-400">本次提交会标记为辅助完成</p>
                           )}
                         </div>
                       )}

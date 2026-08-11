@@ -13,15 +13,83 @@ from sqlalchemy import select
 from typing import List
 
 from app.db.database import get_db
+from app.models.learning import AgentSession, LearnerProfile, LearningProjectProposal
 from app.models.project import Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk, Task
 from app.schemas.project import (
     AgentChatRequest, AgentChatResponse,
 )
 from app.services.chunker import SourceProcessor
 from app.services.roadmap_agent import RoadmapAgent
+from app.services.learning_runtime import get_kernel_projection
+from app.services.auth import (
+    CurrentLearner, get_current_learner, require_owned_project,
+    require_owned_source,
+)
 
 router = APIRouter()
 chunker = SourceProcessor()
+
+
+async def _roadmap_planning_context(
+    db: AsyncSession,
+    current: CurrentLearner,
+    project_id: int,
+) -> dict:
+    """Build private planning context without turning proposal stages into a roadmap."""
+    profile = await db.get(LearnerProfile, current.learner.id)
+    proposal = (await db.execute(
+        select(LearningProjectProposal)
+        .where(
+            LearningProjectProposal.learner_id == current.learner.id,
+            LearningProjectProposal.accepted_project_id == project_id,
+            LearningProjectProposal.status == "accepted",
+        )
+        .order_by(LearningProjectProposal.updated_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    project_session = (await db.execute(
+        select(AgentSession)
+        .where(
+            AgentSession.learner_id == current.learner.id,
+            AgentSession.project_id == project_id,
+            AgentSession.session_type == "project",
+            AgentSession.status == "active",
+        )
+        .order_by(AgentSession.updated_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    proposal_artifact = dict(proposal.artifact or {}) if proposal else {}
+    return {
+        "input_policy": {
+            "content_source": "processed_project_sources",
+            "adaptation_source": "learner_profile_and_five_kernel_memory",
+            "decision_source": "current_project_dialogue_and_explicit_confirmation",
+            "stage_preview_weight": "low",
+        },
+        "learner_profile": {
+            "education_stage": profile.education_stage,
+            "background": profile.background,
+            "focus_areas": list(profile.focus_areas or []),
+            "weekly_hours": profile.weekly_hours,
+            "preferred_modes": list(profile.preferred_modes or []),
+            "career_goal": profile.career_goal,
+            "career_goal_status": profile.career_goal_status,
+        } if profile else {},
+        "five_kernel_memory": await get_kernel_projection(db, current.learner.id),
+        "session_handoff": dict(project_session.context_summary or {}) if project_session else {},
+        "proposal_reference": {
+            "proposal_id": proposal.id,
+            "revision": proposal.revision,
+            "learning_goal": proposal_artifact.get("learning_goal", ""),
+            "practice_goal": proposal_artifact.get("practice_goal", ""),
+            "estimated_effort": proposal_artifact.get("estimated_effort", ""),
+            "acceptance_criteria": list(proposal_artifact.get("acceptance_criteria") or []),
+            "risks": list(proposal_artifact.get("risks") or []),
+            "stage_preview": list(proposal_artifact.get("milestones") or []),
+            "usage": "soft_reference_only",
+        } if proposal else {},
+    }
 
 
 def _count_images(persist_dir: str) -> int:
@@ -44,14 +112,11 @@ async def process_source(
     project_id: int,
     source_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Fetch and chunk a source."""
-    result = await db.execute(
-        select(Source).where(Source.id == source_id, Source.project_id == project_id)
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(404, "Source not found")
+    await require_owned_project(db, current.learner.id, project_id)
+    source = await require_owned_source(db, current.learner.id, source_id, project_id)
 
     # Update status
     source.status = "processing"
@@ -143,8 +208,11 @@ async def process_source(
 async def serve_source_file(
     source_id: int,
     file_path: str,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Serve persisted repo files (images/markdown) for rendering (T6-P0)."""
+    await require_owned_source(db, current.learner.id, source_id)
     base = os.path.realpath(os.path.join(settings.repo_files_dir, str(source_id)))
     full = os.path.realpath(os.path.join(base, file_path))
     if not full.startswith(base + os.sep):
@@ -161,6 +229,7 @@ async def start_image_captioning(
     source_id: int,
     db: AsyncSession = Depends(get_db),
     req: dict = Body(default={}),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Trigger image captioning (T6).
 
@@ -168,11 +237,8 @@ async def start_image_captioning(
     mode=api: Moonshot vision for images flagged needs_api (pure graphics/photos),
     only when API enhancement is enabled in settings (idempotent toggle).
     """
-    source = (await db.execute(
-        select(Source).where(Source.id == source_id, Source.project_id == project_id)
-    )).scalar_one_or_none()
-    if not source:
-        raise HTTPException(404, "Source not found")
+    await require_owned_project(db, current.learner.id, project_id)
+    source = await require_owned_source(db, current.learner.id, source_id, project_id)
     if source.type != "github":
         raise HTTPException(400, "仅支持 GitHub 仓库的图片")
 
@@ -194,6 +260,7 @@ async def start_image_captioning(
         return {"task_id": running.id, "status": running.status, "already_running": True}
 
     task = Task(
+        learner_id=current.learner.id,
         project_id=project_id,
         type="image_caption",
         status="queued",
@@ -217,17 +284,14 @@ async def analyze_source_structure(
     project_id: int,
     source_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """
     Backfill L0 structure confidence + logic type from existing repo analysis
     (no LLM, no re-chunking — safe for already-processed sources).
     """
-    result = await db.execute(
-        select(Source).where(Source.id == source_id, Source.project_id == project_id)
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(404, "Source not found")
+    await require_owned_project(db, current.learner.id, project_id)
+    source = await require_owned_source(db, current.learner.id, source_id, project_id)
 
     meta = dict(source.meta_data or {})
     ra = dict(meta.get("repo_analysis") or {})
@@ -252,17 +316,14 @@ async def summarize_source_files(
     project_id: int,
     source_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """
     Generate one-line summaries per file (L1 of repo understanding).
     Cached in source.meta_data.repo_analysis.file_summaries; idempotent.
     """
-    result = await db.execute(
-        select(Source).where(Source.id == source_id, Source.project_id == project_id)
-    )
-    source = result.scalar_one_or_none()
-    if not source:
-        raise HTTPException(404, "Source not found")
+    await require_owned_project(db, current.learner.id, project_id)
+    source = await require_owned_source(db, current.learner.id, source_id, project_id)
 
     meta = dict(source.meta_data or {})
     repo_analysis = dict(meta.get("repo_analysis") or {})
@@ -390,8 +451,10 @@ async def _save_file_summaries(db: AsyncSession, source, summaries: dict) -> Non
 async def process_all_sources(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Process all pending sources for a project."""
+    await require_owned_project(db, current.learner.id, project_id)
     result = await db.execute(
         select(Source).where(
             Source.project_id == project_id,
@@ -488,13 +551,11 @@ async def set_source_role(
     source_id: int,
     data: dict = Body(default={}),
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """T10: set source role — main (roadmap skeleton) | auxiliary (retrieval only)."""
-    source = (await db.execute(
-        select(Source).where(Source.id == source_id, Source.project_id == project_id)
-    )).scalar_one_or_none()
-    if not source:
-        raise HTTPException(404, "Source not found")
+    await require_owned_project(db, current.learner.id, project_id)
+    source = await require_owned_source(db, current.learner.id, source_id, project_id)
     role = (data or {}).get("role", "main")
     if role not in ("main", "auxiliary"):
         raise HTTPException(400, "role 必须是 main 或 auxiliary")
@@ -509,6 +570,7 @@ async def set_source_role(
 async def reconcile_sources(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """T10: suggest how a new/changed source fits the existing roadmap.
 
@@ -517,6 +579,7 @@ async def reconcile_sources(
     checkpoint scopes, or ignore. Apply happens via /roadmap/reconcile-apply
     after the user confirms.
     """
+    await require_owned_project(db, current.learner.id, project_id)
     if not settings.llm_api_key or settings.llm_api_key == "***":
         raise HTTPException(400, "请先配置 API Key")
     roadmap = (await db.execute(
@@ -588,9 +651,11 @@ async def apply_reconcile(
     project_id: int,
     data: dict = Body(default={}),
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """T10: apply confirmed reconcile suggestions (insert checkpoints / extend
     scopes). Deterministic — no LLM here."""
+    await require_owned_project(db, current.learner.id, project_id)
     roadmap = (await db.execute(
         select(Roadmap).where(Roadmap.project_id == project_id)
     )).scalar_one_or_none()
@@ -669,6 +734,13 @@ async def apply_reconcile(
                 description=ins.get("description", ""),
                 prerequisites=[],
                 completed=False,
+                learning_status="not_started",
+                legacy_completed=False,
+                learning_contract={
+                    "concept_ids": [],
+                    "practice_target": {"requires_generation": True},
+                    "exit_criteria": ["knowledge_verified", "independent_practice"],
+                },
             )
             db.add(cp)
             await db.flush()
@@ -700,8 +772,10 @@ async def roadmap_chat(
     project_id: int,
     req: AgentChatRequest,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Chat with the roadmap planning agent."""
+    await require_owned_project(db, current.learner.id, project_id)
     # Get project info
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -730,8 +804,11 @@ async def roadmap_chat(
             "source_id": s.id,
             "type": s.type,
             "url": s.url,
+            "role": s.role or "main",
             "repo_analysis": meta.get("repo_analysis") or {},
         })
+
+    planning_context = await _roadmap_planning_context(db, current, project_id)
 
     # Get existing roadmap (or create placeholder on first chat)
     existing_roadmap = None
@@ -753,7 +830,7 @@ async def roadmap_chat(
         cp_rows = (await db.execute(
             select(Checkpoint).where(Checkpoint.roadmap_id == roadmap.id)
         )).scalars().all()
-        completed_by_order = {cp.order: cp.completed for cp in cp_rows}
+        completed_by_order = {cp.order: cp.learning_status == "completed" for cp in cp_rows}
         for node in existing_roadmap.get("checkpoints", []):
             node["completed"] = completed_by_order.get(node.get("order"), False)
 
@@ -774,6 +851,8 @@ async def roadmap_chat(
             chunks=chunks_data,
             existing_roadmap=existing_roadmap,
             sources_info=sources_info,
+            planning_context=planning_context,
+            require_submission=req.require_submission,
         )
     except Exception as e:
         raise HTTPException(502, f"AI Agent error: {str(e)}")
@@ -812,8 +891,10 @@ async def roadmap_chat(
 async def get_roadmap_history(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Get the persistent conversation history for a project's roadmap."""
+    await require_owned_project(db, current.learner.id, project_id)
     result = await db.execute(
         select(Roadmap).where(Roadmap.project_id == project_id)
     )
@@ -905,6 +986,7 @@ def _match_files_by_keywords(title: str, description: str, summaries: dict) -> l
 async def backfill_briefs(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """
     T3/T4: backfill CheckpointBriefs for existing roadmaps (no LLM).
@@ -912,6 +994,7 @@ async def backfill_briefs(
     matching → (fallback) one batched LLM call for checkpoints still empty.
     Also applies the scope assignments (equivalent to /roadmap/resync).
     """
+    await require_owned_project(db, current.learner.id, project_id)
     roadmap = (await db.execute(
         select(Roadmap).where(Roadmap.project_id == project_id)
     )).scalar_one_or_none()
@@ -1032,6 +1115,7 @@ async def backfill_briefs(
 async def resync_roadmap_chunks(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """
     T3/T4: deterministic re-assignment after source re-processing.
@@ -1039,6 +1123,7 @@ async def resync_roadmap_chunks(
     (chunk ids change when a source is re-processed; this repairs links
     without needing the LLM).
     """
+    await require_owned_project(db, current.learner.id, project_id)
     roadmap = (await db.execute(
         select(Roadmap).where(Roadmap.project_id == project_id)
     )).scalar_one_or_none()
@@ -1159,6 +1244,15 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
             cp.title = node.get("title", cp.title)
             cp.description = node.get("description", cp.description)
             cp.prerequisites = node.get("prerequisites", [])
+            cp.learning_contract = {
+                **dict(cp.learning_contract or {}),
+                "concept_ids": node.get("concept_ids") or node.get("key_concepts") or [],
+                "knowledge_target": node.get("knowledge_target") or {"checkpoint_id": cp.id},
+                "practice_target": node.get("practice_target") or {"requires_generation": True},
+                "evidence_target": node.get("evidence_target") or {},
+                "exit_criteria": node.get("exit_criteria") or ["knowledge_verified", "independent_practice"],
+                "estimated_effort": node.get("estimated_effort", ""),
+            }
         else:
             cp = Checkpoint(
                 roadmap_id=roadmap.id,
@@ -1167,9 +1261,19 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
                 order=order,
                 prerequisites=node.get("prerequisites", []),
                 completed=False,
+                learning_status="not_started",
+                legacy_completed=False,
             )
             db.add(cp)
             await db.flush()
+            cp.learning_contract = {
+                "concept_ids": node.get("concept_ids") or node.get("key_concepts") or [],
+                "knowledge_target": node.get("knowledge_target") or {"checkpoint_id": cp.id},
+                "practice_target": node.get("practice_target") or {"requires_generation": True},
+                "evidence_target": node.get("evidence_target") or {},
+                "exit_criteria": node.get("exit_criteria") or ["knowledge_verified", "independent_practice"],
+                "estimated_effort": node.get("estimated_effort", ""),
+            }
 
         # ── Scope-based chunk assignment ──
         seed_ids = _parse_ids(node.get("chunk_ids"))
@@ -1199,7 +1303,7 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
 
     # Remove checkpoints that are no longer in the roadmap (completed are kept)
     for order, cp in existing.items():
-        if order not in seen_orders and not cp.completed:
+        if order not in seen_orders and not (cp.completed or cp.legacy_completed):
             await db.delete(cp)
 
     # T10: apply archives — completed checkpoints declared in "archives" are
@@ -1207,7 +1311,7 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
     archives = roadmap_data.get("archives") or []
     for a in archives:
         cp = next((c for c in existing.values()
-                   if c.title == a.get("title") and c.completed), None)
+                   if c.title == a.get("title") and (c.completed or c.legacy_completed)), None)
         if cp and not cp.archived:
             cp.archived = True
             brief = dict(cp.brief or {})

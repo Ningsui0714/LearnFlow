@@ -25,6 +25,7 @@ interface CheckpointNode {
   chunk_ids: number[]
   archived?: boolean
   progress?: any
+  learning_status?: 'not_started' | 'in_progress' | 'verification_due' | 'blocked' | 'completed'
 }
 
 interface Props {
@@ -33,7 +34,26 @@ interface Props {
 }
 
 function CheckpointNodeComponent({ data }: NodeProps) {
-  const { label, completed, description, progress } = data as any
+  const { label, completed, description, progress, learningStatus } = data as any
+  const status = learningStatus || (completed ? 'completed' : 'not_started')
+  const statusStyle: Record<string, string> = {
+    completed: 'bg-emerald-50 border-emerald-400',
+    verification_due: 'bg-amber-50 border-amber-400',
+    blocked: 'bg-red-50 border-red-300',
+    in_progress: 'bg-indigo-50 border-indigo-400',
+    not_started: 'bg-white border-gray-300 hover:border-indigo-400',
+  }
+  const dotStyle: Record<string, string> = {
+    completed: 'bg-emerald-500',
+    verification_due: 'bg-amber-500',
+    blocked: 'bg-red-500',
+    in_progress: 'bg-indigo-500',
+    not_started: 'bg-gray-300',
+  }
+  const statusLabel: Record<string, string> = {
+    completed: '已验证', verification_due: '待验证', blocked: '受阻',
+    in_progress: '进行中', not_started: '未开始',
+  }
   const conceptTotal = progress?.concept_total || 0
   const conceptCorrect = progress?.concept_correct || 0
   const exercisesDone = progress?.exercises_done || 0
@@ -43,19 +63,17 @@ function CheckpointNodeComponent({ data }: NodeProps) {
       className={`
         px-4 py-3 rounded-xl shadow-sm border-2 min-w-[180px] cursor-pointer
         transition-all hover:shadow-md
-        ${completed
-          ? 'bg-green-50 border-green-400'
-          : 'bg-white border-primary-300 hover:border-primary-500'
-        }
+        ${statusStyle[status] || statusStyle.not_started}
       `}
     >
       <Handle type="target" position={Position.Top} className="!bg-gray-400" />
       <div className="flex items-center gap-2">
-        <span className={`w-3 h-3 rounded-full ${
-          completed ? 'bg-green-500' : 'bg-primary-400'
-        }`} />
+        <span className={`w-3 h-3 rounded-full ${dotStyle[status] || dotStyle.not_started}`} />
         <span className="font-medium text-sm text-gray-900">{label}</span>
       </div>
+      <p className={`mt-1 text-[10px] ${status === 'verification_due' ? 'text-amber-700' : 'text-gray-500'}`}>
+        {statusLabel[status] || statusLabel.not_started}
+      </p>
       {hasProgress && (
         <div className="flex gap-1.5 mt-1.5">
           {exercisesDone > 0 && (
@@ -96,6 +114,7 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
       description: cp.description,
       checkpointId: cp.id,
       progress: cp.progress,
+      learningStatus: cp.learning_status,
     },
     draggable: true,
   }))
@@ -113,7 +132,7 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
         source: String(prereqId),
         target: String(cp.id),
         type: 'smoothstep',
-        animated: !cp.completed,
+        animated: cp.learning_status === 'in_progress',
         style: { stroke: '#6366f1', strokeWidth: 2 },
         markerEnd: { type: MarkerType.ArrowClosed, color: '#6366f1' },
       })

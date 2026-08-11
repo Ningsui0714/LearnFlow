@@ -19,12 +19,39 @@ from typing import List, Optional, Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 
 MAX_TOOL_ROUNDS = 12
 
+
+class SubmittedCheckpoint(BaseModel):
+    title: str
+    description: str
+    order: int
+    prerequisites: List[int] = Field(default_factory=list)
+    files: List[str] = Field(default_factory=list)
+    key_concepts: List[str] = Field(default_factory=list)
+    estimated_effort: str = ""
+
+
+class ArchivedCheckpoint(BaseModel):
+    title: str
+    replaced_by_title: str = ""
+
+
+class SubmittedRoadmap(BaseModel):
+    checkpoints: List[SubmittedCheckpoint]
+    archives: List[ArchivedCheckpoint] = Field(default_factory=list)
+
 SYSTEM_PROMPT = """你是一名学习路线规划专家。你的任务是帮助用户为特定学习主题规划一条循序渐进的学习路线。
+
+## 规划依据与优先级
+1. 已处理的项目来源是知识内容、文件和切片归属的事实依据。
+2. 用户画像与五核记忆用于调整前置要求、难度、节奏、练习形式和投入规模；当前对话中的明确表述优先于旧记忆。用户自述基础不是掌握证据，不能仅据此跳过验证。
+3. 项目内对话负责确认学习目标、实践产物、约束和取舍。提出正式路线方案后，必须等待用户明确确认才能提交。
+4. 项目提案中的“阶段预览”只有低权重参考价值。不得机械复制为检查点；应基于来源、画像和确认后的对话重新拆分，必要时可以合并、重排或舍弃预览阶段。
 
 ## 你的工作流程
 1. 先用工具理解仓库：get_repo_structure 查看整体结构，get_file_summaries 查看各文件作用。
@@ -73,6 +100,7 @@ class RoadmapAgent:
         )
         self._existing_roadmap: Optional[Dict] = None
         self._last_submitted_roadmap: Optional[Dict] = None
+        self._planning_context: Dict[str, Any] = {}
 
     # ── Compact structure context (L0 + L1, no chunk stuffing) ──
 
@@ -108,10 +136,50 @@ class RoadmapAgent:
                     parts.append(f"  - {fp}: {sm}")
         return "\n".join(parts) if parts else "（无仓库结构信息，请先调用 get_repo_structure）"
 
+    def _build_planning_context(self) -> str:
+        context = self._planning_context or {}
+        if not context:
+            return ""
+        profile = context.get("learner_profile") or {}
+        memory = context.get("five_kernel_memory") or {}
+        handoff = context.get("session_handoff") or {}
+        proposal = context.get("proposal_reference") or {}
+        sections = [
+            "## 用户画像与五核记忆（用于难度、节奏与形式适配）",
+            json.dumps({"profile": profile, "memory": memory}, ensure_ascii=False, indent=2)[:6000],
+        ]
+        if handoff:
+            sections.extend([
+                "## 项目对话衔接（对话中的最新明确表述优先）",
+                json.dumps(handoff, ensure_ascii=False, indent=2)[:3000],
+            ])
+        if proposal:
+            proposal_constraints = {
+                key: proposal.get(key)
+                for key in (
+                    "learning_goal", "practice_goal", "estimated_effort",
+                    "acceptance_criteria", "risks",
+                )
+                if proposal.get(key)
+            }
+            sections.extend([
+                "## 项目提案参考",
+                json.dumps(proposal_constraints, ensure_ascii=False, indent=2)[:2500],
+                "## 阶段预览（低权重参考，不是正式路线骨架）",
+                json.dumps(proposal.get("stage_preview") or [], ensure_ascii=False, indent=2)[:2500],
+                "你可以合并、重排或舍弃上述阶段；不要在没有来源与对话依据时逐项照搬。",
+            ])
+        return "\n\n".join(sections)
+
     # ── Tools ──
 
     def _build_tools(self, chunks: List[Dict], sources_info: List[Dict]):
         chunk_by_id = {c["id"]: c for c in chunks}
+        allowed_source_ids = {
+            int(source["source_id"])
+            for source in sources_info
+            if source.get("source_id") is not None
+        }
         by_file: Dict[str, list] = {}
         for c in chunks:
             fp = (c.get("meta") or {}).get("file", "") or f"chunk-{c['id']}"
@@ -124,6 +192,10 @@ class RoadmapAgent:
             from sqlalchemy import select as _select
             async with _as() as db:
                 stmt = _select(_Chunk).order_by(_Chunk.index).limit(limit)
+                if allowed_source_ids:
+                    stmt = stmt.where(_Chunk.source_id.in_(allowed_source_ids))
+                else:
+                    return []
                 if exclude_translations:
                     stmt = stmt.where(_Chunk.meta_data["file"].as_string().not_like("translations/%"))
                 if where is not None:
@@ -183,6 +255,7 @@ class RoadmapAgent:
                 async with _as() as db:
                     rows = (await db.execute(
                         _select(_Chunk)
+                        .where(_Chunk.source_id.in_(allowed_source_ids))
                         .where(_Chunk.meta_data["file"].as_string().like(f"%{file}%"))
                         .order_by(_Chunk.index)
                         .limit(60)
@@ -206,13 +279,17 @@ class RoadmapAgent:
         def read_chunk(chunk_ids: List[int]) -> str:
             """读取指定切片的完整内容。chunk_ids 为整数列表。"""
             import asyncio as _ai
+            from sqlalchemy import select as _select
 
             async def _run():
                 from app.db.database import async_session as _as
                 from app.models.project import Chunk as _Chunk
                 async with _as() as db:
                     rows = (await db.execute(
-                        _select(_Chunk).where(_Chunk.id.in_(chunk_ids))
+                        _select(_Chunk).where(
+                            _Chunk.id.in_(chunk_ids),
+                            _Chunk.source_id.in_(allowed_source_ids),
+                        )
                     )).scalars().all()
                 by_id = {c.id: c for c in rows}
                 out = []
@@ -235,6 +312,7 @@ class RoadmapAgent:
             async with _as() as db:
                 rows = (await db.execute(
                     _select(_Chunk)
+                    .where(_Chunk.source_id.in_(allowed_source_ids))
                     .where(_Chunk.meta_data["file"].as_string().not_like("translations/%"))
                     .order_by(_Chunk.index)
                     .limit(8000)
@@ -313,6 +391,8 @@ class RoadmapAgent:
         chunks: Optional[List[Dict]] = None,
         existing_roadmap: Optional[Dict] = None,
         sources_info: Optional[List[Dict]] = None,
+        planning_context: Optional[Dict] = None,
+        require_submission: bool = False,
     ) -> Dict[str, Any]:
         """Process a chat message with tool calling; returns reply + optional roadmap.
 
@@ -321,15 +401,97 @@ class RoadmapAgent:
         """
         self._existing_roadmap = existing_roadmap
         self._last_submitted_roadmap = None
+        self._planning_context = planning_context or {}
         chunks = chunks or []
         sources_info = sources_info or []
 
         try:
-            return await self._chat_with_tools(message, history, topic, chunks, sources_info)
+            result = await self._chat_with_tools(message, history, topic, chunks, sources_info)
         except Exception as e:
             # Fallback: legacy single-shot path (robustness)
             print(f"[RoadmapAgent] tool-calling failed, falling back: {type(e).__name__}: {str(e)[:200]}")
-            return await self._chat_legacy(message, history, topic, chunks, sources_info)
+            result = await self._chat_legacy(message, history, topic, chunks, sources_info)
+        if require_submission and not result.get("updated_roadmap"):
+            return await self._force_structured_submission(
+                message=message,
+                history=history,
+                topic=topic,
+                sources_info=sources_info,
+            )
+        return result
+
+    async def _force_structured_submission(
+        self,
+        *,
+        message: str,
+        history: List[Dict[str, str]],
+        topic: str,
+        sources_info: List[Dict],
+    ) -> Dict[str, Any]:
+        """Produce a validated roadmap when a confirmed turn omitted submit_roadmap."""
+        allowed_files = {
+            str(path)
+            for source in sources_info
+            for path in ((source.get("repo_analysis") or {}).get("file_summaries") or {}).keys()
+        }
+        system_content = (
+            SYSTEM_PROMPT
+            + f"\n\n## 学习主题\n{topic}"
+            + f"\n\n## 仓库结构与文件摘要\n{self._build_structure_context(sources_info)}"
+        )
+        planning_context = self._build_planning_context()
+        if planning_context:
+            system_content += f"\n\n{planning_context}"
+        if self._existing_roadmap:
+            system_content += (
+                "\n\n## 当前正式路线\n"
+                + json.dumps(self._existing_roadmap, ensure_ascii=False, indent=2)[:5000]
+            )
+        system_content += (
+            "\n\n用户已经明确确认路线。现在必须返回可直接落库的最终关卡结构，"
+            "不能只写路线说明。每一关都要有明确学习目标、可生成的讲义主题、实践产物"
+            "和验证方向；只引用上方真实存在的文件。"
+        )
+        messages: List = [SystemMessage(content=system_content)]
+        for item in history[-20:]:
+            if item["role"] == "user":
+                messages.append(HumanMessage(content=item["content"]))
+            else:
+                messages.append(AIMessage(content=item["content"]))
+        messages.append(HumanMessage(content=message))
+        structured = self.llm.with_structured_output(SubmittedRoadmap)
+        output = await structured.ainvoke(messages)
+
+        checkpoints = []
+        for index, item in enumerate(output.checkpoints[:12], start=1):
+            title = item.title.strip()[:255]
+            if not title:
+                continue
+            checkpoints.append({
+                "title": title,
+                "description": item.description.strip()[:2000],
+                "order": index,
+                "prerequisites": [
+                    value for value in item.prerequisites
+                    if isinstance(value, int) and 1 <= value < index
+                ],
+                "chunk_ids": [],
+                "files": [path for path in item.files if path in allowed_files][:20],
+                "key_concepts": [value.strip()[:120] for value in item.key_concepts if value.strip()][:12],
+                "estimated_effort": item.estimated_effort.strip()[:120],
+            })
+        archives = [item.model_dump() for item in output.archives]
+        errors = self._validate_roadmap(checkpoints, archives)
+        if len(checkpoints) < 2:
+            errors.append("正式路线至少需要两个可学习关卡")
+        if errors:
+            raise ValueError("正式路线结构校验失败：" + "；".join(errors))
+        roadmap = {"checkpoints": checkpoints, "archives": archives}
+        self._last_submitted_roadmap = roadmap
+        return {
+            "message": f"路线已通过结构校验并保存，共 {len(checkpoints)} 关。",
+            "updated_roadmap": roadmap,
+        }
 
     async def _chat_with_tools(self, message, history, topic, chunks, sources_info):
         tools = self._build_tools(chunks, sources_info)
@@ -337,6 +499,9 @@ class RoadmapAgent:
         tool_map = {t.name: t for t in tools}
 
         system_content = SYSTEM_PROMPT + f"\n\n## 学习主题\n{topic}\n\n## 仓库结构速览\n{self._build_structure_context(sources_info)}"
+        planning_context = self._build_planning_context()
+        if planning_context:
+            system_content += f"\n\n{planning_context}"
         if existing_roadmap := self._existing_roadmap:
             roadmap_json = json.dumps(existing_roadmap, ensure_ascii=False, indent=2)[:4000]
             system_content += (
@@ -445,6 +610,9 @@ class RoadmapAgent:
     async def _chat_legacy(self, message, history, topic, chunks, sources_info=None):
         context = self._build_enriched_context(chunks, sources_info)
         system_content = SYSTEM_PROMPT + f"\n\n## 学习主题\n{topic}\n\n## 参考资料切片\n{context}"
+        planning_context = self._build_planning_context()
+        if planning_context:
+            system_content += f"\n\n{planning_context}"
 
         if self._existing_roadmap:
             roadmap_json = json.dumps(self._existing_roadmap, ensure_ascii=False, indent=2)

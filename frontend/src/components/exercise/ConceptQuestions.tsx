@@ -14,7 +14,8 @@ interface Question {
 }
 
 const TYPE_LABEL: Record<string, string> = {
-  single: '单选', multi: '多选', judge: '判断', wwpd: 'WWPD', wwpp: 'WWPP',
+  single: '单选', multi: '多选', judge: '判断', code_output: '代码推演',
+  wwpd: '代码推演', wwpp: '代码推演',
 }
 const DIFF_COLOR: Record<string, string> = {
   easy: 'bg-green-50 text-green-600', medium: 'bg-amber-50 text-amber-600', hard: 'bg-red-50 text-red-600',
@@ -27,6 +28,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
   const [results, setResults] = useState<Record<number, { correct: boolean; answer_indexes: number[] }>>({})
   const [explanations, setExplanations] = useState<Record<number, string>>({})
   const [explaining, setExplaining] = useState<Record<number, boolean>>({})
+  const [assisted, setAssisted] = useState<Record<number, boolean>>({})
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
@@ -106,7 +108,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
     const ans = answers[qid]
     if (!ans || ans.length === 0) { alert('请先选择答案'); return }
     try {
-      const res = await submitConcept(checkpointId, qid, ans)
+      const res = await submitConcept(checkpointId, qid, ans, assisted[qid] ? 'guided' : 'none')
       setResults(prev => ({ ...prev, [qid]: { correct: res.correct, answer_indexes: res.answer_indexes } }))
       setSubmitted(prev => ({ ...prev, [qid]: true }))
     } catch (e: any) {
@@ -115,6 +117,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
   }
 
   const handleExplain = async (q: Question) => {
+    setAssisted(prev => ({ ...prev, [q.id]: true }))
     setExplaining(prev => ({ ...prev, [q.id]: true }))
     try {
       const res = await explainConcept(checkpointId, q.id, answers[q.id] || [])
@@ -132,7 +135,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white shrink-0">
         <div>
           <h2 className="font-semibold text-gray-900">🧠 概念考察题</h2>
-          <p className="text-xs text-gray-400 mt-0.5">WWPD/WWPP 答案由代码执行校验，保证正确且唯一</p>
+          <p className="text-xs text-gray-400 mt-0.5">围绕本关目标检查理解、辨析与迁移</p>
         </div>
         {!generating && (
           <button

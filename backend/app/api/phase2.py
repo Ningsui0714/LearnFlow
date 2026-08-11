@@ -17,6 +17,10 @@ from app.schemas.project import (
     AgentMessage, LectureAskRequest, AnimationGenerateRequest,
 )
 from app.services.lecture_agent import LectureAgent, QAAgent
+from app.services.auth import (
+    CurrentLearner, get_current_learner, require_owned_animation,
+    require_owned_checkpoint, require_owned_note,
+)
 
 router = APIRouter()
 
@@ -26,6 +30,7 @@ async def generate_lecture_task(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
     req: dict = Body(default={}),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Create a background lecture-generation task (T1).
 
@@ -33,6 +38,7 @@ async def generate_lecture_task(
     checkpoint, returns the existing one (frontend subscribes to it).
     mode: "fresh" (default) clears partial content; "resume" reuses saved sections.
     """
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     mode = (req or {}).get("mode", "fresh")
     feedback = (req or {}).get("feedback") or ""
     if not settings.llm_api_key or settings.llm_api_key == "***":
@@ -54,6 +60,7 @@ async def generate_lecture_task(
         return {"task_id": running.id, "status": running.status, "already_running": True}
 
     task = Task(
+        learner_id=current.learner.id,
         project_id=project_id,
         checkpoint_id=checkpoint_id,
         type="lecture_generate",
@@ -75,8 +82,10 @@ async def generate_lecture_task(
 async def get_lecture_task(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Latest generation task for a checkpoint (used on page load / reconnect)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Task)
         .where(Task.checkpoint_id == checkpoint_id, Task.type == "lecture_generate")
@@ -98,8 +107,10 @@ async def get_lecture_task(
 async def generate_lecture_stream(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Legacy direct-SSE generation endpoint (kept for compatibility; use POST + /tasks/{id}/events)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     from app.api.tasks import _snapshot as _unused  # noqa: F401
     try:
         # Quick API key check
@@ -163,8 +174,10 @@ async def save_lecture(
     checkpoint_id: int,
     sections_data: dict,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Save generated lecture sections to database."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
     )
@@ -193,13 +206,23 @@ async def save_lecture(
         } for s in sections]
         lecture.status = "published"
 
-    # Mark checkpoint as completed
+    # A generated lecture is exposure material, not proof of mastery.
     cp_result = await db.execute(
         select(Checkpoint).where(Checkpoint.id == checkpoint_id)
     )
     cp = cp_result.scalar_one_or_none()
-    if cp:
-        cp.completed = True
+    if cp and cp.learning_status not in {"completed", "verification_due"}:
+        cp.learning_status = "in_progress"
+
+    from app.services.learning_runtime import record_event
+    await record_event(
+        db, event_type="lecture_generated", source="legacy_api",
+        learner_id=current.learner.id,
+        checkpoint_id=checkpoint_id,
+        payload={"sections_count": len(sections)},
+        provenance={"endpoint": "lecture/save"},
+        client_event_id=f"lecture:{checkpoint_id}:save:{len(sections)}",
+    )
 
     await db.commit()
 
@@ -210,8 +233,10 @@ async def save_lecture(
 async def get_lecture(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Get stored lecture for a checkpoint."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
     )
@@ -263,7 +288,10 @@ async def get_lecture(
 # ── Process animations (process-animator) ──
 
 @router.post("/animations/generate")
-async def generate_animation(req: AnimationGenerateRequest):
+async def generate_animation(
+    req: AnimationGenerateRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+):
     """手动/工作台：过程文本 → 动画 JSON（不落库，前端预览用）。"""
     if not req.text or not req.text.strip():
         raise HTTPException(400, "text 不能为空")
@@ -278,11 +306,13 @@ async def generate_animation(req: AnimationGenerateRequest):
 
 
 @router.get("/animations/{animation_id}")
-async def get_animation(animation_id: int, db: AsyncSession = Depends(get_db)):
+async def get_animation(
+    animation_id: int,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
     """按 id 取动画（LectureRenderer 懒加载用）。"""
-    anim = await db.get(ProcessAnimation, animation_id)
-    if not anim:
-        raise HTTPException(404, "动画不存在")
+    anim = await require_owned_animation(db, current.learner.id, animation_id)
     return {
         "id": anim.id,
         "checkpoint_id": anim.checkpoint_id,
@@ -302,8 +332,10 @@ async def get_animation(animation_id: int, db: AsyncSession = Depends(get_db)):
 async def generate_concept_graph(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Create a background concept-graph generation task."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     if not settings.llm_api_key or settings.llm_api_key == "***":
         raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
     cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))).scalar_one_or_none()
@@ -319,6 +351,7 @@ async def generate_concept_graph(
         return {"task_id": running.id, "status": running.status, "already_running": True}
 
     task = Task(
+        learner_id=current.learner.id,
         project_id=roadmap.project_id if roadmap else None,
         checkpoint_id=checkpoint_id,
         type="concept_graph",
@@ -338,7 +371,9 @@ async def generate_concept_graph(
 async def get_concept_graph_task(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Task)
         .where(Task.checkpoint_id == checkpoint_id, Task.type == "concept_graph")
@@ -358,8 +393,10 @@ async def get_concept_graph_task(
 async def list_lecture_versions(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """List snapshotted versions (newest first)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     rows = (await db.execute(
         select(LectureVersion)
         .where(LectureVersion.checkpoint_id == checkpoint_id)
@@ -379,8 +416,10 @@ async def rollback_lecture(
     checkpoint_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Restore a previous version. Current content is snapshotted first."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     version_id = (data or {}).get("version_id")
     if not version_id:
         raise HTTPException(400, "缺少 version_id")
@@ -420,8 +459,10 @@ async def ask_question(
     checkpoint_id: int,
     req: LectureAskRequest,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Answer a question / run a quick action about selected lecture text (T9)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
     )
@@ -507,7 +548,9 @@ async def _trace_selection(db: AsyncSession, checkpoint_id: int, selection: str)
 async def list_notes(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     rows = (await db.execute(
         select(LectureNote)
         .where(LectureNote.checkpoint_id == checkpoint_id)
@@ -529,7 +572,9 @@ async def create_note(
     checkpoint_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     note = LectureNote(
         checkpoint_id=checkpoint_id,
         section_index=int(data.get("section_index", 0) or 0),
@@ -551,12 +596,9 @@ async def update_note(
     note_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
-    note = (await db.execute(
-        select(LectureNote).where(LectureNote.id == note_id)
-    )).scalar_one_or_none()
-    if not note:
-        raise HTTPException(404, "Note not found")
+    note = await require_owned_note(db, current.learner.id, note_id)
     if "note" in data:
         note.note = data["note"]
     await db.commit()
@@ -567,12 +609,9 @@ async def update_note(
 async def delete_note(
     note_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
-    note = (await db.execute(
-        select(LectureNote).where(LectureNote.id == note_id)
-    )).scalar_one_or_none()
-    if not note:
-        raise HTTPException(404, "Note not found")
+    note = await require_owned_note(db, current.learner.id, note_id)
     await db.delete(note)
     await db.commit()
     from app.services.progress import update_notes_count

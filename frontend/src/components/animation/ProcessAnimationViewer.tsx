@@ -15,23 +15,181 @@ const DEFAULT_LEGEND: [string, string][] = [
 ]
 
 // ── SVG 白名单消毒（与后端 animation_agent.sanitize_svg 同策略，双保险） ──
-const SVG_TAGS = new Set(['svg', 'g', 'circle', 'rect', 'line', 'path', 'text', 'polygon', 'polyline', 'marker', 'defs', 'title', 'tspan', 'ellipse'])
-const SVG_ATTRS = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity', 'transform', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'viewBox', 'd', 'font-size', 'font-weight', 'text-anchor', 'font-family', 'preserveAspectRatio', 'marker-end', 'style'])
+const SVG_TAGS = new Set([
+  'svg', 'g', 'circle', 'rect', 'line', 'path', 'text', 'polygon', 'polyline',
+  'marker', 'defs', 'title', 'tspan', 'ellipse', 'lineargradient',
+  'radialgradient', 'stop',
+])
+const SVG_ATTRS = new Map([
+  'fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity', 'transform',
+  'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width',
+  'height', 'd', 'font-size', 'font-weight', 'text-anchor', 'font-family',
+  'marker-end', 'id', 'offset', 'stop-color', 'stop-opacity', 'gradientunits',
+  'paint-order', 'stroke-linejoin',
+].map(name => [name, name]))
+SVG_ATTRS.set('viewbox', 'viewBox')
+SVG_ATTRS.set('preserveaspectratio', 'preserveAspectRatio')
+SVG_ATTRS.set('gradientunits', 'gradientUnits')
 
-function sanitizeSvg(raw: string): string {
+const SVG_STYLE_ATTRS = new Map([
+  'fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'opacity', 'rx', 'ry',
+  'font-size', 'font-weight', 'text-anchor', 'font-family', 'stop-color',
+  'stop-opacity',
+].map(name => [name, name]))
+
+// SVG drawing primitives cannot contain visible child nodes. Treating them as
+// leaf tags also repairs common model output such as `<rect ...>` without `/>`.
+const SVG_LEAF_TAGS = new Set(['circle', 'rect', 'line', 'path', 'polygon', 'polyline', 'ellipse', 'stop'])
+
+function numericAttr(source: string, name: string): number | null {
+  const match = source.match(new RegExp(`\\b${name}\\s*=\\s*["'](-?[0-9]+(?:\\.[0-9]+)?)["']`, 'i'))
+  if (!match) return null
+  const value = Number(match[1])
+  return Number.isFinite(value) ? value : null
+}
+
+function inferViewBox(raw: string): [number, number] {
+  const svgTag = raw.match(/<svg\b([^>]*)>/i)?.[1] || ''
+  const existing = svgTag.match(/\bviewBox\s*=\s*["']\s*-?[0-9.]+\s+-?[0-9.]+\s+([0-9.]+)\s+([0-9.]+)\s*["']/i)
+  const existingWidth = existing ? Number(existing[1]) : 0
+  const existingHeight = existing ? Number(existing[2]) : 0
+  const svgWidth = numericAttr(svgTag, 'width')
+  const svgHeight = numericAttr(svgTag, 'height')
+
+  let maxWidth = 0
+  let maxHeight = 0
+  for (const rect of raw.match(/<rect\b[^>]*>/gi) || []) {
+    const width = numericAttr(rect, 'width')
+    const height = numericAttr(rect, 'height')
+    if (!width || width <= 0 || !height || height <= 0) continue
+    const x = numericAttr(rect, 'x') || 0
+    const y = numericAttr(rect, 'y') || 0
+    maxWidth = Math.max(maxWidth, x + width)
+    maxHeight = Math.max(maxHeight, y + height)
+  }
+  for (const line of raw.match(/<line\b[^>]*>/gi) || []) {
+    maxWidth = Math.max(maxWidth, numericAttr(line, 'x1') || 0, numericAttr(line, 'x2') || 0)
+    maxHeight = Math.max(maxHeight, numericAttr(line, 'y1') || 0, numericAttr(line, 'y2') || 0)
+  }
+  for (const text of raw.match(/<text\b[^>]*>/gi) || []) {
+    const x = numericAttr(text, 'x') || 0
+    const y = numericAttr(text, 'y') || 0
+    const fontSize = numericAttr(text, 'font-size') || 14
+    maxWidth = Math.max(maxWidth, x)
+    maxHeight = Math.max(maxHeight, y + fontSize * 0.4)
+  }
+
+  const baseWidth = existingWidth || (svgWidth && svgWidth > 0 ? svgWidth : 0) || maxWidth || 800
+  const baseHeight = existingHeight || (svgHeight && svgHeight > 0 ? svgHeight : 0) || maxHeight || 450
+  return [
+    maxWidth > baseWidth ? Math.ceil(maxWidth + 12) : baseWidth,
+    maxHeight > baseHeight ? Math.ceil(maxHeight + 12) : baseHeight,
+  ]
+}
+
+function safeStyleValue(value: string): string | null {
+  const cleaned = value.trim()
+  if (!cleaned || /[<>";]/.test(cleaned) || /javascript:|expression\s*\(/i.test(cleaned)) return null
+  if (/url\s*\(/i.test(cleaned) && !/^url\(#[A-Za-z][\w:.-]*\)$/i.test(cleaned)) return null
+  return cleaned
+}
+
+function parseStyleDeclarations(source: string): Map<string, string> {
+  const declarations = new Map<string, string>()
+  for (const declaration of source.split(';')) {
+    const colon = declaration.indexOf(':')
+    if (colon < 1) continue
+    const property = declaration.slice(0, colon).trim().toLowerCase()
+    const safeName = SVG_STYLE_ATTRS.get(property)
+    const safeValue = safeStyleValue(declaration.slice(colon + 1))
+    if (safeName && safeValue) declarations.set(safeName, safeValue)
+  }
+  return declarations
+}
+
+function extractCssClasses(raw: string): Map<string, Map<string, string>> {
+  const classes = new Map<string, Map<string, string>>()
+  for (const match of raw.matchAll(/\.([A-Za-z_][\w-]*)\s*\{([^{}]*)\}/g)) {
+    classes.set(match[1], parseStyleDeclarations(match[2]))
+  }
+  return classes
+}
+
+function escapeAttribute(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+}
+
+export function sanitizeSvg(raw: string): string {
+  const [inferredWidth, inferredHeight] = inferViewBox(raw)
+  const cssClasses = extractCssClasses(raw)
+  const hadCssRules = cssClasses.size > 0
+  const rectBounds = (raw.match(/<rect\b[^>]*>/gi) || []).flatMap(rect => {
+    const x = numericAttr(rect, 'x') || 0
+    const y = numericAttr(rect, 'y') || 0
+    const width = numericAttr(rect, 'width') || 0
+    const height = numericAttr(rect, 'height') || 0
+    return width > 0 && height > 0 ? [{ x, y, width, height }] : []
+  })
   let svg = raw.slice(0, 65536)
     .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/\.[A-Za-z_][\w-]*\s*\{[^{}]*\}/g, '')
     .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*')/gi, '')
     .replace(/javascript:/gi, '')
-  svg = svg.replace(/<(\w+)([^>]*)>/g, (_m, tag: string, attrs: string) => {
-    if (!SVG_TAGS.has(tag.toLowerCase())) return ''
-    const kept: string[] = []
-    for (const mm of attrs.matchAll(/([\w-]+)\s*=\s*("[^"]*"|'[^']*')/g)) {
-      if (SVG_ATTRS.has(mm[1].toLowerCase())) kept.push(`${mm[1]}=${mm[2]}`)
+  svg = svg.replace(/<(\/)?(\w+)([^>]*)>/g, (_m, closing: string, rawTag: string, attrs: string) => {
+    const tag = rawTag.toLowerCase()
+    if (!SVG_TAGS.has(tag)) return ''
+    if (closing) return SVG_LEAF_TAGS.has(tag) ? '' : `</${tag}>`
+
+    const kept = new Map<string, string>()
+    const keptNames = new Set<string>()
+    const classValue = attrs.match(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i)
+    for (const className of (classValue?.[1] || classValue?.[2] || '').split(/\s+/).filter(Boolean)) {
+      for (const [name, value] of cssClasses.get(className) || []) kept.set(name, value)
     }
-    return `<${tag}${kept.length ? ' ' + kept.join(' ') : ''}>`
+    for (const mm of attrs.matchAll(/([\w-]+)\s*=\s*("[^"]*"|'[^']*')/g)) {
+      const sourceName = mm[1].toLowerCase()
+      if (sourceName === 'class' || sourceName === 'style') continue
+      const safeName = SVG_ATTRS.get(sourceName)
+      if (!safeName) continue
+      kept.set(safeName, mm[2].slice(1, -1))
+      keptNames.add(sourceName)
+    }
+    const inlineStyle = attrs.match(/\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i)
+    for (const [name, value] of parseStyleDeclarations(inlineStyle?.[1] || inlineStyle?.[2] || '')) {
+      kept.set(name, value)
+    }
+    if (hadCssRules && tag === 'rect' && !kept.has('fill')) {
+      kept.set('fill', '#f8fafc')
+      kept.set('stroke', '#334155')
+      kept.set('stroke-width', '1.5')
+    }
+    if (hadCssRules && tag === 'text') {
+      if (!kept.has('fill')) kept.set('fill', '#1e293b')
+      if (!kept.has('font-family')) kept.set('font-family', 'Arial, sans-serif')
+      if (!kept.has('font-size')) kept.set('font-size', '13px')
+      if (!kept.has('text-anchor')) kept.set('text-anchor', 'middle')
+      const x = numericAttr(attrs, 'x') || 0
+      const y = numericAttr(attrs, 'y') || 0
+      const insideNode = rectBounds.some(rect => (
+        x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
+      ))
+      if (!insideNode) {
+        kept.set('paint-order', 'stroke')
+        kept.set('stroke', '#ffffff')
+        kept.set('stroke-width', '4')
+        kept.set('stroke-linejoin', 'round')
+      }
+    }
+    if (tag === 'svg') {
+      kept.set('viewBox', `0 0 ${inferredWidth} ${inferredHeight}`)
+      if (!keptNames.has('preserveaspectratio')) kept.set('preserveAspectRatio', 'xMidYMid meet')
+      kept.set('style', 'display:block;width:100%;height:auto')
+    }
+    const serialized = [...kept].map(([name, value]) => `${name}="${escapeAttribute(value)}"`)
+    const opening = `<${tag}${serialized.length ? ' ' + serialized.join(' ') : ''}`
+    return SVG_LEAF_TAGS.has(tag) ? `${opening} />` : `${opening}>`
   })
-  svg = svg.replace(/<\/(\w+)>/g, (_m, tag: string) => (SVG_TAGS.has(tag.toLowerCase()) ? `</${tag}>` : ''))
   return svg
 }
 
@@ -107,7 +265,10 @@ export default function ProcessAnimationViewer({ animation, className }: Props) 
         {animation.title && (
           <figcaption className="px-4 pt-3 text-sm font-bold text-gray-900">{animation.title}</figcaption>
         )}
-        <div className="px-4 py-4" dangerouslySetInnerHTML={{ __html: svg }} />
+        <div
+          className="px-4 py-4 overflow-x-auto [&_svg]:block [&_svg]:w-full [&_svg]:h-auto"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
       </figure>
     )
   }
@@ -134,7 +295,7 @@ export default function ProcessAnimationViewer({ animation, className }: Props) 
 
       <div className="min-h-[260px] flex items-center justify-center px-4 py-4">
         {showBars && <div dangerouslySetInnerHTML={{ __html: renderBars(step.bars) }} />}
-        {showSvg && <div dangerouslySetInnerHTML={{ __html: svgSafe }} />}
+        {showSvg && <div className="w-full [&_svg]:block [&_svg]:w-full [&_svg]:h-auto" dangerouslySetInnerHTML={{ __html: svgSafe }} />}
         {!showBars && !showSvg && (
           <div className="text-base text-gray-400 text-center max-w-md leading-relaxed">{step?.text}</div>
         )}

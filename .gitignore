@@ -27,3 +27,5 @@ backend/runtime/
 # Build artifacts & backups
 frontend/*.tsbuildinfo
 backend/*.db.bak*
+backend/backups/
+backend/*.pth

@@ -3,9 +3,12 @@ Settings API: read/write .env config, test connections.
 """
 import os
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+
+from app.core.config import settings
+from app.services.auth import CurrentLearner, get_current_learner
 
 router = APIRouter()
 
@@ -79,12 +82,18 @@ def _mask_key(key: str) -> str:
     return key[:8] + "…" + key[-4:]
 
 
+def _require_dev_settings(current: CurrentLearner):
+    if not settings.dev_test_login_enabled or not current.is_dev_login:
+        raise HTTPException(404, "Not found")
+
+
 # ── Routes ──
 
 
 @router.get("/settings")
-async def get_settings():
+async def get_settings(current: CurrentLearner = Depends(get_current_learner)):
     """Get current settings with masked API keys."""
+    _require_dev_settings(current)
     from app.core.config import settings as app_settings
 
     raw = _read_env()
@@ -115,8 +124,12 @@ class TestConnectionRequest(BaseModel):
 
 
 @router.post("/settings/test")
-async def test_connection(req: TestConnectionRequest):
+async def test_connection(
+    req: TestConnectionRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+):
     """Test LLM connection with provided credentials."""
+    _require_dev_settings(current)
     from openai import AsyncOpenAI
     from app.core.config import settings as app_settings
 
@@ -146,8 +159,12 @@ async def test_connection(req: TestConnectionRequest):
 
 
 @router.post("/settings/test-embedding")
-async def test_embedding(req: TestConnectionRequest):
+async def test_embedding(
+    req: TestConnectionRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+):
     """Test embedding API connection."""
+    _require_dev_settings(current)
     from openai import AsyncOpenAI
     from app.core.config import settings as app_settings
 
@@ -177,8 +194,12 @@ async def test_embedding(req: TestConnectionRequest):
 
 
 @router.put("/settings")
-async def save_settings(data: SettingsUpdate):
+async def save_settings(
+    data: SettingsUpdate,
+    current: CurrentLearner = Depends(get_current_learner),
+):
     """Save settings to .env file."""
+    _require_dev_settings(current)
     updates = {}
     # Only include non-None values
     mapping = {
@@ -211,8 +232,12 @@ _TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwA
 
 
 @router.post("/settings/test-vision")
-async def test_vision(req: TestConnectionRequest):
+async def test_vision(
+    req: TestConnectionRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+):
     """Test vision connection with a tiny inline image (Moonshot/kimi)."""
+    _require_dev_settings(current)
     from openai import AsyncOpenAI
     from app.core.config import settings as app_settings
 

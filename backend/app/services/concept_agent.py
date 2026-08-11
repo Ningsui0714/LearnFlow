@@ -1,14 +1,9 @@
-"""
-Concept question agent (T7).
+"""Generate source-grounded formative checks for a checkpoint.
 
-Generates concept-check questions for a checkpoint:
-- q_type: single | multi | judge | wwpd | wwpp
-- WWPD (What Would Python Do) / WWPP (What Would Python Print): code-output
-  questions. The answer is AUTHORITATIVE — we execute the reference code with
-  code_executor at generation time and use the real output as the correct
-  answer (never trusting the LLM's guess). If the verified answer collides
-  with a distractor, the question is discarded.
+Question type describes the response format, not the learning construct. Code
+output prediction is one optional format and is executable-verified when used.
 """
+import hashlib
 import json
 import re
 from typing import List, Dict, Optional
@@ -19,7 +14,11 @@ from langchain_core.messages import HumanMessage
 from app.core.config import settings
 from app.services.code_executor import execute_code
 
-GENERATE_PROMPT = """你是计算机教学命题专家。根据下面的关卡学习内容和讲义，设计概念考察题。
+SUPPORTED_QUESTION_TYPES = {"single", "multi", "judge", "code_output"}
+LEGACY_QUESTION_TYPES = {"wwpd": "code_output", "wwpp": "code_output"}
+
+
+GENERATE_PROMPT = """你是学习评价设计专家。根据下面的关卡目标、讲义和来源，设计形成性概念检查。
 
 ## 关卡
 {checkpoint_title}: {checkpoint_description}
@@ -35,14 +34,17 @@ GENERATE_PROMPT = """你是计算机教学命题专家。根据下面的关卡�
 
 ## 题目要求
 1. 出 3-8 道题，数量由内容复杂度决定：内容有料就多出，没料就少出，绝不硬凑。
-2. 题型分配：
-   - single：单选概念题（理解而非记忆，考"为什么"）
-   - multi：多选题（2-4 个正确选项）
-   - judge：判断题（只有两个选项：正确/错误）
-   - 如果教学内容包含代码且适合考察代码行为，可以用 wwpd/wwpp（给一段 Python 代码问输出）——内容不合适就不要用，不要硬凑。
-3. 难度递进：easy → medium → hard 各若干。
-4. 每题附简要解析（explanation），说明为什么对/错。
-5. 考察理解、关联、易错点，不考死记硬背。
+2. 每道题先明确一个细粒度学习目标（learning_target），再写出学生怎样的可观察回答能支持判断（evidence_claim），最后选择响应形式。不要先按题型凑配额。
+3. 当前支持的响应形式只有：
+   - single：一个正确选项；可用于解释原因、概念辨析、情境应用或错误定位。
+   - multi：多个正确选项；用于需要同时识别多个条件或关系的目标。
+   - judge：正确/错误；只在一个明确命题足以提供证据时使用，避免靠措辞猜题。
+   - code_output：代码推演；仅当关卡目标本身需要追踪 Python 执行语义，且讲义或来源确实包含相关代码时使用。系统支持这种形式不构成出题理由。
+4. 响应形式不等于认知层次。优先考察解释、辨析、错误定位、预测和近迁移，不考孤立术语记忆。
+5. 难度根据推理步数、概念组合和情境新颖度确定，不强制每档都出现。
+6. 每题附简要解析，说明答案依据以及其他选项为何不成立。
+7. 干扰项可以表示“待验证的常见混淆”，但没有学习者回答或研究证据时，不得称为已确认误解。
+8. 每题列出它实际依据的 source_chunk_ids。不得引入讲义、关卡目标和参考切片中没有出现的专有内容。
 
 ## 输出格式（JSON）
 ```json
@@ -51,8 +53,12 @@ GENERATE_PROMPT = """你是计算机教学命题专家。根据下面的关卡�
     {{
       "q_type": "single",
       "difficulty": "medium",
-      "question": "题干（wwpd/wwpp 题先给代码块，再问输出）",
-      "code": "wwpd/wwpp 题的参考代码（其他题型为空字符串）",
+      "learning_target": "本题要检查的细粒度目标",
+      "evidence_claim": "什么样的回答能说明学生理解了什么",
+      "target_concepts": ["概念A"],
+      "source_chunk_ids": [123],
+      "question": "题干",
+      "code": "仅 code_output 使用的纯 Python 代码，其他题型为空字符串",
       "options": ["选项A", "选项B", "选项C", "选项D"],
       "answer_indexes": [0],
       "explanation": "解析"
@@ -62,9 +68,9 @@ GENERATE_PROMPT = """你是计算机教学命题专家。根据下面的关卡�
 ```
 
 规则：
-- wwpd/wwpp 的 code 必须是自包含、可直接运行的 Python（只依赖标准库），不要读文件/网络。
+- code_output 的 code 必须是自包含、可直接运行的 Python（只依赖标准库），不要读文件/网络；题干中也要展示这段代码。
 - judge 题 options 必须是 ["正确", "错误"]。
-- 代码用 ```python 包裹在 question 里展示，code 字段存纯代码。
+- source_chunk_ids 只能取自参考资料切片标题中给出的 ID。
 - JSON 中所有字符串的双引号要正确转义。
 - **输出必须是单个合法的 JSON 对象**（不要 markdown 代码块包裹，不要额外文字）。"""
 
@@ -84,8 +90,8 @@ EXPLAIN_PROMPT = """你是学习辅导助手。学生回答了一道概念题，
 
 ## 要求
 - 解释为什么正确答案是对的（200-400 字）
-- 如果学生答错，指出他可能的误解点
-- wwpd/wwpp 题要解释代码的执行过程
+- 如果学生答错，指出本次回答暴露的待确认缺口；不要仅凭一道题断言稳定误解
+- code_output 题要解释代码的执行过程
 - 用 KaTeX 写公式（如有）"""
 
 
@@ -131,7 +137,7 @@ class ConceptAgent:
             max_tokens=2000,
         )
 
-    # ── WWPD/WWPP self-verification ──
+    # ── Response normalization and executable verification ──
 
     @staticmethod
     def _extract_json(content: str) -> dict:
@@ -158,6 +164,30 @@ class ConceptAgent:
         if m and m.group(1).strip():
             return m.group(1).strip()
         return o
+
+    @staticmethod
+    def _canonical_question_type(value: str) -> Optional[str]:
+        q_type = str(value or "single").strip().lower()
+        q_type = LEGACY_QUESTION_TYPES.get(q_type, q_type)
+        return q_type if q_type in SUPPORTED_QUESTION_TYPES else None
+
+    @staticmethod
+    def _verified_code_options(
+        question: str,
+        expected: str,
+        options: List[str],
+    ) -> tuple[List[str], List[int]]:
+        """Insert the executed answer once at a stable non-fixed position."""
+        distractors = [item for item in options if item != expected][:3]
+        if not distractors:
+            return [], []
+        position = int(
+            hashlib.sha256(f"{question}\n{expected}".encode("utf-8")).hexdigest()[:8],
+            16,
+        ) % (len(distractors) + 1)
+        verified = list(distractors)
+        verified.insert(position, expected)
+        return verified, [position]
 
     @staticmethod
     def _verify_code_answer(code: str) -> Optional[str]:
@@ -196,7 +226,13 @@ class ConceptAgent:
         lecture_text = ""
         for s in (lecture_sections or [])[:3]:
             lecture_text += s.get("content", "")[:1500] + "\n\n"
-        chunk_text = "\n".join(c["content"][:500] for c in chunks[:6])
+        chunk_text = "\n".join(
+            f"[source_chunk_id={c.get('id', 'unknown')}] {c.get('content', '')[:500]}"
+            for c in chunks[:6]
+        )
+        valid_chunk_ids = {
+            int(c["id"]) for c in chunks if c.get("id") is not None
+        }
 
         prompt = GENERATE_PROMPT.format(
             checkpoint_title=checkpoint_title,
@@ -218,11 +254,16 @@ class ConceptAgent:
         questions = []
         seen = set()
         for q in raw_qs:
-            q_type = q.get("q_type", "single")
+            q_type = self._canonical_question_type(q.get("q_type", "single"))
+            if not q_type:
+                continue
             question = (q.get("question") or "").strip()
             options = [self._norm_option(o) for o in (q.get("options") or [])]
             options = list(dict.fromkeys(o for o in options if o))
-            ans = [int(i) for i in (q.get("answer_indexes") or [])]
+            try:
+                ans = list(dict.fromkeys(int(i) for i in (q.get("answer_indexes") or [])))
+            except (TypeError, ValueError):
+                continue
 
             if not question or len(options) < 2 or not ans:
                 continue
@@ -234,21 +275,32 @@ class ConceptAgent:
 
             code = (q.get("code") or "").strip()
             expected = ""
-            if q_type in ("wwpd", "wwpp"):
+            if q_type == "code_output":
                 if not code:
                     continue
                 expected = self._verify_code_answer(code)
                 if expected is None:
                     continue  # code doesn't run / no output → discard
-                # Authoritative answer: replace LLM's guess with real output
-                ans = [0]  # we'll place the verified answer at options[0]
-                options = [expected] + [o for o in options if o != expected][:3]
-                if len(options) < 2:
+                options, ans = self._verified_code_options(question, expected, options)
+                if len(options) < 2 or not ans:
                     continue
             elif q_type == "judge":
                 options = ["正确", "错误"]
                 if not ans or ans[0] not in (0, 1):
                     continue
+                ans = [ans[0]]
+                code = ""
+            else:
+                code = ""
+
+            source_chunk_ids = []
+            for value in q.get("source_chunk_ids") or []:
+                try:
+                    chunk_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if chunk_id in valid_chunk_ids and chunk_id not in source_chunk_ids:
+                    source_chunk_ids.append(chunk_id)
 
             questions.append({
                 "question": question,
@@ -259,6 +311,14 @@ class ConceptAgent:
                 "answer_indexes": ans,
                 "expected_output": expected,
                 "explanation": (q.get("explanation") or "").strip(),
+                "learning_target": str(q.get("learning_target") or "").strip()[:500],
+                "evidence_claim": str(q.get("evidence_claim") or "").strip()[:500],
+                "target_concepts": [
+                    str(item).strip()[:100]
+                    for item in (q.get("target_concepts") or [])[:8]
+                    if str(item).strip()
+                ],
+                "source_chunk_ids": source_chunk_ids,
             })
 
         return questions
@@ -272,7 +332,7 @@ class ConceptAgent:
         opts = question.get("options") or []
         ans = question.get("answer_indexes") or []
         answer_text = "；".join(opts[i] for i in ans if i < len(opts))
-        if question.get("q_type") in ("wwpd", "wwpp") and question.get("expected_output"):
+        if self._canonical_question_type(question.get("q_type", "")) == "code_output" and question.get("expected_output"):
             answer_text = f"输出：{question['expected_output']}"
         if user_answer:
             user_text = "；".join(opts[i] for i in user_answer if i < len(opts)) or "（未选择）"

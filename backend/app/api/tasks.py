@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.models.project import Task, Lecture
 from app.services.task_manager import manager, TERMINAL_STATUSES
+from app.services.auth import CurrentLearner, get_current_learner, require_owned_task
 
 router = APIRouter()
 
@@ -38,22 +39,23 @@ def _snapshot(task: Task, sections=None) -> dict:
 @router.get("/tasks/{task_id}")
 async def get_task_status(
     task_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    task = (await db.execute(select(Task).where(Task.id == task_id))).scalar_one_or_none()
-    if not task:
-        raise HTTPException(404, "Task not found")
+    task = await require_owned_task(db, current.learner.id, task_id)
     return _snapshot(task)
 
 
 @router.post("/tasks/{task_id}/cancel")
-async def cancel_task(task_id: int):
+async def cancel_task(
+    task_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await require_owned_task(db, current.learner.id, task_id)
     if not manager.cancel(task_id):
         # Not running locally: maybe already finished — reflect DB state
         from app.services.task_manager import get_task
-        task = await get_task(task_id)
-        if not task:
-            raise HTTPException(404, "Task not found")
         if task.status in TERMINAL_STATUSES:
             return {"status": task.status, "already_terminal": True}
         # Running in a different process / stale: mark canceled in DB
@@ -67,19 +69,20 @@ async def cancel_task(task_id: int):
 @router.get("/tasks/{task_id}/events")
 async def task_events(
     task_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
     """SSE stream of task snapshots (polling DB every 1s, diff-based)."""
-    task = (await db.execute(select(Task).where(Task.id == task_id))).scalar_one_or_none()
-    if not task:
-        raise HTTPException(404, "Task not found")
+    task = await require_owned_task(db, current.learner.id, task_id)
 
     async def event_stream():
         last_payload = None
         try:
             while True:
                 db.expire_all()
-                t = (await db.execute(select(Task).where(Task.id == task_id))).scalar_one_or_none()
+                t = (await db.execute(select(Task).where(
+                    Task.id == task_id, Task.learner_id == current.learner.id,
+                ))).scalar_one_or_none()
                 if t is None:
                     yield f"data: {json.dumps({'type': 'error', 'message': '任务不存在'}, ensure_ascii=False)}\n\n"
                     break

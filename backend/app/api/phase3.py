@@ -15,6 +15,11 @@ from app.schemas.project import ExerciseOut, CodeRunRequest, CodeRunResult
 from app.services.code_executor import execute_code
 from app.services.code_agent import CodeAgent
 from app.services.concept_agent import ConceptAgent
+from app.services.auth import (
+    CurrentLearner, get_current_learner, require_owned_checkpoint,
+    require_owned_exercise, require_owned_project,
+)
+from app.services.profile import evaluate_project_badge
 from langchain_core.messages import HumanMessage
 
 router = APIRouter()
@@ -26,8 +31,10 @@ router = APIRouter()
 async def list_exercises(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """List exercises for a checkpoint."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Exercise)
         .where(Exercise.checkpoint_id == checkpoint_id)
@@ -52,11 +59,10 @@ async def create_exercise(
     checkpoint_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Create a new exercise."""
-    cp = await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))
-    if not cp.scalar_one_or_none():
-        raise HTTPException(404, "Checkpoint not found")
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
 
     exercise = Exercise(
         checkpoint_id=checkpoint_id,
@@ -67,6 +73,10 @@ async def create_exercise(
         test_cases=data.get("test_cases", []),
         hints=data.get("hints", []),
         order=data.get("order", 0),
+        assessment_meta=data.get("assessment_meta", {
+            "mode": "practice",
+            "evidence_target": {"practice": "independent_success"},
+        }),
         files=data.get("files", []),
         entrypoint=data.get("entrypoint", ""),
         requirements=data.get("requirements", []),
@@ -93,12 +103,10 @@ async def create_exercise(
 async def get_exercise(
     exercise_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Get exercise details."""
-    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
-    e = result.scalar_one_or_none()
-    if not e:
-        raise HTTPException(404, "Exercise not found")
+    e = await require_owned_exercise(db, current.learner.id, exercise_id)
     return ExerciseOut(
         id=e.id, checkpoint_id=e.checkpoint_id, title=e.title,
         description=e.description, starter_code=e.starter_code,
@@ -116,12 +124,10 @@ async def save_exercise_files(
     exercise_id: int,
     req: CodeRunRequest,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Persist user's edited files for a project-mode exercise."""
-    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
-    exercise = result.scalar_one_or_none()
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
     if not req.files:
         raise HTTPException(400, "files 不能为空")
 
@@ -152,16 +158,14 @@ async def run_code(
     exercise_id: int,
     req: CodeRunRequest,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Execute code for an exercise.
 
     - Project-mode (exercise.files non-empty): run whole project in runtime venv.
     - Classic mode: run single code snippet.
     """
-    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
-    exercise = result.scalar_one_or_none()
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
 
     files = exercise.files or []
     if files:
@@ -191,6 +195,7 @@ async def run_code(
 @router.post("/exercises/run", response_model=CodeRunResult)
 async def run_standalone_code(
     req: CodeRunRequest,
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Execute arbitrary Python code (no exercise context)."""
     res = execute_code(req.code)
@@ -204,12 +209,10 @@ async def run_standalone_code(
 async def exercise_env_status(
     exercise_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Report runtime env readiness for a project-mode exercise."""
-    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
-    exercise = result.scalar_one_or_none()
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
     from app.services import project_runner
     return {
         "ready": project_runner.venv_ready(),
@@ -226,12 +229,10 @@ async def review_code(
     exercise_id: int,
     req: CodeRunRequest,  # code + optional selection
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Review code with AI agent."""
-    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
-    exercise = result.scalar_one_or_none()
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
 
     context = f"{exercise.title}: {exercise.description[:200]}"
     agent = CodeAgent()
@@ -241,12 +242,23 @@ async def review_code(
     else:
         answer = await agent.review(req.code, context)
 
+    from app.services.learning_runtime import record_event
+    await record_event(
+        db, event_type="code_review_requested", source="ui",
+        learner_id=current.learner.id,
+        checkpoint_id=exercise.checkpoint_id,
+        payload={"exercise_id": exercise.id, "has_selection": bool(req.selection)},
+        provenance={"endpoint": "exercise/review"},
+    )
+    await db.commit()
+
     return {"answer": answer}
 
 
 @router.post("/code/ask")
 async def ask_code_question(
     data: dict,
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Ask a question about code (without exercise context)."""
     agent = CodeAgent()
@@ -294,8 +306,10 @@ async def ask_code_question(
 async def index_embeddings(
     project_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Batch index all chunks for a project via DeepSeek API."""
+    await require_owned_project(db, current.learner.id, project_id)
     from app.models.project import Chunk, Source
     from app.services.embedding import embed_batch, cache_embedding
 
@@ -333,7 +347,9 @@ async def index_embeddings(
 async def list_concepts(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     rows = (await db.execute(
         select(ConceptQuestion)
         .where(ConceptQuestion.checkpoint_id == checkpoint_id)
@@ -356,8 +372,10 @@ async def list_concepts(
 async def generate_concepts(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Create a background concept-question generation task (T7)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     if not settings.llm_api_key or settings.llm_api_key == "***":
         raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
     cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))).scalar_one_or_none()
@@ -373,6 +391,7 @@ async def generate_concepts(
         return {"task_id": running.id, "status": running.status, "already_running": True}
 
     task = Task(
+        learner_id=current.learner.id,
         project_id=roadmap.project_id if roadmap else None,
         checkpoint_id=checkpoint_id,
         type="concept_generate",
@@ -392,7 +411,9 @@ async def generate_concepts(
 async def get_concept_task(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Task)
         .where(Task.checkpoint_id == checkpoint_id, Task.type == "concept_generate")
@@ -412,8 +433,10 @@ async def explain_concept(
     question_id: int,
     data: dict = Body(default={}),
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Lazy AI explanation for one question, with the user's answer."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     q = (await db.execute(select(ConceptQuestion).where(
         ConceptQuestion.id == question_id,
         ConceptQuestion.checkpoint_id == checkpoint_id,
@@ -432,6 +455,15 @@ async def explain_concept(
         },
         user_answer=[int(i) for i in (data or {}).get("user_answer_indexes", [])],
     )
+    from app.services.learning_runtime import record_event
+    await record_event(
+        db, event_type="explanation_requested", source="ui",
+        learner_id=current.learner.id,
+        checkpoint_id=checkpoint_id,
+        payload={"item_type": "concept", "item_id": question_id},
+        provenance={"endpoint": "concept/explain"},
+    )
+    await db.commit()
     return {"explanation": answer, "base_explanation": q.explanation}
 
 
@@ -441,8 +473,10 @@ async def submit_concept(
     question_id: int,
     data: dict = Body(default={}),
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """Instant grading: return correct/wrong + right answers (no LLM)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     q = (await db.execute(select(ConceptQuestion).where(
         ConceptQuestion.id == question_id,
         ConceptQuestion.checkpoint_id == checkpoint_id,
@@ -454,11 +488,51 @@ async def submit_concept(
     is_correct = user == correct and len(user) > 0
     from app.services.progress import record_concept_answer
     await record_concept_answer(checkpoint_id, question_id, is_correct)
+    assistance_level = str((data or {}).get("assistance_level") or "none")
+    from app.services.learning_runtime import (
+        create_attempt, record_event, evaluate_checkpoint_status,
+    )
+    attempt = await create_attempt(
+        db,
+        learner_id=current.learner.id,
+        checkpoint_id=checkpoint_id,
+        item_type="concept",
+        item_id=question_id,
+        submission={"answer_indexes": user},
+        result={"correct": is_correct, "answer_indexes": correct},
+        assistance_level=assistance_level,
+    )
+    cp = await db.get(Checkpoint, checkpoint_id)
+    roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
+    await record_event(
+        db, event_type="concept_attempt_evaluated", source="assessment",
+        learner_id=current.learner.id,
+        project_id=roadmap.project_id if roadmap else None,
+        checkpoint_id=checkpoint_id,
+        payload={
+            "attempt_id": attempt.id,
+            "item_id": question_id,
+            "question": q.question,
+            "correct": is_correct,
+            "independent": assistance_level == "none",
+            "assistance_level": assistance_level,
+        },
+        provenance={"grader": "exact_match", "question_type": q.q_type},
+        client_event_id=f"attempt:{attempt.id}:evaluated",
+    )
+    await evaluate_checkpoint_status(db, checkpoint_id, learner_id=current.learner.id)
+    if roadmap:
+        await evaluate_project_badge(
+            db, learner_id=current.learner.id, project_id=roadmap.project_id,
+        )
+    await db.commit()
     return {
         "correct": is_correct,
         "answer_indexes": correct,
         "user_answer_indexes": user,
         "explanation": q.explanation or "",
+        "attempt_id": attempt.id,
+        "assistance_level": assistance_level,
     }
 
 
@@ -468,9 +542,11 @@ async def submit_concept(
 async def generate_exercises(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """T8: background exercise generation — blueprint → per-exercise →
     executable verification (solution × test_cases must all pass)."""
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     if not settings.llm_api_key or settings.llm_api_key == "***":
         raise HTTPException(400, "请先配置 API Key: 在设置页填写 LLM_API_KEY")
     cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == checkpoint_id))).scalar_one_or_none()
@@ -486,6 +562,7 @@ async def generate_exercises(
         return {"task_id": running.id, "status": running.status, "already_running": True}
 
     task = Task(
+        learner_id=current.learner.id,
         project_id=roadmap.project_id if roadmap else None,
         checkpoint_id=checkpoint_id,
         type="exercise_generate",
@@ -505,7 +582,9 @@ async def generate_exercises(
 async def get_exercise_task(
     checkpoint_id: int,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
+    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Task)
         .where(Task.checkpoint_id == checkpoint_id, Task.type == "exercise_generate")
@@ -524,14 +603,66 @@ async def submit_exercise(
     exercise_id: int,
     req: CodeRunRequest,
     db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
 ):
     """T8: judge user code against the exercise's test cases.
     Returns per-case results (passed/expected/actual)."""
-    exercise = (await db.execute(
-        select(Exercise).where(Exercise.id == exercise_id)
-    )).scalar_one_or_none()
-    if not exercise:
-        raise HTTPException(404, "Exercise not found")
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
+
+    async def persist_attempt(response: dict, passed_ok: bool):
+        import hashlib
+        from app.services.learning_runtime import (
+            create_attempt, record_event, evaluate_checkpoint_status,
+        )
+        code_bytes = (req.code or "").encode("utf-8")
+        file_refs = [
+            {
+                "name": f.get("name", ""),
+                "sha256": hashlib.sha256(str(f.get("content", "")).encode("utf-8")).hexdigest(),
+            }
+            for f in (req.files or []) if f.get("name")
+        ]
+        submission = {
+            "code": req.code[:65536],
+            "code_sha256": hashlib.sha256(code_bytes).hexdigest(),
+            "truncated": len(code_bytes) > 65536,
+            "files": file_refs,
+        }
+        attempt = await create_attempt(
+            db,
+            learner_id=current.learner.id,
+            checkpoint_id=exercise.checkpoint_id,
+            item_type="exercise",
+            item_id=exercise.id,
+            submission=submission,
+            result=response,
+            assistance_level=req.assistance_level or "none",
+        )
+        cp = await db.get(Checkpoint, exercise.checkpoint_id)
+        roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
+        await record_event(
+            db, event_type="exercise_attempt_evaluated", source="assessment",
+            learner_id=current.learner.id,
+            project_id=roadmap.project_id if roadmap else None,
+            checkpoint_id=exercise.checkpoint_id,
+            payload={
+                "attempt_id": attempt.id,
+                "item_id": exercise.id,
+                "passed": passed_ok,
+                "assistance_level": req.assistance_level or "none",
+            },
+            provenance={"grader": exercise.judge_mode or "test_cases"},
+            client_event_id=f"attempt:{attempt.id}:evaluated",
+        )
+        await evaluate_checkpoint_status(
+            db, exercise.checkpoint_id, learner_id=current.learner.id,
+        )
+        if roadmap:
+            await evaluate_project_badge(
+                db, learner_id=current.learner.id, project_id=roadmap.project_id,
+            )
+        await db.commit()
+        return attempt.id
 
     # Project-mode judging: run the whole project, check stdout
     if (exercise.files or []) and exercise.judge_mode == "stdout_check":
@@ -547,22 +678,28 @@ async def submit_exercise(
         res = run_project(exercise_id, merged, exercise.entrypoint or "main.py",
                           exercise.requirements or [])
         if res["exit_code"] != 0 and not res["timed_out"]:
-            return {"passed": 0, "total": 1, "results": [
+            response = {"passed": 0, "total": 1, "results": [
                 {"passed": False, "expected": "正常运行", "actual": f"退出码 {res['exit_code']}",
                  "stderr": res["stderr"][:200]}
             ], "error": None}
+            response["attempt_id"] = await persist_attempt(response, False)
+            return response
         check = check_stdout(res["stdout"], exercise.judge_config or {})
         if check["passed"]:
             from app.services.progress import record_exercise_solved
             await record_exercise_solved(exercise.checkpoint_id, exercise.id)
-        return {"passed": 1 if check["passed"] else 0, "total": 1,
+        response = {"passed": 1 if check["passed"] else 0, "total": 1,
                 "results": [{"passed": check["passed"], "expected": check["expected"],
                               "actual": check["actual"], "detail": check["detail"]}],
                 "stdout": res["stdout"][-1000:]}
+        response["attempt_id"] = await persist_attempt(response, bool(check["passed"]))
+        return response
 
     test_cases = exercise.test_cases or []
     if not test_cases:
-        return {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}
+        response = {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}
+        response["attempt_id"] = await persist_attempt(response, False)
+        return response
 
     from app.services.exercise_agent import ExerciseAgent
     results = ExerciseAgent.verify_exercise(req.code, test_cases)
@@ -570,4 +707,8 @@ async def submit_exercise(
     if passed == len(results) and passed > 0:
         from app.services.progress import record_exercise_solved
         await record_exercise_solved(exercise.checkpoint_id, exercise.id)
-    return {"passed": passed, "total": len(results), "results": results}
+    response = {"passed": passed, "total": len(results), "results": results}
+    response["attempt_id"] = await persist_attempt(
+        response, passed == len(results) and passed > 0
+    )
+    return response

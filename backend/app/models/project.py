@@ -8,6 +8,7 @@ class Project(Base):
     __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, default="")
     user_level = Column(String(50), default="beginner")
@@ -73,6 +74,9 @@ class Checkpoint(Base):
     order = Column(Integer, nullable=False)
     prerequisites = Column(JSON, default=list)  # list of checkpoint ids
     completed = Column(Boolean, default=False)
+    learning_status = Column(String(30), default="not_started", index=True)
+    legacy_completed = Column(Boolean, default=False)
+    learning_contract = Column(JSON, default=dict)
     archived = Column(Boolean, default=False)  # T10: removed-but-kept checkpoints
     brief = Column(JSON, default=dict)  # CheckpointBrief handoff contract (see docs/design)
     progress = Column(JSON, default=dict)  # T10: {lecture_read, exercises_done, concept_total, concept_correct, notes_count}
@@ -132,6 +136,7 @@ class Exercise(Base):
     requirements = Column(JSON, default=list)       # ["torch", "scikit-learn"]
     judge_mode = Column(String(50), default="test_cases")  # test_cases | stdout_check
     judge_config = Column(JSON, default=dict)       # {pattern, min_accuracy} for stdout_check
+    assessment_meta = Column(JSON, default=dict)   # targets, rubric, evidence contract
 
     checkpoint = relationship("Checkpoint", back_populates="exercises")
 
@@ -171,12 +176,7 @@ class LectureNote(Base):
 
 
 class ConceptQuestion(Base):
-    """Concept check question (T7): single/multi/judge/WWPD/WWPP.
-
-    WWPD (What Would Python Do) / WWPP (What Would Python Print): the user
-    predicts the output of a code snippet; the expected output is verified by
-    executing the code (code_executor) at generation time.
-    """
+    """A formative check with a response format and an evidence contract."""
 
     __tablename__ = "concept_questions"
 
@@ -185,12 +185,13 @@ class ConceptQuestion(Base):
     question = Column(Text, nullable=False)
     options = Column(JSON, default=list)        # list[str]
     answer_indexes = Column(JSON, default=list) # list[int] (multi supports >1)
-    q_type = Column(String(20), default="single")  # single | multi | judge | wwpd | wwpp
+    q_type = Column(String(20), default="single")  # single | multi | judge | code_output
     difficulty = Column(String(10), default="medium")  # easy | medium | hard
     explanation = Column(Text, default="")
     source_chunk_ids = Column(JSON, default=list)
-    code = Column(Text, default="")            # wwpd/wwpp reference code
+    code = Column(Text, default="")            # executable reference for code_output
     expected_output = Column(Text, default="") # verified by code execution
+    assessment_meta = Column(JSON, default=dict)   # mode, targets, rubric, evidence contract
     order = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -230,8 +231,10 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    agent_action_id = Column(Integer, ForeignKey("agent_actions.id"), nullable=True, index=True)
     type = Column(String(50), nullable=False, index=True)  # lecture_generate | ...
     status = Column(String(50), default="queued", index=True)  # queued running completed failed canceled
     payload = Column(JSON, default=dict)

@@ -13,6 +13,50 @@ from sqlalchemy import select
 from app.db.database import async_session
 from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion, ConceptQuestion, Exercise, Source
 from app.services.lecture_agent import LectureAgent
+
+
+async def run_source_ingestion(task_id: int):
+    """Run the existing source pipeline behind a persistent Tutor action."""
+    from fastapi import HTTPException
+    from app.services.task_manager import update_task, classify_error
+
+    await update_task(
+        task_id,
+        status="running",
+        started_at=datetime.utcnow(),
+        progress={"current": 0, "total": 1, "message": "正在读取并整理来源..."},
+    )
+    async with async_session() as db:
+        task = await db.get(Task, task_id)
+        if not task:
+            return
+        project_id = (task.payload or {}).get("project_id")
+        source_id = (task.payload or {}).get("source_id")
+        try:
+            from app.api.phase1 import process_source
+            result = await process_source(project_id, source_id, db)
+        except HTTPException as exc:
+            err = {
+                "code": "source_processing",
+                "message": str(exc.detail)[:500],
+                "guidance": "检查来源地址和网络后重试。",
+                "retryable": True,
+            }
+            await update_task(task_id, status="failed", error=err, finished_at=datetime.utcnow())
+            return
+        except Exception as exc:
+            await update_task(
+                task_id, status="failed", error=classify_error(exc), finished_at=datetime.utcnow()
+            )
+            return
+
+    await update_task(
+        task_id,
+        status="completed",
+        result=result,
+        progress={"current": 1, "total": 1, "message": "来源处理完成"},
+        finished_at=datetime.utcnow(),
+    )
 from app.services.task_manager import update_task
 
 
@@ -107,9 +151,58 @@ def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
             pass
 
 
+def _repair_markdown_fences(content: str) -> str:
+    """Prevent a malformed math fence from swallowing the rest of a section."""
+    import re as _re
+
+    output: list[str] = []
+    math_open = False
+    code_marker = ""
+    code_marker_length = 0
+    for line in content.split("\n"):
+        stripped = line.strip()
+        if code_marker:
+            output.append(line)
+            if _re.fullmatch(
+                _re.escape(code_marker) + "{" + str(code_marker_length) + ",}",
+                stripped,
+            ):
+                code_marker = ""
+                code_marker_length = 0
+            continue
+
+        if stripped == "$$":
+            output.append(line)
+            math_open = not math_open
+            continue
+
+        fence = _re.match(r"^(`{3,}|~{3,})(.*)$", stripped)
+        if fence:
+            marker, info = fence.groups()
+            if math_open:
+                if info.strip():
+                    output.extend(("$$", line))
+                    code_marker = marker[0]
+                    code_marker_length = len(marker)
+                else:
+                    output.append(line.replace(stripped, "$$"))
+                math_open = False
+                continue
+            output.append(line)
+            code_marker = marker[0]
+            code_marker_length = len(marker)
+            continue
+
+        output.append(line)
+
+    if math_open:
+        output.append("$$")
+    return "\n".join(output)
+
+
 def _postprocess_section(content: str, source_file: str, source_id: int,
                          persist_dir: str, all_source_ids: list = None) -> str:
-    """Rewrite image paths + render matplotlib blocks (T6)."""
+    """Repair Markdown, rewrite image paths and render matplotlib blocks."""
     import re as _re
     if not content:
         return content
@@ -122,6 +215,7 @@ def _postprocess_section(content: str, source_file: str, source_id: int,
         return "\n*（示意图渲染失败）*\n"
 
     content = _re.sub(r"```matplotlib\s*\n(.*?)```", _fix_mpl, content, flags=_re.DOTALL)
+    content = _repair_markdown_fences(content)
     content = _rewrite_image_paths(content, source_file, source_id, persist_dir, all_source_ids)
     return content
 
@@ -391,8 +485,8 @@ async def run_lecture_generation(task_id: int):
         checkpoint = (await db.execute(
             select(Checkpoint).where(Checkpoint.id == checkpoint_id)
         )).scalar_one_or_none()
-        if checkpoint:
-            checkpoint.completed = True
+        if checkpoint and checkpoint.learning_status not in {"completed", "verification_due"}:
+            checkpoint.learning_status = "in_progress"
 
         # T3 write-back: citation feedback → brief retrieval policy
         if checkpoint and checkpoint.brief:
@@ -756,7 +850,7 @@ async def run_image_captioning(task_id: int):
 # ── T7: concept question generation ──
 
 async def run_concept_generation(task_id: int):
-    """Generate verified concept questions (WWPD/WWPP answers checked by execution)."""
+    """Generate source-grounded formative checks for one checkpoint."""
     task = await update_task(task_id, status="running", started_at=datetime.utcnow())
     if not task:
         return
@@ -796,7 +890,7 @@ async def run_concept_generation(task_id: int):
         scope_files=(brief or {}).get("scope", {}).get("files"),
     )
 
-    await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在命题并校验..."})
+    await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在按学习目标设计并校验题目..."})
     from app.services.concept_agent import ConceptAgent
     cagent = ConceptAgent()
     questions = await cagent.generate(
@@ -808,8 +902,8 @@ async def run_concept_generation(task_id: int):
         await update_task(
             task_id, status="failed",
             error={"code": "llm_format",
-                   "message": "命题失败：没有生成有效题目（可能 WWPD 代码校验未通过）",
-                   "guidance": "请重试；若持续出现，可能是内容不适合出题",
+                   "message": "命题失败：没有生成符合关卡目标与格式约束的题目",
+                   "guidance": "请重试；若持续出现，请检查关卡目标、讲义和来源切片是否充分",
                    "retryable": True},
             progress={"current": 0, "total": 0, "message": "命题失败"},
             finished_at=datetime.utcnow())
@@ -831,7 +925,17 @@ async def run_concept_generation(task_id: int):
                 q_type=q["q_type"],
                 difficulty=q["difficulty"],
                 explanation=q["explanation"],
+                source_chunk_ids=q.get("source_chunk_ids", []),
                 code=q["code"],
+                assessment_meta={
+                    "mode": "formative",
+                    "target_concepts": q.get("target_concepts", []),
+                    "learning_target": q.get("learning_target", ""),
+                    "evidence_claim": q.get("evidence_claim", ""),
+                    "response_format": q["q_type"],
+                    "design_status": "provisional",
+                    "evidence_target": {"knowledge": "concept_attempt"},
+                },
                 expected_output=q["expected_output"],
                 order=i + 1,
             ))
@@ -935,6 +1039,12 @@ async def run_exercise_generation(task_id: int):
                 test_cases=ex["test_cases"],
                 hints=ex["hints"],
                 order=i + 1,
+                assessment_meta={
+                    "mode": "practice",
+                    "target_skills": ex.get("target_skills", []),
+                    "independence_criteria": ["tests_pass", "no_guidance"],
+                    "evidence_target": {"practice": "independent_success"},
+                },
             ))
         await db.commit()
 

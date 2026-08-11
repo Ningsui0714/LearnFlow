@@ -25,6 +25,14 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./learnflow.db"
+    five_kernel_enabled: bool = True
+    memory_auto_synthesis_enabled: bool = False
+    github_token: str = ""
+    github_resource_search_enabled: bool = True
+    dev_test_login_enabled: bool = True
+    auth_cookie_name: str = "learnflow_session"
+    auth_session_days: int = 7
+    auth_cookie_secure: bool = False
 
     # Embedding
     embedding_backend: str = "local"  # local | api

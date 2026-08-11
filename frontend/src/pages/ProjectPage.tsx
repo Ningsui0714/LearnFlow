@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getProject, addSource, listSources, processAllSources, getRoadmap, startImageCaptioning, getTaskStatus, setSourceRole, reconcileSources, applyReconcile } from '../services/api'
-import ChatInterface from '../components/workspace/ChatInterface'
+import { BookOpen } from 'lucide-react'
+import {
+  getProject, addSource, listSources, processAllSources, processSource, getRoadmap,
+  startImageCaptioning, getTaskStatus, setSourceRole, reconcileSources, applyReconcile,
+  getAcceptedProjectProposal, getProjectProposal, refreshProjectProposalSources,
+} from '../services/api'
+import type { ProjectProposal, ProjectProposalSource } from '../services/api'
+import TutorPanel from '../components/tutor/TutorPanel'
 import CheckpointGraph from '../components/checkpoint/CheckpointGraph'
 
 interface CheckpointNode {
@@ -14,6 +20,7 @@ interface CheckpointNode {
   chunk_ids: number[]
   archived?: boolean
   progress?: any
+  learning_status?: 'not_started' | 'in_progress' | 'verification_due' | 'blocked' | 'completed'
 }
 
 export default function ProjectPage() {
@@ -33,6 +40,9 @@ export default function ProjectPage() {
   const [visionEnhanceEnabled, setVisionEnhanceEnabled] = useState(false)
   const [reconcileSuggestion, setReconcileSuggestion] = useState<any>(null)
   const [reconcileLoading, setReconcileLoading] = useState(false)
+  const [projectProposal, setProjectProposal] = useState<ProjectProposal | null>(null)
+  const [addingCandidateUrl, setAddingCandidateUrl] = useState<string | null>(null)
+  const [refreshingCandidates, setRefreshingCandidates] = useState(false)
 
   // Check whether paid API enhance is allowed (settings)
   useEffect(() => {
@@ -136,12 +146,14 @@ export default function ProjectPage() {
     try {
       // NOTE: chunks are NOT loaded into the UI anymore (huge repos have
       // 100k+ chunks — rendering them froze the page). Only counts are shown.
-      const [p, s] = await Promise.all([
+      const [p, s, proposal] = await Promise.all([
         getProject(pid).catch(() => null),
         listSources(pid).catch(() => []),
+        getAcceptedProjectProposal(pid).catch(() => null),
       ])
       setProject(p)
       setSources(s)
+      setProjectProposal(proposal)
       setChunks([])
       loadRoadmap()
     } catch (e) {
@@ -167,6 +179,58 @@ export default function ProjectPage() {
       load()
     } catch (e) {
       console.error('Failed to add source', e)
+    }
+  }
+
+  const handleAddCandidateSource = async (candidate: ProjectProposalSource) => {
+    if (addingCandidateUrl) return
+    setAddingCandidateUrl(candidate.url)
+    setNotification('正在添加并处理候选来源...')
+    try {
+      const source = await addSource(pid, { type: candidate.type || 'url', url: candidate.url })
+      await processSource(pid, source.id)
+      setNotification('候选来源已添加并处理完成')
+      await load()
+    } catch (error: any) {
+      setNotification(error?.response?.data?.detail || '候选来源处理失败，可稍后重试')
+    } finally {
+      setAddingCandidateUrl(null)
+      setTimeout(() => setNotification(null), 4000)
+    }
+  }
+
+  const handleRefreshCandidateSources = async () => {
+    if (!projectProposal || refreshingCandidates) return
+    setRefreshingCandidates(true)
+    setNotification('正在重新检索并排序候选来源...')
+    try {
+      let latest = await refreshProjectProposalSources(projectProposal.id)
+      setProjectProposal(latest)
+      const deadline = Date.now() + 45_000
+      while (['queued', 'searching'].includes(latest.source_status) && Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 1500))
+        latest = await getProjectProposal(projectProposal.id)
+        setProjectProposal(latest)
+      }
+      if (latest.source_status === 'failed') {
+        throw new Error(latest.artifact.source_search_last_error || '候选来源检索失败')
+      }
+      if (['queued', 'searching'].includes(latest.source_status)) {
+        setNotification('检索仍在后台进行，稍后会显示最新结果')
+      } else {
+        const selected = latest.artifact.candidate_sources?.length || 0
+        const discovered = latest.artifact.source_search_discovered_count || selected
+        setNotification(
+          latest.artifact.source_search_result_changed
+            ? `已从 ${discovered} 个仓库中更新 ${selected} 个候选来源`
+            : `已重新检索 ${discovered} 个仓库，当前最佳候选未变化`,
+        )
+      }
+    } catch (error: any) {
+      setNotification(error?.response?.data?.detail || error?.message || '候选来源检索失败，可稍后重试')
+    } finally {
+      setRefreshingCandidates(false)
+      window.setTimeout(() => setNotification(null), 5000)
     }
   }
 
@@ -197,6 +261,13 @@ export default function ProjectPage() {
   }, [])
 
   const handleCheckpointClick = (checkpointId: number) => {
+    import('../services/api').then(({ recordLearningEvent }) => recordLearningEvent({
+      client_event_id: `checkpoint-open-${checkpointId}-${Date.now()}`,
+      event_type: 'checkpoint_entered',
+      project_id: pid,
+      checkpoint_id: checkpointId,
+      payload: {},
+    })).catch(() => {})
     navigate(`/projects/${pid}/checkpoints/${checkpointId}`)
   }
 
@@ -214,7 +285,7 @@ export default function ProjectPage() {
           {notification}
         </div>
       )}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 shrink-0">
+      <div className="bg-white border-b border-gray-200 px-4 py-4 sm:px-6 shrink-0">
         <button onClick={() => navigate('/')} className="text-sm text-gray-400 hover:text-gray-600 mb-1">
           ← 返回
         </button>
@@ -224,9 +295,19 @@ export default function ProjectPage() {
         )}
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      {projectProposal && (
+        <div className="flex shrink-0 items-start gap-2 border-b border-gray-200 bg-gray-50 px-4 py-2.5 sm:px-6">
+          <BookOpen size={14} className="mt-0.5 shrink-0 text-indigo-600" />
+          <div className="min-w-0 text-xs">
+            <p className="font-medium text-gray-600">学习目标</p>
+            <p className="mt-0.5 leading-5 text-gray-800">{projectProposal.artifact.learning_goal}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
         {/* Left sidebar: Sources */}
-        <div className="w-72 border-r border-gray-200 bg-white overflow-y-auto shrink-0 p-4">
+        <div className="max-h-72 w-full shrink-0 overflow-y-auto border-b border-gray-200 bg-white p-4 md:max-h-none md:w-72 md:border-b-0 md:border-r">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold text-sm">参考资料</h2>
             <button
@@ -400,14 +481,20 @@ export default function ProjectPage() {
         </div>
 
         {/* Main content */}
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex min-h-[540px] flex-1 overflow-hidden md:min-h-0">
           {/* Tabs: empty state */}
           {!hasProcessedChunks && (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
-              <div className="text-center">
-                <p className="text-4xl mb-2">📚</p>
-                <p className="text-sm">添加参考资料并处理，即可开始规划学习路线</p>
-              </div>
+            <div className="flex-1 p-4">
+              <TutorPanel
+                projectId={pid}
+                className="h-full"
+                projectProposal={projectProposal}
+                projectSources={sources}
+                candidateSourcesRefreshing={refreshingCandidates}
+                addingCandidateUrl={addingCandidateUrl}
+                onRefreshCandidateSources={handleRefreshCandidateSources}
+                onAddCandidateSource={handleAddCandidateSource}
+              />
             </div>
           )}
 
@@ -434,7 +521,7 @@ export default function ProjectPage() {
                       : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  📋 路线规划对话
+                  学习 Tutor
                 </button>
               </div>
 
@@ -446,7 +533,7 @@ export default function ProjectPage() {
                       <div>
                         <div className="flex items-center justify-between mb-3">
                           <h2 className="font-semibold text-sm text-gray-700">
-                            已规划 {checkpoints.filter(c => c.completed).length}/{checkpoints.length} 关
+                            已验证 {checkpoints.filter(c => c.learning_status === 'completed').length}/{checkpoints.length} 关
                           </h2>
                         </div>
                         <CheckpointGraph
@@ -456,7 +543,7 @@ export default function ProjectPage() {
                       </div>
                     ) : (
                       <div className="flex items-center justify-center h-64 text-gray-400 text-sm">
-                        切换到「路线规划对话」标签页，与 AI 对话生成学习路线
+                        切换到「学习 Tutor」，直接说“为这个项目规划学习路线”
                       </div>
                     )}
                   </div>
@@ -464,9 +551,17 @@ export default function ProjectPage() {
 
                 {activeTab === 'sources' && (
                   <div className="h-full p-4">
-                    <ChatInterface
+                    <TutorPanel
                       projectId={pid}
+                      className="h-full"
                       onRoadmapUpdate={handleRoadmapUpdate}
+                      onCheckpointChange={checkpoint => navigate(`/projects/${pid}/checkpoints/${checkpoint.id}`)}
+                      projectProposal={projectProposal}
+                      projectSources={sources}
+                      candidateSourcesRefreshing={refreshingCandidates}
+                      addingCandidateUrl={addingCandidateUrl}
+                      onRefreshCandidateSources={handleRefreshCandidateSources}
+                      onAddCandidateSource={handleAddCandidateSource}
                     />
                   </div>
                 )}

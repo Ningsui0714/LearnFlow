@@ -1,24 +1,42 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import ProtectedRoute from './components/auth/ProtectedRoute'
 import Layout from './components/layout/Layout'
-import HomePage from './pages/HomePage'
-import ProjectPage from './pages/ProjectPage'
+import { useAuth } from './contexts/AuthContext'
+import AgentPage from './pages/AgentPage'
 import CheckpointPage from './pages/CheckpointPage'
 import ExercisePage from './pages/ExercisePage'
+import HomePage from './pages/HomePage'
+import LoginPage from './pages/LoginPage'
+import MemoryGraphPage from './pages/MemoryGraphPage'
+import ProfilePage from './pages/ProfilePage'
+import ProjectPage from './pages/ProjectPage'
+import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
 
-function App() {
+function DevSettingsRoute() {
+  const { user } = useAuth()
+  return user?.is_dev_login ? <SettingsPage /> : <Navigate to="/agent" replace />
+}
+
+export default function App() {
   return (
     <Routes>
-      <Route element={<Layout />}>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/projects/:projectId" element={<ProjectPage />} />
-        <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />
-        <Route path="/projects/:projectId/checkpoints/:checkpointId/exercises" element={<ExercisePage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<Layout />}>
+          <Route path="/" element={<Navigate to="/agent" replace />} />
+          <Route path="/agent" element={<AgentPage />} />
+          <Route path="/projects" element={<HomePage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/memory" element={<MemoryGraphPage />} />
+          <Route path="/settings" element={<DevSettingsRoute />} />
+          <Route path="/projects/:projectId" element={<ProjectPage />} />
+          <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />
+          <Route path="/projects/:projectId/checkpoints/:checkpointId/exercises" element={<ExercisePage />} />
+        </Route>
       </Route>
+      <Route path="*" element={<Navigate to="/agent" replace />} />
     </Routes>
   )
 }
-
-export default App

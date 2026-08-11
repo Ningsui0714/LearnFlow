@@ -3,7 +3,143 @@ import axios from 'axios'
 const api = axios.create({
   baseURL: '/api',
   timeout: 90000,
+  withCredentials: true,
 })
+
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error?.response?.status === 401) {
+      window.dispatchEvent(new CustomEvent('learnflow:unauthorized'))
+    }
+    return Promise.reject(error)
+  },
+)
+
+export interface AuthUser {
+  id: number
+  username: string
+  display_name: string
+  learner_id: number
+  is_legacy_demo: boolean
+  is_dev_login: boolean
+  dev_test_login_enabled: boolean
+  profile: {
+    education_stage: string
+    background: string
+    focus_areas: string[]
+    weekly_hours: number
+    preferred_modes: string[]
+    career_goal: string
+    career_goal_status: 'exploring' | 'confirmed'
+  }
+}
+
+export interface RegisterPayload {
+  username: string
+  password: string
+  display_name: string
+  education_stage: string
+  background: string
+  focus_areas: string[]
+  weekly_hours: number
+  preferred_modes: string[]
+  career_goal?: string
+  career_goal_status: 'exploring' | 'confirmed'
+}
+
+export const getCurrentUser = () => api.get('/auth/me').then(r => r.data as AuthUser)
+export const loginUser = (username: string, password: string) =>
+  api.post('/auth/login', { username, password }).then(r => r.data as AuthUser)
+export const registerUser = (data: RegisterPayload) =>
+  api.post('/auth/register', data).then(r => r.data as AuthUser)
+export const logoutUser = () => api.post('/auth/logout').then(r => r.data)
+export const listDevAccounts = () => api.get('/dev/accounts').then(r => r.data)
+export const devLogin = (accountId: number) =>
+  api.post(`/dev/accounts/${accountId}/login`).then(r => r.data as AuthUser)
+
+export const getProfile = () => api.get('/profile').then(r => r.data)
+export const updateProfile = (data: Record<string, any>) => api.patch('/profile', data).then(r => r.data)
+export const getProfileMemories = () => api.get('/profile/memories').then(r => r.data)
+export const archiveProfileMemory = (memoryId: string, reason = '') =>
+  api.post(`/profile/memories/${encodeURIComponent(memoryId)}/archive`, { reason }).then(r => r.data)
+export const restoreProfileMemory = (memoryId: string) =>
+  api.post(`/profile/memories/${encodeURIComponent(memoryId)}/restore`).then(r => r.data)
+export const getLearningJourney = () => api.get('/profile/journey').then(r => r.data)
+
+export type MemoryKernel = 'structure' | 'knowledge' | 'human' | 'value' | 'practice'
+export type MemoryNodeType = 'fact' | 'module' | 'claim'
+
+export interface MemoryGraphNode {
+  id: number
+  type: MemoryNodeType
+  kernel: MemoryKernel
+  subject: string
+  text: string
+  payload: Record<string, any>
+  confidence: number
+  status: string
+  valid_from?: string
+  valid_to?: string
+  occurred_at: string
+  created_at: string
+  fact?: {
+    source_event_id: number
+    source_mutation_id: number
+    predicate: string
+    value: any
+    evidence_grade: string
+    consumption_status: string
+    consumed_by_module_id?: number
+    project_id?: number
+    checkpoint_id?: number
+    session_id?: number
+  }
+  module?: {
+    synthesis_run_id?: number
+    module_type: string
+    summary: string
+    time_start: string
+    time_end: string
+    immutable: boolean
+  }
+  claim?: {
+    module_id: number
+    predicate: string
+    value: any
+    verification_status: string
+  }
+}
+
+export interface MemoryGraphEdge {
+  id: number
+  source: number
+  target: number
+  relation: string
+  origin: string
+  confidence: number
+  payload: Record<string, any>
+}
+
+export interface MemoryGraphResponse {
+  nodes: MemoryGraphNode[]
+  edges: MemoryGraphEdge[]
+  page: { limit: number; has_more: boolean; next_after_id?: number }
+}
+
+export const getMemoryGraph = (params: Record<string, string | number | undefined> = {}) =>
+  api.get('/memory/graph', { params }).then(r => r.data as MemoryGraphResponse)
+
+export const getMemoryNode = (nodeId: number) =>
+  api.get(`/memory/nodes/${nodeId}`).then(r => r.data)
+
+export const getMemoryConsolidations = (status?: string) =>
+  api.get('/memory/consolidations', { params: { status } }).then(r => r.data)
+
+export const submitMemoryClaimFeedback = (
+  claimId: number,
+  data: { action: 'confirm' | 'correct' | 'retract'; correction?: string; reason?: string },
+) => api.post(`/memory/claims/${claimId}/feedback`, data).then(r => r.data)
 
 // ── Project ──
 export const createProject = (data: { name: string; description?: string; user_level?: string }) =>
@@ -54,6 +190,124 @@ export const sendAgentMessage = (projectId: number, data: { message: string; his
 
 export const getRoadmapHistory = (projectId: number) =>
   api.get(`/projects/${projectId}/roadmap/history`).then(r => r.data)
+
+// ── Main Tutor ──
+export const createTutorSession = (data: { session_type?: 'global' | 'project'; project_id?: number; checkpoint_id?: number }) =>
+  api.post('/agent/sessions', data).then(r => r.data)
+
+export const getTutorSession = (sessionId: number) =>
+  api.get(`/agent/sessions/${sessionId}`).then(r => r.data)
+
+export const sendTutorTurn = (sessionId: number, data: {
+  message: string
+  project_id?: number
+  checkpoint_id?: number
+  selected_action_id?: number
+  client_turn_id?: string
+  context?: Record<string, any>
+}) => api.post(`/agent/sessions/${sessionId}/turns`, data).then(r => r.data)
+
+export const confirmTutorAction = (actionId: number) =>
+  api.post(`/agent/actions/${actionId}/confirm`).then(r => r.data)
+
+export const cancelTutorAction = (actionId: number) =>
+  api.post(`/agent/actions/${actionId}/cancel`).then(r => r.data)
+
+export const getTutorAction = (actionId: number) =>
+  api.get(`/agent/actions/${actionId}`).then(r => r.data)
+
+export interface ProjectProposalMilestone {
+  id: string
+  title: string
+  purpose?: string
+  estimated_effort?: string
+}
+
+export interface ProjectProposalSource {
+  title: string
+  url: string
+  type: 'github' | 'url'
+  description?: string
+  stars?: number
+  forks?: number
+  language?: string
+  license?: string
+  pushed_at?: string
+  rank_score?: number
+  quality?: 'excellent' | 'strong' | 'relevant'
+  match_reasons?: string[]
+  reason?: string
+}
+
+export interface ProjectProposal {
+  id: number
+  proposal_key: string
+  proposal_type: 'build' | 'mastery' | 'exam' | 'research'
+  status: string
+  action_type: 'create' | 'enter_existing'
+  target_project_id?: number
+  accepted_project_id?: number
+  artifact: {
+    title: string
+    learning_goal: string
+    practice_goal: string
+    learner_start: string[]
+    estimated_effort: string
+    milestones: ProjectProposalMilestone[]
+    acceptance_criteria: string[]
+    risks: string[]
+    assumptions?: string[]
+    details?: Record<string, any>
+    candidate_sources?: ProjectProposalSource[]
+    source_search_generation?: number
+    source_search_requested_at?: string
+    source_search_refreshed_at?: string
+    source_search_discovered_count?: number
+    source_search_partial_failures?: number
+    source_search_result_changed?: boolean
+    source_search_last_error?: string
+  }
+  revision: number
+  locked_fields: string[]
+  last_change_summary: string
+  source_status: 'idle' | 'queued' | 'searching' | 'completed' | 'failed'
+  source_task_id?: number
+  updated_at?: string
+}
+
+export const getProjectProposal = (proposalId: number) =>
+  api.get(`/agent/project-proposals/${proposalId}`).then(r => r.data as ProjectProposal)
+
+export const getAcceptedProjectProposal = (projectId: number) =>
+  api.get(`/agent/projects/${projectId}/accepted-proposal`).then(r => r.data as ProjectProposal | null)
+
+export const updateProjectProposal = (proposalId: number, data: {
+  patch?: Record<string, any>
+  lock_fields?: string[]
+  unlock_fields?: string[]
+  client_event_id?: string
+}) => api.patch(`/agent/project-proposals/${proposalId}`, data).then(r => r.data as ProjectProposal)
+
+export const acceptProjectProposal = (proposalId: number, clientEventId: string) =>
+  api.post(`/agent/project-proposals/${proposalId}/accept`, { client_event_id: clientEventId }).then(r => r.data)
+
+export const dismissProjectProposal = (proposalId: number) =>
+  api.post(`/agent/project-proposals/${proposalId}/dismiss`).then(r => r.data as ProjectProposal)
+
+export const reopenProjectProposal = (proposalId: number) =>
+  api.post(`/agent/project-proposals/${proposalId}/reopen`).then(r => r.data as ProjectProposal)
+
+export const refreshProjectProposalSources = (proposalId: number) =>
+  api.post(`/agent/project-proposals/${proposalId}/refresh-sources`).then(r => r.data as ProjectProposal)
+
+export const recordLearningEvent = (data: {
+  client_event_id: string
+  event_type: string
+  project_id?: number
+  checkpoint_id?: number
+  session_id?: number
+  payload?: Record<string, any>
+}) => api.post('/learning-events', data).then(r => r.data)
 
 // ── Lecture (Phase 2) ──
 export const getLecture = (checkpointId: number) =>
@@ -241,8 +495,8 @@ export const saveExerciseFiles = (exerciseId: number, files: any[]) =>
 export const getExerciseEnv = (exerciseId: number) =>
   api.get(`/exercises/${exerciseId}/env`).then(r => r.data)
 
-export const submitProject = (exerciseId: number, files: any[]) =>
-  api.post(`/exercises/${exerciseId}/submit`, { code: '', files }).then(r => r.data)
+export const submitProject = (exerciseId: number, files: any[], assistanceLevel: string = 'none') =>
+  api.post(`/exercises/${exerciseId}/submit`, { code: '', files, assistance_level: assistanceLevel }).then(r => r.data)
 
 export const reviewCode = (exerciseId: number, code: string, selection?: string) =>
   api.post(`/exercises/${exerciseId}/review`, { code, selection }).then(r => r.data)
@@ -263,12 +517,12 @@ export const getConceptTask = (checkpointId: number) =>
 export const explainConcept = (checkpointId: number, questionId: number, userAnswerIndexes: number[]) =>
   api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/explain`, { user_answer_indexes: userAnswerIndexes }).then(r => r.data)
 
-export const submitConcept = (checkpointId: number, questionId: number, answerIndexes: number[]) =>
-  api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/submit`, { answer_indexes: answerIndexes }).then(r => r.data)
+export const submitConcept = (checkpointId: number, questionId: number, answerIndexes: number[], assistanceLevel: string = 'none') =>
+  api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/submit`, { answer_indexes: answerIndexes, assistance_level: assistanceLevel }).then(r => r.data)
 
 // ── T8: exercise submit ──
-export const submitExercise = (exerciseId: number, code: string) =>
-  api.post(`/exercises/${exerciseId}/submit`, { code }).then(r => r.data)
+export const submitExercise = (exerciseId: number, code: string, assistanceLevel: string = 'none') =>
+  api.post(`/exercises/${exerciseId}/submit`, { code, assistance_level: assistanceLevel }).then(r => r.data)
 
 export const getExerciseTask = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/exercises/task`).then(r => r.data)

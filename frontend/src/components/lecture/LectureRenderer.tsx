@@ -7,22 +7,69 @@ import 'katex/dist/katex.min.css'
 import ProcessAnimationViewer from '../animation/ProcessAnimationViewer'
 import { getAnimation, ProcessAnimation } from '../../services/api'
 
-/**
- * remark-math 的显示公式解析要求 `$$` 独占一行：
- * - 若 `$$` 同行紧跟着内容（如 `$$\begin{aligned}`），该内容会被当作 fence 元信息（类似 ```python 的 python）丢弃；
- * - 行尾的 `$$`（如 `\end{aligned}$$`）不满足「闭合 fence 必须在行首」的规则，不会被认作闭合符，
- *   导致 math 节点吞掉后续整段文档，KaTeX 收到残缺输入 → 解析失败 → 渲染成红色 katex-error。
- * LLM 经常输出 `$$\begin{aligned}...\end{aligned}$$` 的多行同行写法，这里在渲染前归一化。
- * 注意：替换串必须用函数返回，不能用字符串字面量（字符串里 `$$` 会被 JS 解释成单个 `$`）。
- * 只匹配多行块，单行 `$$...$$` 公式不受影响。
+/** Repair block delimiters before remark-math sees them.
+ *
+ * Generated Markdown occasionally opens a display formula with `$$` and
+ * closes it with a bare code fence. Without this guard remark-math consumes
+ * the rest of the section as one invalid formula, including later code blocks.
  */
-function normalizeMath(md: string): string {
-  return md.replace(
-    /^\$\$[ \t]*(\\begin\{[^}]+})?\n([\s\S]*?)\\end\{([^}]+)\}[ \t]*\$\$$/gm,
-    (_m, openEnv: string | undefined, body: string, closeEnv: string) =>
-      openEnv
-        ? `$$\n${openEnv}\n${body}\\end{${closeEnv}}\n$$`
-        : `$$\n${body}\\end{${closeEnv}}\n$$`
+export function repairMarkdownFences(md: string): string {
+  const lines = md.split('\n')
+  const output: string[] = []
+  let mathOpen = false
+  let codeMarker = ''
+  let codeMarkerLength = 0
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (codeMarker) {
+      output.push(line)
+      const closing = new RegExp(`^${codeMarker === '`' ? '`' : '~'}{${codeMarkerLength},}\\s*$`)
+      if (closing.test(trimmed)) {
+        codeMarker = ''
+        codeMarkerLength = 0
+      }
+      continue
+    }
+
+    if (trimmed === '$$') {
+      output.push(line)
+      mathOpen = !mathOpen
+      continue
+    }
+
+    const fence = trimmed.match(/^(`{3,}|~{3,})(.*)$/)
+    if (fence) {
+      if (mathOpen) {
+        if (fence[2].trim()) {
+          output.push('$$')
+          output.push(line)
+          codeMarker = fence[1][0]
+          codeMarkerLength = fence[1].length
+        } else {
+          output.push(line.replace(trimmed, () => '$$'))
+        }
+        mathOpen = false
+        continue
+      }
+      output.push(line)
+      codeMarker = fence[1][0]
+      codeMarkerLength = fence[1].length
+      continue
+    }
+
+    output.push(line)
+  }
+
+  if (mathOpen) output.push('$$')
+  return output.join('\n')
+}
+
+function normalizeMarkdown(md: string): string {
+  return repairMarkdownFences(md).replace(
+    /^\$\$[ \t]*(\\begin\{([^}]+)\})\n([\s\S]*?)\\end\{\2\}[ \t]*\$\$$/gm,
+    (_m, openEnv: string, environment: string, body: string) =>
+      `$$\n${openEnv}\n${body}\\end{${environment}}\n$$`
   )
 }
 
@@ -125,17 +172,20 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={{
-        // Style code blocks
-        code({ className, children, ...props }: any) {
-          const isInline = !className
-          if (isInline) {
-            return <code className="bg-gray-100 text-red-600 px-1 rounded text-sm" {...props}>{children}</code>
-          }
+        pre({ children }: any) {
           return (
             <pre className="bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto text-sm">
-              <code className={className} {...props}>{children}</code>
+              {children}
             </pre>
           )
+        },
+        code({ className, children, ...props }: any) {
+          const content = String(children ?? '')
+          const isBlock = Boolean(className) || content.includes('\n')
+          if (!isBlock) {
+            return <code className="bg-gray-100 text-red-600 px-1 rounded text-sm" {...props}>{children}</code>
+          }
+          return <code className={className} {...props}>{children}</code>
         },
         // Images: hover to delete (T6)
         img({ src, alt }: any) {
@@ -168,7 +218,7 @@ export default function LectureRenderer({ sections, animations, onSelect, onDele
         },
       }}
     >
-      {normalizeMath(content)}
+      {normalizeMarkdown(content)}
     </ReactMarkdown>
   )
 

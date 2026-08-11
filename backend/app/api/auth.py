@@ -1,0 +1,198 @@
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.db.database import get_db
+from app.models.learning import AuthSession, Learner, LearnerProfile, UserAccount
+from app.models.project import Project
+from app.schemas.auth import LoginRequest, RegisterRequest
+from app.services.auth import (
+    CurrentLearner, clear_auth_cookie, create_auth_session, get_current_learner,
+    hash_password, normalize_username, set_auth_cookie, verify_password,
+)
+from app.services.learning_runtime import ensure_kernel_states, record_event
+from app.services.profile import award_career_goal
+
+
+router = APIRouter(tags=["Authentication"])
+dev_router = APIRouter(prefix="/dev", tags=["Development"])
+
+
+def _account_view(current: CurrentLearner) -> dict:
+    return {
+        "id": current.account.id,
+        "username": current.account.username,
+        "display_name": current.learner.display_name,
+        "learner_id": current.learner.id,
+        "is_legacy_demo": bool(current.account.is_legacy_demo),
+        "profile": {
+            "education_stage": current.profile.education_stage,
+            "background": current.profile.background,
+            "focus_areas": current.profile.focus_areas or [],
+            "weekly_hours": current.profile.weekly_hours,
+            "preferred_modes": current.profile.preferred_modes or [],
+            "career_goal": current.profile.career_goal or "",
+            "career_goal_status": current.profile.career_goal_status,
+        },
+        "dev_test_login_enabled": settings.dev_test_login_enabled,
+        "is_dev_login": current.is_dev_login,
+    }
+
+
+@router.post("/auth/register")
+async def register(
+    data: RegisterRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    normalized = normalize_username(data.username)
+    existing = (await db.execute(
+        select(UserAccount.id).where(UserAccount.username_normalized == normalized)
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(409, "用户名已存在")
+    account = UserAccount(
+        username=data.username.strip(),
+        username_normalized=normalized,
+        password_hash=hash_password(data.password),
+    )
+    db.add(account)
+    await db.flush()
+    learner = Learner(
+        user_id=account.id,
+        key=f"user-{account.id}",
+        display_name=data.display_name.strip(),
+    )
+    db.add(learner)
+    await db.flush()
+    profile = LearnerProfile(
+        learner_id=learner.id,
+        education_stage=data.education_stage,
+        background=data.background.strip(),
+        focus_areas=data.focus_areas,
+        weekly_hours=data.weekly_hours,
+        preferred_modes=data.preferred_modes,
+        career_goal=data.career_goal.strip(),
+        career_goal_status=data.career_goal_status,
+    )
+    db.add(profile)
+    await ensure_kernel_states(db, learner.id)
+    registration_event = await record_event(
+        db,
+        learner_id=learner.id,
+        event_type="registration_profile_completed",
+        source="registration",
+        payload={
+            "education_stage": profile.education_stage,
+            "background": profile.background,
+            "focus_areas": profile.focus_areas,
+            "weekly_hours": profile.weekly_hours,
+            "preferred_modes": profile.preferred_modes,
+            "career_goal": profile.career_goal,
+            "career_goal_status": profile.career_goal_status,
+        },
+        confidence=1.0,
+        provenance={"self_report": True},
+        client_event_id="registration-profile",
+    )
+    if profile.career_goal and profile.career_goal_status == "confirmed":
+        await award_career_goal(
+            db,
+            learner_id=learner.id,
+            career_goal=profile.career_goal,
+            confidence=1.0,
+            source_event_id=registration_event.id,
+        )
+    token = await create_auth_session(db, account)
+    await db.commit()
+    set_auth_cookie(response, token)
+    return _account_view(CurrentLearner(account, learner, profile))
+
+
+@router.post("/auth/login")
+async def login(
+    data: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    account = (await db.execute(select(UserAccount).where(
+        UserAccount.username_normalized == normalize_username(data.username),
+        UserAccount.status == "active",
+    ))).scalar_one_or_none()
+    if not account or not verify_password(data.password, account.password_hash):
+        raise HTTPException(401, "用户名或密码错误")
+    learner = (await db.execute(select(Learner).where(Learner.user_id == account.id))).scalar_one()
+    profile = await db.get(LearnerProfile, learner.id)
+    token = await create_auth_session(db, account)
+    await db.commit()
+    set_auth_cookie(response, token)
+    return _account_view(CurrentLearner(account, learner, profile))
+
+
+@router.post("/auth/logout")
+async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    raw = request.cookies.get(settings.auth_cookie_name)
+    if raw:
+        from app.services.auth import _token_hash
+        session = (await db.execute(select(AuthSession).where(
+            AuthSession.token_hash == _token_hash(raw), AuthSession.revoked_at.is_(None),
+        ))).scalar_one_or_none()
+        if session:
+            session.revoked_at = datetime.utcnow()
+            await db.commit()
+    clear_auth_cookie(response)
+    return {"status": "ok"}
+
+
+@router.get("/auth/me")
+async def me(current: CurrentLearner = Depends(get_current_learner)):
+    return _account_view(current)
+
+
+def _require_dev():
+    if not settings.dev_test_login_enabled:
+        raise HTTPException(404, "Not found")
+
+
+@dev_router.get("/accounts")
+async def list_dev_accounts(db: AsyncSession = Depends(get_db)):
+    _require_dev()
+    rows = (await db.execute(
+        select(UserAccount, Learner, func.count(Project.id))
+        .join(Learner, Learner.user_id == UserAccount.id)
+        .outerjoin(Project, Project.learner_id == Learner.id)
+        .group_by(UserAccount.id, Learner.id)
+        .order_by(UserAccount.created_at.asc())
+    )).all()
+    return [{
+        "id": account.id,
+        "username": account.username,
+        "display_name": learner.display_name,
+        "created_at": account.created_at.isoformat() if account.created_at else None,
+        "last_login_at": account.last_login_at.isoformat() if account.last_login_at else None,
+        "project_count": project_count or 0,
+        "is_legacy_demo": bool(account.is_legacy_demo),
+    } for account, learner, project_count in rows]
+
+
+@dev_router.post("/accounts/{account_id}/login")
+async def dev_login(
+    account_id: int,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    _require_dev()
+    account = await db.get(UserAccount, account_id)
+    if not account or account.status != "active":
+        raise HTTPException(404, "Account not found")
+    learner = (await db.execute(select(Learner).where(Learner.user_id == account.id))).scalar_one_or_none()
+    profile = await db.get(LearnerProfile, learner.id) if learner else None
+    if not learner or not profile:
+        raise HTTPException(404, "Account not found")
+    token = await create_auth_session(db, account, is_dev_login=True)
+    await db.commit()
+    set_auth_cookie(response, token)
+    return _account_view(CurrentLearner(account, learner, profile, is_dev_login=True))

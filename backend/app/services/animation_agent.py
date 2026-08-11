@@ -74,6 +74,9 @@ ANIMATION_PROMPT = """你是可视化决策专家。判断给定内容是否适�
 ## static 载荷（decision="static" 时）
 {"title": "图标题", "static_svg": "<svg …>…</svg>"}
 - 一张信息完整、标签清晰的 SVG 图（架构/流程/层次等）
+- 外层必须包含 `viewBox="0 0 宽 高"`，所有内容与标签必须落在画布内并保留至少 16px 边距
+- `rect`、`line`、`path`、`circle` 等图元必须用 `/>` 正确闭合；优先直接写 fill/stroke/font-size 等属性，不依赖 CSS class
+- 连接线不得穿过文字；流程标签应与连线错开，或使用浅色背景/白色描边保证清晰
 
 ## 输出格式（只输出 JSON，不要 markdown 代码块）
 {"decision": "animation"|"static"|"none", "reason": "一句话理由", "animation": {...}|null, "static_svg": "..."|null}"""
@@ -111,39 +114,197 @@ class AnimationAgent:
     SVG_TAGS = {
         "svg", "g", "circle", "rect", "line", "path", "text", "polygon",
         "polyline", "marker", "defs", "title", "tspan", "ellipse",
+        "lineargradient", "radialgradient", "stop",
     }
     SVG_ATTRS = {
-        "fill", "stroke", "stroke-width", "stroke-dasharray", "opacity", "transform",
-        "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
-        "width", "height", "viewBox", "d", "font-size", "font-weight",
-        "text-anchor", "font-family", "preserveAspectRatio", "marker-end", "style",
+        name: name for name in {
+            "fill", "stroke", "stroke-width", "stroke-dasharray", "opacity", "transform",
+            "x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry",
+            "width", "height", "d", "font-size", "font-weight", "text-anchor",
+            "font-family", "marker-end", "id", "offset", "stop-color", "stop-opacity",
+            "paint-order", "stroke-linejoin",
+        }
     }
+    SVG_ATTRS.update({
+        "viewbox": "viewBox",
+        "preserveaspectratio": "preserveAspectRatio",
+        "gradientunits": "gradientUnits",
+    })
+    SVG_STYLE_ATTRS = {
+        name: name for name in {
+            "fill", "stroke", "stroke-width", "stroke-dasharray", "opacity", "rx", "ry",
+            "font-size", "font-weight", "text-anchor", "font-family", "stop-color",
+            "stop-opacity",
+        }
+    }
+    SVG_LEAF_TAGS = {"circle", "rect", "line", "path", "polygon", "polyline", "ellipse", "stop"}
+
+    @staticmethod
+    def _numeric_svg_attr(source: str, name: str) -> Optional[float]:
+        match = re.search(rf'\b{re.escape(name)}\s*=\s*["\']([0-9]+(?:\.[0-9]+)?)["\']', source, re.I)
+        if not match:
+            return None
+        return float(match.group(1))
+
+    def _infer_svg_viewbox(self, svg: str) -> tuple[float, float]:
+        svg_attrs = (re.search(r"<svg\b([^>]*)>", svg, re.I) or [None, ""])[1]
+        existing = re.search(
+            r'\bviewBox\s*=\s*["\']\s*-?[0-9.]+\s+-?[0-9.]+\s+([0-9.]+)\s+([0-9.]+)\s*["\']',
+            svg_attrs,
+            re.I,
+        )
+        existing_width = float(existing.group(1)) if existing else 0
+        existing_height = float(existing.group(2)) if existing else 0
+        width = self._numeric_svg_attr(svg_attrs, "width")
+        height = self._numeric_svg_attr(svg_attrs, "height")
+
+        max_width = 0.0
+        max_height = 0.0
+        for rect in re.findall(r"<rect\b[^>]*>", svg, re.I):
+            rect_width = self._numeric_svg_attr(rect, "width")
+            rect_height = self._numeric_svg_attr(rect, "height")
+            if not rect_width or rect_width <= 0 or not rect_height or rect_height <= 0:
+                continue
+            x = self._numeric_svg_attr(rect, "x") or 0
+            y = self._numeric_svg_attr(rect, "y") or 0
+            max_width = max(max_width, x + rect_width)
+            max_height = max(max_height, y + rect_height)
+        for line in re.findall(r"<line\b[^>]*>", svg, re.I):
+            max_width = max(
+                max_width,
+                self._numeric_svg_attr(line, "x1") or 0,
+                self._numeric_svg_attr(line, "x2") or 0,
+            )
+            max_height = max(
+                max_height,
+                self._numeric_svg_attr(line, "y1") or 0,
+                self._numeric_svg_attr(line, "y2") or 0,
+            )
+        for text in re.findall(r"<text\b[^>]*>", svg, re.I):
+            x = self._numeric_svg_attr(text, "x") or 0
+            y = self._numeric_svg_attr(text, "y") or 0
+            font_size = self._numeric_svg_attr(text, "font-size") or 14
+            max_width = max(max_width, x)
+            max_height = max(max_height, y + font_size * 0.4)
+
+        base_width = existing_width or (width if width and width > 0 else 0) or max_width or 800
+        base_height = existing_height or (height if height and height > 0 else 0) or max_height or 450
+        return (
+            max_width + 12 if max_width > base_width else base_width,
+            max_height + 12 if max_height > base_height else base_height,
+        )
+
+    @staticmethod
+    def _safe_style_value(value: str) -> Optional[str]:
+        cleaned = value.strip()
+        if not cleaned or re.search(r'[<>";]|javascript:|expression\s*\(', cleaned, re.I):
+            return None
+        if re.search(r"url\s*\(", cleaned, re.I) and not re.fullmatch(r"url\(#[A-Za-z][\w:.-]*\)", cleaned, re.I):
+            return None
+        return cleaned
+
+    def _parse_style_declarations(self, source: str) -> Dict[str, str]:
+        declarations = {}
+        for declaration in source.split(";"):
+            if ":" not in declaration:
+                continue
+            property_name, value = declaration.split(":", 1)
+            safe_name = self.SVG_STYLE_ATTRS.get(property_name.strip().lower())
+            safe_value = self._safe_style_value(value)
+            if safe_name and safe_value:
+                declarations[safe_name] = safe_value
+        return declarations
+
+    def _extract_css_classes(self, svg: str) -> Dict[str, Dict[str, str]]:
+        return {
+            name: self._parse_style_declarations(body)
+            for name, body in re.findall(r"\.([A-Za-z_][\w-]*)\s*\{([^{}]*)\}", svg)
+        }
 
     def sanitize_svg(self, svg: str) -> str:
         if not svg:
             return ""
         svg = svg[:65536]
+        inferred_width, inferred_height = self._infer_svg_viewbox(svg)
+        css_classes = self._extract_css_classes(svg)
+        had_css_rules = bool(css_classes)
+        rect_bounds = []
+        for rect in re.findall(r"<rect\b[^>]*>", svg, re.I):
+            x = self._numeric_svg_attr(rect, "x") or 0
+            y = self._numeric_svg_attr(rect, "y") or 0
+            width = self._numeric_svg_attr(rect, "width") or 0
+            height = self._numeric_svg_attr(rect, "height") or 0
+            if width > 0 and height > 0:
+                rect_bounds.append((x, y, width, height))
         svg = re.sub(r"<script.*?</script>", "", svg, flags=re.I | re.S)
+        svg = re.sub(r"<style\b[^>]*>.*?</style>", "", svg, flags=re.I | re.S)
+        svg = re.sub(r"\.[A-Za-z_][\w-]*\s*\{[^{}]*\}", "", svg)
         svg = re.sub(r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*')", "", svg, flags=re.I)
         svg = re.sub(r"javascript:", "", svg, flags=re.I)
 
         def _clean_tag(m: re.Match) -> str:
-            tag = m.group(1).lower()
+            closing = bool(m.group(1))
+            tag = m.group(2).lower()
             if tag not in self.SVG_TAGS:
                 return ""
-            kept = []
-            for name, value in re.findall(r'([\w-]+)\s*=\s*("[^"]*"|\'[^\']*\')', m.group(2)):
-                if name.lower() in self.SVG_ATTRS:
-                    kept.append(f"{name}={value}")
-            return f"<{tag}" + (" " + " ".join(kept) if kept else "") + ">"
+            if closing:
+                return "" if tag in self.SVG_LEAF_TAGS else f"</{tag}>"
 
-        svg = re.sub(r"<(\w+)([^>]*)>", _clean_tag, svg)
-        svg = re.sub(
-            r"</(\w+)>",
-            lambda m: f"</{m.group(1).lower()}>" if m.group(1).lower() in self.SVG_TAGS else "",
-            svg,
-        )
+            kept = {}
+            kept_names = set()
+            class_match = re.search(r'\bclass\s*=\s*(?:"([^"]*)"|\'([^\']*)\')', m.group(3), re.I)
+            class_value = (class_match.group(1) or class_match.group(2)) if class_match else ""
+            for class_name in class_value.split():
+                kept.update(css_classes.get(class_name, {}))
+            for name, value in re.findall(r'([\w-]+)\s*=\s*("[^"]*"|\'[^\']*\')', m.group(3)):
+                source_name = name.lower()
+                if source_name in {"class", "style"}:
+                    continue
+                safe_name = self.SVG_ATTRS.get(source_name)
+                if not safe_name:
+                    continue
+                kept[safe_name] = value[1:-1]
+                kept_names.add(source_name)
+            inline_match = re.search(r'\bstyle\s*=\s*(?:"([^"]*)"|\'([^\']*)\')', m.group(3), re.I)
+            inline_value = (inline_match.group(1) or inline_match.group(2)) if inline_match else ""
+            kept.update(self._parse_style_declarations(inline_value))
+            if had_css_rules and tag == "rect" and "fill" not in kept:
+                kept.update({"fill": "#f8fafc", "stroke": "#334155", "stroke-width": "1.5"})
+            if had_css_rules and tag == "text":
+                kept.setdefault("fill", "#1e293b")
+                kept.setdefault("font-family", "Arial, sans-serif")
+                kept.setdefault("font-size", "13px")
+                kept.setdefault("text-anchor", "middle")
+                x = self._numeric_svg_attr(m.group(3), "x") or 0
+                y = self._numeric_svg_attr(m.group(3), "y") or 0
+                inside_node = any(
+                    left <= x <= left + width and top <= y <= top + height
+                    for left, top, width, height in rect_bounds
+                )
+                if not inside_node:
+                    kept.update({
+                        "paint-order": "stroke",
+                        "stroke": "#ffffff",
+                        "stroke-width": "4",
+                        "stroke-linejoin": "round",
+                    })
+            if tag == "svg":
+                kept["viewBox"] = f"0 0 {inferred_width:g} {inferred_height:g}"
+                if "preserveaspectratio" not in kept_names:
+                    kept["preserveAspectRatio"] = "xMidYMid meet"
+                kept["style"] = "display:block;width:100%;height:auto"
+            serialized = " ".join(
+                f'{name}="{self._escape_svg_attr(value)}"' for name, value in kept.items()
+            )
+            opening = f"<{tag}" + (" " + serialized if serialized else "")
+            return opening + (" />" if tag in self.SVG_LEAF_TAGS else ">")
+
+        svg = re.sub(r"<(\/)?(\w+)([^>]*)>", _clean_tag, svg)
         return svg
+
+    @staticmethod
+    def _escape_svg_attr(value: str) -> str:
+        return str(value).replace("&", "&amp;").replace('"', "&quot;")
 
     # ── 结构校验与上限 ──
     def validate_steps(self, data: Dict) -> Dict:

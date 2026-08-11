@@ -103,9 +103,10 @@ RoadmapAgent 改用 function calling（DeepSeek 支持），绑定上述工具�
 
 ### 3.1 概念考察题
 
-- 模型：`ConceptQuestion { question, options[], answer_index, q_type: single|multi|judge|wwpd|wwpp, difficulty, explanation, source_chunk_ids }`。WWPD/WWPP = 给代码问输出。
+- 模型：`ConceptQuestion { question, options[], answer_index, q_type, difficulty, explanation, source_chunk_ids, assessment_meta }`。`q_type` 只描述响应形式，学习目标与证据声明进入 `assessment_meta`。
 - 生成：输入 brief + 讲义 + scope chunks → 动态 3-10 题（数量由内容复杂度决定）。
-- **WWPD/WWPP 用 code_executor 自校验**：跑 reference 代码取标准输出，确保答案正确且唯一；不唯一则改题或删题。
+- 代码输出预测只是可选的 `code_output` 形式，仅在关卡确实考察程序追踪时使用，并由 `code_executor` 校验；WWPD/WWPP 只作为早期设计参考，不是 LearnFlow 的固定内容或题型体系。
+- 题型体系仍处于研究与验证阶段。当前先固定“学习目标 → 证据声明 → 响应形式 → 判分解释”的设计协议，不把未经验证的题型分类写死为产品标准。
 - UI：题卡 + 选项 + 提交判分 + 每题"🤖 解析"按钮（懒加载，点击才调 LLM，带该题上下文与用户答案）。
 
 ### 3.2 代码命题智能体（强健版）
