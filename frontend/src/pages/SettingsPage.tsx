@@ -191,7 +191,7 @@ export default function SettingsPage() {
           ← 返回首页
         </button>
         <h1 className="text-2xl font-bold text-gray-900 mb-1">⚙️ 模型设置</h1>
-        <p className="text-sm text-gray-500 mb-8">配置 AI 模型和嵌入服务</p>
+        <p className="text-sm text-gray-500 mb-8">当前未接入模型时，Tutor 只会显示“未接入模型。”</p>
 
         {/* Status card */}
         <div className={`rounded-xl border p-5 mb-6 ${settings.has_key

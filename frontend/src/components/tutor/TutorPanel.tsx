@@ -163,6 +163,11 @@ function CandidateSourcesAttachment({
 function normalizeTutorContent(content: unknown): string {
   if (typeof content !== 'string') return String(content ?? '')
   const original = content.trim()
+  // Older sessions may contain the verbose pre-configuration fallback. Keep
+  // the history intact, but present the same explicit status as new turns.
+  if (original === '我可以继续帮你整理学习问题；要进行 AI 讲解，请先在设置页配置 LLM API Key。') {
+    return '未接入模型。'
+  }
   let text = original
   if (text.startsWith('```')) {
     const lines = text.split('\n')
