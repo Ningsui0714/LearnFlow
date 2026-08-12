@@ -143,7 +143,7 @@ export default function WorkspaceAgentRail({
             type="button"
             onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })}
             title="配置 AI 模型和 API Key"
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-100"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border-2 border-indigo-300 bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-700 shadow-sm hover:border-indigo-400 hover:bg-indigo-100"
           >
             <Settings2 size={14} />
             <span>模型设置</span>
