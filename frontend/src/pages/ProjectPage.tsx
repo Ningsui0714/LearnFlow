@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { BookOpen } from 'lucide-react'
 import {
-  getProject, addSource, listSources, processAllSources, processSource, getRoadmap,
+  getProject, addSource, uploadSource, listSources, processAllSources, processSource, getRoadmap,
   startImageCaptioning, getTaskStatus, setSourceRole, reconcileSources, applyReconcile,
   getAcceptedProjectProposal, getProjectProposal, refreshProjectProposalSources,
 } from '../services/api'
@@ -36,6 +36,7 @@ export default function ProjectPage() {
   const [showAddSource, setShowAddSource] = useState(false)
   const [sourceType, setSourceType] = useState('url')
   const [sourceUrl, setSourceUrl] = useState('')
+  const [sourceFile, setSourceFile] = useState<File | null>(null)
   const [processing, setProcessing] = useState(false)
   const [captioningSource, setCaptioningSource] = useState<number | null>(null)
   const [visionEnhanceEnabled, setVisionEnhanceEnabled] = useState(false)
@@ -175,14 +176,20 @@ export default function ProjectPage() {
   }
 
   const handleAddSource = async () => {
-    if (!sourceUrl.trim()) return
+    if (sourceType === 'file' && !sourceFile) return
+    if (sourceType !== 'file' && !sourceUrl.trim()) return
     try {
-      await addSource(pid, { type: sourceType, url: sourceUrl.trim() })
+      if (sourceType === 'file' && sourceFile) {
+        await uploadSource(pid, sourceFile)
+      } else {
+        await addSource(pid, { type: sourceType, url: sourceUrl.trim() })
+      }
       setSourceUrl('')
+      setSourceFile(null)
       setShowAddSource(false)
       load()
-    } catch (e) {
-      console.error('Failed to add source', e)
+    } catch (e: any) {
+      setNotification('❌ ' + (e?.response?.data?.detail || e.message || '添加来源失败'))
     }
   }
 
@@ -351,26 +358,36 @@ export default function ProjectPage() {
               >
                 <option value="url">🌐 网页链接</option>
                 <option value="github">📦 GitHub 仓库</option>
+                <option value="file">📄 上传文件</option>
               </select>
               {sourceType === 'github' && (
                 <div className="text-[10px] text-purple-500 mb-1.5 -mt-1">
                   ⚡ 检测到 GitHub 链接，自动切换为仓库模式
                 </div>
               )}
-              <input
-                type="text"
-                placeholder="URL"
-                value={sourceUrl}
-                onChange={e => {
-                  setSourceUrl(e.target.value)
-                  // Auto-detect GitHub URLs
-                  if (e.target.value.includes('github.com')) {
-                    setSourceType('github')
-                  }
-                }}
-                className="w-full border border-gray-300 rounded px-2 py-1 text-xs mb-2"
-                onKeyDown={e => e.key === 'Enter' && handleAddSource()}
-              />
+              {sourceType === 'file' ? (
+                <input
+                  type="file"
+                  accept=".md,.markdown,.txt,.rst,.csv,.py,.ipynb,.yaml,.yml,.toml,.json,.xml,.html,.css,.js,.sh,.bash,.c,.cpp,.h,.hpp,.java,.rs,.go,.rb,.php,.swift,.tex,.bib,.pdf,.docx"
+                  onChange={e => setSourceFile(e.target.files?.[0] || null)}
+                  className="w-full text-[10px] mb-2"
+                />
+              ) : (
+                <input
+                  type="text"
+                  placeholder="URL"
+                  value={sourceUrl}
+                  onChange={e => {
+                    setSourceUrl(e.target.value)
+                    // Auto-detect GitHub URLs
+                    if (e.target.value.includes('github.com')) {
+                      setSourceType('github')
+                    }
+                  }}
+                  className="w-full border border-gray-300 rounded px-2 py-1 text-xs mb-2"
+                  onKeyDown={e => e.key === 'Enter' && handleAddSource()}
+                />
+              )}
               <div className="flex gap-1.5">
                 <button
                   onClick={handleAddSource}
@@ -402,7 +419,7 @@ export default function ProjectPage() {
                     s.status === 'failed' ? 'bg-red-400' : 'bg-gray-300'
                   }`} />
                   <span className="truncate flex-1 text-gray-700">
-                    {s.type === 'github' ? '📦' : '🔗'} {s.url?.slice(0, 35)}
+                    {s.type === 'github' ? '📦' : s.type === 'file' ? '📄' : '🔗'} {s.url?.slice(0, 35)}
                   </span>
                   <span className="text-gray-400">{s.chunk_count || '-'}</span>
                 </div>

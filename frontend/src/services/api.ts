@@ -293,6 +293,12 @@ export const getWorkspacePreview = (projectId: number, path: string) =>
 export const addSource = (projectId: number, data: { type: string; url?: string }) =>
   api.post(`/projects/${projectId}/sources`, data).then(r => r.data)
 
+export const uploadSource = (projectId: number, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post(`/projects/${projectId}/sources/upload`, form).then(r => r.data)
+}
+
 export const listSources = (projectId: number) =>
   api.get(`/projects/${projectId}/sources`).then(r => r.data)
 

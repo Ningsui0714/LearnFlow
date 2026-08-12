@@ -84,7 +84,7 @@ class SourceProcessor:
         return name in skip or (name.startswith(".") and name not in {".", ".ci", ".devcontainer"})
 
     _READABLE_EXTS = {
-        ".md", ".rst", ".txt", ".py", ".ipynb", ".yaml", ".yml",
+        ".md", ".markdown", ".rst", ".txt", ".csv", ".py", ".ipynb", ".yaml", ".yml",
         ".toml", ".cfg", ".ini", ".json", ".xml", ".html", ".css", ".js",
         ".sh", ".bash", ".c", ".cpp", ".h", ".hpp", ".java",
         ".rs", ".go", ".rb", ".php", ".swift", ".tex", ".bib",
@@ -95,7 +95,7 @@ class SourceProcessor:
     def _should_persist(self, fname: str) -> bool:
         """Files kept in the repo cache (needed for rendering/captioning)."""
         ext = f".{fname.split('.')[-1].lower()}" if "." in fname else ""
-        return ext in self._IMAGE_EXTS or fname.lower() in {"readme.md", "readme.rst"} or ext in {".md", ".rst"}
+        return ext in self._IMAGE_EXTS or fname.lower() in {"readme.md", "readme.rst"} or ext in {".md", ".markdown", ".rst"}
 
     async def clone_and_extract(self, repo_url: str, persist_dir: str = None) -> dict:
         """
@@ -578,9 +578,14 @@ class SourceProcessor:
         Full pipeline: fetch → extract → analyze → chunk.
         Returns {chunks: [...], source_meta: {...}}.
         """
-        parsed = urlparse(url)
-        clean_url = parsed._replace(query="").geturl().rstrip("/")
-        if source_type != "github" and "github.com" in clean_url:
+        if source_type == "file":
+            # Local application-data paths are not URLs. Preserve filename
+            # characters such as '?' instead of parsing them as a query.
+            clean_url = url
+        else:
+            parsed = urlparse(url)
+            clean_url = parsed._replace(query="").geturl().rstrip("/")
+        if source_type not in {"github", "file"} and "github.com" in clean_url:
             source_type = "github"
 
         if source_type == "github":
@@ -620,8 +625,8 @@ class SourceProcessor:
                 chunks = self.chunk_text(text, source_type="github")
                 return {"chunks": chunks, "source_meta": {}}
         elif source_type == "file":
-            # Local file/dir source: read .md/.py/.txt etc. directly.
-            # url 字段存本地路径（绝对路径或相对 backend 目录）。
+            # Uploaded reference file: read from the private source store.
+            # This path is never a linked project workspace path.
             import os as _os
             base = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
             raw = clean_url
@@ -645,6 +650,26 @@ class SourceProcessor:
 
             for p in sorted(paths):
                 ext = f".{p.split('.')[-1].lower()}" if "." in p else ""
+                if ext == ".pdf":
+                    try:
+                        from pypdf import PdfReader
+                        pages = PdfReader(p).pages
+                        content = "\n".join(page.extract_text() or "" for page in pages)
+                    except Exception as exc:
+                        raise ValueError(f"无法读取 PDF 文件 {p}: {exc}") from exc
+                    if len(content.strip()) >= 20:
+                        text_parts.append(f"=== {os.path.basename(p)} ===\n{content}\n")
+                    continue
+                if ext == ".docx":
+                    try:
+                        from docx import Document
+                        document = Document(p)
+                        content = "\n".join(paragraph.text for paragraph in document.paragraphs)
+                    except Exception as exc:
+                        raise ValueError(f"无法读取 DOCX 文件 {p}: {exc}") from exc
+                    if len(content.strip()) >= 20:
+                        text_parts.append(f"=== {os.path.basename(p)} ===\n{content}\n")
+                    continue
                 if ext not in self._READABLE_EXTS and ext not in {".md", ".py", ".txt", ".json"}:
                     continue
                 try:

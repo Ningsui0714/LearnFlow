@@ -11,7 +11,11 @@ import stat
 import tempfile
 from typing import Iterable
 
-from app.models.project import Checkpoint, Exercise, Lecture, Project
+from sqlalchemy import select
+
+from app.models.project import (
+    Checkpoint, Exercise, Lecture, Project, ProjectWorkspace, Roadmap,
+)
 
 
 DESCRIPTOR_SCHEMA = "learnflow.workspace.v1"
@@ -205,6 +209,10 @@ def initialize_managed_layout(
         lecture_dir.mkdir(parents=True, exist_ok=True)
         exercise_dir.mkdir(parents=True, exist_ok=True)
         lecture = lecture_by_checkpoint.get(checkpoint.id)
+        expected_lecture = f"lecture-{lecture.id}.lflecture" if lecture else None
+        for stale in lecture_dir.glob("*.lflecture"):
+            if stale.name != expected_lecture:
+                stale.unlink(missing_ok=True)
         if lecture:
             _write_json(lecture_dir / f"lecture-{lecture.id}.lflecture", {
                 "schema": "learnflow.lecture-ref.v1",
@@ -215,6 +223,13 @@ def initialize_managed_layout(
                 "summary": checkpoint.title,
                 "digest": _summary_digest(lecture.sections or []),
             })
+        expected_exercises = {
+            f"exercise-{item.id}.lfexercise"
+            for item in exercise_by_checkpoint.get(checkpoint.id, [])
+        }
+        for stale in exercise_dir.glob("*.lfexercise"):
+            if stale.name not in expected_exercises:
+                stale.unlink(missing_ok=True)
         for exercise in exercise_by_checkpoint.get(checkpoint.id, []):
             protected = {
                 "description": exercise.description or "",
@@ -231,6 +246,42 @@ def initialize_managed_layout(
                 "summary": exercise.title,
                 "protected_digest": _summary_digest(protected),
             })
+
+
+async def sync_managed_layout_for_project(db, project_id: int) -> bool:
+    """Refresh managed lecture/exercise descriptors for a linked workspace.
+
+    The database remains authoritative. A missing or temporarily unavailable
+    workspace must not make saving a lecture or exercise fail.
+    """
+    workspace = (await db.execute(
+        select(ProjectWorkspace).where(ProjectWorkspace.project_id == project_id)
+    )).scalar_one_or_none()
+    if not workspace or workspace.status != "linked":
+        return False
+    project = await db.get(Project, project_id)
+    if not project:
+        return False
+    checkpoints = list((await db.execute(
+        select(Checkpoint)
+        .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
+        .where(Roadmap.project_id == project_id)
+    )).scalars().all())
+    if not checkpoints:
+        return False
+    checkpoint_ids = [item.id for item in checkpoints]
+    lectures = list((await db.execute(
+        select(Lecture).where(Lecture.checkpoint_id.in_(checkpoint_ids))
+    )).scalars().all())
+    exercises = list((await db.execute(
+        select(Exercise).where(Exercise.checkpoint_id.in_(checkpoint_ids))
+    )).scalars().all())
+    try:
+        root = canonical_root(workspace.root_path, create=False)
+        initialize_managed_layout(root, project, checkpoints, lectures, exercises)
+    except (OSError, WorkspaceError):
+        return False
+    return True
 
 
 def classify_path(path: Path) -> tuple[str, int]:

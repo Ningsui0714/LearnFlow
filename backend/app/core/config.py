@@ -1,5 +1,6 @@
 import os
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -30,8 +31,19 @@ class Settings(BaseSettings):
     vision_model: str = "moonshot-v1-8k-vision-preview"
     vision_api_enhance: bool = False  # allow paid API captioning of pure graphics
 
-    # Repo files cache (images + markdown persisted from cloned sources)
-    repo_files_dir: str = "data/repo-files"
+    # Reference-source cache. This is deliberately outside any linked project
+    # workspace: GitHub/URL processing may persist images and markdown here for
+    # rendering, but those files are not project files.
+    source_cache_dir: str = Field(
+        default="data/repo-files",
+        validation_alias=AliasChoices("SOURCE_CACHE_DIR", "REPO_FILES_DIR"),
+    )
+    # Uploaded reference originals also live outside project workspaces.
+    source_uploads_dir: str = Field(
+        default="data/source-uploads",
+        validation_alias="SOURCE_UPLOADS_DIR",
+    )
+    max_source_upload_bytes: int = 25 * 1024 * 1024
 
     # Project-mode runtime (venv + workspaces for multi-file exercises)
     runtime_dir: str = ""  # empty → <backend>/runtime
@@ -75,6 +87,11 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         return [s.strip() for s in self.cors_origins.split(",") if s.strip()]
+
+    @property
+    def repo_files_dir(self) -> str:
+        """Compatibility alias for integrations using the old setting name."""
+        return self.source_cache_dir
 
 
 settings = Settings()

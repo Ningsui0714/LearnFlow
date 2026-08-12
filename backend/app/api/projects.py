@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+import shutil
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, Integer
 from typing import List
@@ -11,6 +14,7 @@ from app.schemas.project import (
     RoadmapOut, RoadmapNode,
 )
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_project
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -107,6 +111,10 @@ async def delete_project(
     from app.models.project import Source, Chunk
     srcs = await db.execute(select(Chunk.id).join(Source).where(Source.project_id == project_id))
     chunk_ids = [r[0] for r in srcs.all()]
+    source_ids_result = await db.execute(
+        select(Source.id).where(Source.project_id == project_id)
+    )
+    source_ids = [r[0] for r in source_ids_result.all()]
     
     # Delete project (cascades to sources, chunks, roadmap, checkpoints, etc.)
     await db.delete(project)
@@ -120,6 +128,19 @@ async def delete_project(
         save_cache(cache)
     except Exception:
         pass
+
+    # Reference originals and derived caches are application data, not
+    # project-workspace files. Clean only this project's own source data.
+    shutil.rmtree(
+        Path(settings.source_uploads_dir).expanduser()
+        / str(current.learner.id) / str(project_id),
+        ignore_errors=True,
+    )
+    for source_id in source_ids:
+        shutil.rmtree(
+            Path(settings.source_cache_dir).expanduser() / str(source_id),
+            ignore_errors=True,
+        )
     
     return {"status": "ok", "deleted": project.name, "chunks_cleaned": len(chunk_ids)}
 
@@ -134,6 +155,9 @@ async def add_source(
     db: AsyncSession = Depends(get_db),
 ):
     await require_owned_project(db, current.learner.id, project_id)
+
+    if data.type == "file":
+        raise HTTPException(400, "文件来源请使用上传文件入口，不能读取项目工作区路径")
 
     source = Source(project_id=project_id, type=data.type, url=data.url)
     db.add(source)
@@ -151,6 +175,85 @@ async def add_source(
     return SourceOut(id=source.id, project_id=source.project_id, type=source.type,
                      url=source.url, status=source.status, error=source.error,
                      chunk_count=0, created_at=source.created_at)
+
+
+@router.post("/projects/{project_id}/sources/upload", response_model=SourceOut)
+async def upload_source(
+    project_id: int,
+    file: UploadFile = File(...),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store an uploaded reference file outside the linked project workspace."""
+    await require_owned_project(db, current.learner.id, project_id)
+
+    filename = Path((file.filename or "").replace("\\", "/")).name
+    if not filename or filename in {".", ".."} or "\x00" in filename:
+        raise HTTPException(400, "上传文件名无效")
+
+    source = Source(
+        project_id=project_id,
+        type="file",
+        # The API exposes the original name, never the private application path.
+        url=filename,
+        meta_data={
+            "upload": {
+                "original_filename": filename,
+                "content_type": file.content_type or "",
+            }
+        },
+    )
+    db.add(source)
+    await db.flush()
+
+    upload_dir = Path(settings.source_uploads_dir).expanduser() / str(current.learner.id) / str(project_id) / str(source.id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored_path = upload_dir / filename
+    total = 0
+    try:
+        with stored_path.open("wb") as handle:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > settings.max_source_upload_bytes:
+                    raise HTTPException(413, "上传文件不能超过 25 MB")
+                handle.write(chunk)
+        source.meta_data = {
+            "upload": {
+                "original_filename": filename,
+                "content_type": file.content_type or "",
+                "size_bytes": total,
+                "stored_path": str(stored_path),
+            }
+        }
+        from app.services.learning_runtime import record_event
+        await record_event(
+            db, event_type="source_added", source="ui", project_id=project_id,
+            learner_id=current.learner.id,
+            payload={"source_id": source.id, "type": "file", "filename": filename},
+            provenance={"endpoint": "POST /api/projects/{id}/sources/upload"},
+            client_event_id=f"source:{source.id}:added",
+        )
+        await db.commit()
+        await db.refresh(source)
+    except HTTPException:
+        stored_path.unlink(missing_ok=True)
+        await db.rollback()
+        raise
+    except Exception as exc:
+        stored_path.unlink(missing_ok=True)
+        await db.rollback()
+        raise HTTPException(500, f"保存上传文件失败: {exc}") from exc
+    finally:
+        await file.close()
+
+    return SourceOut(
+        id=source.id, project_id=source.project_id, type=source.type,
+        url=source.url, status=source.status, error=source.error,
+        chunk_count=0, created_at=source.created_at,
+    )
 
 
 @router.get("/projects/{project_id}/sources", response_model=List[SourceOut])

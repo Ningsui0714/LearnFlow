@@ -85,7 +85,7 @@ def _rewrite_image_paths(content: str, source_file: str, source_id: int,
     import re as _re
     from app.core.config import settings as _settings
     md_dir = os.path.dirname(source_file or "")
-    repo_root = _settings.repo_files_dir
+    repo_root = _settings.source_cache_dir
     source_ids = all_source_ids or [source_id]
 
     def _resolve(raw: str) -> str:
@@ -279,7 +279,7 @@ async def run_lecture_generation(task_id: int):
     main_source_id = (brief or {}).get("scope", {}).get("main_source_id")
     if not main_source_id and chunks:
         main_source_id = chunks[0].get("source_id")
-    persist_dir = os.path.join(_settings.repo_files_dir, str(main_source_id)) if main_source_id else ""
+    persist_dir = os.path.join(_settings.source_cache_dir, str(main_source_id)) if main_source_id else ""
 
     # T10: all project source ids for cross-source image resolution
     all_source_ids = []
@@ -520,6 +520,10 @@ async def run_lecture_generation(task_id: int):
             }
             checkpoint.brief = new_brief
         await db.commit()
+        from app.services.workspace_files import sync_managed_layout_for_project
+        roadmap = await db.get(Roadmap, checkpoint.roadmap_id) if checkpoint else None
+        if roadmap:
+            await sync_managed_layout_for_project(db, roadmap.project_id)
 
     from app.services.progress import mark_lecture_generated
     await mark_lecture_generated(checkpoint_id)
@@ -704,7 +708,7 @@ async def run_image_captioning(task_id: int):
         return
 
     from app.core.config import settings as _settings
-    persist_dir = os.path.join(_settings.repo_files_dir, str(source_id))
+    persist_dir = os.path.join(_settings.source_cache_dir, str(source_id))
     mode = (task.payload or {}).get("mode", "free")
     images = _scan_images(persist_dir, include_svg=(mode == "free"))
     limit = (task.payload or {}).get("limit")
@@ -948,7 +952,6 @@ async def run_concept_generation(task_id: int):
                 order=i + 1,
             ))
         await db.commit()
-
     await update_task(
         task_id, status="completed",
         progress={"current": len(questions), "total": len(questions),
@@ -1055,6 +1058,13 @@ async def run_exercise_generation(task_id: int):
                 },
             ))
         await db.commit()
+        from app.services.workspace_files import sync_managed_layout_for_project
+        roadmap = (await db.execute(
+            select(Roadmap).join(Checkpoint, Checkpoint.roadmap_id == Roadmap.id)
+            .where(Checkpoint.id == checkpoint_id)
+        )).scalar_one_or_none()
+        if roadmap:
+            await sync_managed_layout_for_project(db, roadmap.project_id)
 
     await update_task(
         task_id, status="completed",

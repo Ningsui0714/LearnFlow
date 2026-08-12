@@ -47,6 +47,10 @@ def main() -> None:
         # SQLAlchemy loads the aiosqlite driver dynamically, so PyInstaller
         # cannot discover it from the import graph on its own.
         "--hidden-import=aiosqlite",
+        # Uploaded reference documents load their parsers lazily from the
+        # source processor; keep them in the desktop sidecar bundle.
+        "--hidden-import=pypdf",
+        "--hidden-import=docx",
         str(BACKEND_ROOT / "desktop_entry.py"),
     ], check=True, cwd=REPO_ROOT)
     BINARIES_ROOT.mkdir(parents=True, exist_ok=True)

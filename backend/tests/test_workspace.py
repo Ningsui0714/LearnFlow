@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -175,6 +176,23 @@ def test_repo_files_dir_can_be_overridden_for_desktop_storage(tmp_path):
         check=True,
     )
     assert result.stdout.strip() == str(repo_files_dir)
+
+
+def test_source_cache_and_upload_dirs_are_not_workspace_paths(tmp_path):
+    source_cache = tmp_path / "source-cache"
+    source_uploads = tmp_path / "source-uploads"
+    env = os.environ.copy()
+    env["SOURCE_CACHE_DIR"] = str(source_cache)
+    env["SOURCE_UPLOADS_DIR"] = str(source_uploads)
+    result = subprocess.run(
+        [sys.executable, "-c", "from app.core.config import settings; print(settings.source_cache_dir); print(settings.source_uploads_dir)"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.splitlines() == [str(source_cache), str(source_uploads)]
 
 
 def test_desktop_bearer_requires_the_per_launch_token(monkeypatch):
@@ -578,6 +596,12 @@ def test_managed_learning_files_drafts_annotations_and_formal_evidence_are_separ
         })
         assert saved.status_code == 200, saved.text
         assert saved.json()["version"] == 2
+        lecture_descriptor = (
+            root / ".learnflow" / "checkpoints" / f"cp-{checkpoint_id}"
+            / "lectures" / f"lecture-{lecture_id}.lflecture"
+        )
+        assert lecture_descriptor.is_file()
+        assert json.loads(lecture_descriptor.read_text(encoding="utf-8"))["version"] == 2
         stale = client.put(f"/api/checkpoints/{checkpoint_id}/lecture", json={
             "sections": [{"title": "Bad", "content": "overwrite"}],
             "base_version": 1, "idempotency_key": "lecture-edit-stale",

@@ -25,6 +25,7 @@ from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_animation,
     require_owned_annotation, require_owned_checkpoint,
 )
+from app.services.workspace_files import sync_managed_layout_for_project
 
 router = APIRouter()
 
@@ -288,6 +289,7 @@ async def _save_lecture_versioned(
     cp = cp_result.scalar_one_or_none()
     if cp and cp.learning_status not in {"completed", "verification_due"}:
         cp.learning_status = "in_progress"
+    roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
 
     from app.services.learning_runtime import record_event
     await record_event(
@@ -300,6 +302,8 @@ async def _save_lecture_versioned(
     )
 
     await db.commit()
+    if roadmap:
+        await sync_managed_layout_for_project(db, roadmap.project_id)
     return {"status": "ok", "sections": len(sections), "version": next_version}
 
 
@@ -553,6 +557,9 @@ async def rollback_lecture(
     lecture.version = int(lecture.version or 1) + 1
     await _reanchor_lecture_annotations(db, lecture, lecture.sections, lecture.version)
     await db.commit()
+    roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
+    if roadmap:
+        await sync_managed_layout_for_project(db, roadmap.project_id)
     return {"status": "ok", "sections": len(lecture.sections or []), "version": lecture.version}
 
 

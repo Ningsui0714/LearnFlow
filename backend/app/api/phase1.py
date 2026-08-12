@@ -105,6 +105,16 @@ def _count_images(persist_dir: str) -> int:
     return count
 
 
+def _source_input(source: Source) -> str:
+    """Resolve the processing input without treating it as a workspace file."""
+    if source.type == "file":
+        upload = dict(source.meta_data or {}).get("upload") or {}
+        stored_path = upload.get("stored_path")
+        if stored_path:
+            return stored_path
+    return source.url
+
+
 # ── Source Processing ──
 
 @router.post("/projects/{project_id}/sources/{source_id}/process")
@@ -130,17 +140,18 @@ async def process_source(
         .distinct()
     )).scalars().all()
 
-    # Repo file cache (T6): clear old, will re-persist images/markdown
-    persist_dir = os.path.join(settings.repo_files_dir, str(source.id))
+    # Source cache (T6): clear old derived files; never write to a project workspace.
+    persist_dir = os.path.join(settings.source_cache_dir, str(source.id))
     if os.path.exists(persist_dir):
         shutil.rmtree(persist_dir, ignore_errors=True)
+    os.makedirs(persist_dir, exist_ok=True)
 
     try:
         # Process the source (now returns {chunks, source_meta})
-        result_data = await chunker.process_source(source.type, source.url, persist_dir=persist_dir)
+        result_data = await chunker.process_source(source.type, _source_input(source), persist_dir=persist_dir)
         chunks_data = result_data["chunks"]
         source_meta = result_data.get("source_meta", {})
-        source_meta["repo_files_dir"] = persist_dir
+        source_meta["source_cache_dir"] = persist_dir
         source_meta["image_files"] = _count_images(persist_dir)
 
         # Store directory structure/toc as source metadata
@@ -202,7 +213,7 @@ async def process_source(
         raise HTTPException(500, f"Source processing failed: {str(e)}")
 
 
-# ── T6: repo file cache serving + image captioning ──
+# ── T6: reference-source cache serving + image captioning ──
 
 @router.get("/sources/{source_id}/files/{file_path:path}")
 async def serve_source_file(
@@ -211,9 +222,9 @@ async def serve_source_file(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    """Serve persisted repo files (images/markdown) for rendering (T6-P0)."""
+    """Serve derived reference files (images/markdown), not workspace files."""
     await require_owned_source(db, current.learner.id, source_id)
-    base = os.path.realpath(os.path.join(settings.repo_files_dir, str(source_id)))
+    base = os.path.realpath(os.path.join(settings.source_cache_dir, str(source_id)))
     full = os.path.realpath(os.path.join(base, file_path))
     if not full.startswith(base + os.sep):
         raise HTTPException(400, "非法路径")
@@ -250,7 +261,7 @@ async def start_image_captioning(
         if not (_s.vision_api_key or _s.llm_api_key):
             raise HTTPException(400, "请先配置 VISION_API_KEY（或 LLM_API_KEY）")
 
-    persist_dir = os.path.join(settings.repo_files_dir, str(source_id))
+    persist_dir = os.path.join(settings.source_cache_dir, str(source_id))
     if not os.path.isdir(persist_dir):
         raise HTTPException(400, "仓库文件缓存不存在，请先重新处理来源")
 
@@ -479,15 +490,16 @@ async def process_all_sources(
                 .distinct()
             )).scalars().all()
 
-            persist_dir = os.path.join(settings.repo_files_dir, str(source.id))
+            persist_dir = os.path.join(settings.source_cache_dir, str(source.id))
             if os.path.exists(persist_dir):
                 shutil.rmtree(persist_dir, ignore_errors=True)
+            os.makedirs(persist_dir, exist_ok=True)
 
             # New: returns {chunks, source_meta}
-            result_data = await chunker.process_source(source.type, source.url, persist_dir=persist_dir)
+            result_data = await chunker.process_source(source.type, _source_input(source), persist_dir=persist_dir)
             chunks_data = result_data["chunks"]
             source_meta = result_data.get("source_meta", {})
-            source_meta["repo_files_dir"] = persist_dir
+            source_meta["source_cache_dir"] = persist_dir
             source_meta["image_files"] = _count_images(persist_dir)
             if source_meta:
                 try:

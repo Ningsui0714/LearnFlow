@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select
 from app.db.database import async_session, init_db
+from app.core.config import settings
 from app.models.project import Project, Source, Roadmap, Checkpoint, CheckpointChunk, Chunk
 from app.services.chunker import SourceProcessor
 
@@ -79,7 +80,7 @@ async def main():
         src.status = "processing"
         await db.commit()
         try:
-            persist_dir = os.path.join("data/repo-files", str(src.id))
+            persist_dir = os.path.join(settings.source_cache_dir, str(src.id))
             result = await processor.process_source("file", MATERIALS_DIR, persist_dir=persist_dir)
             chunks_data = result["chunks"]
             print(f"[process] {len(chunks_data)} chunks generated")

@@ -24,6 +24,7 @@ from app.services.auth import (
     require_owned_exercise, require_owned_project,
 )
 from app.services.profile import evaluate_project_badge
+from app.services.workspace_files import sync_managed_layout_for_project
 from langchain_core.messages import HumanMessage
 
 router = APIRouter()
@@ -90,6 +91,10 @@ async def create_exercise(
     db.add(exercise)
     await db.commit()
     await db.refresh(exercise)
+    checkpoint = await db.get(Checkpoint, checkpoint_id)
+    roadmap = await db.get(Roadmap, checkpoint.roadmap_id) if checkpoint else None
+    if roadmap:
+        await sync_managed_layout_for_project(db, roadmap.project_id)
     return ExerciseOut(
         id=exercise.id, checkpoint_id=exercise.checkpoint_id,
         title=exercise.title, description=exercise.description,
