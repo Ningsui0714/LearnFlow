@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -157,6 +160,21 @@ def test_settings_preserve_api_key_and_normalize_deepseek(monkeypatch, tmp_path)
         assert after_blank_save.json()["llm_api_key"] == "sk-test-…1234"
         assert after_blank_save.json()["llm_base_url"] == "https://api.deepseek.com"
         assert f"LLM_API_KEY={secret}" in settings_path.read_text(encoding="utf-8")
+
+
+def test_repo_files_dir_can_be_overridden_for_desktop_storage(tmp_path):
+    repo_files_dir = tmp_path / "repo-files"
+    env = os.environ.copy()
+    env["REPO_FILES_DIR"] = str(repo_files_dir)
+    result = subprocess.run(
+        [sys.executable, "-c", "from app.core.config import settings; print(settings.repo_files_dir)"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == str(repo_files_dir)
 
 
 def test_desktop_bearer_requires_the_per_launch_token(monkeypatch):

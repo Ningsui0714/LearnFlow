@@ -41,6 +41,8 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&app_data_dir)?;
             let database_path = app_data_dir.join("learnflow.db");
+            let repo_files_dir = app_data_dir.join("repo-files");
+            std::fs::create_dir_all(&repo_files_dir)?;
             let database_url = format!(
                 "sqlite+aiosqlite:///{}",
                 database_path.to_string_lossy().replace('\\', "/")
@@ -53,6 +55,7 @@ pub fn run() {
                 .env("DESKTOP_MODE", "true")
                 .env("DESKTOP_TOKEN", &token)
                 .env("DATABASE_URL", database_url)
+                .env("REPO_FILES_DIR", repo_files_dir.to_string_lossy().as_ref())
                 .env("LEARNFLOW_SETTINGS_PATH", settings_path.to_string_lossy().as_ref())
                 .env(
                     "CORS_ORIGINS",
