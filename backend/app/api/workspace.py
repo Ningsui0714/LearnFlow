@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 import hashlib
 import hmac
+import mimetypes
 from pathlib import Path
 import subprocess
 import sys
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,8 +22,7 @@ from app.models.project import (
 from app.schemas.workspace import (
     WorkspaceFileResponse, WorkspaceFileWriteRequest, WorkspaceLinkRequest,
     WorkspaceLinkResponse, WorkspaceOperationListResponse, WorkspaceOperationRequest,
-    WorkspaceOperationResponse, WorkspaceRevealRequest, WorkspaceRunRequest,
-    WorkspaceRuntimeConfigRequest, WorkspaceRuntimeConfigResponse, WorkspaceTreeResponse,
+    WorkspaceOperationResponse, WorkspaceRevealRequest, WorkspaceTreeResponse,
 )
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_checkpoint, require_owned_project,
@@ -33,7 +34,6 @@ from app.services.workspace_files import (
     canonical_root, initialize_managed_layout, read_workspace_file,
     resolve_workspace_path, scan_workspace_tree, validate_base_hash,
 )
-from app.services.workspace_runtime import execute_runtime_plan, runtime_plan, validate_interpreter
 
 
 router = APIRouter()
@@ -225,127 +225,6 @@ async def workspace_tree(
 
 
 @router.get(
-    "/projects/{project_id}/workspace/runtime/config",
-    response_model=WorkspaceRuntimeConfigResponse,
-    dependencies=[Depends(require_desktop_token)],
-)
-async def get_workspace_runtime_config(
-    project_id: int,
-    current: CurrentLearner = Depends(get_current_learner),
-    db: AsyncSession = Depends(get_db),
-):
-    workspace = await _owned_workspace(db, current.learner.id, project_id)
-    config = dict(workspace.runtime_config or {})
-    return WorkspaceRuntimeConfigResponse(
-        interpreter_path=config.get("interpreter_path"),
-        version=config.get("version"),
-        configured=bool(config.get("interpreter_path")),
-    )
-
-
-@router.put(
-    "/projects/{project_id}/workspace/runtime/config",
-    response_model=WorkspaceRuntimeConfigResponse,
-    dependencies=[Depends(require_desktop_token)],
-)
-async def set_workspace_runtime_config(
-    project_id: int,
-    data: WorkspaceRuntimeConfigRequest,
-    current: CurrentLearner = Depends(get_current_learner),
-    db: AsyncSession = Depends(get_db),
-):
-    workspace = await _owned_workspace(db, current.learner.id, project_id)
-    try:
-        config = validate_interpreter(data.interpreter_path)
-    except WorkspaceError as exc:
-        _raise_workspace_error(exc)
-    workspace.runtime_config = config
-    workspace.updated_at = datetime.utcnow()
-    await db.commit()
-    return WorkspaceRuntimeConfigResponse(**config, configured=True)
-
-
-@router.post(
-    "/projects/{project_id}/workspace/runs",
-    response_model=WorkspaceOperationResponse,
-    dependencies=[Depends(require_desktop_token)],
-)
-async def create_workspace_run(
-    project_id: int,
-    data: WorkspaceRunRequest,
-    current: CurrentLearner = Depends(get_current_learner),
-    db: AsyncSession = Depends(get_db),
-):
-    workspace = await _owned_workspace(db, current.learner.id, project_id)
-    if data.actor == "agent":
-        await _validate_agent_scope(
-            db, current, project_id, data.checkpoint_id, data.session_id,
-        )
-    key = _operation_key(current.learner.id, data.idempotency_key)
-    existing = (await db.execute(select(WorkspaceOperation).where(
-        WorkspaceOperation.learner_id == current.learner.id,
-        WorkspaceOperation.idempotency_key == key,
-    ))).scalar_one_or_none()
-    if existing:
-        return existing
-    config = dict(workspace.runtime_config or {})
-    if not config.get("interpreter_path"):
-        raise HTTPException(409, "请先为项目选择本地 Python 解释器")
-    try:
-        plan = runtime_plan(
-            Path(workspace.root_path),
-            interpreter_path=config["interpreter_path"],
-            script_path=data.path,
-            mode=data.mode,
-            args=data.args,
-            actor=data.actor,
-        )
-    except WorkspaceError as exc:
-        _raise_workspace_error(exc)
-    operation = WorkspaceOperation(
-        workspace_id=workspace.id,
-        learner_id=current.learner.id,
-        project_id=project_id,
-        checkpoint_id=data.checkpoint_id,
-        session_id=data.session_id,
-        actor=data.actor,
-        operation="run",
-        status="proposed",
-        target_path=plan["script"],
-        payload=plan,
-        result={
-            "requires_confirmation": True,
-            "plan": {key: value for key, value in plan.items() if key != "command"},
-        },
-        idempotency_key=key,
-        expires_at=datetime.utcnow() + timedelta(minutes=30),
-    )
-    db.add(operation)
-    await db.flush()
-    if data.actor == "user" and data.confirmed:
-        result = execute_runtime_plan(plan)
-        now = datetime.utcnow()
-        operation.status = "applied"
-        operation.confirmed_at = now
-        operation.applied_at = now
-        operation.result = result
-        await record_event(
-            db, learner_id=current.learner.id,
-            event_type="workspace_file_run", source="workspace_runtime",
-            project_id=project_id,
-            payload={
-                "operation_id": operation.id, "mode": data.mode,
-                "path": operation.target_path, "exit_code": result.get("exit_code"),
-            },
-            provenance={"actor": "user", "confirmation": "run_button"},
-            client_event_id=f"workspace-run:{operation.id}:completed",
-        )
-    await db.commit()
-    await db.refresh(operation)
-    return operation
-
-
-@router.get(
     "/projects/{project_id}/workspace/files/{file_path:path}",
     response_model=WorkspaceFileResponse,
     dependencies=[Depends(require_desktop_token)],
@@ -361,7 +240,41 @@ async def get_workspace_file(
         result = read_workspace_file(Path(workspace.root_path), file_path)
     except WorkspaceError as exc:
         _raise_workspace_error(exc)
-    return WorkspaceFileResponse(**result)
+    mime_type = mimetypes.guess_type(result["path"])[0] or "application/octet-stream"
+    previewable = mime_type == "application/pdf" or mime_type in {
+        "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+    }
+    return WorkspaceFileResponse(**result, mime_type=mime_type, previewable=previewable)
+
+
+@router.get(
+    "/projects/{project_id}/workspace/previews/{file_path:path}",
+    dependencies=[Depends(require_desktop_token)],
+)
+async def preview_workspace_file(
+    project_id: int,
+    file_path: str,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    workspace = await _owned_workspace(db, current.learner.id, project_id)
+    try:
+        relative, target = resolve_workspace_path(Path(workspace.root_path), file_path)
+    except WorkspaceError as exc:
+        _raise_workspace_error(exc)
+    if not target.is_file():
+        raise HTTPException(400, "目标不是普通文件")
+    mime_type = mimetypes.guess_type(relative)[0] or "application/octet-stream"
+    allowed = {
+        "application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+    }
+    if mime_type not in allowed:
+        raise HTTPException(415, "该文件类型不支持内置预览")
+    return FileResponse(
+        target, media_type=mime_type, filename=Path(relative).name,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get(
@@ -385,7 +298,8 @@ async def get_workspace_file_for_checkpoint_tutor(
         result = read_workspace_file(Path(workspace.root_path), file_path, actor="agent")
     except WorkspaceError as exc:
         _raise_workspace_error(exc)
-    return WorkspaceFileResponse(**result)
+    mime_type = mimetypes.guess_type(result["path"])[0] or "application/octet-stream"
+    return WorkspaceFileResponse(**result, mime_type=mime_type, previewable=False)
 
 
 @router.post(
@@ -419,6 +333,37 @@ async def reveal_workspace_item(
         )
     except OSError as exc:
         raise HTTPException(500, "Unable to open the system file manager") from exc
+    return {"status": "opened", "path": relative}
+
+
+@router.post(
+    "/projects/{project_id}/workspace/open",
+    dependencies=[Depends(require_desktop_token)],
+)
+async def open_workspace_item(
+    project_id: int,
+    data: WorkspaceRevealRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    workspace = await _owned_workspace(db, current.learner.id, project_id)
+    try:
+        relative, target = resolve_workspace_path(Path(workspace.root_path), data.path)
+    except WorkspaceError as exc:
+        _raise_workspace_error(exc)
+    if sys.platform == "darwin":
+        command = ["open", str(target)]
+    elif sys.platform == "win32":
+        command = ["explorer.exe", str(target)]
+    else:
+        command = ["xdg-open", str(target)]
+    try:
+        subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True,
+        )
+    except OSError as exc:
+        raise HTTPException(500, "Unable to open file with the system application") from exc
     return {"status": "opened", "path": relative}
 
 
@@ -643,12 +588,8 @@ async def confirm_workspace_operation(
         await db.commit()
         raise HTTPException(409, "Workspace operation expired")
     try:
-        result = (
-            execute_runtime_plan(operation.payload or {})
-            if operation.operation == "run"
-            else apply_operation(
-                Path(workspace.root_path), operation.id, operation.operation, operation.payload or {},
-            )
+        result = apply_operation(
+            Path(workspace.root_path), operation.id, operation.operation, operation.payload or {},
         )
     except WorkspaceError as exc:
         operation.status = "failed" if exc.code != "hash_conflict" else "stale"
@@ -668,24 +609,20 @@ async def confirm_workspace_operation(
                 "restorable": False,
                 "restored_by_operation_id": operation.id,
             }
-    event_type = "workspace_file_run" if operation.operation == "run" else "workspace_change_applied"
     await record_event(
         db,
         learner_id=current.learner.id,
-        event_type=event_type,
-        source="workspace_runtime" if operation.operation == "run" else "workspace_file_service",
+        event_type="workspace_change_applied",
+        source="workspace_file_service",
         project_id=project_id,
         checkpoint_id=operation.checkpoint_id,
         session_id=operation.session_id,
         payload={
             "operation_id": operation.id, "operation": operation.operation,
-            "path": operation.target_path, "exit_code": result.get("exit_code"),
+            "path": operation.target_path,
         },
         provenance={"actor": operation.actor, "confirmation": "explicit"},
-        client_event_id=(
-            f"workspace-run:{operation.id}:completed" if operation.operation == "run"
-            else f"workspace-operation:{operation.id}:applied"
-        ),
+        client_event_id=f"workspace-operation:{operation.id}:applied",
     )
     await db.commit()
     return operation

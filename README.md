@@ -19,7 +19,7 @@ Built as a learning tool — not a chatbot wrapper. Every feature is designed ar
 | **🧩 Graph Checkpoints** | React Flow renders the learning path as an interactive DAG. Click to enter each checkpoint |
 | **🧭 Remediation Loop** | Wrong answer → deterministic remediation → retry → transfer variant → evidence writeback |
 | **🎬 Seeded Demo** | One command, isolated SQLite data, no LLM or network required |
-| **🗂️ Desktop Workspace** | Tauri 2 shell, real local project folders, hash-safe edits, recoverable file operations, confirmed local Python runs, and exercise bindings |
+| **🗂️ Desktop Workspace** | Tauri 2 shell, managed lecture/exercise players, Markdown/PDF/image preview, Vim-capable text edits, and recoverable file operations |
 
 ---
 

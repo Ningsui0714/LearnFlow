@@ -11,7 +11,7 @@
 - WebView 只有目录选择能力，没有 `$HOME/**` 或任意文件系统权限。真正的项目根约束由 FastAPI 再次执行。
 - sidecar 只允许绑定 `127.0.0.1`、`::1` 或 `localhost`；桌面令牌不得写入仓库、日志或数据库。
 
-桌面 Python 运行属于“可信本地执行”，不是容器级代码沙箱。项目显式选择本地解释器；语法检查和运行都使用固定参数数组直接启动进程，默认不安装依赖，也不通过 shell 拼接命令。
+桌面工作区本身不提供 Python 解释器、终端、编译或任意代码运行能力。普通 `.py` 与其他 UTF-8 文本一样，只能查看和轻量编辑；后续本地代码 Agent 由独立 Broker 在隔离副本中执行。
 
 ## 2. 权威数据
 
@@ -52,26 +52,23 @@
 - 覆盖前的内容进入 `.learnflow/history/op-<id>/`；同一幂等键或同一确认重复调用只应用一次。
 - 提案默认 30 分钟过期；基础 hash 变化后状态变为 `stale`，必须重新读取和提案。
 
-桌面 Explorer 将数据库权威的“关卡资料”和磁盘权威的“项目文件”分成两个逻辑组，不展示 `.learnflow`。普通文本由 Monaco 打开，可使用多标签、最多三个编辑组和 `⌘S/Ctrl+S`；二进制或大型文件只显示大小与 hash。创建、重命名、移动、删除、恢复及 Finder/Explorer 定位都经同一受控 API。
+桌面 Explorer 将数据库权威的“关卡资料”和磁盘权威的“项目文件”分成两个逻辑组，不展示 `.learnflow`。普通文本由 Monaco 打开，可使用多标签、最多三个编辑组、Vim 键位和 `⌘S/Ctrl+S`；Markdown 提供安全的预览/源码/分屏，工作区相对图片通过带桌面令牌的 blob 请求载入，不渲染不安全 HTML；图片和 PDF 内置预览，其他二进制显示元数据并可由系统打开。创建、重命名、移动、删除、恢复及 Finder/Explorer 定位都经同一受控 API。
 
 文件系统与 SQLite 无法形成跨介质原子事务，因此磁盘变更先产生回滚快照，再登记 applied 状态和事件。异常操作保留 `failed/stale` 记录，不能伪装成功。
 
-## 5. Python 运行与练习绑定
+## 5. 学习文件播放器与证据边界
 
-- 解释器配置属于项目级 `ProjectWorkspace.runtime_config`，选择时先执行 `--version` 验证。
-- 只运行当前项目根内、通过同一规范化和链接检查的 `.py` 文件；参数最多 32 个，单项不超过 1024 字符。
-- 语法检查和运行均使用固定参数数组与 `shell=False`，工作目录固定为项目根，30 秒超时，stdout/stderr 各截断到 256 KiB。
-- UI 和 Agent 提案都先展示解释器、脚本、工作目录和参数。Agent 即使传入 `confirmed=true` 也只能形成 `proposed` 操作，必须由用户再次确认。
-- 不执行 `pip install`，不创建虚拟环境，不把本地运行描述为沙箱。
-- `Exercise.workspace_bindings` 只登记相对路径和绑定时 hash；正式提交重新读取当前磁盘内容，并把相对路径、SHA-256、大小和不可变内容快照保存到 `LearningAttempt.submission`。
-- 练习的只读题面、测试和答案不能作为用户答案绑定；`Exercise.files` 继续作为兼容虚拟文件存在。
+- `.lflecture/.lfexercise` 是只读引用描述符，双击分别打开讲义播放器和练习播放器，普通文件 API 无权读取或修改它们。
+- 讲义保存必须携带 `base_version`；冲突返回 409，保存前的内容进入 `LectureVersion`，批注随正文重定位，无法唯一定位的进入“未定位笔记”。
+- 练习题面、标准答案、测试和判题规则保持受保护；用户只保存个人答案、代码、草稿和批注。`Exercise.files` 继续作为兼容虚拟子文件。
+- 草稿与练习“运行”不产生 `LearningAttempt` 或 `EvidenceEvent`；正式提交才判题并写证据。
 - 正式提交携带 `client_submission_id`，重复请求返回同一 `LearningAttempt`，不会重复写评估事件。
 
 ## 6. 五核与证据
 
-`workspace_linked`、`workspace_change_applied` 和 `workspace_file_run` 是 `kernel_targets=()` 的操作事件。它们用于审计，不产生 `KernelMutation`，也不能证明学习者掌握了知识或具备独立实践能力。
+`workspace_linked` 和 `workspace_change_applied` 是 `kernel_targets=()` 的操作事件。它们用于审计，不产生 `KernelMutation`，也不能证明学习者掌握了知识或具备独立实践能力。
 
-只有用户将普通文件显式绑定练习并正式提交后，判题结果才可进入 `LearningAttempt/EvidenceEvent`。打开、编辑、保存、运行成功都不是掌握证据。
+只有学习对象播放器里的正式提交判题结果可以进入 `LearningAttempt/EvidenceEvent`。打开、编辑、保存草稿和运行成功都不是掌握证据；首版不允许普通项目文件直接作为练习答案提交。
 
 ## 7. 验收命令
 

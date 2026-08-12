@@ -117,7 +117,10 @@ async def checkpoint_artifacts(
             "id": lecture.id,
             "checkpoint_id": checkpoint_id,
             "status": lecture.status,
-            "version": lecture.updated_at.isoformat() if lecture.updated_at else "draft",
+            "version": int(lecture.version or 1),
+            "logical_filename": f"{checkpoint_row.order:02d}-{checkpoint_row.title}.lflecture",
+            "open_target": f"/projects/{project.id}/checkpoints/{checkpoint_id}",
+            "allowed_operations": ["read", "annotate", "edit_versioned", "view_versions"],
             "section_count": len(lecture.sections or []),
         } if lecture else None),
         "managed_exercises": [{
@@ -126,11 +129,14 @@ async def checkpoint_artifacts(
             "checkpoint_id": checkpoint_id,
             "title": item.title,
             "order": item.order,
+            "version": 1,
+            "logical_filename": f"{item.order + 1:02d}-{item.title}.lfexercise",
+            "open_target": f"/projects/{project.id}/checkpoints/{checkpoint_id}/exercises?exercise={item.id}",
+            "allowed_operations": ["read", "annotate", "edit_draft", "run", "submit"],
             "virtual_files": [
                 {"name": value.get("name"), "read_only": bool(value.get("read_only"))}
                 for value in (item.files or []) if isinstance(value, dict)
             ],
-            "workspace_bindings": list(item.workspace_bindings or []),
         } for item in exercises],
         "authority": {
             "lecture_and_exercise": "database",
@@ -235,7 +241,6 @@ async def build_checkpoint_tutor_context(
                 {"name": value.get("name"), "read_only": bool(value.get("read_only"))}
                 for value in (item.files or []) if isinstance(value, dict)
             ],
-            "workspace_bindings": list(item.workspace_bindings or []),
         } for item in exercises],
         "project_file_tree": workspace_nodes,
         "current_surface": allowed_surface,

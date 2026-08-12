@@ -206,13 +206,15 @@ export interface WorkspaceFile {
   size: number
   modified_at: string
   read_only: boolean
+  mime_type?: string
+  previewable: boolean
 }
 
 export interface WorkspaceOperation {
   id: number
   project_id: number
   actor: 'user' | 'agent'
-  operation: 'create' | 'write' | 'mkdir' | 'rename' | 'move' | 'delete' | 'restore' | 'run'
+  operation: 'create' | 'write' | 'mkdir' | 'rename' | 'move' | 'delete' | 'restore'
   status: string
   target_path: string
   destination_path?: string
@@ -234,6 +236,9 @@ export const linkProjectWorkspace = (
 
 export const getWorkspaceTree = (projectId: number) =>
   api.get(`/projects/${projectId}/workspace/tree`).then(r => r.data as WorkspaceTree)
+
+export const getCheckpointWorkspaceArtifacts = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/workspace/artifacts`).then(r => r.data)
 
 export const getWorkspaceFile = (projectId: number, path: string) =>
   api.get(workspaceFileUrl(projectId, path)).then(r => r.data as WorkspaceFile)
@@ -274,45 +279,15 @@ export const listWorkspaceOperations = (
 export const revealWorkspaceItem = (projectId: number, path: string) =>
   api.post(`/projects/${projectId}/workspace/reveal`, { path }).then(r => r.data)
 
-export interface WorkspaceRuntimeConfig {
-  interpreter_path?: string
-  version?: string
-  configured: boolean
-  mode: 'trusted_local_execution'
-}
+export const openWorkspaceItem = (projectId: number, path: string) =>
+  api.post(`/projects/${projectId}/workspace/open`, { path }).then(r => r.data)
 
-export const getWorkspaceRuntimeConfig = (projectId: number) =>
-  api.get(`/projects/${projectId}/workspace/runtime/config`)
-    .then(r => r.data as WorkspaceRuntimeConfig)
+const workspacePreviewUrl = (projectId: number, path: string) =>
+  `/projects/${projectId}/workspace/previews/${path.split('/').map(encodeURIComponent).join('/')}`
 
-export const setWorkspaceRuntimeConfig = (projectId: number, interpreterPath: string) =>
-  api.put(`/projects/${projectId}/workspace/runtime/config`, { interpreter_path: interpreterPath })
-    .then(r => r.data as WorkspaceRuntimeConfig)
-
-export const runWorkspacePython = (
-  projectId: number,
-  data: {
-    actor: 'user' | 'agent'
-    mode: 'syntax' | 'run'
-    path: string
-    args: string[]
-    checkpoint_id?: number
-    session_id?: number
-    confirmed: boolean
-    idempotency_key: string
-  },
-) => api.post(`/projects/${projectId}/workspace/runs`, data)
-  .then(r => r.data as WorkspaceOperation)
-
-export const bindExerciseWorkspaceFile = (
-  exerciseId: number, path: string, exerciseFile?: string,
-) => api.put(`/exercises/${exerciseId}/workspace-bindings`, {
-  path, exercise_file: exerciseFile,
-}).then(r => r.data.bindings as Array<Record<string, any>>)
-
-export const unbindExerciseWorkspaceFile = (exerciseId: number, path: string) =>
-  api.delete(`/exercises/${exerciseId}/workspace-bindings`, { params: { path } })
-    .then(r => r.data.bindings as Array<Record<string, any>>)
+export const getWorkspacePreview = (projectId: number, path: string) =>
+  api.get(workspacePreviewUrl(projectId, path), { responseType: 'blob' })
+    .then(r => URL.createObjectURL(r.data))
 
 // ── Source ──
 export const addSource = (projectId: number, data: { type: string; url?: string }) =>
@@ -596,8 +571,11 @@ export function subscribeLectureSSE(
   return { close: abort }
 }
 
-export const saveLecture = (checkpointId: number, sections: any[]) =>
-  api.post(`/checkpoints/${checkpointId}/lecture/save`, { sections }).then(r => r.data)
+export const saveLecture = (
+  checkpointId: number, sections: any[], baseVersion: number, idempotencyKey: string,
+) => api.put(`/checkpoints/${checkpointId}/lecture`, {
+  sections, base_version: baseVersion, idempotency_key: idempotencyKey,
+}).then(r => r.data)
 
 // ── Tasks (T1: background jobs) ──
 export const createLectureTask = (checkpointId: number, mode: 'fresh' | 'resume' = 'fresh', feedback?: string) =>
@@ -636,12 +614,48 @@ export const updateNote = (noteId: number, note: string) =>
 export const deleteNote = (noteId: number) =>
   api.delete(`/notes/${noteId}`).then(r => r.data)
 
+export interface ArtifactAnnotation {
+  id: number
+  checkpoint_id: number
+  artifact_type: 'lecture' | 'exercise'
+  artifact_id: number
+  artifact_version: number
+  section_index: number
+  surface: string
+  selection: string
+  anchor: Record<string, any>
+  note: string
+  status: 'anchored' | 'orphaned'
+}
+
+export const listArtifactAnnotations = (artifactType: 'lecture' | 'exercise', artifactId: number) =>
+  api.get(`/artifacts/${artifactType}/${artifactId}/annotations`)
+    .then(r => r.data as ArtifactAnnotation[])
+
+export const createArtifactAnnotation = (
+  artifactType: 'lecture' | 'exercise', artifactId: number,
+  data: { anchor: Record<string, any>; body: string; idempotency_key: string },
+) => api.post(`/artifacts/${artifactType}/${artifactId}/annotations`, data)
+  .then(r => r.data as ArtifactAnnotation)
+
+export const updateArtifactAnnotation = (annotationId: number, body: string) =>
+  api.put(`/artifact-annotations/${annotationId}`, { body }).then(r => r.data as ArtifactAnnotation)
+
+export const deleteArtifactAnnotation = (annotationId: number) =>
+  api.delete(`/artifact-annotations/${annotationId}`).then(r => r.data)
+
 // ── Phase 3: Exercises & Code ──
 export const listExercises = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/exercises`).then(r => r.data)
 
 export const getExercise = (exerciseId: number) =>
   api.get(`/exercises/${exerciseId}`).then(r => r.data)
+
+export const getExerciseDraft = (exerciseId: number) =>
+  api.get(`/exercises/${exerciseId}/draft`).then(r => r.data)
+
+export const saveExerciseDraft = (exerciseId: number, code: string, files: any[]) =>
+  api.put(`/exercises/${exerciseId}/draft`, { code, files }).then(r => r.data)
 
 export const runCode = (code: string, exerciseId?: number) => {
   const url = exerciseId ? `/exercises/${exerciseId}/run` : '/exercises/run'
@@ -651,9 +665,6 @@ export const runCode = (code: string, exerciseId?: number) => {
 // ── Project-mode exercises (multi-file, pilot) ──
 export const runProject = (exerciseId: number, files: any[]) =>
   api.post(`/exercises/${exerciseId}/run`, { code: '', files }).then(r => r.data)
-
-export const saveExerciseFiles = (exerciseId: number, files: any[]) =>
-  api.put(`/exercises/${exerciseId}/files`, { code: '', files }).then(r => r.data)
 
 export const getExerciseEnv = (exerciseId: number) =>
   api.get(`/exercises/${exerciseId}/env`).then(r => r.data)

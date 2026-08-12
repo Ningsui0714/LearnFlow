@@ -4,6 +4,7 @@ Phase 2 API routes:
 - Lecture retrieval
 - Q&A agent for selected text
 """
+import hashlib
 import json
 from fastapi import APIRouter, Depends, HTTPException, Body
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -12,14 +13,17 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.project import Project, Roadmap, Checkpoint, CheckpointChunk, Chunk, Lecture, Task, LectureVersion, LectureNote, ProcessAnimation
+from app.models.project import (
+    ArtifactAnnotation, Project, Roadmap, Checkpoint, CheckpointChunk, Chunk,
+    Lecture, Task, LectureVersion, ProcessAnimation,
+)
 from app.schemas.project import (
     AgentMessage, LectureAskRequest, AnimationGenerateRequest,
 )
 from app.services.lecture_agent import LectureAgent, QAAgent
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_animation,
-    require_owned_checkpoint, require_owned_note,
+    require_owned_annotation, require_owned_checkpoint,
 )
 
 router = APIRouter()
@@ -169,42 +173,113 @@ async def generate_lecture_stream(
         raise HTTPException(500, f"{type(e).__name__}: {str(e)[:200]}")
 
 
-@router.post("/checkpoints/{checkpoint_id}/lecture/save")
-async def save_lecture(
+def _normalized_sections(raw_sections: list) -> list[dict]:
+    return [{
+        "title": str(item.get("title", ""))[:500],
+        "content": str(item.get("content", ""))[:2_000_000],
+        "keywords": list(item.get("keywords") or [])[:100],
+        "questions": list(item.get("questions") or [])[:100],
+    } for item in raw_sections if isinstance(item, dict)]
+
+
+def _serialize_annotation(item: ArtifactAnnotation) -> dict:
+    anchor = dict(item.anchor or {})
+    return {
+        "id": item.id,
+        "checkpoint_id": item.checkpoint_id,
+        "artifact_type": item.artifact_type,
+        "artifact_id": item.artifact_id,
+        "artifact_version": item.artifact_version,
+        "section_index": int(anchor.get("section_index") or 0),
+        "surface": anchor.get("surface") or "content",
+        "selection": anchor.get("selection") or "",
+        "anchor": anchor,
+        "note": item.body or "",
+        "status": item.status or "anchored",
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+async def _reanchor_lecture_annotations(
+    db: AsyncSession, lecture: Lecture, sections: list[dict], next_version: int,
+) -> None:
+    annotations = list((await db.execute(select(ArtifactAnnotation).where(
+        ArtifactAnnotation.artifact_type == "lecture",
+        ArtifactAnnotation.artifact_id == lecture.id,
+    ))).scalars().all())
+    for item in annotations:
+        anchor = dict(item.anchor or {})
+        selection = str(anchor.get("selection") or "")
+        old_index = int(anchor.get("section_index") or 0)
+        new_index = None
+        if selection and 0 <= old_index < len(sections) and selection in sections[old_index].get("content", ""):
+            new_index = old_index
+        elif selection:
+            matches = [
+                index for index, section in enumerate(sections)
+                if selection in section.get("content", "")
+            ]
+            if len(matches) == 1:
+                new_index = matches[0]
+        if new_index is None:
+            item.status = "orphaned"
+        else:
+            anchor["section_index"] = new_index
+            item.anchor = anchor
+            item.status = "anchored"
+        item.artifact_version = next_version
+
+
+async def _save_lecture_versioned(
     checkpoint_id: int,
     sections_data: dict,
-    db: AsyncSession = Depends(get_db),
-    current: CurrentLearner = Depends(get_current_learner),
-):
-    """Save generated lecture sections to database."""
+    db: AsyncSession,
+    current: CurrentLearner,
+) -> dict:
     await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
-    result = await db.execute(
-        select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
-    )
-    lecture = result.scalar_one_or_none()
-
-    sections = sections_data.get("sections", [])
+    lecture = (await db.execute(select(Lecture).where(
+        Lecture.checkpoint_id == checkpoint_id,
+    ))).scalar_one_or_none()
+    sections = _normalized_sections(sections_data.get("sections") or [])
+    base_version = int(sections_data.get("base_version", lecture.version if lecture else 0) or 0)
+    request_key = str(sections_data.get("idempotency_key") or "").strip()
+    if not request_key:
+        digest = hashlib.sha256(json.dumps(sections, sort_keys=True).encode()).hexdigest()
+        request_key = f"compat:{checkpoint_id}:{base_version}:{digest}"
+    scoped_key = f"lecture:{current.learner.id}:{request_key}"[:160]
+    replay = (await db.execute(select(LectureVersion).where(
+        LectureVersion.idempotency_key == scoped_key,
+    ))).scalar_one_or_none()
+    if replay:
+        current_version = lecture.version if lecture else 0
+        if current_version != replay.source_version + 1:
+            raise HTTPException(409, {"code": "idempotency_stale", "message": "该保存请求已执行，但讲义已有更新"})
+        return {"status": "ok", "sections": len(lecture.sections or []), "version": current_version, "idempotent_replay": True}
 
     if not lecture:
+        if base_version != 0:
+            raise HTTPException(409, {"code": "version_conflict", "message": "讲义尚未创建，请重新载入"})
         lecture = Lecture(
             checkpoint_id=checkpoint_id,
-            sections=[{
-                "title": s.get("title", ""),
-                "content": s.get("content", ""),
-                "keywords": s.get("keywords", []),
-                "questions": s.get("questions", []),
-            } for s in sections],
-            status="published",
+            sections=[], status="draft", version=0,
         )
         db.add(lecture)
-    else:
-        lecture.sections = [{
-            "title": s.get("title", ""),
-            "content": s.get("content", ""),
-            "keywords": s.get("keywords", []),
-            "questions": s.get("questions", []),
-        } for s in sections]
-        lecture.status = "published"
+        await db.flush()
+    if int(lecture.version or 0) != base_version:
+        raise HTTPException(409, {
+            "code": "version_conflict", "message": "讲义已被其他编辑更新，请重新载入",
+            "current_version": int(lecture.version or 0),
+        })
+    db.add(LectureVersion(
+        checkpoint_id=checkpoint_id, sections=list(lecture.sections or []),
+        source_version=base_version, reason="before_edit", idempotency_key=scoped_key,
+    ))
+    next_version = base_version + 1
+    lecture.sections = sections
+    lecture.status = "published"
+    lecture.version = next_version
+    await _reanchor_lecture_annotations(db, lecture, sections, next_version)
 
     # A generated lecture is exposure material, not proof of mastery.
     cp_result = await db.execute(
@@ -221,12 +296,33 @@ async def save_lecture(
         checkpoint_id=checkpoint_id,
         payload={"sections_count": len(sections)},
         provenance={"endpoint": "lecture/save"},
-        client_event_id=f"lecture:{checkpoint_id}:save:{len(sections)}",
+        client_event_id=f"lecture:{checkpoint_id}:save:v{next_version}",
     )
 
     await db.commit()
+    return {"status": "ok", "sections": len(sections), "version": next_version}
 
-    return {"status": "ok", "sections": len(sections)}
+
+@router.put("/checkpoints/{checkpoint_id}/lecture")
+async def put_lecture(
+    checkpoint_id: int,
+    sections_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """Versioned managed-lecture save with optimistic concurrency."""
+    return await _save_lecture_versioned(checkpoint_id, sections_data, db, current)
+
+
+@router.post("/checkpoints/{checkpoint_id}/lecture/save")
+async def save_lecture_compat(
+    checkpoint_id: int,
+    sections_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """One-release compatibility adapter for legacy generated-lecture clients."""
+    return await _save_lecture_versioned(checkpoint_id, sections_data, db, current)
 
 
 @router.get("/checkpoints/{checkpoint_id}/lecture")
@@ -255,6 +351,7 @@ async def get_lecture(
             "checkpoint_title": cp.title,
             "sections": [],
             "status": "none",
+            "version": 0,
         }
 
     return {
@@ -262,6 +359,7 @@ async def get_lecture(
         "checkpoint_id": lecture.checkpoint_id,
         "sections": lecture.sections or [],
         "status": lecture.status,
+        "version": int(lecture.version or 1),
         "concept_graph": lecture.concept_graph or {},
         "animations": [
             {
@@ -407,6 +505,7 @@ async def list_lecture_versions(
         "created_at": v.created_at.isoformat() if v.created_at else None,
         "reason": v.reason or "",
         "sections_count": len(v.sections or []),
+        "source_version": int(v.source_version or 1),
         "preview": ((v.sections or [{}])[0].get("title", "") if v.sections else ""),
     } for v in rows]
 
@@ -445,13 +544,16 @@ async def rollback_lecture(
         db.add(LectureVersion(
             checkpoint_id=checkpoint_id,
             sections=list(lecture.sections),
+            source_version=int(lecture.version or 1),
             reason="before_rollback",
         ))
 
     lecture.sections = list(version.sections or [])
     lecture.status = "published"
+    lecture.version = int(lecture.version or 1) + 1
+    await _reanchor_lecture_annotations(db, lecture, lecture.sections, lecture.version)
     await db.commit()
-    return {"status": "ok", "sections": len(lecture.sections or [])}
+    return {"status": "ok", "sections": len(lecture.sections or []), "version": lecture.version}
 
 
 @router.post("/checkpoints/{checkpoint_id}/ask")
@@ -542,7 +644,118 @@ async def _trace_selection(db: AsyncSession, checkpoint_id: int, selection: str)
     }
 
 
-# ── T9: anchored notes ──
+# ── Managed-artifact annotations ──
+
+async def _owned_artifact(
+    db: AsyncSession, learner_id: int, artifact_type: str, artifact_id: int,
+) -> tuple[int, int]:
+    if artifact_type == "lecture":
+        artifact = (await db.execute(
+            select(Lecture).join(Checkpoint).join(Roadmap).join(Project).where(
+                Lecture.id == artifact_id, Project.learner_id == learner_id,
+            )
+        )).scalar_one_or_none()
+        if not artifact:
+            raise HTTPException(404, "Lecture not found")
+        return artifact.checkpoint_id, int(artifact.version or 1)
+    if artifact_type == "exercise":
+        from app.services.auth import require_owned_exercise
+        artifact = await require_owned_exercise(db, learner_id, artifact_id)
+        return artifact.checkpoint_id, 1
+    raise HTTPException(400, "artifact_type must be lecture or exercise")
+
+
+@router.get("/artifacts/{artifact_type}/{artifact_id}/annotations")
+async def list_artifact_annotations(
+    artifact_type: str, artifact_id: int,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    await _owned_artifact(db, current.learner.id, artifact_type, artifact_id)
+    rows = list((await db.execute(select(ArtifactAnnotation).where(
+        ArtifactAnnotation.learner_id == current.learner.id,
+        ArtifactAnnotation.artifact_type == artifact_type,
+        ArtifactAnnotation.artifact_id == artifact_id,
+    ).order_by(ArtifactAnnotation.id.desc()))).scalars().all())
+    return [_serialize_annotation(item) for item in rows]
+
+
+@router.post("/artifacts/{artifact_type}/{artifact_id}/annotations")
+async def create_artifact_annotation(
+    artifact_type: str, artifact_id: int, data: dict,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    checkpoint_id, artifact_version = await _owned_artifact(
+        db, current.learner.id, artifact_type, artifact_id,
+    )
+    request_key = str(data.get("idempotency_key") or "").strip() or None
+    if request_key:
+        request_key = request_key[:160]
+        existing = (await db.execute(select(ArtifactAnnotation).where(
+            ArtifactAnnotation.learner_id == current.learner.id,
+            ArtifactAnnotation.idempotency_key == request_key,
+        ))).scalar_one_or_none()
+        if existing:
+            return _serialize_annotation(existing)
+    anchor = dict(data.get("anchor") or {})
+    anchor["selection"] = str(anchor.get("selection") or data.get("selection") or "")[:2000]
+    if "section_index" not in anchor:
+        anchor["section_index"] = int(data.get("section_index") or 0)
+    item = ArtifactAnnotation(
+        learner_id=current.learner.id, checkpoint_id=checkpoint_id,
+        artifact_type=artifact_type, artifact_id=artifact_id,
+        artifact_version=artifact_version, anchor=anchor,
+        body=str(data.get("body") or data.get("note") or "")[:100_000],
+        status="anchored", idempotency_key=request_key,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    if artifact_type == "lecture":
+        from app.services.progress import update_notes_count
+        count = len(list((await db.execute(select(ArtifactAnnotation).where(
+            ArtifactAnnotation.checkpoint_id == checkpoint_id,
+            ArtifactAnnotation.artifact_type == "lecture",
+        ))).scalars().all()))
+        await update_notes_count(checkpoint_id, count)
+    return _serialize_annotation(item)
+
+
+@router.put("/artifact-annotations/{annotation_id}")
+async def update_artifact_annotation(
+    annotation_id: int, data: dict,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    item = await require_owned_annotation(db, current.learner.id, annotation_id)
+    if "body" in data or "note" in data:
+        item.body = str(data.get("body", data.get("note", "")))[:100_000]
+    await db.commit()
+    return _serialize_annotation(item)
+
+
+@router.delete("/artifact-annotations/{annotation_id}")
+async def delete_artifact_annotation(
+    annotation_id: int,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    item = await require_owned_annotation(db, current.learner.id, annotation_id)
+    checkpoint_id, artifact_type = item.checkpoint_id, item.artifact_type
+    await db.delete(item)
+    await db.commit()
+    if artifact_type == "lecture":
+        from app.services.progress import update_notes_count
+        count = len(list((await db.execute(select(ArtifactAnnotation).where(
+            ArtifactAnnotation.checkpoint_id == checkpoint_id,
+            ArtifactAnnotation.artifact_type == "lecture",
+        ))).scalars().all()))
+        await update_notes_count(checkpoint_id, count)
+    return {"status": "ok"}
+
+
+# Legacy lecture-note routes remain as thin compatibility adapters for one release.
 
 @router.get("/checkpoints/{checkpoint_id}/notes")
 async def list_notes(
@@ -551,20 +764,12 @@ async def list_notes(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
-    rows = (await db.execute(
-        select(LectureNote)
-        .where(LectureNote.checkpoint_id == checkpoint_id)
-        .order_by(LectureNote.id.desc())
-    )).scalars().all()
-    return [{
-        "id": n.id,
-        "checkpoint_id": n.checkpoint_id,
-        "section_index": n.section_index,
-        "selection": n.selection,
-        "note": n.note,
-        "created_at": n.created_at.isoformat() if n.created_at else None,
-        "updated_at": n.updated_at.isoformat() if n.updated_at else None,
-    } for n in rows]
+    lecture = (await db.execute(select(Lecture).where(
+        Lecture.checkpoint_id == checkpoint_id,
+    ))).scalar_one_or_none()
+    if not lecture:
+        return []
+    return await list_artifact_annotations("lecture", lecture.id, db, current)
 
 
 @router.post("/checkpoints/{checkpoint_id}/notes")
@@ -575,20 +780,19 @@ async def create_note(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
-    note = LectureNote(
-        checkpoint_id=checkpoint_id,
-        section_index=int(data.get("section_index", 0) or 0),
-        selection=data.get("selection", "")[:500],
-        note=data.get("note", ""),
-    )
-    db.add(note)
-    await db.commit()
-    await db.refresh(note)
-    from app.services.progress import update_notes_count
-    await update_notes_count(checkpoint_id, len((await db.execute(
-        select(LectureNote).where(LectureNote.checkpoint_id == checkpoint_id)
-    )).scalars().all()))
-    return {"id": note.id, "status": "ok"}
+    lecture = (await db.execute(select(Lecture).where(
+        Lecture.checkpoint_id == checkpoint_id,
+    ))).scalar_one_or_none()
+    if not lecture:
+        raise HTTPException(409, "讲义尚未创建")
+    return await create_artifact_annotation("lecture", lecture.id, {
+        "anchor": {
+            "section_index": int(data.get("section_index", 0) or 0),
+            "selection": str(data.get("selection") or "")[:2000],
+        },
+        "body": data.get("note", ""),
+        "idempotency_key": data.get("idempotency_key"),
+    }, db, current)
 
 
 @router.put("/notes/{note_id}")
@@ -598,11 +802,7 @@ async def update_note(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    note = await require_owned_note(db, current.learner.id, note_id)
-    if "note" in data:
-        note.note = data["note"]
-    await db.commit()
-    return {"status": "ok"}
+    return await update_artifact_annotation(note_id, data, db, current)
 
 
 @router.delete("/notes/{note_id}")
@@ -611,11 +811,4 @@ async def delete_note(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    note = await require_owned_note(db, current.learner.id, note_id)
-    await db.delete(note)
-    await db.commit()
-    from app.services.progress import update_notes_count
-    await update_notes_count(note.checkpoint_id, len((await db.execute(
-        select(LectureNote).where(LectureNote.checkpoint_id == note.checkpoint_id)
-    )).scalars().all()))
-    return {"status": "ok"}
+    return await delete_artifact_annotation(note_id, db, current)

@@ -60,14 +60,3 @@ export async function chooseWorkspaceDirectory() {
   const selected = await open({ directory: true, multiple: false })
   return typeof selected === 'string' ? selected : null
 }
-
-export async function choosePythonInterpreter() {
-  if (!runtime.available) return null
-  const { open } = await import('@tauri-apps/plugin-dialog')
-  const selected = await open({
-    directory: false,
-    multiple: false,
-    title: '选择项目使用的 Python 解释器',
-  })
-  return typeof selected === 'string' ? selected : null
-}

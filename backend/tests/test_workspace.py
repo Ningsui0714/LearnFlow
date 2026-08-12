@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-import sys
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
@@ -11,7 +10,10 @@ from app.core.config import settings
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import AgentSession, EvidenceEvent, KernelMutation, LearningAttempt
-from app.models.project import Checkpoint, Exercise, Project, Roadmap, WorkspaceOperation
+from app.models.project import (
+    ArtifactAnnotation, Checkpoint, Exercise, Lecture, LectureVersion,
+    Project, Roadmap, WorkspaceOperation,
+)
 
 
 DESKTOP_TOKEN = "workspace-test-token"
@@ -100,6 +102,10 @@ def test_link_tree_text_write_hash_and_zero_kernel_mutations(tmp_path, monkeypat
     root.mkdir()
     (root / "main.py").write_text("print('old')\n", encoding="utf-8")
     (root / "asset.bin").write_bytes(b"\x00\x01")
+    (root / "pixel.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    )
+    (root / "unsafe.svg").write_text("<svg><script>alert(1)</script></svg>", encoding="utf-8")
 
     with TestClient(app) as client:
         registered = client.post("/api/auth/register", json=registration("workspace_writer"))
@@ -119,6 +125,19 @@ def test_link_tree_text_write_hash_and_zero_kernel_mutations(tmp_path, monkeypat
         assert by_name["main.py"]["kind"] == "workspace_text"
         assert by_name["asset.bin"]["kind"] == "workspace_binary"
         assert ".learnflow" not in by_name
+
+        image_preview = client.get(
+            f"/api/projects/{project_id}/workspace/previews/pixel.png",
+            headers=DESKTOP_HEADERS,
+        )
+        assert image_preview.status_code == 200
+        assert image_preview.headers["content-type"].startswith("image/png")
+        assert image_preview.headers["x-content-type-options"] == "nosniff"
+        unsafe_preview = client.get(
+            f"/api/projects/{project_id}/workspace/previews/unsafe.svg",
+            headers=DESKTOP_HEADERS,
+        )
+        assert unsafe_preview.status_code == 415
 
         current = client.get(
             f"/api/projects/{project_id}/workspace/files/main.py", headers=DESKTOP_HEADERS,
@@ -388,7 +407,7 @@ def test_traversal_links_protected_paths_delete_restore_and_user_isolation(tmp_p
         assert asyncio.run(operation_count()) == 2
 
 
-def test_python_runtime_and_bound_formal_submission_are_separate_evidence_paths(
+def test_managed_learning_files_drafts_annotations_and_formal_evidence_are_separate(
     tmp_path, monkeypatch,
 ):
     enable_desktop(monkeypatch)
@@ -404,26 +423,19 @@ def test_python_runtime_and_bound_formal_submission_are_separate_evidence_paths(
         project_id = project["id"]
         assert link_workspace(client, project_id, root).status_code == 200
 
-        configured = client.put(
+        assert client.put(
             f"/api/projects/{project_id}/workspace/runtime/config",
             headers=DESKTOP_HEADERS,
-            json={"interpreter_path": sys.executable},
-        )
-        assert configured.status_code == 200, configured.text
-        assert configured.json()["configured"] is True
-        assert "Python" in configured.json()["version"]
-
-        syntax = client.post(
+            json={"interpreter_path": "/usr/bin/python3"},
+        ).status_code == 404
+        assert client.post(
             f"/api/projects/{project_id}/workspace/runs",
             headers=DESKTOP_HEADERS,
             json={
                 "actor": "user", "mode": "syntax", "path": "answer.py", "args": [],
                 "confirmed": True, "idempotency_key": "syntax-answer-1",
             },
-        )
-        assert syntax.status_code == 200, syntax.text
-        assert syntax.json()["status"] == "applied"
-        assert syntax.json()["result"]["passed"] is True
+        ).status_code == 404
 
         async def seed_exercise_scope():
             async with async_session() as db:
@@ -440,63 +452,73 @@ def test_python_runtime_and_bound_formal_submission_are_separate_evidence_paths(
                     test_cases=[{"input": "", "expected": "2"}],
                     order=1,
                 )
+                lecture = Lecture(
+                    checkpoint_id=checkpoint.id, version=1, status="published",
+                    sections=[{"title": "Intro", "content": "alpha beta", "keywords": [], "questions": []}],
+                )
                 session = AgentSession(
                     learner_id=learner_id, session_type="checkpoint",
                     project_id=project_id, checkpoint_id=checkpoint.id,
                     title="Checkpoint Tutor",
                 )
-                db.add_all([exercise, session])
+                db.add_all([exercise, lecture, session])
                 await db.commit()
-                return checkpoint.id, exercise.id, session.id
+                return checkpoint.id, exercise.id, lecture.id, session.id
 
-        checkpoint_id, exercise_id, session_id = asyncio.run(seed_exercise_scope())
-        proposed = client.post(
-            f"/api/projects/{project_id}/workspace/runs",
-            headers=DESKTOP_HEADERS,
+        checkpoint_id, exercise_id, lecture_id, _ = asyncio.run(seed_exercise_scope())
+        artifacts = client.get(f"/api/checkpoints/{checkpoint_id}/workspace/artifacts")
+        assert artifacts.status_code == 200
+        assert artifacts.json()["managed_lecture"]["logical_filename"].endswith(".lflecture")
+        assert artifacts.json()["managed_exercises"][0]["logical_filename"].endswith(".lfexercise")
+
+        saved = client.put(f"/api/checkpoints/{checkpoint_id}/lecture", json={
+            "sections": [{"title": "Intro", "content": "alpha changed", "keywords": [], "questions": []}],
+            "base_version": 1, "idempotency_key": "lecture-edit-1",
+        })
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["version"] == 2
+        stale = client.put(f"/api/checkpoints/{checkpoint_id}/lecture", json={
+            "sections": [{"title": "Bad", "content": "overwrite"}],
+            "base_version": 1, "idempotency_key": "lecture-edit-stale",
+        })
+        assert stale.status_code == 409
+
+        annotation = client.post(
+            f"/api/artifacts/lecture/{lecture_id}/annotations",
             json={
-                "actor": "agent", "mode": "run", "path": "answer.py",
-                "args": ["$(touch should-not-exist)"], "confirmed": True,
-                "checkpoint_id": checkpoint_id, "session_id": session_id,
-                "idempotency_key": "agent-run-answer-1",
+                "anchor": {"section_index": 0, "selection": "alpha changed"},
+                "body": "remember", "idempotency_key": "lecture-note-1",
             },
         )
-        assert proposed.status_code == 200, proposed.text
-        assert proposed.json()["status"] == "proposed"
-        plan = proposed.json()["result"]["plan"]
-        assert plan["script"] == "answer.py"
-        assert plan["working_directory"] == str(root.resolve())
-        assert plan["args"] == ["$(touch should-not-exist)"]
-        assert "command" not in plan
-        confirmed = client.post(
-            f"/api/projects/{project_id}/workspace/operations/{proposed.json()['id']}/confirm",
-            headers=DESKTOP_HEADERS,
-        )
-        assert confirmed.status_code == 200, confirmed.text
-        assert "$(touch should-not-exist)" in confirmed.json()["result"]["stdout"]
-        assert not (root / "should-not-exist").exists()
+        assert annotation.status_code == 200, annotation.text
+        orphaning = client.put(f"/api/checkpoints/{checkpoint_id}/lecture", json={
+            "sections": [{"title": "Intro", "content": "completely different"}],
+            "base_version": 2, "idempotency_key": "lecture-edit-2",
+        })
+        assert orphaning.status_code == 200
+        notes = client.get(f"/api/artifacts/lecture/{lecture_id}/annotations")
+        assert notes.json()[0]["status"] == "orphaned"
 
-        binding = client.put(
-            f"/api/exercises/{exercise_id}/workspace-bindings",
-            headers=DESKTOP_HEADERS,
-            json={"path": "answer.py"},
-        )
-        assert binding.status_code == 200, binding.text
-        assert binding.json()["bindings"][0]["path"] == "answer.py"
+        draft = client.put(f"/api/exercises/{exercise_id}/draft", json={
+            "code": "print(2)", "files": [],
+        })
+        assert draft.status_code == 200
+        loaded_draft = client.get(f"/api/exercises/{exercise_id}/draft")
+        assert loaded_draft.json()["code"] == "print(2)"
+        run = client.post(f"/api/exercises/{exercise_id}/run", json={"code": "print(2)", "files": []})
+        assert run.status_code == 200
 
-        script.write_text("print(2)\n", encoding="utf-8")
         submission_id = "formal-bound-submit-1"
         submitted = client.post(
             f"/api/exercises/{exercise_id}/submit",
-            headers=DESKTOP_HEADERS,
             json={
-                "code": "print(0)", "files": [], "client_submission_id": submission_id,
+                "code": "print(2)", "files": [], "client_submission_id": submission_id,
             },
         )
         assert submitted.status_code == 200, submitted.text
         assert submitted.json()["passed"] == 1
         replay = client.post(
             f"/api/exercises/{exercise_id}/submit",
-            headers=DESKTOP_HEADERS,
             json={
                 "code": "print(999)", "files": [], "client_submission_id": submission_id,
             },
@@ -504,41 +526,26 @@ def test_python_runtime_and_bound_formal_submission_are_separate_evidence_paths(
         assert replay.status_code == 200
         assert replay.json()["idempotent_replay"] is True
         assert replay.json()["attempt_id"] == submitted.json()["attempt_id"]
-        monkeypatch.setattr(settings, "desktop_mode", False)
-        monkeypatch.setattr(settings, "desktop_token", "")
-        hidden_in_browser = client.post(
-            f"/api/exercises/{exercise_id}/submit",
-            json={
-                "code": "print(2)", "files": [],
-                "client_submission_id": "browser-must-not-read-binding",
-            },
-        )
-        assert hidden_in_browser.status_code == 404
-        enable_desktop(monkeypatch)
-
         async def verify_ledgers():
             async with async_session() as db:
                 attempt = await db.get(LearningAttempt, submitted.json()["attempt_id"])
-                binding_snapshot = (attempt.submission or {})["workspace_bindings"][0]
                 run_events = list((await db.execute(select(EvidenceEvent).where(
                     EvidenceEvent.learner_id == learner_id,
-                    EvidenceEvent.event_type == "workspace_file_run",
-                ))).scalars().all())
-                run_event_ids = [item.id for item in run_events]
-                run_mutations = list((await db.execute(select(KernelMutation).where(
-                    KernelMutation.event_id.in_(run_event_ids),
-                ))).scalars().all()) if run_event_ids else []
-                assessment_events = list((await db.execute(select(EvidenceEvent).where(
-                    EvidenceEvent.learner_id == learner_id,
                     EvidenceEvent.event_type == "exercise_attempt_evaluated",
-                    EvidenceEvent.payload["attempt_id"].as_integer() == attempt.id,
                 ))).scalars().all())
-                return binding_snapshot, len(run_events), len(run_mutations), len(assessment_events)
+                attempts = await db.scalar(select(func.count(LearningAttempt.id)).where(
+                    LearningAttempt.learner_id == learner_id,
+                    LearningAttempt.item_id == exercise_id,
+                ))
+                versions = await db.scalar(select(func.count(LectureVersion.id)).where(
+                    LectureVersion.checkpoint_id == checkpoint_id,
+                ))
+                note = await db.get(ArtifactAnnotation, annotation.json()["id"])
+                return dict(attempt.submission or {}), len(run_events), attempts, versions, note.status
 
-        snapshot, run_count, run_mutations, assessment_count = asyncio.run(verify_ledgers())
-        assert snapshot["relative_path"] == "answer.py"
-        assert snapshot["content"] == "print(2)\n"
-        assert len(snapshot["sha256"]) == 64
-        assert run_count == 2
-        assert run_mutations == 0
+        submission, assessment_count, attempt_count, version_count, note_status = asyncio.run(verify_ledgers())
+        assert "workspace_bindings" not in submission
         assert assessment_count == 1
+        assert attempt_count == 1
+        assert version_count == 2
+        assert note_status == "orphaned"

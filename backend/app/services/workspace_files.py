@@ -211,7 +211,7 @@ def initialize_managed_layout(
                 "project_id": project.id,
                 "checkpoint_id": checkpoint.id,
                 "lecture_id": lecture.id,
-                "version": lecture.updated_at.isoformat() if lecture.updated_at else "draft",
+                "version": int(lecture.version or 1),
                 "summary": checkpoint.title,
                 "digest": _summary_digest(lecture.sections or []),
             })

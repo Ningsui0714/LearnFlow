@@ -16,6 +16,9 @@
 | 目标图和连续学习路径 | Roadmap DAG + structure kernel | 统一到项目、路线、关卡和返回锚点 |
 | 星辰三工作流 | `workflow_gateway` contract | 保留为可选 adapter；不能直接写五核或决定策略 |
 | 工作流构建/校验脚本 | `workflow_validator` maintenance tool | 纳入注册表，接入时必须输出符合 LearnFlow artifact/event contract 的结果 |
+| VS Code 式多开与文件操作 | Tauri `desktop_workspace` + Explorer | 保留 LearnFlow Agent/五核/会话权威，只吸收标签、分屏和真实项目目录操作逻辑 |
+| 学习专属文件 | `.lflecture/.lfexercise` + 自定义播放器 | 描述符只引用数据库对象；讲义版本化、练习草稿/批注隔离、正式提交才写证据 |
+| 通用文件编辑 | Monaco + Markdown/PDF/image preview | UTF-8 轻量编辑与 Vim 模式；不内置 Python runtime、终端或任意编译 |
 
 ## 统一分类
 

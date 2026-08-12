@@ -1,33 +1,28 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import SplitPane from "../components/layout/SplitPane"
 import Editor from '@monaco-editor/react'
 import {
-  listExercises, getExercise, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
-  runProject, saveExerciseFiles, submitProject, getExerciseEnv,
-  bindExerciseWorkspaceFile, getWorkspaceTree, recordLearningEvent, listRemediationCases,
-  unbindExerciseWorkspaceFile, type WorkspaceNode,
+  listExercises, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
+  runProject, submitProject, getExerciseEnv, getExerciseDraft, saveExerciseDraft,
+  recordLearningEvent, listRemediationCases, listArtifactAnnotations,
+  createArtifactAnnotation, updateArtifactAnnotation, deleteArtifactAnnotation,
+  type ArtifactAnnotation,
 } from '../services/api'
 import ConceptQuestions from '../components/exercise/ConceptQuestions'
 import RemediationPanel from '../components/exercise/RemediationPanel'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
-import { getDesktopRuntime } from '../services/desktopRuntime'
 
 interface CodeMsg {
   role: 'user' | 'assistant'
   content: string
 }
 
-function flattenWorkspaceText(nodes: WorkspaceNode[]): string[] {
-  return nodes.flatMap(node => node.is_directory
-    ? flattenWorkspaceText(node.children || [])
-    : node.kind === 'workspace_text' ? [node.path] : [])
-}
-
 export default function ExercisePage() {
   const { projectId, checkpointId } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const pid = Number(projectId)
   const cid = Number(checkpointId)
 
@@ -44,10 +39,8 @@ export default function ExercisePage() {
   const [stderr, setStderr] = useState('')
   const [running, setRunning] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([])
-  const [bindingPath, setBindingPath] = useState('')
-  const [bindingBusy, setBindingBusy] = useState(false)
-  const desktopAvailable = getDesktopRuntime().available
+  const [annotations, setAnnotations] = useState<ArtifactAnnotation[]>([])
+  const [descriptionSelection, setDescriptionSelection] = useState('')
 
   // Code workspace
   const [wsMessages, setWsMessages] = useState<CodeMsg[]>([])
@@ -81,15 +74,6 @@ export default function ExercisePage() {
   }, [cid])
 
   useEffect(() => {
-    if (!desktopAvailable || !pid) return
-    getWorkspaceTree(pid).then(tree => {
-      const paths = flattenWorkspaceText(tree.nodes)
-      setWorkspaceFiles(paths)
-      setBindingPath(current => current || paths.find(path => path.toLowerCase().endsWith('.py')) || paths[0] || '')
-    }).catch(() => setWorkspaceFiles([]))
-  }, [desktopAvailable, pid])
-
-  useEffect(() => {
     wsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [wsMessages])
 
@@ -109,7 +93,8 @@ export default function ExercisePage() {
       setExercises(data)
       setRemediationCases(latestByExercise)
       if (data.length > 0) {
-        selectExercise(data[0], latestByExercise)
+        const requestedId = Number(searchParams.get('exercise'))
+        selectExercise(data.find((item: any) => item.id === requestedId) || data[0], latestByExercise)
       }
     } catch { /* no exercises yet */ }
     setLoading(false)
@@ -126,18 +111,26 @@ export default function ExercisePage() {
     setSaveMsg('')
     setRevealedHints(0)
     setAssistanceLevel('none')
-    // Project-mode: load multi-file project
-    if (ex.files && ex.files.length > 0) {
-      setFiles(ex.files)
-      setActiveFileName(ex.files[0].name)
-      setCode('')
-      getExerciseEnv(ex.id).then(env => setEnvReady(env.ready)).catch(() => setEnvReady(null))
-    } else {
-      setFiles([])
-      setActiveFileName('')
-      setCode(ex.starter_code || '')
-      setEnvReady(null)
-    }
+    setDescriptionSelection('')
+    setAnnotations([])
+    getExerciseDraft(ex.id).then(draft => {
+      if (ex.files && ex.files.length > 0) {
+        setFiles(draft.files || ex.files)
+        setActiveFileName((draft.files || ex.files)[0]?.name || '')
+        setCode('')
+        getExerciseEnv(ex.id).then(env => setEnvReady(env.ready)).catch(() => setEnvReady(null))
+      } else {
+        setFiles([])
+        setActiveFileName('')
+        setCode(draft.code ?? ex.starter_code ?? '')
+        setEnvReady(null)
+      }
+    }).catch(() => {
+      setFiles(ex.files || [])
+      setActiveFileName(ex.files?.[0]?.name || '')
+      setCode(ex.files?.length ? '' : ex.starter_code || '')
+    })
+    listArtifactAnnotations('exercise', ex.id).then(setAnnotations).catch(() => setAnnotations([]))
   }
 
   const isProjectMode = () => activeEx?.files?.length > 0
@@ -163,13 +156,12 @@ export default function ExercisePage() {
   }
 
   const handleSave = async () => {
-    if (!activeEx || files.length === 0) return
+    if (!activeEx) return
     setSaving(true)
     setSaveMsg('')
     try {
-      const res = await saveExerciseFiles(activeEx.id, files)
-      setSaveMsg(`✅ 已保存 ${res.saved?.length || 0} 个文件`)
-      setEnvReady(true)
+      await saveExerciseDraft(activeEx.id, code, files)
+      setSaveMsg('✅ 草稿已保存（不产生学习证据）')
     } catch (e: any) {
       setSaveMsg('❌ 保存失败: ' + (e?.response?.data?.detail || e.message))
     }
@@ -237,33 +229,30 @@ export default function ExercisePage() {
     setSubmitting(false)
   }
 
-  const bindWorkspaceFile = async () => {
-    if (!activeEx || !bindingPath) return
-    setBindingBusy(true)
-    try {
-      const editableVirtual = (activeEx.files || []).find((item: any) => !item.read_only)?.name
-      const bindings = await bindExerciseWorkspaceFile(activeEx.id, bindingPath, editableVirtual)
-      const next = { ...activeEx, workspace_bindings: bindings }
-      setActiveEx(next)
-      setExercises(current => current.map(item => item.id === next.id ? next : item))
-    } catch (e: any) {
-      setSaveMsg('❌ 绑定失败: ' + (e?.response?.data?.detail?.message || e?.response?.data?.detail || e.message))
-    } finally {
-      setBindingBusy(false)
-    }
+  const createSelectionAnnotation = async () => {
+    if (!activeEx) return
+    const selection = (selectedCode || descriptionSelection).trim()
+    if (!selection) return
+    const body = window.prompt('为选中内容添加批注')
+    if (body === null || !body.trim()) return
+    const item = await createArtifactAnnotation('exercise', activeEx.id, {
+      anchor: { selection: selection.slice(0, 2000), surface: selectedCode ? 'answer' : 'prompt' },
+      body: body.trim(), idempotency_key: crypto.randomUUID(),
+    })
+    setAnnotations(current => [item, ...current])
   }
 
-  const unbindWorkspaceFile = async (path: string) => {
-    if (!activeEx) return
-    setBindingBusy(true)
-    try {
-      const bindings = await unbindExerciseWorkspaceFile(activeEx.id, path)
-      const next = { ...activeEx, workspace_bindings: bindings }
-      setActiveEx(next)
-      setExercises(current => current.map(item => item.id === next.id ? next : item))
-    } finally {
-      setBindingBusy(false)
-    }
+  const editAnnotation = async (item: ArtifactAnnotation) => {
+    const body = window.prompt('修改批注', item.note)
+    if (body === null) return
+    const next = await updateArtifactAnnotation(item.id, body)
+    setAnnotations(current => current.map(value => value.id === next.id ? next : value))
+  }
+
+  const removeAnnotation = async (item: ArtifactAnnotation) => {
+    if (!window.confirm('删除这条批注？')) return
+    await deleteArtifactAnnotation(item.id)
+    setAnnotations(current => current.filter(value => value.id !== item.id))
   }
 
   const retryExercise = () => {
@@ -332,9 +321,7 @@ export default function ExercisePage() {
     editorRef.current = editor
     editor.onDidChangeCursorSelection(() => {
       const selection = editor.getModel()?.getValueInRange(editor.getSelection())
-      if (selection) {
-        setSelectedCode(selection)
-      }
+      setSelectedCode(selection || '')
     })
   }
 
@@ -366,6 +353,8 @@ export default function ExercisePage() {
     setFontSize(next)
     editorRef.current?.updateOptions({ fontSize: next })
   }
+
+  useEffect(() => () => vimDisposeRef.current?.dispose?.(), [])
 
   if (loading) return <div className="p-8 text-gray-400">加载中...</div>
 
@@ -466,8 +455,14 @@ export default function ExercisePage() {
                         <span className="text-gray-400">{showDesc ? '▲ 收起' : '▼ 展开描述'}</span>
                       </button>
                       {showDesc && (
-                        <div className="px-4 pb-2 max-h-32 overflow-y-auto text-xs space-y-1">
-                          <p className="text-gray-600 whitespace-pre-wrap">{activeEx.description}</p>
+                        <div className="px-4 pb-2 max-h-40 overflow-y-auto text-xs space-y-1">
+                          <p
+                            className="text-gray-600 whitespace-pre-wrap"
+                            onMouseUp={() => setDescriptionSelection(window.getSelection()?.toString().trim() || '')}
+                          >{activeEx.description}</p>
+                          {(descriptionSelection || selectedCode) && (
+                            <button onClick={() => void createSelectionAnnotation()} className="rounded border border-violet-200 bg-violet-50 px-2 py-1 text-[10px] text-violet-700 hover:bg-violet-100">📝 批注选中内容</button>
+                          )}
                           {revealedHints > 0 && (
                             <div className="space-y-1 border border-amber-200 bg-amber-50 px-2 py-1.5 text-amber-800 rounded-lg">
                               {activeEx.hints.slice(0, revealedHints).map((hint: string, index: number) => (
@@ -483,28 +478,7 @@ export default function ExercisePage() {
                           {assistanceLevel !== 'none' && (
                             <p className="text-[10px] text-gray-400">本次提交会标记为辅助完成</p>
                           )}
-                          {desktopAvailable && workspaceFiles.length > 0 && (
-                            <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 p-2">
-                              <div className="flex items-center gap-2">
-                                <span className="shrink-0 text-[10px] font-semibold text-sky-800">绑定项目文件</span>
-                                <select value={bindingPath} onChange={event => setBindingPath(event.target.value)} className="h-7 min-w-0 flex-1 rounded border border-sky-200 bg-white px-2 font-mono text-[10px]">
-                                  {workspaceFiles.map(path => <option key={path} value={path}>{path}</option>)}
-                                </select>
-                                <button type="button" onClick={() => void bindWorkspaceFile()} disabled={bindingBusy || !bindingPath} className="h-7 rounded bg-sky-700 px-2 text-[10px] font-semibold text-white hover:bg-sky-600 disabled:opacity-50">绑定</button>
-                              </div>
-                              <p className="mt-1 text-[10px] text-sky-700">运行与编辑不写掌握证据；正式提交时才冻结路径、SHA-256 和内容快照。</p>
-                              {!!activeEx.workspace_bindings?.length && (
-                                <div className="mt-1.5 flex flex-wrap gap-1">
-                                  {activeEx.workspace_bindings.map((binding: any) => (
-                                    <span key={binding.path} className="inline-flex items-center gap-1 rounded bg-white px-2 py-1 font-mono text-[10px] text-sky-800">
-                                      {binding.path}
-                                      <button type="button" onClick={() => void unbindWorkspaceFile(binding.path)} disabled={bindingBusy} title="解除绑定" className="text-sky-400 hover:text-red-500">×</button>
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                          <p className="text-[10px] text-sky-700">个人草稿和“运行”不写掌握证据；只有“提交判题”进入学习证据链。</p>
                         </div>
                       )}
                     </div>
@@ -543,7 +517,7 @@ export default function ExercisePage() {
                                   )}
                                   <button onClick={handleSave} disabled={saving}
                                     className="text-[11px] bg-primary-600 text-white px-2.5 py-0.5 rounded hover:bg-primary-700 disabled:bg-gray-300">
-                                    {saving ? '保存中...' : '💾 保存'}
+                                    {saving ? '保存中...' : '💾 保存草稿'}
                                   </button>
                                   {saveMsg && <span className="text-[10px] text-gray-500">{saveMsg}</span>}
                                 </div>
@@ -607,6 +581,10 @@ export default function ExercisePage() {
                               </div>
                             )}
                             <div className="border-t border-gray-200 px-3 py-1.5 flex gap-2 bg-white shrink-0">
+                              <button onClick={handleSave} disabled={saving}
+                                className="border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 rounded">
+                                {saving ? '保存中...' : '💾 保存草稿'}
+                              </button>
                               <button onClick={handleRun} disabled={running}
                                 className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 disabled:bg-gray-300">
                                 {running ? '运行中...' : '▶ 运行'}
@@ -621,7 +599,7 @@ export default function ExercisePage() {
                               </button>
                               {isProjectMode() && (
                                 <span className="text-[10px] text-gray-400 self-center">
-                                  📁 项目模式：保存后运行整个项目
+                                  📁 练习专用运行环境；草稿不产生证据
                                 </span>
                               )}
                               {selectedCode && (
@@ -699,6 +677,18 @@ export default function ExercisePage() {
                       }}
                       onRetry={retryExercise}
                     />
+                  </div>
+                )}
+                {annotations.length > 0 && (
+                  <div className="mb-3 space-y-2 border-b border-gray-100 pb-3">
+                    <p className="font-medium text-gray-600">我的批注</p>
+                    {annotations.map(item => (
+                      <button key={item.id} onClick={() => void editAnnotation(item)} className="block w-full rounded-lg border border-violet-100 bg-violet-50 p-2 text-left hover:bg-violet-100">
+                        <span className="block truncate text-[10px] text-violet-500">{item.selection || '未定位内容'}</span>
+                        <span className="mt-1 block whitespace-pre-wrap text-gray-700">{item.note}</span>
+                        <span onClick={event => { event.stopPropagation(); void removeAnnotation(item) }} className="mt-1 inline-block text-[10px] text-gray-400 hover:text-red-500">删除</span>
+                      </button>
+                    ))}
                   </div>
                 )}
                 {wsMessages.length === 0 && (

@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
@@ -116,6 +116,7 @@ class Lecture(Base):
     plan = Column(JSON, default=list)      # persisted section plan (T10 resume stability)
     concept_graph = Column(JSON, default=dict)  # {nodes, edges} concept map
     status = Column(String(50), default="draft")  # draft, published
+    version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -141,8 +142,6 @@ class Exercise(Base):
     judge_mode = Column(String(50), default="test_cases")  # test_cases | stdout_check
     judge_config = Column(JSON, default=dict)       # {pattern, min_accuracy} for stdout_check
     assessment_meta = Column(JSON, default=dict)   # targets, rubric, evidence contract
-    workspace_bindings = Column(JSON, default=list)  # [{path, exercise_file?, bound_sha256}]
-
     checkpoint = relationship("Checkpoint", back_populates="exercises")
 
 
@@ -158,14 +157,16 @@ class LectureVersion(Base):
     id = Column(Integer, primary_key=True, index=True)
     checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
     sections = Column(JSON, default=list)
+    source_version = Column(Integer, default=1, nullable=False)
     reason = Column(String(100), default="")  # regenerate_before | before_rollback
+    idempotency_key = Column(String(160), nullable=True, unique=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="lecture_versions")
 
 
 class LectureNote(Base):
-    """Anchored note on a lecture section (T9: notes & highlights)."""
+    """Legacy anchored note table kept as a read-only migration source."""
 
     __tablename__ = "lecture_notes"
 
@@ -178,6 +179,46 @@ class LectureNote(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="notes")
+
+
+class ArtifactAnnotation(Base):
+    """Learner-owned annotation anchored to a managed lecture or exercise."""
+
+    __tablename__ = "artifact_annotations"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "idempotency_key", name="uq_annotation_learner_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    artifact_type = Column(String(20), nullable=False, index=True)  # lecture | exercise
+    artifact_id = Column(Integer, nullable=False, index=True)
+    artifact_version = Column(Integer, default=1, nullable=False)
+    anchor = Column(JSON, default=dict)  # section_index/surface/selection/prefix/suffix
+    body = Column(Text, default="")
+    status = Column(String(20), default="anchored", nullable=False, index=True)
+    idempotency_key = Column(String(160), nullable=True)
+    legacy_note_id = Column(Integer, nullable=True, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ExerciseDraft(Base):
+    """Personal answer draft. Saving it never creates learning evidence."""
+
+    __tablename__ = "exercise_drafts"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "exercise_id", name="uq_draft_learner_exercise"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False, index=True)
+    code = Column(Text, default="")
+    files = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class ConceptQuestion(Base):
@@ -263,7 +304,6 @@ class ProjectWorkspace(Base):
     root_path = Column(Text, nullable=False)
     status = Column(String(30), default="linked", nullable=False, index=True)
     platform = Column(String(30), default="unknown")
-    runtime_config = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

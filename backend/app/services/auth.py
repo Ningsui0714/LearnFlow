@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.db.database import get_db
 from app.models.learning import AuthSession, Learner, LearnerProfile, UserAccount
 from app.models.project import (
-    Checkpoint, Exercise, LectureNote, ProcessAnimation, Project, Roadmap,
+    ArtifactAnnotation, Checkpoint, Exercise, LectureNote, ProcessAnimation, Project, Roadmap,
     Source, Task,
 )
 
@@ -241,6 +241,18 @@ async def require_owned_note(db: AsyncSession, learner_id: int, note_id: int) ->
     if not note:
         raise HTTPException(404, "Note not found")
     return note
+
+
+async def require_owned_annotation(
+    db: AsyncSession, learner_id: int, annotation_id: int,
+) -> ArtifactAnnotation:
+    annotation = (await db.execute(select(ArtifactAnnotation).where(
+        ArtifactAnnotation.id == annotation_id,
+        ArtifactAnnotation.learner_id == learner_id,
+    ))).scalar_one_or_none()
+    if not annotation:
+        raise HTTPException(404, "Annotation not found")
+    return annotation
 
 
 async def require_owned_animation(

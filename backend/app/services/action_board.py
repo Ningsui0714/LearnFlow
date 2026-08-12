@@ -131,19 +131,19 @@ ACTION_BOARD = {
             ("inspect_workspace_files",),
         ),
         ActionDefinition(
-            "configure_workspace_runtime", "选择项目 Python 解释器", "write", "explicit",
+            "open_managed_learning_artifact", "打开讲义/练习播放器", "none", "none",
             {},
-            ("run_workspace_file",),
+            ("annotate_learning_artifact",),
         ),
         ActionDefinition(
-            "run_workspace_file", "运行本地 Python 文件", "execution", "explicit",
+            "edit_managed_lecture", "版本化修改讲义", "write", "explicit_or_click",
             {},
-            ("inspect_workspace_files", "evaluate_attempt"),
+            ("open_managed_learning_artifact",),
         ),
         ActionDefinition(
-            "bind_exercise_file", "绑定练习与项目文件", "write", "explicit",
+            "annotate_learning_artifact", "批注讲义或练习", "write", "explicit_or_click",
             {},
-            ("evaluate_attempt",),
+            ("open_managed_learning_artifact",),
         ),
     )
 }

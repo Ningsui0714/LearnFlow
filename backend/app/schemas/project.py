@@ -128,7 +128,6 @@ class ExerciseOut(BaseModel):
     requirements: List[str] = []
     judge_mode: str = "test_cases"
     judge_config: dict = {}
-    workspace_bindings: List[dict] = []
 
     class Config:
         from_attributes = True
