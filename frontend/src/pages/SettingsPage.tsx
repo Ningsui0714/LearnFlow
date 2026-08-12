@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
-
-const api = axios.create({ baseURL: '/api', timeout: 15000 })
+import { api } from '../services/api'
 
 interface Settings {
   llm_api_key: string

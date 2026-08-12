@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -53,7 +55,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
 
     class Config:
-        env_file = ".env"
+        env_file = os.environ.get("LEARNFLOW_SETTINGS_PATH", ".env")
 
     @property
     def cors_origins_list(self) -> List[str]:

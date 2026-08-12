@@ -24,6 +24,22 @@ The generated target-triple sidecar and Rust/Node build output are ignored by
 Git. macOS signing, Windows signing, and store credentials are intentionally
 outside this repository stage.
 
+## macOS one-click app
+
+After `npm run build` finishes on Apple Silicon, install the real Tauri app and
+create a Desktop icon with:
+
+```bash
+cd desktop
+bash scripts/install_macos_app.sh
+```
+
+The script installs `LearnFlow.app` into `~/Applications`, creates
+`~/Desktop/LearnFlow.app` as a clickable entry, and launches the app. The app
+starts its bundled FastAPI sidecar on a random loopback port; it does not open
+the browser-based `start.sh` workflow. Existing app entries are moved to a
+timestamped `.backup-*` path instead of being deleted.
+
 ## Internal packages
 
 `.github/workflows/desktop-internal.yml` builds unsigned macOS and Windows

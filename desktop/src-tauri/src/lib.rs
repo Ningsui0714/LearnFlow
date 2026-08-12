@@ -45,6 +45,7 @@ pub fn run() {
                 "sqlite+aiosqlite:///{}",
                 database_path.to_string_lossy().replace('\\', "/")
             );
+            let settings_path = app_data_dir.join("settings.env");
             let command = app
                 .shell()
                 .sidecar("learnflow-backend")?
@@ -52,6 +53,7 @@ pub fn run() {
                 .env("DESKTOP_MODE", "true")
                 .env("DESKTOP_TOKEN", &token)
                 .env("DATABASE_URL", database_url)
+                .env("LEARNFLOW_SETTINGS_PATH", settings_path.to_string_lossy().as_ref())
                 .env(
                     "CORS_ORIGINS",
                     "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:5173",

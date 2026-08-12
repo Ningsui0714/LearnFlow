@@ -7,6 +7,7 @@
 - 浏览器部署的 `DESKTOP_MODE` 必须保持 `false`，本地文件接口对浏览器返回 404。
 - Tauri 每次启动生成新的高熵桌面令牌，并在随机 loopback 端口启动 FastAPI sidecar。
 - 每个文件请求同时校验登录会话、项目 `learner_id` 归属和 `X-LearnFlow-Desktop-Token`。
+- 桌面版“模型设置”也要求登录会话和本次启动令牌；配置保存在应用数据目录的 `settings.env`，不写入仓库或项目工作区。
 - 浏览器继续使用 HTTP-only cookie。由于 Tauri WebView 与 loopback sidecar 可能跨站，只有桌面令牌校验成功的登录/注册请求才会额外返回桌面 Bearer；Bearer 仅保存在该窗口的 `sessionStorage`，服务端接受它时仍要求本次启动令牌。
 - WebView 只有目录选择能力，没有 `$HOME/**` 或任意文件系统权限。真正的项目根约束由 FastAPI 再次执行。
 - sidecar 只允许绑定 `127.0.0.1`、`::1` 或 `localhost`；桌面令牌不得写入仓库、日志或数据库。

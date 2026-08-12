@@ -14,10 +14,11 @@ import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
 import DemoEntryPage from './pages/DemoEntryPage'
 import WorkspaceFilePage from './pages/WorkspaceFilePage'
+import { getDesktopRuntime } from './services/desktopRuntime'
 
 function DevSettingsRoute() {
   const { user } = useAuth()
-  return user?.is_dev_login ? <SettingsPage /> : <Navigate to="/agent" replace />
+  return user?.is_dev_login || Boolean(getDesktopRuntime().apiBaseUrl) ? <SettingsPage /> : <Navigate to="/agent" replace />
 }
 
 export default function App() {

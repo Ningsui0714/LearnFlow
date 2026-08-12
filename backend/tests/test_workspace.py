@@ -76,6 +76,31 @@ def test_browser_mode_hides_local_filesystem_routes(tmp_path, monkeypatch):
         assert not (tmp_path / ".learnflow").exists()
 
 
+def test_desktop_user_can_open_model_settings_without_dev_switch(monkeypatch, tmp_path):
+    enable_desktop(monkeypatch)
+    monkeypatch.setattr(
+        "app.api.settings.ENV_PATH",
+        str(tmp_path / "settings.env"),
+    )
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            headers=DESKTOP_HEADERS,
+            json=registration("workspace_desktop_settings"),
+        )
+        assert registered.status_code == 200
+        assert registered.json()["is_dev_login"] is False
+        settings_response = client.get("/api/settings", headers=DESKTOP_HEADERS)
+        assert settings_response.status_code == 200
+        saved = client.put(
+            "/api/settings",
+            headers=DESKTOP_HEADERS,
+            json={"llm_model": "desktop-test-model"},
+        )
+        assert saved.status_code == 200
+        assert "LLM_MODEL" in saved.json()["updated"]
+
+
 def test_desktop_bearer_requires_the_per_launch_token(monkeypatch):
     enable_desktop(monkeypatch)
     with TestClient(app) as login_client, TestClient(app) as bearer_client:

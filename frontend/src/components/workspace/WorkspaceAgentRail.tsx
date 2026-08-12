@@ -138,7 +138,7 @@ export default function WorkspaceAgentRail({
         <button type="button" onClick={onToggle} title="收起 Agent 对话" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <ChevronRight size={16} />
         </button>
-        {user?.is_dev_login && (
+        {(user?.is_dev_login || Boolean(desktop.apiBaseUrl)) && (
           <button
             type="button"
             onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })}

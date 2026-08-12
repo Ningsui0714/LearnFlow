@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  GitBranch, LogOut, Maximize2, Minimize2, PanelLeft, PanelRight, PanelsTopLeft,
-  Settings2, Sparkles, UserRound, X,
+  GitBranch, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
+  Sparkles, UserRound, X,
 } from 'lucide-react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { getDesktopRuntime } from '../../services/desktopRuntime'
 import WorkspaceProjectExplorer from '../workspace/WorkspaceProjectExplorer'
 import WorkspaceAgentRail from '../workspace/WorkspaceAgentRail'
 import WorkspaceTabs from '../workspace/WorkspaceTabs'
@@ -73,21 +74,6 @@ function WorkspaceFrame() {
   const { openPath } = useWorkspace()
   const [explorerVisible, setExplorerVisible] = useState(() => window.innerWidth >= 1024)
   const [agentRailExpanded, setAgentRailExpanded] = useState(() => window.innerWidth >= 1280)
-  const [focusMode, setFocusMode] = useState(() => {
-    try {
-      return window.localStorage.getItem('learnflow.workspace.app-mode') === 'true'
-    } catch {
-      return false
-    }
-  })
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem('learnflow.workspace.app-mode', String(focusMode))
-    } catch {
-      // Some embedded webviews can disable local storage; the switch still works for this session.
-    }
-  }, [focusMode])
 
   useEffect(() => {
     const openAgentConversation = () => {
@@ -139,24 +125,7 @@ function WorkspaceFrame() {
         <button type="button" onClick={() => openPath('/profile', { title: '个人画像', kind: 'profile' })} title="个人画像" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
           <UserRound size={17} />
         </button>
-        <button
-          type="button"
-          onClick={() => setFocusMode(value => !value)}
-          aria-pressed={focusMode}
-          aria-label={focusMode ? '退出 App 模式，恢复资源管理器和 Agent' : '进入 App 模式，隐藏侧栏'}
-          title={focusMode ? '退出 App 模式，恢复资源管理器和 Agent' : '进入 App 模式，隐藏侧栏'}
-          className={`inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition-colors ${focusMode
-            ? 'border-indigo-300 bg-indigo-600 text-white shadow-sm hover:bg-indigo-700'
-            : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
-          }`}
-        >
-          {focusMode ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          <span className="hidden sm:inline">App 模式</span>
-          <span className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${focusMode ? 'bg-indigo-300' : 'bg-slate-300'}`} aria-hidden="true">
-            <span className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${focusMode ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-          </span>
-        </button>
-        {user?.is_dev_login && (
+        {(user?.is_dev_login || Boolean(getDesktopRuntime().apiBaseUrl)) && (
           <button type="button" onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })} title="配置 AI 模型和 API Key" aria-label="模型设置：配置 AI 模型和 API Key" className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border-2 border-indigo-300 bg-indigo-50 px-2.5 text-xs font-semibold text-indigo-700 shadow-sm hover:border-indigo-400 hover:bg-indigo-100">
             <Settings2 size={17} />
             <span>模型设置</span>
@@ -172,7 +141,7 @@ function WorkspaceFrame() {
       </header>
 
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        {!focusMode && explorerVisible && (
+        {explorerVisible && (
           <div className="hidden w-[258px] shrink-0 border-r border-slate-200 lg:block">
             <WorkspaceProjectExplorer />
           </div>
@@ -183,14 +152,14 @@ function WorkspaceFrame() {
           <WorkspaceStage />
         </section>
 
-        {!focusMode && explorerVisible && (
+        {explorerVisible && (
           <div className="absolute inset-0 z-40 flex bg-slate-950/30 lg:hidden" onClick={() => setExplorerVisible(false)}>
             <div className="h-full w-[min(88vw,320px)] border-r border-slate-200 shadow-2xl" onClick={event => event.stopPropagation()}>
               <WorkspaceProjectExplorer onNavigate={() => setExplorerVisible(false)} />
             </div>
           </div>
         )}
-        {!focusMode && agentRailExpanded && (
+        {agentRailExpanded && (
           <button
             type="button"
             aria-label="关闭 Agent 对话"
@@ -199,11 +168,9 @@ function WorkspaceFrame() {
           />
         )}
         <div className={`${
-          focusMode
-            ? 'hidden'
-            : agentRailExpanded
-              ? 'absolute inset-y-0 right-0 z-50 w-[min(92vw,390px)] 2xl:relative 2xl:inset-auto 2xl:z-auto 2xl:w-[390px]'
-              : 'hidden xl:block xl:w-[52px]'
+          agentRailExpanded
+            ? 'absolute inset-y-0 right-0 z-50 w-[min(92vw,390px)] 2xl:relative 2xl:inset-auto 2xl:z-auto 2xl:w-[390px]'
+            : 'hidden xl:block xl:w-[52px]'
         } shrink-0 transition-[width] duration-200`}>
           <WorkspaceAgentRail
             expanded={agentRailExpanded}
