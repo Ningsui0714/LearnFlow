@@ -1577,7 +1577,7 @@ function renderDiagnosisQuestion(question) {
   document.querySelector(".diagnosis-question h2").textContent = question.title || "";
   const optionsBox = document.querySelector(".diagnosis-options");
   optionsBox.replaceChildren();
-  ["a", "b", "c"].forEach((key) => {
+  ["a", "b", "c", "d"].forEach((key) => {
     const text = question.options?.[key];
     if (!text) return;
     const label = document.createElement("label");

@@ -1,0 +1,50 @@
+{
+    "student_id": "STU-WF-001",
+    "text": "我想备战世界职业院校技能大赛 Java 应用开发赛项",
+    "student_profile": {
+      "learning_style": "example_driven",
+      "pace_factor": 0.9
+    },
+    "knowledge_state": {
+      "items": [
+        {
+          "knowledge_point_id": "KN_JAVA_CLASS",
+          "knowledge_point_name": "类与对象",
+          "mastery": 82,
+          "prerequisites": []
+        },
+        {
+          "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+          "knowledge_point_name": "封装与访问控制",
+          "mastery": 58,
+          "prerequisites": [
+            "KN_JAVA_CLASS"
+          ]
+        },
+        {
+          "knowledge_point_id": "KN_JAVA_INHERITANCE",
+          "knowledge_point_name": "继承",
+          "mastery": 45,
+          "prerequisites": [
+            "KN_JAVA_ENCAPSULATION"
+          ]
+        },
+        {
+          "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+          "knowledge_point_name": "多态",
+          "mastery": 35,
+          "prerequisites": [
+            "KN_JAVA_INHERITANCE"
+          ]
+        },
+        {
+          "knowledge_point_id": "KN_JAVA_COLLECTION",
+          "knowledge_point_name": "集合框架",
+          "mastery": 62,
+          "prerequisites": [
+            "KN_JAVA_CLASS"
+          ]
+        }
+      ]
+    }
+}

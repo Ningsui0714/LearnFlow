@@ -103,6 +103,26 @@ flowData:
             import json
 
 
+            def _parse_input(raw_input):
+                value = raw_input
+                for _ in range(3):
+                    if isinstance(value, dict):
+                        if "input" in value:
+                            value = value.get("input")
+                            continue
+                        if "AGENT_USER_INPUT" in value:
+                            value = value.get("AGENT_USER_INPUT")
+                            continue
+                        return value
+                    text = str(value or "").strip()
+                    if not text:
+                        return {}
+                    value = json.loads(text, strict=False)
+                if not isinstance(value, dict):
+                    raise ValueError("输入必须是 JSON 对象或 JSON 字符串")
+                return value
+
+
             def _collect_error_types(value, counts):
                 if isinstance(value, dict):
                     error_type = str(value.get("error_type", "")).strip()
@@ -116,7 +136,7 @@ flowData:
 
 
             def main(raw_input):
-                data = json.loads(str(raw_input or "{}"), strict=False)
+                data = _parse_input(raw_input)
                 if not isinstance(data, dict):
                     raise ValueError("输入必须是 JSON 对象")
                 student_id = str(data.get("student_id", "")).strip()
@@ -176,7 +196,7 @@ flowData:
                     "recurring_errors_json": json.dumps(recurring_errors, ensure_ascii=False, separators=(",", ":")),
                     "event_count": max(0, int(data.get("event_count", 0) or 0)),
                 }
-          appId: 12a0a7e2
+          appId: 6545ca99
           uid: '21880654528'
           codeErrMsg: ''
         updatable: false
@@ -357,7 +377,7 @@ flowData:
               "generated_at":"ISO 8601 时间",
               "based_on_event_count":0
             }
-          appId: 12a0a7e2
+          appId: 6545ca99
           uid: '21880654528'
           patchId: '0'
           llmIdErrMsg: ''
@@ -534,7 +554,7 @@ flowData:
                         "is_fallback": True,
                     }
                     return {"final_result_json": json.dumps(fallback, ensure_ascii=False, separators=(",", ":"))}
-          appId: 12a0a7e2
+          appId: 6545ca99
           uid: '21880654528'
           codeErrMsg: ''
         updatable: false

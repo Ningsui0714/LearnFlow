@@ -1,0 +1,69 @@
+{
+    "student_id": "STU-WF-001",
+    "event_count": 6,
+    "teaching_history": {
+      "events": [
+        {
+          "event_type": "learning_explanation",
+          "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+          "teaching_mode": "worked_example",
+          "strategy_code": "concept_to_example",
+          "effect": "passed",
+          "created_at": "2026-08-11T08:00:00Z"
+        },
+        {
+          "event_type": "remediation_explanation",
+          "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+          "teaching_mode": "analogy",
+          "strategy_code": "alternative_representation",
+          "effect": "not_understood",
+          "error_type": "conceptual",
+          "created_at": "2026-08-11T08:20:00Z"
+        },
+        {
+          "event_type": "remediation_explanation",
+          "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+          "teaching_mode": "execution_trace",
+          "strategy_code": "trace_and_debug",
+          "effect": "passed",
+          "error_type": "conceptual",
+          "created_at": "2026-08-11T08:40:00Z"
+        }
+      ]
+    },
+    "knowledge_state": {
+      "items": [
+        {
+          "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+          "knowledge_point_name": "封装与访问控制",
+          "knowledge_type": "conceptual",
+          "mastery": 78,
+          "wrong_streak": 0,
+          "correct_streak": 2
+        },
+        {
+          "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+          "knowledge_point_name": "多态",
+          "knowledge_type": "conceptual",
+          "mastery": 42,
+          "wrong_streak": 2,
+          "correct_streak": 0
+        }
+      ]
+    },
+    "practice_results": [
+      {
+        "question_id": "Q-POLY-001",
+        "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+        "evaluation_status": "incorrect",
+        "error_type": "conceptual",
+        "score": 0,
+        "max_score": 10
+      }
+    ],
+    "resource_preferences": {
+      "preferred_delivery_mode": "interactive_document",
+      "explanation_depth": "guided",
+      "auto_play_video": false
+    }
+}

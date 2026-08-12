@@ -1,0 +1,25 @@
+{
+    "message": "private 的 scores 字段，外部类应该怎么安全访问？",
+  "student_id": "STU-WF-001",
+  "assistant_mode": "education",
+  "source_kind": "knowledge_base",
+    "student_profile": {
+      "learning_style": "example_driven",
+      "effective_modes": {
+        "worked_example": 0.82
+      },
+      "pace_factor": 0.9,
+      "scaffold_preference": "moderate"
+    },
+    "kb_text": "【封装的本质：私有字段 + 公有方法】字段应声明为 private，通过 public 的 getter/setter 提供受控访问。对于数组 scores，getter 应返回副本或不可变视图，setter 应完成 null、范围和业务规则校验，不能直接暴露内部数组引用。来源：《Java 核心技术·卷I》第4节：封装与访问控制。",
+    "history_memory": [
+      {
+        "role": "user",
+        "content": "封装为什么要把字段设为 private？"
+      },
+      {
+        "role": "assistant",
+        "content": "这样可以把数据修改入口收敛到类的方法中，并在方法内执行校验。"
+      }
+    ]
+}

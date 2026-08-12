@@ -1,0 +1,66 @@
+{
+    "student_id": "STU-WF-001",
+    "session_id": "SESSION-LEARN-001",
+    "context": {
+      "scene": "learn",
+      "event_type": "initialize_learning",
+      "learner_action": "first",
+      "learning_goal": {
+        "goal_id": "GOAL-JAVA-CERT",
+        "goal_name": "1+X Java 应用开发认证"
+      },
+      "current_knowledge_point": {
+        "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+        "knowledge_point_name": "封装与访问控制",
+        "knowledge_type": "conceptual",
+        "mastery": 42,
+        "weakness_evidence": "getter 直接返回内部数组引用"
+      },
+      "learning_path": {
+        "items": [
+          {
+            "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+            "knowledge_point_name": "封装与访问控制",
+            "status": "current"
+          },
+          {
+            "knowledge_point_id": "KN_JAVA_INHERITANCE",
+            "knowledge_point_name": "继承",
+            "status": "pending"
+          }
+        ]
+      },
+      "teaching_history": {
+        "events": []
+      }
+    },
+    "strategy": {
+      "strategy_code": "concept_to_example",
+      "preferred_representation": "worked_example",
+      "explanation_depth": "guided",
+      "avoid_repeating_strategies": [
+        "analogy"
+      ],
+      "student_pace_hint": 0.9,
+      "misconception_tags": [
+        "封装边界混淆"
+      ]
+    },
+    "student_profile": {
+      "learning_style": "example_driven",
+      "learning_style_confidence": 0.82,
+      "effective_modes": {
+        "worked_example": 0.8,
+        "execution_trace": 0.67
+      },
+      "ineffective_modes": [
+        "analogy"
+      ],
+      "misconception_tags": [
+        "封装边界混淆"
+      ],
+      "pace_factor": 0.9,
+      "scaffold_preference": "moderate"
+    },
+    "kb_text": "课程依据：封装要求字段保持 private，通过 public 方法提供受控访问。数组或可变集合的 getter 不应直接暴露内部引用，应返回副本或不可变视图；setter 应完成 null、范围和业务规则校验。"
+}

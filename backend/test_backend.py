@@ -1,4 +1,5 @@
 ﻿import json
+import os
 import tempfile
 import threading
 import unittest
@@ -63,6 +64,12 @@ class BackendIntegrationTests(unittest.TestCase):
         )
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def test_empty_xingchen_input_key_uses_standard_default(self):
+        with patch.dict(os.environ, {"XINGCHEN_INPUT_KEY": ""}):
+            settings = Settings.from_env(host="127.0.0.1", port=4173)
+
+        self.assertEqual(settings.input_key, "AGENT_USER_INPUT")
 
     def test_unified_learning_context_overrides_assessment_route(self):
         application = self.server.RequestHandlerClass.application
@@ -1229,6 +1236,34 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["personalized_explanation"], "可渲染的讲解内容")
 
+    def test_remote_gateway_extracts_all_split_workflow_result_shapes(self):
+        gateway = self.server.RequestHandlerClass.application.gateway
+        result_shapes = {
+            "learning_path": {"items": []},
+            "learning_goal": {"goal_name": "Java 竞赛备赛"},
+            "recommendations": [],
+            "questions": [],
+            "message": "继续练习封装与访问控制。",
+        }
+
+        for result_key, result_value in result_shapes.items():
+            with self.subTest(result_key=result_key):
+                expected = {"status": "ok", result_key: result_value}
+                payload = {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": json.dumps(
+                                    {"result_json": json.dumps(expected, ensure_ascii=False)},
+                                    ensure_ascii=False,
+                                )
+                            }
+                        }
+                    ]
+                }
+
+                self.assertEqual(gateway._extract_result(payload), expected)
+
     def test_student_model_cache_tracks_refresh_interval(self):
         database = Path(self.temporary_directory.name) / "student-model-cache.db"
         cache = StudentModelCache(database)
@@ -2312,6 +2347,133 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertTrue(point["error_type"])
         self.assertTrue(point["misconception_tag"])
         self.assertTrue(point["root_cause"])
+
+    def test_diagnosis_accepts_four_option_question(self) -> None:
+        """落差4修复：学习者形态支持 4 选项题（工作流生成 3-4 选项均合法）。"""
+        self.request_json("POST", "/api/demo/seed", None)
+        start = self.request_json(
+            "POST",
+            "/api/diagnosis/start",
+            {
+                "student_id": "STU-OPT4-001",
+                "session_id": "OPT4-SESSION-001",
+                "goal": "daily",
+            },
+        )
+        self.assertEqual(start["status"], "ok")
+        application = self.server.RequestHandlerClass.application
+        state = application.store.get_student_state("STU-OPT4-001")
+        session = state["diagnosis_session"]
+        session["questions"][0] = {
+            "question_id": "GEN-OPT4-001",
+            "knowledge_point_id": "KN_JAVA_CLASS",
+            "knowledge_point_name": "类的定义与对象创建",
+            "title": "四选项题",
+            "options": {"a": "1", "b": "2", "c": "3", "d": "4"},
+            "answer": "d",
+            "explanation": "解析",
+            "difficulty": 1,
+        }
+        application.store.save_student_state("STU-OPT4-001", state)
+        answered = self.request_json(
+            "POST",
+            "/api/diagnosis/answer",
+            {
+                "student_id": "STU-OPT4-001",
+                "session_id": "OPT4-SESSION-001",
+                "selected": "d",
+            },
+        )
+        self.assertTrue(answered["correct"])
+
+    def test_diagnosis_writeback_feeds_next_round_by_weak_point(self) -> None:
+        """落差5+1修复：归因回写 upstream_payload，复测出题按薄弱点优先。"""
+        self.request_json("POST", "/api/demo/seed", None)
+        application = self.server.RequestHandlerClass.application
+        start = self.request_json(
+            "POST",
+            "/api/diagnosis/start",
+            {
+                "student_id": "STU-WB-001",
+                "session_id": "WB-SESSION-001",
+                "goal": "daily",
+            },
+        )
+        self.assertIn("provider", start)
+        diagnosis = application.store.get_student_state("STU-WB-001")[
+            "diagnosis_session"
+        ]
+        first = diagnosis["questions"][0]
+        wrong_choice = "a" if first["answer"] != "a" else "b"
+        self.request_json(
+            "POST",
+            "/api/diagnosis/answer",
+            {
+                "student_id": "STU-WB-001",
+                "session_id": "WB-SESSION-001",
+                "selected": wrong_choice,
+            },
+        )
+        bank = {
+            q["id"]: q
+            for q in __import__("backend.server", fromlist=["DIAGNOSIS_BANK"]).DIAGNOSIS_BANK
+        }
+        final: dict = {}
+        for question in diagnosis["questions"][1:]:
+            final = self.request_json(
+                "POST",
+                "/api/diagnosis/answer",
+                {
+                    "student_id": "STU-WB-001",
+                    "session_id": "WB-SESSION-001",
+                    "selected": bank[question["question_id"]]["answer"],
+                },
+            )
+        self.assertEqual(final["status"], "completed")
+        weak_points = application.store.get_student_state("STU-WB-001")[
+            "upstream_payload"
+        ]["diagnostic_result"]["weak_points"]
+        self.assertTrue(weak_points)
+        weak_kp = weak_points[0]["knowledge_point_id"]
+        # 复测：出题按薄弱点优先（复用题/工作流生成均薄弱点排前）
+        second = self.request_json(
+            "POST",
+            "/api/diagnosis/start",
+            {
+                "student_id": "STU-WB-001",
+                "session_id": "WB-SESSION-001",
+                "goal": "daily",
+            },
+        )
+        self.assertEqual(
+            second["questions"][0]["knowledge_point_id"], weak_kp
+        )
+
+    def test_diagnosis_reuses_persisted_generated_questions(self) -> None:
+        """落差3修复：生成题入库后，后续诊断优先复用（provider=workflow_reuse）。"""
+        self.request_json("POST", "/api/demo/seed", None)
+        first = self.request_json(
+            "POST",
+            "/api/diagnosis/start",
+            {
+                "student_id": "STU-REUSE-001",
+                "session_id": "REUSE-SESSION-001",
+                "goal": "daily",
+            },
+        )
+        first_ids = {q["question_id"] for q in first["questions"]}
+        second = self.request_json(
+            "POST",
+            "/api/diagnosis/start",
+            {
+                "student_id": "STU-REUSE-001",
+                "session_id": "REUSE-SESSION-001",
+                "goal": "daily",
+            },
+        )
+        self.assertEqual(second["provider"], "workflow_reuse")
+        second_ids = {q["question_id"] for q in second["questions"]}
+        self.assertTrue(second_ids & first_ids)
 
     def test_code_run_executes_and_timeouts(self) -> None:
         """本地代码执行：Python 运行、Java 编译错误、死循环超时。"""

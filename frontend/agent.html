@@ -114,6 +114,7 @@
     }
     .path-item.current .path-state { background: var(--amber); color: #fff; }
     .path-item.learning .path-state { background: var(--green); color: #fff; }
+    .path-item.completed .path-state { background: var(--green); color: #fff; }
     .path-item.pending .path-state { background: transparent; color: var(--muted-soft); }
     .path-copy { flex: 1; min-width: 0; }
     .path-copy small { display: block; font-size: 10.5px; color: var(--muted-soft); margin-bottom: 1px; }
@@ -313,12 +314,6 @@
     }
     .editor-tab-close:hover { background: #3a3f42; color: #fff; }
     .editor-tab-close svg { width: 13px; height: 13px; color: inherit; }
-    .editor-new-tab {
-      width: 38px; flex: none; display: flex; align-items: center; justify-content: center;
-      border: none; border-right: 1px solid #303437; background: #181a1b; color: #9ca3a7;
-    }
-    .editor-new-tab:hover { background: #25292c; color: #fff; }
-    .editor-new-tab svg { width: 15px; height: 15px; }
     .editor-runtime {
       flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px;
       color: #9fb3a9; background: #181a1b; font-size: 10px; white-space: nowrap;
@@ -487,10 +482,50 @@
     .option.selected .opt-key { background: var(--blue); border-color: var(--blue); color: #fff; }
     .quiz-foot { padding: 14px 34px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
     .quiz-error { color: var(--red); font-size: 12px; padding: 0 22px 8px; }
+    .quiz-context { padding: 10px 34px; background: var(--blue-soft); border-bottom: 1px solid #d6e0f8; color: #31466f; font-size: 11.5px; line-height: 1.6; }
+    .quiz-source { display: flex; align-items: center; gap: 6px; margin: -8px 0 15px; color: var(--muted); font-size: 11.5px; }
+
+    .assessment-center { height: 100%; overflow-y: auto; padding: 28px 32px 48px; }
+    .assessment-center-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+    .assessment-center-head h1 { margin: 0 0 6px; font-size: 24px; }
+    .assessment-center-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .assessment-policy { display: flex; gap: 10px; align-items: flex-start; border: 1px solid #d8e3dc; background: var(--green-soft); border-radius: 12px; padding: 13px 15px; margin-bottom: 22px; color: var(--green-strong); font-size: 12px; line-height: 1.7; }
+    .assessment-policy svg { flex: none; margin-top: 2px; }
+    .assessment-section-title { display: flex; align-items: center; gap: 8px; margin: 22px 0 12px; font-size: 14px; }
+    .assessment-scope { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; }
+    .assessment-scope span { color: var(--muted); }
+    .assessment-scope select { margin-left: auto; min-width: 220px; border: 1px solid var(--line); background: var(--surface-soft); border-radius: 8px; padding: 7px 9px; }
+    .assessment-catalog { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+    .assessment-card { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 13px; padding: 16px; box-shadow: 0 3px 12px rgba(24,32,29,.04); }
+    .assessment-card:hover { border-color: var(--blue); box-shadow: var(--shadow); }
+    .assessment-card .card-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--blue-soft); color: var(--blue); margin-bottom: 12px; }
+    .assessment-card strong { display: block; font-size: 14px; margin-bottom: 6px; }
+    .assessment-card p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.65; min-height: 40px; }
+    .assessment-card small { color: var(--muted-soft); font-size: 11px; }
+    .assessment-history { display: grid; gap: 9px; }
+    .assessment-history-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: 11px; padding: 12px 14px; }
+    .assessment-history-row strong { display: block; font-size: 13px; margin-bottom: 3px; }
+    .assessment-history-row small { color: var(--muted); font-size: 11.5px; }
+    .assessment-score { font-weight: 700; color: var(--blue); }
+    .evidence-button { border: 1px solid var(--line); background: var(--surface-soft); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; }
+    .evidence-button:hover { border-color: var(--green); color: var(--green-strong); }
+    .assessment-empty { border: 1px dashed var(--line-strong); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); font-size: 12px; }
+    .tree-assessment-list { display: grid; gap: 3px; margin: 3px 0 7px; }
+    .tree-assessment-row { width: 100%; border: 0; background: transparent; display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 35px; text-align: left; color: var(--muted); font-size: 12px; }
+    .tree-assessment-row:hover { background: var(--surface-soft); color: var(--ink); }
+    .tree-assessment-row svg { width: 15px; height: 15px; color: var(--blue); }
+    .tree-assessment-row small { margin-left: auto; color: var(--muted-soft); }
+    .evidence-dialog { border: 0; border-radius: 14px; padding: 0; width: min(720px, calc(100vw - 48px)); box-shadow: var(--shadow-lg); }
+    .evidence-dialog::backdrop { background: rgba(17,24,39,.36); }
+    .evidence-dialog-head { display: flex; align-items: center; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--line); }
+    .evidence-dialog-head strong { flex: 1; }
+    .evidence-dialog-body { max-height: 60vh; overflow-y: auto; padding: 14px 18px 18px; }
+    .evidence-event { border-left: 3px solid var(--green); padding: 8px 10px; margin: 8px 0; background: var(--surface-soft); border-radius: 0 8px 8px 0; font-size: 12px; line-height: 1.65; }
 
     @media (max-width: 1180px) {
       .layout { grid-template-columns: 240px minmax(500px, 1fr) 340px; }
       .editor-runtime { display: none; }
+      .assessment-catalog { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -527,13 +562,7 @@
       <main class="stage" id="stage">
         <section class="learning-editor" aria-label="学习页面工作台">
           <div class="editor-tabbar">
-            <div class="editor-tabs" role="tablist" aria-label="已打开的学习页面">
-              <div class="editor-tab active" id="editor-tab-home" role="tab" tabindex="0" aria-selected="true">
-                <i data-lucide="layout-dashboard"></i>
-                <span>学习工作台</span>
-              </div>
-            </div>
-            <button class="editor-new-tab" id="editor-new-tab" type="button" title="新建学习页"><i data-lucide="plus"></i></button>
+            <div class="editor-tabs" role="tablist" aria-label="已打开的学习页面"></div>
             <span class="editor-runtime" title="把章节标签拖到右侧即可拆成独立编辑组"><i data-lucide="columns-2"></i>拖动章节标签可并排</span>
           </div>
           <div class="editor-page" id="editor-page">
@@ -561,12 +590,28 @@
               </div>
               <div class="lesson-body" id="lesson-body"></div>
             </article>
+            <section class="assessment-center" id="assessment-center" hidden aria-label="测评中心">
+              <div class="assessment-center-head">
+                <div>
+                  <h1>测评中心</h1>
+                  <p id="assessment-center-subtitle">选择检测目的，系统按能力图谱自动组卷。</p>
+                </div>
+                <button class="primary-btn" id="assessment-center-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+              </div>
+              <div class="assessment-policy"><i data-lucide="shield-check"></i><span>题目只来自已审核题库或经校验的智能体候选题；联网检索仅用于发现权威资料，不会直接拼成正式测评题。</span></div>
+              <h2 class="assessment-section-title"><i data-lucide="list-checks"></i>选择检测方式</h2>
+              <label class="assessment-scope"><span>阶段检查与自主检测范围</span><select id="assessment-scope"></select></label>
+              <div class="assessment-catalog" id="assessment-catalog"></div>
+              <h2 class="assessment-section-title"><i data-lucide="history"></i>测评记录</h2>
+              <div class="assessment-history" id="assessment-history"></div>
+            </section>
             <section class="quiz-drawer" id="quiz-drawer" hidden aria-label="能力测评">
               <div class="quiz-head">
                 <span class="qh-icon"><i data-lucide="clipboard-list"></i></span>
                 <strong id="quiz-title">能力测评</strong>
                 <button class="close-btn" id="quiz-close" title="返回学习工作台"><i data-lucide="x"></i></button>
               </div>
+              <div class="quiz-context" id="quiz-context">正式测评会形成能力证据；题目完成后统一生成可追溯结果。</div>
               <div class="quiz-progress-track"><div class="quiz-progress-bar" id="quiz-progress-bar" style="width:0%"></div></div>
               <div class="quiz-body" id="quiz-body"></div>
               <div class="quiz-error" id="quiz-error" hidden></div>
@@ -578,6 +623,11 @@
           </div>
         </section>
       </main>
+
+      <dialog class="evidence-dialog" id="evidence-dialog">
+        <div class="evidence-dialog-head"><i data-lucide="file-search"></i><strong>测评证据记录</strong><button class="close-btn" id="evidence-dialog-close" type="button"><i data-lucide="x"></i></button></div>
+        <div class="evidence-dialog-body" id="evidence-dialog-body"></div>
+      </dialog>
 
       <!-- 全屏：个人中心（独立页面） -->
       <section class="fullpage" id="fullpage-profile" hidden>
@@ -686,7 +736,7 @@
       <aside class="chat">
         <div class="chat-head">
           <span class="bot-icon"><i data-lucide="sparkles"></i></span>
-          <div><strong>知行课径助手</strong><small>在线 · 已接入领域知识库</small></div>
+          <div><strong>知行课径助手</strong><small>在线</small></div>
         </div>
         <div class="workbench-context">
           <small>当前工作台上下文</small>
@@ -696,12 +746,12 @@
         <div class="suggestions" id="suggestions" hidden></div>
         <div class="chat-input-box">
           <div class="chat-tools" aria-label="工作台工具">
-            <button class="chat-tool" type="button" aria-pressed="true"><i data-lucide="database"></i>领域知识库</button>
-            <button class="chat-tool" type="button" aria-pressed="true"><i data-lucide="globe-2"></i>联网检索</button>
-            <button class="chat-tool" type="button" aria-pressed="false"><i data-lucide="paperclip"></i>学习资料</button>
+            <button class="chat-tool" data-tool="knowledge" type="button" aria-pressed="true"><i data-lucide="database"></i>领域知识库</button>
+            <button class="chat-tool" data-tool="web" type="button" aria-pressed="true"><i data-lucide="globe-2"></i>联网检索</button>
+            <button class="chat-tool" data-tool="materials" type="button" aria-pressed="false"><i data-lucide="paperclip"></i>学习资料</button>
           </div>
           <div class="chat-input">
-            <textarea id="chat-textarea" rows="1" placeholder="输入学习目标、知识问题，或让 Tutor 开始测评…"></textarea>
+            <textarea id="chat-textarea" rows="1" placeholder="输入学习目标、知识问题，也可以搜索、翻译、总结或写作…"></textarea>
             <button class="send-btn" id="send-btn" title="发送"><i data-lucide="send"></i></button>
           </div>
         </div>
@@ -719,6 +769,7 @@
     const welcomeEl = $("welcome-view");
     const lessonEl = $("lesson-view");
     const drawerEl = $("quiz-drawer");
+    const assessmentCenterEl = $("assessment-center");
     const stageEl = $("stage");
     const editorPageEl = $("editor-page");
     const editorTabsEl = document.querySelector(".editor-tabs");
@@ -730,9 +781,16 @@
       quiz: null,          // { project_id, questions, index, answers[] }
       busy: false,         // 输入锁定
       currentView: "welcome",
-      tabs: [],            // 多章节/测评标签
+      tabs: [{ id: "home", view: "welcome", title: "学习工作台", scrollTop: 0 }],
       activeTabId: "home",
       draggingTabId: null,
+      assessmentCatalog: [],
+      assessmentHistory: [],
+      expandedProjects: new Set(),
+      expandedProjectsInitialized: false,
+      conversations: new Map(),
+      activeConversationKey: "",
+      chatTools: { knowledge: true, web: true, materials: false },
     };
 
     function icons() { if (window.lucide) lucide.createIcons(); }
@@ -741,11 +799,22 @@
       return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
+    function formatQuestionSource(source) {
+      const labels = {
+        ai_generated_reviewed: "智能生成 · 已校验",
+        ai_generated_unreviewed: "智能生成 · 未审核",
+        curated_bank: "审核题库",
+        source_pending: "题源校验中",
+      };
+      return labels[source] || source || "未标注";
+    }
+
     function setWorkspaceVisibility(view) {
       state.currentView = view;
       welcomeEl.hidden = view !== "welcome";
       lessonEl.hidden = view !== "lesson";
       drawerEl.hidden = view !== "quiz";
+      assessmentCenterEl.hidden = view !== "assessment_center";
     }
 
     function workspaceTab(tabId) {
@@ -753,25 +822,23 @@
     }
 
     function renderEditorTabs() {
-      editorTabsEl.querySelectorAll("[data-workspace-tab]").forEach((tab) => tab.remove());
-      const homeTab = $("editor-tab-home");
-      const homeActive = state.activeTabId === "home";
-      homeTab.classList.toggle("active", homeActive);
-      homeTab.setAttribute("aria-selected", String(homeActive));
-
+      editorTabsEl.replaceChildren();
       state.tabs.forEach((tab) => {
         const tabEl = document.createElement("div");
         tabEl.className = "editor-tab" +
           (state.activeTabId === tab.id ? " active" : "") +
-          (tab.view === "quiz" ? " assessment-tab" : "");
+          (["quiz", "assessment_center"].includes(tab.view) ? " assessment-tab" : "");
         tabEl.dataset.workspaceTab = tab.id;
         tabEl.setAttribute("role", "tab");
         tabEl.setAttribute("tabindex", "0");
         tabEl.setAttribute("aria-selected", String(state.activeTabId === tab.id));
         tabEl.draggable = tab.view === "lesson";
         tabEl.title = tab.view === "lesson" ? "拖到右侧可拆分为并排页面" : tab.title;
+        const icon = tab.view === "welcome"
+          ? "layout-dashboard"
+          : ["quiz", "assessment_center"].includes(tab.view) ? "clipboard-list" : "file-text";
         tabEl.innerHTML =
-          '<i data-lucide="' + (tab.view === "quiz" ? "clipboard-list" : "file-text") + '"></i>' +
+          '<i data-lucide="' + icon + '"></i>' +
           "<span>" + escapeHtml(tab.title) + "</span>" +
           '<button class="editor-tab-close" type="button" title="关闭标签页"><i data-lucide="x"></i></button>';
         tabEl.onclick = () => activateWorkspaceTab(tab.id);
@@ -814,24 +881,22 @@
     function activateWorkspaceTab(tabId) {
       const previous = workspaceTab(state.activeTabId);
       if (previous) previous.scrollTop = editorPageEl.scrollTop;
-      state.activeTabId = tabId;
-      if (tabId === "home") {
-        setWorkspaceVisibility("welcome");
+      const tab = workspaceTab(tabId);
+      if (!tab) {
+        state.activeTabId = null;
+        setWorkspaceVisibility("blank");
         renderEditorTabs();
         syncActivePathItem(null);
         editorPageEl.scrollTop = 0;
         return;
       }
-      const tab = workspaceTab(tabId);
-      if (!tab) {
-        activateWorkspaceTab("home");
-        return;
-      }
+      state.activeTabId = tabId;
       setWorkspaceVisibility(tab.view);
       renderEditorTabs();
       syncActivePathItem(tab);
       if (tab.view === "lesson") renderLessonTab(tab);
       if (tab.view === "quiz") renderQuiz();
+      if (tab.view === "assessment_center") loadAssessmentCenter(tab.projectId);
       editorPageEl.scrollTop = tab.scrollTop || 0;
     }
 
@@ -845,32 +910,31 @@
 
     function showWorkspaceView(view, options = {}) {
       if (view === "welcome") {
-        activateWorkspaceTab("home");
+        upsertWorkspaceTab({ id: "home", view: "welcome", title: "学习工作台" });
         return;
       }
       const fallbackId = view === "quiz"
         ? "quiz:" + (options.projectId || (state.quiz && state.quiz.project_id) || "current")
-        : options.tabId;
+        : view === "assessment_center"
+          ? "assessment-center:" + (options.projectId || "current")
+          : options.tabId;
       if (!fallbackId) return;
       upsertWorkspaceTab({
         id: fallbackId,
         view,
-        title: options.title || (view === "quiz" ? "能力测评" : "课程讲解"),
+        title: options.title || (view === "quiz" ? "能力测评" : view === "assessment_center" ? "测评中心" : "课程讲解"),
         projectId: options.projectId || (state.quiz && state.quiz.project_id) || "",
       });
     }
 
     function closeWorkspaceTab(tabId = state.activeTabId) {
       const index = state.tabs.findIndex((tab) => tab.id === tabId);
-      if (index < 0) {
-        activateWorkspaceTab("home");
-        return;
-      }
+      if (index < 0) return;
       const wasActive = state.activeTabId === tabId;
       state.tabs.splice(index, 1);
       if (wasActive) {
         const next = state.tabs[index] || state.tabs[index - 1];
-        activateWorkspaceTab(next ? next.id : "home");
+        activateWorkspaceTab(next ? next.id : null);
       } else {
         renderEditorTabs();
       }
@@ -885,7 +949,7 @@
       let data = {};
       try { data = await response.json(); } catch (_) { /* 非 JSON 响应 */ }
       if (!response.ok) {
-        throw new Error(data.message || `请求失败（HTTP ${response.status}）`);
+        throw new Error(data.user_message || data.message || `请求失败（HTTP ${response.status}）`);
       }
       return data;
     }
@@ -893,16 +957,181 @@
     /* ================= 对话 ================= */
     function scrollChat() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
-    function addMsg(role, html) {
+    function projectConversationKey(projectId) {
+      return "project:" + projectId;
+    }
+
+    function createDraftConversationKey() {
+      return "draft:" + Date.now() + ":" + Math.random().toString(36).slice(2, 8);
+    }
+
+    function ensureConversation(key, project = null) {
+      if (!state.conversations.has(key)) {
+        state.conversations.set(key, {
+          key,
+          sessionId: "agent-" + key.replace(/[^a-zA-Z0-9_-]/g, "-"),
+          projectId: project ? project.project_id : "",
+          goalName: project ? project.goal_name : "",
+          messages: document.createDocumentFragment(),
+          suggestionChips: DEFAULT_CHIPS,
+          suggestionsVisible: true,
+          draft: "",
+          initialized: false,
+        });
+      }
+      const conversation = state.conversations.get(key);
+      if (project) {
+        conversation.projectId = project.project_id;
+        conversation.goalName = project.goal_name;
+      }
+      return conversation;
+    }
+
+    function activeConversation() {
+      if (!state.activeConversationKey) {
+        const key = createDraftConversationKey();
+        switchConversation(key);
+      }
+      return ensureConversation(state.activeConversationKey);
+    }
+
+    function stashActiveConversation() {
+      if (!state.activeConversationKey) return;
+      const conversation = ensureConversation(state.activeConversationKey);
+      conversation.draft = $("chat-textarea").value;
+      while (messagesEl.firstChild) conversation.messages.appendChild(messagesEl.firstChild);
+    }
+
+    function updateConversationContext(conversation) {
+      $("workbench-project").textContent = conversation.projectId
+        ? (conversation.goalName || "当前项目") + " · 独立项目会话"
+        : "新项目 · 等待输入学习目标";
+    }
+
+    function renderConversationSuggestions(conversation) {
+      const box = $("suggestions");
+      box.innerHTML = "";
+      box.hidden = !conversation.suggestionsVisible;
+      if (!conversation.suggestionsVisible) return;
+      (conversation.suggestionChips || DEFAULT_CHIPS).forEach((chip) => {
+        const button = document.createElement("button");
+        button.className = "suggestion-chip";
+        button.textContent = chip;
+        button.onclick = () => sendGoal(chip);
+        box.appendChild(button);
+      });
+    }
+
+    function switchConversation(key, project = null) {
+      if (state.activeConversationKey === key) {
+        const current = ensureConversation(key, project);
+        updateConversationContext(current);
+        return current;
+      }
+      stashActiveConversation();
+      state.activeConversationKey = key;
+      const conversation = ensureConversation(key, project);
+      messagesEl.replaceChildren();
+      messagesEl.appendChild(conversation.messages);
+      conversation.messages = document.createDocumentFragment();
+      $("chat-textarea").value = conversation.draft || "";
+      renderConversationSuggestions(conversation);
+      updateConversationContext(conversation);
+      icons();
+      scrollChat();
+      return conversation;
+    }
+
+    function migrateConversation(sourceKey, project) {
+      const targetKey = projectConversationKey(project.project_id);
+      if (sourceKey === targetKey) return ensureConversation(targetKey, project);
+      const source = ensureConversation(sourceKey);
+      const existing = state.conversations.get(targetKey);
+      if (existing && existing !== source) {
+        while (source.messages.firstChild) existing.messages.appendChild(source.messages.firstChild);
+      } else {
+        state.conversations.set(targetKey, source);
+      }
+      state.conversations.delete(sourceKey);
+      source.key = targetKey;
+      source.sessionId = "agent-project-" + project.project_id;
+      source.projectId = project.project_id;
+      source.goalName = project.goal_name;
+      source.historyLoaded = true;
+      if (state.activeConversationKey === sourceKey) state.activeConversationKey = targetKey;
+      updateConversationContext(source);
+      return source;
+    }
+
+    function initializeConversation(conversation, project = null) {
+      if (conversation.initialized) return;
+      conversation.initialized = true;
+      if (project) {
+        addMsg("bot",
+          "<p><strong>这是“" + escapeHtml(project.goal_name) + "”的独立项目会话。</strong></p>" +
+          "<p>这里的提问和建议不会与其他项目混合。</p>",
+          conversation.key);
+      } else {
+        addMsg("bot",
+          "<p><strong>你好，我是知行课径助手。</strong> 我具备通用问答、联网检索、翻译、总结和写作能力，并专项支持学习目标分析、测评、路径规划与知识讲解。告诉我你现在想完成什么。</p>",
+          conversation.key);
+      }
+    }
+
+    async function loadConversationHistory(conversation, project) {
+      if (!project || conversation.historyLoaded) return;
+      conversation.historyLoaded = true;
+      try {
+        const result = await api(
+          "/api/projects/" + encodeURIComponent(project.project_id) +
+          "/messages?student_id=" + encodeURIComponent(STUDENT_ID)
+        );
+        const history = result.messages || [];
+        if (!history.length) {
+          initializeConversation(conversation, project);
+          return;
+        }
+        conversation.initialized = true;
+        history.forEach((item) => {
+          const role = item.role === "user" ? "user" : "bot";
+          const html = role === "user"
+            ? "<strong>" + escapeHtml(item.content) + "</strong>"
+            : "<p>" + escapeHtml(item.content).replace(/\n/g, "<br/>") + "</p>";
+          addMsg(role, html, conversation.key);
+        });
+      } catch (_) {
+        conversation.historyLoaded = false;
+        initializeConversation(conversation, project);
+      }
+    }
+
+    function currentWorkspaceContext(projectId = "") {
+      const tab = workspaceTab(state.activeTabId);
+      if (!tab) return {};
+      if (projectId && tab.projectId && tab.projectId !== projectId) return {};
+      return {
+        view: tab.view || "",
+        project_id: tab.projectId || "",
+        knowledge_point_id: tab.knowledgePointId || "",
+        knowledge_point_name: tab.title || "",
+        assessment_type: state.quiz && state.quiz.assessment_type || "",
+      };
+    }
+
+    function addMsg(role, html, conversationKey = state.activeConversationKey) {
       const div = document.createElement("div");
       div.className = "msg " + role;
       const avatar = role === "bot"
         ? '<span class="bubble-avatar"><i data-lucide="sparkles"></i></span>'
         : '<span class="bubble-avatar">我</span>';
       div.innerHTML = avatar + '<div class="bubble">' + html + "</div>";
-      messagesEl.appendChild(div);
-      icons();
-      scrollChat();
+      if (conversationKey === state.activeConversationKey) {
+        messagesEl.appendChild(div);
+        icons();
+        scrollChat();
+      } else {
+        ensureConversation(conversationKey).messages.appendChild(div);
+      }
       return div;
     }
 
@@ -912,41 +1141,55 @@
       $("chat-textarea").disabled = !on;
     }
 
-    function showSuggestions(chips) {
-      const box = $("suggestions");
-      box.hidden = false;
-      box.innerHTML = "";
-      (chips || DEFAULT_CHIPS).forEach((c) => {
-        const b = document.createElement("button");
-        b.className = "suggestion-chip";
-        b.textContent = c;
-        b.onclick = () => sendGoal(c);
-        box.appendChild(b);
-      });
+    function showSuggestions(chips, conversationKey = state.activeConversationKey) {
+      const conversation = ensureConversation(conversationKey);
+      conversation.suggestionChips = chips || DEFAULT_CHIPS;
+      conversation.suggestionsVisible = true;
+      if (conversationKey === state.activeConversationKey) renderConversationSuggestions(conversation);
     }
-    function hideSuggestions() { $("suggestions").hidden = true; }
+    function hideSuggestions(conversationKey = state.activeConversationKey) {
+      const conversation = ensureConversation(conversationKey);
+      conversation.suggestionsVisible = false;
+      if (conversationKey === state.activeConversationKey) renderConversationSuggestions(conversation);
+    }
 
     const DEFAULT_CHIPS = [
       "我想系统掌握 Java 面向对象编程",
-      "备战世界职业院校技能大赛",
-      "我想考 1+X Java 应用开发认证",
+      "帮我上网搜索 Python 官方入门教程",
+      "请把今天的学习计划整理成三点",
     ];
 
     /* ================= Tutor Agent 统一对话 ================= */
 
-    async function renderChatAnswer(result) {
+    async function renderChatAnswer(result, conversationKey) {
       const sources = result.sources || [];
+      const answerBadge = result.answer_mode === "web_synthesis"
+        ? "联网检索 · AI 综合回答"
+        : result.answer_mode === "web_results"
+          ? "联网检索 · 网页结果"
+          : result.answer_mode === "general_generation"
+            ? "星辰智能生成 · 通用助手"
+            : result.answer_mode === "education_generation"
+              ? "星辰智能生成 · 教育辅导"
+              : result.answer_mode === "local_rag"
+                ? "知识库回答 · 本地规则组织"
+                : result.ai_generated
+                  ? "星辰智能生成"
+                  : "系统回答";
       const sourceHtml = sources.length
         ? '<div class="chat-sources"><small>依据：</small>' + sources.map((s) =>
-            '<span class="source-chip">' + escapeHtml(s.title || s.quote_text || "知识库") +
-            (s.locator ? " · " + escapeHtml(s.locator) : "") + "</span>").join("") + "</div>"
+            s.locator
+              ? '<a class="source-chip" href="' + escapeHtml(s.locator) + '" target="_blank" rel="noopener noreferrer">' +
+                escapeHtml(s.title || s.quote_text || "来源") + "</a>"
+              : '<span class="source-chip">' + escapeHtml(s.title || s.quote_text || "知识库") + "</span>"
+          ).join("") + "</div>"
         : "";
       addMsg("bot",
         '<div class="chat-answer">' +
-          '<div class="ca-badge"><i data-lucide="sparkles"></i> AI 生成 · 依据领域知识库</div>' +
+          '<div class="ca-badge"><i data-lucide="sparkles"></i> ' + escapeHtml(answerBadge) + '</div>' +
           '<p class="ca-text">' + escapeHtml(result.answer).replace(/\n/g, "<br/>") + "</p>" +
           sourceHtml +
-        "</div>");
+        "</div>", conversationKey);
     }
 
     function renderAgentChoices(messageEl, options) {
@@ -969,61 +1212,103 @@
       icons();
     }
 
-    async function renderProjectCreated(result) {
+    async function renderProjectCreated(result, sourceConversationKey) {
       const project = result.project;
-      state.current = project;
-      $("workbench-project").textContent = project.goal_name + " · 目标规划会话";
+      const planningReady = project.planning_state === "ready";
+      const assessmentReady = project.assessment_state === "ready";
+      const conversation = migrateConversation(sourceConversationKey, project);
+      if (state.activeConversationKey === conversation.key) state.current = project;
+      state.expandedProjects.add(project.project_id);
       await refreshProjects();
+      const constraintParts = [];
+      const constraints = project.goal_constraints || {};
+      if (constraints.duration_text) constraintParts.push("期限：" + constraints.duration_text);
+      if (constraints.target_outcome) constraintParts.push("成果：" + constraints.target_outcome);
+      const constraintHtml = constraintParts.length
+        ? '<p style="color:var(--muted)">' + escapeHtml(constraintParts.join(" · ")) + "</p>"
+        : "";
+      const nextCard = planningReady && assessmentReady
+        ? "<p>为了给你生成真正个性化的学习路径，请先完成一次能力测评（约 3 分钟）。</p>" +
+          '<div class="quiz-card">' +
+            '<div class="qc-head"><i data-lucide="clipboard-list"></i> 能力测评 · 根据目标取样</div>' +
+            "<p>系统会按目标抽取知识点，分析作答证据并更新薄弱项与学习顺序。</p>" +
+            '<div class="quiz-actions">' +
+              '<button class="primary-btn blue" id="start-quiz-btn"><i data-lucide="play"></i> 开始测评</button>' +
+              '<button class="ghost-link" id="later-quiz-btn" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">先看学习路径</button>' +
+            "</div>" +
+          "</div>"
+        : planningReady
+          ? '<div class="quiz-card">' +
+            '<div class="qc-head"><i data-lucide="route"></i> 候选学习路径已生成</div>' +
+            "<p>正式题源尚未审核。你可以先做不写入画像的 AI 临时自检，或查看候选路径；系统不会套用其他领域题目。</p>" +
+            '<div class="quiz-actions">' +
+              '<button class="primary-btn blue" id="open-provisional-assessment"><i data-lucide="flask-conical"></i> AI 临时自检</button>' +
+              '<button class="primary-btn" id="later-quiz-btn"><i data-lucide="map"></i> 查看候选路径</button>' +
+            '</div>' +
+          "</div>"
+          : '<div class="quiz-card">' +
+            '<div class="qc-head"><i data-lucide="search-check"></i> 知识结构校验中</div>' +
+            "<p>该目标尚未绑定已审核的知识图谱。系统会先检索课程标准、岗位要求或权威资料，再生成可追溯路径与测评。</p>" +
+            '<div class="assessment-policy" style="margin:10px 0 0"><i data-lucide="shield-check"></i><span>校验完成前不会套用其他领域的课程或试题。</span></div>' +
+          "</div>";
       addMsg("bot",
         "<p><strong>目标已创建为项目：</strong>" + escapeHtml(project.goal_name) + "</p>" +
-        "<p>为了给你生成真正个性化的学习路径，请先完成一次能力测评（约 3 分钟）。</p>" +
-        '<div class="quiz-card">' +
-          '<div class="qc-head"><i data-lucide="clipboard-list"></i> 能力测评 · 根据目标取样</div>' +
-          "<p>系统会按目标抽取知识点，分析作答证据并更新薄弱项与学习顺序。</p>" +
-          '<div class="quiz-actions">' +
-            '<button class="primary-btn blue" id="start-quiz-btn"><i data-lucide="play"></i> 开始测评</button>' +
-            '<button class="ghost-link" id="later-quiz-btn" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">先看学习路径</button>' +
-          "</div>" +
-        "</div>");
-      const last = messagesEl.lastElementChild;
-      last.querySelector("#start-quiz-btn").onclick = startQuiz;
-      last.querySelector("#later-quiz-btn").onclick = () => sendGoal("查看学习路径");
+        constraintHtml + nextCard, conversation.key);
+      const last = conversation.key === state.activeConversationKey
+        ? messagesEl.lastElementChild
+        : conversation.messages.lastElementChild;
+      const startButton = last.querySelector("#start-quiz-btn");
+      const pathButton = last.querySelector("#later-quiz-btn");
+      const provisionalButton = last.querySelector("#open-provisional-assessment");
+      if (startButton) startButton.onclick = startQuiz;
+      if (pathButton) pathButton.onclick = () => sendGoal("查看学习路径");
+      if (provisionalButton) provisionalButton.onclick = () => openAssessmentCenter(project.project_id);
     }
 
-    async function handleAgentResult(result) {
+    async function handleAgentResult(result, conversationKey) {
       if (result.status === "needs_clarification" || result.action === "ask_clarification") {
-        const messageEl = addMsg("bot", "<p>" + escapeHtml(result.message || "请再补充一点信息。") + "</p>");
+        const messageEl = addMsg("bot", "<p>" + escapeHtml(result.message || "请再补充一点信息。") + "</p>", conversationKey);
         renderAgentChoices(messageEl, result.clarify_options || []);
         return;
       }
 
       if (result.project) {
-        state.current = result.project;
-        $("workbench-project").textContent = result.project.goal_name + " · Tutor 工作会话";
+        const resultKey = projectConversationKey(result.project.project_id);
+        if (conversationKey === resultKey) ensureConversation(resultKey, result.project);
+        if (state.activeConversationKey === conversationKey) {
+          state.current = result.project;
+          updateConversationContext(ensureConversation(conversationKey, result.project));
+        }
       }
 
       if (result.action === "reply") {
-        if (result.answer && (result.ai_generated || (result.sources || []).length)) {
-          await renderChatAnswer(result);
+        if (result.answer && (result.ai_generated || result.answer_mode || (result.sources || []).length)) {
+          await renderChatAnswer(result, conversationKey);
         } else {
-          addMsg("bot", "<p>" + escapeHtml(result.answer || result.message) + "</p>");
+          addMsg("bot", "<p>" + escapeHtml(result.answer || result.message) + "</p>", conversationKey);
         }
         return;
       }
       if (result.action === "project_created") {
-        await renderProjectCreated(result);
+        await renderProjectCreated(result, conversationKey);
         return;
       }
       if (result.action === "show_assessment") {
         const assessment = ((result.artifact || {}).data) || {};
         state.quiz = {
           project_id: result.project.project_id,
+          assessment_id: assessment.assessment_id || "",
+          assessment_type: assessment.assessment_type || "initial_diagnostic",
+          title: assessment.title || ("能力测评 · " + result.project.goal_name),
+          stakes: assessment.stakes || "formal",
+          blueprint: assessment.blueprint || {},
+          source_policy: assessment.source_policy || "",
           questions: assessment.questions || [],
           index: 0,
           answers: new Array((assessment.questions || []).length).fill(null),
         };
-        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>");
-        $("quiz-title").textContent = "能力测评 · " + result.project.goal_name;
+        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>", conversationKey);
+        $("quiz-title").textContent = state.quiz.title;
         renderQuiz();
         openDrawer();
         return;
@@ -1031,11 +1316,11 @@
       if (result.action === "show_path") {
         await refreshProjects();
         renderProjectTree();
-        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>");
+        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>", conversationKey);
         return;
       }
       if (result.action === "open_lesson") {
-        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>");
+        addMsg("bot", "<p>" + escapeHtml(result.message) + "</p>", conversationKey);
         await openLesson(
           result.project.project_id,
           result.knowledge_point_id,
@@ -1044,31 +1329,41 @@
         );
         return;
       }
-      addMsg("bot", "<p>" + escapeHtml(result.message || "已完成本轮操作。") + "</p>");
+      addMsg("bot", "<p>" + escapeHtml(result.message || "已完成本轮操作。") + "</p>", conversationKey);
     }
 
     async function requestAgentTurn(message, showUser = true) {
       if (!message || state.busy) return;
-      hideSuggestions();
+      const conversation = activeConversation();
+      const conversationKey = conversation.key;
+      const requestProjectId = conversation.projectId;
+      hideSuggestions(conversationKey);
       setInputEnabled(false);
-      if (showUser) addMsg("user", "<strong>" + escapeHtml(message) + "</strong>");
+      if (showUser) addMsg("user", "<strong>" + escapeHtml(message) + "</strong>", conversationKey);
       await sleep(250);
       try {
         const result = await api("/api/agent/turn", {
           method: "POST",
           body: {
             student_id: STUDENT_ID,
-            session_id: "agent-main",
-            project_id: state.current ? state.current.project_id : "",
+            session_id: conversation.sessionId,
+            project_id: requestProjectId,
             message,
+            workspace_context: currentWorkspaceContext(requestProjectId),
+            use_knowledge_base: state.chatTools.knowledge,
+            allow_web_search: state.chatTools.web,
+            force_web_search: state.chatTools.web && /上网|联网|搜索|最新|官网|近期/.test(message),
           },
         });
-        await handleAgentResult(result);
+        await handleAgentResult(result, conversationKey);
       } catch (error) {
-        addMsg("bot", "<p><strong>Tutor 暂时无法完成操作：</strong>" + escapeHtml(error.message) + "</p>");
+        addMsg("bot", "<p><strong>Tutor 暂时无法完成操作：</strong>" + escapeHtml(error.message) + "</p>", conversationKey);
       } finally {
         setInputEnabled(true);
-        showSuggestions();
+        const finalKey = state.conversations.has(conversationKey)
+          ? conversationKey
+          : conversation.projectId ? projectConversationKey(conversation.projectId) : state.activeConversationKey;
+        showSuggestions(DEFAULT_CHIPS, finalKey);
       }
     }
 
@@ -1079,7 +1374,147 @@
       await requestAgentTurn(value);
     }
 
-    /* ================= 中央能力测评 ================= */
+    /* ================= 测评中心与中央能力测评 ================= */
+    async function openAssessmentCenter(projectId) {
+      if (!projectId) return;
+      const project = state.projects.find((item) => item.project_id === projectId);
+      if (project) {
+        const conversation = switchConversation(projectConversationKey(projectId), project);
+        await loadConversationHistory(conversation, project);
+        state.current = project;
+        renderProjectTree();
+      }
+      showWorkspaceView("assessment_center", {
+        title: "测评中心",
+        projectId,
+      });
+    }
+
+    async function loadAssessmentCenter(projectId) {
+      if (!projectId) return;
+      $("assessment-catalog").innerHTML = '<div class="assessment-empty">正在加载测评方案…</div>';
+      $("assessment-history").innerHTML = '<div class="assessment-empty">正在读取证据记录…</div>';
+      try {
+        const [center, projectResult] = await Promise.all([
+          api("/api/projects/" + encodeURIComponent(projectId) + "/assessments?student_id=" + encodeURIComponent(STUDENT_ID)),
+          api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID)),
+        ]);
+        state.assessmentCatalog = center.catalog || [];
+        state.assessmentHistory = center.history || [];
+        const project = projectResult.project || {};
+        $("assessment-center-subtitle").textContent = center.formal_assessment_available === false
+          ? (project.goal_name || "当前项目") + " · " + center.availability_message
+          : (project.goal_name || "当前项目") + " · 选择检测目的，系统按能力图谱自动组卷。";
+        const scope = $("assessment-scope");
+        scope.innerHTML = ((project.learning_path || {}).items || []).map((item) =>
+          '<option value="' + escapeHtml(item.knowledge_point_id) + '">' + escapeHtml(item.knowledge_point_name) + "</option>"
+        ).join("");
+        renderAssessmentCenter(projectId, center);
+      } catch (error) {
+        $("assessment-catalog").innerHTML = '<div class="assessment-empty">加载失败：' + escapeHtml(error.message) + "</div>";
+        $("assessment-history").innerHTML = "";
+      }
+    }
+
+    function renderAssessmentCenter(projectId, center = {}) {
+      const iconByType = {
+        initial_diagnostic: "scan-search",
+        stage_check: "badge-check",
+        self_check: "list-checks",
+        provisional_self_check: "flask-conical",
+      };
+      $("assessment-catalog").innerHTML = state.assessmentCatalog.length
+        ? state.assessmentCatalog.map((item) =>
+        '<button class="assessment-card" data-assessment-type="' + escapeHtml(item.assessment_type) + '">' +
+          '<span class="card-icon"><i data-lucide="' + (iconByType[item.assessment_type] || "clipboard-list") + '"></i></span>' +
+          "<strong>" + escapeHtml(item.label) + "</strong>" +
+          "<p>" + escapeHtml(item.description) + "</p>" +
+          "<small>" + (item.stakes === "formal" ? "正式证据" : "低风险自检") + " · " + escapeHtml(item.recommended_knowledge_point_name) + "</small>" +
+        "</button>"
+      ).join("")
+        : '<div class="assessment-empty" style="grid-column:1/-1">' + escapeHtml(center.availability_message || "当前还没有可用测评") + "</div>";
+      $("assessment-catalog").querySelectorAll("[data-assessment-type]").forEach((button) => {
+        button.onclick = () => {
+          const type = button.dataset.assessmentType;
+          const knowledgePointId = type === "initial_diagnostic" ? "" : $("assessment-scope").value;
+          startProjectAssessment(projectId, type, knowledgePointId);
+        };
+      });
+
+      const history = state.assessmentHistory;
+      $("assessment-history").innerHTML = history.length ? history.map((item) => {
+        const result = item.result || {};
+        const score = item.status === "completed" ? (result.score || 0) + "/" + (result.total || 0) : "进行中";
+        return '<div class="assessment-history-row">' +
+          '<div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.started_at || "") + " · " + escapeHtml(item.provider || "") + "</small></div>" +
+          '<span class="assessment-score">' + escapeHtml(score) + "</span>" +
+          '<button class="evidence-button" data-evidence="' + escapeHtml(item.assessment_id) + '">查看证据</button>' +
+        "</div>";
+      }).join("") : '<div class="assessment-empty">还没有测评记录。首次目标诊断通常由右侧 Tutor 在目标确认后发起。</div>';
+      $("assessment-history").querySelectorAll("[data-evidence]").forEach((button) => {
+        button.onclick = () => showAssessmentEvidence(projectId, button.dataset.evidence);
+      });
+      icons();
+    }
+
+    async function startProjectAssessment(projectId, assessmentType, knowledgePointId = "") {
+      setInputEnabled(false);
+      try {
+        const assessment = await api("/api/projects/" + encodeURIComponent(projectId) + "/assessments/start", {
+          method: "POST",
+          body: {
+            student_id: STUDENT_ID,
+            assessment_type: assessmentType,
+            knowledge_point_id: knowledgePointId,
+          },
+        });
+        state.quiz = {
+          project_id: projectId,
+          assessment_id: assessment.assessment_id,
+          assessment_type: assessment.assessment_type,
+          title: assessment.title,
+          stakes: assessment.stakes,
+          blueprint: assessment.blueprint || {},
+          source_policy: assessment.source_policy || "",
+          questions: assessment.questions || [],
+          index: 0,
+          answers: new Array((assessment.questions || []).length).fill(null),
+        };
+        $("quiz-title").textContent = assessment.title || "能力测评";
+        openDrawer();
+        renderQuiz();
+      } catch (error) {
+        addMsg("bot", "<p><strong>测评暂时无法开始：</strong>" + escapeHtml(error.message) + "</p>");
+      } finally {
+        setInputEnabled(true);
+      }
+    }
+
+    async function showAssessmentEvidence(projectId, assessmentId) {
+      const dialog = $("evidence-dialog");
+      const body = $("evidence-dialog-body");
+      body.innerHTML = '<div class="assessment-empty">正在读取证据…</div>';
+      dialog.showModal();
+      try {
+        const result = await api("/api/projects/" + encodeURIComponent(projectId) + "/assessments/" + encodeURIComponent(assessmentId) + "/evidence?student_id=" + encodeURIComponent(STUDENT_ID));
+        body.innerHTML = (result.events || []).length ? (result.events || []).map((event) => {
+          const payload = event.payload || {};
+          const outcome = event.event_type === "ANSWER_SKIPPED" ? "跳过" : payload.correct ? "独立答对" : "答错";
+          return '<div class="evidence-event"><strong>' + escapeHtml(outcome) + " · " + escapeHtml(event.knowledge_point_id) + "</strong><br/>" +
+            "题目：" + escapeHtml(event.question_id) + "　角色：" + escapeHtml(event.evidence_role) + "　置信权重：" + escapeHtml(event.confidence) + "<br/>" +
+            "来源：" + escapeHtml(formatQuestionSource(payload.source)) + "</div>";
+        }).join("") : '<div class="assessment-empty">本次测评尚未产生作答证据。</div>';
+      } catch (error) {
+        body.innerHTML = '<div class="assessment-empty">读取失败：' + escapeHtml(error.message) + "</div>";
+      }
+    }
+
+    $("evidence-dialog-close").onclick = () => $("evidence-dialog").close();
+    $("assessment-center-refresh").onclick = () => {
+      const tab = workspaceTab(state.activeTabId);
+      if (tab && tab.view === "assessment_center") loadAssessmentCenter(tab.projectId);
+    };
+
     async function startQuiz() {
       if (!state.current) return;
       await requestAgentTurn("开始能力测评", false);
@@ -1087,7 +1522,7 @@
 
     function openDrawer() {
       showWorkspaceView("quiz", {
-        title: "能力测评 · " + (state.current ? state.current.goal_name : "学习目标"),
+        title: (state.quiz && state.quiz.title) || ("能力测评 · " + (state.current ? state.current.goal_name : "学习目标")),
         projectId: state.current ? state.current.project_id : "",
       });
     }
@@ -1103,10 +1538,20 @@
       const q = quiz.questions[i];
       if (!q) return;
       const optionKeys = Object.keys(q.options || {});
+      const typeLabel = {
+        initial_diagnostic: "目标能力诊断",
+        stage_check: "阶段检查",
+        self_check: "自主能力检测",
+        provisional_self_check: "AI 临时自检",
+      }[quiz.assessment_type] || "能力测评";
+      $("quiz-context").textContent = typeLabel + " · " +
+        (quiz.stakes === "formal" ? "本次结果会形成正式能力证据。" : "本次为低风险自检，结果仅作辅助参考。") +
+        "完成后统一生成解析与路径调整建议。";
       $("quiz-progress-bar").style.width = ((i + 1) / quiz.questions.length) * 100 + "%";
       $("quiz-body").innerHTML =
         '<div class="q-index">第 ' + (i + 1) + " / " + quiz.questions.length + " 题</div>" +
         "<h2>" + escapeHtml(q.title) + "</h2>" +
+        '<div class="quiz-source"><i data-lucide="' + (q.quality_status === "reviewed" ? "shield-check" : "triangle-alert") + '"></i>' + escapeHtml(q.quality_status === "reviewed" ? "已审核题目" : "AI 临时题 · 未做领域审核") + " · " + escapeHtml(formatQuestionSource(q.source_type)) + "</div>" +
         optionKeys.map((key, k) =>
           '<button class="option' + (quiz.answers[i] === k ? " selected" : "") + '" data-k="' + k + '">' +
             '<span class="opt-key">' + key.toUpperCase() + "</span><span>" + escapeHtml(q.options[key]) + "</span></button>"
@@ -1114,7 +1559,8 @@
       $("quiz-body").querySelectorAll(".option").forEach((b) => {
         b.onclick = () => { quiz.answers[i] = Number(b.dataset.k); renderQuiz(); };
       });
-      $("quiz-prev").disabled = i === 0;
+      $("quiz-prev").disabled = true;
+      $("quiz-prev").title = "当前版本采用逐题提交，已形成证据的题目不可返回修改";
       const nextBtn = $("quiz-next");
       nextBtn.disabled = quiz.answers[i] === null;
       if (i === quiz.questions.length - 1) {
@@ -1126,7 +1572,7 @@
       icons();
     }
 
-    $("quiz-prev").onclick = () => { state.quiz.index--; renderQuiz(); };
+    $("quiz-prev").onclick = () => {};
     $("quiz-next").onclick = async () => {
       const quiz = state.quiz;
       const i = quiz.index;
@@ -1138,9 +1584,9 @@
       try {
         const optionKeys = Object.keys(quiz.questions[i].options || {});
         const letter = optionKeys[selected] || "a";
-        const result = await api("/api/projects/" + quiz.project_id + "/diagnosis/answer", {
+        const result = await api("/api/projects/" + quiz.project_id + "/assessments/answer", {
           method: "POST",
-          body: { student_id: STUDENT_ID, selected: letter },
+          body: { student_id: STUDENT_ID, assessment_id: quiz.assessment_id, selected: letter },
         });
         if (result.status === "completed") {
           closeDrawer();
@@ -1164,20 +1610,26 @@
       typing.remove();
 
       const weak = summary.weak_points || [];
+      const isFormalEvidence = summary.formal_evidence !== false;
+      const assessedProjectId = state.quiz && state.quiz.project_id;
       const weakTags = weak.length
         ? '<div class="weak-tags">' + weak.map((w) =>
             '<span class="weak-tag">' + escapeHtml(w.knowledge_point_name) + "</span>").join("") + "</div>"
         : '<div class="weak-tags"><span class="weak-tag" style="background:var(--green-soft);color:var(--green-strong)">暂无明显薄弱点</span></div>';
-      addMsg("bot",
+      const analysisMessage = addMsg("bot",
         '<div class="analysis-card">' +
           '<div class="analysis-head">' +
             '<span class="ah-icon"><i data-lucide="chart-pie"></i></span>' +
-            '<div class="ah-copy"><strong>测评分析完成</strong><small>已依据本次作答更新掌握度</small></div>' +
+            '<div class="ah-copy"><strong>' + (isFormalEvidence ? "测评分析完成" : "临时自检完成") + '</strong><small>' + (isFormalEvidence ? "已依据可追溯证据更新能力状态" : "仅提供即时反馈，未写入正式画像") + '</small></div>' +
           "</div>" +
           "<p class=\"analysis-note\">" + escapeHtml(summary.feedback || "已生成个性化学习路径。") + "</p>" +
           weakTags +
-          '<p class="analysis-note">路径已生成在<b>左侧项目树</b>中，点击章节即可打开讲解页。</p>' +
+          '<p class="analysis-note">' + (isFormalEvidence ? '路径已生成在<b>左侧项目树</b>中，点击章节即可打开讲解页。' : '本次未调整路径；正式题源接入后再完成目标诊断。') + '</p>' +
+          '<div class="quiz-actions" style="margin-top:12px"><button class="primary-btn" data-open-center><i data-lucide="file-search"></i>查看测评证据</button></div>' +
         "</div>");
+      analysisMessage.querySelector("[data-open-center]").onclick = () => {
+        if (assessedProjectId) openAssessmentCenter(assessedProjectId);
+      };
       state.quiz = null;
       await refreshProjects();
       setInputEnabled(true);
@@ -1189,11 +1641,23 @@
       try {
         const result = await api("/api/projects?student_id=" + encodeURIComponent(STUDENT_ID));
         state.projects = result.projects || [];
+        if (!state.expandedProjectsInitialized) {
+          if (state.projects[0]) state.expandedProjects.add(state.projects[0].project_id);
+          state.expandedProjectsInitialized = true;
+        }
       } catch (_) { /* 网络异常时保留旧数据 */ }
       renderProjectTree();
     }
 
     async function selectProject(projectId) {
+      const summary = state.projects.find((project) => project.project_id === projectId) || {
+        project_id: projectId,
+        goal_name: "当前项目",
+      };
+      const conversation = switchConversation(projectConversationKey(projectId), summary);
+      await loadConversationHistory(conversation, summary);
+      state.current = summary;
+      renderProjectTree();
       try {
         const result = await api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID));
         const project = result.project;
@@ -1201,14 +1665,12 @@
           project_id: project.project_id,
           goal_name: project.goal_name,
         };
-        $("workbench-project").textContent = project.goal_name + " · 持续学习会话";
+        ensureConversation(projectConversationKey(projectId), project);
+        updateConversationContext(conversation);
         renderProjectTree();
-        addMsg("bot",
-          "<p>已切换到项目：<strong>" + escapeHtml(project.goal_name) + "</strong></p>" +
-          "<p>点击左侧章节开始学习；也可以输入新的目标创建新项目。</p>");
         scrollChat();
       } catch (error) {
-        addMsg("bot", "<p><strong>加载项目失败：</strong>" + escapeHtml(error.message) + "</p>");
+        addMsg("bot", "<p><strong>加载项目失败：</strong>" + escapeHtml(error.message) + "</p>", conversation.key);
       }
     }
 
@@ -1222,7 +1684,7 @@
       }
       treeEl.innerHTML = state.projects.map((project) => {
         const isCurrent = state.current && state.current.project_id === project.project_id;
-        const expanded = isCurrent || project.diagnosis_state === "not_started";
+        const expanded = state.expandedProjects.has(project.project_id);
         const progress = project.progress || 0;
         return '<div class="project-node' + (expanded ? " open" : "") + '" data-project="' + project.project_id + '">' +
           '<button class="project-header" data-project="' + project.project_id + '">' +
@@ -1238,19 +1700,27 @@
             "</button>" +
             '<div class="tree-section-label"><i data-lucide="route"></i>个性化学习路径</div>' +
             '<ul class="path-list" data-path="' + project.project_id + '"></ul>' +
+            '<div class="tree-section-label"><i data-lucide="clipboard-check"></i>测评与检查</div>' +
+            '<div class="tree-assessment-list">' +
+              '<button class="tree-assessment-row" data-open-assessment-center="' + project.project_id + '"><i data-lucide="layout-list"></i><span>测评中心</span><small>题单与记录</small></button>' +
+            "</div>" +
           "</div>" +
         "</div>";
       }).join("");
       icons();
       treeEl.querySelectorAll(".project-header").forEach((button) => {
         button.onclick = () => {
-          const node = button.closest(".project-node");
-          node.classList.toggle("open");
-          selectProject(node.dataset.project);
+          const projectId = button.dataset.project;
+          if (state.expandedProjects.has(projectId)) state.expandedProjects.delete(projectId);
+          else state.expandedProjects.add(projectId);
+          renderProjectTree();
         };
       });
       treeEl.querySelectorAll(".session-row").forEach((button) => {
         button.onclick = () => selectProject(button.dataset.sessionProject);
+      });
+      treeEl.querySelectorAll("[data-open-assessment-center]").forEach((button) => {
+        button.onclick = () => openAssessmentCenter(button.dataset.openAssessmentCenter);
       });
       // 异步加载各项目路径
       state.projects.forEach((project) => loadProjectPath(project.project_id));
@@ -1267,10 +1737,11 @@
         listEl.innerHTML = pathItems.map((item, index) => {
           const status = item.status || "pending";
           const isActive = state.activeTabId === lessonTabId(projectId, item.knowledge_point_id);
-          const stateIcon = status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
+          const stateIcon = status === "completed" ? '<i data-lucide="check"></i>'
+            : status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
             : status === "learning" ? '<i data-lucide="book-open"></i>'
             : '<i data-lucide="lock-keyhole"></i>';
-          const statusLabel = status === "current" ? "当前" : status === "learning" ? "进行中" : "待解锁";
+          const statusLabel = status === "completed" ? "已通过" : status === "current" ? "当前" : status === "learning" ? "进行中" : "待解锁";
           const weakMark = weakIds.has(item.knowledge_point_id) ? " · 薄弱" : "";
           return '<li class="path-item ' + status + (isActive ? " active" : "") + '">' +
             '<button data-project="' + projectId + '" data-kp="' + escapeHtml(item.knowledge_point_id) + '">' +
@@ -1313,12 +1784,30 @@
         return;
       }
       const result = tab.result || {};
+      const isCandidate = result.source_status === "candidate_unverified";
+      const isFallback = result.source_status === "verified_local_fallback";
+      $("lesson-tag").textContent = isCandidate
+        ? "候选讲解 · 待权威来源复核"
+        : isFallback
+          ? "课程知识库讲解 · 远程服务已降级"
+          : "章节讲解 · 依据课程知识库";
       if (result.lesson_objective) $("lesson-objective").textContent = result.lesson_objective;
       const modes = (result.alternative_modes || []).slice(0, 3);
       $("lesson-meta").innerHTML =
         '<span><i data-lucide="book-open"></i> 知识点讲解</span>' +
-        '<span><i data-lucide="shield-check"></i> 内容带来源标注</span>' +
+        (isCandidate
+          ? '<span><i data-lucide="triangle-alert"></i> 候选框架，尚未完成来源审核</span>'
+          : isFallback
+            ? '<span><i data-lucide="shield-check"></i> 已使用本地课程知识库兜底</span>'
+            : '<span><i data-lucide="shield-check"></i> 内容带来源标注</span>') +
         (modes.length ? '<span><i data-lucide="refresh-cw"></i> 支持换种讲法</span>' : "");
+      if (result.source_notice) {
+        renderBlock(body, {
+          type: isCandidate ? "warning" : "standard",
+          title: isCandidate ? "来源状态" : "服务状态",
+          content: result.source_notice,
+        });
+      }
       (result.content_blocks || []).forEach((block) => renderBlock(body, block));
 
       const videos = (result.resources || []).filter((resource) => resource.type === "video" && resource.url);
@@ -1341,6 +1830,13 @@
     }
 
     async function openLesson(projectId, knowledgePointId, knowledgePointName, prefetchedResult = null) {
+      const project = state.projects.find((item) => item.project_id === projectId);
+      if (project) {
+        const conversation = switchConversation(projectConversationKey(projectId), project);
+        await loadConversationHistory(conversation, project);
+        state.current = project;
+        renderProjectTree();
+      }
       const initialTitle = knowledgePointName || knowledgePointId;
       const tabId = lessonTabId(projectId, knowledgePointId);
       let tab = workspaceTab(tabId);
@@ -1467,12 +1963,6 @@
       return true;
     }
 
-    $("editor-tab-home").onclick = () => activateWorkspaceTab("home");
-    $("editor-new-tab").onclick = () => {
-      activateWorkspaceTab("home");
-      $("workbench-project").textContent = "新项目 · 等待输入学习目标";
-      $("chat-textarea").focus();
-    };
     stageEl.addEventListener("dragover", (event) => {
       if (!state.draggingTabId) return;
       event.preventDefault();
@@ -1693,16 +2183,31 @@
       this.style.height = Math.min(this.scrollHeight, 120) + "px";
     });
     $("new-project-btn").onclick = () => {
-      $("workbench-project").textContent = "新项目 · 等待输入学习目标";
+      const key = createDraftConversationKey();
+      const conversation = switchConversation(key);
+      state.current = null;
+      initializeConversation(conversation);
+      renderProjectTree();
       $("chat-textarea").focus();
-      addMsg("bot", "<p>告诉我你的学习目标，我来为你创建新项目。</p>");
     };
     document.querySelectorAll(".chat-tool").forEach((button) => {
-      button.onclick = () => button.setAttribute("aria-pressed", String(button.getAttribute("aria-pressed") !== "true"));
+      button.onclick = () => {
+        if (button.dataset.tool === "materials") {
+          addMsg("bot", "<p><strong>学习资料问答尚未接入。</strong> 当前可以使用领域知识库和联网检索；后续需要补充文件上传、文本提取、向量检索和项目级权限隔离后再开放。</p>");
+          button.setAttribute("aria-pressed", "false");
+          state.chatTools.materials = false;
+          return;
+        }
+        const enabled = button.getAttribute("aria-pressed") !== "true";
+        button.setAttribute("aria-pressed", String(enabled));
+        const tool = button.dataset.tool;
+        if (tool) state.chatTools[tool] = enabled;
+      };
     });
 
     /* ================= 启动 ================= */
     async function boot() {
+      renderEditorTabs();
       try {
         await refreshProjects();
         const profile = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null);
@@ -1718,13 +2223,8 @@
       } catch (_) {
         $("conn-state").textContent = "服务未连接（请通过后端启动页面）";
       }
-      const hasProjects = state.projects.length > 0;
-      addMsg("bot",
-        "<p><strong>你好，我是知行课径助手。</strong> 我可以把你的学习目标转化为个性化学习路径。</p>" +
-        (hasProjects
-          ? "<p>你已有 " + state.projects.length + " 个项目：点击左侧项目可查看路径与进度；也可以输入新目标创建新项目。</p>"
-          : "<p>创建一个项目后，我会先用测评题了解你的掌握情况，再为你规划学习顺序。</p>"));
-      showSuggestions();
+      const conversation = switchConversation(createDraftConversationKey());
+      initializeConversation(conversation);
     }
     boot();
   </script>

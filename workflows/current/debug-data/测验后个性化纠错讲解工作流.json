@@ -1,0 +1,71 @@
+{
+    "student_id": "STU-WF-001",
+    "session_id": "SESSION-REMEDIATE-001",
+    "context": {
+      "scene": "error_correction",
+      "route_type": "error_remediation",
+      "attempt_id": "ATTEMPT-POLY-001",
+      "question_snapshot": {
+        "question_id": "Q-POLY-001",
+        "question_text": "父类引用指向子类对象后，调用被重写的方法时执行哪一个实现？"
+      },
+      "current_attempt": {
+        "student_answer": "始终执行父类实现"
+      },
+      "validated_evaluation": {
+        "validation_passed": true,
+        "evaluation_status": "incorrect",
+        "score": 0,
+        "max_score": 10,
+        "error_points": [
+          {
+            "error_id": "JAVA-POLY-DISPATCH",
+            "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+            "knowledge_point_name": "多态与动态绑定",
+            "knowledge_type": "conceptual",
+            "mastery": 42,
+            "error_type": "conceptual",
+            "same_error_count": 2,
+            "wrong_streak": 2,
+            "correct_streak": 0,
+            "student_evidence": "把引用类型当成运行时方法选择依据",
+            "expected_behavior": "根据对象的实际类型选择重写方法",
+            "diagnosis": "混淆编译期引用类型与运行时实际类型",
+            "root_cause": "未理解动态绑定",
+            "severity": "medium",
+            "confidence": 0.96,
+            "prerequisite_gap": []
+          }
+        ]
+      }
+    },
+    "strategy": {
+      "strategy_code": "alternative_representation",
+      "preferred_representation": "execution_trace",
+      "explanation_depth": "guided",
+      "avoid_repeating_strategies": [
+        "analogy"
+      ],
+      "student_pace_hint": 0.9,
+      "misconception_tags": [
+        "引用类型与实际类型混淆"
+      ]
+    },
+    "student_profile": {
+      "learning_style": "procedural_learner",
+      "learning_style_confidence": 0.82,
+      "effective_modes": {
+        "execution_trace": 0.8,
+        "worked_example": 0.67
+      },
+      "ineffective_modes": [
+        "analogy"
+      ],
+      "misconception_tags": [
+        "引用类型与实际类型混淆"
+      ],
+      "pace_factor": 0.9,
+      "scaffold_preference": "moderate"
+    },
+    "kb_text": "课程依据：Java 实例方法采用动态绑定。编译期检查引用类型是否声明该方法，运行时根据对象的实际类型选择重写后的实现。纠错时应先区分引用类型和实际类型，再跟踪方法调用。"
+}

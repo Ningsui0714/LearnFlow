@@ -20,11 +20,11 @@ flowData:
         nodeMeta: {aliasName: 开始节点, nodeType: 基础节点}
         inputs: []
         outputs:
-          - id: 'out::3a62a731-ba03-4dde-8688-07f8a067d91e'
+          - id: '3a62a731-ba03-4dde-8688-07f8a067d91e'
             name: AGENT_USER_INPUT
             schema:
               type: string
-              default: '包含 message/student_id/kb_text/history_memory 的 JSON 字符串'
+              default: '包含 message/student_id/student_profile/kb_text/history_memory 的 JSON 字符串'
             required: true
             deleteDisabled: true
             nameErrMsg: ''
@@ -47,44 +47,78 @@ flowData:
         label: 解析提问与上下文
         nodeMeta: {aliasName: 代码, nodeType: 工具}
         inputs:
-          - id: 'in::c81280bf-4e93-4f49-9cec-303976af661c'
+          - id: 'c81280bf-4e93-4f49-9cec-303976af661c'
             name: raw_input
             schema:
               type: string
               value:
                 type: ref
-                content: {name: AGENT_USER_INPUT, id: 'out::3a62a731-ba03-4dde-8688-07f8a067d91e', nodeId: 'node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69'}
+                content: {name: AGENT_USER_INPUT, id: '3a62a731-ba03-4dde-8688-07f8a067d91e', nodeId: 'node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
         outputs:
-          - id: 'out::5ec32e5c-13a5-4372-998d-6f7929a98b4a'
+          - id: '5ec32e5c-13a5-4372-998d-6f7929a98b4a'
             name: message
             schema: {type: string, default: ''}
             nameErrMsg: ''
             required: false
-          - id: 'out::d5b240a8-84ea-4fcd-9543-bd8fc7f9e96c'
+          - id: 'd5b240a8-84ea-4fcd-9543-bd8fc7f9e96c'
             name: student_id
             schema: {type: string, default: ''}
             nameErrMsg: ''
             required: false
-          - id: 'out::ab8300dd-e30f-40b4-aa9e-2d64e3debcc1'
+          - id: '785cdca2-3afe-4077-8f12-d09430408ad7'
+            name: student_profile
+            schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+          - id: 'ab8300dd-e30f-40b4-aa9e-2d64e3debcc1'
             name: kb_text
             schema: {type: string, default: ''}
             nameErrMsg: ''
             required: false
-          - id: 'out::af8274eb-a72a-4421-999b-b0de7b973cfd'
+          - id: 'af8274eb-a72a-4421-999b-b0de7b973cfd'
             name: history_memory
             schema: {type: string, default: ''}
+            nameErrMsg: ''
+            required: false
+          - id: 'c0a5351f-6c6e-483c-bf86-8ca365245e98'
+            name: assistant_mode
+            schema: {type: string, default: 'education'}
+            nameErrMsg: ''
+            required: false
+          - id: '098806be-46c4-46ad-a5a7-e659f2ed180d'
+            name: source_kind
+            schema: {type: string, default: 'none'}
             nameErrMsg: ''
             required: false
         nodeParam:
           code: |-
             import json
             
+            def _parse_input(raw_input):
+                value = raw_input
+                for _ in range(3):
+                    if isinstance(value, dict):
+                        if "input" in value:
+                            value = value.get("input")
+                            continue
+                        if "AGENT_USER_INPUT" in value:
+                            value = value.get("AGENT_USER_INPUT")
+                            continue
+                        return value
+                    text = str(value or "").strip()
+                    if not text:
+                        return {}
+                    value = json.loads(text, strict=False)
+                if not isinstance(value, dict):
+                    raise ValueError("输入必须是 JSON 对象或 JSON 字符串")
+                return value
+
             def main(raw_input):
                 try:
-                    data = json.loads(str(raw_input or "{}"))
+                    data = _parse_input(raw_input)
                     if not isinstance(data, dict):
                         data = {}
                 except Exception:
@@ -93,17 +127,27 @@ flowData:
                 if not message:
                     raise ValueError("message 不能为空")
                 student_id = str(data.get("student_id") or "")
+                student_profile = data.get("student_profile") or {}
+                if not isinstance(student_profile, dict):
+                    student_profile = {}
                 kb_text = str(data.get("kb_text") or "")
                 history = data.get("history_memory") or []
                 if not isinstance(history, list):
                     history = []
+                assistant_mode = str(data.get("assistant_mode") or "education").strip().lower()
+                if assistant_mode not in ("education", "general"):
+                    assistant_mode = "education"
+                source_kind = str(data.get("source_kind") or "none").strip().lower()
                 return {
                     "message": message,
                     "student_id": student_id,
+                    "student_profile": json.dumps(student_profile, ensure_ascii=False),
                     "kb_text": kb_text,
                     "history_memory": json.dumps(history, ensure_ascii=False),
+                    "assistant_mode": assistant_mode,
+                    "source_kind": source_kind,
                 }
-          appId: 12a0a7e2
+          appId: 6545ca99
           uid: '21880654528'
           codeErrMsg: ''
         updatable: false
@@ -126,48 +170,78 @@ flowData:
         label: 生成对话回答
         nodeMeta: {aliasName: 大模型, nodeType: 基础节点}
         inputs:
-          - id: 'in::aadd527f-ed3c-4c8d-a5f7-80730e76bca6'
+          - id: 'aadd527f-ed3c-4c8d-a5f7-80730e76bca6'
             name: message
             schema:
               type: string
               value:
                 type: ref
-                content: {name: message, id: 'out::7c666084-3b8f-4534-a15e-5b9ed0cabdf1', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                content: {name: message, id: '5ec32e5c-13a5-4372-998d-6f7929a98b4a', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
-          - id: 'in::5d3eb853-ca9a-49f9-83b6-05f6ca53492a'
+          - id: '5d3eb853-ca9a-49f9-83b6-05f6ca53492a'
             name: student_id
             schema:
               type: string
               value:
                 type: ref
-                content: {name: student_id, id: 'out::9f097803-694f-4d4d-a189-be888a578d25', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                content: {name: student_id, id: 'd5b240a8-84ea-4fcd-9543-bd8fc7f9e96c', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
-          - id: 'in::423e2740-6f23-4a3f-8964-9113ca8467bb'
+          - id: '0a2d4f2b-9c6c-4e31-bcd3-acde43bc87df'
+            name: student_profile
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: student_profile, id: '785cdca2-3afe-4077-8f12-d09430408ad7', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: '423e2740-6f23-4a3f-8964-9113ca8467bb'
             name: kb_text
             schema:
               type: string
               value:
                 type: ref
-                content: {name: kb_text, id: 'out::de037047-ee23-489b-bb5b-21ac616ec3b3', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                content: {name: kb_text, id: 'ab8300dd-e30f-40b4-aa9e-2d64e3debcc1', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
-          - id: 'in::82083de3-03e4-4519-9a92-5b4cea89bb56'
+          - id: '82083de3-03e4-4519-9a92-5b4cea89bb56'
             name: history_memory
             schema:
               type: string
               value:
                 type: ref
-                content: {name: history_memory, id: 'out::b5f6ed28-4939-49e6-9d80-2afd347a3904', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                content: {name: history_memory, id: 'af8274eb-a72a-4421-999b-b0de7b973cfd', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: '5297ddb8-2596-43ac-94bd-8f177a5fb31d'
+            name: assistant_mode
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: assistant_mode, id: 'c0a5351f-6c6e-483c-bf86-8ca365245e98', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                contentErrMsg: ''
+            nameErrMsg: ''
+            fileType: ''
+          - id: 'cd20dba8-10fc-43f1-9d86-639a33242468'
+            name: source_kind
+            schema:
+              type: string
+              value:
+                type: ref
+                content: {name: source_kind, id: '098806be-46c4-46ad-a5a7-e659f2ed180d', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
         outputs:
-          - id: 'out::5fce8329-ce47-4022-88d5-e507cd908f60'
+          - id: '5fce8329-ce47-4022-88d5-e507cd908f60'
             name: output
             schema: {type: string, default: ''}
             nameErrMsg: ''
@@ -178,9 +252,18 @@ flowData:
               学生提问
               {{message}}
               
-              本地知识库检索结果（仅此为依据，不得使用外部知识）
+              可用检索上下文（可能为空）
               {{kb_text}}
-              
+
+              回答模式
+              {{assistant_mode}}
+
+              来源类型
+              {{source_kind}}
+
+              学生画像（只用于调整表达方式与学习支架）
+              {{student_profile}}
+
               最近对话历史
               {{history_memory}}
           enableChatHistoryV2: {isEnabled: false, rounds: 1}
@@ -194,17 +277,20 @@ flowData:
           serviceId: bm4
           respFormat: 0
           systemTemplate: |-
-              你是职业教育"Java 面向对象程序设计"课程的智能辅导助手。
+              你是一个以教育为专项的通用 AI 助手。你既能完成普通 AI 的解释、翻译、总结、改写、比较与写作任务，也能结合学习项目、学生画像、知识库和当前章节提供个性化辅导。
               
               回答要求：
-              1. 只用 {{kb_text}} 中的内容回答，不得编造 kb_text 之外的知识；kb_text 为空时明确告知"知识库暂未覆盖，建议先进入学情诊断"，并给出 2-3 个可追问的方向。
-              2. 语言口语化、分步骤，贴合高职学生认知；避免术语堆砌；必要时给出一行 Java 代码示例。
-              3. 结合 {{history_memory}} 中的上文：若学生用"那/它/这个"等指代提问，按上文主题作答；不要重复上轮已回答的内容。
-              4. 若学生提问与 Java/课程无关，礼貌说明本助手专注该课程范围。
-              5. 只输出一个合法 JSON 对象（不输出 Markdown 代码块），格式严格如下：
+              1. {{assistant_mode}} 为 general 时，像通用助手一样直接完成用户任务；除非用户要求学习规划，不要强行引导测评或创建项目。涉及事实结论时区分事实、推测和建议，不伪造来源。
+              2. {{assistant_mode}} 为 education 时，优先结合 {{kb_text}}、当前学习项目和画像回答；若问题依赖课程事实而检索上下文为空，应明确资料未覆盖，不得套用其他学科内容。
+              3. {{source_kind}} 为 web 时，只能把 {{kb_text}} 视为网页搜索摘要，回答中提醒它不是已审核知识库；时效性结论必须引用所给网页来源。{{source_kind}} 为 knowledge_base 时，来源只能来自 {{kb_text}}。
+              4. 语言清楚、口语化、分步骤，贴合用户认知；代码示例必须匹配提问语言或项目领域，不要默认 Java。
+              5. 结合 {{history_memory}} 中的上文消解指代，不重复上轮已回答内容。
+              6. 结合 {{student_profile}} 调整讲解节奏与支架强度，但不得杜撰学生信息；未测评的自报信息不能当作已验证能力。
+              7. 不能声称已经执行订票、付款、发消息等未接入工具的外部动作。
+              8. 只输出一个合法 JSON 对象（不输出 Markdown 代码块），格式严格如下：
               {"answer": "口语化回答，不超过 500 字", "sources": [{"title": "依据的知识库条目标题", "locator": "来源定位"}]}
-              sources 最多 3 条，必须来自 kb_text；无依据时 sources 为空数组。
-          appId: 12a0a7e2
+              sources 最多 3 条，必须来自 kb_text；纯生成任务或无依据时 sources 为空数组。
+          appId: 6545ca99
           uid: '21880654528'
           patchId: '0'
           llmIdErrMsg: ''
@@ -230,28 +316,28 @@ flowData:
         label: 校验回答输出
         nodeMeta: {aliasName: 代码, nodeType: 工具}
         inputs:
-          - id: 'in::08f0d1ee-f1d2-4465-9317-2bab02fd594e'
+          - id: '08f0d1ee-f1d2-4465-9317-2bab02fd594e'
             name: model_output
             schema:
               type: string
               value:
                 type: ref
-                content: {name: output, id: 'out::9a003b90-1915-4bee-9904-b099780dff19', nodeId: 'spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f'}
+                content: {name: output, id: '5fce8329-ce47-4022-88d5-e507cd908f60', nodeId: 'spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
-          - id: 'in::9e3dd933-5cfb-4d4f-b2a8-849431bb1e1c'
+          - id: '9e3dd933-5cfb-4d4f-b2a8-849431bb1e1c'
             name: message
             schema:
               type: string
               value:
                 type: ref
-                content: {name: message, id: 'out::7c666084-3b8f-4534-a15e-5b9ed0cabdf1', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
+                content: {name: message, id: '5ec32e5c-13a5-4372-998d-6f7929a98b4a', nodeId: 'ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''
         outputs:
-          - id: 'out::a2af24ca-6a7c-4431-8783-7a62f0f756a4'
+          - id: 'a2af24ca-6a7c-4431-8783-7a62f0f756a4'
             name: final_result_json
             schema: {type: string, default: ''}
             nameErrMsg: ''
@@ -287,7 +373,7 @@ flowData:
                     "original_question": message,
                 }
                 return {"final_result_json": json.dumps(output, ensure_ascii=False, separators=(",", ":"))}
-          appId: 12a0a7e2
+          appId: 6545ca99
           uid: '21880654528'
           codeErrMsg: ''
         updatable: false
@@ -310,13 +396,13 @@ flowData:
         label: 结束
         nodeMeta: {aliasName: 结束节点, nodeType: 基础节点}
         inputs:
-          - id: 'in::7a78a544-25a0-478b-89f1-26632fa2de7f'
+          - id: '7a78a544-25a0-478b-89f1-26632fa2de7f'
             name: result_json
             schema:
               type: string
               value:
                 type: ref
-                content: {name: final_result_json, id: 'out::ab8a3fd2-db6a-4614-99ed-26e5a6633f89', nodeId: 'ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022'}
+                content: {name: final_result_json, id: 'a2af24ca-6a7c-4431-8783-7a62f0f756a4', nodeId: 'ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022'}
                 contentErrMsg: ''
             nameErrMsg: ''
             fileType: ''

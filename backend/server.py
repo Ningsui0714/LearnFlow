@@ -66,6 +66,17 @@ except ModuleNotFoundError:
     )
 
 try:
+    from backend.data.goal_graph import (
+        GOALS as GOAL_GRAPH_GOALS,
+        KNOWLEDGE_POINTS as GRAPH_KNOWLEDGE_POINTS,
+    )
+except ModuleNotFoundError:
+    from data.goal_graph import (
+        GOALS as GOAL_GRAPH_GOALS,
+        KNOWLEDGE_POINTS as GRAPH_KNOWLEDGE_POINTS,
+    )
+
+try:
     from backend.data.error_cards import default_error_card_for, error_cards_for
 except ModuleNotFoundError:
     from data.error_cards import default_error_card_for, error_cards_for
@@ -237,7 +248,10 @@ class Settings:
             auth_header=os.getenv("XINGCHEN_AUTH_HEADER", "Authorization").strip(),
             auth_scheme=os.getenv("XINGCHEN_AUTH_SCHEME", "Bearer").strip(),
             flow_id=os.getenv("XINGCHEN_FLOW_ID", "").strip(),
-            input_key=os.getenv("XINGCHEN_INPUT_KEY", "AGENT_USER_INPUT").strip(),
+            input_key=(
+                os.getenv("XINGCHEN_INPUT_KEY", "AGENT_USER_INPUT").strip()
+                or "AGENT_USER_INPUT"
+            ),
             request_style=os.getenv("XINGCHEN_REQUEST_STYLE", "workflow_v1").strip().lower(),
             request_timeout=float(os.getenv("XINGCHEN_TIMEOUT", "60")),
             seed_demo=os.getenv("APP_SEED_DEMO", "1").strip().lower() not in {"0", "false", "no"},
@@ -313,6 +327,55 @@ class StateStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_projects_student
                     ON projects(student_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS project_messages (
+                    message_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    student_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_project_messages_conversation
+                    ON project_messages(project_id, student_id, created_at ASC);
+                CREATE TABLE IF NOT EXISTS agent_goal_drafts (
+                    student_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    draft_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(student_id, session_id)
+                );
+                CREATE TABLE IF NOT EXISTS assessment_runs (
+                    assessment_id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    student_id TEXT NOT NULL,
+                    assessment_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    stakes TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    blueprint_json TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    completed_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_assessment_runs_project
+                    ON assessment_runs(project_id, started_at DESC);
+                CREATE TABLE IF NOT EXISTS assessment_evidence (
+                    event_id TEXT PRIMARY KEY,
+                    assessment_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    student_id TEXT NOT NULL,
+                    question_id TEXT NOT NULL,
+                    knowledge_point_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    evidence_role TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_assessment_evidence_project
+                    ON assessment_evidence(project_id, created_at DESC);
                 """
             )
             connection.commit()
@@ -442,6 +505,241 @@ class StateStore:
                     (json_text(state), utc_now(), project_id),
                 )
             connection.commit()
+
+    def add_project_message(
+        self,
+        project_id: str,
+        student_id: str,
+        role: str,
+        content: str,
+        action: str = "",
+    ) -> str:
+        message_id = f"MSG-{uuid.uuid4().hex[:12].upper()}"
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO project_messages(
+                    message_id, project_id, student_id, role, content, action, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message_id,
+                    project_id,
+                    student_id,
+                    role,
+                    content[:8000],
+                    action[:80],
+                    utc_now(),
+                ),
+            )
+            connection.commit()
+        return message_id
+
+    def list_project_messages(
+        self, project_id: str, student_id: str, limit: int = 80
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 200))
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT message_id, project_id, student_id, role, content, action, created_at
+                FROM (
+                    SELECT rowid AS ordinal, message_id, project_id, student_id,
+                           role, content, action, created_at
+                    FROM project_messages
+                    WHERE project_id = ? AND student_id = ?
+                    ORDER BY created_at DESC, rowid DESC
+                    LIMIT ?
+                )
+                ORDER BY created_at ASC, ordinal ASC
+                """,
+                (project_id, student_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_agent_goal_draft(self, student_id: str, session_id: str) -> dict[str, Any]:
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT draft_json FROM agent_goal_drafts
+                WHERE student_id = ? AND session_id = ?
+                """,
+                (student_id, session_id),
+            ).fetchone()
+        if not row:
+            return {}
+        try:
+            draft = json.loads(row["draft_json"])
+        except json.JSONDecodeError:
+            return {}
+        return draft if isinstance(draft, dict) else {}
+
+    def save_agent_goal_draft(
+        self, student_id: str, session_id: str, draft: dict[str, Any]
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO agent_goal_drafts(student_id, session_id, draft_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(student_id, session_id) DO UPDATE SET
+                    draft_json = excluded.draft_json,
+                    updated_at = excluded.updated_at
+                """,
+                (student_id, session_id, json_text(draft), utc_now()),
+            )
+            connection.commit()
+
+    def delete_agent_goal_draft(self, student_id: str, session_id: str) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                "DELETE FROM agent_goal_drafts WHERE student_id = ? AND session_id = ?",
+                (student_id, session_id),
+            )
+            connection.commit()
+
+    # ---------- 统一测评与证据账本 ----------
+
+    def create_assessment_run(
+        self,
+        project_id: str,
+        student_id: str,
+        assessment_type: str,
+        title: str,
+        stakes: str,
+        provider: str,
+        blueprint: dict[str, Any],
+    ) -> str:
+        assessment_id = f"ASSESS-{uuid.uuid4().hex[:12].upper()}"
+        now = utc_now()
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO assessment_runs(
+                    assessment_id, project_id, student_id, assessment_type,
+                    title, stakes, status, provider, blueprint_json,
+                    result_json, started_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, '{}', ?, '')
+                """,
+                (
+                    assessment_id,
+                    project_id,
+                    student_id,
+                    assessment_type,
+                    title,
+                    stakes,
+                    provider,
+                    json_text(blueprint),
+                    now,
+                ),
+            )
+            connection.commit()
+        return assessment_id
+
+    def complete_assessment_run(
+        self, assessment_id: str, result: dict[str, Any]
+    ) -> None:
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE assessment_runs
+                SET status = 'completed', result_json = ?, completed_at = ?
+                WHERE assessment_id = ?
+                """,
+                (json_text(result), utc_now(), assessment_id),
+            )
+            connection.commit()
+
+    def record_assessment_evidence(
+        self,
+        assessment_id: str,
+        project_id: str,
+        student_id: str,
+        question_id: str,
+        knowledge_point_id: str,
+        event_type: str,
+        evidence_role: str,
+        confidence: float,
+        payload: dict[str, Any],
+    ) -> str:
+        event_id = f"AEV-{uuid.uuid4().hex[:12].upper()}"
+        with self._lock, closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO assessment_evidence(
+                    event_id, assessment_id, project_id, student_id,
+                    question_id, knowledge_point_id, event_type,
+                    evidence_role, confidence, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    assessment_id,
+                    project_id,
+                    student_id,
+                    question_id,
+                    knowledge_point_id,
+                    event_type,
+                    evidence_role,
+                    max(0.0, min(float(confidence), 1.0)),
+                    json_text(payload),
+                    utc_now(),
+                ),
+            )
+            connection.commit()
+        return event_id
+
+    @staticmethod
+    def _decode_json_object(value: Any) -> dict[str, Any]:
+        try:
+            decoded = json.loads(str(value))
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+
+    def list_assessment_runs(
+        self, project_id: str, student_id: str
+    ) -> list[dict[str, Any]]:
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM assessment_runs
+                WHERE project_id = ? AND student_id = ?
+                ORDER BY started_at DESC
+                """,
+                (project_id, student_id),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["blueprint"] = self._decode_json_object(item.pop("blueprint_json"))
+            item["result"] = self._decode_json_object(item.pop("result_json"))
+            result.append(item)
+        return result
+
+    def list_assessment_evidence(
+        self,
+        project_id: str,
+        student_id: str,
+        assessment_id: str = "",
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT * FROM assessment_evidence
+            WHERE project_id = ? AND student_id = ?
+        """
+        params: list[Any] = [project_id, student_id]
+        if assessment_id:
+            query += " AND assessment_id = ?"
+            params.append(assessment_id)
+        query += " ORDER BY created_at ASC"
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(query, params).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = self._decode_json_object(item.pop("payload_json"))
+            result.append(item)
+        return result
 
     def record_upstream(self, payload: dict[str, Any]) -> tuple[str, bool]:
         event_id = str(payload.get("event_id") or uuid.uuid4())
@@ -896,6 +1194,31 @@ class VideoSearchGateway:
             )
         return dict(result)
 
+    def search_general_documents(self, query: str) -> dict[str, Any]:
+        """Search the public web without treating arbitrary domains as verified authorities."""
+        normalized_query = re.sub(r"\s+", " ", str(query or "")).strip()
+        if not normalized_query:
+            return {
+                "status": "skipped",
+                "provider": "bing_rss",
+                "query": "",
+                "searched_at": utc_now(),
+                "results": [],
+            }
+        cache_key = "general-doc:" + normalized_query
+        now = time.monotonic()
+        with self._lock:
+            cached = self._cache.get(cache_key)
+            if cached and cached[0] >= now:
+                return dict(cached[1])
+        result = self._search_bing_rss(normalized_query, kind="general_document")
+        with self._lock:
+            self._cache[cache_key] = (
+                now + self.settings.video_search_cache_seconds,
+                result,
+            )
+        return dict(result)
+
     def _build_query(self, workflow: str, payload: dict[str, Any]) -> str:
         target = as_dict(payload.get("current_knowledge_point"))
         if workflow == "review":
@@ -976,10 +1299,14 @@ class VideoSearchGateway:
             url = str(item.findtext("link") or "").strip()
             description = self._plain_text(item.findtext("description"))
             host = (urlparse(url).hostname or "").lower()
-            domain = self._allowed_domain(host, domain_map)
+            domain = (
+                host
+                if kind == "general_document" and self._is_public_web_result(url, host)
+                else self._allowed_domain(host, domain_map)
+            )
             if not title or not url or not domain:
                 continue
-            source = domain_map[domain]
+            source = domain_map.get(domain, host)
             if kind == "video":
                 resource = {
                     "type": "video",
@@ -990,6 +1317,9 @@ class VideoSearchGateway:
                     "snippet": description,
                     "content": description,
                     "provider": "Bing RSS",
+                    "verification_state": (
+                        "web_sourced" if kind == "general_document" else "whitelisted"
+                    ),
                 }
                 embed_url = self._embed_url(url)
                 if embed_url:
@@ -1004,6 +1334,9 @@ class VideoSearchGateway:
                     "snippet": description,
                     "content": description,
                     "provider": "Bing RSS",
+                    "verification_state": (
+                        "web_sourced" if kind == "general_document" else "whitelisted"
+                    ),
                 }
             results.append(resource)
             if len(results) >= self.settings.video_search_max_results:
@@ -1015,6 +1348,23 @@ class VideoSearchGateway:
             "searched_at": utc_now(),
             "results": results,
         }
+
+    @staticmethod
+    def _is_public_web_result(url: str, host: str) -> bool:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not host or host == "localhost":
+            return False
+        try:
+            address = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            return True
+        return not (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_unspecified
+        )
 
     def _doc_domain_map(self) -> dict[str, str]:
         return {suffix: suffix for suffix in self.DOC_DOMAIN_SUFFIXES}
@@ -1279,6 +1629,12 @@ class XingchenGateway:
                     "user_message",
                     "knowledge_gap",
                     "workflow_mode",
+                    "learning_path",
+                    "learning_goal",
+                    "recommendations",
+                    "questions",
+                    "message",
+                    "answer",
                 )
             ):
                 return payload
@@ -2781,7 +3137,27 @@ class LearningApplication:
                     return parsed
             except Exception:
                 pass  # 联调异常回落本地规则，保证演示可用
-        return self._match_goal_keywords(text)
+        keyword_match = self._match_goal_keywords(text)
+        if keyword_match.get("matched"):
+            return keyword_match
+        open_goal = self._open_goal_analysis(text)
+        if open_goal.get("matched"):
+            return {
+                "status": "ok",
+                "matched": True,
+                "goal": open_goal["goal"],
+                "diagnosis_goal": "custom",
+                "confidence": 0.72,
+                "keywords_hit": [],
+            }
+        return {
+            "status": "ok",
+            "matched": False,
+            "confidence": 0.0,
+            "clarification": open_goal.get("clarification", "请补充更具体的学习目标。"),
+            "missing_fields": open_goal.get("missing_fields", []),
+            "reason": open_goal.get("reason", "goal_unclear"),
+        }
 
     @staticmethod
     def _parse_goal_workflow_result(result: dict[str, Any]) -> dict[str, Any] | None:
@@ -2842,8 +3218,19 @@ class LearningApplication:
         if not goal_config:
             raise ApiError(400, "UNKNOWN_GOAL", f"不支持的目标：{goal}")
 
+        state = self.store.get_student_state(student_id) or {}
         # 生成式出题：工作流 → 本地校验 → 入库；失败回落本地取样（前端无需改动）
-        generated, provider = self._generate_diagnosis_questions(student_id, goal, [])
+        # 薄弱点来自上次诊断归因回写（upstream_payload），首轮无数据时按目标全覆盖出题
+        upstream = as_dict(state.get("upstream_payload"))
+        diagnostic = as_dict(upstream.get("diagnostic_result"))
+        weak_points = [
+            item
+            for item in as_list(diagnostic.get("weak_points"))
+            if isinstance(item, dict)
+        ]
+        generated, provider = self._generate_diagnosis_questions(
+            student_id, goal, weak_points
+        )
 
         questions = [
             {
@@ -2858,7 +3245,6 @@ class LearningApplication:
             }
             for item in generated
         ]
-        state = self.store.get_student_state(student_id) or {}
         rounds = int(state.get("diagnosis_rounds", 0) or 0) + 1
         state["diagnosis_session"] = {
             "goal": goal,
@@ -2881,6 +3267,7 @@ class LearningApplication:
             "round": rounds,
             "goal": goal,
             "goal_label": goal_config["label"],
+            "provider": provider,
             "questions": public_questions,
             "total": len(public_questions),
         }
@@ -2907,7 +3294,7 @@ class LearningApplication:
             correct = False
             session["skipped"] = int(session.get("skipped", 0) or 0) + 1
         else:
-            if selected not in {"a", "b", "c"}:
+            if selected not in {"a", "b", "c", "d"}:
                 raise ApiError(400, "INVALID_ANSWER", "无效的选项")
             correct = selected == current.get("answer")
             key = "correct" if correct else "wrong"
@@ -3018,6 +3405,13 @@ class LearningApplication:
             ),
             key=lambda item: -item["error_count"],
         )
+        # 归因结果回写 upstream_payload：画像页（portrait）与学习兜底（weak_points[0]）
+        # 直接消费，形成「诊断 → 薄弱点 → 复测按薄弱点出题」闭环
+        upstream = as_dict(state.get("upstream_payload"))
+        diagnostic = as_dict(upstream.get("diagnostic_result"))
+        upstream["diagnostic_result"] = {**diagnostic, "weak_points": weak_points}
+        state["upstream_payload"] = upstream
+        self.store.save_student_state(student_id, state)
         return {
             "weak_points": weak_points,
             "feedback": (
@@ -3083,18 +3477,116 @@ class LearningApplication:
             )
         return valid, dropped
 
+    def _goal_knowledge_list(self, goal: str) -> list[dict[str, Any]]:
+        """诊断目标（competition/certification/daily）→ 目标覆盖的知识点列表。
+
+        供工作流出题约束 knowledge_point_id（与 goal_graph 目标图谱一致）；
+        未知目标时回退全部知识点。
+        """
+        goal_id = next(
+            (
+                gid
+                for gid, key in self.PROJECT_GOAL_DIAGNOSIS.items()
+                if key == goal
+            ),
+            "",
+        )
+        point_ids = (
+            list(GOAL_GRAPH_GOALS[goal_id].get("knowledge_points", []))
+            if goal_id in GOAL_GRAPH_GOALS
+            else list(GRAPH_KNOWLEDGE_POINTS)
+        )
+        return [
+            {
+                "knowledge_point_id": point_id,
+                "knowledge_point_name": GRAPH_KNOWLEDGE_POINTS[point_id][
+                    "knowledge_point_name"
+                ],
+            }
+            for point_id in point_ids
+            if point_id in GRAPH_KNOWLEDGE_POINTS
+        ]
+
+    def _reuse_generated_questions(
+        self, goal: str, weak_points: list[dict[str, Any]], target_size: int
+    ) -> list[dict[str, Any]]:
+        """复用最近已校验入库的生成题：目标知识点内、每知识点最多一题、薄弱点优先。
+
+        生成题库随每次诊断沉淀，复用后不足部分再由工作流生成/本地取样。
+        """
+        goal_ids = {
+            str(item.get("knowledge_point_id", "")).strip()
+            for item in self._goal_knowledge_list(goal)
+        }
+        weak_ids = {
+            str(item.get("knowledge_point_id", "")).strip()
+            for item in weak_points
+            if str(item.get("knowledge_point_id", "")).strip()
+        }
+        candidates = [
+            item
+            for item in self.domain.recent_generated_questions(limit=40)
+            if str(item.get("knowledge_point_id", "")).strip() in goal_ids
+        ]
+        # 薄弱点知识点优先，其余保持入库时间倒序（recent 已倒序）
+        candidates.sort(
+            key=lambda item: 0
+            if str(item.get("knowledge_point_id", "")).strip() in weak_ids
+            else 1
+        )
+        reused: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in candidates:
+            if len(reused) >= target_size:
+                break
+            kp_id = str(item.get("knowledge_point_id", "")).strip()
+            if not kp_id or kp_id in seen:
+                continue
+            seen.add(kp_id)
+            options = as_dict(item.get("options"))
+            if not options:
+                continue
+            reused.append(
+                {
+                    "question_id": str(item.get("question_id", "")).strip(),
+                    "knowledge_point_id": kp_id,
+                    "knowledge_point_name": str(
+                        item.get("knowledge_point_name") or kp_id
+                    ),
+                    "title": str(item.get("title", "")).strip(),
+                    "options": options,
+                    "answer": str(item.get("answer", "")).strip(),
+                    "explanation": str(item.get("explanation", "")).strip(),
+                    "difficulty": int(item.get("difficulty", 1) or 1),
+                    "source": str(item.get("source") or "历史生成题复用（本地校验通过）"),
+                }
+            )
+        return reused
+
     def _generate_diagnosis_questions(
         self, student_id: str, goal: str, weak_points: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], str]:
-        """生成式出题：星辰工作流 → 本地校验 → 入库；失败/不足回落本地取样。
+        """生成式出题：复用已校验生成题 → 星辰工作流 → 本地校验 → 入库；失败回落本地取样。
 
-        返回 (questions, provider)，provider ∈ {"workflow", "local_fallback"}。
+        返回 (questions, provider)，provider ∈
+        {"workflow_reuse", "workflow", "mock_bank", "local_fallback"}。
         """
+        target_size = int(DIAGNOSIS_GOALS.get(goal, {}).get("size", 6))
+        reused = self._reuse_generated_questions(goal, weak_points, target_size)
+        if len(reused) >= target_size:
+            return reused, "workflow_reuse"
         generated: list[dict[str, Any]] = []
+        provider = "workflow"
         try:
             result = self.gateway.invoke_quiz_workflow(
-                {"student_id": student_id, "goal": goal, "weak_points": weak_points}
+                {
+                    "student_id": student_id,
+                    "goal": goal,
+                    "weak_points": weak_points,
+                    "knowledge_list": self._goal_knowledge_list(goal),
+                }
             )
+            provider = str(result.get("provider") or "workflow")
             generated, _dropped = self._validate_quiz_questions(
                 as_list(result.get("questions"))
             )
@@ -3105,15 +3597,21 @@ class LearningApplication:
                 self.domain.save_generated_questions(generated)
             except Exception:
                 pass  # 入库失败不影响本轮使用
-            target_size = int(DIAGNOSIS_GOALS.get(goal, {}).get("size", len(generated)))
-            if len(generated) < target_size:
-                existing_ids = {q["question_id"] for q in generated}
+            existing_ids = {q["question_id"] for q in reused}
+            for item in generated:
+                if len(reused) >= target_size:
+                    break
+                if item["question_id"] in existing_ids:
+                    continue
+                reused.append(item)
+            if len(reused) < target_size:
+                existing_ids = {q["question_id"] for q in reused}
                 for item in select_diagnosis_questions(goal):
-                    if len(generated) >= target_size:
+                    if len(reused) >= target_size:
                         break
                     if item["id"] in existing_ids:
                         continue
-                    generated.append(
+                    reused.append(
                         {
                             "question_id": item["id"],
                             "knowledge_point_id": item["knowledge_point_id"],
@@ -3126,7 +3624,7 @@ class LearningApplication:
                             "source": "本地题库补足（生成题不足目标题量）",
                         }
                     )
-            return generated, "workflow"
+            return reused, provider
         picked = select_diagnosis_questions(goal)
         return [
             {
@@ -3166,6 +3664,308 @@ class LearningApplication:
         )
         return round(total / len(items))
 
+    GOAL_ACTION_WORDS: tuple[str, ...] = (
+        "学习", "学会", "掌握", "提升", "入门", "熟悉", "精通", "备战",
+        "备考", "考取", "通过", "完成", "开发", "制作", "实现", "转行",
+        "就业", "面试", "训练", "练习",
+    )
+    NON_LEARNING_ACTIONS: tuple[str, ...] = (
+        "订机票", "订酒店", "点外卖", "买东西", "查天气", "播放音乐",
+        "发短信", "打电话", "写情书", "买彩票",
+    )
+    VAGUE_GOAL_TEXTS: tuple[str, ...] = (
+        "随便学点什么", "不知道学什么", "推荐学什么", "提升自己", "学习技能",
+        "学点东西", "都可以", "随便", "学习编程", "学习英语", "学习设计",
+    )
+
+    @staticmethod
+    def _goal_duration(text: str) -> dict[str, Any]:
+        number_map = {
+            "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+        }
+        match = re.search(
+            r"(?:在)?([0-9一二两三四五六七八九十]+)\s*(天|周|个?月|年)(?:内|之内)?",
+            text,
+        )
+        if not match:
+            return {}
+        raw_number, raw_unit = match.groups()
+        if raw_number.isdigit():
+            amount = int(raw_number)
+        elif raw_number == "十":
+            amount = 10
+        elif raw_number.startswith("十") and len(raw_number) == 2:
+            amount = 10 + number_map.get(raw_number[1], 0)
+        elif raw_number.endswith("十") and len(raw_number) == 2:
+            amount = number_map.get(raw_number[0], 0) * 10
+        else:
+            amount = number_map.get(raw_number, 0)
+        if amount <= 0:
+            return {}
+        unit_days = 1 if raw_unit == "天" else 7 if raw_unit == "周" else 30 if "月" in raw_unit else 365
+        return {
+            "duration_text": match.group(0),
+            "estimated_days": min(3650, amount * unit_days),
+        }
+
+    @staticmethod
+    def _goal_outcome(text: str) -> str:
+        match = re.search(
+            r"(?:并且|并能|并可|能够|独立|完成|通过|考取|拿到|做出|开发出|实现)"
+            r"([^，。；]{2,48})",
+            text,
+        )
+        if not match:
+            match = re.search(r"(?:^|[，。；\s])能\s*([^，。；]{2,48})", text)
+        outcome = match.group(1).strip() if match else ""
+        return "" if outcome in {"大赛", "比赛", "竞赛", "认证", "考试", "证书"} else outcome
+
+    @staticmethod
+    def _goal_title(text: str, fallback: str) -> str:
+        title = re.sub(
+            r"^(?:我想|我要|我希望|希望|计划|准备|打算|目标是|想要)\s*",
+            "",
+            text.strip(),
+        ).strip(" ，。；")
+        if not title:
+            title = fallback
+        return title[:56] + ("…" if len(title) > 56 else "")
+
+    def _open_goal_analysis(self, text: str) -> dict[str, Any]:
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if any(action in normalized for action in self.NON_LEARNING_ACTIONS):
+            return {
+                "matched": False,
+                "reason": "outside_learning_scope",
+                "clarification": "这看起来不是学习或能力提升目标。本工作台只处理学习、考证、竞赛、岗位能力和实训项目。",
+            }
+        if len(normalized) < 4 or normalized in self.VAGUE_GOAL_TEXTS:
+            return {
+                "matched": False,
+                "reason": "goal_too_broad",
+                "missing_fields": ["具体学习内容", "希望达到的成果或应用场景"],
+                "clarification": (
+                    "这个目标还太宽泛。请补充“具体学什么”和“最终想做到什么”，"
+                    "例如：六周内掌握 Python 数据分析，并完成一份销售数据看板。"
+                ),
+            }
+        has_action = any(word in normalized for word in self.GOAL_ACTION_WORDS)
+        has_goal_frame = any(
+            word in normalized
+            for word in ("我想", "我要", "目标", "计划", "希望", "准备", "打算")
+        )
+        if not has_action and not has_goal_frame:
+            return {
+                "matched": False,
+                "reason": "intent_unclear",
+                "missing_fields": ["学习意图"],
+                "clarification": (
+                    f"我识别到了“{normalized}”，但还不能确定你是要学习它还是咨询它。"
+                    "如果要建立项目，请说明希望达到的能力或成果。"
+                ),
+            }
+        goal_type = "course"
+        if any(word in normalized for word in ("大赛", "比赛", "竞赛", "备赛")):
+            goal_type = "competition"
+        elif any(
+            word in normalized.lower()
+            for word in (
+                "认证", "证书", "考证", "考级", "考试", "1+x", "四级", "六级",
+                "雅思", "托福", "软考", "教资", "计算机等级",
+            )
+        ):
+            goal_type = "certification"
+        elif any(word in normalized for word in ("岗位", "就业", "转行", "面试", "工作")):
+            goal_type = "job"
+        elif any(word in normalized for word in ("完成", "制作", "开发", "做出", "实现")):
+            goal_type = "project"
+        constraints = self._goal_duration(normalized)
+        outcome = self._goal_outcome(normalized)
+        if outcome:
+            constraints["target_outcome"] = outcome
+        return {
+            "matched": True,
+            "goal": {
+                "goal_id": "GOAL-CUSTOM-" + uuid.uuid5(uuid.NAMESPACE_URL, normalized).hex[:12].upper(),
+                "goal_name": self._goal_title(normalized, normalized),
+                "goal_type": goal_type,
+                "original_text": normalized,
+                "constraints": constraints,
+                "support_level": "planning_required",
+                "planning_state": "pending_knowledge_mapping",
+            },
+        }
+
+    @staticmethod
+    def _graph_goal_matches_text(goal: dict[str, Any] | None, text: str) -> bool:
+        if not goal:
+            return False
+        goal_id = str(goal.get("goal_id") or "")
+        lowered = text.lower().replace(" ", "")
+        java_signals = (
+            "java", "面向对象", "成绩管理", "类与对象", "封装", "继承",
+            "多态", "集合框架", "javaio",
+        )
+        has_java_context = any(signal in lowered for signal in java_signals)
+        if goal_id == "GOAL-JAVA-001":
+            return has_java_context
+        if goal_id == "GOAL-JAVA-COMPETITION":
+            return has_java_context or "世界职业院校技能大赛" in text
+        if goal_id == "GOAL-JAVA-CERT":
+            return has_java_context or "1+x" in lowered
+        if goal_id == "GOAL-JAVA-DAILY":
+            return has_java_context or text.strip() in {"日常技能提升", "Java 日常技能提升"}
+        return goal_id in GOAL_GRAPH_GOALS
+
+    @staticmethod
+    def _custom_goal_nodes(
+        text: str, goal_type: str, target_outcome: str
+    ) -> list[tuple[str, str]]:
+        lowered = text.lower()
+        if "python" in lowered and any(word in lowered for word in ("数据", "pandas", "分析", "看板")):
+            return [
+                ("Python 数据处理基础", "code"),
+                ("NumPy 数组与数值计算", "code"),
+                ("Pandas 数据读取与清洗", "code"),
+                ("业务指标与探索性分析", "conceptual"),
+                ("数据可视化与图表表达", "practice"),
+                (target_outcome or "数据分析看板综合实战", "project"),
+            ]
+        if any(word in lowered for word in ("英语", "四级", "六级", "雅思", "托福")):
+            return [
+                ("考试结构与基线诊断", "conceptual"),
+                ("高频词汇与核心语法", "conceptual"),
+                ("听力理解与信息定位", "practice"),
+                ("阅读理解与篇章分析", "practice"),
+                ("写作与翻译表达", "practice"),
+                (target_outcome or "全真模拟与错题复盘", "assessment"),
+            ]
+        if any(word in lowered for word in ("html", "css", "javascript", "前端", "网页", "web")):
+            return [
+                ("HTML 页面结构", "code"),
+                ("CSS 布局与响应式设计", "code"),
+                ("JavaScript 交互基础", "code"),
+                ("组件化与状态管理", "conceptual"),
+                ("接口联调与错误处理", "practice"),
+                (target_outcome or "Web 项目综合实战", "project"),
+            ]
+        if any(word in lowered for word in ("短视频", "视频创作", "视频剪辑", "微电影")):
+            return [
+                ("赛项规程与评分标准", "conceptual"),
+                ("选题策划与受众分析", "conceptual"),
+                ("脚本、分镜与拍摄计划", "practice"),
+                ("画面拍摄与声音采集", "practice"),
+                ("剪辑节奏、包装与版权规范", "practice"),
+                (target_outcome or "参赛作品制作与模拟评审", "project"),
+            ]
+        if "pmp" in lowered or "项目管理" in lowered:
+            return [
+                ("PMP 考纲、题型与报考要求", "conceptual"),
+                ("项目管理原则与绩效域", "conceptual"),
+                ("预测型项目管理方法", "conceptual"),
+                ("敏捷与混合型项目管理", "conceptual"),
+                ("情境题决策与错题归因", "practice"),
+                (target_outcome or "PMP 全真模拟与复盘", "assessment"),
+            ]
+        if any(word in lowered for word in ("python", "java", "c++", "编程", "开发", "代码")):
+            subject = "目标编程技术"
+            for candidate in ("Python", "Java", "C++", "JavaScript"):
+                if candidate.lower() in lowered:
+                    subject = candidate
+                    break
+            return [
+                (f"{subject} 开发环境与基础语法", "code"),
+                (f"{subject} 数据结构与程序控制", "code"),
+                (f"{subject} 函数、模块与代码组织", "code"),
+                ("调试、测试与异常处理", "practice"),
+                ("典型任务分步练习", "practice"),
+                (target_outcome or f"{subject} 综合项目", "project"),
+            ]
+        if goal_type == "certification":
+            return [
+                ("考试范围与能力要求", "conceptual"),
+                ("基础知识体系", "conceptual"),
+                ("重点模块专项学习", "conceptual"),
+                ("典型题型与解题方法", "practice"),
+                ("薄弱项专项训练", "practice"),
+                (target_outcome or "模拟考试与复盘", "assessment"),
+            ]
+        if any(word in lowered for word in ("设计", "绘画", "摄影", "剪辑", "建模", "ui", "海报")):
+            return [
+                ("目标作品与评价标准", "conceptual"),
+                ("基础工具与操作规范", "practice"),
+                ("构图、色彩与视觉表达", "conceptual"),
+                ("案例拆解与临摹练习", "practice"),
+                ("独立作品迭代", "project"),
+                (target_outcome or "作品集整理与评审", "assessment"),
+            ]
+        topic = re.sub(
+            r"^(?:我想|我要|我希望|希望|计划|准备|打算|目标是|想要|学习|掌握|备战|备考|通过)\s*",
+            "",
+            text,
+        ).strip(" ，。；")
+        topic = re.split(
+            r"(?:并且|并能|并可|并完成|并制作|并开发|并实现|并做出)",
+            topic,
+            maxsplit=1,
+        )[0].strip(" ，。；")[:24]
+        topic = topic or "目标领域"
+        if goal_type in {"project", "job"}:
+            return [
+                (f"{topic}任务要求与验收标准", "conceptual"),
+                (f"{topic}前置知识与工具准备", "conceptual"),
+                (f"{topic}核心方法与关键流程", "practice"),
+                (f"{topic}分步任务训练", "practice"),
+                (target_outcome or "综合任务实现", "project"),
+                (f"{topic}测试、复盘与成果交付", "assessment"),
+            ]
+        return [
+            (f"{topic}目标拆解与验收标准", "conceptual"),
+            (f"{topic}基础概念与术语", "conceptual"),
+            (f"{topic}核心原理与方法", "conceptual"),
+            (f"{topic}典型案例分步练习", "practice"),
+            (target_outcome or f"{topic}综合应用任务", "project"),
+            (f"{topic}成果检验与复盘", "assessment"),
+        ]
+
+    def _build_custom_learning_path(
+        self, goal_id: str, goal_name: str, goal_type: str, text: str, constraints: dict[str, Any]
+    ) -> dict[str, Any]:
+        nodes = self._custom_goal_nodes(
+            text,
+            goal_type,
+            str(constraints.get("target_outcome") or ""),
+        )
+        items = []
+        previous_id = ""
+        for index, (name, knowledge_type) in enumerate(nodes, start=1):
+            point_id = "KN-CUSTOM-" + uuid.uuid5(
+                uuid.NAMESPACE_URL, f"{goal_id}:{index}:{name}"
+            ).hex[:12].upper()
+            item = {
+                "knowledge_point_id": point_id,
+                "knowledge_point_name": name,
+                "knowledge_type": knowledge_type,
+                "mastery": 0,
+                "status": "current" if index == 1 else "pending",
+                "recommended_order": index,
+                "goal_id": goal_id,
+                "source_status": "candidate",
+            }
+            if previous_id:
+                item["prerequisites"] = [previous_id]
+            items.append(item)
+            previous_id = point_id
+        return {
+            "goal_id": goal_id,
+            "goal_name": goal_name,
+            "items": items,
+            "progress": 0,
+            "planning_state": "candidate_ready",
+            "path_basis": "目标语义拆解生成；讲解与测评仍需来源校验",
+        }
+
     def create_project(self, incoming: dict[str, Any]) -> dict[str, Any]:
         """创建项目：口语目标 → 归一化（图谱/关键词）→ 生成路径 → 入库。
 
@@ -3179,34 +3979,87 @@ class LearningApplication:
             raise ApiError(400, "MISSING_GOAL_TEXT", "请先输入你的学习目标")
 
         goal = resolve_learning_goal({"goal_name": text})
+        if goal and not self._graph_goal_matches_text(goal, text):
+            goal = None
         if not goal:
             keyword_match = self._match_goal_keywords(text)
-            if keyword_match.get("matched"):
-                goal = keyword_match["goal"]
+            keyword_goal = as_dict(keyword_match.get("goal"))
+            if keyword_match.get("matched") and self._graph_goal_matches_text(
+                keyword_goal, text
+            ):
+                goal = keyword_goal
         if not goal:
-            return {
-                "status": "needs_clarification",
-                "text": text,
-                "clarification": (
-                    f"暂时无法从“{text}”中识别具体目标。"
-                    "可以输入如“想考 1+X Java 应用开发认证”“备战世界职业院校技能大赛”"
-                    "“完成 Java 面向对象成绩管理实训”，或从下方快捷目标中选择。"
-                ),
-            }
+            open_goal = self._open_goal_analysis(text)
+            if not open_goal.get("matched"):
+                return {
+                    "status": "needs_clarification",
+                    "text": text,
+                    "clarification": open_goal.get("clarification", "请补充更具体的学习目标。"),
+                    "missing_fields": open_goal.get("missing_fields", []),
+                    "reason": open_goal.get("reason", "goal_unclear"),
+                }
+            goal = as_dict(open_goal.get("goal"))
 
         goal_id = str(goal["goal_id"])
-        goal_name = str(goal.get("goal_name") or goal_id)
-        learning_path = build_learning_path(goal_id)
+        canonical_goal_name = str(goal.get("goal_name") or goal_id)
+        is_supported_goal = goal_id in GOAL_GRAPH_GOALS
+        goal_name = str(incoming.get("goal_name") or "").strip() or self._goal_title(
+            text, canonical_goal_name
+        )
+        constraints = dict(as_dict(goal.get("constraints")))
+        constraints.update(self._goal_duration(text))
+        outcome = self._goal_outcome(text)
+        if outcome:
+            constraints["target_outcome"] = outcome
+        constraints.update(as_dict(incoming.get("goal_constraints")))
+        if is_supported_goal:
+            learning_path = build_learning_path(goal_id)
+            learning_path["goal_name"] = goal_name
+            planning_state = "ready"
+            support_level = "validated_graph"
+        else:
+            learning_path = self._build_custom_learning_path(
+                goal_id,
+                goal_name,
+                str(goal.get("goal_type") or "course"),
+                text,
+                constraints or as_dict(goal.get("constraints")),
+            )
+            planning_state = "ready"
+            support_level = "generated_scaffold"
         state: dict[str, Any] = {
             "goal": {
                 "goal_id": goal_id,
                 "goal_name": goal_name,
                 "goal_type": str(goal.get("goal_type") or "course"),
+                "canonical_goal_name": canonical_goal_name if is_supported_goal else "",
+                "original_text": text,
+                "constraints": constraints or as_dict(goal.get("constraints")),
             },
             "learning_path": learning_path,
+            "planning_state": planning_state,
+            "support_level": support_level,
+            "assessment_state": "ready" if is_supported_goal else "question_sources_pending",
             "diagnosis_session": None,
+            "assessment_session": None,
             "weak_points": [],
+            "learner_preferences": {},
+            "learner_self_reports": [],
         }
+        daily_minutes = int(constraints.get("daily_minutes", 0) or 0)
+        if daily_minutes:
+            state["learner_preferences"]["daily_minutes"] = max(
+                5, min(daily_minutes, 720)
+            )
+        current_level = str(constraints.get("current_level") or "").strip()
+        if current_level:
+            state["learner_self_reports"].append({
+                "type": "goal_intake_self_report",
+                "claim": current_level,
+                "message": str(incoming.get("intake_text") or text),
+                "verification_state": "unverified",
+                "created_at": utc_now(),
+            })
         project_id = self.store.create_project(
             student_id, goal_id, goal_name, "created", state
         )
@@ -3227,6 +4080,11 @@ class LearningApplication:
             "goal_name": goal_name,
             "status": status,
             "diagnosis_state": LearningApplication._project_diagnosis_state(state),
+            "planning_state": str(state.get("planning_state") or "ready"),
+            "support_level": str(state.get("support_level") or "validated_graph"),
+            "assessment_state": str(state.get("assessment_state") or "ready"),
+            "goal_type": str(as_dict(state.get("goal")).get("goal_type") or "course"),
+            "goal_constraints": as_dict(as_dict(state.get("goal")).get("constraints")),
             "weak_point_count": len(as_list(state.get("weak_points"))),
             "progress": LearningApplication._project_progress(
                 as_dict(state.get("learning_path"))
@@ -3260,16 +4118,66 @@ class LearningApplication:
                 "goal_id": project["goal_id"],
                 "goal_name": project["goal_name"],
                 "goal_type": str(as_dict(state.get("goal")).get("goal_type") or ""),
+                "original_goal_text": str(as_dict(state.get("goal")).get("original_text") or ""),
+                "goal_constraints": as_dict(as_dict(state.get("goal")).get("constraints")),
+                "planning_state": str(state.get("planning_state") or "ready"),
+                "support_level": str(state.get("support_level") or "validated_graph"),
+                "assessment_state": str(state.get("assessment_state") or "ready"),
                 "status": project["status"],
                 "created_at": project["created_at"],
                 "updated_at": project["updated_at"],
                 "diagnosis_state": self._project_diagnosis_state(state),
                 "learning_path": state.get("learning_path", {}),
                 "weak_points": as_list(state.get("weak_points")),
+                "last_assessment_summary": as_dict(
+                    state.get("last_assessment_summary")
+                ),
+                "learner_preferences": as_dict(state.get("learner_preferences")),
+                "learner_self_reports": as_list(state.get("learner_self_reports")),
             },
         }
 
+    def project_messages(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        student_id = str(incoming.get("student_id") or "").strip()
+        project_id = str(incoming.get("project_id") or "").strip()
+        self._require_project(student_id, project_id)
+        return {
+            "status": "ok",
+            "project_id": project_id,
+            "messages": self.store.list_project_messages(project_id, student_id),
+        }
+
+    def _save_project_conversation_turn(
+        self,
+        student_id: str,
+        project_id: str,
+        message: str,
+        answer: str,
+        action: str,
+    ) -> None:
+        self._require_project(student_id, project_id)
+        self.store.add_project_message(project_id, student_id, "user", message, "user_input")
+        if answer:
+            self.store.add_project_message(project_id, student_id, "assistant", answer, action)
+
     def agent_turn(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        result = self._agent_turn_core(incoming)
+        student_id = str(incoming.get("student_id") or "").strip()
+        message = str(incoming.get("message") or incoming.get("text") or "").strip()
+        project_id = str(incoming.get("project_id") or "").strip()
+        result_project = as_dict(result.get("project"))
+        project_id = str(result_project.get("project_id") or project_id).strip()
+        if student_id and message and project_id:
+            self._save_project_conversation_turn(
+                student_id,
+                project_id,
+                message,
+                str(result.get("answer") or result.get("message") or "").strip(),
+                str(result.get("action") or "reply"),
+            )
+        return result
+
+    def _agent_turn_core(self, incoming: dict[str, Any]) -> dict[str, Any]:
         """Tutor Agent 统一入口：理解意图并编排项目、测评、路径、讲解与问答。"""
         student_id = str(incoming.get("student_id") or "").strip()
         message = str(incoming.get("message") or incoming.get("text") or "").strip()
@@ -3281,9 +4189,20 @@ class LearningApplication:
             raise ApiError(400, "MISSING_MESSAGE", "请输入学习目标或问题")
 
         project = self._agent_project(student_id, project_id)
-        intent = self._classify_agent_intent(message)
+        goal_draft = (
+            self.store.get_agent_goal_draft(student_id, session_id) if not project else {}
+        )
+        if goal_draft:
+            continued = self._continue_goal_draft(
+                student_id, session_id, message, goal_draft
+            )
+            if continued:
+                return continued
+        intent = self._classify_agent_intent(message, project)
 
         if intent == "create_project":
+            if not project and self._goal_needs_outcome_clarification(message):
+                return self._start_goal_draft(student_id, session_id, message)
             created = self.create_project({"student_id": student_id, "text": message})
             if created.get("status") != "ok":
                 return {
@@ -3293,24 +4212,7 @@ class LearningApplication:
                     "message": created.get("clarification", "请补充更具体的学习目标。"),
                     "clarify_options": self._goal_clarify_options(),
                 }
-            new_project = as_dict(created.get("project"))
-            return {
-                "status": "ok",
-                "intent": "create_project",
-                "action": "project_created",
-                "message": (
-                    f"已把“{new_project.get('goal_name', message)}”创建为学习项目。"
-                    "下一步建议先做一次能力测评，我会据此调整学习路径。"
-                ),
-                "project": new_project,
-                "next_interaction": {
-                    "type": "choice",
-                    "options": [
-                        {"id": "start_assessment", "label": "开始能力测评", "prompt": "开始能力测评"},
-                        {"id": "show_path", "label": "先看学习路径", "prompt": "查看学习路径"},
-                    ],
-                },
-            }
+            return self._agent_project_created_response(created, message)
 
         if intent in {"start_assessment", "show_path", "open_lesson"}:
             project = project or self._single_recent_project(student_id)
@@ -3366,6 +4268,11 @@ class LearningApplication:
                 "artifact": {"type": "learning_path", "data": path},
             }
 
+        if intent == "update_learning_context":
+            return self._update_project_learning_context(
+                student_id, project, message, as_dict(incoming.get("workspace_context"))
+            )
+
         if intent == "open_lesson":
             state = as_dict(project.get("state"))
             target = self._agent_lesson_target(message, state)
@@ -3409,17 +4316,26 @@ class LearningApplication:
                 "artifact": {"type": "lesson", "data": lesson},
             }
 
-        if intent == "knowledge_question":
+        if intent in {"knowledge_question", "general_assistant"}:
             answer = self.chat(
                 {
                     "student_id": student_id,
                     "session_id": session_id,
+                    "project_id": str(project.get("project_id") or "") if project else "",
                     "message": message,
+                    "workspace_context": as_dict(incoming.get("workspace_context")),
+                    "use_knowledge_base": incoming.get("use_knowledge_base", True),
+                    "allow_web_search": incoming.get("allow_web_search", True),
+                    "force_web_search": incoming.get("force_web_search", False),
+                    "assistant_mode": (
+                        "general" if intent == "general_assistant" else "education"
+                    ),
+                    "persist_history": False,
                 }
             )
             return {
                 **answer,
-                "intent": "knowledge_question",
+                "intent": intent,
                 "action": (
                     "ask_clarification"
                     if answer.get("status") == "needs_clarification"
@@ -3440,7 +4356,9 @@ class LearningApplication:
             "clarify_options": self._agent_clarify_options(project),
         }
 
-    def _classify_agent_intent(self, message: str) -> str:
+    def _classify_agent_intent(
+        self, message: str, project: dict[str, Any] | None = None
+    ) -> str:
         lowered = message.lower().strip()
         question_words = (
             "什么", "哪些", "怎么", "如何", "为什么", "区别", "是否", "能否",
@@ -3454,29 +4372,396 @@ class LearningApplication:
         assessment_words = ("开始测评", "能力测评", "重新测评", "做测评", "测一下", "诊断一下")
         path_words = ("查看学习路径", "学习路径", "课程安排", "学习计划", "下一步学什么")
         lesson_words = ("开始学习", "继续学习", "打开课程", "打开章节", "学习章节", "下一课")
+        general_request_words = (
+            "上网搜索", "联网搜索", "网上查", "搜索一下", "帮我查", "查找资料",
+            "总结一下", "帮我总结", "对比一下", "翻译一下", "帮我翻译", "翻译成",
+            "帮我润色", "帮我改写", "帮我写", "写一份", "列出", "提取", "整理",
+        )
+        education_request_words = ("帮我解释", "解释一下")
+        open_goal = self._open_goal_analysis(message)
 
-        if any(word in lowered for word in goal_words) and not is_question:
-            return "create_project"
+        if any(word in lowered for word in general_request_words):
+            return "general_assistant"
+        relevant_knowledge = self._relevant_knowledge_items(message, limit=1)
+        if any(word in lowered for word in education_request_words):
+            return (
+                "knowledge_question"
+                if project or relevant_knowledge
+                else "general_assistant"
+            )
         if any(word in lowered for word in assessment_words) and not is_question:
             return "start_assessment"
         if any(word in lowered for word in path_words):
             return "show_path"
-        if any(word in lowered for word in lesson_words) or (
-            "学习" in lowered and not is_question
-        ):
+        if any(word in lowered for word in lesson_words):
             return "open_lesson"
-        if is_question:
-            return "knowledge_question"
-        if resolve_learning_goal({"goal_name": message}) or self._match_goal_keywords(message).get("matched"):
+        if project and self._is_learning_context_update(message):
+            return "update_learning_context"
+        learning_goal_hint = any(
+            word in lowered
+            for word in (
+                "学习", "学会", "想学", "掌握", "备考", "考试", "考证", "竞赛",
+                "实训", "课程", "岗位能力", "提升技能",
+            )
+        )
+        if any(word in lowered for word in goal_words) and learning_goal_hint and not is_question:
             return "create_project"
-        if self.domain.search_knowledge(query=message, limit=1):
+        if open_goal.get("reason") == "goal_too_broad":
+            return "create_project"
+        if open_goal.get("reason") == "outside_learning_scope":
+            return "general_assistant"
+        if is_question:
+            if project or learning_goal_hint or relevant_knowledge:
+                return "knowledge_question"
+            return "general_assistant"
+        graph_goal = resolve_learning_goal({"goal_name": message})
+        keyword_goal = as_dict(self._match_goal_keywords(message).get("goal"))
+        if self._graph_goal_matches_text(graph_goal, message) or self._graph_goal_matches_text(
+            keyword_goal, message
+        ):
+            return "create_project"
+        if open_goal.get("matched"):
+            if project and "学习" in lowered and self.domain.search_knowledge(query=message, limit=1):
+                return "open_lesson"
+            return "create_project"
+        if not project and "学习" in lowered:
+            return "create_project"
+        if relevant_knowledge:
             return "knowledge_question"
+        if project:
+            return "knowledge_question"
+        if lowered in {"随便来点", "随便聊聊", "聊聊", "随便"}:
+            return "clarify_intent"
+        if len(message.strip()) > 4:
+            return "general_assistant"
         return "clarify_intent"
+
+    def _relevant_knowledge_items(
+        self, message: str, limit: int = 3
+    ) -> list[dict[str, Any]]:
+        items = self.domain.search_knowledge(query=message, limit=max(limit, 3))
+        lowered = str(message or "").lower()
+        relevant = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            keyword_tokens = re.findall(
+                r"[a-zA-Z][a-zA-Z0-9+#.-]*|[\u4e00-\u9fff]{2,}",
+                " ".join(
+                    str(item.get(key) or "")
+                    for key in ("title", "keywords", "knowledge_point_name")
+                ).lower(),
+            )
+            if any(token in lowered for token in keyword_tokens if len(token) >= 2):
+                relevant.append(item)
+            if len(relevant) >= limit:
+                break
+        return relevant
 
     def _agent_project(self, student_id: str, project_id: str) -> dict[str, Any] | None:
         if not project_id:
             return None
         return self._require_project(student_id, project_id)
+
+    def _agent_project_created_response(
+        self, created: dict[str, Any], fallback_message: str
+    ) -> dict[str, Any]:
+        new_project = as_dict(created.get("project"))
+        planning_required = new_project.get("planning_state") != "ready"
+        assessment_ready = new_project.get("assessment_state") == "ready"
+        constraints = as_dict(new_project.get("goal_constraints"))
+        intake_notes = []
+        if constraints.get("current_level"):
+            intake_notes.append("当前基础已按自报记录，等待测评验证")
+        if constraints.get("daily_minutes"):
+            intake_notes.append(f"每日可学习 {constraints['daily_minutes']} 分钟")
+        intake_text = " " + "，".join(intake_notes) + "。" if intake_notes else ""
+        return {
+            "status": "ok",
+            "intent": "create_project",
+            "action": "project_created",
+            "message": (
+                f"已把“{new_project.get('goal_name', fallback_message)}”创建为学习项目。"
+                + (
+                    "这个目标正在生成候选知识结构，完成后再开放学习与测评。"
+                    if planning_required
+                    else (
+                        "已按目标生成候选学习路径。下一步建议先做一次能力测评，我会据此调整学习顺序。"
+                        if assessment_ready
+                        else "已生成候选学习路径；当前还缺少经过校验的对应题源，可先查看路径。"
+                    )
+                )
+                + intake_text
+            ),
+            "project": new_project,
+            "next_interaction": (
+                {
+                    "type": "status",
+                    "options": [],
+                    "message": "等待知识结构校验",
+                }
+                if planning_required
+                else {
+                    "type": "choice" if assessment_ready else "status",
+                    "options": (
+                        [
+                            {"id": "start_assessment", "label": "开始能力测评", "prompt": "开始能力测评"},
+                            {"id": "show_path", "label": "先看学习路径", "prompt": "查看学习路径"},
+                        ]
+                        if assessment_ready
+                        else [
+                            {"id": "show_path", "label": "查看候选路径", "prompt": "查看学习路径"},
+                        ]
+                    ),
+                    "message": "题源校验中" if not assessment_ready else "",
+                }
+            ),
+        }
+
+    def _goal_needs_outcome_clarification(self, message: str) -> bool:
+        text = re.sub(r"\s+", " ", str(message or "")).strip()
+        if not text or self._goal_outcome(text):
+            return False
+        goal = resolve_learning_goal({"goal_name": text})
+        if self._graph_goal_matches_text(goal, text):
+            return False
+        lowered = text.lower()
+        if any(word in lowered for word in ("大赛", "比赛", "竞赛", "备考", "认证", "证书", "考试", "考级", "四级", "六级", "雅思", "托福", "面试")):
+            return False
+        broad_subjects = (
+            "python", "数据分析", "英语", "前端", "web", "网页", "javascript",
+            "设计", "摄影", "剪辑", "人工智能", "ai", "项目管理", "编程",
+        )
+        has_subject = any(subject in lowered for subject in broad_subjects)
+        has_specific_outcome = any(
+            word in lowered
+            for word in (
+                "看板", "系统", "网站", "作品", "应用", "程序", "自动化", "报告",
+                "岗位", "就业", "转行", "实训", "参赛作品", "口语交流",
+            )
+        )
+        return has_subject and not has_specific_outcome
+
+    @staticmethod
+    def _goal_intake_daily_minutes(text: str) -> int:
+        if re.search(r"(?:每天|每日)[^，。；]{0,8}?半\s*(?:个)?小时", text):
+            return 30
+        match = re.search(
+            r"(?:每天|每日)[^，。；]{0,8}?(\d+(?:\.\d+)?|一|两|二)\s*(分钟|个?小时)",
+            text,
+        )
+        if not match:
+            return 0
+        raw_amount = match.group(1)
+        amount = {"一": 1.0, "两": 2.0, "二": 2.0}.get(raw_amount, 0.0)
+        if not amount:
+            amount = float(raw_amount)
+        minutes = round(amount * 60) if "小时" in match.group(2) else round(amount)
+        return max(5, min(minutes, 720))
+
+    @staticmethod
+    def _goal_intake_current_level(text: str) -> str:
+        lowered = str(text or "").lower()
+        if any(word in lowered for word in ("零基础", "没学过", "完全不会", "没有基础")):
+            return "zero_foundation"
+        if any(word in lowered for word in ("有一点基础", "有些基础", "学过一点", "入门基础")):
+            return "basic"
+        if any(word in lowered for word in ("有基础", "已经学过", "学过", "熟悉基础")):
+            return "experienced"
+        return ""
+
+    @staticmethod
+    def _goal_follow_up_outcome(message: str) -> str:
+        text = re.sub(r"\s+", " ", str(message or "")).strip(" ，。；")
+        if not text:
+            return ""
+        outcome = LearningApplication._goal_outcome(text)
+        if outcome:
+            return outcome
+        cleaned = re.sub(
+            r"^(?:我想|想要|想做|希望|最终想|目标是|主要是|为了|用来|用于|拿来|可以|能够|能|做|学习)\s*",
+            "",
+            text,
+        ).strip(" ，。；")
+        cleaned = re.sub(
+            r"(?:我)?(?:是)?(?:零基础|没有基础|有一点基础|有些基础|有基础|学过一点|已经学过)[，。；\s]*",
+            "",
+            cleaned,
+        ).strip(" ，。；")
+        cleaned = re.sub(
+            r"(?:每天|每日)[^，。；]{0,12}(?:分钟|个?小时)[，。；\s]*",
+            "",
+            cleaned,
+        ).strip(" ，。；")
+        cleaned = re.sub(
+            r"(?:在)?[0-9一二两三四五六七八九十]+\s*(?:天|周|个?月|年)(?:内|之内)?[，。；\s]*",
+            "",
+            cleaned,
+        ).strip(" ，。；")
+        if cleaned in {"没有", "没有特定目标", "不知道", "都可以", "随便"}:
+            return ""
+        return cleaned[:64] if len(cleaned) >= 2 else ""
+
+    def _goal_draft_options(self, topic: str) -> list[dict[str, str]]:
+        lowered = topic.lower()
+        if "python" in lowered:
+            options = (
+                ("data", "数据分析", "我想用 Python 完成销售数据分析看板"),
+                ("web", "Web 开发", "我想用 Python 开发一个可部署的 Web 应用"),
+                ("automation", "办公自动化", "我想用 Python 自动处理 Excel 和日常文件"),
+            )
+        elif any(word in lowered for word in ("英语", "english")):
+            options = (
+                ("exam", "通过考试", "我想通过大学英语四级考试"),
+                ("work", "职场沟通", "我想能进行英文邮件和会议沟通"),
+                ("travel", "旅行交流", "我想能完成出国旅行中的日常英语交流"),
+            )
+        elif any(word in lowered for word in ("前端", "web", "网页", "javascript")):
+            options = (
+                ("site", "完成网站", "我想独立完成一个响应式网站"),
+                ("job", "求职面试", "我想达到前端初级岗位和面试要求"),
+                ("app", "开发应用", "我想开发一个可交互的 Web 应用"),
+            )
+        else:
+            options = (
+                ("project", "完成项目", "我想完成一个可以验收的实际项目"),
+                ("exam", "通过考试", "我想达到相关考试或认证要求"),
+                ("job", "岗位应用", "我想把它用于目标岗位的实际任务"),
+            )
+        return [
+            {"id": option_id, "label": label, "prompt": prompt}
+            for option_id, label, prompt in options
+        ]
+
+    def _start_goal_draft(
+        self, student_id: str, session_id: str, message: str
+    ) -> dict[str, Any]:
+        constraints = dict(self._goal_duration(message))
+        daily_minutes = self._goal_intake_daily_minutes(message)
+        current_level = self._goal_intake_current_level(message)
+        if daily_minutes:
+            constraints["daily_minutes"] = daily_minutes
+        if current_level:
+            constraints["current_level"] = current_level
+        draft = {
+            "topic_text": message,
+            "constraints": constraints,
+            "intake_messages": [message],
+            "missing_fields": ["target_outcome"],
+        }
+        self.store.save_agent_goal_draft(student_id, session_id, draft)
+        return {
+            "status": "needs_clarification",
+            "intent": "clarify_goal",
+            "action": "ask_clarification",
+            "message": (
+                "我已经识别到你想学习的主题，但还缺少可验收的目标。"
+                "你最终希望用它完成什么、通过什么考试，或解决什么实际任务？"
+            ),
+            "missing_fields": ["target_outcome"],
+            "clarify_options": self._goal_draft_options(message),
+        }
+
+    def _continue_goal_draft(
+        self,
+        student_id: str,
+        session_id: str,
+        message: str,
+        draft: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        lowered = message.lower().strip()
+        if lowered in {"取消", "取消创建", "重新开始", "换个目标"}:
+            self.store.delete_agent_goal_draft(student_id, session_id)
+            return {
+                "status": "ok",
+                "intent": "cancel_goal_draft",
+                "action": "reply",
+                "answer": "已取消刚才的目标草稿。你可以重新告诉我想学习什么。",
+                "ai_generated": False,
+                "sources": [],
+            }
+        assistant_request_words = (
+            "上网搜索", "联网搜索", "网上查", "搜索一下", "帮我查", "查找资料",
+            "总结一下", "帮我总结", "对比一下", "帮我解释", "解释一下", "翻译一下", "帮我润色",
+        )
+        if any(mark in message for mark in ("？", "?")) or any(
+            lowered.startswith(word)
+            for word in ("什么", "怎么", "如何", "为什么", "能不能", "可以吗")
+        ) or any(word in lowered for word in assistant_request_words):
+            return None
+        constraints = as_dict(draft.get("constraints"))
+        constraints.update(self._goal_duration(message))
+        daily_minutes = self._goal_intake_daily_minutes(message)
+        current_level = self._goal_intake_current_level(message)
+        if daily_minutes:
+            constraints["daily_minutes"] = daily_minutes
+        if current_level:
+            constraints["current_level"] = current_level
+        outcome = self._goal_follow_up_outcome(message)
+        intake_messages = [
+            str(item) for item in as_list(draft.get("intake_messages")) if str(item).strip()
+        ]
+        intake_messages.append(message)
+        if not outcome:
+            updated = {
+                **draft,
+                "constraints": constraints,
+                "intake_messages": intake_messages[-8:],
+                "missing_fields": ["target_outcome"],
+            }
+            self.store.save_agent_goal_draft(student_id, session_id, updated)
+            return {
+                "status": "needs_clarification",
+                "intent": "clarify_goal",
+                "action": "ask_clarification",
+                "message": (
+                    "这些学习条件我已经记下了，但仍无法判断完成标准。"
+                    "请补充一个具体结果，例如“完成销售数据看板”“通过四级”或“独立做出网站”。"
+                ),
+                "missing_fields": ["target_outcome"],
+                "clarify_options": self._goal_draft_options(str(draft.get("topic_text") or "")),
+            }
+        constraints["target_outcome"] = outcome
+        if not constraints.get("estimated_days"):
+            constraints.update({
+                "duration_text": "默认 6 周（可调整）",
+                "estimated_days": 42,
+                "duration_assumption": True,
+            })
+        topic_text = str(draft.get("topic_text") or "").strip()
+        combined_text = f"{topic_text}，并完成{outcome}"
+        topic_title = re.split(r"[，。；]", topic_text, maxsplit=1)[0].strip()
+        goal_name = self._goal_title(
+            f"{topic_title}，并完成{outcome}", combined_text
+        )
+        created = self.create_project({
+            "student_id": student_id,
+            "text": combined_text,
+            "goal_name": goal_name,
+            "goal_constraints": constraints,
+            "intake_text": "；".join(intake_messages[-8:]),
+        })
+        if created.get("status") != "ok":
+            return None
+        project_id = str(as_dict(created.get("project")).get("project_id") or "")
+        if project_id:
+            for index, intake_message in enumerate(intake_messages[:-1]):
+                self.store.add_project_message(
+                    project_id, student_id, "user", intake_message, "goal_intake"
+                )
+                self.store.add_project_message(
+                    project_id,
+                    student_id,
+                    "assistant",
+                    (
+                        "我已经识别到学习主题，还需要补充一个可验收的成果或应用场景。"
+                        if index == 0
+                        else "已记录这些学习条件，但仍需要明确最终成果。"
+                    ),
+                    "ask_goal_clarification",
+                )
+        self.store.delete_agent_goal_draft(student_id, session_id)
+        return self._agent_project_created_response(created, combined_text)
 
     def _single_recent_project(self, student_id: str) -> dict[str, Any] | None:
         projects = self.store.list_projects(student_id)
@@ -3485,9 +4770,9 @@ class LearningApplication:
     @staticmethod
     def _goal_clarify_options() -> list[dict[str, str]]:
         return [
-            {"id": "course", "label": "掌握 Java 面向对象", "prompt": "我想系统掌握 Java 面向对象编程"},
-            {"id": "competition", "label": "备战技能大赛", "prompt": "备战世界职业院校技能大赛"},
-            {"id": "certification", "label": "备考 1+X 认证", "prompt": "我想考 1+X Java 应用开发认证"},
+            {"id": "course", "label": "Java 实训", "prompt": "两个月内掌握 Java 面向对象并完成成绩管理实训"},
+            {"id": "data", "label": "Python 数据分析", "prompt": "六周内掌握 Python 数据分析并完成销售数据看板"},
+            {"id": "certification", "label": "英语四级", "prompt": "三个月内通过大学英语四级考试"},
         ]
 
     def _agent_clarify_options(
@@ -3500,6 +4785,153 @@ class LearningApplication:
             {"id": "path", "label": "查看学习路径", "prompt": "查看学习路径"},
             {"id": "lesson", "label": "继续学习", "prompt": "继续学习"},
         ]
+
+    @staticmethod
+    def _is_learning_context_update(message: str) -> bool:
+        lowered = str(message or "").lower()
+        direct_signals = (
+            "每天", "每周", "只能学", "有时间", "没时间", "学习时间", "学习时长",
+            "太难", "太简单", "看不懂", "跟不上", "想先学", "先跳过", "从第",
+            "喜欢案例", "先看案例", "案例优先", "多举例", "讲慢", "讲快", "详细一点", "简单一点",
+        )
+        if any(signal in lowered for signal in direct_signals):
+            return True
+        self_report_patterns = (
+            r"(?:我|本人)[^，。；？?]{0,16}(?:已经会|会了|学过|没学过|不会|不太会|有基础|零基础)",
+            r"(?:这个|这部分|这章)[^，。；？?]{0,8}(?:我会|我不会|学过|没学过)",
+        )
+        return any(re.search(pattern, lowered) for pattern in self_report_patterns)
+
+    def _project_path_matches(
+        self, message: str, state: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        lowered = str(message or "").lower()
+        matches = []
+        for item in as_list(as_dict(state.get("learning_path")).get("items")):
+            if not isinstance(item, dict):
+                continue
+            point_name = str(item.get("knowledge_point_name") or "").strip()
+            aliases = [point_name]
+            if "类" in point_name and "对象" in point_name:
+                aliases.extend(["类和对象", "类与对象"])
+            if "封装" in point_name:
+                aliases.append("封装")
+            if "pandas" in point_name.lower():
+                aliases.append("pandas")
+            if any(alias and alias.lower() in lowered for alias in aliases):
+                matches.append(item)
+        return matches
+
+    def _update_project_learning_context(
+        self,
+        student_id: str,
+        project: dict[str, Any] | None,
+        message: str,
+        workspace_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not project:
+            return {
+                "status": "needs_clarification",
+                "intent": "select_project",
+                "action": "ask_clarification",
+                "message": "这是一条学习情况说明，但当前没有选中项目。请先选择要调整的学习项目。",
+                "clarify_options": self._goal_clarify_options(),
+            }
+        project_id = str(project.get("project_id") or "")
+        state = as_dict(project.get("state"))
+        preferences = as_dict(state.get("learner_preferences"))
+        evidence = [item for item in as_list(state.get("learner_self_reports")) if isinstance(item, dict)]
+        updates = []
+
+        minutes = 0
+        if re.search(r"(?:每天|每日)[^，。；]{0,8}?半\s*(?:个)?小时", message):
+            minutes = 30
+        else:
+            daily_time = re.search(
+                r"(?:每天|每日)[^，。；]{0,8}?(\d+(?:\.\d+)?|一|两|二)\s*(分钟|个?小时)",
+                message,
+            )
+            if daily_time:
+                raw_amount = daily_time.group(1)
+                amount = {"一": 1.0, "两": 2.0, "二": 2.0}.get(raw_amount, 0.0)
+                if not amount:
+                    amount = float(raw_amount)
+                minutes = round(amount * 60) if "小时" in daily_time.group(2) else round(amount)
+        if minutes:
+            minutes = max(5, min(minutes, 720))
+            preferences["daily_minutes"] = minutes
+            updates.append(f"每日可学习时间按 {minutes} 分钟记录")
+
+        if any(word in message for word in ("多举例", "喜欢案例", "先看案例", "案例优先", "案例讲")):
+            preferences["explanation_style"] = "example_driven"
+            updates.append("讲解偏好调整为案例优先")
+        elif any(word in message for word in ("详细一点", "讲慢", "看不懂")):
+            preferences["explanation_style"] = "step_by_step"
+            updates.append("讲解偏好调整为分步慢讲")
+        elif any(word in message for word in ("简单一点", "讲快")):
+            preferences["explanation_style"] = "concise"
+            updates.append("讲解偏好调整为精简模式")
+
+        matched_points = self._project_path_matches(message, state)
+        mastery_claim = any(word in message for word in ("已经会", "我会了", "学过", "已经学过"))
+        weakness_claim = any(word in message for word in ("不会", "不太会", "看不懂", "没学过", "零基础"))
+        for item in matched_points:
+            evidence.append({
+                "type": "self_report",
+                "knowledge_point_id": str(item.get("knowledge_point_id") or ""),
+                "knowledge_point_name": str(item.get("knowledge_point_name") or ""),
+                "claim": "familiar" if mastery_claim else "needs_support" if weakness_claim else "priority",
+                "message": message,
+                "verification_state": "unverified",
+                "created_at": utc_now(),
+            })
+        if matched_points and mastery_claim:
+            names = "、".join(str(item.get("knowledge_point_name") or "") for item in matched_points)
+            updates.append(f"已记录你自报熟悉“{names}”，但暂不改动掌握度")
+        elif matched_points and weakness_claim:
+            names = "、".join(str(item.get("knowledge_point_name") or "") for item in matched_points)
+            updates.append(f"已把“{names}”记录为需要更多支持")
+        elif matched_points and any(word in message for word in ("想先学", "先学", "优先学")):
+            names = "、".join(str(item.get("knowledge_point_name") or "") for item in matched_points)
+            updates.append(f"已记录你想优先学习“{names}”；实际顺序仍会检查必要前置知识")
+
+        if not updates:
+            return {
+                "status": "needs_clarification",
+                "intent": "update_learning_context",
+                "action": "ask_clarification",
+                "message": "我知道你在补充学习情况，但还缺少可执行信息。请说明可用时间、已学内容、困难点或偏好的讲解方式。",
+                "clarify_options": [
+                    {"id": "time", "label": "补充学习时间", "prompt": "我每天可以学习 30 分钟"},
+                    {"id": "foundation", "label": "补充已有基础", "prompt": "类和对象已经学过，但封装还不熟"},
+                    {"id": "style", "label": "补充讲解偏好", "prompt": "我喜欢先看案例，再解释原理"},
+                ],
+            }
+
+        state["learner_preferences"] = preferences
+        state["learner_self_reports"] = evidence[-30:]
+        if workspace_context:
+            state["last_workspace_context"] = workspace_context
+        self.store.save_project_state(project_id, state)
+        return {
+            "status": "ok",
+            "intent": "update_learning_context",
+            "action": "context_updated",
+            "message": "；".join(updates) + "。自报基础需要后续测评验证，我不会直接把它写成已掌握。",
+            "project": self._project_payload(
+                project_id,
+                str(project.get("goal_name") or ""),
+                str(project.get("status") or "created"),
+                state,
+            ),
+            "context_update": {
+                "learner_preferences": preferences,
+                "self_reported_points": [
+                    str(item.get("knowledge_point_id") or "") for item in matched_points
+                ],
+                "verification_state": "unverified" if matched_points else "not_applicable",
+            },
+        }
 
     @staticmethod
     def _project_choice_response(
@@ -3637,37 +5069,370 @@ class LearningApplication:
         return self.discovery.list_sessions(learner_id)
 
 
-    def project_diagnosis_start(self, incoming: dict[str, Any]) -> dict[str, Any]:
+    ASSESSMENT_TYPES: dict[str, dict[str, str]] = {
+        "initial_diagnostic": {
+            "label": "目标能力诊断",
+            "stakes": "formal",
+            "evidence_role": "diagnostic",
+            "description": "覆盖目标能力图谱，定位起点与薄弱项。",
+        },
+        "stage_check": {
+            "label": "阶段检查",
+            "stakes": "formal",
+            "evidence_role": "verification",
+            "description": "检查当前章节是否达到继续学习的条件。",
+        },
+        "self_check": {
+            "label": "自主能力检测",
+            "stakes": "low",
+            "evidence_role": "practice",
+            "description": "由学习者选择范围进行低风险自检。",
+        },
+        "provisional_self_check": {
+            "label": "AI 临时自检",
+            "stakes": "low",
+            "evidence_role": "practice_unverified",
+            "description": "题源未审核时用于即时反馈，不写入正式画像或掌握度。",
+        },
+    }
+
+    def _assessment_target_point(
+        self, state: dict[str, Any], requested_id: str
+    ) -> dict[str, Any]:
+        items = [
+            item
+            for item in as_list(as_dict(state.get("learning_path")).get("items"))
+            if isinstance(item, dict)
+        ]
+        if requested_id:
+            target = next(
+                (
+                    item
+                    for item in items
+                    if str(item.get("knowledge_point_id") or "") == requested_id
+                ),
+                None,
+            )
+            if not target:
+                raise ApiError(404, "KNOWLEDGE_POINT_NOT_FOUND", "测评范围不在当前项目路径中")
+            return target
+        weak_ids = {
+            str(item.get("knowledge_point_id") or "")
+            for item in as_list(state.get("weak_points"))
+            if isinstance(item, dict)
+        }
+        return next(
+            (item for item in items if str(item.get("knowledge_point_id") or "") in weak_ids),
+            next(
+                (
+                    item
+                    for item in items
+                    if str(item.get("status") or "") in {"current", "learning"}
+                ),
+                items[0] if items else {},
+            ),
+        )
+
+    def _assessment_questions(
+        self,
+        student_id: str,
+        goal_key: str,
+        state: dict[str, Any],
+        assessment_type: str,
+        knowledge_point_id: str,
+    ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+        custom_goal = str(state.get("support_level") or "") == "generated_scaffold"
+        if assessment_type == "initial_diagnostic":
+            weak_points = [
+                item
+                for item in as_list(state.get("weak_points"))
+                if isinstance(item, dict)
+            ]
+            if custom_goal:
+                scope = [
+                    {
+                        "knowledge_point_id": str(item.get("knowledge_point_id") or ""),
+                        "knowledge_point_name": str(item.get("knowledge_point_name") or ""),
+                    }
+                    for item in as_list(as_dict(state.get("learning_path")).get("items"))
+                    if isinstance(item, dict) and str(item.get("knowledge_point_id") or "")
+                ]
+                if self.gateway.mode != "remote":
+                    questions, provider = [], "source_pending"
+                else:
+                    try:
+                        generated_result = self.gateway.invoke_quiz_workflow(
+                            {
+                                "student_id": student_id,
+                                "goal": "custom",
+                                "goal_description": str(
+                                    as_dict(state.get("goal")).get("original_text") or ""
+                                ),
+                                "weak_points": weak_points,
+                                "knowledge_list": scope,
+                            }
+                        )
+                        questions, _ = self._validate_quiz_questions(
+                            as_list(generated_result.get("questions"))
+                        )
+                        allowed_ids = {
+                            str(item.get("knowledge_point_id") or "") for item in scope
+                        }
+                        questions = [
+                            item
+                            for item in questions
+                            if str(item.get("knowledge_point_id") or "") in allowed_ids
+                        ]
+                        provider = str(generated_result.get("provider") or "workflow")
+                    except Exception:
+                        questions, provider = [], "source_pending"
+            else:
+                questions, provider = self._generate_diagnosis_questions(
+                    student_id, goal_key, weak_points
+                )
+                scope = self._goal_knowledge_list(goal_key)
+        else:
+            target = self._assessment_target_point(state, knowledge_point_id)
+            target_id = str(target.get("knowledge_point_id") or "")
+            if not target_id:
+                raise ApiError(409, "ASSESSMENT_SCOPE_EMPTY", "当前项目还没有可检测的知识点")
+            candidates = [
+                item
+                for item in DIAGNOSIS_BANK
+                if str(item.get("knowledge_point_id") or "") == target_id
+                and (not item.get("goals") or goal_key in as_list(item.get("goals")))
+            ]
+            candidates.sort(key=lambda item: int(item.get("difficulty", 1) or 1))
+            questions = [
+                {
+                    "question_id": str(item.get("id") or ""),
+                    "knowledge_point_id": target_id,
+                    "knowledge_point_name": str(
+                        item.get("knowledge_point_name")
+                        or target.get("knowledge_point_name")
+                        or target_id
+                    ),
+                    "title": str(item.get("title") or ""),
+                    "options": as_dict(item.get("options")),
+                    "answer": str(item.get("answer") or ""),
+                    "explanation": str(item.get("explanation") or ""),
+                    "difficulty": int(item.get("difficulty", 1) or 1),
+                    "source": str(item.get("source") or "本地审核题库"),
+                }
+                for item in candidates[:3]
+            ]
+            provider = "reviewed_bank"
+            scope = [
+                {
+                    "knowledge_point_id": target_id,
+                    "knowledge_point_name": str(
+                        target.get("knowledge_point_name") or target_id
+                    ),
+                }
+            ]
+        if not questions:
+            raise ApiError(
+                409,
+                "ASSESSMENT_QUESTION_GAP",
+                (
+                    "该目标的对应题源尚未通过校验，系统不会用其他领域题目或未核实的联网内容临时拼题"
+                    if custom_goal
+                    else "当前范围缺少已审核题目，系统不会用未核实的联网内容临时拼题"
+                ),
+            )
+        normalized = []
+        for item in questions:
+            normalized.append(
+                {
+                    **item,
+                    "source": str(item.get("source") or "本地审核题库"),
+                    "source_type": (
+                        "ai_generated_reviewed"
+                        if provider in {"workflow", "workflow_reuse", "mock_bank"}
+                        else "curated_bank"
+                    ),
+                    "quality_status": "reviewed",
+                }
+            )
+        blueprint = {
+            "assessment_type": assessment_type,
+            "goal": goal_key,
+            "coverage": scope,
+            "question_count": len(normalized),
+            "selection_rule": (
+                "按目标能力图谱覆盖取样"
+                if assessment_type == "initial_diagnostic"
+                else "按所选知识点从已审核题库取样"
+            ),
+            "pass_rule": (
+                "用于定位起点，不设置简单分数通过线"
+                if assessment_type == "initial_diagnostic"
+                else "至少两个不同题目形成独立正确证据"
+            ),
+            "source_policy": "权威材料或已审核题库优先；联网检索内容不得直接成为正式试题",
+        }
+        return normalized, provider, blueprint
+
+    def _provisional_assessment_questions(
+        self, student_id: str, state: dict[str, Any], knowledge_point_id: str
+    ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
+        path_items = [
+            item
+            for item in as_list(as_dict(state.get("learning_path")).get("items"))
+            if isinstance(item, dict) and str(item.get("knowledge_point_id") or "")
+        ]
+        if knowledge_point_id:
+            path_items = [
+                item
+                for item in path_items
+                if str(item.get("knowledge_point_id") or "") == knowledge_point_id
+            ]
+        scope = [
+            {
+                "knowledge_point_id": str(item.get("knowledge_point_id") or ""),
+                "knowledge_point_name": str(item.get("knowledge_point_name") or ""),
+            }
+            for item in path_items[:6]
+        ]
+        if not scope:
+            raise ApiError(409, "ASSESSMENT_SCOPE_EMPTY", "当前项目还没有可自检的学习节点")
+        questions: list[dict[str, Any]] = []
+        provider = "provisional_readiness_fallback"
+        if self.gateway.mode == "remote":
+            try:
+                generated = self.gateway.invoke_quiz_workflow({
+                    "student_id": student_id,
+                    "goal": "custom",
+                    "goal_description": str(
+                        as_dict(state.get("goal")).get("original_text") or ""
+                    ),
+                    "assessment_type": "provisional_self_check",
+                    "knowledge_list": scope,
+                    "source_policy": (
+                        "只生成低风险自检题；题目未经领域审核，不得写入正式画像或调整路径"
+                    ),
+                })
+                questions, _ = self._validate_quiz_questions(
+                    as_list(generated.get("questions"))
+                )
+                allowed_ids = {item["knowledge_point_id"] for item in scope}
+                questions = [
+                    item
+                    for item in questions
+                    if str(item.get("knowledge_point_id") or "") in allowed_ids
+                ][:6]
+                if questions:
+                    provider = str(generated.get("provider") or "workflow_provisional")
+            except Exception:
+                questions = []
+        if not questions:
+            questions = [
+                {
+                    "question_id": f"PROVISIONAL-{uuid.uuid4().hex[:10].upper()}",
+                    "knowledge_point_id": item["knowledge_point_id"],
+                    "knowledge_point_name": item["knowledge_point_name"],
+                    "title": (
+                        f"对于“{item['knowledge_point_name']}”，下面哪项最能作为完成本阶段学习的可检查证据？"
+                    ),
+                    "options": {
+                        "a": "看过一遍相关资料",
+                        "b": "记住了几个术语",
+                        "c": "能独立完成一个小任务，并解释结果和常见错误",
+                        "d": "收藏了一个教程链接",
+                    },
+                    "answer": "c",
+                    "explanation": (
+                        "仅观看或记忆不能证明能够应用；独立产出、解释结果并识别错误是更可检查的学习证据。"
+                    ),
+                    "difficulty": 1,
+                    "source": "通用学习证据规则（非领域知识题）",
+                }
+                for item in scope[:3]
+            ]
+        normalized = [
+            {
+                **item,
+                "source": str(item.get("source") or "AI 临时生成（未做领域审核）"),
+                "source_type": "ai_generated_unreviewed",
+                "quality_status": "unverified",
+            }
+            for item in questions
+        ]
+        blueprint = {
+            "assessment_type": "provisional_self_check",
+            "goal": "custom",
+            "coverage": scope,
+            "question_count": len(normalized),
+            "selection_rule": "按候选路径节点生成低风险临时自检",
+            "pass_rule": "只提供即时反馈，不形成正式通过结论",
+            "source_policy": (
+                "AI 生成题或通用准备度题未经领域审核；结果不进入画像、不更新掌握度、不调整路径"
+            ),
+        }
+        return normalized, provider, blueprint
+
+    def project_assessment_start(self, incoming: dict[str, Any]) -> dict[str, Any]:
         student_id = str(incoming.get("student_id", "")).strip()
         project_id = str(incoming.get("project_id", "")).strip()
         project = self._require_project(student_id, project_id)
         state = as_dict(project["state"])
-        goal_key = self.PROJECT_GOAL_DIAGNOSIS.get(
-            str(project.get("goal_id", "")), "daily"
+        assessment_type = str(
+            incoming.get("assessment_type") or "initial_diagnostic"
+        ).strip()
+        provisional = assessment_type == "provisional_self_check"
+        if str(state.get("planning_state") or "ready") != "ready":
+            raise ApiError(
+                409,
+                "GOAL_KNOWLEDGE_MAPPING_PENDING",
+                "该目标的知识结构和题目来源仍在校验，暂不能开始测评，以免生成与目标无关的题目",
+            )
+        if str(state.get("assessment_state") or "ready") != "ready" and not provisional:
+            raise ApiError(
+                409,
+                "GOAL_ASSESSMENT_SOURCE_PENDING",
+                "该目标的对应题源尚未通过校验，可先按候选路径学习；系统不会套用其他领域题目",
+            )
+        type_meta = self.ASSESSMENT_TYPES.get(assessment_type)
+        if not type_meta:
+            raise ApiError(400, "UNKNOWN_ASSESSMENT_TYPE", "不支持的测评类型")
+        requested_point = str(incoming.get("knowledge_point_id") or "").strip()
+        if provisional:
+            goal_key = "custom"
+            goal_label = str(project.get("goal_name") or "自定义目标")
+            questions, provider, blueprint = self._provisional_assessment_questions(
+                student_id, state, requested_point
+            )
+        else:
+            goal_key = self.PROJECT_GOAL_DIAGNOSIS.get(
+                str(project.get("goal_id", "")), "daily"
+            )
+            goal_config = DIAGNOSIS_GOALS.get(goal_key)
+            if not goal_config:
+                raise ApiError(400, "UNKNOWN_GOAL", f"不支持的目标：{goal_key}")
+            goal_label = str(goal_config["label"])
+            questions, provider, blueprint = self._assessment_questions(
+                student_id,
+                goal_key,
+                state,
+                assessment_type,
+                requested_point,
+            )
+        title = f"{type_meta['label']} · {project['goal_name']}"
+        assessment_id = self.store.create_assessment_run(
+            project_id,
+            student_id,
+            assessment_type,
+            title,
+            type_meta["stakes"],
+            provider,
+            blueprint,
         )
-        goal_config = DIAGNOSIS_GOALS.get(goal_key)
-        if not goal_config:
-            raise ApiError(400, "UNKNOWN_GOAL", f"不支持的目标：{goal_key}")
-        weak_points = [
-            item for item in as_list(state.get("weak_points")) if isinstance(item, dict)
-        ]
-        generated, provider = self._generate_diagnosis_questions(
-            student_id, goal_key, weak_points
-        )
-        questions = [
-            {
-                "question_id": item["question_id"],
-                "knowledge_point_id": item["knowledge_point_id"],
-                "knowledge_point_name": item["knowledge_point_name"],
-                "title": item["title"],
-                "options": item["options"],
-                "difficulty": item["difficulty"],
-                "answer": item["answer"],
-                "explanation": item["explanation"],
-            }
-            for item in generated
-        ]
-        state["diagnosis_session"] = {
+        session = {
+            "assessment_id": assessment_id,
+            "assessment_type": assessment_type,
+            "title": title,
+            "stakes": type_meta["stakes"],
+            "evidence_role": type_meta["evidence_role"],
             "goal": goal_key,
             "questions": questions,
             "index": 0,
@@ -3676,8 +5441,13 @@ class LearningApplication:
             "skipped": 0,
             "results": [],
             "done": False,
+            "blueprint": blueprint,
+            "formal_evidence": not provisional,
         }
-        self.store.save_project_state(project_id, state, status="diagnosis")
+        state["assessment_session"] = session
+        if assessment_type == "initial_diagnostic":
+            state["diagnosis_session"] = session
+        self.store.save_project_state(project_id, state, status="assessment")
         public_questions = [
             {k: v for k, v in q.items() if k not in ("answer", "explanation")}
             for q in questions
@@ -3685,23 +5455,40 @@ class LearningApplication:
         return {
             "status": "ok",
             "project_id": project_id,
+            "assessment_id": assessment_id,
+            "assessment_type": assessment_type,
+            "title": title,
+            "stakes": type_meta["stakes"],
             "goal": goal_key,
-            "goal_label": goal_config["label"],
+            "goal_label": goal_label,
             "provider": provider,
+            "blueprint": blueprint,
+            "source_policy": blueprint["source_policy"],
             "questions": public_questions,
             "total": len(public_questions),
         }
 
-    def project_diagnosis_answer(self, incoming: dict[str, Any]) -> dict[str, Any]:
+    def project_diagnosis_start(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        return self.project_assessment_start(
+            {**incoming, "assessment_type": "initial_diagnostic"}
+        )
+
+    def project_assessment_answer(self, incoming: dict[str, Any]) -> dict[str, Any]:
         student_id = str(incoming.get("student_id", "")).strip()
         project_id = str(incoming.get("project_id", "")).strip()
         project = self._require_project(student_id, project_id)
         state = as_dict(project["state"])
-        session = as_dict(state.get("diagnosis_session"))
+        session = as_dict(
+            state.get("assessment_session") or state.get("diagnosis_session")
+        )
         if not session:
             raise ApiError(409, "DIAGNOSIS_NOT_ACTIVE", "当前没有进行中的测评，请先开始")
         if session.get("done"):
             raise ApiError(409, "DIAGNOSIS_FINISHED", "本轮测评已结束，请重新开始")
+        expected_assessment_id = str(session.get("assessment_id") or "")
+        requested_assessment_id = str(incoming.get("assessment_id") or "").strip()
+        if requested_assessment_id and requested_assessment_id != expected_assessment_id:
+            raise ApiError(409, "ASSESSMENT_SESSION_MISMATCH", "测评会话已变化，请重新打开当前测评")
         skipped = bool(incoming.get("skipped"))
         selected = str(incoming.get("selected", "")).strip()
         index = int(session.get("index", 0) or 0)
@@ -3709,6 +5496,7 @@ class LearningApplication:
         if index >= len(questions):
             raise ApiError(409, "DIAGNOSIS_FINISHED", "本轮测评已结束")
         current = questions[index]
+        formal_evidence = bool(session.get("formal_evidence", True))
         if skipped:
             correct = False
             session["skipped"] = int(session.get("skipped", 0) or 0) + 1
@@ -3718,12 +5506,17 @@ class LearningApplication:
             correct = selected == str(current.get("answer", ""))
             key = "correct" if correct else "wrong"
             session[key] = int(session.get(key, 0) or 0) + 1
-        if not skipped:
+        attempt_result: dict[str, Any] = {}
+        if not skipped and formal_evidence:
             # 测评作答落库（与现有诊断一致），供画像溯源/学习记录使用
-            self.domain.record_choice_attempt(
+            attempt_result = self.domain.record_choice_attempt(
                 student_id=student_id,
                 source_question_id=str(current.get("question_id", "")),
-                mode="diagnosis",
+                mode=(
+                    "diagnosis"
+                    if session.get("assessment_type") == "initial_diagnostic"
+                    else str(session.get("assessment_type") or "assessment")
+                ),
                 knowledge_point_id=str(current.get("knowledge_point_id", "")),
                 knowledge_point_name=str(current.get("knowledge_point_name", "")),
                 title=str(current.get("title", "")),
@@ -3733,6 +5526,37 @@ class LearningApplication:
                 selected=selected,
                 explanation=str(current.get("explanation", "")),
             )
+        confidence = (
+            0.3
+            if skipped
+            else 0.9
+            if session.get("evidence_role") == "verification"
+            else 0.85
+            if session.get("evidence_role") == "diagnostic"
+            else 0.65
+        )
+        evidence_event_id = ""
+        if formal_evidence:
+            evidence_event_id = self.store.record_assessment_evidence(
+                expected_assessment_id,
+                project_id,
+                student_id,
+                str(current.get("question_id") or ""),
+                str(current.get("knowledge_point_id") or ""),
+                "ANSWER_SKIPPED" if skipped else "ANSWER_SUBMITTED",
+                str(session.get("evidence_role") or "diagnostic"),
+                confidence,
+                {
+                    "correct": correct,
+                    "skipped": skipped,
+                    "selected": selected,
+                    "assisted": False,
+                    "difficulty": int(current.get("difficulty", 1) or 1),
+                    "source": str(current.get("source") or ""),
+                    "source_type": str(current.get("source_type") or ""),
+                    "attempt_id": str(attempt_result.get("attempt_id") or ""),
+                },
+            )
         session.setdefault("results", []).append(
             {
                 "question_id": current.get("question_id", ""),
@@ -3740,13 +5564,16 @@ class LearningApplication:
                 "knowledge_point_name": current.get("knowledge_point_name", ""),
                 "correct": correct,
                 "skipped": skipped,
+                "evidence_event_id": evidence_event_id,
             }
         )
         is_last = index + 1 >= len(questions)
         session["index"] = index + 1
         if is_last:
             session["done"] = True
-        state["diagnosis_session"] = session
+        state["assessment_session"] = session
+        if session.get("assessment_type") == "initial_diagnostic":
+            state["diagnosis_session"] = session
         self.store.save_project_state(project_id, state)
 
         stats = {
@@ -3765,67 +5592,265 @@ class LearningApplication:
             "knowledge_point_id": current.get("knowledge_point_id", ""),
             "knowledge_point_name": current.get("knowledge_point_name", ""),
             "answer": current.get("answer", ""),
+            "assessment_id": expected_assessment_id,
+            "assessment_type": session.get("assessment_type", "initial_diagnostic"),
+            "evidence_event_id": evidence_event_id,
             "stats": stats,
         }
         if not is_last:
             return base
-        summary = self._finalize_project_diagnosis(state, session)
-        self.store.save_project_state(project_id, state, status="diagnosis_done")
+        summary = (
+            self._finalize_project_assessment(student_id, project_id, state, session)
+            if formal_evidence
+            else self._finalize_provisional_self_check(session)
+        )
+        self.store.complete_assessment_run(expected_assessment_id, summary)
+        self.store.save_project_state(project_id, state, status="assessment_done")
         base["status"] = "completed"
         base["summary"] = summary
         return base
 
     @staticmethod
-    def _finalize_project_diagnosis(
-        state: dict[str, Any], session: dict[str, Any]
+    def _finalize_provisional_self_check(session: dict[str, Any]) -> dict[str, Any]:
+        total = len(as_list(session.get("results")))
+        correct = int(session.get("correct", 0) or 0)
+        return {
+            "assessment_id": str(session.get("assessment_id") or ""),
+            "assessment_type": "provisional_self_check",
+            "title": str(session.get("title") or "AI 临时自检"),
+            "score": correct,
+            "total": total,
+            "weak_points": [],
+            "knowledge_updates": [],
+            "evidence_count": 0,
+            "formal_evidence": False,
+            "mastery_note": "题目未经领域审核，本次结果不写入正式画像或掌握度。",
+            "path_adjustment": "未调整学习路径；请在正式题源接入后完成目标诊断。",
+            "feedback": (
+                f"临时自检完成：{correct}/{total}。结果仅作即时参考，不代表正式能力结论。"
+            ),
+        }
+
+    def project_diagnosis_answer(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        return self.project_assessment_answer(incoming)
+
+    def _finalize_project_assessment(
+        self,
+        student_id: str,
+        project_id: str,
+        state: dict[str, Any],
+        session: dict[str, Any],
     ) -> dict[str, Any]:
-        """答错题目按知识点归因：更新项目路径掌握度并生成薄弱点摘要。"""
-        wrong_counts: dict[str, dict[str, Any]] = {}
-        for record in as_list(session.get("results")):
-            if record.get("correct") or record.get("skipped"):
+        """证据账本 → 可解释状态 → 路径调整；数值是规则指数，不冒充统计概率。"""
+        evidence = self.store.list_assessment_evidence(project_id, student_id)
+        aggregates: dict[str, dict[str, Any]] = {}
+        for event in evidence:
+            kp_id = str(event.get("knowledge_point_id") or "")
+            if not kp_id:
                 continue
-            kp_id = str(record.get("knowledge_point_id", ""))
-            entry = wrong_counts.setdefault(
+            payload = as_dict(event.get("payload"))
+            aggregate = aggregates.setdefault(
                 kp_id,
-                {"count": 0, "name": str(record.get("knowledge_point_name", kp_id))},
+                {"correct": set(), "wrong": set(), "skipped": 0, "events": []},
             )
-            entry["count"] += 1
+            aggregate["events"].append(str(event.get("event_id") or ""))
+            question_id = str(event.get("question_id") or "")
+            if event.get("event_type") == "ANSWER_SKIPPED":
+                aggregate["skipped"] += 1
+            elif payload.get("correct") and not payload.get("assisted"):
+                aggregate["correct"].add(question_id)
+            else:
+                aggregate["wrong"].add(question_id)
+
         path = as_dict(state.get("learning_path"))
         items = [dict(item) for item in as_list(path.get("items")) if isinstance(item, dict)]
-        updated = []
+        knowledge_updates = []
         for item in items:
-            kp_id = str(item.get("knowledge_point_id", ""))
-            if kp_id in wrong_counts:
-                try:
-                    mastery = int(item.get("mastery", 0) or 0)
-                except (TypeError, ValueError):
-                    mastery = 0
-                item["mastery"] = max(0, min(100, mastery - 12))
-            updated.append(item)
-        if updated:
-            state["learning_path"] = {**path, "items": updated}
-        weak_points = sorted(
-            (
+            kp_id = str(item.get("knowledge_point_id") or "")
+            aggregate = aggregates.get(kp_id)
+            if not aggregate:
+                continue
+            correct_count = len(aggregate["correct"])
+            wrong_count = len(aggregate["wrong"])
+            graded_count = correct_count + wrong_count
+            ratio = correct_count / graded_count if graded_count else 0.0
+            current_session_records = [
+                record
+                for record in as_list(session.get("results"))
+                if str(record.get("knowledge_point_id") or "") == kp_id
+                and not record.get("skipped")
+            ]
+            current_all_correct = bool(current_session_records) and all(
+                record.get("correct") for record in current_session_records
+            )
+            if (
+                session.get("evidence_role") == "verification"
+                and len(current_session_records) >= 2
+                and current_all_correct
+            ):
+                evidence_status, mastery_index = "verified_once", 85
+            elif correct_count >= 2 and ratio >= 0.67:
+                evidence_status, mastery_index = "supported", 80
+            elif correct_count >= 1 and wrong_count == 0:
+                evidence_status, mastery_index = "candidate", 60
+            elif graded_count and ratio >= 0.5:
+                evidence_status, mastery_index = "developing", 50
+            elif graded_count:
+                evidence_status, mastery_index = "needs_support", 35
+            else:
+                evidence_status, mastery_index = "unknown", 0
+            confidence = min(0.95, 0.25 + graded_count * 0.15)
+            item.update(
+                {
+                    "mastery": mastery_index,
+                    "mastery_is_estimated": True,
+                    "mastery_model": "evidence_rule_v1",
+                    "evidence_status": evidence_status,
+                    "evidence_count": len(aggregate["events"]),
+                    "confidence": round(confidence, 2),
+                }
+            )
+            if evidence_status in {"verified_once", "supported"}:
+                item["status"] = "completed"
+            elif evidence_status in {"needs_support", "developing"}:
+                item["status"] = "current"
+            knowledge_updates.append(
                 {
                     "knowledge_point_id": kp_id,
-                    "knowledge_point_name": entry["name"],
-                    "error_count": entry["count"],
+                    "knowledge_point_name": str(item.get("knowledge_point_name") or kp_id),
+                    "evidence_status": evidence_status,
+                    "mastery_index": mastery_index,
+                    "confidence": round(confidence, 2),
+                    "evidence_count": len(aggregate["events"]),
+                    "correct_count": correct_count,
+                    "wrong_count": wrong_count,
+                }
+            )
+        verified_ids = {
+            str(record.get("knowledge_point_id") or "")
+            for record in as_list(session.get("results"))
+            if record.get("correct")
+        }
+        for index, item in enumerate(items[:-1]):
+            if (
+                str(item.get("knowledge_point_id") or "") in verified_ids
+                and item.get("evidence_status") == "verified_once"
+                and str(items[index + 1].get("status") or "") == "pending"
+            ):
+                items[index + 1]["status"] = "current"
+        state["learning_path"] = {**path, "items": items}
+
+        weak_points = []
+        for update in knowledge_updates:
+            if update["evidence_status"] not in {"needs_support", "developing"}:
+                continue
+            kp_id = update["knowledge_point_id"]
+            card = default_error_card_for(kp_id)
+            weak_points.append(
+                {
+                    "knowledge_point_id": kp_id,
+                    "knowledge_point_name": update["knowledge_point_name"],
+                    "error_count": update["wrong_count"],
                     "error_id": card.get("error_id", ""),
                     "error_type": card.get("error_type", ""),
                     "misconception_tag": card.get("misconception_tag", ""),
                     "root_cause": card.get("root_cause", ""),
+                    "evidence_status": update["evidence_status"],
                 }
-                for kp_id, entry in wrong_counts.items()
-                for card in (default_error_card_for(kp_id),)
-            ),
-            key=lambda item: -item["error_count"],
-        )
+            )
+        weak_points.sort(key=lambda item: -int(item.get("error_count", 0) or 0))
         state["weak_points"] = weak_points
-        return {
+        total = len(as_list(session.get("results")))
+        correct = int(session.get("correct", 0) or 0)
+        summary = {
+            "assessment_id": str(session.get("assessment_id") or ""),
+            "assessment_type": str(session.get("assessment_type") or "initial_diagnostic"),
+            "title": str(session.get("title") or "能力测评"),
+            "score": correct,
+            "total": total,
             "weak_points": weak_points,
+            "knowledge_updates": knowledge_updates,
+            "evidence_count": len(as_list(session.get("results"))),
+            "mastery_note": "掌握度为 evidence_rule_v1 规则指数，不是统计概率；可点击证据记录追溯。",
+            "path_adjustment": (
+                "已依据证据状态标记补强节点，并在通过阶段检查后解锁下一节点。"
+            ),
             "feedback": (
-                f"测评完成：发现 {len(weak_points)} 个薄弱知识点，"
-                "已更新掌握度，建议按路径顺序优先学习薄弱项。"
+                f"测评完成：{correct}/{total}，发现 {len(weak_points)} 个需要补强的知识点。"
+            ),
+        }
+        state["last_assessment_summary"] = summary
+        return summary
+
+    def project_assessments(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        student_id = str(incoming.get("student_id") or "").strip()
+        project_id = str(incoming.get("project_id") or "").strip()
+        project = self._require_project(student_id, project_id)
+        state = as_dict(project.get("state"))
+        planning_ready = str(state.get("planning_state") or "ready") == "ready"
+        assessment_ready = str(state.get("assessment_state") or "ready") == "ready"
+        target = self._assessment_target_point(state, "")
+        catalog = []
+        if planning_ready and assessment_ready:
+            catalog = [
+                {
+                    "assessment_type": key,
+                    **meta,
+                    "recommended_knowledge_point_id": (
+                        ""
+                        if key == "initial_diagnostic"
+                        else str(target.get("knowledge_point_id") or "")
+                    ),
+                    "recommended_knowledge_point_name": (
+                        "目标能力图谱"
+                        if key == "initial_diagnostic"
+                        else str(target.get("knowledge_point_name") or "当前章节")
+                    ),
+                }
+                for key, meta in self.ASSESSMENT_TYPES.items()
+                if key != "provisional_self_check"
+            ]
+        elif planning_ready:
+            catalog = [{
+                "assessment_type": "provisional_self_check",
+                **self.ASSESSMENT_TYPES["provisional_self_check"],
+                "recommended_knowledge_point_id": str(
+                    target.get("knowledge_point_id") or ""
+                ),
+                "recommended_knowledge_point_name": str(
+                    target.get("knowledge_point_name") or "候选路径"
+                ),
+            }]
+        return {
+            "status": "ok",
+            "project_id": project_id,
+            "planning_state": str(state.get("planning_state") or "ready"),
+            "assessment_available": bool(catalog),
+            "formal_assessment_available": planning_ready and assessment_ready,
+            "availability_message": (
+                ""
+                if planning_ready and assessment_ready
+                else (
+                    "正式题源尚未通过校验；仅开放不写入画像的 AI 临时自检"
+                    if planning_ready
+                    else "知识结构与题目来源尚未校验完成，测评暂不可用"
+                )
+            ),
+            "catalog": catalog,
+            "history": self.store.list_assessment_runs(project_id, student_id),
+        }
+
+    def project_assessment_evidence(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        student_id = str(incoming.get("student_id") or "").strip()
+        project_id = str(incoming.get("project_id") or "").strip()
+        assessment_id = str(incoming.get("assessment_id") or "").strip()
+        self._require_project(student_id, project_id)
+        return {
+            "status": "ok",
+            "project_id": project_id,
+            "assessment_id": assessment_id,
+            "events": self.store.list_assessment_evidence(
+                project_id, student_id, assessment_id
             ),
         }
 
@@ -3853,6 +5878,14 @@ class LearningApplication:
                 404, "KNOWLEDGE_POINT_NOT_FOUND", "该项目路径中没有该知识点"
             )
 
+        learner_preferences = as_dict(state.get("learner_preferences"))
+        explanation_style = str(
+            learner_preferences.get("explanation_style") or ""
+        ).strip()
+        event_type = {
+            "example_driven": "show_example",
+            "step_by_step": "show_steps",
+        }.get(explanation_style, "initialize_learning")
         context = {
             "student_id": student_id,
             "session_id": f"PROJECT-{project_id}",
@@ -3862,16 +5895,34 @@ class LearningApplication:
             },
             "learning_path": path,
             "current_knowledge_point": target,
-            "event_type": "initialize_learning",
+            "event_type": event_type,
             "goal_driven": True,
+            "learner_preferences": learner_preferences,
+            "learner_self_reports": as_list(state.get("learner_self_reports"))[-5:],
         }
-        self._prepare_learning_workflow_context(context, {})
-        self._attach_video_search("learning", context)
-        workflow_payload = self._learning_workflow_payload(context)
-        result = self.gateway.invoke_learning_workflow(workflow_payload)
-        result = self._normalize_learning_result(result, context)
-        self._merge_web_sources(result)
-        self._merge_video_resources(result, context)
+        if str(state.get("support_level") or "") == "generated_scaffold":
+            result = self._custom_goal_lesson(project, state, target)
+        else:
+            self._prepare_learning_workflow_context(context, {})
+            self._attach_video_search("learning", context)
+            workflow_payload = self._learning_workflow_payload(context)
+            try:
+                result = self.gateway.invoke_learning_workflow(workflow_payload)
+                result = self._normalize_learning_result(result, context)
+                if str(result.get("status") or "") != "ok" or not as_list(
+                    result.get("content_blocks")
+                ):
+                    raise GatewayError("学习工作流未返回可展示的讲解内容")
+            except Exception:
+                result = self.gateway._mock_learning(workflow_payload)
+                result["fallback_used"] = True
+                result["fallback_reason"] = "远程学习工作流暂时不可用"
+                result["source_status"] = "verified_local_fallback"
+                result["source_notice"] = (
+                    "本次已自动改用本地课程知识库组织讲解；联网工作流恢复后会优先使用远程生成。"
+                )
+            self._merge_web_sources(result)
+            self._merge_video_resources(result, context)
 
         # 路径状态推进：pending/current → learning（记录学习行为）
         for index, item in enumerate(items):
@@ -3886,6 +5937,99 @@ class LearningApplication:
         result["project_id"] = project_id
         result["knowledge_point_id"] = knowledge_point_id
         return result
+
+    @staticmethod
+    def _custom_goal_lesson(
+        project: dict[str, Any], state: dict[str, Any], target: dict[str, Any]
+    ) -> dict[str, Any]:
+        goal = as_dict(state.get("goal"))
+        goal_name = str(project.get("goal_name") or goal.get("goal_name") or "学习目标")
+        knowledge_name = str(target.get("knowledge_point_name") or "当前知识点")
+        outcome = str(as_dict(goal.get("constraints")).get("target_outcome") or "")
+        order = int(target.get("recommended_order", 1) or 1)
+        path_items = [
+            item
+            for item in as_list(as_dict(state.get("learning_path")).get("items"))
+            if isinstance(item, dict)
+        ]
+        previous = path_items[order - 2] if order > 1 and len(path_items) >= order - 1 else {}
+        next_item = path_items[order] if len(path_items) > order else {}
+        return {
+            "status": "ok",
+            "workflow_mode": "candidate_scaffold",
+            "lesson_title": knowledge_name,
+            "lesson_objective": (
+                f"完成本节后，能够说明“{knowledge_name}”在“{goal_name}”中的作用，"
+                + (f"并将其用于“{outcome}”。" if outcome else "并完成一个可检查的小任务。")
+            ),
+            "content_blocks": [
+                {
+                    "type": "warning",
+                    "title": "内容状态说明",
+                    "content": (
+                        "这是根据目标语义生成的候选讲解框架，尚未绑定经过审核的课程标准或权威资料。"
+                        "可用于确定学习方向，不应替代正式教材和教师审核。"
+                    ),
+                    "source": "目标语义拆解（待权威来源复核）",
+                },
+                {
+                    "type": "weakness_connection",
+                    "title": "本节在路径中的位置",
+                    "content": (
+                        f"这是第 {order} 个学习节点。"
+                        + (
+                            f"建议先完成“{previous.get('knowledge_point_name')}”，再进入本节。"
+                            if previous
+                            else "本节是当前候选路径的起点，用于建立后续学习所需基础。"
+                        )
+                    ),
+                    "source": "候选学习路径",
+                },
+                {
+                    "type": "concept",
+                    "title": "学习重点",
+                    "content": (
+                        f"围绕“{knowledge_name}”建立三个层次：先理解关键术语与适用边界，"
+                        "再观察一个完整案例，最后独立完成一个能被检查的产出。"
+                    ),
+                    "source": "通用教学任务框架（待领域资料补充）",
+                },
+                {
+                    "type": "steps",
+                    "title": "建议学习步骤",
+                    "items": [
+                        f"列出“{knowledge_name}”必须掌握的 3-5 个关键概念",
+                        "找一个与目标一致的完整案例，标注输入、过程与输出",
+                        "不看答案复现关键步骤，并记录卡住的位置",
+                        (
+                            f"完成一个能为“{outcome}”服务的小产出"
+                            if outcome
+                            else "完成一个可运行、可展示或可评分的小产出"
+                        ),
+                        "用结果、错误记录或作品对照标准进行复盘",
+                    ],
+                    "source": "候选学习策略",
+                },
+                {
+                    "type": "workplace",
+                    "title": "完成标准",
+                    "content": (
+                        "能用自己的话说明核心概念，能独立完成一次小任务，并能指出至少一个常见错误及修正方法。"
+                        + (
+                            f"完成后可继续“{next_item.get('knowledge_point_name')}”。"
+                            if next_item
+                            else "完成后进入整体成果验收与复盘。"
+                        )
+                    ),
+                    "source": "候选验收标准（待教师或行业标准复核）",
+                },
+            ],
+            "resources": [],
+            "sources": [],
+            "source_status": "candidate_unverified",
+            "source_notice": "尚未检索到通过校验的领域资料",
+            "alternative_modes": ["worked_example", "step_by_step"],
+        }
 
     def run_code(self, incoming: dict[str, Any]) -> dict[str, Any]:
         """本地执行用户代码（演示级沙箱：超时 + 输出上限 + 临时目录）。
@@ -4552,24 +6696,107 @@ class LearningApplication:
             raise ApiError(400, "MISSING_MESSAGE", "请输入要咨询的问题")
         student_id = str(incoming.get("student_id") or "").strip()
         session_id = str(incoming.get("session_id") or "default").strip()
+        project_id = str(incoming.get("project_id") or "").strip()
+        workspace_context = as_dict(incoming.get("workspace_context"))
+        project = self._require_project(student_id, project_id) if project_id else None
+        project_state = as_dict(project.get("state")) if project else {}
+        assistant_mode = str(incoming.get("assistant_mode") or "education").strip().lower()
+        if assistant_mode not in {"education", "general"}:
+            assistant_mode = "education"
+        use_knowledge_base = bool(incoming.get("use_knowledge_base", True))
+        allow_web_search = bool(incoming.get("allow_web_search", True))
+        force_web_search = bool(incoming.get("force_web_search", False)) or any(
+            word in message.lower()
+            for word in ("上网搜索", "联网搜索", "网上查", "搜索一下", "最新", "官网", "近期")
+        )
+        if (
+            assistant_mode == "education"
+            and not project
+            and not self._relevant_knowledge_items(message, limit=1)
+            and not any(
+                word in message.lower()
+                for word in (
+                    "学习", "学会", "想学", "掌握", "备考", "考试", "考证", "竞赛",
+                    "实训", "课程", "岗位能力", "提升技能",
+                )
+            )
+        ):
+            assistant_mode = "general"
+
+        if message in {"谢谢", "感谢", "好的", "明白了", "知道了", "收到"}:
+            return {
+                "status": "ok",
+                "answer": "好的，我会继续结合当前项目和你刚才提供的信息来调整后续建议。",
+                "ai_generated": False,
+                "answer_mode": "conversation_acknowledgement",
+                "session_id": session_id,
+                "sources": [],
+            }
+
+        unavailable_tool = self._unavailable_external_tool(message)
+        if unavailable_tool:
+            return {
+                "status": "ok",
+                "answer": unavailable_tool,
+                "ai_generated": False,
+                "answer_mode": "tool_unavailable",
+                "session_id": session_id,
+                "sources": [],
+            }
 
         # 多轮上下文：读取会话历史，指代消解
         state = self.store.get_student_state(student_id)
-        history = [
-            item
-            for item in as_list(state.get("chat_history"))
-            if isinstance(item, dict) and str(item.get("content") or "").strip()
-        ]
+        if project:
+            history = [
+                {"role": str(item.get("role") or ""), "content": str(item.get("content") or "")}
+                for item in self.store.list_project_messages(project_id, student_id, limit=16)
+                if str(item.get("content") or "").strip()
+            ]
+        else:
+            history = [
+                item
+                for item in as_list(state.get("chat_history"))
+                if isinstance(item, dict) and str(item.get("content") or "").strip()
+            ]
         resolved = self._resolve_reference(message, history)
-        items = self.domain.search_knowledge(query=resolved, limit=3)
+        active_knowledge_id = str(workspace_context.get("knowledge_point_id") or "")
+        candidate_project = bool(
+            project and str(project_state.get("support_level") or "") == "generated_scaffold"
+        )
+        question_action = ""
+        if any(word in message for word in ("为什么", "是什么", "原理", "作用")):
+            question_action = "concept"
+        elif any(word in message for word in ("怎么", "如何", "步骤", "怎么做")):
+            question_action = "steps"
+        elif any(word in message for word in ("报错", "错误", "易错", "注意")):
+            question_action = "warning"
+        elif any(word in message for word in ("例子", "示例", "代码")):
+            question_action = "example"
+        if assistant_mode == "general" or not use_knowledge_base or candidate_project:
+            items = []
+        elif active_knowledge_id:
+            items = self.domain.search_knowledge(
+                query=resolved,
+                knowledge_point_id=active_knowledge_id,
+                action=question_action,
+                limit=3,
+            )
+            if not items:
+                items = self.domain.search_knowledge(
+                    knowledge_point_id=active_knowledge_id,
+                    action=question_action,
+                    limit=3,
+                )
+        else:
+            items = self._relevant_knowledge_items(resolved, limit=3)
 
         # 1) 模糊提问识别：疑问词 + 缺少领域知识点关键词 → 引导澄清（用原始消息判断）
         vague_words = ("怎么弄", "怎么办", "怎么做", "咋办", "啥意思", "是什么呀", "怎么用", "怎么实现")
         knowledge_hint = ("java", "类", "对象", "封装", "继承", "多态", "接口", "集合",
                           "异常", "io", "成绩", "平均分", "缺考", "getter", "构造器", "数组")
-        has_hint = any(kw in message.lower() for kw in knowledge_hint)
+        has_hint = bool(active_knowledge_id) or any(kw in message.lower() for kw in knowledge_hint)
         is_vague = any(v in message for v in vague_words) and not has_hint
-        if is_vague or len(message) <= 4:
+        if assistant_mode == "education" and (is_vague or len(message) <= 4):
             return {
                 "status": "needs_clarification",
                 "message": "你问的有点笼统，先确认一下你想了解的具体方向：",
@@ -4580,47 +6807,175 @@ class LearningApplication:
                 ],
             }
 
+        web_answer = None
+        if allow_web_search and (force_web_search or (not items and assistant_mode == "education")):
+            web_answer = self._chat_web_search(
+                resolved,
+                general_search=assistant_mode == "general",
+            )
+            if web_answer and assistant_mode == "education":
+                if bool(incoming.get("persist_history", True)):
+                    self._save_chat_history(
+                        student_id, state, history, message, web_answer["answer"]
+                    )
+                return web_answer
+            if force_web_search and not web_answer:
+                return {
+                    "status": "ok",
+                    "answer": (
+                        (
+                            "本次联网检索没有取得可用的网页结果，"
+                            if assistant_mode == "general"
+                            else "本次联网检索没有取得可核验的白名单来源，"
+                        )
+                        +
+                        "因此我不会用本地旧知识冒充最新搜索结果。"
+                        "你可以稍后重试，或换成更具体的官网、标准名称和关键词。"
+                    ),
+                    "ai_generated": False,
+                    "answer_mode": "web_search_unavailable",
+                    "web_searched": True,
+                    "session_id": session_id,
+                    "sources": [],
+                }
+
         # 2) remote 模式：生成类上平台（对话问答工作流，携带多轮历史）
-        if self.gateway.mode == "remote":
+        validated_project = not project or str(project_state.get("support_level") or "") == "validated_graph"
+        if self.gateway.mode == "remote" and (assistant_mode == "general" or validated_project):
             try:
+                context_memory = history[-6:]
+                if project:
+                    path_items = [
+                        str(item.get("knowledge_point_name") or "")
+                        for item in as_list(as_dict(project_state.get("learning_path")).get("items"))
+                        if isinstance(item, dict)
+                    ]
+                    context_memory = [{
+                        "role": "system",
+                        "content": json_text({
+                            "current_project": str(project.get("goal_name") or ""),
+                            "learning_path": path_items,
+                            "learner_preferences": as_dict(project_state.get("learner_preferences")),
+                            "workspace": workspace_context,
+                        }),
+                    }] + context_memory
+                project_context_text = ""
+                if project:
+                    project_context_text = (
+                        "\n\n【当前项目运行上下文】"
+                        + json_text({
+                            "goal_name": str(project.get("goal_name") or ""),
+                            "learning_path": path_items,
+                            "learner_preferences": as_dict(project_state.get("learner_preferences")),
+                            "learner_self_reports": as_list(project_state.get("learner_self_reports"))[-5:],
+                            "workspace": workspace_context,
+                            "instruction": (
+                                "可依据这些信息回答学习安排、节奏和下一步建议；"
+                                "自报基础均未验证，不得表述为已经掌握。"
+                            ),
+                        })
+                    )
+                source_items = items
+                if web_answer:
+                    source_items = as_list(web_answer.get("search_items"))
+                source_context = "\n".join(
+                    f"【{i.get('title')}】{i.get('content') or i.get('snippet') or ''} 来源：{i.get('url') or i.get('locator') or ''}"
+                    for i in source_items
+                    if isinstance(i, dict)
+                )
                 result = self.gateway.invoke_chat_workflow({
                     "message": message,
                     "student_id": student_id,
                     "student_profile": as_dict(self.domain.profile(student_id).get("profile")),
-                    "kb_text": "\n".join(
-                        f"【{i.get('title')}】{i.get('content')}" for i in items
-                    ) if items else "",
-                    "history_memory": history[-6:],
+                    "assistant_mode": assistant_mode,
+                    "source_kind": "web" if web_answer else ("knowledge_base" if items else "none"),
+                    "kb_text": source_context + project_context_text,
+                    "history_memory": context_memory,
                 })
-                answer = str(as_dict(result).get("message") or "").strip()
+                result_data = as_dict(result)
+                answer = str(
+                    result_data.get("message")
+                    or result_data.get("answer")
+                    or result_data.get("user_message")
+                    or ""
+                ).strip()
                 if answer:
-                    self._save_chat_history(student_id, state, history, message, answer)
+                    if assistant_mode == "general" and any(
+                        marker in answer
+                        for marker in (
+                            "知识库暂未覆盖",
+                            "只回答 Java",
+                            "专注 Java",
+                            "与 Java/课程无关",
+                        )
+                    ):
+                        answer = ""
+                if answer:
+                    if bool(incoming.get("persist_history", True)):
+                        self._save_chat_history(student_id, state, history, message, answer)
                     return {
                         "status": "ok",
                         "answer": answer,
                         "ai_generated": True,
+                        "answer_mode": (
+                            "web_synthesis"
+                            if web_answer
+                            else "general_generation"
+                            if assistant_mode == "general"
+                            else "education_generation"
+                        ),
+                        "web_searched": bool(web_answer),
                         "session_id": session_id,
-                        "sources": [
-                            {
-                                "title": str(i.get("source") or "知识库"),
-                                "locator": str(i.get("locator") or ""),
-                                "knowledge_point_id": str(i.get("knowledge_point_id") or ""),
-                                "quote_text": str(i.get("title") or ""),
-                            }
-                            for i in items
-                        ],
+                        "sources": (
+                            as_list(web_answer.get("sources"))
+                            if web_answer
+                            else self._knowledge_sources(items)
+                        ),
                     }
             except Exception:
                 # 工作流失败降级本地 RAG，保证演示不中断
                 pass
 
+        if assistant_mode == "general":
+            if web_answer:
+                if bool(incoming.get("persist_history", True)):
+                    self._save_chat_history(
+                        student_id, state, history, message, str(web_answer["answer"])
+                    )
+                return web_answer
+            return {
+                "status": "ok",
+                "answer": (
+                    "通用生成服务当前不可用。我仍可继续处理学习项目、测评、路径和已接入知识库的问答；"
+                    "翻译、改写、总结等通用任务需要对话工作流恢复后才能可靠完成。"
+                ),
+                "ai_generated": False,
+                "answer_mode": "general_generation_unavailable",
+                "session_id": session_id,
+                "sources": [],
+            }
+
         # 3) 明确提问（本地 RAG 兜底 / mock 模式）：知识库检索（按知识点优先，命中前 3）
         if not items:
             # 3.1) 白名单联网检索兜底（方案 A：检索留本地、白名单域名、来源引用）
-            web_answer = self._chat_web_search(resolved)
+            web_answer = self._chat_web_search(resolved) if allow_web_search else None
             if web_answer:
-                self._save_chat_history(student_id, state, history, message, web_answer["answer"])
+                if bool(incoming.get("persist_history", True)):
+                    self._save_chat_history(student_id, state, history, message, web_answer["answer"])
                 return web_answer
+            if project and str(project_state.get("support_level") or "") == "generated_scaffold":
+                return {
+                    "status": "ok",
+                    "answer": (
+                        f"我理解你是在“{project.get('goal_name')}”项目里提问，但当前候选路径还没有绑定"
+                        "经过审核的领域资料。你可以问我调整学习顺序、记录已有基础或学习时间；"
+                        "涉及知识结论时，我需要先接入可靠来源，不能用其他领域资料代答。"
+                    ),
+                    "ai_generated": False,
+                    "answer_mode": "scope_boundary",
+                    "session_id": session_id,
+                    "sources": [],
+                }
             return {
                 "status": "ok",
                 "answer": "知识库暂未检索到与「" + message + "」直接相关的内容。你可以换个问法，或进入「学情诊断」定位薄弱知识点。",
@@ -4628,28 +6983,76 @@ class LearningApplication:
                 "sources": [],
             }
         # 组装回答：主条目内容 + 来源标注（AI 生成标识）
-        primary = items[0]
-        answer = str(primary.get("content") or "").strip()
-        if len(items) > 1:
-            extra = [str(i.get("title") or "") for i in items[1:] if i.get("title")]
-            if extra:
-                answer += "\n\n（延伸参考：" + "、".join(extra) + "）"
-        self._save_chat_history(student_id, state, history, message, answer)
+        answer = self._compose_local_chat_answer(message, items, workspace_context)
+        if bool(incoming.get("persist_history", True)):
+            self._save_chat_history(student_id, state, history, message, answer)
         return {
             "status": "ok",
             "answer": answer,
-            "ai_generated": True,
+            "ai_generated": False,
+            "answer_mode": "local_rag",
             "session_id": session_id,
-            "sources": [
-                {
-                    "title": str(i.get("source") or "知识库"),
-                    "locator": str(i.get("locator") or ""),
-                    "knowledge_point_id": str(i.get("knowledge_point_id") or ""),
-                    "quote_text": str(i.get("title") or ""),
-                }
-                for i in items
-            ],
+            "sources": self._knowledge_sources(items),
         }
+
+    @staticmethod
+    def _compose_local_chat_answer(
+        message: str, items: list[dict[str, Any]], workspace_context: dict[str, Any]
+    ) -> str:
+        primary = items[0]
+        title = str(primary.get("title") or "当前知识点").strip()
+        content = str(primary.get("content") or "").strip()
+        if any(word in message for word in ("怎么", "如何", "步骤", "怎么做")):
+            answer = f"针对“{title}”，可以先按三步处理：\n1. 明确它解决的问题和使用边界；\n2. 对照一个最小示例完成一次练习；\n3. 用结果或报错验证是否真正掌握。\n\n知识库要点：{content}"
+        elif any(word in message for word in ("为什么", "原因")):
+            answer = f"先说结论：{content}\n\n之所以这样做，是为了让“{title}”的职责、边界和错误处理保持一致。"
+        elif any(word in message for word in ("区别", "比较", "不同")) and len(items) > 1:
+            second = items[1]
+            answer = (
+                f"可以从用途上区分：\n- {title}：{content}\n"
+                f"- {second.get('title') or '相关概念'}：{second.get('content') or ''}\n\n"
+                "建议再用同一个小案例分别实现一次，差异会更直观。"
+            )
+        else:
+            answer = f"你问的是“{title}”。{content}"
+        active_name = str(workspace_context.get("knowledge_point_name") or "").strip()
+        if active_name:
+            answer += f"\n\n我已结合当前打开的“{active_name}”章节回答。"
+        return answer
+
+    @staticmethod
+    def _knowledge_sources(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+        return [
+            {
+                "title": str(item.get("source") or "知识库"),
+                "locator": str(item.get("locator") or ""),
+                "knowledge_point_id": str(item.get("knowledge_point_id") or ""),
+                "quote_text": str(item.get("title") or ""),
+                "verification_state": "knowledge_base",
+            }
+            for item in items
+            if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _unavailable_external_tool(message: str) -> str:
+        lowered = str(message or "").lower()
+        execution_requests = (
+            ("订机票", "机票预订"),
+            ("订酒店", "酒店预订"),
+            ("点外卖", "外卖下单"),
+            ("帮我付款", "付款"),
+            ("替我付款", "付款"),
+            ("发邮件", "邮件发送"),
+            ("发消息", "消息发送"),
+        )
+        for marker, capability in execution_requests:
+            if marker in lowered:
+                return (
+                    f"我目前没有接入{capability}工具，不能替你执行真实操作。"
+                    "我可以帮你比较方案、整理步骤或起草内容，但在接入相应账号授权和确认机制前不会假装已经完成。"
+                )
+        return ""
 
     def _resolve_reference(self, message: str, history: list[dict[str, Any]]) -> str:
         """多轮指代消解：短消息或指代词开头时，拼接最近一次用户提问作为检索上下文。
@@ -4693,7 +7096,9 @@ class LearningApplication:
         state["chat_history"] = history[-16:]
         self.store.save_student_state(student_id, state)
 
-    def _chat_web_search(self, message: str) -> dict[str, Any] | None:
+    def _chat_web_search(
+        self, message: str, general_search: bool = False
+    ) -> dict[str, Any] | None:
         """chat 联网检索兜底：白名单域名（bing RSS）+ 来源引用。
 
         仅当文档联网检索开启（doc_enabled）时启用；未命中/失败/未开启
@@ -4702,8 +7107,11 @@ class LearningApplication:
         """
         if not self.video_search.doc_enabled:
             return None
-        payload = {"current_knowledge_point": {"knowledge_point_name": message}}
-        result = self.video_search.search_documents("chat", payload)
+        if general_search:
+            result = self.video_search.search_general_documents(message)
+        else:
+            payload = {"current_knowledge_point": {"knowledge_point_name": message}}
+            result = self.video_search.search_documents("chat", payload)
         if str(result.get("status")) in {"search_failed", "skipped", "no_results"}:
             return None
         web_results = [
@@ -4720,7 +7128,13 @@ class LearningApplication:
             or primary.get("title", "")
         ).strip()
         answer = (
-            "知识库暂未收录该内容，为你联网检索到以下权威资料（来源域名已核验）：\n\n"
+            (
+                "已为你检索到以下网页结果。它们是搜索结果，不等于已核验结论；"
+                "请结合来源与发布时间判断：\n\n"
+            )
+            if general_search
+            else "知识库暂未收录该内容，为你联网检索到以下权威资料（来源域名已核验）：\n\n"
+        ) + (
             f"【{primary.get('title', '')}】\n{snippet}\n\n"
             f"详细内容请访问：{primary.get('url', '')}"
         )
@@ -4734,7 +7148,9 @@ class LearningApplication:
                 "title": str(item.get("source") or item.get("source_domain") or "联网检索"),
                 "locator": str(item.get("url") or ""),
                 "quote_text": str(item.get("title") or ""),
-                "verification_state": "whitelisted",
+                "verification_state": (
+                    "web_sourced" if general_search else "whitelisted"
+                ),
                 "provider": str(result.get("provider") or "bing_rss"),
             }
             for item in web_results[:4]
@@ -4742,9 +7158,11 @@ class LearningApplication:
         return {
             "status": "ok",
             "answer": answer,
-            "ai_generated": True,
+            "ai_generated": False,
+            "answer_mode": "web_results",
             "web_searched": True,
             "sources": sources,
+            "search_items": web_results[:4],
         }
 
     def growth(self, student_id: str) -> dict[str, Any]:
@@ -6006,6 +8424,58 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                     200, self.application.list_projects({"student_id": student_id})
                 )
                 return
+            assessment_evidence_match = re.fullmatch(
+                r"/api/projects/([^/]+)/assessments/([^/]+)/evidence", parsed.path
+            )
+            if assessment_evidence_match:
+                student_id = parse_qs(parsed.query).get("student_id", [""])[0].strip()
+                if not student_id:
+                    raise ApiError(400, "MISSING_STUDENT_ID", "student_id 不能为空")
+                self._send_json(
+                    200,
+                    self.application.project_assessment_evidence(
+                        {
+                            "student_id": student_id,
+                            "project_id": unquote(assessment_evidence_match.group(1)),
+                            "assessment_id": unquote(assessment_evidence_match.group(2)),
+                        }
+                    ),
+                )
+                return
+            project_assessments_match = re.fullmatch(
+                r"/api/projects/([^/]+)/assessments", parsed.path
+            )
+            if project_assessments_match:
+                student_id = parse_qs(parsed.query).get("student_id", [""])[0].strip()
+                if not student_id:
+                    raise ApiError(400, "MISSING_STUDENT_ID", "student_id 不能为空")
+                self._send_json(
+                    200,
+                    self.application.project_assessments(
+                        {
+                            "student_id": student_id,
+                            "project_id": unquote(project_assessments_match.group(1)),
+                        }
+                    ),
+                )
+                return
+            project_messages_match = re.fullmatch(
+                r"/api/projects/([^/]+)/messages", parsed.path
+            )
+            if project_messages_match:
+                student_id = parse_qs(parsed.query).get("student_id", [""])[0].strip()
+                if not student_id:
+                    raise ApiError(400, "MISSING_STUDENT_ID", "student_id 不能为空")
+                self._send_json(
+                    200,
+                    self.application.project_messages(
+                        {
+                            "student_id": student_id,
+                            "project_id": unquote(project_messages_match.group(1)),
+                        }
+                    ),
+                )
+                return
             project_match = re.fullmatch(r"/api/projects/([^/]+)", parsed.path)
             if project_match:
                 student_id = parse_qs(parsed.query).get("student_id", [""])[0].strip()
@@ -6178,7 +8648,7 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                     parsed.path,
                 )
                 project_action = re.fullmatch(
-                    r"/api/projects/([^/]+)/(diagnosis/start|diagnosis/answer|explain)",
+                    r"/api/projects/([^/]+)/(diagnosis/start|diagnosis/answer|assessments/start|assessments/answer|explain)",
                     parsed.path,
                 )
                 attempt_match = re.fullmatch(
@@ -6205,6 +8675,10 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                         result = self.application.project_diagnosis_start(request)
                     elif action == "diagnosis/answer":
                         result = self.application.project_diagnosis_answer(request)
+                    elif action == "assessments/start":
+                        result = self.application.project_assessment_start(request)
+                    elif action == "assessments/answer":
+                        result = self.application.project_assessment_answer(request)
                     else:
                         result = self.application.project_explain(request)
                 elif attempt_match:

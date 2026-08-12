@@ -30,6 +30,7 @@ server.err.log
 !/项目介绍.md
 !/知识库_Java岗位_星辰上传版.md
 !/DIRECTORY_GUIDE.md
+!/AGENTS.md
 
 # ---------- 敏感/运行时文件 ----------
 .env

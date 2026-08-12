@@ -87,6 +87,26 @@ flowData:
           import json
 
 
+          def _parse_input(raw_input):
+              value = raw_input
+              for _ in range(3):
+                  if isinstance(value, dict):
+                      if "input" in value:
+                          value = value.get("input")
+                          continue
+                      if "AGENT_USER_INPUT" in value:
+                          value = value.get("AGENT_USER_INPUT")
+                          continue
+                      return value
+                  text = str(value or "").strip()
+                  if not text:
+                      return {}
+                  value = json.loads(text, strict=False)
+              if not isinstance(value, dict):
+                  raise ValueError("输入必须是 JSON 对象或 JSON 字符串")
+              return value
+
+
           def _object(value, name):
               if not isinstance(value, dict) or not value:
                   raise ValueError(name + " 必须是非空对象")
@@ -94,7 +114,7 @@ flowData:
 
 
           def main(raw_input):
-              data = json.loads(str(raw_input or "{}"), strict=False)
+              data = _parse_input(raw_input)
               if not isinstance(data, dict):
                   raise ValueError("输入必须是 JSON 对象")
               context = _object(data.get("context"), "context")
@@ -115,7 +135,7 @@ flowData:
                   "student_profile_json": json.dumps(profile, ensure_ascii=False, separators=(",", ":")),
                   "kb_text": kb_text,
               }
-        appId: 12a0a7e2
+        appId: 6545ca99
         uid: '21880654528'
         codeErrMsg: ''
       updatable: false
@@ -206,7 +226,7 @@ flowData:
           \        parts.append(value)\n    query = \" \".join(part for part in parts
           if part)\n    if query:\n        query += \" 原理 规范 标准\"\n    return {\"\
           kb_available\": kb_available, \"web_search_query\": query}\n"
-        appId: 12a0a7e2
+        appId: 6545ca99
         uid: '21880654528'
         codeErrMsg: ''
       updatable: false
@@ -279,7 +299,7 @@ flowData:
           logicalOperator: and
           id: branch_one_of::d0ba2ff3-5c67-53de-b1d9-06e8d2355929
           conditions: []
-        appId: 12a0a7e2
+        appId: 6545ca99
       updatable: false
       icon: 
         https://oss-beijing-m8.openstorage.cn/SparkBotProd/icon/icon-wrapper-if-else.svg
@@ -412,7 +432,7 @@ flowData:
             "next_action":"start_check|continue_learning",
             "memory_writeback":{"event_type":"learning_explanation","knowledge_point_id":"知识点ID","strategy_code":"本轮策略","explanation_mode":"本轮表征方式","effect":"pending"}
           }
-        appId: 12a0a7e2
+        appId: 6545ca99
         uid: '21880654528'
         patchId: '0'
         llmIdErrMsg: ''
@@ -554,7 +574,7 @@ flowData:
                       },
                   }
                   return {"final_result_json": json.dumps(fallback, ensure_ascii=False, separators=(",", ":"))}
-        appId: 12a0a7e2
+        appId: 6545ca99
         uid: '21880654528'
         codeErrMsg: ''
       updatable: false
@@ -612,7 +632,7 @@ flowData:
           : str(web_search_query or \"\"),\n            \"knowledge_gap\": True,\n\
           \            \"user_message\": \"当前知识点暂时没有可用知识依据，系统已请求联网检索；若仍无结果，请换一个切入点或联系老师补充教学资料。\"\
           ,\n        }, ensure_ascii=False),\n    }\n"
-        appId: 12a0a7e2
+        appId: 6545ca99
         uid: '21880654528'
         codeErrMsg: ''
       updatable: false
