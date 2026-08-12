@@ -101,6 +101,64 @@ def test_desktop_user_can_open_model_settings_without_dev_switch(monkeypatch, tm
         assert "LLM_MODEL" in saved.json()["updated"]
 
 
+def test_settings_preserve_api_key_and_normalize_deepseek(monkeypatch, tmp_path):
+    enable_desktop(monkeypatch)
+    settings_path = tmp_path / "settings.env"
+    monkeypatch.delenv("LEARNFLOW_SETTINGS_PATH", raising=False)
+    monkeypatch.setattr("app.api.settings.ENV_PATH", str(settings_path))
+    # Keep the process-global settings isolated from the other TestClient cases.
+    monkeypatch.setattr(settings, "llm_api_key", settings.llm_api_key)
+    monkeypatch.setattr(settings, "llm_base_url", settings.llm_base_url)
+    monkeypatch.setattr(settings, "llm_model", settings.llm_model)
+
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            headers=DESKTOP_HEADERS,
+            json=registration("workspace_settings_key_roundtrip"),
+        )
+        assert registered.status_code == 200
+
+        secret = "sk-test-settings-roundtrip-1234"
+        saved = client.put(
+            "/api/settings",
+            headers=DESKTOP_HEADERS,
+            json={
+                "llm_api_key": secret,
+                "llm_base_url": "https://api.deepseek.com/v1/",
+                "llm_model": "deepseek-v4-flash",
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert "LLM_API_KEY" in saved.json()["updated"]
+
+        current = client.get("/api/settings", headers=DESKTOP_HEADERS)
+        assert current.status_code == 200
+        assert current.json()["has_key"] is True
+        assert current.json()["llm_api_key"] == "sk-test-…1234"
+        assert current.json()["llm_base_url"] == "https://api.deepseek.com"
+
+        # The settings form intentionally sends no key when the input is blank.
+        # Even an explicit blank must not destroy the persisted credential.
+        preserved = client.put(
+            "/api/settings",
+            headers=DESKTOP_HEADERS,
+            json={
+                "llm_api_key": "",
+                "llm_base_url": "https://api.deepseek.com/v1",
+                "llm_model": "deepseek-v4-flash",
+            },
+        )
+        assert preserved.status_code == 200, preserved.text
+        assert "LLM_API_KEY" not in preserved.json()["updated"]
+
+        after_blank_save = client.get("/api/settings", headers=DESKTOP_HEADERS)
+        assert after_blank_save.json()["has_key"] is True
+        assert after_blank_save.json()["llm_api_key"] == "sk-test-…1234"
+        assert after_blank_save.json()["llm_base_url"] == "https://api.deepseek.com"
+        assert f"LLM_API_KEY={secret}" in settings_path.read_text(encoding="utf-8")
+
+
 def test_desktop_bearer_requires_the_per_launch_token(monkeypatch):
     enable_desktop(monkeypatch)
     with TestClient(app) as login_client, TestClient(app) as bearer_client:

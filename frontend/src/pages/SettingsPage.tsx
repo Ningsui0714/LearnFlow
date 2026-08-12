@@ -8,6 +8,7 @@ interface Settings {
   llm_model: string
   embedding_backend: string
   embedding_model: string
+  embedding_base_url: string
   vision_api_key: string
   vision_base_url: string
   vision_model: string
@@ -51,6 +52,7 @@ export default function SettingsPage() {
       setEditModel(s.llm_model)
       setEditEmbBackend(s.embedding_backend)
       setEditEmbModel(s.embedding_model)
+      setEditEmbUrl(s.embedding_base_url || '')
       setEditVisionUrl(s.vision_base_url)
       setEditVisionModel(s.vision_model)
       setEditVisionEnhance(!!s.vision_api_enhance)
@@ -105,12 +107,13 @@ export default function SettingsPage() {
         vision_model: editVisionModel,
         vision_api_enhance: editVisionEnhance,
       }
-      if (editKey) body.llm_api_key = editKey
-      if (editEmbKey) body.embedding_api_key = editEmbKey
-      if (editVisionKey) body.vision_api_key = editVisionKey
+      if (editKey.trim()) body.llm_api_key = editKey.trim()
+      if (editEmbKey.trim()) body.embedding_api_key = editEmbKey.trim()
+      if (editVisionKey.trim()) body.vision_api_key = editVisionKey.trim()
 
       const res = await api.put('/settings', body)
-      setSaveMsg(`✅ 已保存: ${res.data.updated.join(', ')}`)
+      const keySaved = res.data.updated.includes('LLM_API_KEY')
+      setSaveMsg(`✅ 已保存: ${res.data.updated.join(', ')}${keySaved ? '；API Key 已保存，输入框已清空以保护密钥' : ''}`)
       await loadSettings()
       setEditKey('')
       setShowKey(false)
@@ -124,11 +127,8 @@ export default function SettingsPage() {
     setTesting(true)
     setTestResult({ type: '', msg: '' })
     try {
-      const key = editKey || settings?.llm_api_key?.replace(/…/g, '') || ''
-      // For test we need the real key - if masked, try to use current
-      // The backend handles this
       const res = await api.post('/settings/test', {
-        api_key: editKey || 'use_current',
+        api_key: editKey.trim() || 'use_current',
         base_url: editUrl,
         model: editModel,
       })
@@ -204,7 +204,7 @@ export default function SettingsPage() {
               </p>
               <p className="text-xs text-gray-500 mt-0.5">
                 {settings.has_key
-                  ? '路线规划、讲义生成、代码审阅等功能可用'
+                  ? '路线规划、讲义生成、代码审阅等功能可用；保存后输入框清空属于正常的安全处理'
                   : '请配置 API Key 后使用 AI 功能。支持 DeepSeek、OpenAI 等兼容接口'
                 }
               </p>
@@ -253,14 +253,14 @@ export default function SettingsPage() {
               <input
                 type="text" value={editUrl}
                 onChange={e => setEditUrl(e.target.value)}
-                placeholder="https://api.deepseek.com/v1"
+                placeholder="https://api.deepseek.com"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
                            focus:outline-none focus:ring-2 focus:ring-primary-400"
               />
               <div className="flex gap-2 mt-1.5">
-                <button onClick={() => setEditUrl('https://api.deepseek.com/v1')}
+                <button onClick={() => setEditUrl('https://api.deepseek.com')}
                   className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
-                  DeepSeek
+                  DeepSeek V4
                 </button>
                 <button onClick={() => setEditUrl('https://api.openai.com/v1')}
                   className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
@@ -282,14 +282,14 @@ export default function SettingsPage() {
               <input
                 type="text" value={editModel}
                 onChange={e => setEditModel(e.target.value)}
-                placeholder="deepseek-chat / gpt-4o-mini / moonshot-v1-8k"
+                placeholder="deepseek-v4-flash / gpt-4o-mini / moonshot-v1-8k"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
                            focus:outline-none focus:ring-2 focus:ring-primary-400"
               />
               <div className="flex gap-2 mt-1.5">
-                <button onClick={() => setEditModel('deepseek-chat')}
+                <button onClick={() => setEditModel('deepseek-v4-flash')}
                   className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">
-                  DeepSeek Chat
+                  DeepSeek V4 Flash
                 </button>
                 <button onClick={() => setEditModel('gpt-4o-mini')}
                   className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">

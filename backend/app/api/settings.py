@@ -12,10 +12,45 @@ from app.services.auth import CurrentLearner, get_current_learner, valid_desktop
 
 router = APIRouter()
 
-ENV_PATH = os.environ.get(
-    "LEARNFLOW_SETTINGS_PATH",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
+DEFAULT_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
 )
+ENV_PATH = os.environ.get("LEARNFLOW_SETTINGS_PATH", DEFAULT_ENV_PATH)
+
+RUNTIME_FIELDS = {
+    "LLM_API_KEY": "llm_api_key",
+    "LLM_BASE_URL": "llm_base_url",
+    "LLM_MODEL": "llm_model",
+    "EMBEDDING_BACKEND": "embedding_backend",
+    "EMBEDDING_MODEL": "embedding_model",
+    "EMBEDDING_API_KEY": "embedding_api_key",
+    "EMBEDDING_BASE_URL": "embedding_base_url",
+    "VISION_API_KEY": "vision_api_key",
+    "VISION_BASE_URL": "vision_base_url",
+    "VISION_MODEL": "vision_model",
+    "VISION_API_ENHANCE": "vision_api_enhance",
+}
+SECRET_ENV_KEYS = {"LLM_API_KEY", "EMBEDDING_API_KEY", "VISION_API_KEY"}
+
+
+def _configured_env_path() -> str:
+    """Resolve the desktop path at request time, not only at module import."""
+    return os.environ.get("LEARNFLOW_SETTINGS_PATH", ENV_PATH)
+
+
+def _read_env_file(path: str) -> dict:
+    config = {}
+    if not os.path.exists(path):
+        return config
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, _, val = line.partition("=")
+                config[key.strip()] = val.strip()
+    return config
 
 
 class SettingsUpdate(BaseModel):
@@ -34,30 +69,65 @@ class SettingsUpdate(BaseModel):
 
 def _read_env() -> dict:
     """Read .env file into dict."""
-    config = {}
-    if not os.path.exists(ENV_PATH):
+    path = _configured_env_path()
+    config = _read_env_file(path)
+    if config or os.path.exists(path):
         return config
-    with open(ENV_PATH, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, _, val = line.partition("=")
-                config[key.strip()] = val.strip()
+
+    # Older desktop builds wrote settings to backend/.env. Read it once as a
+    # migration source, then _write_env() moves the values to the desktop path.
+    if path != DEFAULT_ENV_PATH:
+        return _read_env_file(DEFAULT_ENV_PATH)
     return config
+
+
+def _normalize_base_url(value: str) -> str:
+    value = (value or "").strip()
+    # DeepSeek's current OpenAI-compatible endpoint is the host itself. The
+    # old /v1 preset is accepted by some proxies but is not the official V4 URL.
+    if value.rstrip("/") in {
+        "https://api.deepseek.com",
+        "https://api.deepseek.com/v1",
+    }:
+        return "https://api.deepseek.com"
+    return value
+
+
+def _sync_runtime_from_env(raw: dict) -> None:
+    """Keep the live Settings object aligned with the persisted config."""
+    for env_key, field in RUNTIME_FIELDS.items():
+        if env_key not in raw:
+            continue
+        value = raw[env_key]
+        if env_key in {"LLM_BASE_URL", "EMBEDDING_BASE_URL", "VISION_BASE_URL"}:
+            value = _normalize_base_url(value)
+        if env_key == "VISION_API_ENHANCE":
+            value = value.lower() in ("1", "true", "yes")
+        setattr(settings, field, value)
+
+
+def _is_configured_key(value: str) -> bool:
+    return bool(value and value not in ("sk-your-key-here", "***") and "…" not in value)
 
 
 def _write_env(updates: dict):
     """Write updates to .env, preserving existing keys and order."""
-    existing = _read_env()
-    existing.update(updates)
+    path = _configured_env_path()
+    target_exists = os.path.exists(path)
+    source_path = path if target_exists else ""
+    if not target_exists and path != DEFAULT_ENV_PATH and os.path.exists(DEFAULT_ENV_PATH):
+        # Migrate only settings fields. Never copy the whole development .env
+        # (database URLs, tokens, and unrelated secrets) into desktop storage.
+        legacy = _read_env_file(DEFAULT_ENV_PATH)
+        inherited = {key: legacy[key] for key in RUNTIME_FIELDS if key in legacy}
+        inherited.update(updates)
+        updates = inherited
 
     seen_keys = set(updates.keys())
     lines = []
 
-    if os.path.exists(ENV_PATH):
-        with open(ENV_PATH, "r") as f:
+    if source_path:
+        with open(source_path, "r") as f:
             for line in f:
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#") or "=" not in stripped:
@@ -74,24 +144,12 @@ def _write_env(updates: dict):
     for key in seen_keys:
         lines.append(f"{key}={updates[key]}\n")
 
-    with open(ENV_PATH, "w") as f:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
         f.writelines(lines)
 
-    runtime_fields = {
-        "LLM_API_KEY": "llm_api_key",
-        "LLM_BASE_URL": "llm_base_url",
-        "LLM_MODEL": "llm_model",
-        "EMBEDDING_BACKEND": "embedding_backend",
-        "EMBEDDING_MODEL": "embedding_model",
-        "EMBEDDING_API_KEY": "embedding_api_key",
-        "EMBEDDING_BASE_URL": "embedding_base_url",
-        "VISION_API_KEY": "vision_api_key",
-        "VISION_BASE_URL": "vision_base_url",
-        "VISION_MODEL": "vision_model",
-        "VISION_API_ENHANCE": "vision_api_enhance",
-    }
     for env_key, value in updates.items():
-        field = runtime_fields.get(env_key)
+        field = RUNTIME_FIELDS.get(env_key)
         if field:
             setattr(settings, field, value.lower() == "true" if env_key == "VISION_API_ENHANCE" else value)
 
@@ -118,13 +176,15 @@ async def get_settings(request: Request, current: CurrentLearner = Depends(get_c
     from app.core.config import settings as app_settings
 
     raw = _read_env()
+    _sync_runtime_from_env(raw)
 
     emb_key = raw.get("EMBEDDING_API_KEY", "") or app_settings.embedding_api_key or ""
     vision_key = raw.get("VISION_API_KEY", "") or app_settings.vision_api_key or ""
+    llm_key = raw.get("LLM_API_KEY", "") or app_settings.llm_api_key or ""
 
     return {
-        "llm_api_key": _mask_key(raw.get("LLM_API_KEY", app_settings.llm_api_key)),
-        "llm_base_url": raw.get("LLM_BASE_URL", app_settings.llm_base_url),
+        "llm_api_key": _mask_key(llm_key),
+        "llm_base_url": _normalize_base_url(raw.get("LLM_BASE_URL", app_settings.llm_base_url)),
         "llm_model": raw.get("LLM_MODEL", app_settings.llm_model),
         "embedding_backend": raw.get("EMBEDDING_BACKEND", app_settings.embedding_backend),
         "embedding_model": raw.get("EMBEDDING_MODEL", app_settings.embedding_model),
@@ -134,7 +194,7 @@ async def get_settings(request: Request, current: CurrentLearner = Depends(get_c
         "vision_base_url": raw.get("VISION_BASE_URL", app_settings.vision_base_url),
         "vision_model": raw.get("VISION_MODEL", app_settings.vision_model),
         "vision_api_enhance": raw.get("VISION_API_ENHANCE", "true").lower() in ("1", "true", "yes") if raw.get("VISION_API_ENHANCE") else bool(app_settings.vision_api_enhance),
-        "has_key": bool(app_settings.llm_api_key and app_settings.llm_api_key not in ("", "sk-your-key-here")),
+        "has_key": _is_configured_key(llm_key),
     }
 
 
@@ -155,8 +215,9 @@ async def test_connection(
     from openai import AsyncOpenAI
     from app.core.config import settings as app_settings
 
+    _sync_runtime_from_env(_read_env())
     api_key = req.api_key if req.api_key != "use_current" else app_settings.llm_api_key
-    base_url = req.base_url or app_settings.llm_base_url
+    base_url = _normalize_base_url(req.base_url or app_settings.llm_base_url)
 
     try:
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
@@ -242,6 +303,16 @@ async def save_settings(
     for field, env_key in mapping.items():
         val = getattr(data, field, None)
         if val is not None:
+            if env_key in SECRET_ENV_KEYS:
+                val = val.strip()
+                # A blank or masked key means “keep the current key”. There is
+                # no accidental destructive clear through the settings form.
+                if not val or val in {"***"} or "…" in val:
+                    continue
+            elif isinstance(val, str):
+                val = val.strip()
+            if env_key in {"LLM_BASE_URL", "EMBEDDING_BASE_URL", "VISION_BASE_URL"}:
+                val = _normalize_base_url(val)
             updates[env_key] = "true" if val is True else ("false" if val is False else val)
 
     if not updates:

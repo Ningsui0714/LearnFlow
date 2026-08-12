@@ -4,6 +4,17 @@ from pydantic_settings import BaseSettings
 from typing import List
 
 
+DEFAULT_ENV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
+)
+CONFIGURED_ENV_PATH = os.environ.get("LEARNFLOW_SETTINGS_PATH")
+ENV_FILES = (
+    (DEFAULT_ENV_PATH, CONFIGURED_ENV_PATH)
+    if CONFIGURED_ENV_PATH and CONFIGURED_ENV_PATH != DEFAULT_ENV_PATH
+    else (DEFAULT_ENV_PATH,)
+)
+
+
 class Settings(BaseSettings):
     app_name: str = "LearnFlow"
     app_version: str = "0.1.0"
@@ -55,7 +66,11 @@ class Settings(BaseSettings):
     log_level: str = "info"
 
     class Config:
-        env_file = os.environ.get("LEARNFLOW_SETTINGS_PATH", ".env")
+        # Desktop settings override the repository .env when present. Falling
+        # back to the repository file keeps existing local credentials usable
+        # after upgrading from older desktop builds that did not persist a
+        # separate settings.env yet.
+        env_file = ENV_FILES
 
     @property
     def cors_origins_list(self) -> List[str]:
