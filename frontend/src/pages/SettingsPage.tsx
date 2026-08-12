@@ -190,7 +190,7 @@ export default function SettingsPage() {
         <button onClick={() => navigate('/')} className="text-sm text-gray-400 hover:text-gray-600 mb-4">
           ← 返回首页
         </button>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">⚙️ 设置</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">⚙️ 模型设置</h1>
         <p className="text-sm text-gray-500 mb-8">配置 AI 模型和嵌入服务</p>
 
         {/* Status card */}

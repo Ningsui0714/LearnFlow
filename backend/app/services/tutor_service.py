@@ -1474,7 +1474,7 @@ async def _generate_tutor_reply(
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
         if latest_interaction == "candidate_sources_completed" and session.project_id:
             return await _candidate_sources_follow_up(db, session), [], None, None, [], None
-        return "我可以继续帮你整理学习问题；要进行 AI 讲解，请先在设置页配置 LLM API Key。", [], None, None, [], None
+        return "未接入模型。", [], None, None, [], None
 
     projection = await get_kernel_projection(db, session.learner_id)
     prompt_projection = deepcopy(projection)

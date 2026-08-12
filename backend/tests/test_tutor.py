@@ -549,6 +549,17 @@ def test_candidate_source_completion_continues_project_tutor_session(
     assert completed_turn["meta_data"]["proposal_id"] == proposal_id
 
 
+def test_tutor_reports_missing_model_without_fallback_copy(client: TestClient, monkeypatch):
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "")
+    session_id = new_session(client)
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json={"message": "请解释一下这个概念", "client_turn_id": f"missing-model-{uuid.uuid4().hex}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["message"] == "未接入模型。"
+
+
 def test_project_tutor_routes_formal_learning_into_checkpoints(
     client: TestClient,
     monkeypatch,

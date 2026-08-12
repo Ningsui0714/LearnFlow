@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import TutorPanel from '../tutor/TutorPanel'
 import LocalAgentProfilesDialog from '../tutor/LocalAgentProfilesDialog'
 import { getDesktopRuntime } from '../../services/desktopRuntime'
+import { useAuth } from '../../contexts/AuthContext'
 import { useWorkspace } from './WorkspaceContext'
 import {
   subscribeWorkspaceAgentContext, type WorkspaceAgentContext,
@@ -88,6 +89,7 @@ export default function WorkspaceAgentRail({
 }) {
   const location = useLocation()
   const { openPath } = useWorkspace()
+  const { user } = useAuth()
   const state = useMemo(() => deriveConversation(location.pathname), [location.pathname])
   const [operationContext, setOperationContext] = useState<WorkspaceAgentContext | null>(null)
   const [showAgentProfiles, setShowAgentProfiles] = useState(false)
@@ -136,6 +138,17 @@ export default function WorkspaceAgentRail({
         <button type="button" onClick={onToggle} title="收起 Agent 对话" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <ChevronRight size={16} />
         </button>
+        {user?.is_dev_login && (
+          <button
+            type="button"
+            onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })}
+            title="配置 AI 模型和 API Key"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-[11px] font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-100"
+          >
+            <Settings2 size={14} />
+            <span>模型设置</span>
+          </button>
+        )}
         {desktop.available && state.checkpointId && (
           <button type="button" onClick={() => setShowAgentProfiles(true)} title="配置本地代码 Agent" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
             <Settings2 size={15} />

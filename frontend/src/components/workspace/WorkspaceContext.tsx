@@ -139,7 +139,7 @@ function pathMeta(path: string): WorkspaceTab {
     '/projects': { title: '学习项目', kind: 'projects' },
     '/memory': { title: '五核记忆', kind: 'memory' },
     '/profile': { title: '个人画像', kind: 'profile' },
-    '/settings': { title: '开发设置', kind: 'settings' },
+    '/settings': { title: '模型设置', kind: 'settings' },
   }
   const meta = staticMeta[pathname] || { title: 'LearnFlow', kind: 'home' as const }
   return { id: normalized, path: normalized, ...meta }
