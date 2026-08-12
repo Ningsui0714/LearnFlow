@@ -22,8 +22,8 @@ bash start.sh demo
 - `SUBMISSION_CHECKLIST.md`：按比赛材料编号维护交付物。
 - `USER_TEST_TEMPLATE.md`：2–3 名学生或教师试用的证据模板。
 - `ETHICS_AND_DATA_TEMPLATE.md`：数据、AI 标识和学术诚信声明底稿。
-- `../ARCHITECTURE_AUTHORITY.md`：团队分工和架构变更规则。
-- `../FUSION_CATALOG.md`：两仓库的能力映射与去重决策。
+- `../ARCHITECTURE_AUTHORITY.md`：架构维护边界和变更规则。
+- `../FUSION_CATALOG.md`：两仓库并行参考时的能力映射与去重决策。
 - `../DESKTOP_WORKSPACE_SECURITY.md`：桌面文件工作区、sidecar、路径和证据边界。
 
 ## 可复现验收

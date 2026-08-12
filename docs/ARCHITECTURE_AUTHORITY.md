@@ -1,6 +1,6 @@
-# LearnFlow 架构权威与维护分工
+# LearnFlow 架构权威与维护边界
 
-本文规定融合仓库的架构权威、两条工作线的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
+本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
 ## 1. 权威层级
 
@@ -47,9 +47,9 @@
 
 工具和 Agent 只能读取经过 learner/project/checkpoint scope 的投影。它们不能直接更新 `KernelState`，也不能把模型生成的教学内容当成掌握证据。
 
-## 4. 两条工作线
+## 4. 两个维护域
 
-### 工作线 A：主要架构与记忆权威
+### 维护域 A：主要架构与记忆权威
 
 维护范围：
 
@@ -58,7 +58,7 @@
 - EvidenceEvent schema、确定性 reducer、Memory Graph 和可纠正历史。
 - learner ownership、幂等、证据等级与通过条件。
 
-### 工作线 B：工具、产品技能、工作台与流程事件
+### 维护域 B：工具、产品技能、工作台与流程事件
 
 维护范围：
 
@@ -69,7 +69,7 @@
 
 ### 重合区处理
 
-工作线 B 需要五核信息时，只声明 `reads_kernels` 并消费只读投影；需要改变学习状态时，先在注册表新增或复用 capability 与 event contract，再通过 `record_event` 写证据。工作线 A 决定该事件是否归约、写入哪些核以及能否长期巩固。双方都不得在自己的模块内创建第二套画像缓存作为权威事实。
+维护域 B 需要五核信息时，只声明 `reads_kernels` 并消费只读投影；需要改变学习状态时，先在注册表新增或复用 capability 与 event contract，再通过 `record_event` 写证据。维护域 A 的确定性规则决定该事件是否归约、写入哪些核以及能否长期巩固。任何模块都不得创建第二套画像缓存作为权威事实。
 
 ## 5. 标准变更流程
 
@@ -78,7 +78,7 @@
 1. 在 `architecture_registry.py` 声明稳定 ID、owner、origin 和允许的五核读取范围。
 2. 复用或新增 Action Board capability，明确 side effect、确认策略和 evidence target。
 3. 为重要行为注册 EventContract；所有写入经过 `record_event`。
-4. 若需要五核变化，由工作线 A 在 reducer 中增加确定性规则与测试。
+4. 若需要五核变化，在 reducer 中增加确定性规则与测试。
 5. 外部工作流输出先校验为 LearnFlow artifact；不得直接写五核或决定纠错状态。
 6. 更新架构/融合/比赛文档，提升注册表版本，并运行注册漂移、后端、前端与 demo 验收。
 

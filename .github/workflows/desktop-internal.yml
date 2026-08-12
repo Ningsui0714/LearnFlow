@@ -2,7 +2,10 @@ name: Desktop internal packages
 
 on:
   workflow_dispatch:
-  pull_request:
+  push:
+    branches:
+      - "main"
+      - "codex/**"
     paths:
       - "backend/**"
       - "frontend/**"

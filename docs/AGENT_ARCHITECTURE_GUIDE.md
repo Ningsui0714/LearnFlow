@@ -3,7 +3,7 @@
 > 面向对象：维护、扩展或评审 LearnFlow 的编码智能体、研究智能体与产品智能体  
 > 文档性质：架构约束与协作契约，不是面向用户的产品介绍  
 > 当前状态：常驻 Tutor、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
-> 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；分工和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
+> 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
 ## 1. 阅读方式
 

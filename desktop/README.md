@@ -30,5 +30,5 @@ outside this repository stage.
 packages on GitHub-hosted runners and uploads each `bundle/` directory as a
 workflow artifact. It first runs the workspace/Tutor/registry contract tests,
 then the frontend build, PyInstaller sidecar build, and Tauri build. Run the
-workflow manually for release candidates; pull requests touching desktop,
-backend, or frontend code also exercise the same matrix.
+workflow manually for release candidates; direct pushes to `main` or `codex/**`
+that touch desktop, backend, or frontend code also exercise the same matrix.
