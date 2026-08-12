@@ -51,9 +51,12 @@ export default function LoginPage() {
 
   const enterAccount = async (accountId: number) => {
     setBusy(true)
+    setError('')
     try {
       await enterDevAccount(accountId)
       navigate('/agent', { replace: true })
+    } catch (requestError: any) {
+      setError(requestError?.response?.data?.detail || '开发测试账号进入失败，请重试')
     } finally {
       setBusy(false)
     }
@@ -120,14 +123,16 @@ export default function LoginPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-gray-950">开发测试</h2>
-                <p className="mt-1 text-xs text-gray-500">选择账号进入，学习数据不会合并。</p>
+                <p className="mt-1 text-xs text-gray-500">无需输入密码，点击账号卡片直接进入；学习数据不会合并。</p>
               </div>
               <button onClick={() => setDevOpen(false)} title="关闭" className="flex h-9 w-9 items-center justify-center text-gray-500 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
             </div>
+            {error && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
             <div className="mt-6 space-y-2">
               {accounts.map(account => (
                 <button
                   key={account.id}
+                  type="button"
                   disabled={busy}
                   onClick={() => enterAccount(account.id)}
                   className="w-full border border-gray-200 p-3 text-left hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-60 rounded-lg"
