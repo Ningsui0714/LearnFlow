@@ -1472,8 +1472,6 @@ async def _generate_tutor_reply(
         ((latest_messages[-1].meta_data or {}).get("interaction") if latest_messages else "") or ""
     )
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
-        if latest_interaction == "candidate_sources_completed" and session.project_id:
-            return await _candidate_sources_follow_up(db, session), [], None, None, [], None
         return "未接入模型。", [], None, None, [], None
 
     projection = await get_kernel_projection(db, session.learner_id)

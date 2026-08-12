@@ -536,9 +536,7 @@ def test_candidate_source_completion_continues_project_tutor_session(
     assert response.status_code == 200
     body = response.json()
     assert body["executed_action"] is None
-    assert "正式路线" in body["message"]
-    assert "阶段预览只作为参考" in body["message"]
-    assert "请先确认" in body["message"]
+    assert body["message"] == "未接入模型。"
 
     restored = client.get(f"/api/agent/sessions/{session_id}").json()
     completed_turn = next(
