@@ -44,6 +44,9 @@ def main() -> None:
         str(BUILD_ROOT / "work"),
         "--specpath",
         str(BUILD_ROOT),
+        # SQLAlchemy loads the aiosqlite driver dynamically, so PyInstaller
+        # cannot discover it from the import graph on its own.
+        "--hidden-import=aiosqlite",
         str(BACKEND_ROOT / "desktop_entry.py"),
     ], check=True, cwd=REPO_ROOT)
     BINARIES_ROOT.mkdir(parents=True, exist_ok=True)
