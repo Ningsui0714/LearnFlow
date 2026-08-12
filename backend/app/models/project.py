@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Text, Boolean, JSON, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.db.database import Base
 
@@ -17,6 +17,10 @@ class Project(Base):
 
     sources = relationship("Source", back_populates="project", cascade="all, delete-orphan")
     roadmap = relationship("Roadmap", back_populates="project", uselist=False, cascade="all, delete-orphan")
+    workspace = relationship(
+        "ProjectWorkspace", back_populates="project", uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class Source(Base):
@@ -112,6 +116,7 @@ class Lecture(Base):
     plan = Column(JSON, default=list)      # persisted section plan (T10 resume stability)
     concept_graph = Column(JSON, default=dict)  # {nodes, edges} concept map
     status = Column(String(50), default="draft")  # draft, published
+    version = Column(Integer, default=1, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -137,7 +142,6 @@ class Exercise(Base):
     judge_mode = Column(String(50), default="test_cases")  # test_cases | stdout_check
     judge_config = Column(JSON, default=dict)       # {pattern, min_accuracy} for stdout_check
     assessment_meta = Column(JSON, default=dict)   # targets, rubric, evidence contract
-
     checkpoint = relationship("Checkpoint", back_populates="exercises")
 
 
@@ -153,14 +157,16 @@ class LectureVersion(Base):
     id = Column(Integer, primary_key=True, index=True)
     checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
     sections = Column(JSON, default=list)
+    source_version = Column(Integer, default=1, nullable=False)
     reason = Column(String(100), default="")  # regenerate_before | before_rollback
+    idempotency_key = Column(String(160), nullable=True, unique=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="lecture_versions")
 
 
 class LectureNote(Base):
-    """Anchored note on a lecture section (T9: notes & highlights)."""
+    """Legacy anchored note table kept as a read-only migration source."""
 
     __tablename__ = "lecture_notes"
 
@@ -173,6 +179,46 @@ class LectureNote(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     checkpoint = relationship("Checkpoint", back_populates="notes")
+
+
+class ArtifactAnnotation(Base):
+    """Learner-owned annotation anchored to a managed lecture or exercise."""
+
+    __tablename__ = "artifact_annotations"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "idempotency_key", name="uq_annotation_learner_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    artifact_type = Column(String(20), nullable=False, index=True)  # lecture | exercise
+    artifact_id = Column(Integer, nullable=False, index=True)
+    artifact_version = Column(Integer, default=1, nullable=False)
+    anchor = Column(JSON, default=dict)  # section_index/surface/selection/prefix/suffix
+    body = Column(Text, default="")
+    status = Column(String(20), default="anchored", nullable=False, index=True)
+    idempotency_key = Column(String(160), nullable=True)
+    legacy_note_id = Column(Integer, nullable=True, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class ExerciseDraft(Base):
+    """Personal answer draft. Saving it never creates learning evidence."""
+
+    __tablename__ = "exercise_drafts"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "exercise_id", name="uq_draft_learner_exercise"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    exercise_id = Column(Integer, ForeignKey("exercises.id"), nullable=False, index=True)
+    code = Column(Text, default="")
+    files = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class ConceptQuestion(Base):
@@ -245,3 +291,120 @@ class Task(Base):
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProjectWorkspace(Base):
+    """A desktop-only link from a learning project to one local folder."""
+
+    __tablename__ = "project_workspaces"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, unique=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    root_path = Column(Text, nullable=False)
+    status = Column(String(30), default="linked", nullable=False, index=True)
+    platform = Column(String(30), default="unknown")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    project = relationship("Project", back_populates="workspace")
+    operations = relationship(
+        "WorkspaceOperation", back_populates="workspace", cascade="all, delete-orphan",
+    )
+
+
+class WorkspaceOperation(Base):
+    """Auditable proposal/application record for every managed file mutation."""
+
+    __tablename__ = "workspace_operations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("project_workspaces.id"), nullable=False, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=True, index=True)
+    actor = Column(String(20), default="user", nullable=False, index=True)
+    operation = Column(String(30), nullable=False, index=True)
+    status = Column(String(30), default="proposed", nullable=False, index=True)
+    target_path = Column(Text, nullable=False)
+    destination_path = Column(Text, nullable=True)
+    base_hash = Column(String(64), nullable=True)
+    payload = Column(JSON, default=dict)
+    result = Column(JSON, default=dict)
+    idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    confirmed_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+
+    workspace = relationship("ProjectWorkspace", back_populates="operations")
+
+
+class LocalAgentProfile(Base):
+    """Learner-owned, allow-listed local Agent configuration."""
+
+    __tablename__ = "local_agent_profiles"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "name", name="uq_local_agent_profile_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    adapter = Column(String(40), nullable=False, index=True)  # codex_cli | deterministic_fake
+    executable_path = Column(Text, nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False, index=True)
+    priority = Column(Integer, default=100, nullable=False)
+    task_types = Column(JSON, default=list)
+    capabilities = Column(JSON, default=list)
+    sandbox_policy = Column(String(40), default="workspace_write", nullable=False)
+    network_policy = Column(String(40), default="unmanaged", nullable=False)
+    timeout_seconds = Column(Integer, default=900, nullable=False)
+    last_probe = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class LocalAgentRun(Base):
+    """Two-confirmation local Agent run; never a learning evidence object."""
+
+    __tablename__ = "local_agent_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=False, index=True)
+    action_id = Column(Integer, ForeignKey("agent_actions.id"), nullable=False, unique=True, index=True)
+    profile_id = Column(Integer, ForeignKey("local_agent_profiles.id"), nullable=False, index=True)
+    task_type = Column(String(60), nullable=False, index=True)
+    goal = Column(Text, nullable=False)
+    constraints = Column(JSON, default=list)
+    required_capabilities = Column(JSON, default=list)
+    status = Column(String(30), default="queued", nullable=False, index=True)
+    isolation_root = Column(Text, nullable=True)
+    base_manifest = Column(JSON, default=dict)
+    changed_files = Column(JSON, default=list)
+    diff_text = Column(Text, default="")
+    result = Column(JSON, default=dict)
+    error = Column(JSON, default=dict)
+    idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+
+
+class LocalAgentRunEvent(Base):
+    __tablename__ = "local_agent_run_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_local_agent_run_event_sequence"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("local_agent_runs.id"), nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    event_type = Column(String(60), nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

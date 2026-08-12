@@ -11,7 +11,10 @@ from app.models.learning import (
     AgentMessage, AgentSession, EvidenceEvent, KernelState, LearningProjectProposal,
     SchemaMigration,
 )
-from app.models.project import Project, Source, Chunk, Roadmap, Checkpoint, Lecture
+from app.models.project import (
+    Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk, Lecture, Exercise,
+    ProjectWorkspace,
+)
 from app.services.learning_runtime import (
     apply_semantic_observations, create_attempt, evaluate_checkpoint_status,
     get_kernel_projection, record_event,
@@ -21,6 +24,7 @@ from app.services.task_manager import manager
 from app.services.auth import load_current_learner
 from app.services.roadmap_agent import RoadmapAgent, SubmittedRoadmap
 from app.services.tutor_service import _decode_tutor_content, get_or_create_session
+from app.services.checkpoint_context import build_checkpoint_tutor_context
 from app.services.task_runners import _repair_markdown_fences
 from app.services import project_proposals as proposal_service
 from app.api.phase1 import _roadmap_planning_context
@@ -50,13 +54,110 @@ def new_session(client: TestClient) -> int:
     return response.json()["id"]
 
 
+def test_checkpoint_tutor_session_and_context_are_isolated(client: TestClient, tmp_path):
+    root = tmp_path / "checkpoint-workspace"
+    root.mkdir()
+    (root / "shared.py").write_text("print('shared project file')\n", encoding="utf-8")
+
+    async def seed():
+        async with async_session() as db:
+            learner_id = await legacy_learner_id()
+            project = Project(learner_id=learner_id, name="关卡会话隔离项目")
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={})
+            db.add(roadmap)
+            await db.flush()
+            first = Checkpoint(
+                roadmap_id=roadmap.id, title="第一关", description="只看第一关",
+                order=1, brief={"goal": "first-only"},
+            )
+            second = Checkpoint(
+                roadmap_id=roadmap.id, title="第二关", description="other-checkpoint-secret",
+                order=2, brief={"goal": "second-secret"},
+            )
+            db.add_all([first, second])
+            await db.flush()
+            source = Source(project_id=project.id, type="url", url="https://example.com", status="processed")
+            db.add(source)
+            await db.flush()
+            first_chunk = Chunk(source_id=source.id, index=0, content="first assigned resource", meta_data={"file": "first.md"})
+            second_chunk = Chunk(source_id=source.id, index=1, content="second hidden resource", meta_data={"file": "second.md"})
+            db.add_all([first_chunk, second_chunk])
+            await db.flush()
+            db.add_all([
+                CheckpointChunk(checkpoint_id=first.id, chunk_id=first_chunk.id),
+                CheckpointChunk(checkpoint_id=second.id, chunk_id=second_chunk.id),
+                Lecture(checkpoint_id=first.id, status="published", sections=[{"title": "第一讲", "content": "first lecture body"}]),
+                Lecture(checkpoint_id=second.id, status="published", sections=[{"title": "第二讲", "content": "other lecture secret"}]),
+                Exercise(checkpoint_id=first.id, title="第一题", description="first exercise", order=1),
+                Exercise(checkpoint_id=second.id, title="第二题", description="other exercise secret", order=1),
+                ProjectWorkspace(project_id=project.id, learner_id=learner_id, root_path=str(root), status="linked", platform="test"),
+            ])
+            await db.commit()
+            return learner_id, project.id, first.id, second.id
+
+    learner_id, project_id, first_id, second_id = asyncio.run(seed())
+    first = client.post("/api/agent/sessions", json={
+        "session_type": "checkpoint", "project_id": project_id, "checkpoint_id": first_id,
+    })
+    assert first.status_code == 200, first.text
+    resumed = client.post("/api/agent/sessions", json={
+        "session_type": "checkpoint", "project_id": project_id, "checkpoint_id": first_id,
+    })
+    second = client.post("/api/agent/sessions", json={
+        "session_type": "checkpoint", "project_id": project_id, "checkpoint_id": second_id,
+    })
+    assert resumed.json()["id"] == first.json()["id"]
+    assert second.json()["id"] != first.json()["id"]
+    assert first.json()["session_type"] == "checkpoint"
+
+    crossed = client.post(f"/api/agent/sessions/{first.json()['id']}/turns", json={
+        "message": "切换关卡", "project_id": project_id, "checkpoint_id": second_id,
+    })
+    assert crossed.status_code == 409
+    turn = client.post(f"/api/agent/sessions/{first.json()['id']}/turns", json={
+        "message": "只属于第一关的消息", "project_id": project_id, "checkpoint_id": first_id,
+        "context": {"surface": "lecture", "selected_text": "第一关选中文本"},
+    })
+    assert turn.status_code == 200, turn.text
+    untouched = client.get(f"/api/agent/sessions/{second.json()['id']}").json()
+    assert all("只属于第一关" not in item["content"] for item in untouched["messages"])
+
+    artifacts = client.get(f"/api/checkpoints/{first_id}/workspace/artifacts")
+    assert artifacts.status_code == 200
+    assert artifacts.json()["managed_lecture"]["checkpoint_id"] == first_id
+    assert [item["title"] for item in artifacts.json()["managed_exercises"]] == ["第一题"]
+
+    async def load_context():
+        async with async_session() as db:
+            return await build_checkpoint_tutor_context(
+                db, learner_id=learner_id, project_id=project_id,
+                checkpoint_id=first_id,
+                surface_context={"surface": "lecture", "selected_text": "selected"},
+            )
+
+    context = asyncio.run(load_context())
+    rendered = str(context)
+    assert "first assigned resource" in rendered
+    assert "shared.py" in rendered
+    assert "first lecture body" in rendered
+    assert "second hidden resource" not in rendered
+    assert "other lecture secret" not in rendered
+    assert "other exercise secret" not in rendered
+    assert context["scope"]["checkpoint_id"] == first_id
+    assert context["five_kernel_projection"]["structure"]["short_term"]["session_scope"] == {
+        "project_id": project_id, "checkpoint_id": first_id,
+    }
+
+
 async def legacy_learner_id() -> int:
     async with async_session() as db:
         return (await db.execute(select(KernelState.learner_id).limit(1))).scalar_one()
 
 
 def test_model_json_fallback_is_unwrapped_for_tutor_display():
-    reply, observations, opportunity, learning_intent, major_events = _decode_tutor_content(
+    reply, observations, opportunity, learning_intent, major_events, local_agent_task = _decode_tutor_content(
         """```json
 {"reply":"第一段\\n\\n第二段","observations":[{"kernel":"knowledge","key":"understanding"}],"project_opportunity":null}
 ```"""
@@ -66,6 +167,7 @@ def test_model_json_fallback_is_unwrapped_for_tutor_display():
     assert opportunity is None
     assert learning_intent is None
     assert major_events == []
+    assert local_agent_task is None
 
 
 def test_malformed_math_fence_cannot_swallow_following_markdown():

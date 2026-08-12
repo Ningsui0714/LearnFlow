@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +8,7 @@ from app.db.database import get_db
 from app.models.learning import (
     AgentSession, AgentMessage, AgentAction, LearningProjectProposal,
 )
-from app.models.project import Project, Checkpoint, Task
+from app.models.project import Project, Roadmap, Checkpoint, Task
 from app.schemas.agent import (
     AgentSessionCreate, TutorTurnRequest, LearningEventRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
@@ -20,7 +20,7 @@ from app.services.tutor_service import (
     get_or_create_session, get_messages, process_turn, execute_action,
     action_card, action_result, finalize_action_for_task,
     proposal_acceptance_action, finalize_proposal_acceptance,
-    get_session_state_summary,
+    get_session_state_summary, _is_confirmation,
 )
 from app.services.project_proposals import (
     list_session_proposals, proposal_view, set_proposal_status,
@@ -28,7 +28,7 @@ from app.services.project_proposals import (
 )
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_project,
-    require_owned_checkpoint,
+    require_owned_checkpoint, valid_desktop_request,
 )
 
 
@@ -88,15 +88,26 @@ async def create_or_resume_session(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    if data.project_id is not None:
-        await require_owned_project(db, current.learner.id, data.project_id)
+    project_id = data.project_id
+    session_type = data.session_type
+    if project_id is not None:
+        await require_owned_project(db, current.learner.id, project_id)
     if data.checkpoint_id is not None:
-        await require_owned_checkpoint(db, current.learner.id, data.checkpoint_id)
+        checkpoint = await require_owned_checkpoint(db, current.learner.id, data.checkpoint_id)
+        roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
+        if not roadmap:
+            raise HTTPException(404, "Checkpoint roadmap not found")
+        if project_id is not None and project_id != roadmap.project_id:
+            raise HTTPException(400, "Checkpoint does not belong to project")
+        project_id = roadmap.project_id
+        session_type = "checkpoint"
+    elif session_type == "checkpoint":
+        raise HTTPException(400, "checkpoint session requires checkpoint_id")
     session = await get_or_create_session(
         db,
         learner_id=current.learner.id,
-        session_type="project" if data.project_id else data.session_type,
-        project_id=data.project_id,
+        session_type="project" if project_id and session_type == "global" else session_type,
+        project_id=project_id,
         checkpoint_id=data.checkpoint_id,
     )
     await db.commit()
@@ -141,10 +152,23 @@ async def get_session(
 async def tutor_turn(
     session_id: int,
     data: TutorTurnRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
     session = await _owned_session(db, current.learner.id, session_id)
+    pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
+    if (
+        pending and pending.capability == "delegate_local_agent_task"
+        and (data.selected_action_id == pending.id or _is_confirmation(data.message))
+        and not valid_desktop_request(request)
+    ):
+        raise HTTPException(404, "Local Agent Broker is unavailable")
+    if session.session_type == "checkpoint":
+        if data.project_id is not None and data.project_id != session.project_id:
+            raise HTTPException(409, "Checkpoint Tutor project scope is immutable")
+        if data.checkpoint_id is not None and data.checkpoint_id != session.checkpoint_id:
+            raise HTTPException(409, "Checkpoint Tutor scope is immutable")
     if data.project_id is not None:
         await require_owned_project(db, current.learner.id, data.project_id)
     if data.checkpoint_id is not None:
@@ -328,10 +352,13 @@ async def get_action(
 @router.post("/actions/{action_id}/confirm")
 async def confirm_action(
     action_id: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
     action = await _owned_action(db, current.learner.id, action_id)
+    if action.capability == "delegate_local_agent_task" and not valid_desktop_request(request):
+        raise HTTPException(404, "Local Agent Broker is unavailable")
     if action.status not in {"pending_confirmation", "needs_input"}:
         return action_result(action)
     if action.status == "needs_input":
@@ -349,7 +376,12 @@ async def confirm_action(
         session_id=action.session_id,
         role="assistant",
         content=message,
-        meta_data={"action_id": action.id},
+        meta_data={
+            "action_id": action.id,
+            "local_agent_run_id": (
+                ((action.result or {}).get("local_agent_run") or {}).get("id")
+            ),
+        },
     ))
     await db.commit()
     session = await _owned_session(db, current.learner.id, action.session_id)

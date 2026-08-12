@@ -29,3 +29,8 @@ frontend/*.tsbuildinfo
 backend/*.db.bak*
 backend/backups/
 backend/*.pth
+
+# Tauri desktop build output and generated sidecars
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/learnflow-backend-*

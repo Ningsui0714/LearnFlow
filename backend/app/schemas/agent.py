@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class AgentSessionCreate(BaseModel):
-    session_type: Literal["global", "project"] = "global"
+    session_type: Literal["global", "project", "checkpoint"] = "global"
     project_id: Optional[int] = None
     checkpoint_id: Optional[int] = None
 
@@ -74,12 +74,22 @@ class MajorEventCandidate(BaseModel):
     evidence_text: str = Field(default="", max_length=500)
 
 
+class LocalAgentTaskProposal(BaseModel):
+    should_delegate: bool = False
+    task_type: Literal["code_change", "bug_fix", "refactor", "test", "documentation"] = "code_change"
+    goal: str = Field(default="", max_length=2000)
+    constraints: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=lambda: ["code_edit"])
+    reason: str = Field(default="", max_length=500)
+
+
 class TutorModelOutput(BaseModel):
     reply: str
     observations: list[TutorObservation] = Field(default_factory=list)
     project_opportunity: Optional[ProjectOpportunity] = None
     learning_intent: Optional[LearningIntent] = None
     major_event_candidates: list[MajorEventCandidate] = Field(default_factory=list)
+    local_agent_task: Optional[LocalAgentTaskProposal] = None
 
 
 class ProjectProposalUpdateRequest(BaseModel):

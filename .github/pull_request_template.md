@@ -1,3 +1,5 @@
+<!-- LearnFlow 日常维护采用验证后直接 push。仅在用户明确要求 PR 或接收外部贡献时使用本模板。 -->
+
 ## What
 
 <!-- 本 PR 改变了什么？ -->
@@ -5,13 +7,6 @@
 ## Why
 
 <!-- 用户价值、问题根因或 Issue 链接。 -->
-
-## Scope
-
-- Owner:
-- Issue/task:
-- In scope:
-- Out of scope:
 
 ## Contract impact
 
@@ -48,8 +43,7 @@ Results:
 
 ## Final checklist
 
-- [ ] 未直接修改 `main`，未 force push 或覆盖他人历史
+- [ ] 未 force push、rebase 或改写已发布历史
 - [ ] diff 不含 `.env`、token、数据库、缓存、权重或日志
-- [ ] 未修改任务范围外的用户/协作者改动
+- [ ] 未修改任务范围外的用户改动
 - [ ] 共享契约变更已同步注册表、实现、测试和文档
-- [ ] 已请求至少一名其他组员或独立 Codex 审查

@@ -9,6 +9,7 @@ import {
 } from '../../services/api'
 import type { ProjectProposal, ProjectProposalSource } from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
+import LocalAgentRunCard from './LocalAgentRunCard'
 
 interface Message {
   id?: number
@@ -20,6 +21,8 @@ interface Message {
 interface Props {
   projectId?: number
   checkpointId?: number
+  turnContext?: Record<string, any>
+  quickPrompts?: string[]
   className?: string
   onProjectChange?: (project: any) => void
   onRoadmapUpdate?: (roadmap: any) => void
@@ -188,7 +191,7 @@ function normalizeTutorContent(content: unknown): string {
 }
 
 export default function TutorPanel({
-  projectId, checkpointId, className = '', onProjectChange, onRoadmapUpdate, onCheckpointChange,
+  projectId, checkpointId, turnContext = {}, quickPrompts = [], className = '', onProjectChange, onRoadmapUpdate, onCheckpointChange,
   onProposalAccepted, proposalDragEnabled = false, projectProposal,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
   onRefreshCandidateSources, onAddCandidateSource,
@@ -212,7 +215,7 @@ export default function TutorPanel({
     setAction(null)
     setProposals([])
     createTutorSession({
-      session_type: projectId ? 'project' : 'global',
+      session_type: checkpointId ? 'checkpoint' : projectId ? 'project' : 'global',
       project_id: projectId,
       checkpoint_id: checkpointId,
     }).then(data => {
@@ -384,9 +387,9 @@ export default function TutorPanel({
     }
   }
 
-  const send = async (selectedActionId?: number) => {
+  const send = async (selectedActionId?: number, presetText?: string) => {
     if (!sessionId || loading) return
-    const text = input.trim()
+    const text = (presetText ?? input).trim()
     if (!text && !selectedActionId) return
     if (text) {
       setMessages(prev => [...prev, { role: 'user', content: text }])
@@ -400,6 +403,7 @@ export default function TutorPanel({
         checkpoint_id: checkpointId,
         selected_action_id: selectedActionId,
         client_turn_id: globalThis.crypto?.randomUUID?.() || `turn-${Date.now()}-${Math.random()}`,
+        context: turnContext,
       })
       applyResult(data)
     } catch (e: any) {
@@ -437,9 +441,11 @@ export default function TutorPanel({
     <section className={`flex min-h-0 flex-col overflow-hidden border border-gray-200 bg-white rounded-lg ${className}`}>
       <header className="flex min-h-14 items-center justify-between border-b border-gray-200 px-4 py-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-gray-900">{projectId ? '学习 Tutor' : '主 Agent'}</h2>
+          <h2 className="text-sm font-semibold text-gray-900">{checkpointId ? '关卡 Tutor' : projectId ? '学习 Tutor' : '主 Agent'}</h2>
           <p className="truncate text-xs text-gray-500">
-            {projectId
+            {checkpointId
+              ? (summary?.active_checkpoint?.title || '正在接入本关讲义、练习与文件上下文...')
+              : projectId
               ? (summary?.active_checkpoint?.title
                 || (summary?.active_project?.name
                   ? `负责「${summary.active_project.name}」的路线、来源与课前后答疑`
@@ -473,7 +479,7 @@ export default function TutorPanel({
         )}
         {messages.length === 0 && (
           <div className="py-8 text-center text-sm text-gray-400">
-            {projectId ? '正在接入项目上下文...' : '今天想聊哪件学习上的事？'}
+            {checkpointId ? '本关讲义和练习共用这段 Tutor 会话。' : projectId ? '正在接入项目上下文...' : '今天想聊哪件学习上的事？'}
           </div>
         )}
         {messages.map((message, index) => {
@@ -509,6 +515,9 @@ export default function TutorPanel({
                     onDone={finishCandidateSources}
                   />
                 )}
+                {message.meta_data?.local_agent_run_id && (
+                  <LocalAgentRunCard runId={Number(message.meta_data.local_agent_run_id)} />
+                )}
               </div>
             </div>
           )
@@ -525,6 +534,14 @@ export default function TutorPanel({
                 <p className="text-sm font-semibold text-gray-900">{action.title}</p>
                 {action.reason && <p className="mt-1 text-xs leading-5 text-gray-600">{action.reason}</p>}
                 {action.expected_result && <p className="mt-1 text-xs text-gray-500">{action.expected_result}</p>}
+                {action.target_summary?.task_type && (
+                  <div className="mt-2 space-y-0.5 border border-indigo-100 bg-white/70 p-2 text-[10px] text-slate-600 rounded">
+                    <p>Agent：{action.target_summary.profile_name} · {action.target_summary.adapter}</p>
+                    <p>任务：{action.target_summary.task_type}</p>
+                    <p>沙箱：{action.target_summary.sandbox_policy} · 联网：{action.target_summary.network_policy}{action.target_summary.network_boundary_enforced === false ? '（未受管）' : ''}</p>
+                    {Array.isArray(action.target_summary.excluded_paths) && <p>排除：{action.target_summary.excluded_paths.join('、')}</p>}
+                  </div>
+                )}
                 {action.status === 'running' && (
                   <div className="mt-2 text-xs text-indigo-700">
                     <p>{action.task?.progress?.message || '正在执行...'}</p>
@@ -554,6 +571,11 @@ export default function TutorPanel({
             </div>
           </div>
         )}
+        {action?.result?.local_agent_run?.id && !messages.some(message => (
+          Number(message.meta_data?.local_agent_run_id) === Number(action.result.local_agent_run.id)
+        )) && (
+          <LocalAgentRunCard runId={Number(action.result.local_agent_run.id)} />
+        )}
 
         {loading && (
           <div className="flex justify-start">
@@ -563,6 +585,21 @@ export default function TutorPanel({
       </div>
 
       <div className="border-t border-gray-200 p-3">
+        {quickPrompts.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {quickPrompts.map(prompt => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => send(undefined, prompt)}
+                disabled={loading || !sessionId}
+                className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] text-gray-600 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={input}

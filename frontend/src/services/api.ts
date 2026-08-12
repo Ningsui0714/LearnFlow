@@ -6,8 +6,24 @@ const api = axios.create({
   withCredentials: true,
 })
 
+const DESKTOP_AUTH_STORAGE_KEY = 'learnflow.desktop.auth-token'
+
+export function configureDesktopApi(baseURL: string, desktopToken: string) {
+  api.defaults.baseURL = baseURL
+  api.defaults.headers.common['X-LearnFlow-Desktop-Token'] = desktopToken
+  const authToken = sessionStorage.getItem(DESKTOP_AUTH_STORAGE_KEY)
+  if (authToken) api.defaults.headers.common.Authorization = `Bearer ${authToken}`
+}
+
 api.interceptors.response.use(
-  response => response,
+  response => {
+    const desktopAuthToken = response?.data?.desktop_auth_token
+    if (typeof desktopAuthToken === 'string' && desktopAuthToken) {
+      sessionStorage.setItem(DESKTOP_AUTH_STORAGE_KEY, desktopAuthToken)
+      api.defaults.headers.common.Authorization = `Bearer ${desktopAuthToken}`
+    }
+    return response
+  },
   error => {
     if (error?.response?.status === 401) {
       window.dispatchEvent(new CustomEvent('learnflow:unauthorized'))
@@ -24,6 +40,7 @@ export interface AuthUser {
   is_legacy_demo: boolean
   is_dev_login: boolean
   dev_test_login_enabled: boolean
+  desktop_auth_token?: string
   profile: {
     education_stage: string
     background: string
@@ -53,7 +70,11 @@ export const loginUser = (username: string, password: string) =>
   api.post('/auth/login', { username, password }).then(r => r.data as AuthUser)
 export const registerUser = (data: RegisterPayload) =>
   api.post('/auth/register', data).then(r => r.data as AuthUser)
-export const logoutUser = () => api.post('/auth/logout').then(r => r.data)
+export const logoutUser = () => api.post('/auth/logout').then(r => {
+  sessionStorage.removeItem(DESKTOP_AUTH_STORAGE_KEY)
+  delete api.defaults.headers.common.Authorization
+  return r.data
+})
 export const listDevAccounts = () => api.get('/dev/accounts').then(r => r.data)
 export const devLogin = (accountId: number) =>
   api.post(`/dev/accounts/${accountId}/login`).then(r => r.data as AuthUser)
@@ -151,6 +172,123 @@ export const listProjects = () =>
 export const getProject = (id: number) =>
   api.get(`/projects/${id}`).then(r => r.data)
 
+// ── Desktop project workspace ──
+export type WorkspaceNodeKind =
+  | 'managed_lecture'
+  | 'managed_exercise'
+  | 'workspace_text'
+  | 'workspace_binary'
+  | 'protected'
+
+export interface WorkspaceNode {
+  name: string
+  path: string
+  kind: WorkspaceNodeKind
+  is_directory: boolean
+  size?: number
+  modified_at?: string
+  protected_reason?: string
+  children: WorkspaceNode[]
+}
+
+export interface WorkspaceTree {
+  workspace_id: number
+  project_id: number
+  root_name: string
+  nodes: WorkspaceNode[]
+}
+
+export interface WorkspaceFile {
+  path: string
+  kind: WorkspaceNodeKind
+  content?: string
+  sha256?: string
+  size: number
+  modified_at: string
+  read_only: boolean
+  mime_type?: string
+  previewable: boolean
+}
+
+export interface WorkspaceOperation {
+  id: number
+  project_id: number
+  actor: 'user' | 'agent'
+  operation: 'create' | 'write' | 'mkdir' | 'rename' | 'move' | 'delete' | 'restore'
+  status: string
+  target_path: string
+  destination_path?: string
+  base_hash?: string
+  result: Record<string, any>
+  expires_at?: string
+  created_at: string
+  confirmed_at?: string
+  applied_at?: string
+}
+
+const workspaceFileUrl = (projectId: number, path: string) =>
+  `/projects/${projectId}/workspace/files/${path.split('/').map(encodeURIComponent).join('/')}`
+
+export const linkProjectWorkspace = (
+  projectId: number,
+  data: { root_path: string; platform: string; create: boolean; client_request_id: string },
+) => api.post(`/projects/${projectId}/workspace/link`, data).then(r => r.data)
+
+export const getWorkspaceTree = (projectId: number) =>
+  api.get(`/projects/${projectId}/workspace/tree`).then(r => r.data as WorkspaceTree)
+
+export const getCheckpointWorkspaceArtifacts = (checkpointId: number) =>
+  api.get(`/checkpoints/${checkpointId}/workspace/artifacts`).then(r => r.data)
+
+export const getWorkspaceFile = (projectId: number, path: string) =>
+  api.get(workspaceFileUrl(projectId, path)).then(r => r.data as WorkspaceFile)
+
+export const saveWorkspaceFile = (
+  projectId: number,
+  path: string,
+  data: { content: string; base_hash?: string; idempotency_key: string },
+) => api.put(workspaceFileUrl(projectId, path), data).then(r => r.data as WorkspaceOperation)
+
+export const proposeWorkspaceOperation = (
+  projectId: number,
+  data: {
+    actor: 'user' | 'agent'
+    operation: WorkspaceOperation['operation']
+    target_path: string
+    destination_path?: string
+    content?: string
+    base_hash?: string
+    checkpoint_id?: number
+    session_id?: number
+    source_operation_id?: number
+    idempotency_key: string
+  },
+) => api.post(`/projects/${projectId}/workspace/operations/propose`, data)
+  .then(r => r.data as WorkspaceOperation)
+
+export const confirmWorkspaceOperation = (projectId: number, operationId: number) =>
+  api.post(`/projects/${projectId}/workspace/operations/${operationId}/confirm`)
+    .then(r => r.data as WorkspaceOperation)
+
+export const listWorkspaceOperations = (
+  projectId: number,
+  params: { operation?: string; status?: string } = {},
+) => api.get(`/projects/${projectId}/workspace/operations`, { params })
+  .then(r => r.data.operations as WorkspaceOperation[])
+
+export const revealWorkspaceItem = (projectId: number, path: string) =>
+  api.post(`/projects/${projectId}/workspace/reveal`, { path }).then(r => r.data)
+
+export const openWorkspaceItem = (projectId: number, path: string) =>
+  api.post(`/projects/${projectId}/workspace/open`, { path }).then(r => r.data)
+
+const workspacePreviewUrl = (projectId: number, path: string) =>
+  `/projects/${projectId}/workspace/previews/${path.split('/').map(encodeURIComponent).join('/')}`
+
+export const getWorkspacePreview = (projectId: number, path: string) =>
+  api.get(workspacePreviewUrl(projectId, path), { responseType: 'blob' })
+    .then(r => URL.createObjectURL(r.data))
+
 // ── Source ──
 export const addSource = (projectId: number, data: { type: string; url?: string }) =>
   api.post(`/projects/${projectId}/sources`, data).then(r => r.data)
@@ -192,7 +330,7 @@ export const getRoadmapHistory = (projectId: number) =>
   api.get(`/projects/${projectId}/roadmap/history`).then(r => r.data)
 
 // ── Main Tutor ──
-export const createTutorSession = (data: { session_type?: 'global' | 'project'; project_id?: number; checkpoint_id?: number }) =>
+export const createTutorSession = (data: { session_type?: 'global' | 'project' | 'checkpoint'; project_id?: number; checkpoint_id?: number }) =>
   api.post('/agent/sessions', data).then(r => r.data)
 
 export const getTutorSession = (sessionId: number) =>
@@ -215,6 +353,81 @@ export const cancelTutorAction = (actionId: number) =>
 
 export const getTutorAction = (actionId: number) =>
   api.get(`/agent/actions/${actionId}`).then(r => r.data)
+
+export interface LocalAgentProfile {
+  id: number
+  name: string
+  adapter: 'codex_cli' | 'deterministic_fake'
+  executable_path?: string | null
+  enabled: boolean
+  priority: number
+  task_types: string[]
+  capabilities: string[]
+  sandbox_policy: string
+  network_policy: 'unmanaged' | 'managed_off' | 'managed_on'
+  timeout_seconds: number
+  last_probe: Record<string, any>
+}
+
+export interface LocalAgentRun {
+  id: number
+  project_id: number
+  checkpoint_id: number
+  session_id: number
+  action_id: number
+  profile_id: number
+  task_type: string
+  goal: string
+  constraints: string[]
+  required_capabilities: string[]
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled' | 'stale' | 'applied'
+  changed_files: Array<{
+    operation: 'create' | 'write' | 'delete' | 'move'
+    path: string
+    destination_path?: string
+    diff?: string
+    requires_separate_confirmation?: boolean
+  }>
+  diff_text: string
+  result: Record<string, any>
+  error: Record<string, any>
+}
+
+export const listLocalAgentProfiles = () =>
+  api.get('/desktop/agent-profiles').then(r => r.data as LocalAgentProfile[])
+
+export const createLocalAgentProfile = (data: {
+  name: string
+  adapter?: 'codex_cli'
+  executable_path?: string | null
+  enabled?: boolean
+  priority?: number
+  task_types?: string[]
+  capabilities?: string[]
+  sandbox_policy?: 'workspace_write'
+  network_policy?: 'unmanaged'
+  timeout_seconds?: number
+}) => api.post('/desktop/agent-profiles', data).then(r => r.data as LocalAgentProfile)
+
+export const updateLocalAgentProfile = (profileId: number, data: Record<string, any>) =>
+  api.patch(`/desktop/agent-profiles/${profileId}`, data).then(r => r.data as LocalAgentProfile)
+
+export const deleteLocalAgentProfile = (profileId: number) =>
+  api.delete(`/desktop/agent-profiles/${profileId}`).then(r => r.data)
+
+export const getLocalAgentRun = (runId: number) =>
+  api.get(`/local-agent/runs/${runId}`).then(r => r.data as LocalAgentRun)
+
+export const getLocalAgentRunEvents = (runId: number, after = 0) =>
+  api.get(`/local-agent/runs/${runId}/events`, { params: { after } }).then(r => r.data)
+
+export const cancelLocalAgentRun = (runId: number) =>
+  api.post(`/local-agent/runs/${runId}/cancel`).then(r => r.data as LocalAgentRun)
+
+export const applyLocalAgentRun = (
+  runId: number,
+  data: { confirm_apply: boolean; confirmed_deletions: string[]; confirmed_moves: string[]; idempotency_key: string },
+) => api.post(`/local-agent/runs/${runId}/apply`, data).then(r => r.data as LocalAgentRun)
 
 export interface ProjectProposalMilestone {
   id: string
@@ -433,8 +646,11 @@ export function subscribeLectureSSE(
   return { close: abort }
 }
 
-export const saveLecture = (checkpointId: number, sections: any[]) =>
-  api.post(`/checkpoints/${checkpointId}/lecture/save`, { sections }).then(r => r.data)
+export const saveLecture = (
+  checkpointId: number, sections: any[], baseVersion: number, idempotencyKey: string,
+) => api.put(`/checkpoints/${checkpointId}/lecture`, {
+  sections, base_version: baseVersion, idempotency_key: idempotencyKey,
+}).then(r => r.data)
 
 // ── Tasks (T1: background jobs) ──
 export const createLectureTask = (checkpointId: number, mode: 'fresh' | 'resume' = 'fresh', feedback?: string) =>
@@ -473,12 +689,48 @@ export const updateNote = (noteId: number, note: string) =>
 export const deleteNote = (noteId: number) =>
   api.delete(`/notes/${noteId}`).then(r => r.data)
 
+export interface ArtifactAnnotation {
+  id: number
+  checkpoint_id: number
+  artifact_type: 'lecture' | 'exercise'
+  artifact_id: number
+  artifact_version: number
+  section_index: number
+  surface: string
+  selection: string
+  anchor: Record<string, any>
+  note: string
+  status: 'anchored' | 'orphaned'
+}
+
+export const listArtifactAnnotations = (artifactType: 'lecture' | 'exercise', artifactId: number) =>
+  api.get(`/artifacts/${artifactType}/${artifactId}/annotations`)
+    .then(r => r.data as ArtifactAnnotation[])
+
+export const createArtifactAnnotation = (
+  artifactType: 'lecture' | 'exercise', artifactId: number,
+  data: { anchor: Record<string, any>; body: string; idempotency_key: string },
+) => api.post(`/artifacts/${artifactType}/${artifactId}/annotations`, data)
+  .then(r => r.data as ArtifactAnnotation)
+
+export const updateArtifactAnnotation = (annotationId: number, body: string) =>
+  api.put(`/artifact-annotations/${annotationId}`, { body }).then(r => r.data as ArtifactAnnotation)
+
+export const deleteArtifactAnnotation = (annotationId: number) =>
+  api.delete(`/artifact-annotations/${annotationId}`).then(r => r.data)
+
 // ── Phase 3: Exercises & Code ──
 export const listExercises = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/exercises`).then(r => r.data)
 
 export const getExercise = (exerciseId: number) =>
   api.get(`/exercises/${exerciseId}`).then(r => r.data)
+
+export const getExerciseDraft = (exerciseId: number) =>
+  api.get(`/exercises/${exerciseId}/draft`).then(r => r.data)
+
+export const saveExerciseDraft = (exerciseId: number, code: string, files: any[]) =>
+  api.put(`/exercises/${exerciseId}/draft`, { code, files }).then(r => r.data)
 
 export const runCode = (code: string, exerciseId?: number) => {
   const url = exerciseId ? `/exercises/${exerciseId}/run` : '/exercises/run'
@@ -489,9 +741,6 @@ export const runCode = (code: string, exerciseId?: number) => {
 export const runProject = (exerciseId: number, files: any[]) =>
   api.post(`/exercises/${exerciseId}/run`, { code: '', files }).then(r => r.data)
 
-export const saveExerciseFiles = (exerciseId: number, files: any[]) =>
-  api.put(`/exercises/${exerciseId}/files`, { code: '', files }).then(r => r.data)
-
 export const getExerciseEnv = (exerciseId: number) =>
   api.get(`/exercises/${exerciseId}/env`).then(r => r.data)
 
@@ -501,9 +750,11 @@ export const submitProject = (
   assistanceLevel: string = 'none',
   remediationCaseId?: number,
   attemptRole: string = 'original',
+  clientSubmissionId?: string,
 ) => api.post(`/exercises/${exerciseId}/submit`, {
   code: '', files, assistance_level: assistanceLevel,
   remediation_case_id: remediationCaseId, attempt_role: attemptRole,
+  client_submission_id: clientSubmissionId,
 }).then(r => r.data)
 
 export const reviewCode = (exerciseId: number, code: string, selection?: string) =>
@@ -546,11 +797,13 @@ export const submitExercise = (
   assistanceLevel: string = 'none',
   remediationCaseId?: number,
   attemptRole: string = 'original',
+  clientSubmissionId?: string,
 ) => api.post(`/exercises/${exerciseId}/submit`, {
   code,
   assistance_level: assistanceLevel,
   remediation_case_id: remediationCaseId,
   attempt_role: attemptRole,
+  client_submission_id: clientSubmissionId,
 }).then(r => r.data)
 
 // ── Explicit remediation loop ──

@@ -28,6 +28,7 @@ from app.services.project_proposals import (
     evolve_project_proposal, get_latest_active_proposal, list_session_proposals,
     proposal_view, start_resource_search,
 )
+from app.services.checkpoint_context import build_checkpoint_tutor_context
 
 
 CONFIRM_WORDS = {
@@ -60,7 +61,7 @@ TUTOR_SYSTEM_PROMPT = """你是 LearnFlow 中常驻的学习 Tutor。你可以�
 12. 严格区分结构观察与知识观察：结构只记录学习者位于哪条路径、哪个阶段、依赖什么、为何转向以及回来时从哪里继续；知识只记录某个具体知识点的理解程度、待解疑问、明确误解与验证结果。学习目标属于价值，学习负荷属于人因，实践产物属于实践。
 13. 普通疑问或答错只能形成知识缺口，不能自动写成“误解”。只有用户明确表达了可指出其错误之处的具体理解，或评估证据诊断出稳定错误模式时，才记录 misconceptions。两个维度需要联动时，用检查点、概念或证据引用关联，不在两个维度重复同一段判断。
 
-严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。"""
+严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。只有在 checkpoint 会话中，且任务确实需要修改或测试共享项目文件时，才可设置 local_agent_task.should_delegate=true；只描述任务类型、目标、约束与能力，不选择 Agent、不拼接命令，也不要声称已经启动。"""
 
 GLOBAL_MAIN_AGENT_PROMPT = """当前是 global 主 Agent 会话。你的主要职责是帮助学习者：
 - 梳理学习方向、目标价值与优先级，尤其接住“我不知道学什么、怎么选、是否适合”的迷茫；
@@ -71,6 +72,15 @@ GLOBAL_MAIN_AGENT_PROMPT = """当前是 global 主 Agent 会话。你的主要�
 项目列表、最近活跃项目、关卡位置以及结构/知识短期记忆都只是理解学习者的参考，不代表你正在负责那个项目。不要自称某个项目的负责人，不要主动续接某个项目的当前关卡、路线、来源或课前后辅导，也不要把最近活跃项目当作本轮默认主题。涉及正式路线、关卡学习、深入练习或项目推进时，说明应由对应项目 Tutor 或关卡承接。除非用户明确要求操作某个项目，否则保持全局视角。"""
 
 PROJECT_TUTOR_PROMPT = """当前是 project 项目 Tutor 会话。你只负责当前绑定项目，并持续承接它的来源、正式路线、路线修订、阶段推进和课前后答疑。其他项目及全局记忆只能作为背景参考，不能替换当前项目上下文。正式教学与验证必须落入路线关卡。"""
+
+CHECKPOINT_TUTOR_PROMPT = """当前是 checkpoint 关卡 Tutor 会话。你只负责当前绑定关卡，并在本关讲义、练习和项目文件之间保持同一段会话历史。
+- 学习设计与实践验证是你按需调用的内部能力，不要把自己切换或介绍成另一个主 Agent。
+- 只使用当前关卡上下文；不要引用其他关卡的讲义、练习或聊天。
+- 文件树只表示文件存在。需要正文时必须按需读取，不得假设内容。
+- 官方讲义和练习由数据库领域能力维护；不得用普通文件写入绕过版本、测试、答案或判题保护。
+- 可以把明确的项目代码修改或测试委派给已配置的本地代码 Agent。它是工具而非第四类主 Agent；由 Broker 确定性选择配置，用户确认后才在隔离副本启动，结果再次确认后才写回。
+- 编辑文件或运行成功不代表掌握；只有正式判题结果可以形成掌握证据。
+- 回答围绕用户当前选中的讲义、练习或文件，最多给一个明确下一步。"""
 
 
 def _normalize_url(value: str) -> str:
@@ -86,7 +96,7 @@ def _extract_url(message: str) -> str | None:
 
 def _decode_tutor_content(
     content: str,
-) -> tuple[str, list[dict], dict | None, dict | None, list[dict]]:
+) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None]:
     """Unwrap JSON returned by models that ignore the structured-output request."""
     text = content.strip()
     if text.startswith("```"):
@@ -114,14 +124,16 @@ def _decode_tutor_content(
         opportunity = payload.get("project_opportunity")
         learning_intent = payload.get("learning_intent")
         major_events = payload.get("major_event_candidates")
+        local_agent_task = payload.get("local_agent_task")
         return (
             payload["reply"].strip(),
             [item for item in observations if isinstance(item, dict)] if isinstance(observations, list) else [],
             opportunity if isinstance(opportunity, dict) else None,
             learning_intent if isinstance(learning_intent, dict) else None,
             [item for item in major_events if isinstance(item, dict)] if isinstance(major_events, list) else [],
+            local_agent_task if isinstance(local_agent_task, dict) else None,
         )
-    return text, [], None, None, []
+    return text, [], None, None, [], None
 
 
 def _extract_project_name(message: str) -> str | None:
@@ -188,6 +200,30 @@ def _looks_like_lecture_command(message: str) -> bool:
 
 def _looks_like_assessment_command(message: str) -> bool:
     return any(word in message for word in ("生成题目", "出题", "自测", "练习题", "生成练习"))
+
+
+def _looks_like_local_agent_delegation(message: str) -> bool:
+    normalized = message.casefold()
+    actor = any(token in normalized for token in (
+        "本地agent", "本地 agent", "代码agent", "代码 agent", "codex", "子agent", "子 agent",
+    ))
+    task = any(token in normalized for token in (
+        "修改", "实现", "修复", "重构", "测试", "写代码", "构建", "补全", "文档",
+    ))
+    delegation = any(token in normalized for token in ("让", "交给", "委派", "调用", "请"))
+    return actor and task and delegation
+
+
+def _local_agent_task_type(message: str) -> str:
+    if any(token in message for token in ("修复", "bug", "报错")):
+        return "bug_fix"
+    if "重构" in message:
+        return "refactor"
+    if any(token in message for token in ("测试", "test")):
+        return "test"
+    if any(token in message for token in ("文档", "README", "说明")):
+        return "documentation"
+    return "code_change"
 
 
 def _learning_flow(session: AgentSession) -> dict[str, Any]:
@@ -411,7 +447,14 @@ async def get_or_create_session(
         AgentSession.session_type == session_type,
         AgentSession.status == "active",
     )
-    if session_type == "project":
+    if session_type == "checkpoint":
+        if not project_id or not checkpoint_id:
+            raise ValueError("checkpoint session requires project_id and checkpoint_id")
+        query = query.where(
+            AgentSession.project_id == project_id,
+            AgentSession.checkpoint_id == checkpoint_id,
+        )
+    elif session_type == "project":
         query = query.where(AgentSession.project_id == project_id)
     else:
         query = query.where(AgentSession.project_id.is_(None))
@@ -453,14 +496,15 @@ async def get_or_create_session(
             session_type=session_type,
             project_id=project_id,
             checkpoint_id=checkpoint_id,
-            title="项目 Tutor" if project_id else "学习 Tutor",
+            title=(
+                "关卡 Tutor" if session_type == "checkpoint"
+                else "项目 Tutor" if project_id else "学习 Tutor"
+            ),
             status="active",
             context_summary=context_summary,
         )
         db.add(session)
         await db.flush()
-    elif checkpoint_id is not None:
-        session.checkpoint_id = checkpoint_id
     await _ensure_project_welcome_message(db, session)
     return session
 
@@ -485,6 +529,8 @@ def action_card(action: AgentAction | None) -> dict | None:
     public_keys = {
         "name", "project_name", "description", "url", "mode",
         "initial_concepts", "practice_artifact", "goal",
+        "task_type", "profile_name", "adapter", "sandbox_policy",
+        "network_policy", "network_boundary_enforced", "excluded_paths",
     }
     return {
         "id": action.id,
@@ -558,10 +604,12 @@ async def get_session_state_summary(
     """Return UI state without presenting remembered projects as global scope."""
     state = await get_state_summary(
         db,
-        session.project_id if session.session_type == "project" else None,
-        session.checkpoint_id if session.session_type == "project" else None,
+        session.project_id if session.session_type in {"project", "checkpoint"} else None,
+        session.checkpoint_id if session.session_type == "checkpoint" else None,
         learner_id=session.learner_id,
     )
+    if session.session_type == "checkpoint":
+        return {**state, "session_scope": "checkpoint", "tutor_role": "checkpoint_tutor"}
     if session.session_type == "project":
         return {**state, "session_scope": "project", "tutor_role": "project_tutor"}
 
@@ -793,6 +841,43 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
         raise ValueError("Tutor 会话不存在")
     if session.learner_id != action.learner_id:
         raise ValueError("Tutor 行动归属无效")
+
+    if action.capability == "delegate_local_agent_task":
+        from app.models.project import LocalAgentProfile
+        from app.services.local_agent_broker import LocalAgentError, create_run_for_action
+
+        profile_id = target.get("profile_id")
+        profile = (await db.execute(select(LocalAgentProfile).where(
+            LocalAgentProfile.id == profile_id,
+            LocalAgentProfile.learner_id == action.learner_id,
+            LocalAgentProfile.enabled.is_(True),
+        ))).scalar_one_or_none() if profile_id else None
+        if not profile:
+            action.status = "needs_input"
+            session.pending_action_id = action.id
+            await db.commit()
+            return "请先在桌面版为当前账号启用一个满足任务能力的本地代码 Agent。"
+        try:
+            run = await create_run_for_action(db, action, profile, target)
+        except LocalAgentError as exc:
+            action.status = "failed"
+            action.error = {"code": exc.code, "message": exc.detail}
+            action.finished_at = datetime.utcnow()
+            session.pending_action_id = None
+            await db.commit()
+            return f"本地 Agent 没有启动：{exc.detail}"
+        action.status = "completed"
+        action.finished_at = datetime.utcnow()
+        action.result = {
+            "local_agent_run": {
+                "id": run.id, "status": run.status, "profile_id": profile.id,
+                "profile_name": profile.name, "task_type": run.task_type,
+            },
+            "user_message": "已在隔离副本启动本地代码 Agent；完成后会展示完整 diff，写回前还会再次确认。",
+        }
+        session.pending_action_id = None
+        await db.commit()
+        return action.result["user_message"]
 
     if action.capability in {"create_project", "bootstrap_project"}:
         name = str(target.get("name") or "").strip()
@@ -1221,6 +1306,28 @@ async def _explicit_action(
     message: str,
     context: dict | None = None,
 ) -> AgentAction | None:
+    if session.session_type == "checkpoint":
+        if _looks_like_local_agent_delegation(message):
+            return await _local_agent_action(
+                db, session,
+                task_type=_local_agent_task_type(message), goal=message,
+                constraints=[], required_capabilities=["code_edit"],
+                reason="这项任务需要修改或验证本地项目文件",
+            )
+        if _looks_like_lecture_command(message):
+            return await _new_action(
+                db, session, "generate_lecture",
+                {"checkpoint_id": session.checkpoint_id, "explicit": True},
+                "running",
+            )
+        if _looks_like_assessment_command(message):
+            mode = "practice" if any(word in message for word in ("练习", "代码", "实践")) else "concept"
+            return await _new_action(
+                db, session, "generate_assessment",
+                {"checkpoint_id": session.checkpoint_id, "mode": mode, "explicit": True},
+                "running",
+            )
+        return None
     url = _extract_url(message) or await _source_url_from_context(db, session.learner_id, context)
     if _looks_like_create_command(message):
         name = _extract_project_name(message)
@@ -1295,6 +1402,49 @@ async def _explicit_action(
     return None
 
 
+async def _local_agent_action(
+    db: AsyncSession,
+    session: AgentSession,
+    *,
+    task_type: str,
+    goal: str,
+    constraints: list[str],
+    required_capabilities: list[str],
+    reason: str,
+) -> AgentAction:
+    from app.services.local_agent_broker import select_profile
+
+    if session.session_type != "checkpoint" or not session.project_id or not session.checkpoint_id:
+        raise ValueError("本地代码 Agent 只能由关卡 Tutor 委派")
+    normalized_capabilities = list(dict.fromkeys(
+        item for item in required_capabilities if item in {"code_edit", "test"}
+    )) or ["code_edit"]
+    profile = await select_profile(
+        db, session.learner_id, task_type, normalized_capabilities,
+    )
+    target = {
+        "project_id": session.project_id,
+        "checkpoint_id": session.checkpoint_id,
+        "task_type": task_type,
+        "goal": goal[:2000],
+        "constraints": [str(item)[:500] for item in constraints[:20]],
+        "required_capabilities": normalized_capabilities,
+        "reason": reason[:500],
+        "expected_result": "在隔离副本生成事件、测试、风险和完整 diff；不会直接改动真实工作区",
+        "profile_id": profile.id if profile else None,
+        "profile_name": profile.name if profile else "未找到可用配置",
+        "adapter": profile.adapter if profile else "",
+        "sandbox_policy": profile.sandbox_policy if profile else "workspace_write",
+        "network_policy": profile.network_policy if profile else "",
+        "network_boundary_enforced": bool(profile and profile.adapter == "deterministic_fake"),
+        "excluded_paths": [".learnflow", ".git", ".env/密钥", "符号链接", "缓存与构建目录"],
+    }
+    return await _new_action(
+        db, session, "delegate_local_agent_task", target,
+        "pending_confirmation" if profile else "needs_input",
+    )
+
+
 async def _candidate_sources_follow_up(
     db: AsyncSession,
     session: AgentSession,
@@ -1316,15 +1466,15 @@ async def _candidate_sources_follow_up(
 async def _generate_tutor_reply(
     db: AsyncSession,
     session: AgentSession,
-) -> tuple[str, list[dict], dict | None, dict | None, list[dict]]:
+) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None]:
     latest_messages = await get_messages(db, session.id, limit=1)
     latest_interaction = str(
         ((latest_messages[-1].meta_data or {}).get("interaction") if latest_messages else "") or ""
     )
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
         if latest_interaction == "candidate_sources_completed" and session.project_id:
-            return await _candidate_sources_follow_up(db, session), [], None, None, []
-        return "我可以继续帮你整理学习问题；要进行 AI 讲解，请先在设置页配置 LLM API Key。", [], None, None, []
+            return await _candidate_sources_follow_up(db, session), [], None, None, [], None
+        return "我可以继续帮你整理学习问题；要进行 AI 讲解，请先在设置页配置 LLM API Key。", [], None, None, [], None
 
     projection = await get_kernel_projection(db, session.learner_id)
     prompt_projection = deepcopy(projection)
@@ -1338,10 +1488,11 @@ async def _generate_tutor_reply(
     projects = (await db.execute(
         select(Project).where(Project.learner_id == session.learner_id)
         .order_by(Project.updated_at.desc()).limit(20)
-    )).scalars().all()
+    )).scalars().all() if session.session_type != "checkpoint" else []
     proposals = await list_session_proposals(db, session.id)
     project_workspace: dict[str, Any] = {}
-    if session.project_id:
+    checkpoint_workspace: dict[str, Any] = {}
+    if session.session_type == "project" and session.project_id:
         active_project = (await db.execute(select(Project).where(
             Project.id == session.project_id,
             Project.learner_id == session.learner_id,
@@ -1410,13 +1561,29 @@ async def _generate_tutor_reply(
                 ],
             } if accepted_proposal else None,
         }
+    elif session.session_type == "checkpoint" and session.project_id and session.checkpoint_id:
+        latest = await get_messages(db, session.id, limit=1)
+        latest_context = dict(latest[-1].meta_data or {}) if latest else {}
+        checkpoint_workspace = await build_checkpoint_tutor_context(
+            db,
+            learner_id=session.learner_id,
+            project_id=session.project_id,
+            checkpoint_id=session.checkpoint_id,
+            surface_context=latest_context,
+        )
+        prompt_projection = checkpoint_workspace["five_kernel_projection"]
+    role = {
+        "global": "main_agent",
+        "project": "project_tutor",
+        "checkpoint": "checkpoint_tutor",
+    }.get(session.session_type, "main_agent")
     context = {
         "session_scope": {
             "type": session.session_type,
-            "role": "project_tutor" if session.session_type == "project" else "main_agent",
+            "role": role,
             "project_information_policy": (
-                "current_project_workspace"
-                if session.session_type == "project"
+                "current_checkpoint_only" if session.session_type == "checkpoint"
+                else "current_project_workspace" if session.session_type == "project"
                 else "portfolio_and_memory_reference_only"
             ),
         },
@@ -1426,6 +1593,7 @@ async def _generate_tutor_reply(
         "session_handoff": dict(session.context_summary or {}) if session.session_type == "project" else {},
         "recent_project_reference": dict(session.context_summary or {}) if session.session_type == "global" else {},
         "project_workspace": project_workspace,
+        "checkpoint_workspace": checkpoint_workspace,
         "active_project_proposals": [
             {
                 "proposal_key": item.proposal_key,
@@ -1439,7 +1607,11 @@ async def _generate_tutor_reply(
             for item in proposals
         ],
     }
-    scope_prompt = PROJECT_TUTOR_PROMPT if session.session_type == "project" else GLOBAL_MAIN_AGENT_PROMPT
+    scope_prompt = (
+        CHECKPOINT_TUTOR_PROMPT if session.session_type == "checkpoint"
+        else PROJECT_TUTOR_PROMPT if session.session_type == "project"
+        else GLOBAL_MAIN_AGENT_PROMPT
+    )
     system = (
         TUTOR_SYSTEM_PROMPT
         + "\n\n"
@@ -1494,12 +1666,14 @@ async def _generate_tutor_reply(
         output = await structured.ainvoke(messages)
         opportunity = output.project_opportunity.model_dump() if output.project_opportunity else None
         learning_intent = output.learning_intent.model_dump() if output.learning_intent else None
+        local_agent_task = output.local_agent_task.model_dump() if output.local_agent_task else None
         return (
             output.reply,
             [o.model_dump() for o in output.observations],
             opportunity,
             learning_intent,
             [item.model_dump() for item in output.major_event_candidates],
+            local_agent_task,
         )
     except Exception:
         try:
@@ -1508,8 +1682,8 @@ async def _generate_tutor_reply(
             return _decode_tutor_content(content)
         except Exception:
             if latest_interaction == "candidate_sources_completed" and session.project_id:
-                return await _candidate_sources_follow_up(db, session), [], None, None, []
-            return "这次模型服务没有响应。你仍然可以直接让我创建项目、添加来源或推进当前检查点。", [], None, None, []
+                return await _candidate_sources_follow_up(db, session), [], None, None, [], None
+            return "这次模型服务没有响应。你仍然可以直接让我创建项目、添加来源或推进当前检查点。", [], None, None, [], None
 
 
 async def proposal_acceptance_action(
@@ -1616,7 +1790,14 @@ async def process_turn(
         if cached_response:
             return cached_response
 
-    if project_id is not None:
+    if session.session_type == "checkpoint":
+        if project_id is not None and project_id != session.project_id:
+            raise ValueError("关卡 Tutor 不能切换到其他项目")
+        if checkpoint_id is not None and checkpoint_id != session.checkpoint_id:
+            raise ValueError("关卡 Tutor 不能切换到其他关卡")
+        project_id = session.project_id
+        checkpoint_id = session.checkpoint_id
+    if project_id is not None and session.session_type != "checkpoint":
         project = await _project_for_context(db, session, project_id)
         if not project:
             raise ValueError("学习项目不存在")
@@ -1626,7 +1807,8 @@ async def process_turn(
         checkpoint = await _checkpoint_for_learner(db, session.learner_id, checkpoint_id)
         if not checkpoint:
             raise ValueError("检查点不存在")
-        session.checkpoint_id = checkpoint.id
+        if session.session_type == "checkpoint" and checkpoint.id != session.checkpoint_id:
+            raise ValueError("关卡 Tutor 作用域不可修改")
         if checkpoint.learning_status in (None, "", "not_started"):
             checkpoint.learning_status = "in_progress"
 
@@ -1635,7 +1817,10 @@ async def process_turn(
     message_context = {}
     if isinstance(incoming_context.get("selected_text"), str):
         message_context["selected_text"] = incoming_context["selected_text"][:12000]
-    for key in ("selected_source_id", "selected_source_url"):
+    for key in (
+        "selected_source_id", "selected_source_url", "surface", "resource_kind",
+        "resource_id", "title", "section_index", "selected_path", "open_file", "language",
+    ):
         if key in incoming_context:
             message_context[key] = incoming_context[key]
     if candidate_sources_completed:
@@ -1871,7 +2056,11 @@ async def process_turn(
         ]))
         action.target = target
         try:
-            reply = await execute_action(db, action)
+            if action.status == "pending_confirmation":
+                reply = "本地代码 Agent 任务已准备好。确认后只会在隔离副本启动，不会直接改动真实工作区。"
+                await db.commit()
+            else:
+                reply = await execute_action(db, action)
             proposal_id = (action.target or {}).get("proposal_id")
             if proposal_id:
                 proposal_for_action = proposal_for_action or await db.get(
@@ -1896,7 +2085,12 @@ async def process_turn(
             reply = f"没有执行成功：{str(exc)[:240]}"
         assistant = AgentMessage(
             session_id=session.id, role="assistant", content=reply,
-            meta_data={"action_id": action.id},
+            meta_data={
+                "action_id": action.id,
+                "local_agent_run_id": (
+                    ((action.result or {}).get("local_agent_run") or {}).get("id")
+                ),
+            },
         )
         db.add(assistant)
         await db.commit()
@@ -1915,9 +2109,28 @@ async def process_turn(
         await db.commit()
         return response
 
-    reply, observations, opportunity, learning_intent, major_event_candidates = (
+    reply, observations, opportunity, learning_intent, major_event_candidates, local_agent_task = (
         await _generate_tutor_reply(db, session)
     )
+    generated_local_action = None
+    if (
+        session.session_type == "checkpoint"
+        and isinstance(local_agent_task, dict)
+        and local_agent_task.get("should_delegate")
+        and str(local_agent_task.get("goal") or "").strip()
+    ):
+        generated_local_action = await _local_agent_action(
+            db, session,
+            task_type=str(local_agent_task.get("task_type") or "code_change"),
+            goal=str(local_agent_task.get("goal") or message),
+            constraints=list(local_agent_task.get("constraints") or []),
+            required_capabilities=list(local_agent_task.get("required_capabilities") or ["code_edit"]),
+            reason=str(local_agent_task.get("reason") or "这项任务需要本地代码能力"),
+        )
+        if generated_local_action.status == "pending_confirmation":
+            reply = "我已把任务收敛为一张本地代码 Agent 委派卡。确认后先在隔离副本执行；完成后你会看到测试、风险和完整 diff，再决定是否写回。"
+        else:
+            reply = "当前没有满足任务能力的本地代码 Agent。请先在桌面版配置并启用一个 Agent。"
     if (
         session.session_type == "project"
         and learning_phase != "roadmap_ready"
@@ -1937,7 +2150,7 @@ async def process_turn(
         candidates=major_event_candidates,
     )
     proposal_update = None
-    if not candidate_sources_completed:
+    if not candidate_sources_completed and session.session_type != "checkpoint":
         proposal_update = await evolve_project_proposal(
             db, session,
             message=message,
@@ -1961,7 +2174,11 @@ async def process_turn(
         "message": reply,
         "state_summary": state,
         "executed_action": None,
-        "action_card": action_card(pending) if pending and pending.status in {"needs_input", "pending_confirmation"} else None,
+        "action_card": (
+            action_card(generated_local_action) if generated_local_action
+            else action_card(pending) if pending and pending.status in {"needs_input", "pending_confirmation"}
+            else None
+        ),
         "project_proposals": [proposal_view(item) for item in proposals],
         "proposal_update": proposal_view(proposal_update) if proposal_update else None,
         "life_events": life_events,

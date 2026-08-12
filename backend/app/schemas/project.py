@@ -140,6 +140,7 @@ class CodeRunRequest(BaseModel):
     assistance_level: str = "none"
     remediation_case_id: Optional[int] = None
     attempt_role: str = "original"
+    client_submission_id: Optional[str] = None
 
 
 class CodeRunResult(BaseModel):

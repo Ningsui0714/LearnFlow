@@ -4,13 +4,17 @@ Phase 3 API routes:
 - Code execution
 - Code review agent
 """
+import hashlib
+
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.database import get_db
-from app.core.config import settings
-from app.models.project import Checkpoint, Exercise, ConceptQuestion, Task, Roadmap
+from app.models.learning import LearningAttempt
+from app.models.project import (
+    Checkpoint, Exercise, ExerciseDraft, ConceptQuestion, Task, Roadmap,
+)
 from app.schemas.project import ExerciseOut, CodeRunRequest, CodeRunResult
 from app.services.code_executor import execute_code
 from app.services.code_agent import CodeAgent
@@ -117,38 +121,70 @@ async def get_exercise(
     )
 
 
-# ── Project-mode: save user files (pilot) ──
-
-@router.put("/exercises/{exercise_id}/files")
-async def save_exercise_files(
+@router.get("/exercises/{exercise_id}/draft")
+async def get_exercise_draft(
     exercise_id: int,
-    req: CodeRunRequest,
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    """Persist user's edited files for a project-mode exercise."""
     exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
-    if not req.files:
-        raise HTTPException(400, "files 不能为空")
-
-    # Merge: keep read_only files' original content, update editable ones
-    originals = {f["name"]: f for f in (exercise.files or [])}
-    merged = []
-    for f in req.files:
-        name = f.get("name", "")
-        orig = originals.get(name, {})
-        merged.append({
-            "name": name,
-            "content": f.get("content", ""),
-            "read_only": bool(f.get("read_only", orig.get("read_only", False))),
+    draft = (await db.execute(select(ExerciseDraft).where(
+        ExerciseDraft.exercise_id == exercise_id,
+        ExerciseDraft.learner_id == current.learner.id,
+    ))).scalar_one_or_none()
+    saved_files = {
+        item.get("name"): item for item in (draft.files or [])
+        if draft and isinstance(item, dict)
+    }
+    files = []
+    for item in (exercise.files or []):
+        if not isinstance(item, dict):
+            continue
+        saved = saved_files.get(item.get("name"))
+        files.append({
+            **item,
+            "content": item.get("content", "") if item.get("read_only") else (
+                saved.get("content", item.get("content", "")) if saved else item.get("content", "")
+            ),
         })
-    exercise.files = merged
-    await db.commit()
+    return {
+        "exercise_id": exercise_id,
+        "code": draft.code if draft else exercise.starter_code or "",
+        "files": files,
+        "updated_at": draft.updated_at.isoformat() if draft and draft.updated_at else None,
+    }
 
-    # Also persist to workspace so runs are consistent
-    from app.services import project_runner
-    project_runner.write_project_files(exercise_id, merged)
-    return {"status": "ok", "saved": [f["name"] for f in merged]}
+
+@router.put("/exercises/{exercise_id}/draft")
+async def put_exercise_draft(
+    exercise_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
+    draft = (await db.execute(select(ExerciseDraft).where(
+        ExerciseDraft.exercise_id == exercise_id,
+        ExerciseDraft.learner_id == current.learner.id,
+    ))).scalar_one_or_none()
+    if not draft:
+        draft = ExerciseDraft(learner_id=current.learner.id, exercise_id=exercise_id)
+        db.add(draft)
+    if "code" in data:
+        draft.code = str(data.get("code") or "")[:2_000_000]
+    if "files" in data:
+        editable = {
+            item.get("name") for item in (exercise.files or [])
+            if isinstance(item, dict) and not item.get("read_only")
+        }
+        draft.files = [
+            {"name": item.get("name", ""), "content": str(item.get("content", ""))[:2_000_000]}
+            for item in (data.get("files") or [])
+            if isinstance(item, dict) and item.get("name") in editable
+        ]
+    await db.commit()
+    await db.refresh(draft)
+    return {"status": "ok", "updated_at": draft.updated_at.isoformat() if draft.updated_at else None}
 
 
 # ── Code Execution ──
@@ -187,17 +223,6 @@ async def run_code(
         )
 
     # Classic single-file mode
-    res = execute_code(req.code)
-    return CodeRunResult(stdout=res["stdout"], stderr=res["stderr"],
-                         passed=res["exit_code"] == 0, elapsed=res["elapsed"])
-
-
-@router.post("/exercises/run", response_model=CodeRunResult)
-async def run_standalone_code(
-    req: CodeRunRequest,
-    current: CurrentLearner = Depends(get_current_learner),
-):
-    """Execute arbitrary Python code (no exercise context)."""
     res = execute_code(req.code)
     return CodeRunResult(stdout=res["stdout"], stderr=res["stderr"],
                          passed=res["exit_code"] == 0, elapsed=res["elapsed"])
@@ -645,13 +670,26 @@ async def submit_exercise(
     """T8: judge user code against the exercise's test cases.
     Returns per-case results (passed/expected/actual)."""
     exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
+    submission_key = None
+    if req.client_submission_id:
+        raw_key = f"exercise:{current.learner.id}:{exercise_id}:{req.client_submission_id}"
+        submission_key = raw_key if len(raw_key) <= 160 else (
+            f"exercise:{current.learner.id}:sha256:{hashlib.sha256(raw_key.encode()).hexdigest()}"
+        )
+        replay = (await db.execute(select(LearningAttempt).where(
+            LearningAttempt.learner_id == current.learner.id,
+            LearningAttempt.client_submission_id == submission_key,
+        ))).scalar_one_or_none()
+        if replay:
+            return {**dict(replay.result or {}), "attempt_id": replay.id, "idempotent_replay": True}
+
+    effective_code = req.code
 
     async def persist_attempt(response: dict, passed_ok: bool):
-        import hashlib
         from app.services.learning_runtime import (
             create_attempt, record_event, evaluate_checkpoint_status,
         )
-        code_bytes = (req.code or "").encode("utf-8")
+        code_bytes = (effective_code or "").encode("utf-8")
         file_refs = [
             {
                 "name": f.get("name", ""),
@@ -660,7 +698,7 @@ async def submit_exercise(
             for f in (req.files or []) if f.get("name")
         ]
         submission = {
-            "code": req.code[:65536],
+            "code": effective_code[:65536],
             "code_sha256": hashlib.sha256(code_bytes).hexdigest(),
             "truncated": len(code_bytes) > 65536,
             "files": file_refs,
@@ -674,6 +712,7 @@ async def submit_exercise(
             submission=submission,
             result=response,
             assistance_level=req.assistance_level or "none",
+            client_submission_id=submission_key,
         )
         cp = await db.get(Checkpoint, exercise.checkpoint_id)
         roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
@@ -730,6 +769,11 @@ async def submit_exercise(
             await evaluate_project_badge(
                 db, learner_id=current.learner.id, project_id=roadmap.project_id,
             )
+        attempt.result = {
+            **response,
+            "attempt_id": attempt.id,
+            "remediation": remediation_payload,
+        }
         await db.commit()
         return attempt.id, remediation_payload
 
@@ -771,7 +815,7 @@ async def submit_exercise(
         return response
 
     from app.services.exercise_agent import ExerciseAgent
-    results = ExerciseAgent.verify_exercise(req.code, test_cases)
+    results = ExerciseAgent.verify_exercise(effective_code, test_cases)
     passed = sum(1 for r in results if r["passed"])
     if passed == len(results) and passed > 0:
         from app.services.progress import record_exercise_solved

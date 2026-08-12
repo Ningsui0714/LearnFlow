@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  BookOpen, Braces, ChevronDown, ChevronRight, Folder, FolderKanban,
+  BookOpen, Braces, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
   GitBranch, MessageCircle, Plus, Route, UserRound,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { getRoadmap, listProjects } from '../../services/api'
+import { getCheckpointWorkspaceArtifacts, getRoadmap, listProjects } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { useWorkspace } from './WorkspaceContext'
+import WorkspaceFileExplorer from './WorkspaceFileExplorer'
 
 interface ProjectSummary {
   id: number
@@ -32,6 +33,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [expandedIds, setExpandedIds] = useState<number[]>([])
   const [roadmaps, setRoadmaps] = useState<Record<number, CheckpointSummary[]>>({})
+  const [artifacts, setArtifacts] = useState<Record<number, any>>({})
   const [loadingIds, setLoadingIds] = useState<number[]>([])
 
   const current = useMemo(() => {
@@ -66,7 +68,13 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
     setLoadingIds(previous => [...previous, projectId])
     try {
       const data = await getRoadmap(projectId)
-      setRoadmaps(previous => ({ ...previous, [projectId]: data.checkpoints || [] }))
+      const checkpoints = data.checkpoints || []
+      setRoadmaps(previous => ({ ...previous, [projectId]: checkpoints }))
+      const artifactRows = await Promise.all(checkpoints.map(async (checkpoint: CheckpointSummary) => {
+        try { return [checkpoint.id, await getCheckpointWorkspaceArtifacts(checkpoint.id)] as const }
+        catch { return [checkpoint.id, null] as const }
+      }))
+      setArtifacts(previous => ({ ...previous, ...Object.fromEntries(artifactRows) }))
     } catch {
       setRoadmaps(previous => ({ ...previous, [projectId]: [] }))
     } finally {
@@ -147,7 +155,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
           const total = project.checkpoint_count || checkpoints.length
           const progress = total ? Math.round(completed * 100 / total) : 0
           return (
-            <section key={project.id} className={`mb-1 overflow-hidden rounded-lg ${expanded ? 'bg-slate-50' : ''}`}>
+            <section key={project.id} className={`mb-1 overflow-visible rounded-lg ${expanded ? 'bg-slate-50' : ''}`}>
               <button
                 type="button"
                 onClick={() => toggleProject(project)}
@@ -177,7 +185,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
                   </button>
 
                   <p className="mb-1 mt-2 flex items-center gap-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                    <Route size={10} /> 个性化学习路径
+                    <Route size={10} /> 关卡资料
                   </p>
                   {loadingIds.includes(project.id) && (
                     <p className="px-2 py-2 text-[10px] text-slate-400">正在读取路径…</p>
@@ -191,44 +199,38 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
                       const exercisePath = `${lecturePath}/exercises`
                       const active = current.projectId === project.id && current.checkpointId === checkpoint.id
                       const status = checkpoint.learning_status || (checkpoint.completed ? 'completed' : 'not_started')
+                      const managed = artifacts[checkpoint.id]
                       return (
-                        <div key={checkpoint.id} className={`group flex items-center rounded-md ${active ? 'bg-emerald-100' : 'hover:bg-slate-100'}`}>
-                          <button
-                            type="button"
-                            onClick={() => open(lecturePath, {
-                              title: checkpoint.title,
-                              kind: 'lecture',
-                              projectId: project.id,
-                              checkpointId: checkpoint.id,
-                            })}
-                            className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-[11px] ${active ? 'font-semibold text-emerald-800' : 'text-slate-600'}`}
-                          >
-                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] ${
-                              status === 'completed' ? 'bg-emerald-600 text-white'
-                                : status === 'verification_due' ? 'bg-amber-500 text-white'
-                                  : status === 'in_progress' ? 'bg-sky-600 text-white' : 'border border-slate-300 text-slate-400'
-                            }`}>
-                              {status === 'completed' ? '✓' : checkpoint.order}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate">{checkpoint.title}</span>
+                        <div key={checkpoint.id} className={`rounded-md px-1 py-0.5 ${active ? 'bg-emerald-100' : 'hover:bg-slate-100'}`}>
+                          <div className="flex items-center gap-1 px-1 py-1 text-[10px] font-semibold text-slate-500">
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[8px] ${status === 'completed' ? 'bg-emerald-600 text-white' : status === 'verification_due' ? 'bg-amber-500 text-white' : status === 'in_progress' ? 'bg-sky-600 text-white' : 'border border-slate-300 text-slate-400'}`}>{status === 'completed' ? '✓' : checkpoint.order}</span>
+                            <span className="truncate">{checkpoint.title}</span>
+                          </div>
+                          <button type="button" onDoubleClick={() => open(lecturePath, { title: checkpoint.title, kind: 'lecture', projectId: project.id, checkpointId: checkpoint.id })} onClick={() => open(lecturePath, { title: checkpoint.title, kind: 'lecture', projectId: project.id, checkpointId: checkpoint.id })} className="flex w-full items-center gap-1.5 rounded px-5 py-1 text-left font-mono text-[10px] text-slate-600 hover:bg-white" title="双击打开讲义播放器">
+                            <FileText size={11} className="text-emerald-600" /><span className="truncate">{managed?.managed_lecture?.logical_filename || `${String(checkpoint.order).padStart(2, '0')}-${checkpoint.title}.lflecture`}</span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => open(exercisePath, {
-                              title: `练习 · ${checkpoint.title}`,
-                              kind: 'exercise',
-                              projectId: project.id,
-                              checkpointId: checkpoint.id,
-                            })}
-                            title="打开练习"
-                            className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-400 opacity-100 hover:bg-white hover:text-violet-600 lg:opacity-0 lg:group-hover:opacity-100"
-                          >
-                            <Braces size={12} />
-                          </button>
+                          {(managed?.managed_exercises || []).map((exercise: any) => (
+                            <button key={exercise.id} type="button" onDoubleClick={() => open(`${exercisePath}?exercise=${exercise.id}`, { title: exercise.title, kind: 'exercise', projectId: project.id, checkpointId: checkpoint.id })} onClick={() => open(`${exercisePath}?exercise=${exercise.id}`, { title: exercise.title, kind: 'exercise', projectId: project.id, checkpointId: checkpoint.id })} className="flex w-full items-center gap-1.5 rounded px-5 py-1 text-left font-mono text-[10px] text-slate-600 hover:bg-white" title="双击打开练习播放器">
+                              <Braces size={11} className="text-violet-600" /><span className="truncate">{exercise.logical_filename}</span>
+                            </button>
+                          ))}
                         </div>
                       )
                     })}
                   </div>
+                  <WorkspaceFileExplorer
+                    projectId={project.id}
+                    projectName={project.name}
+                    onOpen={workspacePath => open(
+                      `/projects/${project.id}/workspace?path=${encodeURIComponent(workspacePath)}`,
+                      {
+                        title: workspacePath.split('/').pop() || '项目文件',
+                        kind: 'file',
+                        projectId: project.id,
+                        workspacePath,
+                      },
+                    )}
+                  />
                 </div>
               )}
             </section>

@@ -10,12 +10,13 @@ export type WorkspaceTabKind =
   | 'project'
   | 'lecture'
   | 'exercise'
+  | 'file'
   | 'memory'
   | 'profile'
   | 'settings'
 
 const WORKSPACE_TAB_KINDS: WorkspaceTabKind[] = [
-  'home', 'projects', 'project', 'lecture', 'exercise', 'memory', 'profile', 'settings',
+  'home', 'projects', 'project', 'lecture', 'exercise', 'file', 'memory', 'profile', 'settings',
 ]
 
 export interface WorkspaceTab {
@@ -25,6 +26,8 @@ export interface WorkspaceTab {
   kind: WorkspaceTabKind
   projectId?: number
   checkpointId?: number
+  workspacePath?: string
+  dirty?: boolean
   pinned?: boolean
 }
 
@@ -33,6 +36,8 @@ interface WorkspaceTabPatch {
   kind?: WorkspaceTabKind
   projectId?: number
   checkpointId?: number
+  workspacePath?: string
+  dirty?: boolean
 }
 
 interface WorkspaceContextValue {
@@ -46,6 +51,7 @@ interface WorkspaceContextValue {
   updateCurrentTab: (patch: WorkspaceTabPatch) => void
   splitTab: (tabId: string) => void
   closeSplit: (tabId: string) => void
+  setTabDirty: (tabId: string, dirty: boolean) => void
   setDraggingTabId: (tabId: string | null) => void
 }
 
@@ -69,6 +75,7 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
   updateCurrentTab: noOp,
   splitTab: noOp,
   closeSplit: noOp,
+  setTabDirty: noOp,
   setDraggingTabId: noOp,
 })
 
@@ -82,6 +89,19 @@ function normalizePath(path: string) {
 function pathMeta(path: string): WorkspaceTab {
   const normalized = normalizePath(path)
   const pathname = new URL(normalized, window.location.origin).pathname
+  const workspaceFile = pathname.match(/^\/projects\/(\d+)\/workspace$/)
+  if (workspaceFile) {
+    const url = new URL(normalized, window.location.origin)
+    const workspacePath = url.searchParams.get('path') || ''
+    return {
+      id: normalized,
+      path: normalized,
+      title: workspacePath.split('/').pop() || '项目文件',
+      kind: 'file',
+      projectId: Number(workspaceFile[1]),
+      workspacePath,
+    }
+  }
   const exercise = pathname.match(/^\/projects\/(\d+)\/checkpoints\/(\d+)\/exercises$/)
   if (exercise) {
     return {
@@ -188,6 +208,43 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
     setActiveTabId(next.id)
   }, [hydrated, location.hash, location.pathname, location.search])
 
+  useEffect(() => {
+    const remapWorkspacePath = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        projectId: number
+        previousPath: string
+        nextPath: string
+      }>).detail
+      if (!detail?.projectId || !detail.previousPath || !detail.nextPath) return
+      const remapTab = (tab: WorkspaceTab): WorkspaceTab => {
+        if (tab.kind !== 'file' || tab.projectId !== detail.projectId || !tab.workspacePath) return tab
+        const exact = tab.workspacePath === detail.previousPath
+        const descendant = tab.workspacePath.startsWith(`${detail.previousPath}/`)
+        if (!exact && !descendant) return tab
+        const suffix = exact ? '' : tab.workspacePath.slice(detail.previousPath.length)
+        const workspacePath = `${detail.nextPath}${suffix}`
+        const route = `/projects/${detail.projectId}/workspace?path=${encodeURIComponent(workspacePath)}`
+        const replacement = {
+          ...tab,
+          id: normalizePath(route),
+          path: normalizePath(route),
+          title: workspacePath.split('/').pop() || tab.title,
+          workspacePath,
+        }
+        return replacement
+      }
+      const activeTab = tabs.find(tab => tab.id === activeTabId)
+      const activeReplacement = activeTab ? remapTab(activeTab) : null
+      setTabs(previous => previous.map(remapTab))
+      if (activeReplacement && activeReplacement.id !== activeTab?.id) {
+        setActiveTabId(activeReplacement.id)
+        navigate(activeReplacement.path, { replace: true })
+      }
+    }
+    window.addEventListener('learnflow:workspace-path-moved', remapWorkspacePath)
+    return () => window.removeEventListener('learnflow:workspace-path-moved', remapWorkspacePath)
+  }, [activeTabId, navigate, tabs])
+
   const openPath = useCallback((path: string, patch: WorkspaceTabPatch = {}) => {
     const base = pathMeta(path)
     const next = { ...base, ...patch, id: base.id, path: base.path }
@@ -213,6 +270,7 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
     const index = tabs.findIndex(tab => tab.id === tabId)
     const target = tabs[index]
     if (index < 0 || target?.pinned) return
+    if (target.dirty && !window.confirm(`“${target.title}”还有未保存的修改，仍要关闭吗？`)) return
     const remaining = tabs.filter(tab => tab.id !== tabId)
     setTabs(remaining)
     setSplitTabIds(previous => previous.filter(id => id !== tabId))
@@ -240,6 +298,10 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
     setSplitTabIds(previous => previous.filter(id => id !== tabId))
   }, [])
 
+  const setTabDirty = useCallback((tabId: string, dirty: boolean) => {
+    setTabs(previous => previous.map(tab => tab.id === tabId ? { ...tab, dirty } : tab))
+  }, [])
+
   const value = useMemo<WorkspaceContextValue>(() => ({
     tabs,
     activeTabId,
@@ -251,10 +313,11 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
     updateCurrentTab,
     splitTab,
     closeSplit,
+    setTabDirty,
     setDraggingTabId,
   }), [
     tabs, activeTabId, splitTabIds, draggingTabId, openPath, activateTab,
-    closeTab, updateCurrentTab, splitTab, closeSplit,
+    closeTab, updateCurrentTab, splitTab, closeSplit, setTabDirty,
   ])
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
@@ -266,11 +329,11 @@ export function useWorkspace() {
 
 export function useWorkspaceTitle(title: string, patch: WorkspaceTabPatch = {}) {
   const { updateCurrentTab } = useWorkspace()
-  const { kind, projectId, checkpointId } = patch
+  const { kind, projectId, checkpointId, workspacePath } = patch
   useEffect(() => {
     if (!title) return
-    updateCurrentTab({ title, kind, projectId, checkpointId })
-  }, [checkpointId, kind, projectId, title, updateCurrentTab])
+    updateCurrentTab({ title, kind, projectId, checkpointId, workspacePath })
+  }, [checkpointId, kind, projectId, title, updateCurrentTab, workspacePath])
 }
 
 export function workspaceEmbedPath(path: string) {

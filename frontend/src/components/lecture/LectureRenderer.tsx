@@ -105,6 +105,7 @@ export interface LectureNote {
   section_index: number
   selection: string
   note: string
+  status?: 'anchored' | 'orphaned'
   created_at?: string
   updated_at?: string
 }

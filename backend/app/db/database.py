@@ -51,6 +51,7 @@ EXTRA_COLUMNS = {
     "lectures": [
         ("plan", "TEXT"),        # T10: persisted section plan (resume stability)
         ("concept_graph", "TEXT"),  # concept map {nodes, edges}
+        ("version", "INTEGER DEFAULT 1"),
     ],
     "exercises": [
         ("files", "TEXT"),        # project-mode: [{name, content, read_only}]
@@ -78,9 +79,14 @@ EXTRA_COLUMNS = {
     "learning_attempts": [
         ("remediation_case_id", "INTEGER"),
         ("attempt_role", "TEXT DEFAULT 'original'"),
+        ("client_submission_id", "TEXT"),
     ],
     "process_animations": [
         ("kind", "TEXT"),         # animation | static（表已存在时补列）
+    ],
+    "lecture_versions": [
+        ("source_version", "INTEGER DEFAULT 1"),
+        ("idempotency_key", "TEXT"),
     ],
 }
 
@@ -88,6 +94,10 @@ FIVE_KERNEL_MIGRATION = "v2-five-kernel-tutor"
 PROJECT_PROPOSAL_MIGRATION = "v3-evolving-project-proposals"
 USER_ISOLATION_MIGRATION = "v4-user-isolation-profile-badges"
 MEMORY_GRAPH_MIGRATION = "v5-inspectable-memory-graph"
+DESKTOP_WORKSPACE_MIGRATION = "v6-desktop-workspace"
+CHECKPOINT_TUTOR_MIGRATION = "v7-checkpoint-tutor-sessions"
+MANAGED_ARTIFACT_MIGRATION = "v8-managed-learning-artifacts"
+LOCAL_AGENT_BROKER_MIGRATION = "v9-local-agent-broker"
 
 
 def _sqlite_path() -> Path | None:
@@ -256,6 +266,113 @@ def _backup_before_memory_graph_migration():
     print(f"[migrate] backup created: {backup_path}")
 
 
+def _backup_before_desktop_workspace_migration():
+    path = _sqlite_path()
+    if not path or not path.exists() or path.stat().st_size == 0:
+        return
+    if _migration_applied(path, DESKTOP_WORKSPACE_MIGRATION):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-desktop-workspace-v6{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
+def _backup_before_checkpoint_tutor_migration():
+    path = _sqlite_path()
+    if (
+        not path or not path.exists() or path.stat().st_size == 0
+        or _migration_applied(path, CHECKPOINT_TUTOR_MIGRATION)
+    ):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-checkpoint-tutor-v7{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
+def _backup_before_managed_artifact_migration():
+    path = _sqlite_path()
+    if (
+        not path or not path.exists() or path.stat().st_size == 0
+        or _migration_applied(path, MANAGED_ARTIFACT_MIGRATION)
+    ):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-managed-artifacts-v8{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
 async def _ensure_columns():
     async with engine.begin() as conn:
         for table, cols in EXTRA_COLUMNS.items():
@@ -278,9 +395,15 @@ async def _ensure_columns():
             ("ix_evidence_events_actor_type", "evidence_events", "actor_type"),
             ("ix_learning_attempts_remediation_case_id", "learning_attempts", "remediation_case_id"),
             ("ix_learning_attempts_attempt_role", "learning_attempts", "attempt_role"),
+            ("ix_learning_attempts_client_submission_id", "learning_attempts", "client_submission_id"),
+            ("ix_lecture_versions_idempotency_key", "lecture_versions", "idempotency_key"),
         ]
         for name, table, column in indexes:
-            unique = "UNIQUE " if name == "ix_agent_messages_idempotency_key" else ""
+            unique = "UNIQUE " if name in {
+                "ix_agent_messages_idempotency_key",
+                "ix_learning_attempts_client_submission_id",
+                "ix_lecture_versions_idempotency_key",
+            } else ""
             await conn.execute(text(
                 f"CREATE {unique}INDEX IF NOT EXISTS {name} ON {table} ({column})"
             ))
@@ -288,6 +411,11 @@ async def _ensure_columns():
         await conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_evidence_learner_seq_idx "
             "ON evidence_events (learner_id, learner_seq)"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_session_checkpoint_scope_idx "
+            "ON agent_sessions (learner_id, project_id, checkpoint_id) "
+            "WHERE session_type = 'checkpoint' AND status = 'active'"
         ))
 
 
@@ -657,11 +785,95 @@ async def _backfill_inspectable_memory_graph():
         print(f"[migrate] applied {MEMORY_GRAPH_MIGRATION}: {counts}")
 
 
+async def _mark_desktop_workspace_migration():
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == DESKTOP_WORKSPACE_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=DESKTOP_WORKSPACE_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {DESKTOP_WORKSPACE_MIGRATION}")
+
+
+async def _mark_checkpoint_tutor_migration():
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == CHECKPOINT_TUTOR_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=CHECKPOINT_TUTOR_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {CHECKPOINT_TUTOR_MIGRATION}")
+
+
+async def _migrate_managed_artifacts():
+    from app.models.learning import SchemaMigration
+    from app.models.project import ArtifactAnnotation, Checkpoint, Lecture, LectureNote, Project, Roadmap
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == MANAGED_ARTIFACT_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        legacy_notes = list((await db.execute(select(LectureNote))).scalars().all())
+        for note in legacy_notes:
+            existing = (await db.execute(select(ArtifactAnnotation).where(
+                ArtifactAnnotation.legacy_note_id == note.id,
+            ))).scalar_one_or_none()
+            if existing:
+                continue
+            ownership = (await db.execute(
+                select(Project.learner_id, Lecture.id, Lecture.version)
+                .join(Roadmap, Roadmap.project_id == Project.id)
+                .join(Checkpoint, Checkpoint.roadmap_id == Roadmap.id)
+                .join(Lecture, Lecture.checkpoint_id == Checkpoint.id)
+                .where(Checkpoint.id == note.checkpoint_id)
+            )).one_or_none()
+            if not ownership or ownership[0] is None:
+                continue
+            db.add(ArtifactAnnotation(
+                learner_id=ownership[0], checkpoint_id=note.checkpoint_id,
+                artifact_type="lecture", artifact_id=ownership[1],
+                artifact_version=ownership[2] or 1,
+                anchor={"section_index": note.section_index, "selection": note.selection or ""},
+                body=note.note or "", status="anchored", legacy_note_id=note.id,
+                created_at=note.created_at, updated_at=note.updated_at,
+            ))
+        db.add(SchemaMigration(version=MANAGED_ARTIFACT_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {MANAGED_ARTIFACT_MIGRATION}: {len(legacy_notes)} legacy notes inspected")
+
+
+async def _mark_local_agent_broker_migration():
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == LOCAL_AGENT_BROKER_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=LOCAL_AGENT_BROKER_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {LOCAL_AGENT_BROKER_MIGRATION}")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
     _backup_before_user_isolation_migration()
     _backup_before_memory_graph_migration()
+    _backup_before_desktop_workspace_migration()
+    _backup_before_checkpoint_tutor_migration()
+    _backup_before_managed_artifact_migration()
     async with engine.begin() as conn:
         from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -670,3 +882,7 @@ async def init_db():
     await _mark_project_proposal_migration()
     await _backfill_user_isolation()
     await _backfill_inspectable_memory_graph()
+    await _mark_desktop_workspace_migration()
+    await _mark_checkpoint_tutor_migration()
+    await _migrate_managed_artifacts()
+    await _mark_local_agent_broker_migration()

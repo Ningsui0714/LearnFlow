@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 import { AuthProvider } from './contexts/AuthContext'
+import { initializeDesktopRuntime } from './services/desktopRuntime'
 
 // Local monaco instance (instead of CDN loader) so that monaco-vim and the
 // editor share the same module instance.
@@ -16,12 +17,17 @@ import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 }
 loader.config({ monaco })
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
-    </BrowserRouter>
-  </StrictMode>,
-)
+async function bootstrap() {
+  await initializeDesktopRuntime()
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <BrowserRouter>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </BrowserRouter>
+    </StrictMode>,
+  )
+}
+
+void bootstrap()

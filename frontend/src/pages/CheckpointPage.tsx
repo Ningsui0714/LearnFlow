@@ -38,6 +38,9 @@ export default function CheckpointPage() {
   const [selectedText, setSelectedText] = useState('')
   const [selectedSection, setSelectedSection] = useState(0)
   const [notes, setNotes] = useState<LectureNote[]>([])
+  const [lectureVersion, setLectureVersion] = useState(0)
+  const [editingLecture, setEditingLecture] = useState(false)
+  const [editSections, setEditSections] = useState<Section[]>([])
   const [showVersions, setShowVersions] = useState(false)
   const [versions, setVersions] = useState<any[]>([])
   const [versionLoading, setVersionLoading] = useState(false)
@@ -114,6 +117,7 @@ export default function CheckpointPage() {
       } catch {}
 
       const data = await getLecture(cid)
+      setLectureVersion(Number(data.version || 0))
       if (data.sections && data.sections.length > 0) {
         setSections(data.sections)
         setStatus(data.status || 'published')
@@ -309,14 +313,48 @@ export default function CheckpointPage() {
         content = content.replace(/\n{3,}/g, '\n\n')
         return { ...s, content }
       })
-      saveLecture(cid, next).then(() => setProgress('✅ 已删除图片')).catch((e: any) => {
-        setError('保存失败: ' + (e?.response?.data?.detail || e.message))
+      saveLecture(cid, next, lectureVersion, crypto.randomUUID()).then(result => {
+        setLectureVersion(Number(result.version || lectureVersion + 1))
+        setProgress('✅ 已删除图片')
+      }).catch((e: any) => {
+        const detail = e?.response?.data?.detail
+        setError('保存失败: ' + (detail?.message || detail || e.message))
+        void loadLecture()
       })
       return next
     })
-  }, [cid])
+  }, [cid, lectureVersion])
+
+  const beginLectureEdit = () => {
+    setEditSections(sections.map(section => ({ ...section })))
+    setEditingLecture(true)
+  }
+
+  const saveLectureEdit = async () => {
+    setVersionLoading(true)
+    try {
+      const result = await saveLecture(cid, editSections, lectureVersion, crypto.randomUUID())
+      setSections(editSections)
+      setLectureVersion(Number(result.version || lectureVersion + 1))
+      setEditingLecture(false)
+      setProgress(`✅ 讲义 v${result.version} 已保存，旧版本已归档`)
+      await refreshNotes()
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail
+      if (e?.response?.status === 409) {
+        setError(detail?.message || '讲义已有新版本，已重新载入；请重新编辑。')
+        setEditingLecture(false)
+        await loadLecture()
+      } else {
+        setError('保存失败: ' + (detail?.message || detail || e.message))
+      }
+    }
+    setVersionLoading(false)
+  }
 
   const canResume = status === 'draft' && sections.length > 0 && !generating
+  const anchoredNotes = notes.filter(note => note.status !== 'orphaned')
+  const orphanedNotes = notes.filter(note => note.status === 'orphaned')
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -388,6 +426,13 @@ export default function CheckpointPage() {
           </button>
           {sections.length > 0 && !generating && (
             <>
+              <span className="text-xs text-gray-400">v{lectureVersion}</span>
+              <button
+                onClick={beginLectureEdit}
+                className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded-lg text-sm hover:bg-gray-200 transition-colors"
+              >
+                ✏️ 编辑讲义
+              </button>
               <button
                 onClick={() => setShowGraph(true)}
                 className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded-lg text-sm
@@ -506,18 +551,49 @@ export default function CheckpointPage() {
             )}
 
             {/* Lecture content */}
-            {sections.length > 0 && (
+            {orphanedNotes.length > 0 && !editingLecture && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm font-semibold text-amber-800">未定位笔记（{orphanedNotes.length}）</p>
+                <p className="mb-3 text-xs text-amber-700">正文已变化，原锚点无法唯一定位；笔记仍保留，可修改或删除。</p>
+                <div className="space-y-2">
+                  {orphanedNotes.map(note => (
+                    <button key={note.id} onClick={() => void handleUpdateAnchoredNote(note.id, window.prompt('修改笔记', note.note) ?? note.note)} className="block w-full rounded-lg border border-amber-100 bg-white p-2 text-left text-xs hover:bg-amber-50">
+                      <span className="block truncate text-[10px] text-amber-500">{note.selection || '原文已不存在'}</span>
+                      <span className="mt-1 block whitespace-pre-wrap text-gray-700">{note.note}</span>
+                      <span onClick={event => { event.stopPropagation(); void handleDeleteAnchoredNote(note.id) }} className="mt-1 inline-block text-[10px] text-gray-400 hover:text-red-500">删除</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {sections.length > 0 && !editingLecture && (
               <LectureRenderer
                 sections={sections}
                 animations={animations}
                 onSelect={handleTextSelect}
                 onAskSelection={handleAskSelection}
-                notes={notes}
+                notes={anchoredNotes}
                 onCreateNote={handleCreateAnchoredNote}
                 onUpdateNote={handleUpdateAnchoredNote}
                 onDeleteNote={handleDeleteAnchoredNote}
                 onDeleteImage={handleDeleteImage}
               />
+            )}
+            {editingLecture && (
+              <div className="space-y-4">
+                <div className="sticky top-0 z-10 flex items-center justify-between rounded-xl border border-primary-100 bg-white p-3 shadow-sm">
+                  <div><p className="text-sm font-semibold text-gray-800">版本化编辑讲义</p><p className="text-xs text-gray-500">基于 v{lectureVersion} 保存；如版本已变化会拒绝覆盖。</p></div>
+                  <div className="flex gap-2"><button onClick={() => setEditingLecture(false)} className="rounded-lg border px-3 py-1.5 text-sm text-gray-600">取消</button><button onClick={() => void saveLectureEdit()} disabled={versionLoading} className="rounded-lg bg-primary-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">{versionLoading ? '保存中…' : '保存新版本'}</button></div>
+                </div>
+                {editSections.map((section, index) => (
+                  <div key={index} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <div className="mb-2 flex gap-2"><span className="pt-2 text-xs text-gray-400">{index + 1}</span><input value={section.title} onChange={event => setEditSections(current => current.map((value, i) => i === index ? { ...value, title: event.target.value } : value))} className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold outline-none focus:border-primary-400" /></div>
+                    <textarea value={section.content} onChange={event => setEditSections(current => current.map((value, i) => i === index ? { ...value, content: event.target.value } : value))} rows={14} className="w-full resize-y rounded-lg border border-gray-200 p-3 font-mono text-xs leading-6 outline-none focus:border-primary-400" />
+                    <button onClick={() => setEditSections(current => current.filter((_, i) => i !== index))} className="mt-2 text-xs text-red-500 hover:text-red-700">删除小节</button>
+                  </div>
+                ))}
+                <button onClick={() => setEditSections(current => [...current, { title: '新小节', content: '' }])} className="w-full rounded-xl border border-dashed border-gray-300 py-3 text-sm text-gray-500 hover:border-primary-400 hover:text-primary-600">＋ 添加小节</button>
+              </div>
             )}
           </div>
         </div>

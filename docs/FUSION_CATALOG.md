@@ -1,8 +1,16 @@
-# 两仓库能力融合目录
+# 两仓库并行参考目录
 
-融合基线是当前 LearnFlow。参考仓库为 [killoppen/-](https://github.com/killoppen/-)。融合遵循“吸收产品闭环和可替换适配器，不复制第二套状态权威”的原则。
+LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立仓库、两套提交历史和各自的产品节奏。本文只登记已经验证并由 LearnFlow 自主实现的灵感映射；不自动同步代码，不合并仓库，也不复制第二套状态权威。
 
-## 已融合或标准化
+## 并行原则
+
+- 两个仓库互不作为对方的开发分支、submodule、发布源或数据库权威。
+- 可以只读研究交互和产品逻辑；吸收灵感时按 LearnFlow 的三类主 Agent、五核、事件链和安全边界重新实现。
+- 禁止为了“保持同步”自动 merge、rebase、cherry-pick、批量复制文件或共享运行数据。
+- 复制具体代码、资源或文案前必须检查许可证和来源；一般优先记录思路并独立实现。
+- LearnFlow 内发生冲突时，以 `AGENTS.md`、架构注册表和架构权威文档为准，参考仓库不能覆盖这些契约。
+
+## 已吸收并标准化
 
 | 参考仓库构件 | LearnFlow 落点 | 处理结果 |
 |---|---|---|
@@ -16,6 +24,10 @@
 | 目标图和连续学习路径 | Roadmap DAG + structure kernel | 统一到项目、路线、关卡和返回锚点 |
 | 星辰三工作流 | `workflow_gateway` contract | 保留为可选 adapter；不能直接写五核或决定策略 |
 | 工作流构建/校验脚本 | `workflow_validator` maintenance tool | 纳入注册表，接入时必须输出符合 LearnFlow artifact/event contract 的结果 |
+| VS Code 式多开与文件操作 | Tauri `desktop_workspace` + Explorer | 保留 LearnFlow Agent/五核/会话权威，只吸收标签、分屏和真实项目目录操作逻辑 |
+| 学习专属文件 | `.lflecture/.lfexercise` + 自定义播放器 | 描述符只引用数据库对象；讲义版本化、练习草稿/批注隔离、正式提交才写证据 |
+| 通用文件编辑 | Monaco + Markdown/PDF/image preview | UTF-8 轻量编辑与 Vim 模式；不内置 Python runtime、终端或任意编译 |
+| Tutor 本地构建能力 | `local_agent_broker` + `LocalAgentProfile` | 本地代码 Agent 仅作 Tutor 工具；确定性选择、隔离副本、两次确认、hash 校验与批量回滚 |
 
 ## 统一分类
 

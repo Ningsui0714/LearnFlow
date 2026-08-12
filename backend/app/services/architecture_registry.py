@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-11.1"
+REGISTRY_VERSION = "2026-08-12.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -117,7 +117,7 @@ AGENTS = {
     item.id: item for item in (
         AgentContract(
             "tutor_agent", "Tutor 控制 Agent", "control",
-            ("global_main_agent", "project_tutor"),
+            ("global_main_agent", "project_tutor", "checkpoint_tutor"),
             ("current_learner", "page_context", "five_kernel_projection", "recent_evidence"),
             ("structured_intent", "reply", "action_proposal", "handoff_refs"),
             "read projections; emit events through Action Board",
@@ -170,6 +170,8 @@ TOOLS = {
                      KERNEL_NAMES, (), "EvidenceEvent"),
         ToolContract("tutor_context", "Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
+        ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
+                     KERNEL_NAMES),
         ToolContract("source_ingestion", "Source Ingestion + Chunking", "learning_design_agent", "learnflow", "artifact"),
         ToolContract("hierarchical_rag", "Hierarchical RAG", "learning_design_agent", "learnflow", "read",
                      ("knowledge", "structure")),
@@ -192,6 +194,12 @@ TOOLS = {
         ToolContract("workflow_validator", "Workflow Builder + Validator", "learning_design_agent", "companion", "maintenance"),
         ToolContract("seeded_demo", "Seeded Competition Demo", "tutor_agent", "fused", "demo"),
         ToolContract("task_runtime", "Idempotent Background Task Runtime", "tutor_agent", "learnflow", "execution"),
+        ToolContract("workspace_file_service", "Desktop Workspace File Service", "tutor_agent", "learnflow", "filesystem",
+                     (), (), "confirmed WorkspaceOperation only"),
+        ToolContract("managed_artifact_service", "Managed Learning Artifact Service", "tutor_agent", "learnflow", "artifact",
+                     (), (), "versioned lecture/draft/annotation domain APIs"),
+        ToolContract("local_agent_broker", "Local Agent Broker", "tutor_agent", "learnflow", "isolated_execution",
+                     (), (), "two-confirmation WorkspaceOperation batch only"),
     )
 }
 
@@ -201,6 +209,10 @@ SKILLS = {
         SkillContract("intent_and_handoff", "意图理解与跨空间交接", "tutor_agent",
                       ("tutor_context", "action_board", "evidence_ledger"),
                       "structured intent + auditable action/handoff", "Action Board"),
+        SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
+                      ("checkpoint_context", "hierarchical_rag", "workspace_file_service"),
+                      "checkpoint-scoped Tutor reply + internal design/practice handoff",
+                      "immutable checkpoint session scope"),
         SkillContract("learning_path_planning", "来源约束的学习路线规划", "learning_design_agent",
                       ("source_ingestion", "hierarchical_rag", "content_generation"),
                       "roadmap proposal with checkpoint dependencies and provenance", "confirmed proposal"),
@@ -219,6 +231,18 @@ SKILLS = {
         SkillContract("external_workflow_rendering", "星辰/Mock 教学内容适配", "learning_design_agent",
                       ("workflow_gateway", "workflow_validator"),
                       "validated content artifact; no direct kernel mutation", "LearnFlow contract", "companion"),
+        SkillContract("workspace_file_management", "受控本地项目文件管理", "tutor_agent",
+                      ("workspace_file_service", "evidence_ledger"),
+                      "hash-bound diff proposal + explicit confirmation + operational event",
+                      "WorkspaceOperation state machine"),
+        SkillContract("managed_learning_file_playback", "讲义与练习专用播放器", "tutor_agent",
+                      ("managed_artifact_service", "deterministic_assessment", "evidence_ledger"),
+                      "versioned lecture, personal draft, annotation and formal assessment",
+                      "database learning-object authority"),
+        SkillContract("local_agent_delegation", "本地代码 Agent 双确认委派", "tutor_agent",
+                      ("local_agent_broker", "workspace_file_service", "evidence_ledger"),
+                      "isolated run events + tests + risk + hash-bound diff",
+                      "deterministic profile selector and two confirmations"),
     )
 }
 
@@ -229,9 +253,9 @@ WORKBENCHES = {
                           ("search_projects", "draft_learning_project", "create_project")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
                           ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint")),
-        WorkbenchContract("lecture", "Checkpoint Lecture", "/projects/:projectId/checkpoints/:checkpointId", "learning_design_agent",
+        WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
-        WorkbenchContract("assessment", "Concept + Code Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "practice_agent",
+        WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
                           ("evaluate_attempt", "retry_attempt", "evaluate_transfer_variant")),
         WorkbenchContract("remediation", "Remediation Panel", "RemediationPanel", "practice_agent",
                           ("request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
@@ -239,6 +263,8 @@ WORKBENCHES = {
         WorkbenchContract("memory", "Inspectable Memory", "/memory", "tutor_agent", ()),
         WorkbenchContract("competition_demo", "Seeded Demo Entry", "/demo", "tutor_agent",
                           ("evaluate_attempt", "request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
+        WorkbenchContract("desktop_workspace", "Desktop File Workspace", "tauri://workspace", "tutor_agent",
+                          ("link_project_workspace", "inspect_workspace_files", "propose_workspace_change", "apply_workspace_change", "open_managed_learning_artifact", "edit_managed_lecture", "annotate_learning_artifact", "delegate_local_agent_task", "inspect_local_agent_run", "cancel_local_agent_run", "apply_local_agent_result")),
         WorkbenchContract("xingchen_studio", "Xingchen Workflow Studio", "external", "learning_design_agent",
                           ("generate_lecture", "request_remediation_explanation"), "companion"),
     )
@@ -265,6 +291,17 @@ CAPABILITY_OWNERS = {
     "request_remediation_explanation": ("practice_agent", "deterministic_remediation", "remediation"),
     "retry_attempt": ("practice_agent", "deterministic_assessment", "remediation"),
     "evaluate_transfer_variant": ("practice_agent", "deterministic_assessment", "remediation"),
+    "link_project_workspace": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "inspect_workspace_files": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "propose_workspace_change": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "apply_workspace_change": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
+    "open_managed_learning_artifact": ("tutor_agent", "managed_artifact_service", "desktop_workspace"),
+    "edit_managed_lecture": ("learning_design_agent", "managed_artifact_service", "desktop_workspace"),
+    "annotate_learning_artifact": ("tutor_agent", "managed_artifact_service", "desktop_workspace"),
+    "delegate_local_agent_task": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
+    "inspect_local_agent_run": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
+    "cancel_local_agent_run": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
+    "apply_local_agent_result": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
 }
 
 
@@ -305,6 +342,12 @@ EVENTS = {
         _event("remediation_variant_evaluated", "evaluate_transfer_variant", ("knowledge", "practice"), "transfer_evidence", origin="fused"),
         _event("remediation_completed", "evaluate_transfer_variant", ("knowledge", "human", "practice"), "evidence_writeback", origin="fused"),
         _event("project_completed", "advance_checkpoint", ("structure", "value", "practice"), "milestone"),
+        _event("workspace_linked", "link_project_workspace", (), "operational"),
+        _event("workspace_change_applied", "apply_workspace_change", (), "operational"),
+        _event("local_agent_started", "delegate_local_agent_task", (), "operational"),
+        _event("local_agent_completed", "inspect_local_agent_run", (), "operational"),
+        _event("local_agent_canceled", "cancel_local_agent_run", (), "operational"),
+        _event("local_agent_result_applied", "apply_local_agent_result", (), "operational"),
         _event("tool_failed", "evaluate_attempt", (), "operational"),
     )
 }

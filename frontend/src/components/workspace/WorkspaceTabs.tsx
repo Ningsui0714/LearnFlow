@@ -1,5 +1,5 @@
 import {
-  BookOpen, Braces, Columns2, FolderKanban, GitBranch, LayoutDashboard,
+  BookOpen, Braces, Columns2, FileCode2, FolderKanban, GitBranch, LayoutDashboard,
   Settings2, UserRound, X,
 } from 'lucide-react'
 import type { WorkspaceTab, WorkspaceTabKind } from './WorkspaceContext'
@@ -11,6 +11,7 @@ const iconByKind: Record<WorkspaceTabKind, typeof LayoutDashboard> = {
   project: FolderKanban,
   lecture: BookOpen,
   exercise: Braces,
+  file: FileCode2,
   memory: GitBranch,
   profile: UserRound,
   settings: Settings2,
@@ -48,6 +49,7 @@ function Tab({ tab }: { tab: WorkspaceTab }) {
       {active && <span className="absolute inset-x-0 top-0 h-0.5 bg-sky-400" />}
       <Icon size={14} className={tab.kind === 'exercise' ? 'text-violet-400' : 'text-emerald-400'} />
       <span className="min-w-0 flex-1 truncate">{tab.title}</span>
+      {tab.dirty && <span className="h-2 w-2 shrink-0 rounded-full bg-amber-300" title="未保存" />}
       {!tab.pinned && (
         <span className="flex shrink-0 items-center gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus:opacity-100">
           <button

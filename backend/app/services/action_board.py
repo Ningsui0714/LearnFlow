@@ -110,6 +110,61 @@ ACTION_BOARD = {
             {"structure": "checkpoint_entered"},
             ("generate_lecture", "generate_assessment"),
         ),
+        ActionDefinition(
+            "link_project_workspace", "关联本地项目目录", "write", "explicit",
+            {},
+            ("inspect_workspace_files",),
+        ),
+        ActionDefinition(
+            "inspect_workspace_files", "查看项目文件", "none", "none",
+            {},
+            ("propose_workspace_change",),
+        ),
+        ActionDefinition(
+            "propose_workspace_change", "提出项目文件修改", "proposal", "none",
+            {},
+            ("apply_workspace_change",),
+        ),
+        ActionDefinition(
+            "apply_workspace_change", "确认并应用项目文件修改", "write", "explicit",
+            {},
+            ("inspect_workspace_files",),
+        ),
+        ActionDefinition(
+            "open_managed_learning_artifact", "打开讲义/练习播放器", "none", "none",
+            {},
+            ("annotate_learning_artifact",),
+        ),
+        ActionDefinition(
+            "edit_managed_lecture", "版本化修改讲义", "write", "explicit_or_click",
+            {},
+            ("open_managed_learning_artifact",),
+        ),
+        ActionDefinition(
+            "annotate_learning_artifact", "批注讲义或练习", "write", "explicit_or_click",
+            {},
+            ("open_managed_learning_artifact",),
+        ),
+        ActionDefinition(
+            "delegate_local_agent_task", "委派本地代码 Agent", "execution", "explicit",
+            {},
+            ("inspect_local_agent_run", "cancel_local_agent_run"),
+        ),
+        ActionDefinition(
+            "inspect_local_agent_run", "查看本地 Agent 结果", "none", "none",
+            {},
+            ("apply_local_agent_result",),
+        ),
+        ActionDefinition(
+            "cancel_local_agent_run", "取消本地 Agent", "execution", "explicit_or_click",
+            {},
+            (),
+        ),
+        ActionDefinition(
+            "apply_local_agent_result", "应用本地 Agent 修改", "write", "explicit",
+            {},
+            ("inspect_workspace_files",),
+        ),
     )
 }
 

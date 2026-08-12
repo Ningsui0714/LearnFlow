@@ -7,6 +7,7 @@ updates Task progress + incremental results as it goes.
 from datetime import datetime
 import asyncio
 import os
+from typing import List
 
 from sqlalchemy import select
 
@@ -369,12 +370,14 @@ async def run_lecture_generation(task_id: int):
                 db.add(LectureVersion(
                     checkpoint_id=checkpoint_id,
                     sections=list(lecture.sections),
+                    source_version=int(lecture.version or 1),
                     reason="regenerate_before",
                 ))
             # Fresh generation: clear stale partial content + persist new plan
             lecture.sections = []
             lecture.plan = plan_sections
             lecture.status = "draft"
+            lecture.version = int(lecture.version or 1) + 1
             await db.commit()
         saved = list(lecture.sections or [])
 
@@ -482,6 +485,11 @@ async def run_lecture_generation(task_id: int):
         )).scalar_one_or_none()
         if lecture:
             lecture.status = "published"
+            lecture.version = int(lecture.version or 1) + 1
+            from app.api.phase2 import _reanchor_lecture_annotations
+            await _reanchor_lecture_annotations(
+                db, lecture, list(lecture.sections or []), lecture.version,
+            )
         checkpoint = (await db.execute(
             select(Checkpoint).where(Checkpoint.id == checkpoint_id)
         )).scalar_one_or_none()
