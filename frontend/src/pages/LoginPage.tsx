@@ -25,12 +25,26 @@ export default function LoginPage() {
   const [devOpen, setDevOpen] = useState(false)
   const [accounts, setAccounts] = useState<DevAccount[]>([])
   const [devAvailable, setDevAvailable] = useState(true)
+  const [devLoading, setDevLoading] = useState(false)
+  const [devLoadError, setDevLoadError] = useState('')
 
-  useEffect(() => {
-    listDevAccounts().then(setAccounts).catch(error => {
-      if (error?.response?.status === 404) setDevAvailable(false)
-    })
-  }, [])
+  const loadDevAccounts = async () => {
+    setDevLoading(true)
+    setDevLoadError('')
+    try {
+      setAccounts(await listDevAccounts())
+    } catch (requestError: any) {
+      if (requestError?.response?.status === 404) {
+        setDevAvailable(false)
+      } else {
+        setDevLoadError(requestError?.response?.data?.detail || '开发账号列表加载失败，请点击重试')
+      }
+    } finally {
+      setDevLoading(false)
+    }
+  }
+
+  useEffect(() => { void loadDevAccounts() }, [])
 
   if (user) return <Navigate to="/agent" replace />
 
@@ -67,7 +81,7 @@ export default function LoginPage() {
       {devAvailable && (
         <button
           type="button"
-          onClick={() => setDevOpen(true)}
+          onClick={() => { setDevOpen(true); void loadDevAccounts() }}
           className="absolute right-4 top-4 inline-flex items-center gap-2 border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 rounded-lg"
         >
           <FlaskConical size={16} /> 开发测试
@@ -128,8 +142,15 @@ export default function LoginPage() {
               <button onClick={() => setDevOpen(false)} title="关闭" className="flex h-9 w-9 items-center justify-center text-gray-500 hover:bg-gray-100 rounded-lg"><X size={18} /></button>
             </div>
             {error && <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+            {devLoadError && (
+              <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                <span>{devLoadError}</span>
+                <button type="button" onClick={() => void loadDevAccounts()} className="shrink-0 font-medium underline">重试</button>
+              </div>
+            )}
             <div className="mt-6 space-y-2">
-              {accounts.map(account => (
+              {devLoading && <p className="py-10 text-center text-sm text-gray-400">正在读取开发账号…</p>}
+              {!devLoading && accounts.map(account => (
                 <button
                   key={account.id}
                   type="button"
@@ -147,7 +168,7 @@ export default function LoginPage() {
                   </p>
                 </button>
               ))}
-              {accounts.length === 0 && <p className="py-10 text-center text-sm text-gray-400">暂无测试账号</p>}
+              {!devLoading && !devLoadError && accounts.length === 0 && <p className="py-10 text-center text-sm text-gray-400">暂无测试账号</p>}
             </div>
           </aside>
         </div>

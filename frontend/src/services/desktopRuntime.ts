@@ -16,7 +16,7 @@ function isTauriWindow() {
 async function waitForSidecar(apiBaseUrl: string) {
   const healthUrl = `${apiBaseUrl.replace(/\/api\/?$/, '')}/health`
   let lastError: unknown
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
     try {
       const response = await fetch(healthUrl)
       if (response.ok) return
