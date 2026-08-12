@@ -104,6 +104,8 @@ git diff --check
 
 修改共享契约必须同时更新注册表、实现、测试和文档，并请架构维护者审查。
 
+涉及本地代码 Agent / Broker 时，还必须在 PR 中逐项说明：适配器固定参数、沙箱和联网是否真实可执行、隔离目录排除项、首次/二次确认、基础 hash 失效、删除/移动单独确认、批量回滚，以及零 kernel target。禁止提交任意 shell 模板或把本地 Agent 注册为第四类主 Agent。
+
 ## 6. 重叠修改协议
 
 两名组员或两个 Codex 预计修改同一个文件时：
@@ -155,6 +157,13 @@ venv/bin/python -m pytest tests/test_architecture_registry.py -q
 
 ```bash
 bash start.sh demo
+```
+
+修改本地 Agent Broker：
+
+```bash
+cd backend
+venv/bin/python -m pytest tests/test_local_agent_broker.py tests/test_workspace.py tests/test_architecture_registry.py -q
 ```
 
 如环境无法执行某项检查，PR 必须写明“未执行”和原因，不得声称通过。

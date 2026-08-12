@@ -339,3 +339,72 @@ class WorkspaceOperation(Base):
     applied_at = Column(DateTime, nullable=True)
 
     workspace = relationship("ProjectWorkspace", back_populates="operations")
+
+
+class LocalAgentProfile(Base):
+    """Learner-owned, allow-listed local Agent configuration."""
+
+    __tablename__ = "local_agent_profiles"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "name", name="uq_local_agent_profile_name"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    adapter = Column(String(40), nullable=False, index=True)  # codex_cli | deterministic_fake
+    executable_path = Column(Text, nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False, index=True)
+    priority = Column(Integer, default=100, nullable=False)
+    task_types = Column(JSON, default=list)
+    capabilities = Column(JSON, default=list)
+    sandbox_policy = Column(String(40), default="workspace_write", nullable=False)
+    network_policy = Column(String(40), default="unmanaged", nullable=False)
+    timeout_seconds = Column(Integer, default=900, nullable=False)
+    last_probe = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class LocalAgentRun(Base):
+    """Two-confirmation local Agent run; never a learning evidence object."""
+
+    __tablename__ = "local_agent_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=False, index=True)
+    action_id = Column(Integer, ForeignKey("agent_actions.id"), nullable=False, unique=True, index=True)
+    profile_id = Column(Integer, ForeignKey("local_agent_profiles.id"), nullable=False, index=True)
+    task_type = Column(String(60), nullable=False, index=True)
+    goal = Column(Text, nullable=False)
+    constraints = Column(JSON, default=list)
+    required_capabilities = Column(JSON, default=list)
+    status = Column(String(30), default="queued", nullable=False, index=True)
+    isolation_root = Column(Text, nullable=True)
+    base_manifest = Column(JSON, default=dict)
+    changed_files = Column(JSON, default=list)
+    diff_text = Column(Text, default="")
+    result = Column(JSON, default=dict)
+    error = Column(JSON, default=dict)
+    idempotency_key = Column(String(160), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+
+
+class LocalAgentRunEvent(Base):
+    __tablename__ = "local_agent_run_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_local_agent_run_event_sequence"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("local_agent_runs.id"), nullable=False, index=True)
+    sequence = Column(Integer, nullable=False)
+    event_type = Column(String(60), nullable=False, index=True)
+    payload = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

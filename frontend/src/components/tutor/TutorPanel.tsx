@@ -9,6 +9,7 @@ import {
 } from '../../services/api'
 import type { ProjectProposal, ProjectProposalSource } from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
+import LocalAgentRunCard from './LocalAgentRunCard'
 
 interface Message {
   id?: number
@@ -514,6 +515,9 @@ export default function TutorPanel({
                     onDone={finishCandidateSources}
                   />
                 )}
+                {message.meta_data?.local_agent_run_id && (
+                  <LocalAgentRunCard runId={Number(message.meta_data.local_agent_run_id)} />
+                )}
               </div>
             </div>
           )
@@ -530,6 +534,14 @@ export default function TutorPanel({
                 <p className="text-sm font-semibold text-gray-900">{action.title}</p>
                 {action.reason && <p className="mt-1 text-xs leading-5 text-gray-600">{action.reason}</p>}
                 {action.expected_result && <p className="mt-1 text-xs text-gray-500">{action.expected_result}</p>}
+                {action.target_summary?.task_type && (
+                  <div className="mt-2 space-y-0.5 border border-indigo-100 bg-white/70 p-2 text-[10px] text-slate-600 rounded">
+                    <p>Agent：{action.target_summary.profile_name} · {action.target_summary.adapter}</p>
+                    <p>任务：{action.target_summary.task_type}</p>
+                    <p>沙箱：{action.target_summary.sandbox_policy} · 联网：{action.target_summary.network_policy}{action.target_summary.network_boundary_enforced === false ? '（未受管）' : ''}</p>
+                    {Array.isArray(action.target_summary.excluded_paths) && <p>排除：{action.target_summary.excluded_paths.join('、')}</p>}
+                  </div>
+                )}
                 {action.status === 'running' && (
                   <div className="mt-2 text-xs text-indigo-700">
                     <p>{action.task?.progress?.message || '正在执行...'}</p>
@@ -558,6 +570,11 @@ export default function TutorPanel({
               )}
             </div>
           </div>
+        )}
+        {action?.result?.local_agent_run?.id && !messages.some(message => (
+          Number(message.meta_data?.local_agent_run_id) === Number(action.result.local_agent_run.id)
+        )) && (
+          <LocalAgentRunCard runId={Number(action.result.local_agent_run.id)} />
         )}
 
         {loading && (

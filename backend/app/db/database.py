@@ -97,6 +97,7 @@ MEMORY_GRAPH_MIGRATION = "v5-inspectable-memory-graph"
 DESKTOP_WORKSPACE_MIGRATION = "v6-desktop-workspace"
 CHECKPOINT_TUTOR_MIGRATION = "v7-checkpoint-tutor-sessions"
 MANAGED_ARTIFACT_MIGRATION = "v8-managed-learning-artifacts"
+LOCAL_AGENT_BROKER_MIGRATION = "v9-local-agent-broker"
 
 
 def _sqlite_path() -> Path | None:
@@ -851,6 +852,20 @@ async def _migrate_managed_artifacts():
         print(f"[migrate] applied {MANAGED_ARTIFACT_MIGRATION}: {len(legacy_notes)} legacy notes inspected")
 
 
+async def _mark_local_agent_broker_migration():
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == LOCAL_AGENT_BROKER_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=LOCAL_AGENT_BROKER_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {LOCAL_AGENT_BROKER_MIGRATION}")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -870,3 +885,4 @@ async def init_db():
     await _mark_desktop_workspace_migration()
     await _mark_checkpoint_tutor_migration()
     await _migrate_managed_artifacts()
+    await _mark_local_agent_broker_migration()

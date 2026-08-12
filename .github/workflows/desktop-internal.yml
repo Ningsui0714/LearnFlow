@@ -55,7 +55,7 @@ jobs:
         working-directory: backend
         env:
           PYTHONPATH: .
-        run: python -m pytest -q tests/test_workspace.py tests/test_tutor.py tests/test_architecture_registry.py
+        run: python -m pytest -q tests/test_workspace.py tests/test_tutor.py tests/test_local_agent_broker.py tests/test_architecture_registry.py
 
       - name: Frontend production build
         run: npm --prefix frontend run build

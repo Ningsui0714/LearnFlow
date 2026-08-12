@@ -19,14 +19,17 @@ from app.api.memory import router as memory_router
 from app.api.remediation import router as remediation_router
 from app.api.architecture import router as architecture_router
 from app.api.workspace import router as workspace_router
+from app.api.local_agent import router as local_agent_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     from app.services.task_manager import mark_stale_tasks_failed
+    from app.services.local_agent_broker import mark_interrupted_runs_failed
     from app.services.memory_worker import memory_worker_loop
     await mark_stale_tasks_failed()
+    await mark_interrupted_runs_failed()
     stop_memory_worker = asyncio.Event()
     memory_task = asyncio.create_task(memory_worker_loop(stop_memory_worker))
     try:
@@ -69,3 +72,4 @@ app.include_router(memory_router, prefix="/api")
 app.include_router(remediation_router, prefix="/api")
 app.include_router(architecture_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
+app.include_router(local_agent_router, prefix="/api")

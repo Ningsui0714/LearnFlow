@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Desktop sidecar mode. Keep disabled in browser/server deployments.
     desktop_mode: bool = False
     desktop_token: str = ""
+    local_agent_runs_dir: str = ""  # empty -> platform temp directory
+    local_agent_default_timeout_seconds: int = 900
+    local_agent_max_output_bytes: int = 2 * 1024 * 1024
     auth_cookie_name: str = "learnflow_session"
     auth_session_days: int = 7
     auth_cookie_secure: bool = False

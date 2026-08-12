@@ -157,7 +157,7 @@ async def legacy_learner_id() -> int:
 
 
 def test_model_json_fallback_is_unwrapped_for_tutor_display():
-    reply, observations, opportunity, learning_intent, major_events = _decode_tutor_content(
+    reply, observations, opportunity, learning_intent, major_events, local_agent_task = _decode_tutor_content(
         """```json
 {"reply":"第一段\\n\\n第二段","observations":[{"kernel":"knowledge","key":"understanding"}],"project_opportunity":null}
 ```"""
@@ -167,6 +167,7 @@ def test_model_json_fallback_is_unwrapped_for_tutor_display():
     assert opportunity is None
     assert learning_intent is None
     assert major_events == []
+    assert local_agent_task is None
 
 
 def test_malformed_math_fence_cannot_swallow_following_markdown():

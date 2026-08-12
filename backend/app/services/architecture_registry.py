@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-12.1"
+REGISTRY_VERSION = "2026-08-12.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -198,6 +198,8 @@ TOOLS = {
                      (), (), "confirmed WorkspaceOperation only"),
         ToolContract("managed_artifact_service", "Managed Learning Artifact Service", "tutor_agent", "learnflow", "artifact",
                      (), (), "versioned lecture/draft/annotation domain APIs"),
+        ToolContract("local_agent_broker", "Local Agent Broker", "tutor_agent", "learnflow", "isolated_execution",
+                     (), (), "two-confirmation WorkspaceOperation batch only"),
     )
 }
 
@@ -237,6 +239,10 @@ SKILLS = {
                       ("managed_artifact_service", "deterministic_assessment", "evidence_ledger"),
                       "versioned lecture, personal draft, annotation and formal assessment",
                       "database learning-object authority"),
+        SkillContract("local_agent_delegation", "本地代码 Agent 双确认委派", "tutor_agent",
+                      ("local_agent_broker", "workspace_file_service", "evidence_ledger"),
+                      "isolated run events + tests + risk + hash-bound diff",
+                      "deterministic profile selector and two confirmations"),
     )
 }
 
@@ -258,7 +264,7 @@ WORKBENCHES = {
         WorkbenchContract("competition_demo", "Seeded Demo Entry", "/demo", "tutor_agent",
                           ("evaluate_attempt", "request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
         WorkbenchContract("desktop_workspace", "Desktop File Workspace", "tauri://workspace", "tutor_agent",
-                          ("link_project_workspace", "inspect_workspace_files", "propose_workspace_change", "apply_workspace_change", "open_managed_learning_artifact", "edit_managed_lecture", "annotate_learning_artifact")),
+                          ("link_project_workspace", "inspect_workspace_files", "propose_workspace_change", "apply_workspace_change", "open_managed_learning_artifact", "edit_managed_lecture", "annotate_learning_artifact", "delegate_local_agent_task", "inspect_local_agent_run", "cancel_local_agent_run", "apply_local_agent_result")),
         WorkbenchContract("xingchen_studio", "Xingchen Workflow Studio", "external", "learning_design_agent",
                           ("generate_lecture", "request_remediation_explanation"), "companion"),
     )
@@ -292,6 +298,10 @@ CAPABILITY_OWNERS = {
     "open_managed_learning_artifact": ("tutor_agent", "managed_artifact_service", "desktop_workspace"),
     "edit_managed_lecture": ("learning_design_agent", "managed_artifact_service", "desktop_workspace"),
     "annotate_learning_artifact": ("tutor_agent", "managed_artifact_service", "desktop_workspace"),
+    "delegate_local_agent_task": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
+    "inspect_local_agent_run": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
+    "cancel_local_agent_run": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
+    "apply_local_agent_result": ("tutor_agent", "local_agent_broker", "desktop_workspace"),
 }
 
 
@@ -334,6 +344,10 @@ EVENTS = {
         _event("project_completed", "advance_checkpoint", ("structure", "value", "practice"), "milestone"),
         _event("workspace_linked", "link_project_workspace", (), "operational"),
         _event("workspace_change_applied", "apply_workspace_change", (), "operational"),
+        _event("local_agent_started", "delegate_local_agent_task", (), "operational"),
+        _event("local_agent_completed", "inspect_local_agent_run", (), "operational"),
+        _event("local_agent_canceled", "cancel_local_agent_run", (), "operational"),
+        _event("local_agent_result_applied", "apply_local_agent_result", (), "operational"),
         _event("tool_failed", "evaluate_attempt", (), "operational"),
     )
 }

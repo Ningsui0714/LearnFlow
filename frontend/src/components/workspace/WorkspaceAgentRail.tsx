@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, Settings2, Sparkles } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import TutorPanel from '../tutor/TutorPanel'
+import LocalAgentProfilesDialog from '../tutor/LocalAgentProfilesDialog'
+import { getDesktopRuntime } from '../../services/desktopRuntime'
 import { useWorkspace } from './WorkspaceContext'
 import {
   subscribeWorkspaceAgentContext, type WorkspaceAgentContext,
@@ -88,6 +90,8 @@ export default function WorkspaceAgentRail({
   const { openPath } = useWorkspace()
   const state = useMemo(() => deriveConversation(location.pathname), [location.pathname])
   const [operationContext, setOperationContext] = useState<WorkspaceAgentContext | null>(null)
+  const [showAgentProfiles, setShowAgentProfiles] = useState(false)
+  const desktop = getDesktopRuntime()
 
   useEffect(() => subscribeWorkspaceAgentContext(setOperationContext), [])
 
@@ -119,7 +123,7 @@ export default function WorkspaceAgentRail({
   }
 
   return (
-    <aside className="flex h-full min-h-0 w-full flex-col border-l border-slate-200 bg-white shadow-xl 2xl:shadow-none" aria-label={`${state.title} 对话窗口`}>
+    <aside className="relative flex h-full min-h-0 w-full flex-col border-l border-slate-200 bg-white shadow-xl 2xl:shadow-none" aria-label={`${state.title} 对话窗口`}>
       <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-slate-200 bg-white px-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-white"><Bot size={16} /></span>
         <div className="min-w-0 flex-1">
@@ -132,6 +136,11 @@ export default function WorkspaceAgentRail({
         <button type="button" onClick={onToggle} title="收起 Agent 对话" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <ChevronRight size={16} />
         </button>
+        {desktop.available && state.checkpointId && (
+          <button type="button" onClick={() => setShowAgentProfiles(true)} title="配置本地代码 Agent" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            <Settings2 size={15} />
+          </button>
+        )}
       </header>
 
       <TutorPanel
@@ -155,6 +164,7 @@ export default function WorkspaceAgentRail({
         onRefreshCandidateSources={state.checkpointId ? undefined : projectContext?.onRefreshCandidateSources}
         onAddCandidateSource={state.checkpointId ? undefined : projectContext?.onAddCandidateSource}
       />
+      {showAgentProfiles && <LocalAgentProfilesDialog onClose={() => setShowAgentProfiles(false)} />}
     </aside>
   )
 }

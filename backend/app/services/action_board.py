@@ -145,6 +145,26 @@ ACTION_BOARD = {
             {},
             ("open_managed_learning_artifact",),
         ),
+        ActionDefinition(
+            "delegate_local_agent_task", "委派本地代码 Agent", "execution", "explicit",
+            {},
+            ("inspect_local_agent_run", "cancel_local_agent_run"),
+        ),
+        ActionDefinition(
+            "inspect_local_agent_run", "查看本地 Agent 结果", "none", "none",
+            {},
+            ("apply_local_agent_result",),
+        ),
+        ActionDefinition(
+            "cancel_local_agent_run", "取消本地 Agent", "execution", "explicit_or_click",
+            {},
+            (),
+        ),
+        ActionDefinition(
+            "apply_local_agent_result", "应用本地 Agent 修改", "write", "explicit",
+            {},
+            ("inspect_workspace_files",),
+        ),
     )
 }
 

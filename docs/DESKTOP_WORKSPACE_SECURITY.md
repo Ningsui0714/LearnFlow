@@ -11,7 +11,17 @@
 - WebView 只有目录选择能力，没有 `$HOME/**` 或任意文件系统权限。真正的项目根约束由 FastAPI 再次执行。
 - sidecar 只允许绑定 `127.0.0.1`、`::1` 或 `localhost`；桌面令牌不得写入仓库、日志或数据库。
 
-桌面工作区本身不提供 Python 解释器、终端、编译或任意代码运行能力。普通 `.py` 与其他 UTF-8 文本一样，只能查看和轻量编辑；后续本地代码 Agent 由独立 Broker 在隔离副本中执行。
+桌面工作区本身不提供 Python 解释器、终端、编译或任意代码运行能力。普通 `.py` 与其他 UTF-8 文本一样，只能查看和轻量编辑；本地代码 Agent 由独立 Broker 在隔离副本中执行。
+
+## 本地 Agent Broker
+
+- Profile 只保存允许登记的 adapter、可执行文件、任务类型、能力、优先级、沙箱和联网策略，不接受任意 shell 模板。
+- 首版 Codex adapter 固定以参数数组执行 `codex exec --json --sandbox workspace-write -C <isolated> -`，不经过 shell；复用本机 Codex 登录，不读取或保存明文凭据。
+- 沙箱与联网是两条独立权限边界。Codex adapter 首版联网策略必须标为 `unmanaged`；若无法真正保证断网，UI 明确显示“未受管”。seeded fake adapter 才登记为可验证的 `managed_off`。
+- Git 项目在独立 clone 中覆盖当前安全磁盘快照；非 Git 项目复制后初始化临时 Git。`.learnflow`、`.git` 内容、`.env`、密钥、符号链接/reparse point、缓存和构建目录不进入任务快照。
+- 子 Agent 不能访问真实工作区、学习对象、五核或数据库。结果仅形成事件、测试、风险和文本 diff。
+- 第一次确认启动隔离任务；第二次确认才应用。删除/移动逐项确认，基础 hash 变化会把结果标记为 `stale`，批量失败恢复真实文件快照。
+- Broker 操作事件没有 kernel target；它们不是学习证据。
 
 ## 2. 权威数据
 

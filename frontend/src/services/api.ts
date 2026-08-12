@@ -354,6 +354,81 @@ export const cancelTutorAction = (actionId: number) =>
 export const getTutorAction = (actionId: number) =>
   api.get(`/agent/actions/${actionId}`).then(r => r.data)
 
+export interface LocalAgentProfile {
+  id: number
+  name: string
+  adapter: 'codex_cli' | 'deterministic_fake'
+  executable_path?: string | null
+  enabled: boolean
+  priority: number
+  task_types: string[]
+  capabilities: string[]
+  sandbox_policy: string
+  network_policy: 'unmanaged' | 'managed_off' | 'managed_on'
+  timeout_seconds: number
+  last_probe: Record<string, any>
+}
+
+export interface LocalAgentRun {
+  id: number
+  project_id: number
+  checkpoint_id: number
+  session_id: number
+  action_id: number
+  profile_id: number
+  task_type: string
+  goal: string
+  constraints: string[]
+  required_capabilities: string[]
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled' | 'stale' | 'applied'
+  changed_files: Array<{
+    operation: 'create' | 'write' | 'delete' | 'move'
+    path: string
+    destination_path?: string
+    diff?: string
+    requires_separate_confirmation?: boolean
+  }>
+  diff_text: string
+  result: Record<string, any>
+  error: Record<string, any>
+}
+
+export const listLocalAgentProfiles = () =>
+  api.get('/desktop/agent-profiles').then(r => r.data as LocalAgentProfile[])
+
+export const createLocalAgentProfile = (data: {
+  name: string
+  adapter?: 'codex_cli'
+  executable_path?: string | null
+  enabled?: boolean
+  priority?: number
+  task_types?: string[]
+  capabilities?: string[]
+  sandbox_policy?: 'workspace_write'
+  network_policy?: 'unmanaged'
+  timeout_seconds?: number
+}) => api.post('/desktop/agent-profiles', data).then(r => r.data as LocalAgentProfile)
+
+export const updateLocalAgentProfile = (profileId: number, data: Record<string, any>) =>
+  api.patch(`/desktop/agent-profiles/${profileId}`, data).then(r => r.data as LocalAgentProfile)
+
+export const deleteLocalAgentProfile = (profileId: number) =>
+  api.delete(`/desktop/agent-profiles/${profileId}`).then(r => r.data)
+
+export const getLocalAgentRun = (runId: number) =>
+  api.get(`/local-agent/runs/${runId}`).then(r => r.data as LocalAgentRun)
+
+export const getLocalAgentRunEvents = (runId: number, after = 0) =>
+  api.get(`/local-agent/runs/${runId}/events`, { params: { after } }).then(r => r.data)
+
+export const cancelLocalAgentRun = (runId: number) =>
+  api.post(`/local-agent/runs/${runId}/cancel`).then(r => r.data as LocalAgentRun)
+
+export const applyLocalAgentRun = (
+  runId: number,
+  data: { confirm_apply: boolean; confirmed_deletions: string[]; confirmed_moves: string[]; idempotency_key: string },
+) => api.post(`/local-agent/runs/${runId}/apply`, data).then(r => r.data as LocalAgentRun)
+
 export interface ProjectProposalMilestone {
   id: string
   title: string
