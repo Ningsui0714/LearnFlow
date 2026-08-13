@@ -6,6 +6,7 @@
 import json
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -244,6 +245,26 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(path["items"][0]["status"], "current")
         self.assertEqual(detail["diagnosis_state"], "not_started")
 
+    def test_portrait_reserves_graph_contract_only_for_job_goals(self):
+        course = self.create_project("我想系统掌握 Java 面向对象编程")["project"]
+        portrait = self.request_json(
+            "GET", f"/api/students/{self.student_id}/portrait"
+        )
+        self.assertEqual(portrait["job_competency_graphs"], [])
+
+        job = self.create_project("我想达到 Java 后端开发岗位要求")["project"]
+        self.assertEqual(job["goal_type"], "job")
+        portrait = self.request_json(
+            "GET", f"/api/students/{self.student_id}/portrait"
+        )
+        graphs = portrait["job_competency_graphs"]
+        self.assertEqual(len(graphs), 1)
+        self.assertEqual(graphs[0]["project_id"], job["project_id"])
+        self.assertEqual(graphs[0]["status"], "not_connected")
+        self.assertEqual(graphs[0]["nodes"], [])
+        self.assertEqual(graphs[0]["edges"], [])
+        self.assertNotEqual(graphs[0]["project_id"], course["project_id"])
+
     def test_project_diagnosis_full_flow(self):
         created = self.create_project("备战世界职业院校技能大赛")
         project_id = created["project"]["project_id"]
@@ -413,6 +434,110 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertTrue(explanation["lesson_title"])
         self.assertTrue(len(explanation["content_blocks"]) >= 1)
         self.assertEqual(explanation["knowledge_point_id"], first["knowledge_point_id"])
+        self.assertTrue(explanation["generated_with_path"])
+
+    def test_project_creation_pregenerates_every_lesson_before_click(self):
+        project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+        )["project"]
+        items = detail["learning_path"]["items"]
+        self.assertGreaterEqual(len(items), 3)
+        self.assertTrue(all(item["lesson_generation_status"] == "ready" for item in items))
+        application = self.server.RequestHandlerClass.application
+        for item in items:
+            cached = application.store.get_project_lesson(
+                project["project_id"], self.student_id, item["knowledge_point_id"]
+            )
+            self.assertEqual(cached["status"], "ready")
+            self.assertTrue(cached["lesson"]["content_blocks"])
+
+    def test_clicking_ready_lesson_only_reads_pregenerated_cache(self):
+        project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+        )["project"]
+        target = detail["learning_path"]["items"][0]
+        application = self.server.RequestHandlerClass.application
+        original = application._generate_project_lesson
+        application._generate_project_lesson = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("点击章节时不应生成讲解")
+        )
+        try:
+            explanation = self.request_json(
+                "POST",
+                f"/api/projects/{project['project_id']}/explain",
+                {
+                    "student_id": self.student_id,
+                    "knowledge_point_id": target["knowledge_point_id"],
+                },
+            )
+        finally:
+            application._generate_project_lesson = original
+        self.assertEqual(explanation["status"], "ok")
+        self.assertTrue(explanation["generated_with_path"])
+
+    def test_video_candidates_filter_relevance_then_sort_by_play_count(self):
+        application = self.server.RequestHandlerClass.application
+        context = {
+            "current_knowledge_point": {
+                "knowledge_point_id": "KN_PANDAS_CLEAN",
+                "knowledge_point_name": "Pandas 数据清洗",
+            },
+            "web_search_context": {
+                "status": "ok",
+                "provider": "bilibili",
+                "results": [
+                    {
+                        "type": "video",
+                        "title": "Pandas 数据清洗入门",
+                        "url": "https://www.bilibili.com/video/BV1LowPlay",
+                        "play_count": 1200,
+                        "play_count_text": "1200",
+                    },
+                    {
+                        "type": "video",
+                        "title": "Pandas 数据清洗完整教程",
+                        "url": "https://www.bilibili.com/video/BV1HighPlay",
+                        "play_count": 86000,
+                        "play_count_text": "8.6万",
+                    },
+                    {
+                        "type": "video",
+                        "title": "热门游戏直播回放",
+                        "url": "https://www.bilibili.com/video/BV1Irrelevant",
+                        "play_count": 9_000_000,
+                        "play_count_text": "900万",
+                    },
+                ],
+            },
+        }
+        result = {"resources": []}
+        application._merge_video_resources(result, context)
+        videos = [item for item in result["resources"] if item["type"] == "video"]
+        self.assertEqual(
+            [item["url"] for item in videos],
+            [
+                "https://www.bilibili.com/video/BV1HighPlay",
+                "https://www.bilibili.com/video/BV1LowPlay",
+            ],
+        )
+
+    def test_bilibili_popularity_parser_and_cross_domain_filter(self):
+        application = self.server.RequestHandlerClass.application
+        search = application.video_search
+        self.assertEqual(search._parse_count_text("168.6万"), 1_686_000)
+        self.assertEqual(search._parse_count_text("6949"), 6949)
+        self.assertIsNone(search._parse_count_text("播放量未知"))
+        self.assertTrue(search._bilibili_title_relevant(
+            "2026 最新 HTML 标签入门教程", "HTML 页面结构 教学 教程"
+        ))
+        self.assertTrue(search._bilibili_title_relevant(
+            "Pandas 数据读取与清洗完整教程", "Pandas 数据读取与清洗 教学 教程"
+        ))
+        self.assertFalse(search._bilibili_title_relevant(
+            "王者荣耀 HTML 活动页", "HTML 页面结构 教学 教程"
+        ))
 
     def test_custom_goal_explain_uses_labeled_candidate_fallback(self):
         project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
@@ -434,6 +559,96 @@ class AgentProjectApiTests(unittest.TestCase):
         content = json.dumps(explanation["content_blocks"], ensure_ascii=False)
         self.assertIn("待权威来源复核", content)
         self.assertNotIn("Java 封装", content)
+
+    def test_custom_goal_remote_explain_returns_ai_markdown_body(self):
+        gateway = self.server.RequestHandlerClass.application.gateway
+        gateway.settings = Settings(
+            **{**gateway.settings.__dict__, "xingchen_mode": "remote"}
+        )
+        original_invoke = gateway.invoke_chat_workflow
+        gateway.invoke_chat_workflow = lambda payload: {
+            "status": "ok",
+            "answer": (
+                "### 核心概念\n\nPython 数据处理先要区分原始数据、转换过程和输出结果，"
+                "并为缺失值和类型转换建立明确规则。\n\n"
+                "### 最小示例\n\n```python\nrows = [1, None, 3]\n"
+                "clean = [value for value in rows if value is not None]\nprint(clean)\n```\n\n"
+                "### 常见误区\n\n不要把缺失值直接当成零；两者表达的业务含义不同。\n\n"
+                "### 动手练习\n\n读取一组包含空值的数据，清洗后输出有效记录数量。"
+            ),
+        }
+        try:
+            project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+            detail = self.request_json(
+                "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+            )["project"]
+            first = detail["learning_path"]["items"][0]
+            application = self.server.RequestHandlerClass.application
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                cached = application.store.get_project_lesson(
+                    project["project_id"], self.student_id, first["knowledge_point_id"]
+                )
+                if cached and cached["status"] == "ready":
+                    break
+                time.sleep(0.02)
+            explanation = self.request_json(
+                "POST",
+                f"/api/projects/{project['project_id']}/explain",
+                {
+                    "student_id": self.student_id,
+                    "knowledge_point_id": first["knowledge_point_id"],
+                },
+            )
+        finally:
+            gateway.invoke_chat_workflow = original_invoke
+
+        self.assertEqual(explanation["source_status"], "candidate_unverified")
+        self.assertTrue(explanation["ai_generated"])
+        self.assertEqual(explanation["workflow_mode"], "candidate_ai_generation")
+        knowledge_block = next(
+            block for block in explanation["content_blocks"]
+            if block["type"] == "concept"
+        )
+        self.assertIn("```python", knowledge_block["markdown"])
+        self.assertIn("AI 生成候选内容", knowledge_block["source"])
+
+    def test_custom_goal_short_remote_explain_falls_back_honestly(self):
+        gateway = self.server.RequestHandlerClass.application.gateway
+        gateway.settings = Settings(
+            **{**gateway.settings.__dict__, "xingchen_mode": "remote"}
+        )
+        original_invoke = gateway.invoke_chat_workflow
+        gateway.invoke_chat_workflow = lambda payload: {"status": "ok", "answer": "内容生成中"}
+        try:
+            project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+            detail = self.request_json(
+                "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+            )["project"]
+            first = detail["learning_path"]["items"][0]
+            application = self.server.RequestHandlerClass.application
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                cached = application.store.get_project_lesson(
+                    project["project_id"], self.student_id, first["knowledge_point_id"]
+                )
+                if cached and cached["status"] == "ready":
+                    break
+                time.sleep(0.02)
+            explanation = self.request_json(
+                "POST",
+                f"/api/projects/{project['project_id']}/explain",
+                {
+                    "student_id": self.student_id,
+                    "knowledge_point_id": first["knowledge_point_id"],
+                },
+            )
+        finally:
+            gateway.invoke_chat_workflow = original_invoke
+
+        self.assertTrue(explanation["fallback_used"])
+        self.assertIn("仅展示导学框架", explanation["source_notice"])
+        self.assertEqual(explanation["source_status"], "candidate_unverified")
 
     def test_project_explain_unknown_knowledge_point(self):
         created = self.create_project("完成 Java 面向对象成绩管理实训")
@@ -706,11 +921,6 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertTrue(result["artifact"]["data"]["content_blocks"])
 
     def test_project_lesson_falls_back_when_workflow_fails(self):
-        project = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
-        detail = self.request_json(
-            "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
-        )["project"]
-        target = detail["learning_path"]["items"][0]
         application = self.server.RequestHandlerClass.application
         original = application.gateway.invoke_learning_workflow
 
@@ -719,6 +929,11 @@ class AgentProjectApiTests(unittest.TestCase):
 
         application.gateway.invoke_learning_workflow = fail_workflow
         try:
+            project = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
+            detail = self.request_json(
+                "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+            )["project"]
+            target = detail["learning_path"]["items"][0]
             result = self.request_json(
                 "POST",
                 f"/api/projects/{project['project_id']}/explain",
@@ -733,6 +948,13 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertTrue(result["fallback_used"])
         self.assertEqual(result["source_status"], "verified_local_fallback")
         self.assertTrue(result["content_blocks"])
+        self.assertTrue(result["content_version"])
+        self.assertTrue(
+            all(block.get("block_id") for block in result["content_blocks"])
+        )
+        self.assertTrue(
+            all("markdown" in block for block in result["content_blocks"])
+        )
 
     def test_agent_turn_understands_learning_time_and_self_report(self):
         project = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
@@ -770,6 +992,209 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertNotIn("先看案例", first_text)
         self.assertIn("先看案例", second_text)
         self.assertNotIn("30 分钟", second_text)
+
+    def test_project_notes_are_scoped_editable_and_deletable(self):
+        first = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
+        second = self.agent_turn("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{first['project_id']}?student_id={self.student_id}"
+        )["project"]
+        target = detail["learning_path"]["items"][0]
+        lesson = self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/explain",
+            {
+                "student_id": self.student_id,
+                "knowledge_point_id": target["knowledge_point_id"],
+            },
+        )
+        block = lesson["content_blocks"][0]
+        created = self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/notes",
+            {
+                "student_id": self.student_id,
+                "knowledge_point_id": target["knowledge_point_id"],
+                "knowledge_point_name": target["knowledge_point_name"],
+                "content_version": lesson["content_version"],
+                "block_id": block["block_id"],
+                "block_title": block.get("title") or "讲解内容",
+                "quote_text": "稳定锚点",
+                "quote_prefix": "前文",
+                "quote_suffix": "后文",
+                "note_markdown": "**第一条**笔记",
+            },
+        )["note"]
+        listed = self.request_json(
+            "GET",
+            f"/api/projects/{first['project_id']}/notes?student_id={self.student_id}"
+            f"&knowledge_point_id={target['knowledge_point_id']}",
+        )["notes"]
+        self.assertEqual([item["note_id"] for item in listed], [created["note_id"]])
+        self.assertEqual(listed[0]["content_version"], lesson["content_version"])
+        self.assertEqual(
+            self.request_json(
+                "GET",
+                f"/api/projects/{second['project_id']}/notes?student_id={self.student_id}",
+            )["notes"],
+            [],
+        )
+
+        updated_payload = {
+            **created,
+            "student_id": self.student_id,
+            "note_markdown": "更新后的笔记",
+        }
+        updated = self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/notes",
+            updated_payload,
+        )["note"]
+        self.assertEqual(updated["note_id"], created["note_id"])
+        self.assertEqual(updated["note_markdown"], "更新后的笔记")
+        with self.assertRaises(Exception):
+            self.request_json(
+                "POST",
+                f"/api/projects/{second['project_id']}/notes",
+                {**updated_payload, "note_markdown": "跨项目篡改"},
+            )
+        deleted = self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/notes/delete",
+            {"student_id": self.student_id, "note_id": created["note_id"]},
+        )
+        self.assertEqual(deleted["deleted_note_id"], created["note_id"])
+        self.assertEqual(
+            self.request_json(
+                "GET",
+                f"/api/projects/{first['project_id']}/notes?student_id={self.student_id}",
+            )["notes"],
+            [],
+        )
+
+    def test_project_delete_checks_owner_and_removes_project_scoped_data(self):
+        first = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
+        second = self.agent_turn("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+        project_id = first["project_id"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        target = detail["learning_path"]["items"][0]
+        lesson = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/explain",
+            {
+                "student_id": self.student_id,
+                "knowledge_point_id": target["knowledge_point_id"],
+            },
+        )
+        self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/notes",
+            {
+                "student_id": self.student_id,
+                "knowledge_point_id": target["knowledge_point_id"],
+                "knowledge_point_name": target["knowledge_point_name"],
+                "content_version": lesson["content_version"],
+                "block_id": lesson["content_blocks"][0]["block_id"],
+                "block_title": "讲解内容",
+                "note_markdown": "删除项目时应一并删除",
+            },
+        )
+        assessment = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/start",
+            {
+                "student_id": self.student_id,
+                "assessment_type": "initial_diagnostic",
+            },
+        )
+        self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/answer",
+            {
+                "student_id": self.student_id,
+                "assessment_id": assessment["assessment_id"],
+                "selected": "a",
+            },
+        )
+        discovery = self.request_json(
+            "POST",
+            "/api/discovery/sessions",
+            {
+                "learner_id": self.student_id,
+                "project_id": project_id,
+                "goal_candidate": first["goal_name"],
+            },
+        )
+        self.assertTrue(discovery["session"]["session_id"])
+
+        with self.assertRaises(Exception):
+            self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/delete",
+                {"student_id": "STU-OTHER"},
+            )
+
+        deleted = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/delete",
+            {"student_id": self.student_id},
+        )
+        self.assertEqual(deleted["deleted_project_id"], project_id)
+        self.assertGreaterEqual(deleted["deleted_records"]["project_messages"], 1)
+        self.assertEqual(deleted["deleted_records"]["project_notes"], 1)
+        self.assertEqual(deleted["deleted_records"]["assessment_runs"], 1)
+        self.assertGreaterEqual(deleted["deleted_records"]["assessment_evidence"], 1)
+        self.assertEqual(deleted["deleted_records"]["ld_discovery_sessions"], 1)
+
+        listed = self.request_json(
+            "GET", f"/api/projects?student_id={self.student_id}"
+        )["projects"]
+        self.assertEqual([item["project_id"] for item in listed], [second["project_id"]])
+        with self.assertRaises(Exception):
+            self.request_json(
+                "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+            )
+
+    def test_selected_lesson_excerpt_drives_answer_and_message_context(self):
+        project = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+        )["project"]
+        target = detail["learning_path"]["items"][1]
+        selected_text = "对象的状态应该通过受控方法访问"
+        result = self.request_json(
+            "POST",
+            "/api/agent/turn",
+            {
+                "student_id": self.student_id,
+                "session_id": "selected-lesson-test",
+                "project_id": project["project_id"],
+                "message": "为什么要这样设计？",
+                "workspace_context": {"view": "blank"},
+                "selection_context": {
+                    "selected_text": selected_text,
+                    "block_id": "BLOCK-TEST",
+                    "block_title": "核心概念",
+                    "knowledge_point_id": target["knowledge_point_id"],
+                    "knowledge_point_name": target["knowledge_point_name"],
+                },
+            },
+        )
+        self.assertEqual(result["action"], "reply")
+        self.assertIn(selected_text, result["answer"])
+        messages = self.request_json(
+            "GET",
+            f"/api/projects/{project['project_id']}/messages?student_id={self.student_id}",
+        )["messages"]
+        user_message = next(
+            item for item in reversed(messages) if item["role"] == "user"
+        )
+        self.assertEqual(
+            user_message["context"]["selection_context"]["selected_text"],
+            selected_text,
+        )
 
     def test_agent_turn_records_preferred_topic_without_skipping_prerequisites(self):
         project = self.agent_turn("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
