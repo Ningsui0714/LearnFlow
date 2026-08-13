@@ -148,7 +148,16 @@ def _extract_project_name(message: str) -> str | None:
 
 def _is_confirmation(message: str) -> bool:
     normalized = message.strip().lower().rstrip("。.!！")
-    return normalized in CONFIRM_WORDS or any(
+    if normalized in CONFIRM_WORDS:
+        return True
+    # Project Tutor often asks for a natural-language confirmation such as
+    # “我确认这条路线” or “好的，采用这个方案”. Treat only short, explicit
+    # route/plan confirmations as confirmations; ordinary questions remain chat.
+    if len(normalized) <= 32 and any(word in normalized for word in ("确认", "同意", "采用")) and any(
+        word in normalized for word in ("路线", "方案", "安排", "计划")
+    ):
+        return True
+    return any(
         normalized.startswith(prefix) for prefix in ("就按", "按这个", "用这个", "选第")
     )
 
@@ -289,13 +298,23 @@ async def _has_recent_roadmap_proposal(
             and "确认" in content
         ):
             return True
+        # The Tutor is allowed to phrase the proposal naturally. Once the
+        # immediately recent assistant message both presents a route and asks
+        # for confirmation, the next explicit confirmation must enter the
+        # deterministic apply action instead of falling back to free chat.
+        if "路线" in content and "确认" in content and any(
+            marker in content for marker in ("关卡", "阶段", "建立", "生效", "生成")
+        ):
+            return True
     return False
 
 
 def _claims_roadmap_was_applied(message: str) -> bool:
     return any(marker in message for marker in (
         "正式路线已生效", "正式路线已经生效", "路线已保存", "路线已经保存",
-        "路线已写入", "路线已经写入",
+        "路线已写入", "路线已经写入", "路线已建立", "路线已经建立",
+        "正式路线已建立", "正式路线已经建立", "路线已生成", "路线已经生成",
+        "学习路线已生成", "学习路线已经生成",
     ))
 
 
@@ -1931,7 +1950,7 @@ async def process_turn(
                 session.session_type == "project"
                 and active_project_id
                 and _is_confirmation(message)
-                and learning_phase not in {"roadmap_intake", "roadmap_ready"}
+                and learning_phase != "roadmap_ready"
             )
             else False
         )

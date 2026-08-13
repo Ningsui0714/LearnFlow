@@ -52,16 +52,6 @@ export default function ProjectPage() {
       setVisionEnhanceEnabled(!!s.vision_api_enhance)
     }).catch(() => {})
   }, [])
-  const [activeTab, setActiveTab] = useState<'sources' | 'roadmap'>('sources')
-  const [initialTabSet, setInitialTabSet] = useState(false)
-
-  // After loading, switch to roadmap tab if roadmap exists
-  useEffect(() => {
-    if (!initialTabSet && checkpoints.length > 0) {
-      setActiveTab('roadmap')
-      setInitialTabSet(true)
-    }
-  }, [checkpoints, initialTabSet])
   const [notification, setNotification] = useState<string | null>(null)
 
   useWorkspaceTitle(project?.name || `学习项目 ${pid}`, { kind: 'project', projectId: pid })
@@ -267,7 +257,6 @@ export default function ProjectPage() {
   const handleRoadmapUpdate = useCallback((roadmap: any) => {
     if (roadmap.checkpoints) {
       setCheckpoints(roadmap.checkpoints)
-      setActiveTab('roadmap')
       window.dispatchEvent(new CustomEvent('learnflow:roadmap-changed', { detail: { projectId: pid } }))
     }
   }, [pid])
@@ -521,81 +510,33 @@ export default function ProjectPage() {
 
         {/* Main content */}
         <div className="flex min-h-[540px] flex-1 overflow-hidden md:min-h-0">
-          {/* Tabs: empty state */}
-          {!hasProcessedChunks && (
-            <div className="flex flex-1 items-center justify-center p-6">
-              <div className="max-w-md rounded-xl border border-gray-200 bg-white p-6 text-center shadow-sm">
-                <p className="text-3xl">💬</p>
-                <h2 className="mt-3 text-sm font-semibold text-gray-800">项目 Tutor 已固定在右侧对话窗口</h2>
-                <p className="mt-2 text-xs leading-6 text-gray-500">
-                  可直接与 Tutor 确认目标、选择候选来源和规划路线；主编辑区继续用于来源与学习产物。
-                </p>
-              </div>
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex shrink-0 items-center border-b border-gray-200 bg-white px-4 py-2.5">
+              <h2 className="text-sm font-medium text-primary-600">🗺️ 学习路线</h2>
             </div>
-          )}
-
-          {/* With data: show split view */}
-          {hasProcessedChunks && (
-            <div className="flex-1 flex flex-col">
-              {/* Tab buttons */}
-              <div className="flex border-b border-gray-200 bg-white shrink-0">
-                <button
-                  onClick={() => setActiveTab('roadmap')}
-                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === 'roadmap'
-                      ? 'border-primary-600 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  🗺️ 学习路线
-                </button>
-                <button
-                  onClick={() => setActiveTab('sources')}
-                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === 'sources'
-                      ? 'border-primary-600 text-primary-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  Agent 对话
-                </button>
-              </div>
-
-              {/* Tab content */}
-              <div className="flex-1 overflow-hidden">
-                {activeTab === 'roadmap' && (
-                  <div className="p-4 h-full overflow-y-auto">
-                    {hasRoadmap ? (
-                      <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <h2 className="font-semibold text-sm text-gray-700">
-                            已验证 {checkpoints.filter(c => c.learning_status === 'completed').length}/{checkpoints.length} 关
-                          </h2>
-                        </div>
-                        <CheckpointGraph
-                          checkpoints={checkpoints}
-                          onCheckpointClick={handleCheckpointClick}
-                        />
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center h-64 text-gray-400 text-sm">
-                        切换到「学习 Tutor」，直接说“为这个项目规划学习路线”
-                      </div>
-                    )}
+            <div className="flex-1 overflow-y-auto p-4">
+              {hasRoadmap ? (
+                <div>
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-gray-700">
+                      已验证 {checkpoints.filter(c => c.learning_status === 'completed').length}/{checkpoints.length} 关
+                    </h2>
                   </div>
-                )}
-
-                {activeTab === 'sources' && (
-                  <div className="flex h-full items-center justify-center p-6">
-                    <div className="max-w-md rounded-xl border border-gray-200 bg-gray-50 p-6 text-center">
-                      <p className="text-sm font-semibold text-gray-800">项目会话在右侧保持打开</p>
-                      <p className="mt-2 text-xs leading-6 text-gray-500">收起时点击右侧窄条即可继续；项目会话不会与主 Agent 或其他 Agent 合并。</p>
-                    </div>
+                  <CheckpointGraph
+                    checkpoints={checkpoints}
+                    onCheckpointClick={handleCheckpointClick}
+                  />
+                </div>
+              ) : (
+                <div className="flex h-64 items-center justify-center text-center text-sm text-gray-400">
+                  <div>
+                    <p>尚未生成正式学习路线</p>
+                    <p className="mt-2 text-xs">请在右侧 Tutor 中确认路线，确认后这里会直接显示关卡。</p>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 

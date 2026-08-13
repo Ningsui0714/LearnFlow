@@ -791,6 +791,78 @@ def test_confirmation_recovers_a_recent_text_only_route_proposal(
     assert response.json()["executed_action"]["result"]["updated_roadmap"] is not None
 
 
+def test_natural_route_confirmation_after_tutor_prompt_applies_roadmap(
+    client: TestClient,
+    monkeypatch,
+):
+    session_id = new_session(client)
+    created = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json={"message": f"创建一个 自然确认路线测试 {uuid.uuid4().hex[:8]} 项目"},
+    ).json()
+    project_id = created["executed_action"]["result"]["project"]["id"]
+
+    async def seed_route_prompt():
+        async with async_session() as db:
+            session = await db.get(AgentSession, session_id)
+            session.session_type = "project"
+            session.project_id = project_id
+            session.context_summary = {"learning_flow": {"phase": "roadmap_intake"}}
+            db.add(AgentMessage(
+                session_id=session_id,
+                role="assistant",
+                content=(
+                    "我已经根据你的目标整理好路线：先完成基础关，再进入实践关。"
+                    "确认这条路线后，我就正式建立路线。"
+                ),
+            ))
+            await db.commit()
+
+    asyncio.run(seed_route_prompt())
+
+    async def fake_roadmap_chat(self, message, **_kwargs):
+        assert "已经明确确认" in message
+        return {
+            "message": "路线已真实写入。",
+            "updated_roadmap": {
+                "checkpoints": [
+                    {
+                        "title": "基础关", "description": "基础", "order": 1,
+                        "prerequisites": [], "chunk_ids": [], "files": [], "key_concepts": [],
+                    },
+                    {
+                        "title": "实践关", "description": "实践", "order": 2,
+                        "prerequisites": [1], "chunk_ids": [], "files": [], "key_concepts": [],
+                    },
+                ],
+                "archives": [],
+            },
+        }
+
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(RoadmapAgent, "chat", fake_roadmap_chat)
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json={"message": "我确认这条路线", "project_id": project_id},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["executed_action"]["title"] == "应用学习路线"
+    assert body["executed_action"]["result"]["updated_roadmap"] is not None
+
+    async def route_state():
+        async with async_session() as db:
+            checkpoints = list((await db.execute(
+                select(Checkpoint)
+                .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
+                .where(Roadmap.project_id == project_id)
+                .order_by(Checkpoint.order)
+            )).scalars().all())
+            return [item.title for item in checkpoints]
+
+    assert asyncio.run(route_state()) == ["基础关", "实践关"]
+
+
 def test_add_source_uses_recent_url(client: TestClient, no_background_tasks):
     session_id = new_session(client)
     client.post(

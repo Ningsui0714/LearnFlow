@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen, Braces, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
-  GitBranch, MessageCircle, Plus, Route, UserRound,
+  GitBranch, Plus, Route, UserRound,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { getCheckpointWorkspaceArtifacts, getRoadmap, listProjects } from '../../services/api'
@@ -169,9 +169,6 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
 
               {expanded && (
                 <div className="pb-2 pl-6 pr-1.5">
-                  <p className="mb-1 mt-1 flex items-center gap-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                    <MessageCircle size={10} /> 项目会话
-                  </p>
                   <button
                     type="button"
                     onClick={() => open(`/projects/${project.id}`, { title: project.name, kind: 'project', projectId: project.id })}
@@ -179,9 +176,8 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
                       current.projectId === project.id && !current.checkpointId ? 'bg-emerald-100 text-emerald-800' : 'text-slate-500 hover:bg-slate-100'
                     }`}
                   >
-                    <MessageCircle size={12} />
-                    <span className="min-w-0 flex-1 truncate">目标、来源与路线</span>
-                    <span className="text-[9px] text-slate-400">持续</span>
+                    <Route size={12} />
+                    <span className="min-w-0 flex-1 truncate">学习路线、参考资料</span>
                   </button>
 
                   <p className="mb-1 mt-2 flex items-center gap-1.5 px-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">
