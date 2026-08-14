@@ -16,7 +16,7 @@ from app.main import app
 from app.models.learning import AgentSession, EvidenceEvent, KernelMutation, LearningAttempt
 from app.models.project import (
     ArtifactAnnotation, Checkpoint, Exercise, Lecture, LectureVersion,
-    Project, Roadmap, WorkspaceOperation,
+    Project, Roadmap, Task, WorkspaceOperation,
 )
 
 
@@ -213,6 +213,44 @@ def test_desktop_bearer_requires_the_per_launch_token(monkeypatch):
         assert bearer_client.get(
             "/api/projects", headers={"Authorization": f"Bearer {auth_token}"},
         ).status_code == 401
+
+
+def test_desktop_bearer_can_subscribe_to_owned_task_events(monkeypatch):
+    """Task streams must accept the same headers the desktop fetch client sends."""
+    enable_desktop(monkeypatch)
+    with TestClient(app) as login_client, TestClient(app) as stream_client:
+        registered = login_client.post(
+            "/api/auth/register",
+            headers=DESKTOP_HEADERS,
+            json=registration("workspace_desktop_task_stream"),
+        )
+        assert registered.status_code == 200
+        learner_id = registered.json()["learner_id"]
+        auth_token = registered.json()["desktop_auth_token"]
+
+        async def create_completed_task():
+            async with async_session() as db:
+                task = Task(
+                    learner_id=learner_id,
+                    type="test_task",
+                    status="completed",
+                    progress={"message": "完成"},
+                    payload={},
+                )
+                db.add(task)
+                await db.commit()
+                return task.id
+
+        task_id = asyncio.run(create_completed_task())
+        bearer_headers = {
+            **DESKTOP_HEADERS,
+            "Authorization": f"Bearer {auth_token}",
+        }
+        response = stream_client.get(f"/api/tasks/{task_id}/events", headers=bearer_headers)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert f'"task_id": {task_id}' in response.text
+        assert '"status": "completed"' in response.text
 
 
 def test_link_tree_text_write_hash_and_zero_kernel_mutations(tmp_path, monkeypatch):

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  listConcepts, listRemediationCases, generateConcepts, getConceptTask, explainConcept, submitConcept, lectureTaskEventsUrl,
+  listConcepts, listRemediationCases, generateConcepts, getConceptTask, explainConcept, submitConcept, subscribeTaskEvents, type TaskEventSubscription,
 } from '../../services/api'
 import RemediationPanel from './RemediationPanel'
 
@@ -35,7 +35,7 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<TaskEventSubscription | null>(null)
 
   useEffect(() => {
     load()
@@ -70,25 +70,25 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
 
   const subscribeTask = (taskId: number) => {
     esRef.current?.close()
-    const es = new EventSource(lectureTaskEventsUrl(taskId))
-    esRef.current = es
-    es.onmessage = (ev) => {
-      try {
-        const snap = JSON.parse(ev.data)
-        if (snap.progress?.message) setProgress(snap.progress.message)
-        if (snap.status === 'completed') {
-          setGenerating(false)
-          setProgress(`✅ ${snap.progress?.message || '完成！'}`)
-          es.close()
-          load()
-        } else if (snap.status === 'failed') {
-          setGenerating(false)
-          setError(snap.error?.guidance || snap.error?.message || '生成失败')
-          setProgress('❌ 生成失败')
-          es.close()
-        }
-      } catch {}
-    }
+    esRef.current = subscribeTaskEvents(taskId, snap => {
+      if (snap.progress?.message) setProgress(snap.progress.message)
+      if (snap.status === 'completed') {
+        setGenerating(false)
+        setProgress(`✅ ${snap.progress?.message || '完成！'}`)
+        esRef.current?.close()
+        load()
+      } else if (snap.status === 'failed') {
+        setGenerating(false)
+        setError(snap.error?.guidance || snap.error?.message || '生成失败')
+        setProgress('❌ 生成失败')
+        esRef.current?.close()
+      }
+    }, message => {
+      setGenerating(false)
+      setError(`题目状态同步失败：${message}`)
+      setProgress('❌ 无法连接生成任务，请刷新后重试')
+      esRef.current?.close()
+    })
   }
 
   const handleGenerate = () => {

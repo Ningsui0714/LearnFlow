@@ -1,7 +1,7 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import ReactFlow, { Background, Controls, Handle, Position, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { generateConceptGraph, getConceptGraphTask, lectureTaskEventsUrl } from '../../services/api'
+import { generateConceptGraph, getConceptGraphTask, subscribeTaskEvents, type TaskEventSubscription } from '../../services/api'
 
 interface GraphData {
   nodes: { id: string; label: string; section_index: number }[]
@@ -36,7 +36,9 @@ export default function ConceptGraphModal({ checkpointId, graph, sections, onClo
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState('')
   const [selected, setSelected] = useState<any>(null)
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<TaskEventSubscription | null>(null)
+
+  useEffect(() => () => esRef.current?.close(), [])
 
   const sectionTitles = useMemo(() => {
     const m: Record<number, string> = {}
@@ -78,27 +80,25 @@ export default function ConceptGraphModal({ checkpointId, graph, sections, onClo
     generateConceptGraph(checkpointId)
       .then((res: any) => {
         esRef.current?.close()
-        const es = new EventSource(lectureTaskEventsUrl(res.task_id))
-        esRef.current = es
-        es.onmessage = (ev) => {
-          try {
-            const snap = JSON.parse(ev.data)
-            if (snap.progress?.message) setProgress(snap.progress.message)
-            if (snap.status === 'completed') {
-              es.close()
-              setGenerating(false)
-              // refresh graph from lecture
-              import('../../services/api').then(({ getLecture }) =>
-                getLecture(checkpointId).then(d => {
-                  if (d.concept_graph?.nodes?.length) onGraphUpdate(d.concept_graph)
-                }))
-            } else if (snap.status === 'failed') {
-              es.close()
-              setGenerating(false)
-              setProgress('❌ ' + (snap.error?.guidance || '生成失败'))
-            }
-          } catch {}
-        }
+        esRef.current = subscribeTaskEvents(res.task_id, snap => {
+          if (snap.progress?.message) setProgress(snap.progress.message)
+          if (snap.status === 'completed') {
+            esRef.current?.close()
+            setGenerating(false)
+            import('../../services/api').then(({ getLecture }) =>
+              getLecture(checkpointId).then(d => {
+                if (d.concept_graph?.nodes?.length) onGraphUpdate(d.concept_graph)
+              }))
+          } else if (snap.status === 'failed') {
+            esRef.current?.close()
+            setGenerating(false)
+            setProgress('❌ ' + (snap.error?.guidance || '生成失败'))
+          }
+        }, message => {
+          setGenerating(false)
+          setProgress(`❌ 图谱状态同步失败：${message}`)
+          esRef.current?.close()
+        })
       })
       .catch((e: any) => { setGenerating(false); setProgress('❌ ' + e.message) })
   }

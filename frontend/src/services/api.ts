@@ -561,8 +561,80 @@ export const generateConceptGraph = (checkpointId: number) =>
 export const getConceptGraphTask = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/concept-graph/task`).then(r => r.data)
 
-// SSE stream for lecture generation — uses fetch for proper error handling
-// Deprecated in favor of task-based generation (createLectureTask + lectureTaskEventsUrl)
+export interface TaskEventSubscription {
+  close: () => void
+}
+
+function streamingHeaders() {
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(api.defaults.headers.common)) {
+    if (typeof value === 'string') headers.set(name, value)
+  }
+  return headers
+}
+
+function apiUrl(path: string) {
+  return api.getUri({ url: path })
+}
+
+async function consumeSSE(response: Response, onData: (data: any) => void, signal: AbortSignal) {
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`服务器错误 (${response.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`)
+  }
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('响应无数据流')
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const deliver = (frame: string) => {
+    const payload = frame.split('\n')
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart())
+      .join('\n')
+    if (!payload) return
+    try { onData(JSON.parse(payload)) } catch { /* Ignore malformed SSE frames. */ }
+  }
+
+  while (!signal.aborted) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const frames = buffer.split(/\r?\n\r?\n/)
+    buffer = frames.pop() || ''
+    frames.forEach(deliver)
+  }
+  buffer += decoder.decode()
+  if (buffer.trim()) deliver(buffer)
+}
+
+/**
+ * Subscribe to a task snapshot stream with the current API base URL and auth
+ * headers. Native EventSource cannot attach the desktop sidecar token, so it
+ * would silently fail in Tauri after a task was successfully created.
+ */
+export function subscribeTaskEvents(
+  taskId: number,
+  onSnapshot: (snapshot: any) => void,
+  onError: (message: string) => void,
+): TaskEventSubscription {
+  const controller = new AbortController()
+  void fetch(apiUrl(`/tasks/${taskId}/events`), {
+    headers: streamingHeaders(),
+    credentials: 'include',
+    signal: controller.signal,
+  })
+    .then(response => consumeSSE(response, onSnapshot, controller.signal))
+    .catch((error: unknown) => {
+      if (!controller.signal.aborted) {
+        onError(error instanceof Error ? error.message : '网络错误')
+      }
+    })
+
+  return { close: () => controller.abort() }
+}
+
+// Legacy direct-lecture stream kept for compatibility with older callers.
 export function subscribeLectureSSE(
   checkpointId: number,
   onSection: (data: any) => void,
@@ -571,6 +643,7 @@ export function subscribeLectureSSE(
   onStatus?: (msg: string) => void,
 ) {
   let aborted = false
+  const controller = new AbortController()
   let firstData = false
 
   // Timeout: if no data within 90s, report error
@@ -583,12 +656,17 @@ export function subscribeLectureSSE(
 
   const abort = () => {
     aborted = true
+    controller.abort()
     clearTimeout(timeoutId)
   }
 
   const doFetch = async () => {
     try {
-      const resp = await fetch(`/api/checkpoints/${checkpointId}/lecture/generate`)
+      const resp = await fetch(apiUrl(`/checkpoints/${checkpointId}/lecture/generate`), {
+        headers: streamingHeaders(),
+        credentials: 'include',
+        signal: controller.signal,
+      })
 
       if (!resp.ok) {
         clearTimeout(timeoutId)
@@ -676,8 +754,6 @@ export const getTaskStatus = (taskId: number) =>
 
 export const cancelTask = (taskId: number) =>
   api.post(`/tasks/${taskId}/cancel`).then(r => r.data)
-
-export const lectureTaskEventsUrl = (taskId: number) => `/api/tasks/${taskId}/events`
 
 export const askQuestion = (checkpointId: number, data: { selection: string; question: string; history: any[]; action?: string }) =>
   api.post(`/checkpoints/${checkpointId}/ask`, data).then(r => r.data)

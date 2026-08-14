@@ -73,7 +73,12 @@ async def task_events(
     db: AsyncSession = Depends(get_db),
 ):
     """SSE stream of task snapshots (polling DB every 1s, diff-based)."""
-    task = await require_owned_task(db, current.learner.id, task_id)
+    # ``expire_all`` below intentionally refreshes task state on every poll.
+    # Keep the ownership scope as a scalar before that happens: accessing an
+    # expired async ORM relationship from the stream otherwise raises
+    # MissingGreenlet before it can emit the first snapshot.
+    learner_id = current.learner.id
+    task = await require_owned_task(db, learner_id, task_id)
 
     async def event_stream():
         last_payload = None
@@ -81,7 +86,7 @@ async def task_events(
             while True:
                 db.expire_all()
                 t = (await db.execute(select(Task).where(
-                    Task.id == task_id, Task.learner_id == current.learner.id,
+                    Task.id == task_id, Task.learner_id == learner_id,
                 ))).scalar_one_or_none()
                 if t is None:
                     yield f"data: {json.dumps({'type': 'error', 'message': '任务不存在'}, ensure_ascii=False)}\n\n"

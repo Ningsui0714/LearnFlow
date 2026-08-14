@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import SplitPane from "../components/layout/SplitPane"
 import Editor from '@monaco-editor/react'
 import {
-  listExercises, runCode, reviewCode, submitExercise, getExerciseTask, lectureTaskEventsUrl,
+  listExercises, runCode, reviewCode, submitExercise, getExerciseTask, subscribeTaskEvents, type TaskEventSubscription,
   runProject, submitProject, getExerciseEnv, getExerciseDraft, saveExerciseDraft,
   recordLearningEvent, listRemediationCases, listArtifactAnnotations,
   createArtifactAnnotation, updateArtifactAnnotation, deleteArtifactAnnotation,
@@ -64,6 +64,7 @@ export default function ExercisePage() {
   const [fontSize, setFontSize] = useState(13)
   const [vimLoading, setVimLoading] = useState(false)
   const wsEndRef = useRef<HTMLDivElement>(null)
+  const genTaskSubscriptionRef = useRef<TaskEventSubscription | null>(null)
 
   useWorkspaceTitle(activeEx?.title ? `练习 · ${activeEx.title}` : `练习 · 关卡 ${cid}`, {
     kind: 'exercise', projectId: pid, checkpointId: cid,
@@ -71,6 +72,7 @@ export default function ExercisePage() {
 
   useEffect(() => {
     loadExercises()
+    return () => genTaskSubscriptionRef.current?.close()
   }, [cid])
 
   useEffect(() => {
@@ -175,22 +177,21 @@ export default function ExercisePage() {
       const res = await api.post(`/checkpoints/${cid}/exercises/generate`)
       setGenTaskId(res.data.task_id)
       setGenProgress('排队中...')
-      // subscribe SSE
-      const es = new EventSource(lectureTaskEventsUrl(res.data.task_id))
-      es.onmessage = (ev) => {
-        try {
-          const snap = JSON.parse(ev.data)
-          if (snap.progress?.message) setGenProgress(snap.progress.message)
-          if (snap.status === 'completed') {
-            setGenProgress('✅ 完成')
-            es.close()
-            loadExercises()
-          } else if (snap.status === 'failed') {
-            setGenProgress('❌ ' + (snap.error?.guidance || snap.error?.message || '失败'))
-            es.close()
-          }
-        } catch {}
-      }
+      genTaskSubscriptionRef.current?.close()
+      genTaskSubscriptionRef.current = subscribeTaskEvents(res.data.task_id, snap => {
+        if (snap.progress?.message) setGenProgress(snap.progress.message)
+        if (snap.status === 'completed') {
+          setGenProgress('✅ 完成')
+          genTaskSubscriptionRef.current?.close()
+          loadExercises()
+        } else if (snap.status === 'failed') {
+          setGenProgress('❌ ' + (snap.error?.guidance || snap.error?.message || '失败'))
+          genTaskSubscriptionRef.current?.close()
+        }
+      }, message => {
+        setGenProgress(`❌ 练习状态同步失败：${message}`)
+        genTaskSubscriptionRef.current?.close()
+      })
     } catch (e: any) {
       alert('生成失败: ' + (e?.response?.data?.detail || e.message))
     }

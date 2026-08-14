@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import {
   getLecture, saveLecture,
-  createLectureTask, getActiveLectureTask, cancelTask, lectureTaskEventsUrl,
+  createLectureTask, getActiveLectureTask, cancelTask, subscribeTaskEvents, type TaskEventSubscription,
   listLectureVersions, rollbackLecture,
   recordLearningEvent, listNotes, createNote, updateNote, deleteNote,
 } from '../services/api'
@@ -48,7 +48,7 @@ export default function CheckpointPage() {
   const [conceptGraph, setConceptGraph] = useState<any>(null)
   const [feedback, setFeedback] = useState('')
   const [showTutor, setShowTutor] = useState(false)
-  const esRef = useRef<EventSource | null>(null)
+  const esRef = useRef<TaskEventSubscription | null>(null)
   const embedded = new URLSearchParams(location.search).get('embed') === '1'
 
   useWorkspaceTitle(checkpointTitle || `讲义 · 关卡 ${cid}`, {
@@ -146,48 +146,41 @@ export default function CheckpointPage() {
     }
   }
 
-  // ── Task subscription (EventSource auto-reconnects on network drops) ──
+  // ── Task subscription ──
   const subscribeTask = (id: number) => {
     closeEventSource()
-    const es = new EventSource(lectureTaskEventsUrl(id))
-    esRef.current = es
+    esRef.current = subscribeTaskEvents(id, snap => {
+      if (snap.type !== 'snapshot') return
+      if (snap.sections) setSections(snap.sections)
+      if (snap.progress?.message) setProgress(snap.progress.message)
 
-    es.onmessage = (ev) => {
-      try {
-        const snap = JSON.parse(ev.data)
-        if (snap.type === 'snapshot') {
-          if (snap.sections) setSections(snap.sections)
-          if (snap.progress?.message) setProgress(snap.progress.message)
-
-          if (snap.status === 'completed') {
-            setGenerating(false)
-            setTaskError(null)
-            setError('')
-            setProgress(`✅ ${snap.progress?.message || '完成！'}`)
-            setStatus('published')
-            // Sections were saved incrementally by the task runner.
-            closeEventSource()
-          } else if (snap.status === 'failed') {
-            setGenerating(false)
-            setTaskError(snap.error)
-            setError(snap.error?.message || '生成失败')
-            setProgress(`❌ ${snap.error?.guidance || '生成失败'}`)
-            if (snap.sections?.length) setStatus('draft')
-            closeEventSource()
-          } else if (snap.status === 'canceled') {
-            setGenerating(false)
-            setProgress('已取消')
-            setStatus(snap.sections?.length ? 'draft' : 'none')
-            closeEventSource()
-          }
-        }
-      } catch {}
-    }
-
-    es.onerror = () => {
-      // EventSource retries automatically; only surface if connection is dead
-      // and we're still marked as generating (task may still be running server-side)
-    }
+      if (snap.status === 'completed') {
+        setGenerating(false)
+        setTaskError(null)
+        setError('')
+        setProgress(`✅ ${snap.progress?.message || '完成！'}`)
+        setStatus('published')
+        closeEventSource()
+      } else if (snap.status === 'failed') {
+        setGenerating(false)
+        setTaskError(snap.error)
+        setError(snap.error?.message || '生成失败')
+        setProgress(`❌ ${snap.error?.guidance || '生成失败'}`)
+        if (snap.sections?.length) setStatus('draft')
+        closeEventSource()
+      } else if (snap.status === 'canceled') {
+        setGenerating(false)
+        setProgress('已取消')
+        setStatus(snap.sections?.length ? 'draft' : 'none')
+        closeEventSource()
+      }
+    }, message => {
+      setGenerating(false)
+      setError(`讲义状态同步失败：${message}`)
+      setProgress('❌ 无法连接生成任务，请刷新后重试')
+      void loadLecture()
+      closeEventSource()
+    })
   }
 
   const handleGenerate = (mode: 'fresh' | 'resume' = 'fresh') => {
