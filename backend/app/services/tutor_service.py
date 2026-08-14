@@ -551,6 +551,9 @@ def action_card(action: AgentAction | None) -> dict | None:
         "task_type", "profile_name", "adapter", "sandbox_policy",
         "network_policy", "network_boundary_enforced", "excluded_paths",
     }
+    primary_label = "确认" if action.status == "pending_confirmation" else "查看结果"
+    if action.capability == "apply_learning_path" and action.status == "pending_confirmation":
+        primary_label = "确认并生成关卡图"
     return {
         "id": action.id,
         "title": spec.title if spec else action.capability,
@@ -558,7 +561,7 @@ def action_card(action: AgentAction | None) -> dict | None:
         "expected_result": expected,
         "status": action.status,
         "requires_confirmation": action.status == "pending_confirmation",
-        "primary_label": "确认" if action.status == "pending_confirmation" else "查看结果",
+        "primary_label": primary_label,
         "target_summary": {key: value for key, value in target.items() if key in public_keys and value},
         "task_id": action.task_id,
         "result": action.result or {},
@@ -1182,10 +1185,12 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
                 message=prompt,
                 history=history,
                 require_submission=action.capability == "apply_learning_path",
+                action_id=action.id,
             ),
             db,
             current,
         )
+        confirmation_action_id = None
         if response.updated_roadmap:
             _set_learning_flow(
                 session,
@@ -1204,8 +1209,32 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             )
         else:
             _set_learning_flow(session, phase="roadmap_proposal")
-            user_message = response.message
-            if action.capability == "apply_learning_path":
+            user_message = response.message.strip()
+            if action.capability == "plan_learning_path":
+                confirmation = await _new_action(
+                    db,
+                    session,
+                    "apply_learning_path",
+                    {
+                        "project_id": project.id,
+                        "workflow_stage": "roadmap_confirmation_card",
+                        "message": (
+                            "学习者已经明确确认上一轮正式路线方案（通过界面的确认按钮）。"
+                            "请保持已协商的目标、节奏和关卡结构，立即调用 submit_roadmap 一次"
+                            "写入路线，不要再次提问，也不要在聊天中展开讲义或布置练习。"
+                        ),
+                        "reason": "确认后会立即把路线写入项目，并显示可进入的关卡图。",
+                        "expected_result": "生成正式关卡图；之后仍可在项目 Tutor 中提出路线修订。",
+                        "explicit": True,
+                    },
+                    "pending_confirmation",
+                )
+                confirmation_action_id = confirmation.id
+                user_message = "\n\n".join(item for item in (
+                    user_message,
+                    "路线可以后续迭代；点击下方按钮后会立即生成关卡图。",
+                ) if item)
+            elif action.capability == "apply_learning_path":
                 user_message = "\n\n".join((
                     response.message.strip(),
                     "这次还没有写入正式路线；路线仍处于待确认状态，关卡内容也尚未开始。",
@@ -1216,8 +1245,10 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             "updated_roadmap": response.updated_roadmap,
             "learning_flow_phase": _learning_flow(session).get("phase"),
             "user_message": user_message,
+            **({"confirmation_action_id": confirmation_action_id}
+               if confirmation_action_id else {}),
         }
-        session.pending_action_id = None
+        session.pending_action_id = confirmation_action_id
         await record_event(
             db,
             learner_id=action.learner_id,
@@ -1893,6 +1924,12 @@ async def process_turn(
         ))).scalar_one_or_none()
         if candidate:
             action = candidate
+    elif pending and pending.status == "pending_confirmation" and _is_confirmation(message):
+        # The UI normally calls /actions/{id}/confirm.  Keep the old text
+        # confirmation path as a backwards-compatible fallback for API users
+        # and existing conversations, while steering the product UI to the card.
+        action = pending
+        action.status = "ready"
     elif pending and pending.status == "needs_input":
         target = dict(pending.target or {})
         if pending.capability in {"create_project", "bootstrap_project"}:
@@ -1972,9 +2009,10 @@ async def process_turn(
                         f"{message}\n\n"
                         "请结合项目中真实已接入的来源、用户画像、五核记忆和项目对话，"
                         "主动给出一份正式路线提案。提案要说明关卡顺序、每关可验证产物和"
-                        "需要用户确认的取舍；项目阶段预览只能作低权重参考。"
-                        "这一轮不要调用 submit_roadmap，不要在聊天里发布完整讲义或练习，"
-                        "最后只询问用户是否按该方案写入正式路线。"
+                            "需要用户确认的取舍；项目阶段预览只能作低权重参考。"
+                            "这一轮不要调用 submit_roadmap，不要在聊天里发布完整讲义或练习。"
+                            "系统会以确认按钮承接写入路线；说明路线可在后续迭代即可，不要要求用户"
+                            "通过自然语言确认。"
                     ),
                     "explicit": True,
                 },
@@ -2118,7 +2156,11 @@ async def process_turn(
             "message": reply,
             "state_summary": state,
             "executed_action": action_result(action),
-            "action_card": action_card(action) if action.status in {"needs_input", "pending_confirmation"} else None,
+            "action_card": (
+                action_card(action) if action.status in {"needs_input", "pending_confirmation"}
+                else action_card(await db.get(AgentAction, session.pending_action_id))
+                if session.pending_action_id else None
+            ),
             "project_proposals": [proposal_view(item) for item in proposals],
             "proposal_update": proposal_view(proposal_for_action) if proposal_for_action else None,
         }

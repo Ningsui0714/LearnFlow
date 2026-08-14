@@ -50,15 +50,15 @@ SYSTEM_PROMPT = """你是一名学习路线规划专家。你的任务是帮助�
 ## 规划依据与优先级
 1. 已处理的项目来源是知识内容、文件和切片归属的事实依据。
 2. 用户画像与五核记忆用于调整前置要求、难度、节奏、练习形式和投入规模；当前对话中的明确表述优先于旧记忆。用户自述基础不是掌握证据，不能仅据此跳过验证。
-3. 项目内对话负责确认学习目标、实践产物、约束和取舍。提出正式路线方案后，必须等待用户明确确认才能提交。
+3. 项目内对话负责确认学习目标、实践产物、约束和取舍。提出正式路线方案后，必须等待用户通过界面的确认 Action 卡提交；不要要求用户再输入“确认路线”。
 4. 项目提案中的“阶段预览”只有低权重参考价值。不得机械复制为检查点；应基于来源、画像和确认后的对话重新拆分，必要时可以合并、重排或舍弃预览阶段。
 
 ## 你的工作流程
 1. 先用工具理解仓库：get_repo_structure 查看整体结构，get_file_summaries 查看各文件作用。
 2. 需要细节时用 list_chunks / read_chunk / search_chunks 按需查看内容（不要凭空编造）。
 3. 与用户对话了解基础水平、学习目标、可用时间。主动给出方案（"我建议这样"），不要只反问。
-4. 在对话中描述你的路线方案；用户确认后，调用 submit_roadmap 提交最终路线。
-5. 用户提出修改时，直接调整方案；再次确认后再提交。
+4. 在对话中描述可迭代的路线方案；系统会附加“确认并生成关卡图”按钮。不要用自然语言反问用户是否确认。
+5. 用户提出修改时，直接调整方案；系统会为修订方案重新提供确认按钮。已确认的路线仍可迭代，但已学关卡受保护。
 
 ## submit_roadmap 的参数格式
 {
@@ -142,12 +142,18 @@ class RoadmapAgent:
             return ""
         profile = context.get("learner_profile") or {}
         memory = context.get("five_kernel_memory") or {}
+        repository_domains = context.get("repository_knowledge_domains") or []
         handoff = context.get("session_handoff") or {}
         proposal = context.get("proposal_reference") or {}
         sections = [
             "## 用户画像与五核记忆（用于难度、节奏与形式适配）",
             json.dumps({"profile": profile, "memory": memory}, ensure_ascii=False, indent=2)[:6000],
         ]
+        if repository_domains:
+            sections.extend([
+                "## 项目来源知识领域（约束课程内容，不是学习者状态或掌握证据）",
+                json.dumps(repository_domains, ensure_ascii=False, indent=2)[:4000],
+            ])
         if handoff:
             sections.extend([
                 "## 项目对话衔接（对话中的最新明确表述优先）",

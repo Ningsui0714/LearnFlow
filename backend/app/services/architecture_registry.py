@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-12.2"
+REGISTRY_VERSION = "2026-08-14.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -173,6 +173,7 @@ TOOLS = {
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
         ToolContract("source_ingestion", "Source Ingestion + Chunking", "learning_design_agent", "learnflow", "artifact"),
+        ToolContract("repository_knowledge_domains", "Repository Knowledge Domain Context Builder", "learning_design_agent", "learnflow", "read"),
         ToolContract("hierarchical_rag", "Hierarchical RAG", "learning_design_agent", "learnflow", "read",
                      ("knowledge", "structure")),
         ToolContract("content_generation", "Roadmap/Lecture/Assessment Generation", "learning_design_agent", "learnflow", "artifact",
@@ -214,7 +215,7 @@ SKILLS = {
                       "checkpoint-scoped Tutor reply + internal design/practice handoff",
                       "immutable checkpoint session scope"),
         SkillContract("learning_path_planning", "来源约束的学习路线规划", "learning_design_agent",
-                      ("source_ingestion", "hierarchical_rag", "content_generation"),
+                      ("source_ingestion", "repository_knowledge_domains", "hierarchical_rag", "content_generation"),
                       "roadmap proposal with checkpoint dependencies and provenance", "confirmed proposal"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
                       ("hierarchical_rag", "content_generation", "process_animation"),

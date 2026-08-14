@@ -522,6 +522,9 @@ export default function ProjectPage() {
                       已验证 {checkpoints.filter(c => c.learning_status === 'completed').length}/{checkpoints.length} 关
                     </h2>
                   </div>
+                  <p className="mb-3 text-xs leading-5 text-gray-500">
+                    这张路线图会随着你的反馈迭代；已产生学习记录的关卡会保留，避免丢失证据。
+                  </p>
                   <CheckpointGraph
                     checkpoints={checkpoints}
                     onCheckpointClick={handleCheckpointClick}

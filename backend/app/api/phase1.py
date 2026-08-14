@@ -13,7 +13,7 @@ from sqlalchemy import select
 from typing import List
 
 from app.db.database import get_db
-from app.models.learning import AgentSession, LearnerProfile, LearningProjectProposal
+from app.models.learning import AgentAction, AgentSession, LearnerProfile, LearningProjectProposal
 from app.models.project import Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk, Task
 from app.schemas.project import (
     AgentChatRequest, AgentChatResponse,
@@ -28,6 +28,55 @@ from app.services.auth import (
 
 router = APIRouter()
 chunker = SourceProcessor()
+
+
+def _repository_knowledge_domains(sources: list[Source]) -> list[dict]:
+    """Return compact, source-grounded topic context for roadmap planning.
+
+    These labels describe what a repository contains.  They intentionally stay
+    outside the five-kernel projection: a source outline is course context, not
+    a claim about what the learner knows or should be scored on.
+    """
+    result = []
+    for source in sources:
+        meta = source.meta_data or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except json.JSONDecodeError:
+                meta = {}
+        analysis = dict(meta.get("repo_analysis") or {})
+        seen: set[str] = set()
+        domains = []
+
+        def add(label: object, evidence: str) -> None:
+            value = " ".join(str(label or "").split())[:160]
+            key = value.casefold()
+            if value and key not in seen and len(domains) < 12:
+                seen.add(key)
+                domains.append({"label": value, "evidence": evidence})
+
+        for item in analysis.get("readme_toc") or []:
+            if isinstance(item, dict):
+                add(item.get("title"), "README 目录")
+        for group in analysis.get("dir_groups") or []:
+            if isinstance(group, dict) and group.get("is_chapter"):
+                add(group.get("name") or group.get("dir"), "章节目录")
+        # Some repositories do not have a usable TOC or chapter folders.  File
+        # summaries still provide an inspectable, non-LLM-invented fallback.
+        if not domains:
+            for path in (analysis.get("file_summaries") or {}).keys():
+                add(path, "文件摘要路径")
+
+        if domains:
+            result.append({
+                "source_id": source.id,
+                "role": source.role or "main",
+                "type": source.type,
+                "structure_logic": analysis.get("structure_logic", "mixed"),
+                "domains": domains,
+            })
+    return result
 
 
 async def _roadmap_planning_context(
@@ -58,6 +107,9 @@ async def _roadmap_planning_context(
         .order_by(AgentSession.updated_at.desc())
         .limit(1)
     )).scalar_one_or_none()
+    sources = list((await db.execute(
+        select(Source).where(Source.project_id == project_id)
+    )).scalars().all())
 
     proposal_artifact = dict(proposal.artifact or {}) if proposal else {}
     return {
@@ -77,6 +129,7 @@ async def _roadmap_planning_context(
             "career_goal_status": profile.career_goal_status,
         } if profile else {},
         "five_kernel_memory": await get_kernel_projection(db, current.learner.id),
+        "repository_knowledge_domains": _repository_knowledge_domains(sources),
         "session_handoff": dict(project_session.context_summary or {}) if project_session else {},
         "proposal_reference": {
             "proposal_id": proposal.id,
@@ -788,6 +841,15 @@ async def roadmap_chat(
 ):
     """Chat with the roadmap planning agent."""
     await require_owned_project(db, current.learner.id, project_id)
+    if req.require_submission:
+        action = await db.get(AgentAction, req.action_id) if req.action_id is not None else None
+        if not action or (
+            action.learner_id != current.learner.id
+            or action.project_id != project_id
+            or action.capability != "apply_learning_path"
+            or action.status != "running"
+        ):
+            raise HTTPException(409, "正式路线只能通过已确认的 Tutor Action 写入")
     # Get project info
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
@@ -868,6 +930,12 @@ async def roadmap_chat(
         )
     except Exception as e:
         raise HTTPException(502, f"AI Agent error: {str(e)}")
+
+    # A route proposal is not allowed to materialize checkpoints, even if the
+    # model called submit_roadmap prematurely.  Only the confirmed Action Board
+    # execution above can carry require_submission=True.
+    if result["updated_roadmap"] and not req.require_submission:
+        result["updated_roadmap"] = None
 
     # Save conversation history
     if roadmap:

@@ -233,6 +233,20 @@ def test_formal_roadmap_uses_profile_and_treats_stage_preview_as_soft_reference(
                 },
             )
             db.add(proposal)
+            db.add(Source(
+                project_id=project_id,
+                type="github",
+                url="https://github.com/example/structured-course",
+                role="main",
+                status="processed",
+                meta_data={
+                    "repo_analysis": {
+                        "structure_logic": "tutorial-progression",
+                        "readme_toc": [{"title": "张量与自动求导"}],
+                        "dir_groups": [{"name": "Chapter 03 Attention", "is_chapter": True}],
+                    },
+                },
+            ))
             await db.commit()
             current = await load_current_learner(db, learner_id)
             return await _roadmap_planning_context(db, current, project_id)
@@ -241,6 +255,15 @@ def test_formal_roadmap_uses_profile_and_treats_stage_preview_as_soft_reference(
     assert context["input_policy"]["stage_preview_weight"] == "low"
     assert context["learner_profile"]["weekly_hours"] >= 0
     assert context["five_kernel_memory"]
+    domains = context["repository_knowledge_domains"]
+    assert len(domains) == 1
+    assert domains[0]["role"] == "main"
+    assert domains[0]["type"] == "github"
+    assert domains[0]["structure_logic"] == "tutorial-progression"
+    assert domains[0]["domains"] == [
+        {"label": "张量与自动求导", "evidence": "README 目录"},
+        {"label": "Chapter 03 Attention", "evidence": "章节目录"},
+    ]
     assert context["proposal_reference"]["usage"] == "soft_reference_only"
     assert context["proposal_reference"]["stage_preview"][0]["title"] == "仅供预览的阶段"
 
@@ -248,6 +271,8 @@ def test_formal_roadmap_uses_profile_and_treats_stage_preview_as_soft_reference(
     agent._planning_context = context
     rendered = agent._build_planning_context()
     assert "用户画像与五核记忆" in rendered
+    assert "项目来源知识领域" in rendered
+    assert "不是学习者状态或掌握证据" in rendered
     assert "低权重参考，不是正式路线骨架" in rendered
     assert "可以合并、重排或舍弃" in rendered
 
@@ -305,6 +330,22 @@ def test_confirmed_route_has_a_structured_submission_fallback():
     assert checkpoints[0]["prerequisites"] == []
     assert checkpoints[0]["files"] == ["chapter01.py"]
     assert checkpoints[1]["prerequisites"] == [1]
+
+
+def test_roadmap_submission_requires_a_confirmed_tutor_action(client: TestClient):
+    session_id = new_session(client)
+    created = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json={"message": f"创建一个路线写入保护测试 {uuid.uuid4().hex[:8]} 项目"},
+    ).json()
+    project_id = created["executed_action"]["result"]["project"]["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/roadmap/chat",
+        json={"message": "直接写入路线", "history": [], "require_submission": True},
+    )
+    assert response.status_code == 409
+    assert "确认" in response.json()["detail"]
 
 
 def test_roadmap_chunk_tools_are_scoped_to_current_project_sources():
@@ -635,10 +676,13 @@ def test_project_tutor_routes_formal_learning_into_checkpoints(
     assert planned_body["executed_action"]["result"]["updated_roadmap"] is None
     assert "正式路线提案" in planned_body["message"]
     assert "import torch" not in planned_body["message"]
+    confirmation_card = planned_body["action_card"]
+    assert confirmation_card["title"] == "应用学习路线"
+    assert confirmation_card["status"] == "pending_confirmation"
+    assert confirmation_card["primary_label"] == "确认并生成关卡图"
 
     applied = client.post(
-        f"/api/agent/sessions/{session_id}/turns",
-        json={"message": "开始", "project_id": project_id},
+        f"/api/agent/actions/{confirmation_card['id']}/confirm",
     )
     assert applied.status_code == 200
     applied_body = applied.json()

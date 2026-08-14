@@ -570,7 +570,7 @@ export default function TutorPanel({
               {action.status === 'pending_confirmation' && (
                 <div className="flex shrink-0 gap-2">
                   <button onClick={cancel} className="px-2.5 py-1.5 text-xs text-gray-600 hover:bg-white rounded">暂不</button>
-                  <button onClick={confirm} className="bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 rounded">确认</button>
+                  <button onClick={confirm} className="bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 rounded">{action.primary_label || '确认'}</button>
                 </div>
               )}
             </div>

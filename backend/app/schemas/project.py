@@ -173,6 +173,7 @@ class AgentChatRequest(BaseModel):
     message: str
     history: List[AgentMessage] = []
     require_submission: bool = False
+    action_id: Optional[int] = None
 
 
 class AgentChatResponse(BaseModel):
