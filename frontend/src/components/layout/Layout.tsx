@@ -126,9 +126,8 @@ function WorkspaceFrame() {
           <UserRound size={17} />
         </button>
         {(user?.is_dev_login || Boolean(getDesktopRuntime().apiBaseUrl)) && (
-          <button type="button" onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })} title="配置 AI 模型和 API Key" aria-label="模型设置：配置 AI 模型和 API Key" className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border-2 border-indigo-300 bg-indigo-50 px-2.5 text-xs font-semibold text-indigo-700 shadow-sm hover:border-indigo-400 hover:bg-indigo-100">
+          <button type="button" onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })} title="设置" aria-label="设置" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
             <Settings2 size={17} />
-            <span>模型设置</span>
           </button>
         )}
         <span className="hidden max-w-28 truncate text-xs text-slate-500 lg:block">{user?.display_name}</span>
