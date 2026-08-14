@@ -366,6 +366,50 @@ async def _first_open_checkpoint(
     )).scalar_one_or_none()
 
 
+async def _enter_checkpoint(
+    db: AsyncSession,
+    action: AgentAction,
+    session: AgentSession,
+    checkpoint: Checkpoint,
+    project_id: int | None,
+    *,
+    entry_mode: str,
+) -> dict[str, Any]:
+    """Enter a verified checkpoint through the single navigation event path.
+
+    Applying a confirmed roadmap is allowed to make this context-only handoff
+    automatically.  It deliberately does not generate a lecture or assessment:
+    those artifact-producing actions remain learner-controlled after arrival.
+    """
+    if project_id:
+        _bind_project_session(session, project_id, checkpoint.id)
+        _record_session_handoff(session, project_id, {
+            **dict(action.target or {}),
+            "checkpoint_id": checkpoint.id,
+            "entry_mode": entry_mode,
+        })
+    action.project_id = project_id
+    action.checkpoint_id = checkpoint.id
+    if checkpoint.learning_status in (None, "", "not_started"):
+        checkpoint.learning_status = "in_progress"
+    await record_event(
+        db, event_type="checkpoint_entered", source="tutor_tool",
+        learner_id=action.learner_id,
+        project_id=project_id, checkpoint_id=checkpoint.id, session_id=session.id,
+        payload={"title": checkpoint.title, "entry_mode": entry_mode},
+        provenance={
+            "action_id": action.id,
+            "trigger_capability": action.capability,
+            "entry_mode": entry_mode,
+        },
+        client_event_id=f"action:{action.id}:checkpoint:{checkpoint.id}:entered",
+    )
+    return {
+        "checkpoint": {"id": checkpoint.id, "title": checkpoint.title},
+        "entry_mode": entry_mode,
+    }
+
+
 async def _ensure_project_welcome_message(
     db: AsyncSession,
     session: AgentSession,
@@ -1058,27 +1102,17 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             return "你想进入哪一个检查点？"
         roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
         project_id = roadmap.project_id if roadmap else (session.project_id or action.project_id)
-        if project_id:
-            _bind_project_session(session, project_id, checkpoint.id)
-            _record_session_handoff(session, project_id, target)
-        action.project_id = project_id
-        action.checkpoint_id = checkpoint.id
-        if checkpoint.learning_status in (None, "", "not_started"):
-            checkpoint.learning_status = "in_progress"
+        entry = await _enter_checkpoint(
+            db, action, session, checkpoint, project_id,
+            entry_mode=str(target.get("entry_mode") or "explicit"),
+        )
         action.status = "completed"
         action.finished_at = datetime.utcnow()
         action.result = {
-            "checkpoint": {"id": checkpoint.id, "title": checkpoint.title},
+            **entry,
             "user_message": f"已进入「{checkpoint.title}」。",
         }
         session.pending_action_id = None
-        await record_event(
-            db, event_type="checkpoint_entered", source="tutor_tool",
-            learner_id=action.learner_id,
-            project_id=project_id, checkpoint_id=checkpoint.id, session_id=session.id,
-            payload={"title": checkpoint.title}, provenance={"action_id": action.id},
-            client_event_id=f"action:{action.id}:checkpoint:{checkpoint.id}:entered",
-        )
         await db.commit()
         return action.result["user_message"]
 
@@ -1191,6 +1225,7 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             current,
         )
         confirmation_action_id = None
+        entered_checkpoint = None
         if response.updated_roadmap:
             _set_learning_flow(
                 session,
@@ -1199,11 +1234,17 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             )
             first_checkpoint = await _first_open_checkpoint(db, session)
             follow_up = (
-                "正式路线已写入项目。讲义、练习、代码任务和验证会放在各自关卡中，"
+                "正式路线已写入项目。讲义、练习、代码任务和验证会放在各自关卡中；"
                 "Tutor 对话继续负责路线调整和课前后答疑。"
             )
             if first_checkpoint:
-                follow_up += f" 现在可以进入第一关「{first_checkpoint.title}」。"
+                roadmap = await db.get(Roadmap, first_checkpoint.roadmap_id)
+                entered_checkpoint = await _enter_checkpoint(
+                    db, action, session, first_checkpoint,
+                    roadmap.project_id if roadmap else project.id,
+                    entry_mode="automatic_after_roadmap",
+                )
+                follow_up += f" 已直接进入第一关「{first_checkpoint.title}」。"
             user_message = "\n\n".join(
                 item for item in (response.message.strip(), follow_up) if item
             )
@@ -1245,6 +1286,7 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             "updated_roadmap": response.updated_roadmap,
             "learning_flow_phase": _learning_flow(session).get("phase"),
             "user_message": user_message,
+            **(entered_checkpoint or {}),
             **({"confirmation_action_id": confirmation_action_id}
                if confirmation_action_id else {}),
         }
@@ -1293,27 +1335,18 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
             action.result = {"user_message": "当前路线已经没有待推进的检查点。"}
             await db.commit()
             return action.result["user_message"]
-        _bind_project_session(session, project.id, checkpoint.id)
-        _record_session_handoff(session, project.id, target)
-        action.project_id = project.id
-        action.checkpoint_id = checkpoint.id
-        if checkpoint.learning_status in {None, "", "not_started"}:
-            checkpoint.learning_status = "in_progress"
+        entry = await _enter_checkpoint(
+            db, action, session, checkpoint, project.id,
+            entry_mode="explicit_advance",
+        )
         action.status = "completed"
         action.finished_at = datetime.utcnow()
         action.result = {
             "project": {"id": project.id, "name": project.name},
-            "checkpoint": {"id": checkpoint.id, "title": checkpoint.title},
+            **entry,
             "user_message": f"已进入下一关「{checkpoint.title}」。",
         }
         session.pending_action_id = None
-        await record_event(
-            db, event_type="checkpoint_entered", source="tutor_tool",
-            learner_id=action.learner_id,
-            project_id=project.id, checkpoint_id=checkpoint.id, session_id=session.id,
-            payload={"title": checkpoint.title}, provenance={"action_id": action.id},
-            client_event_id=f"action:{action.id}:checkpoint:{checkpoint.id}:entered",
-        )
         await db.commit()
         return action.result["user_message"]
 

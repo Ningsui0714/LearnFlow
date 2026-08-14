@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-14.1"
+REGISTRY_VERSION = "2026-08-14.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -292,6 +292,7 @@ CAPABILITY_OWNERS = {
     "request_remediation_explanation": ("practice_agent", "deterministic_remediation", "remediation"),
     "retry_attempt": ("practice_agent", "deterministic_assessment", "remediation"),
     "evaluate_transfer_variant": ("practice_agent", "deterministic_assessment", "remediation"),
+    "record_task_outcome": ("tutor_agent", "task_runtime", "project_tutor"),
     "link_project_workspace": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
     "inspect_workspace_files": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
     "propose_workspace_change": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
@@ -327,11 +328,13 @@ EVENTS = {
         _event("project_created", "create_project", ("structure", "value"), "action_result"),
         _event("project_selected", "enter_project", ("structure",), "navigation"),
         _event("source_added", "add_source", ("structure", "practice"), "artifact"),
+        _event("source_processed", "add_source", ("structure", "practice"), "artifact"),
         _event("roadmap_discussed", "plan_learning_path", ("structure",), "proposal"),
         _event("roadmap_applied", "apply_learning_path", ("structure",), "confirmed_action"),
         _event("checkpoint_entered", "navigate_checkpoint", ("structure",), "navigation"),
         _event("lecture_generated", "generate_lecture", ("knowledge",), "exposure"),
         _event("lecture_viewed", "generate_lecture", ("knowledge",), "exposure"),
+        _event("assessment_generated", "generate_assessment", (), "artifact"),
         _event("explanation_requested", "explain_selection", ("knowledge", "human"), "assistance"),
         _event("code_review_requested", "explain_selection", ("practice", "human"), "assistance", workbench="assessment"),
         _event("concept_attempt_evaluated", "evaluate_attempt", ("knowledge", "practice"), "graded_attempt"),
@@ -349,7 +352,9 @@ EVENTS = {
         _event("local_agent_completed", "inspect_local_agent_run", (), "operational"),
         _event("local_agent_canceled", "cancel_local_agent_run", (), "operational"),
         _event("local_agent_result_applied", "apply_local_agent_result", (), "operational"),
-        _event("tool_failed", "evaluate_attempt", (), "operational"),
+        _event("task_completed", "record_task_outcome", (), "operational"),
+        _event("task_failed", "record_task_outcome", ("structure",), "operational_failure"),
+        _event("tool_failed", "record_task_outcome", ("structure",), "operational_failure"),
     )
 }
 

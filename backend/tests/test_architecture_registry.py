@@ -37,3 +37,14 @@ def test_remediation_events_have_standard_authority_provenance():
     assert provenance["tool"] == "deterministic_assessment"
     assert provenance["kernel_targets"] == ["knowledge", "human", "practice"]
     assert provenance["provider"] == "local"
+
+
+def test_background_task_events_are_registered_with_their_actual_authority():
+    assert {"source_processed", "assessment_generated", "task_completed", "task_failed"} <= set(EVENTS)
+    assert normalize_event_provenance("source_processed", "task", {})["kernel_targets"] == [
+        "structure", "practice",
+    ]
+    assert normalize_event_provenance("assessment_generated", "task", {})["kernel_targets"] == []
+    failure = normalize_event_provenance("task_failed", "task", {})
+    assert failure["tool"] == "task_runtime"
+    assert failure["kernel_targets"] == ["structure"]

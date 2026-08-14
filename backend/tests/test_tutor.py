@@ -893,6 +893,9 @@ def test_natural_route_confirmation_after_tutor_prompt_applies_roadmap(
     body = response.json()
     assert body["executed_action"]["title"] == "应用学习路线"
     assert body["executed_action"]["result"]["updated_roadmap"] is not None
+    assert body["executed_action"]["result"]["checkpoint"]["title"] == "基础关"
+    assert body["executed_action"]["result"]["entry_mode"] == "automatic_after_roadmap"
+    assert "已直接进入第一关「基础关」" in body["message"]
 
     async def route_state():
         async with async_session() as db:
@@ -902,9 +905,19 @@ def test_natural_route_confirmation_after_tutor_prompt_applies_roadmap(
                 .where(Roadmap.project_id == project_id)
                 .order_by(Checkpoint.order)
             )).scalars().all())
-            return [item.title for item in checkpoints]
+            session = await db.get(AgentSession, session_id)
+            events = list((await db.execute(
+                select(EvidenceEvent.event_type, EvidenceEvent.payload)
+                .where(EvidenceEvent.session_id == session_id)
+                .order_by(EvidenceEvent.id)
+            )).all())
+            return [item.title for item in checkpoints], session.checkpoint_id, events
 
-    assert asyncio.run(route_state()) == ["基础关", "实践关"]
+    titles, active_checkpoint_id, events = asyncio.run(route_state())
+    assert titles == ["基础关", "实践关"]
+    assert active_checkpoint_id == body["executed_action"]["result"]["checkpoint"]["id"]
+    entered = [payload for event_type, payload in events if event_type == "checkpoint_entered"]
+    assert entered == [{"title": "基础关", "entry_mode": "automatic_after_roadmap"}]
 
 
 def test_add_source_uses_recent_url(client: TestClient, no_background_tasks):

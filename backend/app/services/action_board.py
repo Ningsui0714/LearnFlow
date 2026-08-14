@@ -111,6 +111,11 @@ ACTION_BOARD = {
             ("generate_lecture", "generate_assessment"),
         ),
         ActionDefinition(
+            "record_task_outcome", "记录异步任务结果", "none", "none",
+            {},
+            (),
+        ),
+        ActionDefinition(
             "link_project_workspace", "关联本地项目目录", "write", "explicit",
             {},
             ("inspect_workspace_files",),

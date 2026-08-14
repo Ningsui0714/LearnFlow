@@ -102,6 +102,10 @@
 
 破坏性接口调整必须保留迁移说明。仅增加讲法、模型或供应商 adapter，不应改变 EvidenceEvent 和五核语义。
 
+路线确认后若已物化出可进入的首关，`apply_learning_path` 可以在同一高层事务中立即
+触发标准 `checkpoint_entered` 导航事件。这只是结构核的可回放上下文切换，不是自动
+开课、自动出题或能力升级；讲义、评估和证据写回仍分别受其自身 Action 与确定性规则约束。
+
 ## 6. 桌面工作区的权威边界
 
 `desktop_workspace` 是 Tutor 控制 Agent 所有的产品工作台，不是第四类主 Agent。`workspace_file_service` 可读取和修改用户明确关联的项目目录，但没有五核写权限。
