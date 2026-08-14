@@ -3,15 +3,39 @@ import {
   GitBranch, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
   Sparkles, UserRound, X,
 } from 'lucide-react'
-import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
 import { getDesktopRuntime } from '../../services/desktopRuntime'
 import WorkspaceProjectExplorer from '../workspace/WorkspaceProjectExplorer'
 import WorkspaceAgentRail from '../workspace/WorkspaceAgentRail'
 import WorkspaceTabs from '../workspace/WorkspaceTabs'
+import CheckpointPage from '../../pages/CheckpointPage'
 import {
   WorkspaceProvider, useWorkspace, workspaceEmbedPath,
 } from '../workspace/WorkspaceContext'
+
+function DesktopSplitPane({ tab }: { tab: { id: string; path: string; title: string; kind: string } }) {
+  const { activateTab } = useWorkspace()
+  if (tab.kind === 'lecture') {
+    return (
+      <Routes location={tab.path}>
+        <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />
+      </Routes>
+    )
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 bg-slate-50 px-8 text-center">
+      <p className="text-sm font-medium text-slate-700">此页面请在主学习编辑组中打开</p>
+      <button
+        type="button"
+        onClick={() => activateTab(tab.id)}
+        className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+      >
+        打开 {tab.title}
+      </button>
+    </div>
+  )
+}
 
 function WorkspaceStage() {
   const {
@@ -20,6 +44,9 @@ function WorkspaceStage() {
   const splitTabs = splitTabIds
     .map(id => tabs.find(tab => tab.id === id))
     .filter(Boolean)
+  const desktop = getDesktopRuntime().available
+    || '__TAURI_INTERNALS__' in window
+    || window.location.protocol === 'tauri:'
 
   return (
     <main
@@ -61,7 +88,9 @@ function WorkspaceStage() {
               <X size={13} />
             </button>
           </header>
-          <iframe title={`并排页面：${tab.title}`} src={workspaceEmbedPath(tab.path)} className="min-h-0 flex-1 border-0 bg-slate-50" />
+          {desktop
+            ? <div className="min-h-0 flex-1 overflow-hidden"><DesktopSplitPane tab={tab} /></div>
+            : <iframe title={`并排页面：${tab.title}`} src={workspaceEmbedPath(tab.path)} className="min-h-0 flex-1 border-0 bg-slate-50" />}
         </section>
       ))}
     </main>
