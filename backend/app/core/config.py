@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # and never writes five-kernel learner state directly.
     learning_task_conversion_base_url: str = "http://82.156.199.145"
     learning_task_conversion_timeout_seconds: float = 30.0
+    # Optional relative SPA route owned by the personalized-learning module.
+    # Keep empty until that module is integrated. The launch API will still
+    # return a validated JSON package and report `pending_binding`.
+    personalized_learning_entry_path: str = ""
     # Published Xunfei Xingchen workflow. Credentials stay on the server and
     # are never returned to the browser-facing API.
     xingchen_api_key: str = ""

@@ -16,6 +16,8 @@ XINGCHEN_API_SECRET=...
 XINGCHEN_FLOW_ID=...
 XINGCHEN_UID=learnflow-wf03
 XINGCHEN_WORKFLOW_TIMEOUT_SECONDS=240
+# 下游模块接入后填写其站内路由；接入前留空
+PERSONALIZED_LEARNING_ENTRY_PATH=/personalized-learning/start
 ```
 
 调用目标地址只来自服务端配置，前端不能传入任意主机，避免形成开放代理。生产环境可以把地址替换为 HTTPS 域名。讯飞 APIKey、API Secret 和 Flow ID 只保存在 LearnFlow 后端环境变量中，不进入浏览器或前端 `.env`。
@@ -29,9 +31,41 @@ XINGCHEN_WORKFLOW_TIMEOUT_SECONDS=240
 | `GET /api/learning-task-conversion/capabilities` | 契约发现与健康检查 | `/api/v1/learning-task-conversion/capabilities` |
 | `POST /api/learning-task-conversion/generate` | 以对话原文调用已发布的讯飞异步工作流并取得任务包 | 讯飞 `async/chat/completions` 与 `async/chat/result` |
 | `POST /api/learning-task-conversion/upstream-handoffs` | 转交岗位能力图谱确认的单项企业任务 | `/api/v1/learning-task-conversion/upstream-handoffs` |
+| `GET /api/learning-task-conversion/upstream-handoffs/{handoff_id}` | 查询已接收的上游原始 JSON、状态和语义反馈 | `/api/v1/learning-task-conversion/upstream-handoffs/{handoff_id}` |
 | `GET /api/learning-task-conversion/tasks/{task_card_id}/bundle` | 获取任务、强关系、追溯和展示产物 | `/api/v1/learning-task-conversion/tasks/{task_card_id}/bundle` |
 | `GET /api/learning-task-conversion/tasks/{task_card_id}/personalized-learning` | 获取个性化学习输入 JSON | `/api/v1/learning-task-conversion/tasks/{task_card_id}/personalized-learning.json` |
+| `POST /api/learning-task-conversion/tasks/{task_card_id}/downstream-launch` | 校验交付数据并生成下游启动包；本身不创建项目、不写学习状态 | 读取任务包与个性化学习 JSON |
 | `POST /api/learning-task-conversion/downstream-feedback` | 回传关系过弱、知识范围错误或步骤映射问题 | `/api/v1/learning-task-conversion/downstream-feedback` |
+
+## 两侧对接顺序
+
+### 上游岗位任务进入本模块
+
+1. 上游在用户点击某个具体岗位任务后，调用 `POST /api/learning-task-conversion/upstream-handoffs`，请求体使用 `competency-graph-learning-task-handoff-v1`。
+2. LearnFlow 先用严格模型检查任务、知识点、技能点和关系字段，再交给转化服务保存。响应中的 `handoff_id` 是后续唯一引用；页面地址中不传整包 JSON。
+3. 上游可使用响应里的 `learnflow_integration.handoff_status_path` 查询保存结果和语义反馈。
+4. 当前已发布的讯飞工作流只声明 `AGENT_USER_INPUT`。若要让“点击上游任务后直接生成”完整保留 `handoff_id`，下一次发布工作流时还需增加 `COMPETENCY_GRAPH_HANDOFF_ID` 输入并传入提交插件。接口会明确返回 `generation_binding_status=pending_xingchen_handoff_parameter`，避免把未关联的对话生成误报为已关联生成。
+
+### 本模块进入个性化学习
+
+前端点击“进入个性化学习”时调用：
+
+```json
+{
+  "schema_version": "personalized-learning-launch-request-v1",
+  "entry_mode": "whole_task"
+}
+```
+
+如需从一个知识点进入，则使用 `entry_mode=knowledge_point` 并提供 `selected_knowledge_id`。接口会同时校验任务包、下游 JSON、核验状态以及知识点归属，返回 `learning-task-to-personalized-learning-launch-v1`：
+
+- `handoff.payload`：下游可以直接接收的完整 JSON。
+- `handoff.url`：下游需要按需拉取时使用的 LearnFlow 登录态地址。
+- `correlation_id`：两侧日志、回调和问题定位共用的关联 ID。
+- `formal_release_allowed`：只有来源核验通过时才为 `true`。
+- `open_path`：配置 `PERSONALIZED_LEARNING_ENTRY_PATH` 后生成，只携带任务 ID、关联 ID 和可选知识点 ID，不把 JSON 放进 URL。
+
+在下游页面尚未绑定时，接口正常返回 `status=pending_binding` 和 `open_path=null`。这表示 JSON 已准备好但路由未接通，不会创建空项目或伪造跳转成功。下游团队确定站内路由后只需配置 `PERSONALIZED_LEARNING_ENTRY_PATH`，例如 `/personalized-learning/start`。
 
 ## 前端使用
 
@@ -39,7 +73,7 @@ XINGCHEN_WORKFLOW_TIMEOUT_SECONDS=240
 
 1. 用户在右侧主 Agent 对话栏开启“生成学习型任务网页”，输入计算机专业真实工作任务。
 2. LearnFlow 后端调用讯飞异步工作流，轮询完成后解析任务卡 ID，并取得通过契约校验的结构化任务包。
-3. 结果直接在中间编辑区渲染，左侧项目栏和右侧对话栏保持不变，不打开新的浏览器窗口。
+3. 结果通过公开站内路径 `/learning-tasks/{task_card_id}` 直接在中间编辑区渲染，左侧项目栏和右侧对话栏保持不变，不打开新的浏览器窗口。旧路径仅作兼容，不用于新跳转。
 4. 用户可以用鼠标左键拖选任务步骤、知识点或技能点，在任务页右侧添加批注并提交复核。
 
 `frontend/src/services/api.ts` 提供生成、读取和反馈调用：
@@ -126,5 +160,9 @@ LearnFlow 后续个性化学习只组织“怎么学”：路线、讲解、练�
 
 ## v1 验收边界
 
-- 已实现：服务端固定地址代理、讯飞异步 Workflow API 调用、超时和错误归一化、版本校验、步骤字段校验、知识/技能引用完整性校验、中间编辑区任务网页、鼠标选区批注、前端调用封装、上下游反馈通道。
-- 未在本版实现：把任务自动物化为 LearnFlow 项目和关卡。该操作会引入 Action Board 副作用、学习者作用域和路线确认，需要作为下一阶段单独登记和实现。
+- 已实现：服务端固定地址代理、讯飞异步 Workflow API 调用、严格上游 JSON 模型、交接记录查询、下游启动包、核验与知识点归属校验、可配置站内入口、中间编辑区任务网页、鼠标选区批注、前端调用封装、上下游反馈通道。
+- 未在本版实现：讯飞工作流接收上游 `handoff_id` 的发布参数、下游个性化学习页面本身，以及把任务物化为 LearnFlow 项目和关卡。后两项属于下游职责和 Action Board 副作用，不能在本适配器内提前伪造。
+
+## Contract impact
+
+本次只扩展已登记的 `workflow_gateway` 外部适配器，新增版本化的上下游边界，不改变三类主 Agent、五核、`EvidenceEvent`、Action Board 或学习状态语义；因此无需提升架构注册表版本。旧任务页路径和既有 API 均保持兼容。

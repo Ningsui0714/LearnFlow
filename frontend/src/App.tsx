@@ -40,6 +40,7 @@ export default function App() {
           <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />
           <Route path="/projects/:projectId/checkpoints/:checkpointId/exercises" element={<ExercisePage />} />
           <Route path="/projects/:projectId/workspace" element={<WorkspaceFilePage />} />
+          <Route path="/learning-tasks/:taskCardId" element={<WF03TaskPage />} />
           <Route path="/wf03/tasks/:taskCardId" element={<WF03TaskPage />} />
         </Route>
       </Route>

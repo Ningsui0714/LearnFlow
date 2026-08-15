@@ -1,13 +1,14 @@
-import { Download, ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
+import { ArrowRight, Download, ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import WF03AnnotationPanel from '../components/wf03/WF03AnnotationPanel'
 import WF03SelectionToolbar from '../components/wf03/WF03SelectionToolbar'
 import WF03TaskDocument from '../components/wf03/WF03TaskDocument'
 import type { WF03Annotation, WF03Selection } from '../components/wf03/types'
-import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+import { useWorkspace, useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import {
   getLearningTaskConversionBundle,
+  preparePersonalizedLearningLaunch,
   submitPersonalizedLearningFeedback,
   type LearningTaskConversionBundle,
   type WF03FeedbackIssue,
@@ -37,6 +38,7 @@ function submittedIssueCount(bundle: LearningTaskConversionBundle) {
 
 export default function WF03TaskPage() {
   const { taskCardId = '' } = useParams()
+  const { openPath } = useWorkspace()
   const contentRef = useRef<HTMLDivElement>(null)
   const [bundle, setBundle] = useState<LearningTaskConversionBundle | null>(null)
   const [loading, setLoading] = useState(true)
@@ -47,6 +49,8 @@ export default function WF03TaskPage() {
   const [submitting, setSubmitting] = useState(false)
   const [submittedCount, setSubmittedCount] = useState(0)
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false)
+  const [launching, setLaunching] = useState(false)
+  const [launchNotice, setLaunchNotice] = useState('')
   useWorkspaceTitle(bundle?.task.work_task.teaching_task_name || '学习型任务网页', { kind: 'wf03' })
 
   const storageKey = `learnflow.learning-task.annotations.${taskCardId}`
@@ -155,6 +159,25 @@ export default function WF03TaskPage() {
     }
   }
 
+  const enterPersonalizedLearning = async () => {
+    if (!taskCardId || launching) return
+    setLaunching(true)
+    setError('')
+    setLaunchNotice('')
+    try {
+      const launch = await preparePersonalizedLearningLaunch(taskCardId)
+      if (launch.open_path) {
+        openPath(launch.open_path, { title: '个性化学习' })
+        return
+      }
+      setLaunchNotice('交接 JSON 已校验并准备完成，等待个性化学习页面提供站内入口后即可直接跳转。')
+    } catch (failure) {
+      setError(errorMessage(failure))
+    } finally {
+      setLaunching(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center bg-slate-50 text-sm text-slate-500">
@@ -187,6 +210,15 @@ export default function WF03TaskPage() {
             <p className="truncate font-mono text-[9px] text-slate-400">{taskCardId}</p>
           </div>
           <span className="hidden text-[10px] text-slate-400 md:block">左键拖选文字即可批注</span>
+          <button
+            type="button"
+            onClick={enterPersonalizedLearning}
+            disabled={launching}
+            className="flex h-8 items-center gap-1.5 bg-emerald-700 px-3 text-[10px] font-semibold text-white hover:bg-emerald-800 disabled:cursor-wait disabled:opacity-60"
+          >
+            {launching ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
+            进入个性化学习
+          </button>
           <a href={bundle.artifacts.pdf_url} target="_blank" rel="noreferrer" className="flex h-8 items-center gap-1.5 border border-slate-200 px-2.5 text-[10px] text-slate-600 hover:bg-slate-50">
             <Download size={12} /> PDF
           </a>
@@ -194,6 +226,7 @@ export default function WF03TaskPage() {
             <ExternalLink size={12} /> JSON
           </a>
         </header>
+        {launchNotice && <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">{launchNotice}</div>}
         {error && <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</div>}
         <div
           ref={contentRef}

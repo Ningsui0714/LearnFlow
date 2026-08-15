@@ -149,3 +149,83 @@ async def test_gateway_requires_server_side_xingchen_credentials():
     with pytest.raises(LearningTaskConversionError, match="尚未配置") as failure:
         await gateway.generate_from_conversation("实现 REST API")
     assert failure.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_gateway_builds_pending_downstream_launch_package():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/tasks/ltc_demo/bundle"):
+            return httpx.Response(200, json=_bundle())
+        if request.url.path.endswith("/tasks/ltc_demo/personalized-learning.json"):
+            return httpx.Response(200, json=_bundle()["task"])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://conversion.example",
+        transport=httpx.MockTransport(handler),
+        personalized_learning_entry_path="",
+    )
+    result = await gateway.prepare_personalized_learning_launch(
+        "ltc_demo",
+        entry_mode="whole_task",
+        correlation_id="correlation_01",
+    )
+    assert result["status"] == "pending_binding"
+    assert result["formal_release_allowed"] is True
+    assert result["open_path"] is None
+    assert result["handoff"]["payload"]["work_task"]["work_task_id"] == "task_docker_01"
+
+
+@pytest.mark.asyncio
+async def test_gateway_builds_knowledge_entry_path_and_validates_selection():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/bundle"):
+            return httpx.Response(200, json=_bundle())
+        if request.url.path.endswith("/personalized-learning.json"):
+            return httpx.Response(200, json=_bundle()["task"])
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://conversion.example",
+        transport=httpx.MockTransport(handler),
+        personalized_learning_entry_path="/personalized-learning/start?source=task-conversion",
+    )
+    result = await gateway.prepare_personalized_learning_launch(
+        "ltc_demo",
+        entry_mode="knowledge_point",
+        selected_knowledge_id="knowledge_01",
+        correlation_id="correlation_02",
+    )
+    assert result["status"] == "ready"
+    assert result["selected_knowledge_point"]["name"] == "镜像分层"
+    assert "knowledge_id=knowledge_01" in result["open_path"]
+    assert "source=task-conversion" in result["open_path"]
+
+    with pytest.raises(LearningTaskConversionError, match="不属于") as failure:
+        await gateway.prepare_personalized_learning_launch(
+            "ltc_demo",
+            entry_mode="knowledge_point",
+            selected_knowledge_id="knowledge_missing",
+        )
+    assert failure.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_gateway_reads_upstream_handoff_by_id():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/upstream-handoffs/handoff_01")
+        return httpx.Response(
+            200,
+            json={
+                "handoff_id": "handoff_01",
+                "status": "accepted",
+                "packet": {"schema_version": "competency-graph-learning-task-handoff-v1"},
+            },
+        )
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://conversion.example",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await gateway.upstream_handoff("handoff_01")
+    assert result["status"] == "accepted"

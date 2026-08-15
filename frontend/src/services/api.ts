@@ -151,6 +151,46 @@ export interface LearningTaskConversionBundle {
   }
 }
 
+export interface CompetencyGraphLearningTaskHandoff {
+  schema_version: 'competency-graph-learning-task-handoff-v1'
+  upstream_task_id: string
+  correlation_id: string
+  task_name: string
+  task_brief: string
+  source_context?: Record<string, any>
+  knowledge_points: Array<{
+    knowledge_id: string
+    name: string
+    description: string
+  }>
+  skill_points: Array<{
+    skill_id: string
+    name: string
+    observable_action: string
+  }>
+  relations: Array<{
+    relation_id: string
+    knowledge_id: string
+    skill_id: string
+    relation_type: 'prerequisite' | 'required_for_step' | 'enables' | 'verifies' | 'safety_constraint'
+    strength: 'critical' | 'high' | 'medium' | 'low'
+    reason: string
+    applies_to_steps?: string[]
+  }>
+}
+
+export interface CompetencyGraphHandoffAcceptance {
+  handoff_id: string
+  status: string
+  packet?: CompetencyGraphLearningTaskHandoff
+  feedback?: Record<string, any>
+  learnflow_integration: {
+    schema_version: 'learnflow-upstream-handoff-acceptance-v1'
+    handoff_status_path: string | null
+    generation_binding_status: 'pending_xingchen_handoff_parameter'
+  }
+}
+
 export interface WF03GenerationResult {
   schema_version: 'learnflow-wf03-generation-v1'
   execute_id: string
@@ -158,6 +198,26 @@ export interface WF03GenerationResult {
   task_card_id: string
   message: string
   bundle: LearningTaskConversionBundle
+}
+
+export interface PersonalizedLearningLaunchResult {
+  schema_version: 'learning-task-to-personalized-learning-launch-v1'
+  task_card_id: string
+  correlation_id: string
+  status: 'ready' | 'preview_only' | 'pending_binding'
+  verification_status: string
+  formal_release_allowed: boolean
+  route_key: 'personalized_learning.open' | string
+  route_binding_status: 'ready' | 'pending_personalized_learning_endpoint'
+  entry_mode: 'whole_task' | 'knowledge_point'
+  selected_knowledge_point?: LearningTaskKnowledgePoint | null
+  required_params: string[]
+  handoff: {
+    schema_version: 'learning-task-to-personalized-learning-v1'
+    url: string
+    payload: LearningTaskConversionBundle['task']
+  }
+  open_path: string | null
 }
 
 export type WF03FeedbackCode =
@@ -188,8 +248,13 @@ export const generateLearningTaskConversion = (query: string) =>
   api.post('/learning-task-conversion/generate', { query }, { timeout: 300000 })
     .then(r => r.data as WF03GenerationResult)
 
-export const submitCompetencyGraphHandoff = (handoff: Record<string, any>) =>
-  api.post('/learning-task-conversion/upstream-handoffs', handoff).then(r => r.data)
+export const submitCompetencyGraphHandoff = (handoff: CompetencyGraphLearningTaskHandoff) =>
+  api.post('/learning-task-conversion/upstream-handoffs', handoff)
+    .then(r => r.data as CompetencyGraphHandoffAcceptance)
+
+export const getCompetencyGraphHandoff = (handoffId: string) =>
+  api.get(`/learning-task-conversion/upstream-handoffs/${encodeURIComponent(handoffId)}`)
+    .then(r => r.data)
 
 export const getLearningTaskConversionBundle = (taskCardId: string) =>
   api.get(`/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}/bundle`)
@@ -198,6 +263,23 @@ export const getLearningTaskConversionBundle = (taskCardId: string) =>
 export const getPersonalizedLearningHandoff = (taskCardId: string) =>
   api.get(`/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}/personalized-learning`)
     .then(r => r.data)
+
+export const preparePersonalizedLearningLaunch = (
+  taskCardId: string,
+  request: {
+    entry_mode?: 'whole_task' | 'knowledge_point'
+    selected_knowledge_id?: string
+    correlation_id?: string
+  } = {},
+) => api.post(
+  `/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}/downstream-launch`,
+  {
+    schema_version: 'personalized-learning-launch-request-v1',
+    entry_mode: request.entry_mode || 'whole_task',
+    ...(request.selected_knowledge_id ? { selected_knowledge_id: request.selected_knowledge_id } : {}),
+    ...(request.correlation_id ? { correlation_id: request.correlation_id } : {}),
+  },
+).then(r => r.data as PersonalizedLearningLaunchResult)
 
 export const submitPersonalizedLearningFeedback = (feedback: Record<string, any>) =>
   api.post('/learning-task-conversion/downstream-feedback', feedback).then(r => r.data)

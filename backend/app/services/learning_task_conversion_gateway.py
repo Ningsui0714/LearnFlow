@@ -11,6 +11,7 @@ import re
 import time
 import uuid
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -45,6 +46,7 @@ class LearningTaskConversionGateway:
         xingchen_uid: str | None = None,
         workflow_timeout_seconds: float | None = None,
         workflow_poll_interval_seconds: float = 1.0,
+        personalized_learning_entry_path: str | None = None,
     ) -> None:
         configured_base = base_url or settings.learning_task_conversion_base_url
         self.base_url = configured_base.rstrip("/")
@@ -78,6 +80,11 @@ class LearningTaskConversionGateway:
             else workflow_timeout_seconds
         )
         self.workflow_poll_interval_seconds = workflow_poll_interval_seconds
+        self.personalized_learning_entry_path = (
+            settings.personalized_learning_entry_path
+            if personalized_learning_entry_path is None
+            else personalized_learning_entry_path
+        ).strip()
 
     async def _request(
         self,
@@ -253,6 +260,17 @@ class LearningTaskConversionGateway:
             payload=handoff,
         )
 
+    async def upstream_handoff(self, handoff_id: str) -> dict[str, Any]:
+        payload = await self._request(
+            "GET",
+            f"/api/v1/learning-task-conversion/upstream-handoffs/{handoff_id}",
+        )
+        if payload.get("handoff_id") != handoff_id:
+            raise LearningTaskConversionError("上游交接记录 ID 不一致")
+        if not isinstance(payload.get("packet"), dict):
+            raise LearningTaskConversionError("上游交接记录缺少原始 JSON")
+        return payload
+
     async def task_bundle(self, task_card_id: str) -> dict[str, Any]:
         payload = await self._request(
             "GET",
@@ -277,6 +295,127 @@ class LearningTaskConversionGateway:
         if not isinstance(work_task, dict) or not work_task.get("task_steps"):
             raise LearningTaskConversionError("个性化学习交付缺少工作任务步骤")
         return payload
+
+    async def prepare_personalized_learning_launch(
+        self,
+        task_card_id: str,
+        *,
+        entry_mode: str,
+        selected_knowledge_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a validated handoff package without mutating learner state."""
+
+        if entry_mode not in {"whole_task", "knowledge_point"}:
+            raise LearningTaskConversionError("不支持的个性化学习进入方式", status_code=422)
+        if entry_mode == "knowledge_point" and not selected_knowledge_id:
+            raise LearningTaskConversionError("按知识点进入时必须提供 knowledge_id", status_code=422)
+        if entry_mode == "whole_task" and selected_knowledge_id:
+            raise LearningTaskConversionError("整项任务进入时不能指定 knowledge_id", status_code=422)
+
+        bundle, handoff = await asyncio.gather(
+            self.task_bundle(task_card_id),
+            self.personalized_learning_handoff(task_card_id),
+        )
+        work_task = handoff["work_task"]
+        knowledge_points = {
+            str(item.get("knowledge_id")): item
+            for item in work_task.get("knowledge_points", [])
+            if isinstance(item, dict) and item.get("knowledge_id")
+        }
+        selected_knowledge = None
+        if selected_knowledge_id:
+            selected_knowledge = knowledge_points.get(selected_knowledge_id)
+            if selected_knowledge is None:
+                raise LearningTaskConversionError(
+                    "所选知识点不属于该学习型任务",
+                    status_code=422,
+                )
+
+        launch_correlation_id = (
+            correlation_id or f"learning-task-launch:{uuid.uuid4().hex[:20]}"
+        )
+        verification_status = str(bundle.get("verification_status") or "provisional")
+        formal_release_allowed = verification_status == "verified"
+        open_path = self._personalized_learning_open_path(
+            task_card_id=task_card_id,
+            correlation_id=launch_correlation_id,
+            entry_mode=entry_mode,
+            selected_knowledge_id=selected_knowledge_id,
+        )
+        route_contract = handoff.get("knowledge_entry_contract")
+        if not isinstance(route_contract, dict):
+            route_contract = {}
+
+        if not open_path:
+            status = "pending_binding"
+            route_binding_status = "pending_personalized_learning_endpoint"
+        elif formal_release_allowed:
+            status = "ready"
+            route_binding_status = "ready"
+        else:
+            status = "preview_only"
+            route_binding_status = "ready"
+
+        return {
+            "schema_version": "learning-task-to-personalized-learning-launch-v1",
+            "task_card_id": task_card_id,
+            "correlation_id": launch_correlation_id,
+            "status": status,
+            "verification_status": verification_status,
+            "formal_release_allowed": formal_release_allowed,
+            "route_key": str(
+                route_contract.get("route_key") or "personalized_learning.open"
+            ),
+            "route_binding_status": route_binding_status,
+            "entry_mode": entry_mode,
+            "selected_knowledge_point": selected_knowledge,
+            "required_params": list(route_contract.get("required_params") or []),
+            "handoff": {
+                "schema_version": "learning-task-to-personalized-learning-v1",
+                "url": (
+                    "/api/learning-task-conversion/tasks/"
+                    f"{task_card_id}/personalized-learning"
+                ),
+                "payload": handoff,
+            },
+            "open_path": open_path,
+        }
+
+    def _personalized_learning_open_path(
+        self,
+        *,
+        task_card_id: str,
+        correlation_id: str,
+        entry_mode: str,
+        selected_knowledge_id: str | None,
+    ) -> str | None:
+        configured = self.personalized_learning_entry_path
+        if not configured:
+            return None
+        parts = urlsplit(configured)
+        if (
+            parts.scheme
+            or parts.netloc
+            or not parts.path.startswith("/")
+            or parts.path.startswith("//")
+            or parts.fragment
+        ):
+            raise LearningTaskConversionError(
+                "个性化学习入口必须配置为站内相对路径",
+                status_code=503,
+            )
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query.update(
+            {
+                "task_card_id": task_card_id,
+                "correlation_id": correlation_id,
+                "entry_mode": entry_mode,
+            }
+        )
+        if selected_knowledge_id:
+            query["knowledge_id"] = selected_knowledge_id
+        return urlunsplit(("", "", parts.path, urlencode(query), ""))
 
     async def submit_downstream_feedback(
         self,

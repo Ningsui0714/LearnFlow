@@ -135,7 +135,7 @@ function pathMeta(path: string): WorkspaceTab {
       projectId: Number(project[1]),
     }
   }
-  const wf03Task = pathname.match(/^\/wf03\/tasks\/([A-Za-z0-9_-]+)$/)
+  const wf03Task = pathname.match(/^\/(?:learning-tasks|wf03\/tasks)\/([A-Za-z0-9_-]+)$/)
   if (wf03Task) {
     return {
       id: normalized,
