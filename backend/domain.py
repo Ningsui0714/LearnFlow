@@ -386,10 +386,61 @@ class LearningDomainStore:
                     job_role TEXT NOT NULL DEFAULT '',
                     action TEXT NOT NULL DEFAULT '',
                     keywords TEXT NOT NULL DEFAULT '',
+                    published_at TEXT NOT NULL DEFAULT '',
+                    fetched_at TEXT NOT NULL DEFAULT '',
+                    authority TEXT NOT NULL DEFAULT '',
+                    valid_year TEXT NOT NULL DEFAULT '',
+                    region TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    review_status TEXT NOT NULL DEFAULT 'approved',
+                    reviewed_at TEXT NOT NULL DEFAULT '',
+                    reviewed_by TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_knowledge_point
                     ON knowledge_entries(knowledge_point_id, category);
+                CREATE TABLE IF NOT EXISTS source_documents (
+                    document_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_url TEXT NOT NULL DEFAULT '',
+                    published_at TEXT NOT NULL DEFAULT '',
+                    fetched_at TEXT NOT NULL DEFAULT '',
+                    authority TEXT NOT NULL DEFAULT '',
+                    valid_year TEXT NOT NULL DEFAULT '',
+                    region TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    review_status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(review_status IN ('pending', 'approved', 'rejected', 'needs_update')),
+                    reviewed_at TEXT NOT NULL DEFAULT '',
+                    reviewed_by TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_source_documents_review
+                    ON source_documents(review_status, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS knowledge_candidates (
+                    candidate_id TEXT PRIMARY KEY,
+                    knowledge_point_id TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    locator TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    ai_generated INTEGER NOT NULL DEFAULT 0
+                        CHECK(ai_generated IN (0, 1)),
+                    review_status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(review_status IN ('pending', 'approved', 'rejected', 'needs_update')),
+                    review_note TEXT NOT NULL DEFAULT '',
+                    reviewed_at TEXT NOT NULL DEFAULT '',
+                    reviewed_by TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(document_id) REFERENCES source_documents(document_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_review
+                    ON knowledge_candidates(review_status, updated_at DESC);
                 CREATE TABLE IF NOT EXISTS generated_questions (
                     question_id TEXT PRIMARY KEY,
                     knowledge_point_id TEXT NOT NULL,
@@ -398,6 +449,9 @@ class LearningDomainStore:
                     title TEXT NOT NULL,
                     options_json TEXT NOT NULL,
                     answer TEXT NOT NULL,
+                    question_type TEXT NOT NULL DEFAULT 'choice',
+                    accepted_answers_json TEXT NOT NULL DEFAULT '[]',
+                    grading_mode TEXT NOT NULL DEFAULT '',
                     explanation TEXT NOT NULL,
                     source TEXT NOT NULL,
                     created_at TEXT NOT NULL
@@ -422,7 +476,52 @@ class LearningDomainStore:
                     "ALTER TABLE resume_tokens "
                     "ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
                 )
+            knowledge_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(knowledge_entries)"
+                ).fetchall()
+            }
+            knowledge_migrations = {
+                "published_at": "TEXT NOT NULL DEFAULT ''",
+                "fetched_at": "TEXT NOT NULL DEFAULT ''",
+                "authority": "TEXT NOT NULL DEFAULT ''",
+                "valid_year": "TEXT NOT NULL DEFAULT ''",
+                "region": "TEXT NOT NULL DEFAULT ''",
+                "content_hash": "TEXT NOT NULL DEFAULT ''",
+                "review_status": "TEXT NOT NULL DEFAULT 'approved'",
+                "reviewed_at": "TEXT NOT NULL DEFAULT ''",
+                "reviewed_by": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column_name, column_definition in knowledge_migrations.items():
+                if column_name not in knowledge_columns:
+                    connection.execute(
+                        f"ALTER TABLE knowledge_entries ADD COLUMN {column_name} "
+                        f"{column_definition}"
+                    )
+            generated_question_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(generated_questions)"
+                ).fetchall()
+            }
+            generated_question_migrations = {
+                "question_type": "TEXT NOT NULL DEFAULT 'choice'",
+                "accepted_answers_json": "TEXT NOT NULL DEFAULT '[]'",
+                "grading_mode": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column_name, column_definition in generated_question_migrations.items():
+                if column_name not in generated_question_columns:
+                    connection.execute(
+                        f"ALTER TABLE generated_questions ADD COLUMN {column_name} "
+                        f"{column_definition}"
+                    )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_knowledge_review_status "
+                "ON knowledge_entries(review_status, knowledge_point_id)"
+            )
             self._initialize_knowledge(connection)
+            self._publish_approved_knowledge_candidates(connection)
             connection.commit()
 
     def ensure_profile(self, student_id: str) -> dict[str, Any]:
@@ -890,6 +989,13 @@ class LearningDomainStore:
         "review": ("warning", "safety", "workplace"),
         "standard": ("standard",),
     }
+    REVIEW_STATUSES = {"pending", "approved", "rejected", "needs_update"}
+    REVIEW_TRANSITIONS = {
+        "pending": {"approved", "rejected"},
+        "approved": {"needs_update"},
+        "needs_update": {"approved", "rejected"},
+        "rejected": {"pending"},
+    }
 
     def _initialize_knowledge(self, connection: sqlite3.Connection) -> None:
         try:
@@ -945,9 +1051,445 @@ class LearningDomainStore:
     def knowledge_count(self) -> int:
         with self._lock, closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT COUNT(*) AS n FROM knowledge_entries"
+                "SELECT COUNT(*) AS n FROM knowledge_entries "
+                "WHERE review_status = 'approved'"
             ).fetchone()
         return int(row["n"] or 0) if row else 0
+
+    @staticmethod
+    def _candidate_entry_id(candidate_id: str) -> str:
+        return f"KN-CAND-{candidate_id}"
+
+    @staticmethod
+    def _rebuild_knowledge_fts(connection: sqlite3.Connection) -> None:
+        try:
+            connection.execute(
+                "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+    def _publish_candidate_row(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        reviewed_at: str = "",
+        reviewed_by: str = "",
+    ) -> str:
+        candidate_id = str(row["candidate_id"])
+        entry_id = self._candidate_entry_id(candidate_id)
+        category = str(row["category"])
+        reviewed_at = str(reviewed_at or row["reviewed_at"] or utc_now())
+        reviewed_by = str(reviewed_by or row["reviewed_by"])
+        connection.execute(
+            """
+            INSERT INTO knowledge_entries(
+                entry_id, knowledge_point_id, title, category, content, source,
+                source_type, document_id, locator, safety, job_role, action,
+                keywords, published_at, fetched_at, authority, valid_year,
+                region, content_hash, review_status, reviewed_at, reviewed_by,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '', ?, ?, ?, ?, ?, ?,
+                      'approved', ?, ?, ?)
+            ON CONFLICT(entry_id) DO UPDATE SET
+                knowledge_point_id = excluded.knowledge_point_id,
+                title = excluded.title,
+                category = excluded.category,
+                content = excluded.content,
+                source = excluded.source,
+                source_type = excluded.source_type,
+                document_id = excluded.document_id,
+                locator = excluded.locator,
+                safety = excluded.safety,
+                published_at = excluded.published_at,
+                fetched_at = excluded.fetched_at,
+                authority = excluded.authority,
+                valid_year = excluded.valid_year,
+                region = excluded.region,
+                content_hash = excluded.content_hash,
+                review_status = 'approved',
+                reviewed_at = excluded.reviewed_at,
+                reviewed_by = excluded.reviewed_by
+            """,
+            (
+                entry_id,
+                str(row["knowledge_point_id"]),
+                str(row["title"]),
+                category,
+                str(row["content"]),
+                str(row["source_title"]),
+                str(row["source_type"]),
+                str(row["document_id"]),
+                str(row["locator"]),
+                1 if category == "safety" else 0,
+                str(row["source_published_at"]),
+                str(row["source_fetched_at"]),
+                str(row["source_authority"]),
+                str(row["source_valid_year"]),
+                str(row["source_region"]),
+                str(row["content_hash"]),
+                reviewed_at,
+                reviewed_by,
+                reviewed_at,
+            ),
+        )
+        return entry_id
+
+    def _publish_approved_knowledge_candidates(
+        self, connection: sqlite3.Connection
+    ) -> None:
+        rows = connection.execute(
+            """
+            SELECT c.*, d.title AS source_title,
+                   d.source_type AS source_type,
+                   d.published_at AS source_published_at,
+                   d.fetched_at AS source_fetched_at,
+                   d.authority AS source_authority,
+                   d.valid_year AS source_valid_year,
+                   d.region AS source_region
+            FROM knowledge_candidates c
+            JOIN source_documents d ON d.document_id = c.document_id
+            WHERE c.review_status = 'approved'
+              AND c.ai_generated = 0
+              AND d.review_status = 'approved'
+            """
+        ).fetchall()
+        for row in rows:
+            self._publish_candidate_row(connection, row)
+        if rows:
+            self._rebuild_knowledge_fts(connection)
+
+    @staticmethod
+    def _mark_published_document_needs_update(
+        connection: sqlite3.Connection, document_id: str
+    ) -> None:
+        connection.execute(
+            """
+            UPDATE knowledge_entries
+            SET review_status = 'needs_update', reviewed_at = '', reviewed_by = ''
+            WHERE document_id = ? AND entry_id LIKE 'KN-CAND-%'
+              AND review_status = 'approved'
+            """,
+            (document_id,),
+        )
+
+    def stage_source_document(self, document: dict[str, Any]) -> dict[str, Any]:
+        document_id = str(document.get("document_id") or "").strip()
+        title = str(document.get("title") or "").strip()
+        source_type = str(document.get("source_type") or "").strip()
+        content_hash = str(document.get("content_hash") or "").strip().lower()
+        if not document_id or not title or not source_type or not content_hash:
+            raise ValueError("document_id、title、source_type 和 content_hash 均不能为空")
+        if not re.fullmatch(r"[0-9a-f]{64}", content_hash):
+            raise ValueError("content_hash 必须是 SHA-256 十六进制摘要")
+        now = utc_now()
+        with self._lock, closing(self._connect()) as connection:
+            existing = connection.execute(
+                "SELECT content_hash, review_status FROM source_documents "
+                "WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            content_changed = bool(
+                existing and str(existing["content_hash"]) != content_hash
+            )
+            connection.execute(
+                """
+                INSERT INTO source_documents(
+                    document_id, title, source_type, source_url, published_at,
+                    fetched_at, authority, valid_year, region, content_hash,
+                    review_status, reviewed_at, reviewed_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', '', ?, ?)
+                ON CONFLICT(document_id) DO UPDATE SET
+                    title = excluded.title,
+                    source_type = excluded.source_type,
+                    source_url = excluded.source_url,
+                    published_at = excluded.published_at,
+                    fetched_at = excluded.fetched_at,
+                    authority = excluded.authority,
+                    valid_year = excluded.valid_year,
+                    region = excluded.region,
+                    content_hash = excluded.content_hash,
+                    review_status = CASE
+                        WHEN source_documents.content_hash <> excluded.content_hash
+                         AND source_documents.review_status = 'approved'
+                        THEN 'needs_update'
+                        WHEN source_documents.content_hash <> excluded.content_hash
+                         AND source_documents.review_status = 'rejected'
+                        THEN 'pending'
+                        ELSE source_documents.review_status
+                    END,
+                    reviewed_at = CASE
+                        WHEN source_documents.content_hash <> excluded.content_hash
+                        THEN '' ELSE source_documents.reviewed_at
+                    END,
+                    reviewed_by = CASE
+                        WHEN source_documents.content_hash <> excluded.content_hash
+                        THEN '' ELSE source_documents.reviewed_by
+                    END,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    document_id,
+                    title,
+                    source_type,
+                    str(document.get("source_url") or "").strip(),
+                    str(document.get("published_at") or "").strip(),
+                    str(document.get("fetched_at") or now).strip(),
+                    str(document.get("authority") or "").strip(),
+                    str(document.get("valid_year") or "").strip(),
+                    str(document.get("region") or "").strip(),
+                    content_hash,
+                    now,
+                    now,
+                ),
+            )
+            if content_changed:
+                connection.execute(
+                    """
+                    UPDATE knowledge_candidates
+                    SET review_status = 'needs_update',
+                        review_note = '来源文档内容已变化，需重新审核',
+                        reviewed_at = '', reviewed_by = '', updated_at = ?
+                    WHERE document_id = ? AND review_status = 'approved'
+                    """,
+                    (now, document_id),
+                )
+                self._mark_published_document_needs_update(
+                    connection, document_id
+                )
+            row = connection.execute(
+                "SELECT * FROM source_documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            connection.commit()
+        return self._source_document_row_to_dict(row)
+
+    def review_source_document(
+        self,
+        document_id: str,
+        review_status: str,
+        reviewed_by: str,
+    ) -> dict[str, Any]:
+        document_id = str(document_id or "").strip()
+        review_status = str(review_status or "").strip()
+        reviewed_by = str(reviewed_by or "").strip()
+        if not reviewed_by:
+            raise ValueError("reviewed_by 不能为空")
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM source_documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            if not row:
+                raise KeyError(document_id)
+            self._validate_review_transition(str(row["review_status"]), review_status)
+            now = utc_now()
+            connection.execute(
+                "UPDATE source_documents SET review_status = ?, reviewed_at = ?, "
+                "reviewed_by = ?, updated_at = ? "
+                "WHERE document_id = ?",
+                (review_status, now, reviewed_by, now, document_id),
+            )
+            if review_status == "needs_update":
+                connection.execute(
+                    """
+                    UPDATE knowledge_candidates
+                    SET review_status = 'needs_update',
+                        review_note = '来源文档被标记为需更新',
+                        reviewed_at = '', reviewed_by = '', updated_at = ?
+                    WHERE document_id = ? AND review_status = 'approved'
+                    """,
+                    (now, document_id),
+                )
+                self._mark_published_document_needs_update(
+                    connection, document_id
+                )
+            updated = connection.execute(
+                "SELECT * FROM source_documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            connection.commit()
+        return self._source_document_row_to_dict(updated)
+
+    def stage_knowledge_candidate(
+        self, candidate: dict[str, Any]
+    ) -> dict[str, Any]:
+        title = str(candidate.get("title") or "").strip()
+        category = str(candidate.get("category") or "").strip()
+        content = str(candidate.get("content") or "").strip()
+        document_id = str(candidate.get("document_id") or "").strip()
+        if not title or not category or not content or not document_id:
+            raise ValueError("title、category、content 和 document_id 均不能为空")
+        candidate_id = str(candidate.get("candidate_id") or new_id("CANDIDATE")).strip()
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        now = utc_now()
+        with self._lock, closing(self._connect()) as connection:
+            source = connection.execute(
+                "SELECT document_id FROM source_documents WHERE document_id = ?",
+                (document_id,),
+            ).fetchone()
+            if not source:
+                raise ValueError("候选资料必须关联已登记的来源文档")
+            connection.execute(
+                """
+                INSERT INTO knowledge_candidates(
+                    candidate_id, knowledge_point_id, title, category, content,
+                    document_id, locator, content_hash, ai_generated,
+                    review_status, review_note, reviewed_at, reviewed_by,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', '', '', ?, ?)
+                """,
+                (
+                    candidate_id,
+                    str(candidate.get("knowledge_point_id") or "").strip(),
+                    title,
+                    category,
+                    content,
+                    document_id,
+                    str(candidate.get("locator") or "").strip(),
+                    content_hash,
+                    1 if candidate.get("ai_generated") else 0,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM knowledge_candidates WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+            connection.commit()
+        return self._knowledge_candidate_row_to_dict(row)
+
+    def list_knowledge_candidates(
+        self, review_status: str = "", limit: int = 50
+    ) -> list[dict[str, Any]]:
+        review_status = str(review_status or "").strip()
+        if review_status and review_status not in self.REVIEW_STATUSES:
+            raise ValueError(f"未知审核状态：{review_status}")
+        try:
+            limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        sql = "SELECT * FROM knowledge_candidates"
+        params: list[Any] = []
+        if review_status:
+            sql += " WHERE review_status = ?"
+            params.append(review_status)
+        sql += " ORDER BY updated_at DESC, candidate_id LIMIT ?"
+        params.append(limit)
+        with self._lock, closing(self._connect()) as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [self._knowledge_candidate_row_to_dict(row) for row in rows]
+
+    def review_knowledge_candidate(
+        self,
+        candidate_id: str,
+        review_status: str,
+        reviewed_by: str,
+        review_note: str = "",
+    ) -> dict[str, Any]:
+        candidate_id = str(candidate_id or "").strip()
+        review_status = str(review_status or "").strip()
+        reviewed_by = str(reviewed_by or "").strip()
+        if not reviewed_by:
+            raise ValueError("reviewed_by 不能为空")
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT c.*, d.review_status AS source_review_status,
+                       d.title AS source_title,
+                       d.source_type AS source_type,
+                       d.published_at AS source_published_at,
+                       d.fetched_at AS source_fetched_at,
+                       d.authority AS source_authority,
+                       d.valid_year AS source_valid_year,
+                       d.region AS source_region
+                FROM knowledge_candidates c
+                JOIN source_documents d ON d.document_id = c.document_id
+                WHERE c.candidate_id = ?
+                """,
+                (candidate_id,),
+            ).fetchone()
+            if not row:
+                raise KeyError(candidate_id)
+            self._validate_review_transition(str(row["review_status"]), review_status)
+            if review_status == "approved" and bool(row["ai_generated"]):
+                raise ValueError("AI 生成候选不得进入正式知识审核通过状态")
+            if review_status == "approved" and str(row["source_review_status"]) != "approved":
+                raise ValueError("来源文档审核通过后才能批准候选资料")
+            now = utc_now()
+            connection.execute(
+                """
+                UPDATE knowledge_candidates
+                SET review_status = ?, review_note = ?, reviewed_at = ?,
+                    reviewed_by = ?, updated_at = ?
+                WHERE candidate_id = ?
+                """,
+                (
+                    review_status,
+                    str(review_note or "").strip(),
+                    now,
+                    reviewed_by,
+                    now,
+                    candidate_id,
+                ),
+            )
+            entry_id = self._candidate_entry_id(candidate_id)
+            if review_status == "approved":
+                self._publish_candidate_row(
+                    connection, row, reviewed_at=now, reviewed_by=reviewed_by
+                )
+                self._rebuild_knowledge_fts(connection)
+            else:
+                connection.execute(
+                    """
+                    UPDATE knowledge_entries
+                    SET review_status = ?, reviewed_at = ?, reviewed_by = ?
+                    WHERE entry_id = ?
+                    """,
+                    (review_status, now, reviewed_by, entry_id),
+                )
+            updated = connection.execute(
+                "SELECT * FROM knowledge_candidates WHERE candidate_id = ?",
+                (candidate_id,),
+            ).fetchone()
+            connection.commit()
+        return self._knowledge_candidate_row_to_dict(updated)
+
+    @classmethod
+    def _validate_review_transition(cls, current: str, target: str) -> None:
+        if target not in cls.REVIEW_STATUSES:
+            raise ValueError(f"未知审核状态：{target}")
+        if target == current:
+            return
+        if target not in cls.REVIEW_TRANSITIONS.get(current, set()):
+            raise ValueError(f"不允许的审核状态转换：{current} -> {target}")
+
+    @staticmethod
+    def _source_document_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            key: row[key]
+            for key in (
+                "document_id", "title", "source_type", "source_url",
+                "published_at", "fetched_at", "authority", "valid_year",
+                "region", "content_hash", "review_status", "reviewed_at",
+                "reviewed_by", "created_at", "updated_at",
+            )
+        }
+
+    @staticmethod
+    def _knowledge_candidate_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+        result = {
+            key: row[key]
+            for key in (
+                "candidate_id", "knowledge_point_id", "title", "category",
+                "content", "document_id", "locator", "content_hash",
+                "review_status", "review_note", "reviewed_at", "reviewed_by",
+                "created_at", "updated_at",
+            )
+        }
+        result["ai_generated"] = bool(row["ai_generated"])
+        return result
 
     def search_knowledge(
         self,
@@ -965,7 +1507,7 @@ class LearningDomainStore:
             limit = max(1, min(int(limit), 20))
         except (TypeError, ValueError):
             limit = 5
-        where: list[str] = []
+        where: list[str] = ["k.review_status = 'approved'"]
         params: list[Any] = []
         if knowledge_point_id:
             where.append("k.knowledge_point_id = ?")
@@ -1069,6 +1611,15 @@ class LearningDomainStore:
             "job_role": str(row["job_role"]),
             "action": str(row["action"]),
             "keywords": str(row["keywords"]),
+            "published_at": str(row["published_at"]),
+            "fetched_at": str(row["fetched_at"]),
+            "authority": str(row["authority"]),
+            "valid_year": str(row["valid_year"]),
+            "region": str(row["region"]),
+            "content_hash": str(row["content_hash"]),
+            "review_status": str(row["review_status"]),
+            "reviewed_at": str(row["reviewed_at"]),
+            "reviewed_by": str(row["reviewed_by"]),
             "url": "",
         }
 
@@ -1344,9 +1895,10 @@ class LearningDomainStore:
                         """
                         INSERT OR IGNORE INTO generated_questions(
                             question_id, knowledge_point_id, knowledge_point_name,
-                            difficulty, title, options_json, answer, explanation,
-                            source, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            difficulty, title, options_json, answer, question_type,
+                            accepted_answers_json, grading_mode, explanation, source,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             question_id,
@@ -1356,6 +1908,9 @@ class LearningDomainStore:
                             str(q.get("title") or ""),
                             json_text(as_dict(q.get("options"))),
                             str(q.get("answer") or ""),
+                            str(q.get("question_type") or "choice"),
+                            json_text(as_list(q.get("accepted_answers"))),
+                            str(q.get("grading_mode") or ""),
                             str(q.get("explanation") or ""),
                             str(q.get("source") or "工作流生成（本地校验通过）"),
                             now,
@@ -1396,6 +1951,12 @@ class LearningDomainStore:
                 q["options"] = json.loads(q.pop("options_json"))
             except (json.JSONDecodeError, KeyError):
                 q["options"] = {}
+            try:
+                q["accepted_answers"] = json.loads(
+                    q.pop("accepted_answers_json")
+                )
+            except (json.JSONDecodeError, KeyError):
+                q["accepted_answers"] = []
             questions.append(q)
         return questions
 

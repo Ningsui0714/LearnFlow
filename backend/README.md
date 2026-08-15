@@ -71,6 +71,19 @@ python backend\server.py
 
 学生画像在无缓存时异步生成，之后每累计 5 个学习/纠错事件刷新一次。高频讲解请求由本地 `StrategyEngine` 完成策略选择，知识依据在内存中缓存 300 秒，学习和纠错工作流不再承担策略决策与知识检索。
 
+## 外部学习资料插件
+
+对话页的“学习资料”开关可选接入星辰导出的外部知识工具。该来源只用于即时资料查询，返回内容统一标记为“未经审核”，不会写入正式知识库、学习者画像或掌握度。
+
+```env
+MATERIAL_KNOWLEDGE_ENABLED=1
+MATERIAL_KNOWLEDGE_URL=https://example.edu/material-search
+MATERIAL_KNOWLEDGE_REQUEST_TYPE=0
+MATERIAL_KNOWLEDGE_TIMEOUT=8
+```
+
+适配器按导出配置使用 `POST`，并通过查询参数发送 `input_source`、`input_memory`、`request_type`、`input_request`，读取 `resources` 和 `return_memory`。当前仅使用 `resources`；外部返回的 `return_memory` 不进入项目记忆。默认拒绝向非本机的明文 HTTP 地址发送学习内容；只允许在明确的本地联调环境设置 `MATERIAL_KNOWLEDGE_ALLOW_INSECURE_HTTP=1`。
+
 ## 联网视频资源
 
 后端可在学习初始化、切换讲法、请求视频和测验讲解时，通过 Bing RSS 搜索教育视频。搜索结果只接受配置白名单中的视频站点，并把标题、链接、来源站点、检索服务和可嵌入地址一并传给工作流和前端。

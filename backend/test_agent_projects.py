@@ -104,15 +104,362 @@ class AgentProjectApiTests(unittest.TestCase):
         )
         self.assertTrue(center["assessment_available"])
         self.assertFalse(center["formal_assessment_available"])
+        self.assertEqual(center["catalog"], [])
         self.assertEqual(
-            [item["assessment_type"] for item in center["catalog"]],
-            ["provisional_self_check"],
+            len(center["practice_sheets"]), len(detail["goal_knowledge_points"])
+        )
+        self.assertTrue(
+            all(
+                item["assessment_type"] == "provisional_self_check"
+                for item in center["practice_sheets"]
+            )
         )
         with self.assertRaises(Exception):
             self.request_json(
                 "POST",
                 f"/api/projects/{project['project_id']}/assessments/start",
                 {"student_id": self.student_id, "assessment_type": "initial_diagnostic"},
+            )
+
+    def test_c_language_goal_uses_language_knowledge_path(self):
+        project = self.create_project("我想学习c语言")["project"]
+        self.assertEqual(project["support_level"], "generated_scaffold")
+        detail = self.request_json(
+            "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+        )["project"]
+        names = [item["knowledge_point_name"] for item in detail["learning_path"]["items"]]
+        self.assertEqual(len(detail["goal_knowledge_points"]), 17)
+        self.assertTrue(any("函数" in name for name in names))
+        self.assertTrue(any("数组" in name for name in names))
+        self.assertTrue(any("指针" in name for name in names))
+        self.assertTrue(any("数组与指针" in name for name in names))
+        self.assertTrue(any("动态内存" in name for name in names))
+        self.assertTrue(any("结构体" in name for name in names))
+        self.assertTrue(any("链表" in name for name in names))
+        self.assertFalse(any("目标拆解与验收标准" in name for name in names))
+
+    def test_learning_plan_has_fixed_stages_and_stable_knowledge_references(self):
+        project = self.create_project("我想系统掌握 Java 面向对象编程")["project"]
+        project_id = project["project_id"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        plan = self.request_json(
+            "GET", f"/api/projects/{project_id}/plan?student_id={self.student_id}"
+        )["learning_plan"]
+        self.assertEqual(
+            [stage["stage_id"] for stage in plan["stages"]],
+            ["foundation", "core", "application"],
+        )
+        plan_point_ids = {
+            step["knowledge_point_id"]
+            for stage in plan["stages"]
+            for step in stage["steps"]
+        }
+        goal_point_ids = {
+            item["knowledge_point_id"] for item in detail["goal_knowledge_points"]
+        }
+        self.assertEqual(plan_point_ids, goal_point_ids)
+        self.assertTrue(
+            all(
+                not step["knowledge_point_id"].startswith("knowledge-")
+                for stage in plan["stages"]
+                for step in stage["steps"]
+            )
+        )
+        self.assertEqual(plan["progress"], 0)
+
+    def test_completing_plan_step_never_changes_mastery(self):
+        project = self.create_project("我想系统掌握 Java 面向对象编程")["project"]
+        project_id = project["project_id"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        before = {
+            item["knowledge_point_id"]: item["mastery"]
+            for item in detail["learning_path"]["items"]
+        }
+        plan = detail["learning_plan"]
+        first_step = next(
+            step for stage in plan["stages"] for step in stage["steps"]
+        )
+        updated = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/plan/steps/{first_step['step_id']}",
+            {"student_id": self.student_id, "status": "completed"},
+        )
+        self.assertEqual(updated["learning_plan"]["progress"], round(100 / len(before)))
+        after = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        self.assertEqual(
+            {item["knowledge_point_id"]: item["mastery"] for item in after["learning_path"]["items"]},
+            before,
+        )
+
+    def test_formal_assessment_updates_plan_context_but_not_plan_completion(self):
+        project = self.create_project("我想系统掌握 Java 面向对象编程")["project"]
+        project_id = project["project_id"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        target = detail["learning_path"]["items"][0]
+        started = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/start",
+            {
+                "student_id": self.student_id,
+                "assessment_type": "stage_check",
+                "knowledge_point_id": target["knowledge_point_id"],
+            },
+        )
+        session = self.server.RequestHandlerClass.application.store.get_project(project_id)["state"]["assessment_session"]
+        for question in session["questions"]:
+            self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/assessments/answer",
+                {
+                    "student_id": self.student_id,
+                    "assessment_id": started["assessment_id"],
+                    "answer": question["answer"],
+                },
+            )
+        plan = self.request_json(
+            "GET", f"/api/projects/{project_id}/plan?student_id={self.student_id}"
+        )["learning_plan"]
+        known = {item["knowledge_point_id"] for item in plan["context"]["known"]}
+        self.assertIn(target["knowledge_point_id"], known)
+        target_step = next(
+            step
+            for stage in plan["stages"]
+            for step in stage["steps"]
+            if step["knowledge_point_id"] == target["knowledge_point_id"]
+        )
+        self.assertEqual(target_step["status"], "not_started")
+
+    def test_legacy_c_project_recovers_complete_practice_scope(self):
+        project = self.create_project("我想学习c语言")["project"]
+        project_id = project["project_id"]
+        application = self.server.RequestHandlerClass.application
+        stored = application.store.get_project(project_id)
+        state = stored["state"]
+        legacy_names = [
+            "C 语言程序结构、编译与运行",
+            "数据类型、运算符与输入输出",
+            "分支、循环与程序流程控制",
+            "函数、参数传递与变量作用域",
+            "数组、字符数组与字符串处理",
+            "指针、地址与动态内存管理",
+            "结构体、枚举与自定义类型",
+            "文件操作、调试与 C 语言综合实战",
+        ]
+        state["goal_knowledge_points"] = [
+            {
+                "knowledge_point_id": f"KN-LEGACY-C-{index}",
+                "knowledge_point_name": name,
+                "knowledge_type": "code",
+                "recommended_order": index,
+                "source_status": "candidate",
+            }
+            for index, name in enumerate(legacy_names, start=1)
+        ]
+        state["learning_path"]["items"] = state["goal_knowledge_points"]
+        application.store.save_project_state(project_id, state)
+
+        center = self.request_json(
+            "GET",
+            f"/api/projects/{project_id}/assessments?student_id={self.student_id}",
+        )
+        names = [item["knowledge_point_name"] for item in center["practice_sheets"]]
+        self.assertEqual(center["goal_knowledge_point_count"], 17)
+        self.assertEqual(len(center["practice_sheets"]), 17)
+        self.assertTrue(any("数组与指针" in name for name in names))
+        self.assertTrue(any("链表" in name for name in names))
+
+    def test_candidate_path_nodes_explain_goal_relationship(self):
+        project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")['project']
+        detail = self.request_json(
+            "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+        )["project"]
+        items = detail["learning_path"]["items"]
+        self.assertTrue(items)
+        self.assertEqual(detail["learning_path"]["candidate_schema_version"], 2)
+        self.assertTrue(all(item.get("goal_connection") for item in items))
+        self.assertTrue(all(item.get("learning_outcome") for item in items))
+        self.assertTrue(all(item.get("video_context_keywords") for item in items))
+        generic_markers = ("目标拆解", "基础概念与术语", "核心原理与方法", "分步任务训练")
+        self.assertFalse(any(
+            marker in item["knowledge_point_name"]
+            for item in items
+            for marker in generic_markers
+        ))
+
+    def test_local_candidate_fallback_templates_pass_validation(self):
+        application = self.server.RequestHandlerClass.application
+        cases = (
+            ("AWS 认证", "certification", "三个月内备考 AWS 认证"),
+            ("学习供应链管理", "course", "学习供应链管理"),
+            ("完成校园资产盘点", "project", "完成校园资产盘点"),
+        )
+        generic_markers = (
+            "目标拆解", "验收标准", "基础概念与术语", "核心原理与方法",
+            "典型案例分步练习", "综合应用任务", "成果检验与复盘",
+            "重点模块专项学习", "薄弱项专项训练", "分步任务训练",
+        )
+
+        for goal_name, goal_type, text in cases:
+            with self.subTest(goal_type=goal_type):
+                nodes, provider = application._plan_custom_goal_nodes(
+                    goal_name,
+                    goal_type,
+                    text,
+                    {},
+                    prefer_remote=False,
+                )
+                self.assertEqual(provider, "local_candidate_fallback")
+                self.assertGreaterEqual(len(nodes), 4)
+                self.assertFalse(any(
+                    marker in node["knowledge_point_name"]
+                    for node in nodes
+                    for marker in generic_markers
+                ))
+
+    def test_remote_candidate_planner_accepts_validated_dynamic_graph(self):
+        application = self.server.RequestHandlerClass.application
+        gateway = application.gateway
+        original_settings = gateway.settings
+        original_invoke = gateway.invoke_chat_workflow
+        gateway.settings = Settings(**{**gateway.settings.__dict__, "xingchen_mode": "remote"})
+        planner_payload = {
+            "domain_keywords": ["无人机", "航拍", "校园宣传片"],
+            "nodes": [
+                {
+                    "node_key": "flight-safety",
+                    "knowledge_point_name": "无人机飞行安全与空域规范",
+                    "knowledge_type": "conceptual",
+                    "prerequisites": [],
+                    "goal_connection": "安全合规飞行是完成校园宣传片航拍素材的前提。",
+                    "learning_outcome": "能够列出校园航拍前的安全检查清单。",
+                    "video_context_keywords": ["无人机", "飞行安全"],
+                },
+                {
+                    "node_key": "camera-motion",
+                    "knowledge_point_name": "航拍运镜与构图",
+                    "knowledge_type": "practice",
+                    "prerequisites": ["flight-safety"],
+                    "goal_connection": "稳定运镜和构图直接决定校园宣传片画面的表达质量。",
+                    "learning_outcome": "能够完成三种服务校园宣传片叙事的航拍镜头。",
+                    "video_context_keywords": ["无人机航拍", "运镜构图"],
+                },
+                {
+                    "node_key": "storyboard",
+                    "knowledge_point_name": "校园宣传片航拍分镜设计",
+                    "knowledge_type": "practice",
+                    "prerequisites": ["camera-motion"],
+                    "goal_connection": "分镜把校园宣传主题转化为可执行的航拍镜头顺序。",
+                    "learning_outcome": "能够提交一份校园宣传片航拍分镜表。",
+                    "video_context_keywords": ["校园宣传片", "航拍分镜"],
+                },
+                {
+                    "node_key": "final-film",
+                    "knowledge_point_name": "校园宣传片航拍素材剪辑",
+                    "knowledge_type": "project",
+                    "prerequisites": ["storyboard"],
+                    "goal_connection": "剪辑将航拍素材整合为最终校园宣传片成果。",
+                    "learning_outcome": "能够输出一段结构完整的校园航拍宣传片。",
+                    "video_context_keywords": ["校园宣传片", "航拍剪辑"],
+                },
+            ],
+        }
+        gateway.invoke_chat_workflow = lambda payload: {
+            "status": "ok", "answer": json.dumps(planner_payload, ensure_ascii=False)
+        }
+        original_queue = application._queue_project_lesson_generation
+        application._queue_project_lesson_generation = lambda *_args, **_kwargs: True
+        try:
+            project = self.create_project("学习无人机航拍并独立完成校园宣传片")["project"]
+            detail = self.request_json(
+                "GET", f"/api/projects/{project['project_id']}?student_id={self.student_id}"
+            )["project"]
+        finally:
+            application._queue_project_lesson_generation = original_queue
+            gateway.invoke_chat_workflow = original_invoke
+            gateway.settings = original_settings
+        names = [item["knowledge_point_name"] for item in detail["learning_path"]["items"]]
+        self.assertEqual(names[0], "无人机飞行安全与空域规范")
+        self.assertIn("校园宣传片航拍分镜设计", names)
+        self.assertEqual(detail["learning_path"]["planning_provider"], "ai_candidate_graph")
+
+    def test_candidate_planner_rejects_generic_or_cyclic_graph(self):
+        application = self.server.RequestHandlerClass.application
+        with self.assertRaises(Exception):
+            application._validate_candidate_nodes(
+                [
+                    {
+                        "node_key": f"node-{index}",
+                        "knowledge_point_name": "基础概念与术语" if index == 1 else f"具体知识点{index}",
+                        "knowledge_type": "conceptual",
+                        "prerequisites": ["node-4"] if index == 1 else [f"node-{index - 1}"],
+                        "goal_connection": "该知识点直接服务于无人机航拍目标。",
+                        "learning_outcome": "能够完成一个可检查的航拍任务。",
+                    }
+                    for index in range(1, 5)
+                ],
+                "学习无人机航拍",
+                ["无人机", "航拍"],
+            )
+
+    def test_candidate_planner_rejects_each_unrelated_node(self):
+        application = self.server.RequestHandlerClass.application
+        goal_name = "学习无人机航拍并完成校园宣传片"
+        goal_keywords = application._candidate_goal_keywords(
+            goal_name,
+            goal_name,
+            ["无人机", "航拍", "校园宣传片", "烘焙"],
+        )
+        self.assertIn("航拍", goal_keywords)
+        self.assertNotIn("烘焙", goal_keywords)
+        nodes = [
+            {
+                "node_key": "flight-safety",
+                "knowledge_point_name": "无人机飞行安全与空域规范",
+                "knowledge_type": "conceptual",
+                "prerequisites": [],
+                "goal_connection": "安全飞行是完成无人机航拍任务的直接前提。",
+                "learning_outcome": "能够完成航拍前安全检查。",
+            },
+            {
+                "node_key": "dessert-plating",
+                "knowledge_point_name": "西点烘焙与甜品摆盘",
+                "knowledge_type": "practice",
+                "prerequisites": ["flight-safety"],
+                "goal_connection": "烘焙和摆盘用于完成甜品展示作品。",
+                "learning_outcome": "能够完成一份甜品摆盘作品。",
+            },
+            {
+                "node_key": "storyboard",
+                "knowledge_point_name": "校园宣传片航拍分镜",
+                "knowledge_type": "practice",
+                "prerequisites": ["dessert-plating"],
+                "goal_connection": "航拍分镜用于规划无人机镜头顺序。",
+                "learning_outcome": "能够提交一份航拍分镜表。",
+            },
+            {
+                "node_key": "final-film",
+                "knowledge_point_name": "校园宣传片航拍剪辑",
+                "knowledge_type": "project",
+                "prerequisites": ["storyboard"],
+                "goal_connection": "航拍剪辑用于输出最终校园宣传片。",
+                "learning_outcome": "能够输出完整的校园航拍宣传片。",
+            },
+        ]
+
+        with self.assertRaisesRegex(Exception, "西点烘焙与甜品摆盘"):
+            application._validate_candidate_nodes(
+                nodes,
+                goal_name,
+                goal_keywords,
+                [*goal_keywords, "烘焙"],
             )
 
     def test_candidate_project_provisional_self_check_never_updates_profile(self):
@@ -133,19 +480,26 @@ class AgentProjectApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(started["stakes"], "low")
-        self.assertTrue(started["questions"])
+        self.assertEqual(len(started["questions"]), 5)
+        self.assertEqual(
+            {question["question_type"] for question in started["questions"]},
+            {"choice", "multiple_choice", "judgment", "fill_blank", "practical"},
+        )
         self.assertTrue(
             all(question["quality_status"] == "unverified" for question in started["questions"])
         )
+        session = self.server.RequestHandlerClass.application.store.get_project(
+            project_id
+        )["state"]["assessment_session"]
         completed = None
-        for _question in started["questions"]:
+        for question in session["questions"]:
             completed = self.request_json(
                 "POST",
                 f"/api/projects/{project_id}/assessments/answer",
                 {
                     "student_id": self.student_id,
                     "assessment_id": started["assessment_id"],
-                    "selected": "c",
+                    "answer": question["answer"],
                 },
             )
         self.assertEqual(completed["status"], "completed")
@@ -284,10 +638,29 @@ class AgentProjectApiTests(unittest.TestCase):
         summary = None
         for index, question in enumerate(questions):
             # 全部答错，确保产生薄弱点归因
+            question_type = str(question.get("question_type") or "choice")
+            options = question.get("options") or {}
+            expected = str(question.get("answer") or "")
+            if question_type in {"choice", "judgment"}:
+                wrong = next(
+                    (key for key in options if key != expected), None
+                )
+            elif question_type == "multiple_choice":
+                expected_keys = {
+                    value.strip()
+                    for value in expected.replace("，", ",").split(",")
+                    if value.strip()
+                }
+                wrong = next(
+                    (key for key in options if key not in expected_keys), None
+                )
+            else:
+                wrong = "错误答案"
+            self.assertIsNotNone(wrong, f"题目缺少可选的错误答案：{question.get('question_id')}")
             answer = self.request_json(
                 "POST",
                 f"/api/projects/{project_id}/diagnosis/answer",
-                {"student_id": self.student_id, "selected": "a"},
+                {"student_id": self.student_id, "selected": wrong},
             )
             if answer["status"] == "completed":
                 summary = answer["summary"]
@@ -309,7 +682,156 @@ class AgentProjectApiTests(unittest.TestCase):
                 {"student_id": self.student_id},
             )
 
-    def test_assessment_center_lists_three_types_and_history(self):
+    def test_zero_foundation_starts_initial_assessment_with_mixed_question_types(self):
+        created = self.create_project("我想系统掌握 Java 面向对象编程")
+        project_id = created["project"]["project_id"]
+        intake = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/intake",
+            {
+                "student_id": self.student_id,
+                "self_reported_level": "zero_foundation",
+                "claimed_knowledge_point_ids": [],
+            },
+        )
+        self.assertEqual(intake["initial_assessment_state"], "awaiting_assessment")
+        self.assertTrue(intake["should_start_initial_assessment"])
+        self.assertEqual(intake["suggested_assessment_type"], "initial_diagnostic")
+        self.assertEqual(intake["baseline_profile"]["status"], "not_created")
+        self.assertTrue(
+            all(
+                point["mastery"] is None
+                for point in intake["baseline_profile"]["knowledge_points"]
+            )
+        )
+        started = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/start",
+            {
+                "student_id": self.student_id,
+                "assessment_type": "initial_diagnostic",
+            },
+        )
+        self.assertEqual(len(started["questions"]), 12)
+        self.assertEqual(
+            {question["question_type"] for question in started["questions"]},
+            {"choice", "multiple_choice", "judgment", "fill_blank", "practical"},
+        )
+        session = self.server.RequestHandlerClass.application.store.get_project(
+            project_id
+        )["state"]["assessment_session"]
+        completed = None
+        for question in session["questions"]:
+            completed = self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/assessments/answer",
+                {
+                    "student_id": self.student_id,
+                    "assessment_id": started["assessment_id"],
+                    "answer": question["answer"],
+                },
+            )
+        self.assertEqual(completed["status"], "completed")
+        self.assertTrue(completed["summary"]["current_profile_updated"])
+        portrait = self.request_json(
+            "GET", f"/api/students/{self.student_id}/portrait"
+        )
+        self.assertIsNotNone(portrait["identity"]["kpi"]["overall_mastery"])
+        self.assertTrue(
+            all(
+                node["mastery"] is not None
+                for node in portrait["knowledge_mastery"]["nodes"]
+            )
+        )
+
+    def test_initial_intake_prioritizes_claimed_points_and_creates_locked_baseline(self):
+        created = self.create_project("我想系统掌握 Java 面向对象编程")
+        project_id = created["project"]["project_id"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        target_id = detail["learning_path"]["items"][0]["knowledge_point_id"]
+        with self.assertRaises(Exception):
+            self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/assessments/start",
+                {
+                    "student_id": self.student_id,
+                    "assessment_type": "initial_diagnostic",
+                },
+            )
+        intake = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/intake",
+            {
+                "student_id": self.student_id,
+                "self_reported_level": "experienced",
+                "claimed_knowledge_point_ids": [target_id],
+            },
+        )
+        self.assertTrue(intake["should_start_initial_assessment"])
+        started = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/start",
+            {
+                "student_id": self.student_id,
+                "assessment_type": "initial_diagnostic",
+            },
+        )
+        active = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]["active_assessment"]
+        self.assertEqual(active["assessment_id"], started["assessment_id"])
+        self.assertEqual(active["index"], 0)
+        self.assertTrue(active["questions"])
+        self.assertTrue(all("answer" not in item for item in active["questions"]))
+        self.assertEqual(started["blueprint"]["focus_knowledge_point_ids"], [target_id])
+        self.assertEqual(started["questions"][0]["knowledge_point_id"], target_id)
+        self.assertTrue(
+            all("question_type" in question for question in started["questions"])
+        )
+        self.assertGreater(started["blueprint"]["estimated_minutes"], 0)
+
+        application = self.server.RequestHandlerClass.application
+        session = application.store.get_project(project_id)["state"]["assessment_session"]
+        completed = None
+        for question in session["questions"]:
+            completed = self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/assessments/answer",
+                {
+                    "student_id": self.student_id,
+                    "assessment_id": started["assessment_id"],
+                    "answer": question["answer"],
+                },
+            )
+        self.assertEqual(completed["status"], "completed")
+        self.assertTrue(completed["summary"]["baseline_profile_created"])
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        baseline = detail["baseline_profile"]
+        self.assertEqual(detail["initial_assessment_state"], "completed")
+        self.assertEqual(baseline["status"], "assessed")
+        measured = [
+            point
+            for point in baseline["knowledge_points"]
+            if point["mastery"] is not None
+        ]
+        self.assertTrue(measured)
+        self.assertTrue(all(point["source_event_ids"] for point in measured))
+        self.assertEqual(detail["current_profile"], baseline)
+        with self.assertRaises(Exception):
+            self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/assessments/start",
+                {
+                    "student_id": self.student_id,
+                    "assessment_type": "initial_diagnostic",
+                },
+            )
+
+    def test_assessment_center_lists_stage_and_goal_wide_practice_sheets(self):
         created = self.create_project("我想系统掌握 Java 面向对象编程")
         project_id = created["project"]["project_id"]
         center = self.request_json(
@@ -318,14 +840,21 @@ class AgentProjectApiTests(unittest.TestCase):
         )
         self.assertEqual(
             {item["assessment_type"] for item in center["catalog"]},
-            {"initial_diagnostic", "stage_check", "self_check"},
+            {"stage_check"},
         )
+        self.assertEqual(center["goal_knowledge_point_count"], 7)
+        self.assertEqual(len(center["practice_sheets"]), 7)
+        self.assertTrue(
+            all(item["assessment_type"] == "self_check" for item in center["practice_sheets"])
+        )
+        self.assertTrue(all(item["available"] for item in center["practice_sheets"]))
         self.assertEqual(center["history"], [])
 
         detail = self.request_json(
             "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
         )["project"]
-        knowledge_point_id = detail["learning_path"]["items"][0]["knowledge_point_id"]
+        self.assertEqual(len(detail["goal_knowledge_points"]), 7)
+        knowledge_point_id = center["practice_sheets"][0]["knowledge_point_id"]
         started = self.request_json(
             "POST",
             f"/api/projects/{project_id}/assessments/start",
@@ -337,38 +866,135 @@ class AgentProjectApiTests(unittest.TestCase):
         )
         self.assertEqual(started["assessment_type"], "self_check")
         self.assertEqual(started["stakes"], "low")
+        self.assertEqual(len(started["questions"]), 5)
+        self.assertEqual(
+            {question["question_type"] for question in started["questions"]},
+            {"choice", "multiple_choice", "judgment", "fill_blank", "practical"},
+        )
         self.assertTrue(started["source_policy"])
         for question in started["questions"]:
             self.assertEqual(question["quality_status"], "reviewed")
             self.assertIn("source_type", question)
             self.assertNotIn("answer", question)
 
+        session = self.server.RequestHandlerClass.application.store.get_project(
+            project_id
+        )["state"]["assessment_session"]
         completed = None
-        for _question in started["questions"]:
+        for question in session["questions"]:
             completed = self.request_json(
                 "POST",
                 f"/api/projects/{project_id}/assessments/answer",
                 {
                     "student_id": self.student_id,
                     "assessment_id": started["assessment_id"],
-                    "selected": "a",
+                    "answer": question["answer"],
                 },
             )
         self.assertEqual(completed["status"], "completed")
+        self.assertFalse(completed["summary"]["formal_evidence"])
+        self.assertEqual(completed["summary"]["evidence_count"], 0)
 
         center = self.request_json(
             "GET",
             f"/api/projects/{project_id}/assessments?student_id={self.student_id}",
         )
-        self.assertEqual(len(center["history"]), 1)
-        self.assertEqual(center["history"][0]["status"], "completed")
+        self.assertEqual(center["history"], [])
         evidence = self.request_json(
             "GET",
             f"/api/projects/{project_id}/assessments/{started['assessment_id']}/evidence"
             f"?student_id={self.student_id}",
         )
-        self.assertEqual(len(evidence["events"]), len(started["questions"]))
-        self.assertTrue(all(event["evidence_role"] == "practice" for event in evidence["events"]))
+        self.assertEqual(evidence["events"], [])
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        self.assertEqual(detail["current_profile"]["status"], "not_created")
+
+    def test_assessment_history_only_keeps_completed_formal_runs(self):
+        created = self.create_project("我想系统掌握 Java 面向对象编程")
+        project_id = created["project"]["project_id"]
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        target = detail["learning_path"]["items"][0]
+        started = self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/start",
+            {
+                "student_id": self.student_id,
+                "assessment_type": "stage_check",
+                "knowledge_point_id": target["knowledge_point_id"],
+            },
+        )
+        center = self.request_json(
+            "GET", f"/api/projects/{project_id}/assessments?student_id={self.student_id}"
+        )
+        self.assertEqual(center["history"], [])
+
+        application = self.server.RequestHandlerClass.application
+        session = application.store.get_project(project_id)["state"]["assessment_session"]
+        completed = None
+        for question in session["questions"]:
+            completed = self.request_json(
+                "POST",
+                f"/api/projects/{project_id}/assessments/answer",
+                {
+                    "student_id": self.student_id,
+                    "assessment_id": started["assessment_id"],
+                    "answer": question["answer"],
+                },
+            )
+        self.assertEqual(completed["status"], "completed")
+        self.assertTrue(completed["summary"]["current_profile_updated"])
+        portrait = self.request_json(
+            "GET", f"/api/students/{self.student_id}/portrait"
+        )
+        self.assertEqual(
+            portrait["assessment_profile"]["current_profile"]["assessment_id"],
+            started["assessment_id"],
+        )
+
+        center = self.request_json(
+            "GET", f"/api/projects/{project_id}/assessments?student_id={self.student_id}"
+        )
+        self.assertEqual([run["assessment_id"] for run in center["history"]], [started["assessment_id"]])
+        self.assertTrue(all(run["stakes"] == "formal" for run in center["history"]))
+        self.assertTrue(all(run["status"] == "completed" for run in center["history"]))
+
+        self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/start",
+            {
+                "student_id": self.student_id,
+                "assessment_type": "self_check",
+                "knowledge_point_id": target["knowledge_point_id"],
+            },
+        )
+        center = self.request_json(
+            "GET", f"/api/projects/{project_id}/assessments?student_id={self.student_id}"
+        )
+        self.assertEqual([run["assessment_id"] for run in center["history"]], [started["assessment_id"]])
+
+    def test_practice_sheets_keep_full_goal_scope_when_path_is_personalized(self):
+        created = self.create_project("我想系统掌握 Java 面向对象编程")
+        project_id = created["project"]["project_id"]
+        application = self.server.RequestHandlerClass.application
+        stored = application.store.get_project(project_id)
+        state = stored["state"]
+        state["learning_path"]["items"] = state["learning_path"]["items"][:2]
+        application.store.save_project_state(project_id, state)
+
+        center = self.request_json(
+            "GET",
+            f"/api/projects/{project_id}/assessments?student_id={self.student_id}",
+        )
+        detail = self.request_json(
+            "GET", f"/api/projects/{project_id}?student_id={self.student_id}"
+        )["project"]
+        self.assertEqual(len(detail["learning_path"]["items"]), 2)
+        self.assertEqual(len(detail["goal_knowledge_points"]), 7)
+        self.assertEqual(len(center["practice_sheets"]), 7)
 
     def test_stage_check_uses_distinct_evidence_to_unlock_path(self):
         created = self.create_project("我想系统掌握 Java 面向对象编程")
@@ -452,6 +1078,49 @@ class AgentProjectApiTests(unittest.TestCase):
             self.assertEqual(cached["status"], "ready")
             self.assertTrue(cached["lesson"]["content_blocks"])
 
+    def test_reading_project_does_not_sync_initialize_lessons(self):
+        project = self.create_project(
+            "六周内掌握 Python 数据分析并完成销售数据看板"
+        )["project"]
+        application = self.server.RequestHandlerClass.application
+        original = application.store.initialize_project_lessons
+        application.store.initialize_project_lessons = lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(AssertionError("项目详情 GET 不应同步初始化章节"))
+        )
+        try:
+            detail = self.request_json(
+                "GET",
+                f"/api/projects/{project['project_id']}?student_id={self.student_id}",
+            )["project"]
+        finally:
+            application.store.initialize_project_lessons = original
+        self.assertTrue(detail["learning_path"]["items"])
+
+    def test_reading_legacy_candidate_project_does_not_replan_path(self):
+        project = self.create_project(
+            "六周内掌握 Python 数据分析并完成销售数据看板"
+        )["project"]
+        application = self.server.RequestHandlerClass.application
+        stored = application.store.get_project(project["project_id"])
+        state = stored["state"]
+        state["learning_path"]["candidate_schema_version"] = 1
+        application.store.save_project_state(project["project_id"], state)
+        original = application._build_custom_learning_path
+        application._build_custom_learning_path = lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(
+                AssertionError("项目详情 GET 不应同步重新规划已有学习路径")
+            )
+        )
+        try:
+            detail = self.request_json(
+                "GET",
+                f"/api/projects/{project['project_id']}?student_id={self.student_id}",
+            )["project"]
+        finally:
+            application._build_custom_learning_path = original
+        self.assertEqual(detail["learning_path"]["candidate_schema_version"], 1)
+        self.assertTrue(detail["learning_path"]["items"])
+
     def test_clicking_ready_lesson_only_reads_pregenerated_cache(self):
         project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
         detail = self.request_json(
@@ -520,6 +1189,79 @@ class AgentProjectApiTests(unittest.TestCase):
             [
                 "https://www.bilibili.com/video/BV1HighPlay",
                 "https://www.bilibili.com/video/BV1LowPlay",
+            ],
+        )
+
+    def test_c_language_video_requires_language_context(self):
+        application = self.server.RequestHandlerClass.application
+        context = {
+            "learning_goal": {"goal_name": "学习 C 语言"},
+            "current_knowledge_point": {
+                "knowledge_point_id": "KN-C-PROGRAM",
+                "knowledge_point_name": "C 语言程序结构、编译与运行",
+            },
+            "web_search_context": {
+                "status": "ok",
+                "provider": "bilibili",
+                "results": [
+                    {
+                        "type": "video",
+                        "title": "编译原理零基础教程",
+                        "url": "https://www.bilibili.com/video/BV1Compiler",
+                        "play_count": 900_000,
+                    },
+                    {
+                        "type": "video",
+                        "title": "C语言程序结构、编译与运行入门",
+                        "url": "https://www.bilibili.com/video/BV1CTutorial",
+                        "play_count": 10_000,
+                    },
+                ],
+            },
+        }
+        result = {"resources": []}
+        application._merge_video_resources(result, context)
+        videos = [item for item in result["resources"] if item["type"] == "video"]
+        self.assertEqual(
+            [item["url"] for item in videos],
+            ["https://www.bilibili.com/video/BV1CTutorial"],
+        )
+
+    def test_video_goal_domain_boosts_ranking_without_hiding_knowledge_match(self):
+        application = self.server.RequestHandlerClass.application
+        context = {
+            "learning_goal": {"goal_name": "学习无人机航拍并完成校园宣传片"},
+            "current_knowledge_point": {
+                "knowledge_point_id": "KN-DRONE-COMPOSE",
+                "knowledge_point_name": "航拍运镜与构图",
+                "goal_context_keywords": ["无人机", "航拍", "校园宣传片"],
+                "video_context_keywords": ["航拍", "运镜", "构图"],
+            },
+            "web_search_context": {
+                "status": "ok",
+                "provider": "bilibili",
+                "results": [
+                    {
+                        "type": "video",
+                        "title": "电影摄影运镜与构图教程",
+                        "url": "https://www.bilibili.com/video/BV1MovieCamera",
+                    },
+                    {
+                        "type": "video",
+                        "title": "无人机航拍运镜与构图教程",
+                        "url": "https://www.bilibili.com/video/BV1DroneCamera",
+                    },
+                ],
+            },
+        }
+        result = {"resources": []}
+        application._merge_video_resources(result, context)
+        videos = [item for item in result["resources"] if item["type"] == "video"]
+        self.assertEqual(
+            [item["url"] for item in videos],
+            [
+                "https://www.bilibili.com/video/BV1DroneCamera",
+                "https://www.bilibili.com/video/BV1MovieCamera",
             ],
         )
 
@@ -736,6 +1478,68 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertTrue(any("我想学 Python" in item["content"] for item in messages))
         self.assertTrue(any("销售数据看板" in item["content"] for item in messages))
 
+    def test_job_goal_uses_adaptive_multiturn_intake(self):
+        session_id = "adaptive-job-goal"
+        first = self.agent_turn("我想成为后端开发工程师", session_id=session_id)
+        self.assertEqual(first["status"], "needs_clarification")
+        self.assertEqual(first["goal_intake"]["goal_type"], "job")
+        self.assertEqual(
+            first["missing_fields"],
+            ["career_stage", "tech_stack", "help_focus"],
+        )
+        self.assertIn("哪个阶段", first["message"])
+
+        second = self.agent_turn("我是在校学生", session_id=session_id)
+        self.assertEqual(second["missing_fields"], ["tech_stack", "help_focus"])
+        self.assertIn("技术栈", second["message"])
+
+        third = self.agent_turn("我想使用 Java 和 Spring Boot", session_id=session_id)
+        self.assertEqual(third["missing_fields"], ["help_focus"])
+        self.assertIn("最需要", third["message"])
+
+        completed = self.agent_turn("我最需要项目实战和项目经验", session_id=session_id)
+        self.assertEqual(completed["action"], "project_created")
+        self.assertEqual(completed["project"]["goal_type"], "job")
+        constraints = completed["project"]["goal_constraints"]
+        self.assertEqual(constraints["career_stage"], "student")
+        self.assertEqual(constraints["tech_stack"], ["spring_boot", "java"])
+        self.assertEqual(constraints["help_focus"], ["project_practice"])
+
+        detail = self.request_json(
+            "GET",
+            f"/api/projects/{completed['project']['project_id']}?student_id={self.student_id}",
+        )["project"]
+        self.assertEqual(detail["learner_self_reports"][0]["verification_state"], "unverified")
+        self.assertTrue(
+            all(item["verification_state"] == "unverified" for item in detail["learner_self_reports"])
+        )
+        self.assertTrue(
+            all(item.get("mastery") is None for item in detail["learning_path"]["items"])
+        )
+
+    def test_complete_job_goal_skips_redundant_questions(self):
+        result = self.agent_turn(
+            "我是在校学生，想学习 Java 后端开发，最需要项目实战",
+            session_id="complete-job-goal",
+        )
+        self.assertEqual(result["action"], "project_created")
+        self.assertEqual(result["project"]["goal_type"], "job")
+        constraints = result["project"]["goal_constraints"]
+        self.assertEqual(constraints["career_stage"], "student")
+        self.assertEqual(constraints["tech_stack"], ["java"])
+        self.assertEqual(constraints["help_focus"], ["project_practice"])
+
+    def test_knowledge_goal_clarification_mentions_teaching_preferences(self):
+        result = self.agent_turn(
+            "我想学 Python",
+            session_id="knowledge-goal-preferences",
+        )
+        self.assertEqual(result["intent"], "clarify_goal")
+        self.assertEqual(result["goal_intake"]["goal_type"], "knowledge")
+        self.assertEqual(result["missing_fields"], ["target_outcome"])
+        self.assertIn("视频", result["message"])
+        self.assertIn("项目实战", result["message"])
+
     def test_goal_draft_is_isolated_by_session(self):
         first = self.agent_turn("我想学 Python", session_id="goal-session-a")
         self.assertEqual(first["intent"], "clarify_goal")
@@ -886,6 +1690,50 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertTrue(result["answer"])
         self.assertTrue(result["sources"])
 
+    def test_agent_turn_uses_external_learning_material_when_enabled(self):
+        application = self.server.RequestHandlerClass.application
+        captured = {}
+        project = self.create_project("完成 Java 面向对象成绩管理实训")["project"]
+
+        class FakeMaterialKnowledge:
+            enabled = True
+            status = "ready"
+
+            @staticmethod
+            def query(message):
+                captured["message"] = message
+                return {
+                    "status": "ok",
+                    "resources": "封装用于隐藏内部实现并约束访问边界。",
+                    "return_memory": "这段外部记忆不能写入画像",
+                }
+
+        original = application.material_knowledge
+        application.material_knowledge = FakeMaterialKnowledge()
+        try:
+            result = self.request_json(
+                "POST",
+                "/api/agent/turn",
+                {
+                    "student_id": self.student_id,
+                    "session_id": "material-plugin-test",
+                    "project_id": project["project_id"],
+                    "message": "请根据学习资料说明 Java 封装的作用",
+                    "use_learning_materials": True,
+                    "allow_web_search": False,
+                },
+            )
+        finally:
+            application.material_knowledge = original
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["action"], "reply")
+        self.assertEqual(result["answer_mode"], "external_learning_material")
+        self.assertEqual(result["source_status"], "unverified_external_material")
+        self.assertEqual(result["sources"][0]["source_type"], "external_material")
+        self.assertIn("Java 封装", captured["message"])
+        self.assertNotIn("外部记忆", result["answer"])
+
     def test_agent_turn_clarifies_unknown_intent(self):
         result = self.agent_turn("随便来点")
         self.assertEqual(result["status"], "needs_clarification")
@@ -970,7 +1818,7 @@ class AgentProjectApiTests(unittest.TestCase):
         )["project"]
         self.assertEqual(detail["learner_preferences"]["daily_minutes"], 30)
         first = detail["learning_path"]["items"][0]
-        self.assertEqual(first["mastery"], 0)
+        self.assertIsNone(first["mastery"])
         self.assertTrue(detail["learner_self_reports"])
 
     def test_project_messages_are_persisted_and_isolated(self):
@@ -1052,6 +1900,36 @@ class AgentProjectApiTests(unittest.TestCase):
         )["note"]
         self.assertEqual(updated["note_id"], created["note_id"])
         self.assertEqual(updated["note_markdown"], "更新后的笔记")
+        document_markdown = "# 章节覆盖稿\n\n" + "正文" * 4_500
+        document_override = self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/notes",
+            {
+                **created,
+                "student_id": self.student_id,
+                "note_id": "",
+                "block_id": "LESSON-DOCUMENT",
+                "block_title": "章节 Markdown 覆盖稿",
+                "note_markdown": document_markdown,
+                "tags": ["lesson_document_override"],
+            },
+        )["note"]
+        self.assertEqual(document_override["note_markdown"], document_markdown)
+        self.assertIn("lesson_document_override", document_override["tags"])
+        retried_override = self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/notes",
+            {
+                **document_override,
+                "student_id": self.student_id,
+                "note_id": "",
+                "note_markdown": "网络恢复后的章节覆盖稿",
+            },
+        )["note"]
+        self.assertEqual(retried_override["note_id"], document_override["note_id"])
+        self.assertEqual(
+            retried_override["note_markdown"], "网络恢复后的章节覆盖稿"
+        )
         with self.assertRaises(Exception):
             self.request_json(
                 "POST",
@@ -1064,6 +1942,11 @@ class AgentProjectApiTests(unittest.TestCase):
             {"student_id": self.student_id, "note_id": created["note_id"]},
         )
         self.assertEqual(deleted["deleted_note_id"], created["note_id"])
+        self.request_json(
+            "POST",
+            f"/api/projects/{first['project_id']}/notes/delete",
+            {"student_id": self.student_id, "note_id": document_override["note_id"]},
+        )
         self.assertEqual(
             self.request_json(
                 "GET",
@@ -1099,6 +1982,15 @@ class AgentProjectApiTests(unittest.TestCase):
                 "block_id": lesson["content_blocks"][0]["block_id"],
                 "block_title": "讲解内容",
                 "note_markdown": "删除项目时应一并删除",
+            },
+        )
+        self.request_json(
+            "POST",
+            f"/api/projects/{project_id}/assessments/intake",
+            {
+                "student_id": self.student_id,
+                "self_reported_level": "uncertain",
+                "claimed_knowledge_point_ids": [],
             },
         )
         assessment = self.request_json(
@@ -1237,6 +2129,43 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(result["action"], "reply")
         self.assertTrue(result["answer"])
         self.assertTrue(result["sources"])
+
+    def test_plan_question_persists_stable_step_context_with_project_message(self):
+        project = self.agent_turn("我想系统掌握 Java 面向对象编程")["project"]
+        plan = self.request_json(
+            "GET", f"/api/projects/{project['project_id']}/plan?student_id={self.student_id}"
+        )["learning_plan"]
+        stage = next(item for item in plan["stages"] if item["steps"])
+        step = stage["steps"][0]
+        self.request_json(
+            "POST",
+            "/api/agent/turn",
+            {
+                "student_id": self.student_id,
+                "session_id": "plan-question-test",
+                "project_id": project["project_id"],
+                "message": f"我想就“{step['knowledge_point_name']}”提问：该从哪里开始？",
+                "workspace_context": {
+                    "view": "learning_plan",
+                    "project_id": project["project_id"],
+                    "knowledge_point_id": step["knowledge_point_id"],
+                    "knowledge_point_name": step["knowledge_point_name"],
+                    "plan_step_id": step["step_id"],
+                    "plan_stage_id": stage["stage_id"],
+                },
+            },
+        )
+        messages = self.request_json(
+            "GET",
+            f"/api/projects/{project['project_id']}/messages?student_id={self.student_id}",
+        )["messages"]
+        user_message = next(
+            item for item in reversed(messages) if item["role"] == "user"
+        )
+        context = user_message["context"]["workspace_context"]
+        self.assertEqual(context["plan_step_id"], step["step_id"])
+        self.assertEqual(context["plan_stage_id"], stage["stage_id"])
+        self.assertEqual(context["knowledge_point_id"], step["knowledge_point_id"])
 
     # ---------- 生成式题库 ----------
 

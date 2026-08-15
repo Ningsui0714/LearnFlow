@@ -1,20 +1,24 @@
 ﻿import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
-from urllib.parse import unquote
+from contextlib import closing
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, unquote, urlparse
 import urllib.error
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from backend.domain import StudentModelCache
+from backend.domain import LearningDomainStore, StudentModelCache
 from backend.server import (
     ApiError,
     GatewayError,
     KnowledgeCache,
+    MaterialKnowledgeGateway,
     Settings,
     StrategyEngine,
     VideoSearchGateway,
@@ -22,6 +26,23 @@ from backend.server import (
     create_server,
     demo_upstream_payload,
 )
+
+
+def _wrong_answer_for(question: dict) -> str:
+    """构造一个必然错误的作答，兼容全部题型（choice/judgment/multiple_choice/fill_blank/practical）。"""
+    question_type = str(question.get("question_type") or "choice")
+    options = question.get("options") or {}
+    expected = str(question.get("answer") or "")
+    if question_type in {"choice", "judgment"}:
+        return next((key for key in options if key != expected), "a")
+    if question_type == "multiple_choice":
+        expected_keys = {
+            value.strip()
+            for value in expected.replace("，", ",").split(",")
+            if value.strip()
+        }
+        return next((key for key in options if key not in expected_keys), "a")
+    return "错误答案"
 
 
 class BackendIntegrationTests(unittest.TestCase):
@@ -176,6 +197,8 @@ class BackendIntegrationTests(unittest.TestCase):
     def test_end_to_end_workflow_routes(self):
         health = self.request_json("GET", "/api/health")
         self.assertEqual(health["status"], "ok")
+        self.assertFalse(health["material_knowledge_enabled"])
+        self.assertEqual(health["material_knowledge_status"], "disabled")
 
         upstream_payload = demo_upstream_payload()
         upstream_payload["event_id"] = "TEST-E2E-UPSTREAM-001"
@@ -1390,6 +1413,67 @@ class BackendIntegrationTests(unittest.TestCase):
             ["profile-flow-id", "learning-flow-id", "remediation-flow-id"],
         )
 
+    def test_material_knowledge_gateway_uses_exported_query_contract(self):
+        captured = {}
+
+        class MaterialHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                parsed = urlparse(self.path)
+                captured.update(parse_qs(parsed.query, keep_blank_values=True))
+                body = json.dumps(
+                    {
+                        "resources": "资料中的封装说明",
+                        "return_memory": "不应写入学习者画像",
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *_args):
+                return
+
+        plugin_server = ThreadingHTTPServer(("127.0.0.1", 0), MaterialHandler)
+        plugin_thread = threading.Thread(
+            target=plugin_server.serve_forever, daemon=True
+        )
+        plugin_thread.start()
+        try:
+            settings = replace(
+                self.server.RequestHandlerClass.application.settings,
+                material_knowledge_enabled=True,
+                material_knowledge_url=(
+                    f"http://127.0.0.1:{plugin_server.server_port}/material"
+                ),
+                material_knowledge_request_type="0",
+            )
+            gateway = MaterialKnowledgeGateway(settings)
+            result = gateway.query("解释封装", input_source="课程讲义")
+        finally:
+            plugin_server.shutdown()
+            plugin_server.server_close()
+            plugin_thread.join(timeout=5)
+
+        self.assertEqual(gateway.status, "ready")
+        self.assertEqual(captured["input_request"], ["解释封装"])
+        self.assertEqual(captured["input_source"], ["课程讲义"])
+        self.assertEqual(captured["input_memory"], [""])
+        self.assertEqual(captured["request_type"], ["0"])
+        self.assertEqual(result["resources"], "资料中的封装说明")
+        self.assertEqual(result["return_memory"], "不应写入学习者画像")
+        blocked = MaterialKnowledgeGateway(
+            replace(
+                settings,
+                material_knowledge_url="http://101.35.40.125:8000",
+                material_knowledge_allow_insecure_http=False,
+            )
+        )
+        self.assertEqual(blocked.status, "insecure_transport_blocked")
+        self.assertFalse(blocked.enabled)
+
     def test_document_search_returns_trusted_official_docs(self):
         settings = Settings(
             host="127.0.0.1",
@@ -1771,16 +1855,13 @@ class BackendIntegrationTests(unittest.TestCase):
         total = sum(distribution[key] for key in ("visual", "auditory", "kinesthetic", "reading"))
         self.assertAlmostEqual(total, 1.0, places=2)
 
-    def test_portrait_falls_back_when_workflow_scores_missing(self):
+    def test_portrait_does_not_fabricate_abilities_when_scores_missing(self):
         portrait = self.request_json(
             "GET", "/api/students/STU-PORTRAIT-FALLBACK-001/portrait"
         )
-        self.assertTrue(portrait["abilities"]["is_fallback"])
-        dimensions = portrait["abilities"]["dimensions"]
-        self.assertEqual(len(dimensions), 6)
-        for dimension in dimensions:
-            self.assertGreaterEqual(dimension["score"], 0)
-            self.assertLessEqual(dimension["score"], 100)
+        self.assertFalse(portrait["abilities"]["is_fallback"])
+        self.assertEqual(portrait["abilities"]["dimensions"], [])
+        self.assertIsNone(portrait["identity"]["kpi"]["overall_mastery"])
 
     def test_review_stream_sections_carry_evidence(self):
         application = self.server.RequestHandlerClass.application
@@ -2241,7 +2322,7 @@ class BackendIntegrationTests(unittest.TestCase):
             },
         )
         self.assertEqual(start["status"], "ok")
-        self.assertEqual(start["total"], 8)
+        self.assertEqual(start["total"], 14)
         self.assertTrue(start["questions"])
         # 答案不得泄露给前端
         for question in start["questions"]:
@@ -2257,7 +2338,7 @@ class BackendIntegrationTests(unittest.TestCase):
             "STU-DEMO-001"
         )["diagnosis_session"]
         first = diagnosis["questions"][0]
-        wrong_choice = "a" if first["answer"] != "a" else "b"
+        wrong_choice = _wrong_answer_for(first)
         answered = self.request_json(
             "POST",
             "/api/diagnosis/answer",
@@ -2287,7 +2368,7 @@ class BackendIntegrationTests(unittest.TestCase):
                 },
             )
         self.assertEqual(final["status"], "completed")
-        self.assertEqual(final["stats"]["correct"], 7)
+        self.assertEqual(final["stats"]["correct"], 13)
         self.assertEqual(final["stats"]["wrong"], 1)
         self.assertTrue(final["summary"]["weak_points"])
         wrong_kp = final["summary"]["weak_points"][0]["knowledge_point_id"]
@@ -2316,7 +2397,7 @@ class BackendIntegrationTests(unittest.TestCase):
             "STU-ATTR-001"
         )["diagnosis_session"]
         first = diagnosis["questions"][0]
-        wrong_choice = "a" if first["answer"] != "a" else "b"
+        wrong_choice = _wrong_answer_for(first)
         self.request_json(
             "POST",
             "/api/diagnosis/answer",
@@ -2404,7 +2485,7 @@ class BackendIntegrationTests(unittest.TestCase):
             "diagnosis_session"
         ]
         first = diagnosis["questions"][0]
-        wrong_choice = "a" if first["answer"] != "a" else "b"
+        wrong_choice = _wrong_answer_for(first)
         self.request_json(
             "POST",
             "/api/diagnosis/answer",
@@ -2603,7 +2684,7 @@ class BackendIntegrationTests(unittest.TestCase):
             "STU-DEMO-001"
         )["diagnosis_session"]
         first = diagnosis["questions"][0]
-        wrong = "a" if first["answer"] != "a" else "b"
+        wrong = _wrong_answer_for(first)
         answered = self.request_json(
             "POST",
             "/api/diagnosis/answer",
@@ -2708,6 +2789,275 @@ class DiagnosisBankAndErrorCardsTests(unittest.TestCase):
         self.assertTrue(card["root_cause"])
         self.assertEqual(default_error_card_for("KN_UNKNOWN"), {})
 
+
+class KnowledgeGovernanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.database_path = Path(self.temporary_directory.name) / "governance.db"
+        self.domain = LearningDomainStore(self.database_path)
+
+    def tearDown(self) -> None:
+        self.temporary_directory.cleanup()
+
+    def stage_source(self, document_id: str = "DOC-GOV-001") -> dict:
+        return self.domain.stage_source_document({
+            "document_id": document_id,
+            "title": "Python 官方教程",
+            "source_type": "official_document",
+            "source_url": "https://docs.python.org/zh-cn/3/tutorial/",
+            "authority": "Python Software Foundation",
+            "valid_year": "2026",
+            "region": "global",
+            "content_hash": "a" * 64,
+        })
+
+    def test_old_knowledge_table_migrates_idempotently(self) -> None:
+        legacy_path = Path(self.temporary_directory.name) / "legacy.db"
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE knowledge_entries (
+                    rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entry_id TEXT NOT NULL UNIQUE,
+                    knowledge_point_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    source_type TEXT NOT NULL DEFAULT 'document',
+                    document_id TEXT NOT NULL DEFAULT '',
+                    locator TEXT NOT NULL DEFAULT '',
+                    safety INTEGER NOT NULL DEFAULT 0,
+                    job_role TEXT NOT NULL DEFAULT '',
+                    action TEXT NOT NULL DEFAULT '',
+                    keywords TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                INSERT INTO knowledge_entries(
+                    entry_id, knowledge_point_id, title, category, content,
+                    source, created_at
+                ) VALUES (
+                    'KN-LEGACY-001', 'KN_LEGACY', '旧库迁移测试', 'concept',
+                    '旧版知识内容', '已核实旧资料', '2026-01-01T00:00:00+00:00'
+                );
+                """
+            )
+
+        migrated = LearningDomainStore(legacy_path)
+        LearningDomainStore(legacy_path)
+
+        with closing(sqlite3.connect(legacy_path)) as connection:
+            columns = {
+                row[1] for row in connection.execute(
+                    "PRAGMA table_info(knowledge_entries)"
+                ).fetchall()
+            }
+            status = connection.execute(
+                "SELECT review_status FROM knowledge_entries "
+                "WHERE entry_id = 'KN-LEGACY-001'"
+            ).fetchone()[0]
+        self.assertTrue({
+            "published_at", "fetched_at", "authority", "valid_year",
+            "region", "content_hash", "review_status", "reviewed_at",
+            "reviewed_by",
+        }.issubset(columns))
+        self.assertEqual(status, "approved")
+        self.assertEqual(
+            migrated.search_knowledge(query="旧库迁移测试")[0]["entry_id"],
+            "KN-LEGACY-001",
+        )
+
+    def test_candidate_defaults_to_pending_and_is_not_published(self) -> None:
+        source = self.stage_source()
+        candidate = self.domain.stage_knowledge_candidate({
+            "knowledge_point_id": "KN_PYTHON_LIST",
+            "title": "列表推导式候选条目",
+            "category": "concept",
+            "content": "列表推导式用于从可迭代对象构造新列表。",
+            "document_id": source["document_id"],
+            "locator": "5.1.3 节",
+        })
+
+        self.assertEqual(source["review_status"], "pending")
+        self.assertEqual(candidate["review_status"], "pending")
+        self.assertEqual(
+            self.domain.list_knowledge_candidates("pending")[0]["candidate_id"],
+            candidate["candidate_id"],
+        )
+        self.assertFalse(
+            any(
+                item["title"] == candidate["title"]
+                for item in self.domain.search_knowledge(
+                    query="列表推导式候选条目", limit=20
+                )
+            )
+        )
+
+    def test_candidate_review_requires_approved_source_and_valid_transition(self) -> None:
+        source = self.stage_source()
+        candidate = self.domain.stage_knowledge_candidate({
+            "knowledge_point_id": "KN_PYTHON_SOURCE_GOVERNANCE",
+            "title": "来源约束候选条目",
+            "category": "concept",
+            "content": "只有来源审核通过后，候选资料才可通过审核。",
+            "document_id": source["document_id"],
+            "locator": "审核发布测试段落",
+        })
+
+        with self.assertRaisesRegex(ValueError, "来源文档审核通过"):
+            self.domain.review_knowledge_candidate(
+                candidate["candidate_id"], "approved", "reviewer-001"
+            )
+        self.domain.review_source_document(
+            source["document_id"], "approved", "reviewer-001"
+        )
+        approved = self.domain.review_knowledge_candidate(
+            candidate["candidate_id"], "approved", "reviewer-001"
+        )
+        self.assertEqual(approved["review_status"], "approved")
+        published = self.domain.search_knowledge(
+            query="来源约束候选条目", limit=20
+        )
+        self.assertEqual(len(published), 1)
+        self.assertTrue(published[0]["entry_id"].startswith("KN-CAND-"))
+        self.assertEqual(
+            published[0]["knowledge_point_id"],
+            "KN_PYTHON_SOURCE_GOVERNANCE",
+        )
+        self.assertEqual(published[0]["source"], source["title"])
+        self.assertEqual(published[0]["source_type"], source["source_type"])
+        self.assertEqual(published[0]["document_id"], source["document_id"])
+        self.assertEqual(published[0]["locator"], "审核发布测试段落")
+        self.assertEqual(published[0]["reviewed_by"], "reviewer-001")
+        published_count = self.domain.knowledge_count()
+        self.domain.review_knowledge_candidate(
+            candidate["candidate_id"], "approved", "reviewer-001"
+        )
+        self.assertEqual(self.domain.knowledge_count(), published_count)
+        self.assertEqual(
+            self.domain.search_knowledge(
+                query="来源约束候选条目", limit=20
+            )[0]["entry_id"],
+            published[0]["entry_id"],
+        )
+        with self.assertRaisesRegex(ValueError, "不允许的审核状态转换"):
+            self.domain.review_knowledge_candidate(
+                candidate["candidate_id"], "rejected", "reviewer-001"
+            )
+
+    def test_ai_generated_candidate_cannot_be_approved(self) -> None:
+        source = self.stage_source("DOC-GOV-AI-001")
+        self.domain.review_source_document(
+            source["document_id"], "approved", "reviewer-001"
+        )
+        candidate = self.domain.stage_knowledge_candidate({
+            "title": "AI 生成候选条目",
+            "category": "concept",
+            "content": "这段内容由模型生成，只能留在候选区。",
+            "document_id": source["document_id"],
+            "ai_generated": True,
+        })
+
+        with self.assertRaisesRegex(ValueError, "AI 生成候选"):
+            self.domain.review_knowledge_candidate(
+                candidate["candidate_id"], "approved", "reviewer-001"
+            )
+        pending = self.domain.list_knowledge_candidates("pending")
+        self.assertTrue(pending[0]["ai_generated"])
+
+    def test_source_content_change_requires_candidate_review_again(self) -> None:
+        source = self.stage_source("DOC-GOV-CHANGE-001")
+        self.domain.review_source_document(
+            source["document_id"], "approved", "reviewer-001"
+        )
+        candidate = self.domain.stage_knowledge_candidate({
+            "title": "会随来源变化的候选条目",
+            "category": "concept",
+            "content": "候选内容来自当前版本的来源文档。",
+            "document_id": source["document_id"],
+        })
+        self.domain.review_knowledge_candidate(
+            candidate["candidate_id"], "approved", "reviewer-001"
+        )
+        published = self.domain.search_knowledge(
+            query="会随来源变化的候选条目", limit=20
+        )[0]
+
+        changed_source = self.domain.stage_source_document({
+            "document_id": source["document_id"],
+            "title": source["title"],
+            "source_type": source["source_type"],
+            "content_hash": "b" * 64,
+        })
+        changed_candidate = self.domain.list_knowledge_candidates(
+            "needs_update"
+        )[0]
+
+        self.assertEqual(changed_source["review_status"], "needs_update")
+        self.assertEqual(changed_source["reviewed_by"], "")
+        self.assertEqual(changed_candidate["candidate_id"], candidate["candidate_id"])
+        self.assertEqual(changed_candidate["reviewed_by"], "")
+        self.assertFalse(
+            any(
+                item["title"] == "会随来源变化的候选条目"
+                for item in self.domain.search_knowledge(
+                    query="会随来源变化的候选条目", limit=20
+                )
+            )
+        )
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            published_status = connection.execute(
+                "SELECT review_status FROM knowledge_entries WHERE entry_id = ?",
+                (published["entry_id"],),
+            ).fetchone()[0]
+        self.assertEqual(published_status, "needs_update")
+
+        self.domain.review_source_document(
+            source["document_id"], "approved", "reviewer-002"
+        )
+        self.domain.review_knowledge_candidate(
+            candidate["candidate_id"], "approved", "reviewer-002"
+        )
+        republished = self.domain.search_knowledge(
+            query="会随来源变化的候选条目", limit=20
+        )[0]
+        self.assertEqual(republished["entry_id"], published["entry_id"])
+        self.assertEqual(republished["reviewed_by"], "reviewer-002")
+
+    def test_initialization_backfills_legacy_approved_candidate(self) -> None:
+        source = self.stage_source("DOC-GOV-BACKFILL-001")
+        self.domain.review_source_document(
+            source["document_id"], "approved", "reviewer-001"
+        )
+        candidate = self.domain.stage_knowledge_candidate({
+            "knowledge_point_id": "KN_PYTHON_BACKFILL",
+            "title": "历史审核候选补发布",
+            "category": "concept",
+            "content": "旧版本只记录审核状态，没有创建正式知识条目。",
+            "document_id": source["document_id"],
+            "locator": "历史审核记录",
+        })
+        with closing(sqlite3.connect(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE knowledge_candidates
+                SET review_status = 'approved', reviewed_at = ?, reviewed_by = ?
+                WHERE candidate_id = ?
+                """,
+                (
+                    "2026-08-14T00:00:00+00:00",
+                    "legacy-reviewer",
+                    candidate["candidate_id"],
+                ),
+            )
+            connection.commit()
+
+        reloaded = LearningDomainStore(self.database_path)
+        published = reloaded.search_knowledge(
+            query="历史审核候选补发布", limit=20
+        )
+        self.assertEqual(len(published), 1)
+        self.assertEqual(published[0]["reviewed_by"], "legacy-reviewer")
 
 
 if __name__ == "__main__":

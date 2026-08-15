@@ -4,8 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>知行课径 Agent · 个性化学习助手</title>
+  <link rel="stylesheet" href="vendor/vditor/dist/index.css" />
   <script src="vendor/lucide.min.js"></script>
   <script src="vendor/marked.min.js"></script>
+  <script src="vendor/vditor/dist/index.min.js"></script>
   <style>
     :root {
       color-scheme: light;
@@ -55,6 +57,13 @@
     .conn-state { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
     .conn-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
     .topbar-user { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+    .mobile-view-switcher { display: none; align-items: center; gap: 3px; }
+    .mobile-view-button {
+      width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+      border: 0; border-radius: 7px; background: transparent; color: var(--muted);
+    }
+    .mobile-view-button[aria-pressed="true"] { background: var(--green-soft); color: var(--green-strong); }
+    .mobile-view-button svg { width: 17px; height: 17px; }
     .avatar {
       width: 30px; height: 30px; border-radius: 50%; background: var(--green-soft);
       color: var(--green-strong); font-size: 13px; font-weight: 600;
@@ -126,7 +135,6 @@
     .path-item.completed .path-state { background: var(--green); color: #fff; }
     .path-item.pending .path-state { background: transparent; color: var(--muted-soft); }
     .path-copy { flex: 1; min-width: 0; }
-    .path-copy small { display: block; font-size: 10.5px; color: var(--muted-soft); margin-bottom: 1px; }
     .path-copy strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
     .path-mastery { font-size: 10.5px; color: var(--muted-soft); flex: none; min-width: 34px; text-align: right; }
     .path-item.current .path-mastery { color: var(--amber); font-weight: 600; }
@@ -175,7 +183,7 @@
     }
     .page-back:hover { border-color: var(--green); color: var(--green-strong); }
 
-    /* ---------- 工作区页面（个人中心 / 用户画像 / 设置） ---------- */
+    /* ---------- 工作区页面（个人中心 / 能力详情 / 设置） ---------- */
     .fullpage {
       min-height: 100%; background: var(--bg); display: flex; flex-direction: column;
     }
@@ -188,71 +196,114 @@
     .fullpage-title .eyebrow { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); letter-spacing: 1px; margin-bottom: 3px; }
     .fullpage-title .eyebrow svg { width: 14px; height: 14px; }
     .fullpage-title h1 { margin: 0; font-size: 18px; }
-    .fullpage-body { flex: 1; width: 100%; max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; }
+    .fullpage-body { flex: 1; width: 100%; max-width: 940px; margin: 0 auto; padding: 24px 20px 60px; }
 
-    .fp-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
-    .profile-hero { display: flex; align-items: center; gap: 18px; padding: 22px 24px; margin-bottom: 14px; }
-    .profile-avatar-xl { width: 72px; height: 72px; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 28px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
+    .fp-card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 8px rgba(36, 56, 46, .06); }
+    .profile-hero { display: flex; align-items: center; gap: 16px; padding: 20px 22px; margin-bottom: 14px; }
+    .profile-avatar-xl { width: 64px; height: 64px; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 25px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
+    .profile-hero-copy { min-width: 0; }
     .profile-hero-copy h2 { margin: 0 0 4px; font-size: 20px; }
     .profile-hero-copy p { margin: 2px 0; color: var(--muted); font-size: 13px; }
-    .profile-hero-copy .fp-program { color: var(--green-strong); }
+    .profile-meta-list { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-top: 9px; font-size: 12px; color: var(--ink-soft); }
+    .profile-meta-list span { display: inline-flex; align-items: center; gap: 4px; }
+    .profile-meta-list svg { width: 13px; height: 13px; color: var(--green); }
+    .profile-hero-actions { margin-left: auto; align-self: flex-start; flex: none; }
+    .profile-hero-actions .secondary-btn { width: auto; white-space: nowrap; }
 
-    .fp-stats { display: flex; gap: 12px; margin-bottom: 14px; }
-    .fp-stat { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 14px; text-align: center; box-shadow: var(--shadow); }
-    .fp-stat strong { display: block; font-size: 24px; color: var(--green-strong); }
-    .fp-stat small { color: var(--muted); font-size: 12px; }
+    .fp-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .fp-stat { min-width: 0; padding: 13px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; text-align: left; box-shadow: 0 1px 4px rgba(36, 56, 46, .04); }
+    button.fp-stat { cursor: pointer; }
+    button.fp-stat:hover { border-color: var(--green); background: var(--green-soft); }
+    .fp-stat strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 20px; color: var(--green-strong); }
+    .fp-stat small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
 
-    .fp-tiles { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
-    .fp-tile {
-      display: flex; align-items: center; gap: 14px; background: var(--surface);
-      border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; text-align: left;
-      box-shadow: var(--shadow); width: 100%;
-    }
-    .fp-tile:hover { border-color: var(--green); background: var(--green-soft); }
-    .fp-tile-icon { width: 42px; height: 42px; border-radius: 12px; background: var(--green-soft); color: var(--green); display: flex; align-items: center; justify-content: center; flex: none; }
-    .fp-tile-copy { flex: 1; }
-    .fp-tile-copy strong { font-size: 14px; display: block; margin-bottom: 3px; }
-    .fp-tile-copy small { color: var(--muted); font-size: 12px; }
-    .fp-tile > svg { color: var(--muted-soft); }
-    .fp-guide { color: var(--muted); font-size: 12.5px; text-align: center; }
+    .profile-learning-card { padding: 18px 20px 20px; }
+    .profile-section-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .profile-section-heading h2 { flex: 1; margin: 0; font-size: 16px; }
+    .profile-section-heading > svg { width: 18px; height: 18px; color: var(--green); }
+    .profile-detail-link { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 3px 0; background: transparent; color: var(--green-strong); font-size: 12.5px; font-weight: 600; }
+    .profile-detail-link:hover { color: var(--green); text-decoration: underline; }
+    .profile-detail-link svg { width: 14px; height: 14px; }
+    .profile-radar-overview { display: grid; grid-template-columns: minmax(210px, .78fr) minmax(0, 1.22fr); gap: 22px; align-items: center; margin: 0 0 18px; padding: 0 0 18px; border-bottom: 1px solid var(--line); }
+    .profile-radar-figure { display: flex; flex-direction: column; align-items: center; margin: 0; }
+    .profile-radar-svg { display: block; width: min(100%, 240px); height: auto; }
+    .profile-radar-figure figcaption { margin-top: -2px; color: var(--muted); font-size: 11px; line-height: 1.55; text-align: center; }
+    .profile-radar-copy { min-width: 0; }
+    .profile-radar-title { margin: 0 0 5px; font-size: 15px; }
+    .profile-radar-note { margin: 0 0 11px; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+    .profile-ability-gap-list { display: grid; gap: 8px; }
+    .profile-ability-gap { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); }
+    .profile-ability-gap strong { min-width: 0; font-size: 12.5px; }
+    .profile-ability-gap span { color: var(--green-strong); font-size: 12px; font-weight: 700; }
+    .profile-ability-gap small { grid-column: 1 / -1; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .profile-radar-pending { margin: 0; padding: 14px 0 4px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .profile-ability-grid { display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: 22px; }
+    .profile-ability-column + .profile-ability-column { border-left: 1px solid var(--line); padding-left: 22px; }
+    .profile-model-label { margin: 0 0 4px; color: var(--muted); font-size: 12px; }
+    .profile-model-title { margin: 0 0 14px; font-size: 15px; }
+    .profile-model-note { margin: -6px 0 12px; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+    .profile-skill-list, .profile-strength-list { display: flex; flex-direction: column; gap: 9px; }
+    .profile-skill-row { width: 100%; padding: 0; border: 0; background: transparent; text-align: left; }
+    button.profile-skill-row { cursor: pointer; }
+    button.profile-skill-row:hover .profile-skill-name { color: var(--green-strong); }
+    .profile-skill-copy { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; font-size: 12.5px; }
+    .profile-skill-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .profile-skill-value { flex: none; color: var(--muted); font-size: 12px; }
+    .profile-skill-track { position: relative; height: 7px; overflow: hidden; border-radius: 99px; background: var(--surface-soft); }
+    .profile-skill-current { display: block; height: 100%; border-radius: 99px; background: var(--green); }
+    .profile-skill-target { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink-soft); opacity: .55; }
+    .profile-skill-caption { display: block; margin-top: 4px; color: var(--muted-soft); font-size: 11px; }
+    .profile-strength-item { padding: 0 0 11px; border-bottom: 1px dashed var(--line); }
+    .profile-strength-item:last-child { padding-bottom: 0; border-bottom: 0; }
+    .profile-strength-item-head { display: flex; align-items: flex-start; gap: 8px; }
+    .profile-strength-rank { display: flex; width: 19px; height: 19px; align-items: center; justify-content: center; border-radius: 50%; background: var(--green-soft); color: var(--green-strong); font-size: 11px; font-weight: 700; flex: none; }
+    .profile-strength-copy { flex: 1; min-width: 0; }
+    .profile-strength-copy strong { display: block; font-size: 13px; }
+    .profile-strength-copy p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .profile-strength-action { margin: 7px 0 0 27px; padding: 0; border: 0; background: transparent; color: var(--green-strong); font-size: 12px; font-weight: 600; }
+    .profile-strength-action:hover { text-decoration: underline; }
+    .profile-empty-state { margin: 0; padding: 10px 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .profile-learning-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .profile-learning-actions small { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+    .profile-learning-actions .primary-btn { flex: none; }
 
-    .portrait-kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
-    .kpi-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: center; box-shadow: var(--shadow); }
-    .kpi-card strong { display: block; font-size: 22px; color: var(--green-strong); }
-    .kpi-card small { color: var(--muted); font-size: 12px; }
-    .portrait-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    .portrait-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; box-shadow: var(--shadow); }
-    .portrait-card-wide { grid-column: 1 / -1; }
-    .portrait-card h3 { margin: 0 0 14px; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
-    .portrait-card h3 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
-    .radar-svg { width: 100%; max-width: 320px; height: auto; display: block; margin: 0 auto; }
-    .style-block p { margin: 0 0 10px; font-size: 13px; color: var(--ink-soft); }
-    .style-bars { display: flex; flex-direction: column; gap: 7px; }
-    .style-bar { display: flex; align-items: center; gap: 10px; font-size: 12px; }
-    .style-bar .bar-track { flex: 1; height: 8px; background: var(--surface-soft); border-radius: 99px; overflow: hidden; }
-    .style-bar .bar-fill { display: block; height: 100%; background: var(--green); border-radius: 99px; }
-    .weak-item { padding: 9px 0; border-bottom: 1px dashed var(--line); }
-    .weak-item:last-child { border-bottom: none; }
-    .weak-item strong { font-size: 13px; display: block; margin-bottom: 3px; }
-    .weak-item small { color: var(--muted); font-size: 12px; }
-    .point-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 12.5px; }
-    .point-row .point-name { width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .point-row .bar-track { flex: 1; height: 8px; background: var(--surface-soft); border-radius: 99px; overflow: hidden; }
-    .point-row .bar-fill { display: block; height: 100%; background: var(--green); border-radius: 99px; }
-    .point-row .point-val { width: 40px; text-align: right; color: var(--muted); }
-    .job-graph-list, .portrait-evidence-list { display: flex; flex-direction: column; gap: 10px; }
-    .job-graph-shell { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface-soft); }
-    .job-graph-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-    .job-graph-head strong { flex: 1; font-size: 13px; }
-    .job-graph-status { color: var(--muted); font-size: 11px; }
-    .job-graph-mount { min-height: 220px; display: flex; align-items: center; justify-content: center; padding: 24px; }
-    .job-graph-empty { max-width: 460px; color: var(--muted); text-align: center; font-size: 12.5px; line-height: 1.7; }
-    .job-graph-empty svg { width: 26px; height: 26px; display: block; margin: 0 auto 8px; color: var(--green); }
-    .portrait-evidence-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px dashed var(--line); }
-    .portrait-evidence-item:last-child { border-bottom: 0; }
-    .portrait-evidence-type { color: var(--green-strong); font-size: 11px; font-weight: 700; }
-    .portrait-evidence-copy strong { display: block; font-size: 12.5px; }
-    .portrait-evidence-copy small, .portrait-evidence-time { color: var(--muted); font-size: 11px; }
+    .profile-activity-card { margin-top: 14px; padding: 18px 20px; }
+    .profile-activity-list { display: flex; flex-direction: column; }
+    .profile-activity-item { position: relative; display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 12px; padding: 0 0 14px 10px; border-left: 1px solid var(--line-strong); }
+    .profile-activity-item:last-child { padding-bottom: 0; }
+    .profile-activity-item::before { content: ""; position: absolute; width: 7px; height: 7px; border-radius: 50%; left: -4px; top: 5px; background: var(--green); }
+    .profile-activity-time { color: var(--muted); font-size: 11.5px; }
+    .profile-activity-copy { min-width: 0; }
+    .profile-activity-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+    .profile-activity-copy small { display: block; margin-top: 3px; color: var(--muted); font-size: 11.5px; }
+
+    .capability-detail-intro { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .capability-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+    .capability-detail-card { padding: 18px 20px; }
+    .capability-detail-card h2 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; font-size: 15px; }
+    .capability-detail-card h2 svg { width: 17px; height: 17px; color: var(--green); }
+    .capability-detail-card--wide { grid-column: 1 / -1; }
+    .capability-detail-note { padding: 11px 12px; border-left: 3px solid var(--green); border-radius: 0 6px 6px 0; background: var(--surface-soft); color: var(--muted); font-size: 12px; line-height: 1.65; }
+    .capability-evidence-list { display: flex; flex-direction: column; gap: 9px; }
+    .capability-evidence-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding-bottom: 9px; border-bottom: 1px dashed var(--line); }
+    .capability-evidence-item:last-child { padding-bottom: 0; border-bottom: 0; }
+    .capability-evidence-type { color: var(--green-strong); font-size: 11px; font-weight: 700; }
+    .capability-evidence-copy { min-width: 0; }
+    .capability-evidence-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .capability-evidence-time { color: var(--muted); font-size: 11px; }
+
+    .profile-goal-dialog { width: min(520px, calc(100vw - 28px)); border: 0; border-radius: 8px; padding: 0; color: var(--ink); box-shadow: var(--shadow-lg); }
+    .profile-goal-dialog::backdrop { background: rgba(17, 24, 39, .42); }
+    .profile-goal-form { padding: 20px; }
+    .profile-goal-form h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 5px; font-size: 17px; }
+    .profile-goal-form h2 svg { width: 18px; height: 18px; color: var(--green); }
+    .profile-goal-form > p { margin: 0 0 16px; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+    .profile-goal-fields { display: grid; gap: 12px; }
+    .profile-goal-fields label { display: grid; gap: 6px; color: var(--ink-soft); font-size: 12.5px; font-weight: 600; }
+    .profile-goal-fields input, .profile-goal-fields select { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+    .profile-goal-fields input:focus, .profile-goal-fields select:focus { outline: 2px solid rgba(31, 107, 85, .18); border-color: var(--green); }
+    .profile-goal-help { margin: 0; min-height: 18px; color: var(--muted); font-size: 11.5px; }
+    .profile-goal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
     .confirm-dialog { border: 0; border-radius: 10px; padding: 0; width: min(440px, calc(100vw - 32px)); box-shadow: var(--shadow-lg); }
     .confirm-dialog::backdrop { background: rgba(17, 24, 39, .42); }
@@ -268,8 +319,9 @@
     .dialog-danger:disabled { opacity: .55; cursor: wait; }
 
     @media (max-width: 860px) {
-      .portrait-kpi { grid-template-columns: repeat(2, 1fr); }
-      .portrait-grid { grid-template-columns: 1fr; }
+      .profile-radar-overview { grid-template-columns: minmax(190px, .72fr) minmax(0, 1.28fr); gap: 18px; }
+      .profile-ability-grid, .capability-detail-grid { grid-template-columns: 1fr; }
+      .profile-ability-column + .profile-ability-column { border-top: 1px solid var(--line); border-left: 0; padding-top: 18px; padding-left: 0; }
     }
 
     .settings-view { min-height: 100%; }
@@ -388,6 +440,7 @@
     .lesson-crumb button { background: none; border: none; color: var(--green); font-size: 12px; padding: 0; }
     .lesson-head { padding: 8px 0 22px; border-bottom: 1px solid var(--line); }
     .lesson-tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--green-strong); background: var(--green-soft); border-radius: 999px; padding: 3px 10px; margin-bottom: 10px; }
+    .lesson-tag.is-warning { color: #8a5b00; background: #fff4d6; }
     .lesson-head h1 { margin: 0 0 8px; font-size: 21px; }
     .lesson-objective { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.7; }
     .lesson-meta { display: flex; gap: 16px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
@@ -398,9 +451,29 @@
     .lesson-action-btn:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
     .lesson-action-btn svg { width: 14px; height: 14px; }
     .lesson-body { margin-top: 24px; background: transparent; border: 0; border-radius: 0; padding: 0; box-shadow: none; }
-    .lesson-card { position: relative; margin: 0 0 34px; padding: 0; border: 0; background: transparent; scroll-margin-top: 18px; }
-    .lesson-card:last-child { margin-bottom: 0; }
+    .lesson-card { position: relative; margin: 0; padding: 0; border: 0; background: transparent; scroll-margin-top: 18px; }
+    .lesson-provenance { margin: 0 0 22px; padding: 12px 14px; border-left: 3px solid var(--green); border-radius: 0 6px 6px 0; background: var(--surface-soft); color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .lesson-provenance.is-warning { border-left-color: var(--amber); background: #fffbef; color: #735211; }
+    .lesson-provenance-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; color: var(--ink); font-weight: 700; }
+    .lesson-provenance-head svg { width: 15px; height: 15px; flex: none; }
+    .lesson-provenance p { margin: 4px 0 0; }
+    .lesson-provenance ul { margin: 6px 0 0; padding-left: 18px; }
+    .lesson-provenance li + li { margin-top: 2px; }
     .lesson-body { cursor: text; }
+    .lesson-vditor { position: relative; min-height: 0; border: 0; background: transparent; }
+    .lesson-vditor .vditor-toolbar,
+    .lesson-vditor .vditor-counter,
+    .lesson-vditor .vditor-resize { display: none; }
+    .lesson-vditor .vditor-content { min-height: 0; background: transparent; }
+    .lesson-vditor .vditor-ir { min-height: 360px; padding: 0; background: transparent; }
+    .lesson-vditor .vditor-reset { color: var(--ink-soft); font-family: inherit; font-size: 14px; line-height: 1.9; }
+    .lesson-vditor .vditor-reset h1,
+    .lesson-vditor .vditor-reset h2,
+    .lesson-vditor .vditor-reset h3,
+    .lesson-vditor .vditor-reset h4 { color: var(--ink); font-family: inherit; }
+    .lesson-vditor .vditor-reset h2 { border-bottom: 1px solid var(--line); }
+    .lesson-user-edit-eye { position: absolute; z-index: 3; right: -24px; width: 18px; height: 18px; color: var(--muted-soft); opacity: .58; pointer-events: none; }
+    .lesson-user-edit-eye svg { width: 14px; height: 14px; }
     .markdown-body { color: var(--ink-soft); font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
     .markdown-body > :first-child { margin-top: 0; }
     .markdown-body > :last-child { margin-bottom: 0; }
@@ -511,6 +584,7 @@
     }
     .chat-tool svg { width: 13px; height: 13px; }
     .chat-tool[aria-pressed="true"] { border-color: #b9d8c8; background: var(--green-soft); color: var(--green-strong); }
+    .chat-tool.unavailable { opacity: .58; cursor: not-allowed; }
     .chat-input { display: flex; align-items: flex-end; gap: 8px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 12px; padding: 8px 8px 8px 14px; }
     .chat-input:focus-within { border-color: var(--green); }
     .chat-input textarea { flex: 1; border: none; background: none; resize: none; outline: none; font-size: 13px; line-height: 1.6; min-height: 22px; max-height: 120px; padding: 4px 0; }
@@ -530,6 +604,22 @@
     .quiz-card .qc-head svg { color: var(--blue); }
     .quiz-card p { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
     .quiz-actions { display: flex; align-items: center; gap: 10px; }
+    .assessment-intake-card { border-radius: 8px; }
+    .assessment-intake-fieldset { border: 0; padding: 0; margin: 12px 0; }
+    .assessment-intake-fieldset legend { padding: 0; margin-bottom: 8px; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+    .assessment-levels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .assessment-level-option { display: block; min-width: 0; }
+    .assessment-level-option input { position: absolute; opacity: 0; pointer-events: none; }
+    .assessment-level-option span { display: flex; min-height: 36px; align-items: center; justify-content: center; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); color: var(--ink-soft); font-size: 12px; text-align: center; }
+    .assessment-level-option input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .assessment-level-option input:checked + span { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 700; }
+    .assessment-knowledge-panel { margin: 12px 0; }
+    .assessment-knowledge-panel > p { margin-bottom: 8px; color: var(--ink-soft); }
+    .assessment-knowledge-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-height: 178px; overflow-y: auto; padding-right: 3px; }
+    .assessment-knowledge-option { display: flex; align-items: flex-start; gap: 7px; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); color: var(--ink-soft); font-size: 11.5px; line-height: 1.45; }
+    .assessment-knowledge-option input { flex: none; margin: 2px 0 0; accent-color: var(--blue); }
+    .assessment-intake-note { display: flex; align-items: flex-start; gap: 6px; color: var(--muted-soft); font-size: 11px; line-height: 1.55; margin: 8px 0 12px; }
+    .assessment-intake-note svg { flex: none; margin-top: 1px; }
     .primary-btn { display: inline-flex; align-items: center; gap: 6px; background: var(--green); color: #fff; border: none; border-radius: 9px; padding: 9px 16px; font-size: 13px; font-weight: 600; }
     .primary-btn:hover { background: var(--green-strong); }
     .primary-btn.blue { background: var(--blue); }
@@ -577,6 +667,9 @@
     .quiz-error { color: var(--red); font-size: 12px; padding: 0 22px 8px; }
     .quiz-context { padding: 10px 34px; background: var(--blue-soft); border-bottom: 1px solid #d6e0f8; color: #31466f; font-size: 11.5px; line-height: 1.6; }
     .quiz-source { display: flex; align-items: center; gap: 6px; margin: -8px 0 15px; color: var(--muted); font-size: 11.5px; }
+    .quiz-text-answer { width: 100%; border: 1.5px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: var(--ink); padding: 12px 13px; font: inherit; line-height: 1.65; outline: none; }
+    .quiz-text-answer:focus { border-color: var(--blue); background: var(--surface); }
+    textarea.quiz-text-answer { min-height: 180px; resize: vertical; }
 
     .assessment-center { height: 100%; overflow-y: auto; padding: 28px 32px 48px; }
     .assessment-center-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
@@ -588,21 +681,69 @@
     .assessment-scope { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; font-size: 12px; }
     .assessment-scope span { color: var(--muted); }
     .assessment-scope select { margin-left: auto; min-width: 220px; border: 1px solid var(--line); background: var(--surface-soft); border-radius: 8px; padding: 7px 9px; }
-    .assessment-catalog { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-    .assessment-card { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 13px; padding: 16px; box-shadow: 0 3px 12px rgba(24,32,29,.04); }
+    .assessment-catalog { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+    .assessment-card { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 16px; box-shadow: 0 3px 12px rgba(24,32,29,.04); }
     .assessment-card:hover { border-color: var(--blue); box-shadow: var(--shadow); }
     .assessment-card .card-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: var(--blue-soft); color: var(--blue); margin-bottom: 12px; }
     .assessment-card strong { display: block; font-size: 14px; margin-bottom: 6px; }
     .assessment-card p { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.65; min-height: 40px; }
     .assessment-card small { color: var(--muted-soft); font-size: 11px; }
+    .practice-sheet-summary { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .practice-sheet-summary svg { width: 15px; height: 15px; flex: none; color: var(--blue); }
+    .practice-sheet-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .practice-sheet { width: 100%; min-height: 82px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 13px 14px; text-align: left; }
+    .practice-sheet:hover:not(:disabled) { border-color: var(--blue); background: #fbfdff; box-shadow: 0 3px 12px rgba(24,32,29,.05); }
+    .practice-sheet:disabled { cursor: not-allowed; opacity: .62; }
+    .practice-sheet-icon { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--blue-soft); color: var(--blue); }
+    .practice-sheet-icon svg { width: 17px; height: 17px; }
+    .practice-sheet-copy { min-width: 0; }
+    .practice-sheet-copy strong { display: block; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
+    .practice-sheet-copy small { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .practice-sheet-state { min-width: 54px; text-align: right; color: var(--blue); }
+    .practice-sheet-state strong { display: block; font-size: 13px; }
+    .practice-sheet-state small { display: block; margin-top: 3px; color: var(--muted-soft); font-size: 10.5px; }
     .assessment-history { display: grid; gap: 9px; }
-    .assessment-history-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 14px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: 11px; padding: 12px 14px; }
+    .assessment-history-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: 11px; padding: 12px 14px; }
     .assessment-history-row strong { display: block; font-size: 13px; margin-bottom: 3px; }
     .assessment-history-row small { color: var(--muted); font-size: 11.5px; }
     .assessment-score { font-weight: 700; color: var(--blue); }
     .evidence-button { border: 1px solid var(--line); background: var(--surface-soft); border-radius: 8px; padding: 7px 10px; font-size: 11.5px; }
     .evidence-button:hover { border-color: var(--green); color: var(--green-strong); }
     .assessment-empty { border: 1px dashed var(--line-strong); border-radius: 12px; padding: 22px; text-align: center; color: var(--muted); font-size: 12px; }
+
+    .learning-plan { height: 100%; overflow-y: auto; padding: 28px 32px 48px; }
+    .learning-plan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+    .learning-plan-head h1 { margin: 0 0 6px; font-size: 24px; }
+    .learning-plan-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .plan-context { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+    .plan-context span { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--surface-soft); border-radius: 6px; padding: 6px 9px; color: var(--muted); font-size: 11.5px; }
+    .plan-context span strong { color: var(--ink); }
+    .plan-context .review { border-color: #f2d5c8; background: var(--red-soft); color: var(--red); }
+    .plan-stage { border-top: 1px solid var(--line); padding: 18px 0 4px; }
+    .plan-stage:first-of-type { border-top: 0; padding-top: 0; }
+    .plan-stage-head { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+    .plan-stage-index { width: 28px; height: 28px; display: flex; flex: none; align-items: center; justify-content: center; border-radius: 6px; background: var(--green-soft); color: var(--green-strong); font-size: 12px; font-weight: 700; }
+    .plan-stage-head h2 { margin: 0 0 3px; font-size: 15px; }
+    .plan-stage-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .plan-step-list { display: grid; gap: 6px; padding-left: 40px; }
+    .plan-step { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 52px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 8px 9px; }
+    .plan-step.recommended { border-color: #b9d8c8; background: #fbfefd; }
+    .plan-step-state { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--surface-soft); color: var(--muted); }
+    .plan-step.completed .plan-step-state { background: var(--green); color: #fff; }
+    .plan-step.in_progress .plan-step-state { background: var(--blue-soft); color: var(--blue); }
+    .plan-step-copy { min-width: 0; }
+    .plan-step-copy strong { display: block; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }
+    .plan-step-copy small { display: block; margin-top: 3px; color: var(--muted-soft); font-size: 10.5px; }
+    .plan-step-actions { display: flex; align-items: center; gap: 5px; }
+    .plan-step-actions button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); color: var(--muted); min-width: 30px; height: 30px; padding: 0 7px; font-size: 11px; }
+    .plan-step-actions button:hover { border-color: var(--green); color: var(--green-strong); }
+    .plan-step-actions .plan-question { gap: 4px; color: var(--blue); }
+    .plan-step-actions .plan-question svg { width: 14px; height: 14px; }
+    .plan-empty { margin-left: 40px; padding: 11px 0; color: var(--muted-soft); font-size: 12px; }
+
+    @media (max-width: 620px) {
+      .assessment-levels, .assessment-knowledge-list, .assessment-catalog, .practice-sheet-list { grid-template-columns: 1fr; }
+    }
     .tree-assessment-list { display: grid; gap: 3px; margin: 3px 0 7px; }
     .tree-assessment-row { width: 100%; border: 0; background: transparent; display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 35px; text-align: left; color: var(--muted); font-size: 12px; }
     .tree-assessment-row:hover { background: var(--surface-soft); color: var(--ink); }
@@ -620,6 +761,73 @@
       .editor-runtime { display: none; }
       .assessment-catalog { grid-template-columns: 1fr; }
     }
+    @media (max-width: 720px) {
+      .topbar { padding: 0 10px; gap: 8px; }
+      .brand-copy small, .conn-state, .topbar-user #user-name, .topbar-spacer { display: none; }
+      .brand-copy strong { font-size: 14px; }
+      .mobile-view-switcher { display: flex; margin-left: auto; }
+      .topbar-user { gap: 0; }
+      .layout { display: block; min-width: 0; overflow: hidden; }
+      .layout > .sidebar, .layout > .stage, .layout > .chat { display: none; width: 100%; height: 100%; min-width: 0; }
+      .layout[data-mobile-panel="projects"] > .sidebar { display: flex; }
+      .layout[data-mobile-panel="workspace"] > .stage { display: flex; }
+      .layout[data-mobile-panel="chat"] > .chat { display: flex; }
+      .stage { overflow: hidden; }
+      .learning-editor { width: 100%; min-width: 0; }
+      .detached-editor { display: none; }
+      .chat { border-left: 0; }
+      .fullpage-head { padding: 11px 16px; }
+      .fullpage-body { padding: 16px 14px 40px; }
+      .profile-hero { align-items: flex-start; flex-wrap: wrap; padding: 16px; gap: 12px; }
+      .profile-avatar-xl { width: 52px; height: 52px; font-size: 21px; }
+      .profile-hero-copy { flex: 1 1 calc(100% - 64px); }
+      .profile-hero-copy h2 { font-size: 18px; }
+      .profile-meta-list { display: grid; gap: 5px; }
+      .profile-meta-list span { align-items: flex-start; line-height: 1.55; }
+      .profile-hero-actions { width: 100%; margin-left: 0; }
+      .profile-hero-actions .secondary-btn { width: 100%; justify-content: center; }
+      .fp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .fp-stat { padding: 11px; }
+      .fp-stat strong { font-size: 18px; }
+      .profile-learning-card, .profile-activity-card, .capability-detail-card { padding: 16px; }
+      .profile-section-heading { align-items: flex-start; gap: 7px; }
+      .profile-section-heading h2 { font-size: 15px; }
+      .profile-detail-link { flex: none; max-width: 128px; text-align: right; line-height: 1.45; }
+      .profile-radar-overview { grid-template-columns: 1fr; gap: 12px; }
+      .profile-radar-figure { align-items: flex-start; }
+      .profile-radar-figure figcaption { text-align: left; }
+      .profile-ability-grid { gap: 16px; }
+      .profile-skill-copy { gap: 8px; }
+      .profile-skill-name { white-space: normal; line-height: 1.4; }
+      .profile-learning-actions { align-items: stretch; flex-direction: column; }
+      .profile-learning-actions .primary-btn { width: 100%; justify-content: center; }
+      .profile-activity-item { grid-template-columns: 58px minmax(0, 1fr); gap: 8px; }
+      .profile-activity-copy strong { white-space: normal; line-height: 1.5; }
+      .capability-detail-grid { gap: 10px; }
+      .capability-evidence-item { grid-template-columns: auto minmax(0, 1fr); }
+      .capability-evidence-time { grid-column: 2; }
+      .assessment-center { padding: 20px 16px 36px; }
+      .learning-plan { padding: 20px 16px 36px; }
+      .assessment-center-head { align-items: center; gap: 10px; }
+      .learning-plan-head { align-items: center; gap: 10px; }
+      .assessment-center-head h1 { font-size: 20px; }
+      .learning-plan-head h1 { font-size: 20px; }
+      .assessment-center-head .primary-btn { width: 36px; height: 36px; padding: 0; justify-content: center; font-size: 0; }
+      .assessment-center-head .primary-btn svg { width: 17px; height: 17px; }
+      .assessment-policy { padding: 11px 12px; margin-bottom: 18px; }
+      .assessment-scope { align-items: stretch; flex-direction: column; }
+      .assessment-scope select { width: 100%; min-width: 0; margin-left: 0; }
+      .assessment-card p { min-height: 0; }
+      .practice-sheet-list { grid-template-columns: 1fr; }
+      .plan-step-list { padding-left: 0; }
+      .plan-empty { margin-left: 0; }
+      .assessment-history-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+      .assessment-history-row .evidence-button { grid-column: 1 / -1; justify-self: start; }
+      .quiz-drawer { width: 100%; min-height: 100%; margin: 0; border: 0; border-radius: 0; }
+      .quiz-context { padding: 10px 16px; }
+      .quiz-body { padding: 22px 16px 14px; }
+      .quiz-foot { padding: 12px 16px 16px; }
+    }
   </style>
 </head>
 <body>
@@ -629,12 +837,17 @@
         <span class="brand-mark"><i data-lucide="route"></i></span>
         <span class="brand-copy"><strong>知行课径 Agent</strong><small>个性化自适应学习助手</small></span>
       </div>
+      <nav class="mobile-view-switcher" aria-label="移动端视图">
+        <button class="mobile-view-button" type="button" data-mobile-panel-target="projects" aria-label="项目" title="项目" aria-pressed="false"><i data-lucide="folders"></i></button>
+        <button class="mobile-view-button" type="button" data-mobile-panel-target="workspace" aria-label="学习画布" title="学习画布" aria-pressed="true"><i data-lucide="panel-top"></i></button>
+        <button class="mobile-view-button" type="button" data-mobile-panel-target="chat" aria-label="对话" title="对话" aria-pressed="false"><i data-lucide="message-square"></i></button>
+      </nav>
       <div class="topbar-spacer"></div>
       <span class="conn-state" id="conn-state">连接服务中</span>
       <div class="topbar-user"><span class="avatar" id="user-avatar">学</span><span id="user-name">学习者</span></div>
     </header>
 
-    <div class="layout">
+    <div class="layout" id="app-layout" data-mobile-panel="workspace">
       <aside class="sidebar">
         <div class="sidebar-head">
           <strong>会话与项目</strong>
@@ -686,6 +899,17 @@
               </div>
               <div class="lesson-body" id="lesson-body" data-lesson-role="body"></div>
             </article>
+            <section class="learning-plan" id="learning-plan" hidden aria-label="学习计划">
+              <div class="learning-plan-head">
+                <div>
+                  <h1>学习计划</h1>
+                  <p id="learning-plan-subtitle">正在加载计划…</p>
+                </div>
+                <button class="primary-btn" id="learning-plan-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+              </div>
+              <div class="plan-context" id="learning-plan-context"></div>
+              <div id="learning-plan-stages"></div>
+            </section>
             <section class="assessment-center" id="assessment-center" hidden aria-label="测评中心">
               <div class="assessment-center-head">
                 <div>
@@ -695,9 +919,12 @@
                 <button class="primary-btn" id="assessment-center-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
               </div>
               <div class="assessment-policy"><i data-lucide="shield-check"></i><span>题目只来自已审核题库或经校验的智能体候选题；联网检索仅用于发现权威资料，不会直接拼成正式测评题。</span></div>
-              <h2 class="assessment-section-title"><i data-lucide="list-checks"></i>选择检测方式</h2>
-              <label class="assessment-scope"><span>阶段检查与自主检测范围</span><select id="assessment-scope"></select></label>
+              <h2 class="assessment-section-title"><i data-lucide="badge-check"></i>阶段测试</h2>
+              <label class="assessment-scope" id="assessment-stage-scope"><span>检测学习路径中的章节</span><select id="assessment-scope"></select></label>
               <div class="assessment-catalog" id="assessment-catalog"></div>
+              <h2 class="assessment-section-title"><i data-lucide="list-checks"></i>自主练习题单</h2>
+              <div class="practice-sheet-summary" id="practice-sheet-summary"><i data-lucide="layers-3"></i><span>加载目标完整知识范围…</span></div>
+              <div class="practice-sheet-list" id="practice-sheet-list"></div>
               <h2 class="assessment-section-title"><i data-lucide="history"></i>测评记录</h2>
               <div class="assessment-history" id="assessment-history"></div>
             </section>
@@ -728,61 +955,55 @@
                 <div class="fp-card profile-hero">
                   <span class="profile-avatar-xl" id="fp-avatar">学</span>
                   <div class="profile-hero-copy">
-                    <h2 id="fp-name">学习者</h2>
+                    <h2 id="fp-name">林同学</h2>
                     <p id="fp-id">STU-DEMO-001</p>
-                    <p class="fp-program" id="fp-program">软件技术专业 · Java 应用开发</p>
+                    <div class="profile-meta-list">
+                      <span><i data-lucide="graduation-cap"></i>当前专业：<b id="fp-program">Java 应用开发</b></span>
+                      <span><i data-lucide="book-open-check"></i>当前学习目标：<b id="fp-learning-goal">加载中</b></span>
+                      <span><i data-lucide="briefcase-business"></i>职业目标：<b id="fp-career-goal">暂未设置</b></span>
+                    </div>
                   </div>
+                  <div class="profile-hero-actions"><button class="secondary-btn" id="profile-adjust-goal" type="button"><i data-lucide="sliders-horizontal"></i>调整目标</button></div>
                 </div>
                 <div class="fp-stats">
-                  <div class="fp-stat"><strong id="fp-stat-projects">0</strong><small>学习项目</small></div>
-                  <div class="fp-stat"><strong id="fp-stat-explanations">0</strong><small>讲解会话</small></div>
-                  <div class="fp-stat"><strong id="fp-stat-attempts">0</strong><small>练习作答</small></div>
+                  <button class="fp-stat" type="button" data-profile-metric="projects"><strong id="fp-stat-projects">0</strong><small>学习项目</small></button>
+                  <button class="fp-stat" type="button" data-profile-metric="explanations"><strong id="fp-stat-explanations">0</strong><small>讲解会话</small></button>
+                  <button class="fp-stat" type="button" data-profile-metric="attempts"><strong id="fp-stat-attempts">0</strong><small>练习作答</small></button>
+                  <button class="fp-stat" type="button" data-profile-metric="mastery"><strong id="fp-stat-mastery">待测评</strong><small>知识掌握度</small></button>
                 </div>
-                <div class="fp-tiles">
-                  <button class="fp-tile" id="fp-tile-portrait">
-                    <span class="fp-tile-icon"><i data-lucide="user-round"></i></span>
-                    <span class="fp-tile-copy"><strong>用户画像</strong><small>能力雷达 · 岗位能力图谱 · 知识点掌握 · 补强建议</small></span>
-                    <i data-lucide="chevron-right"></i>
-                  </button>
-                </div>
+                <section class="fp-card profile-learning-card" aria-labelledby="profile-ability-title">
+                  <div class="profile-section-heading">
+                    <i data-lucide="chart-no-axes-combined"></i>
+                    <h2 id="profile-ability-title">学习能力画像</h2>
+                    <button class="profile-detail-link" id="profile-view-capability-detail" type="button">查看完整能力详情<i data-lucide="arrow-up-right"></i></button>
+                  </div>
+                  <div id="profile-ability-radar"><p class="profile-empty-state">正在加载六维学习能力…</p></div>
+                  <div class="profile-ability-grid">
+                    <div class="profile-ability-column" id="profile-model-summary"><p class="profile-empty-state">正在加载当前目标能力模型…</p></div>
+                    <div class="profile-ability-column" id="profile-strength-summary"><p class="profile-empty-state">正在加载补强建议…</p></div>
+                  </div>
+                  <div class="profile-learning-actions">
+                    <small id="profile-today-reason">推荐依据加载中…</small>
+                    <button class="primary-btn" id="profile-start-today" type="button"><i data-lucide="play"></i>开始今日学习</button>
+                  </div>
+                </section>
+                <section class="fp-card profile-activity-card" id="profile-activity" aria-labelledby="profile-activity-title">
+                  <div class="profile-section-heading"><i data-lucide="history"></i><h2 id="profile-activity-title">最近学习动态</h2></div>
+                  <div class="profile-activity-list" id="profile-activity-list"><p class="profile-empty-state">正在加载学习动态…</p></div>
+                </section>
               </div>
             </section>
 
-            <section class="fullpage" id="workspace-portrait" hidden>
+            <section class="fullpage" id="workspace-capability-detail" hidden>
               <header class="fullpage-head">
                 <div class="fullpage-title">
-                  <div class="eyebrow"><i data-lucide="user-round"></i> 用户画像</div>
-                  <h1>我的能力画像</h1>
+                  <div class="eyebrow"><i data-lucide="network"></i> 能力详情</div>
+                  <h1 id="capability-detail-page-title">完整能力详情</h1>
                 </div>
               </header>
-              <div class="fullpage-body portrait-body">
-                <div class="portrait-kpi" id="portrait-kpi"></div>
-                <div class="portrait-grid">
-                  <div class="portrait-card portrait-card-wide" id="portrait-job-graph-card" hidden>
-                    <h3><span class="dot"></span>岗位能力图谱</h3>
-                    <div class="job-graph-list" id="portrait-job-graphs"></div>
-                  </div>
-                  <div class="portrait-card">
-                    <h3><span class="dot"></span>能力雷达</h3>
-                    <svg class="radar-svg" id="radar-svg" viewBox="0 0 320 320" role="img" aria-label="能力雷达图"></svg>
-                  </div>
-                  <div class="portrait-card">
-                    <h3><span class="dot"></span>学习风格</h3>
-                    <div class="style-block" id="portrait-style"></div>
-                  </div>
-                  <div class="portrait-card">
-                    <h3><span class="dot"></span>补强建议</h3>
-                    <div id="portrait-weak"></div>
-                  </div>
-                  <div class="portrait-card">
-                    <h3><span class="dot"></span>知识点掌握</h3>
-                    <div id="portrait-points"></div>
-                  </div>
-                  <div class="portrait-card portrait-card-wide">
-                    <h3><span class="dot"></span>画像数据依据</h3>
-                    <div class="portrait-evidence-list" id="portrait-evidence"></div>
-                  </div>
-                </div>
+              <div class="fullpage-body">
+                <p class="capability-detail-intro" id="capability-detail-intro">正在加载当前学习目标的能力详情…</p>
+                <div class="capability-detail-grid" id="capability-detail-root"></div>
               </div>
             </section>
 
@@ -825,11 +1046,6 @@
         </section>
       </main>
 
-      <dialog class="evidence-dialog" id="evidence-dialog">
-        <div class="evidence-dialog-head"><i data-lucide="file-search"></i><strong>测评证据记录</strong><button class="close-btn" id="evidence-dialog-close" type="button"><i data-lucide="x"></i></button></div>
-        <div class="evidence-dialog-body" id="evidence-dialog-body"></div>
-      </dialog>
-
       <aside class="chat">
         <div class="chat-head">
           <span class="bot-icon"><i data-lucide="sparkles"></i></span>
@@ -858,6 +1074,44 @@
         </div>
       </aside>
     </div>
+
+    <dialog class="evidence-dialog" id="evidence-dialog">
+      <div class="evidence-dialog-head"><i data-lucide="file-search"></i><strong>测评证据记录</strong><button class="close-btn" id="evidence-dialog-close" type="button"><i data-lucide="x"></i></button></div>
+      <div class="evidence-dialog-body" id="evidence-dialog-body"></div>
+    </dialog>
+
+    <dialog class="profile-goal-dialog" id="profile-goal-dialog">
+      <form class="profile-goal-form" id="profile-goal-form">
+        <h2><i data-lucide="sliders-horizontal"></i>调整学习目标</h2>
+        <p>提交后会把调整请求带入项目对话，由助手确认目标范围并创建或更新对应学习项目。</p>
+        <div class="profile-goal-fields">
+          <label>目标类型
+            <select name="goal_type">
+              <option value="course">课程或实训</option>
+              <option value="job">应聘岗位</option>
+              <option value="competition">技能竞赛</option>
+              <option value="self_improvement">自我提升</option>
+            </select>
+          </label>
+          <label id="profile-goal-name-label">目标岗位或课程
+            <input name="goal_name" type="text" maxlength="80" placeholder="例如：Java 面向对象程序设计实训" required>
+          </label>
+          <label>学习周期
+            <select name="study_period">
+              <option value="2 周">2 周</option>
+              <option value="4 周" selected>4 周</option>
+              <option value="8 周">8 周</option>
+              <option value="本学期">本学期</option>
+            </select>
+          </label>
+        </div>
+        <p class="profile-goal-help" id="profile-goal-help"></p>
+        <div class="profile-goal-actions">
+          <button class="dialog-secondary" id="profile-goal-cancel" type="button">取消</button>
+          <button class="primary-btn" type="submit"><i data-lucide="send"></i>发送给助手确认</button>
+        </div>
+      </form>
+    </dialog>
 
     <div class="selection-toolbar" id="selection-toolbar" hidden role="toolbar" aria-label="正文位置操作">
       <button id="selection-ask" type="button"><i data-lucide="message-circle-question"></i>询问导师</button>
@@ -894,13 +1148,18 @@
     const welcomeEl = $("welcome-view");
     const lessonEl = $("lesson-view");
     const drawerEl = $("quiz-drawer");
+    const learningPlanEl = $("learning-plan");
     const assessmentCenterEl = $("assessment-center");
     const stageEl = $("stage");
     const editorPageEl = $("editor-page");
     const editorTabsEl = document.querySelector(".editor-tabs");
+    const layoutEl = $("app-layout");
+    const mobileViewButtons = Array.from(document.querySelectorAll("[data-mobile-panel-target]"));
     const profileEl = $("workspace-profile");
-    const portraitEl = $("workspace-portrait");
+    const capabilityDetailEl = $("workspace-capability-detail");
     const settingsViewEl = $("workspace-settings");
+    const VDITOR_ASSET_ROOT = new URL("vendor/vditor", window.location.href).href.replace(/\/$/, "");
+    const LESSON_SAVE_RETRY_DELAYS = [1000, 3000];
 
     const state = {
       projects: [],        // 项目摘要列表（左栏）
@@ -912,20 +1171,38 @@
       activeTabId: "home",
       draggingTabId: null,
       assessmentCatalog: [],
+      planQuestionContext: null,
+      practiceSheets: [],
       assessmentHistory: [],
       expandedProjects: new Set(),
       expandedProjectsInitialized: false,
+      projectDetails: new Map(),
+      projectDetailRequests: new Map(),
       conversations: new Map(),
       activeConversationKey: "",
       chatTools: { knowledge: true, web: true, materials: false },
+      materialKnowledgeAvailable: false,
+      materialKnowledgeStatus: "disabled",
       notesByLesson: new Map(),
       selectionContext: null,
       selectionRange: null,
       noteDraft: null,
       pendingProjectDeletion: null,
+      lessonDocumentSaves: new Map(),
+      profileDashboard: null,
     };
 
     function icons() { if (window.lucide) lucide.createIcons(); }
+    function setMobilePanel(panel) {
+      const nextPanel = ["projects", "workspace", "chat"].includes(panel) ? panel : "workspace";
+      layoutEl.dataset.mobilePanel = nextPanel;
+      mobileViewButtons.forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.mobilePanelTarget === nextPanel));
+      });
+    }
+    mobileViewButtons.forEach((button) => {
+      button.onclick = () => setMobilePanel(button.dataset.mobilePanelTarget);
+    });
     function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
     function escapeHtml(s) {
       return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -979,7 +1256,15 @@
     }
 
     function lessonNotes(tab) {
+      return allLessonNotes(tab).filter((note) => !noteTags(note).includes("lesson_document_override"));
+    }
+
+    function allLessonNotes(tab) {
       return state.notesByLesson.get(lessonNotesKey(tab.projectId, tab.knowledgePointId)) || [];
+    }
+
+    function lessonDocumentOverride(tab) {
+      return allLessonNotes(tab).find((note) => noteTags(note).includes("lesson_document_override")) || null;
     }
 
     async function loadLessonNotes(tab, force = false) {
@@ -1565,7 +1850,7 @@
     function formatQuestionSource(source) {
       const labels = {
         ai_generated_reviewed: "智能生成 · 已校验",
-        ai_generated_unreviewed: "智能生成 · 未审核",
+        ai_generated_unreviewed: "候选练习题 · 待审核",
         curated_bank: "审核题库",
         source_pending: "题源校验中",
       };
@@ -1577,9 +1862,10 @@
       welcomeEl.hidden = view !== "welcome";
       lessonEl.hidden = view !== "lesson";
       drawerEl.hidden = view !== "quiz";
+      learningPlanEl.hidden = view !== "learning_plan";
       assessmentCenterEl.hidden = view !== "assessment_center";
       profileEl.hidden = view !== "profile";
-      portraitEl.hidden = view !== "portrait";
+      capabilityDetailEl.hidden = view !== "capability_detail";
       settingsViewEl.hidden = view !== "settings";
     }
 
@@ -1593,7 +1879,7 @@
         const tabEl = document.createElement("div");
         tabEl.className = "editor-tab" +
           (state.activeTabId === tab.id ? " active" : "") +
-          (["quiz", "assessment_center"].includes(tab.view) ? " assessment-tab" : "");
+          (["quiz", "assessment_center", "learning_plan"].includes(tab.view) ? " assessment-tab" : "");
         tabEl.dataset.workspaceTab = tab.id;
         tabEl.setAttribute("role", "tab");
         tabEl.setAttribute("tabindex", "0");
@@ -1604,9 +1890,10 @@
           welcome: "layout-dashboard",
           quiz: "clipboard-list",
           assessment_center: "clipboard-list",
+          learning_plan: "route",
           lesson: "file-text",
           profile: "user",
-          portrait: "user-round",
+          capability_detail: "network",
           settings: "settings",
         }[tab.view] || "file-text";
         tabEl.innerHTML =
@@ -1668,9 +1955,10 @@
       syncActivePathItem(tab);
       if (tab.view === "lesson") renderLessonTab(tab);
       if (tab.view === "quiz") renderQuiz();
+      if (tab.view === "learning_plan") loadLearningPlan(tab.projectId);
       if (tab.view === "assessment_center") loadAssessmentCenter(tab.projectId);
       if (tab.view === "profile") loadProfilePage();
-      if (tab.view === "portrait") loadPortraitPage();
+      if (tab.view === "capability_detail") loadCapabilityDetailPage();
       if (tab.view === "settings") loadSettingsPage();
       editorPageEl.scrollTop = tab.scrollTop || 0;
     }
@@ -1684,6 +1972,7 @@
     }
 
     function showWorkspaceView(view, options = {}) {
+      setMobilePanel("workspace");
       if (view === "welcome") {
         upsertWorkspaceTab({ id: "home", view: "welcome", title: "学习工作台" });
         return;
@@ -1692,7 +1981,9 @@
         ? "quiz:" + (options.projectId || (state.quiz && state.quiz.project_id) || "current")
         : view === "assessment_center"
           ? "assessment-center:" + (options.projectId || "current")
-          : ["profile", "portrait", "settings"].includes(view)
+          : view === "learning_plan"
+            ? "learning-plan:" + (options.projectId || "current")
+          : ["profile", "capability_detail", "settings"].includes(view)
             ? view
             : options.tabId;
       if (!fallbackId) return;
@@ -1702,8 +1993,9 @@
         title: options.title || ({
           quiz: "能力测评",
           assessment_center: "测评中心",
+          learning_plan: "学习计划",
           profile: "个人中心",
-          portrait: "用户画像",
+          capability_detail: "能力详情",
           settings: "设置",
         }[view] || "课程讲解"),
         projectId: options.projectId || (state.quiz && state.quiz.project_id) || "",
@@ -1724,17 +2016,31 @@
     }
 
     async function api(path, options = {}) {
-      const response = await fetch(path, {
-        method: options.method || "GET",
-        headers: { "Content-Type": "application/json" },
-        body: options.body ? JSON.stringify(options.body) : undefined,
-      });
-      let data = {};
-      try { data = await response.json(); } catch (_) { /* 非 JSON 响应 */ }
-      if (!response.ok) {
-        throw new Error(data.user_message || data.message || `请求失败（HTTP ${response.status}）`);
+      const controller = options.timeoutMs ? new AbortController() : null;
+      const timeout = controller
+        ? window.setTimeout(() => controller.abort(), options.timeoutMs)
+        : null;
+      try {
+        const response = await fetch(path, {
+          method: options.method || "GET",
+          headers: { "Content-Type": "application/json" },
+          body: options.body ? JSON.stringify(options.body) : undefined,
+          signal: controller ? controller.signal : undefined,
+        });
+        let data = {};
+        try { data = await response.json(); } catch (_) { /* 非 JSON 响应 */ }
+        if (!response.ok) {
+          throw new Error(data.user_message || data.message || `请求失败（HTTP ${response.status}）`);
+        }
+        return data;
+      } catch (error) {
+        if (error && error.name === "AbortError") {
+          throw new Error("请求超时，请重试");
+        }
+        throw error;
+      } finally {
+        if (timeout) window.clearTimeout(timeout);
       }
-      return data;
     }
 
     /* ================= 对话 ================= */
@@ -1872,6 +2178,7 @@
         const history = result.messages || [];
         if (!history.length) {
           initializeConversation(conversation, project);
+          await ensureProjectAssessmentPrompt(conversation, project);
           return;
         }
         conversation.initialized = true;
@@ -1885,6 +2192,7 @@
             : "<p>" + escapeHtml(item.content).replace(/\n/g, "<br/>") + "</p>";
           addMsg(role, html, conversation.key);
         });
+        await ensureProjectAssessmentPrompt(conversation, project);
       } catch (_) {
         conversation.historyLoaded = false;
         initializeConversation(conversation, project);
@@ -1895,18 +2203,25 @@
       const tab = workspaceTab(state.activeTabId);
       if (!tab) return {};
       if (projectId && tab.projectId && tab.projectId !== projectId) return {};
+      const planContext = state.planQuestionContext &&
+        state.planQuestionContext.project_id === (projectId || tab.projectId)
+        ? state.planQuestionContext
+        : {};
       return {
         view: tab.view || "",
         project_id: tab.projectId || "",
-        knowledge_point_id: tab.knowledgePointId || "",
-        knowledge_point_name: tab.title || "",
+        knowledge_point_id: planContext.knowledge_point_id || tab.knowledgePointId || "",
+        knowledge_point_name: planContext.knowledge_point_name || tab.title || "",
         assessment_type: state.quiz && state.quiz.assessment_type || "",
+        plan_step_id: planContext.step_id || "",
+        plan_stage_id: planContext.stage_id || "",
       };
     }
 
     function requestWorkspaceContext(projectId, selected) {
       if (!selected.selected_text) return currentWorkspaceContext(projectId);
       return {
+        ...currentWorkspaceContext(projectId),
         view: "lesson",
         project_id: projectId,
         knowledge_point_id: selected.knowledge_point_id,
@@ -2009,6 +2324,195 @@
       icons();
     }
 
+    function assessmentIntakeCardHtml(project, detail, assessmentReady) {
+      const points = (detail.goal_knowledge_points || ((detail.learning_path || {}).items) || []);
+      const inputName = "assessment-level-" + String(project.project_id || "project").replace(/[^a-zA-Z0-9_-]/g, "-");
+      const knowledgeHtml = points.map((item) =>
+        '<label class="assessment-knowledge-option">' +
+          '<input type="checkbox" value="' + escapeHtml(item.knowledge_point_id) + '">' +
+          '<span>' + escapeHtml(item.knowledge_point_name) + "</span>" +
+        "</label>"
+      ).join("");
+      return '<div class="quiz-card assessment-intake-card" data-assessment-intake data-assessment-intake-project="' + escapeHtml(project.project_id || "") + '">' +
+        '<div class="qc-head"><i data-lucide="scan-search"></i> 初始能力了解</div>' +
+        '<p>你目前对这个目标的掌握情况如何？这一步只记录自述，不直接作为掌握度。</p>' +
+        '<fieldset class="assessment-intake-fieldset"><legend>当前基础</legend>' +
+          '<div class="assessment-levels">' +
+            [["zero_foundation", "零基础"], ["basic", "有一些基础"], ["experienced", "有实践经验"], ["uncertain", "不确定"]].map((entry) =>
+              '<label class="assessment-level-option"><input type="radio" name="' + inputName + '" value="' + entry[0] + '"><span>' + entry[1] + "</span></label>"
+            ).join("") +
+          "</div>" +
+        "</fieldset>" +
+        '<div class="assessment-knowledge-panel" hidden>' +
+          '<p><strong>哪些知识点是你自认为比较熟练的？</strong></p>' +
+          '<div class="assessment-knowledge-list">' + (knowledgeHtml || '<span class="assessment-intake-note">当前路径暂无可选知识点</span>') + "</div>" +
+          '<div class="assessment-intake-note"><i data-lucide="info"></i><span>所选知识点会被重点验证；未选知识点仍会有少量筛查，不会直接判定为不会。</span></div>' +
+        "</div>" +
+        '<div class="assessment-intake-note"><i data-lucide="shield-check"></i><span>' +
+          escapeHtml(assessmentReady
+            ? "只有测评作答证据会更新画像；自述只用于决定组卷重点。"
+            : "当前方向尚无已审核正式能力包，自评会保留，但练习题单不会更新画像。") +
+        "</span></div>" +
+        '<div class="quiz-actions">' +
+          '<button class="primary-btn blue submit-assessment-intake" disabled><i data-lucide="arrow-right"></i> 继续</button>' +
+          '<button class="ghost-link show-created-path" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">先看学习路径</button>' +
+        "</div>" +
+        '<p class="assessment-intake-error" hidden style="color:var(--red);margin-top:8px"></p>' +
+      "</div>";
+    }
+
+    function assessmentResumeCardHtml(project, activeAssessment) {
+      const isActive = Boolean(activeAssessment && activeAssessment.assessment_id);
+      const isPractice = activeAssessment && activeAssessment.assessment_type === "provisional_self_check" || project.assessment_state !== "ready";
+      const assessmentLabel = isPractice ? "练习型初测" : "初始测评";
+      return '<div class="quiz-card assessment-intake-card" data-assessment-resume-project="' + escapeHtml(project.project_id || "") + '">' +
+        '<div class="qc-head"><i data-lucide="' + (isActive ? "rotate-cw" : "clipboard-check") + '"></i> ' + assessmentLabel + '</div>' +
+        '<p>' + escapeHtml(isActive
+          ? assessmentLabel + "尚未完成，可以从上次未作答的题目继续。"
+          : "基础情况已经记录，" + assessmentLabel + "等待开始。") + '</p>' +
+        '<div class="quiz-actions"><button class="primary-btn blue" data-resume-initial-assessment><i data-lucide="play"></i>' +
+          (isActive ? "继续" + assessmentLabel : "开始" + assessmentLabel) +
+        "</button></div></div>";
+    }
+
+    function openStoredAssessment(projectId, assessment) {
+      state.quiz = {
+        project_id: projectId,
+        assessment_id: assessment.assessment_id,
+        assessment_type: assessment.assessment_type,
+        title: assessment.title,
+        stakes: assessment.stakes,
+        blueprint: assessment.blueprint || {},
+        source_policy: assessment.source_policy || "",
+        questions: assessment.questions || [],
+        index: assessment.index || 0,
+        answers: new Array((assessment.questions || []).length).fill(null),
+      };
+      $("quiz-title").textContent = assessment.title || "初始测评";
+      openDrawer();
+      renderQuiz();
+    }
+
+    function bindAssessmentIntakeCard(intakeCard, project, projectDetail, conversation) {
+      if (!intakeCard || intakeCard.dataset.bound === "true") return;
+      intakeCard.dataset.bound = "true";
+      const assessmentReady = project.assessment_state === "ready";
+      const levelInputs = Array.from(intakeCard.querySelectorAll('.assessment-level-option input'));
+      const knowledgePanel = intakeCard.querySelector(".assessment-knowledge-panel");
+      const knowledgeInputs = Array.from(intakeCard.querySelectorAll('.assessment-knowledge-option input'));
+      const submitButton = intakeCard.querySelector(".submit-assessment-intake");
+      const errorEl = intakeCard.querySelector(".assessment-intake-error");
+      const syncIntake = () => {
+        const selectedLevel = levelInputs.find((input) => input.checked);
+        const isZero = selectedLevel && selectedLevel.value === "zero_foundation";
+        knowledgePanel.hidden = !selectedLevel || isZero;
+        knowledgeInputs.forEach((input) => { input.disabled = Boolean(isZero); });
+        submitButton.disabled = !selectedLevel;
+        submitButton.innerHTML = isZero
+          ? '<i data-lucide="book-open"></i> 按零基础开始学习'
+          : assessmentReady
+            ? '<i data-lucide="play"></i> 生成初始测评'
+            : '<i data-lucide="save"></i> 保存基础情况';
+        icons();
+      };
+      levelInputs.forEach((input) => { input.onchange = syncIntake; });
+      submitButton.onclick = async () => {
+        const selectedLevel = levelInputs.find((input) => input.checked);
+        if (!selectedLevel) return;
+        const claimedIds = knowledgeInputs
+          .filter((input) => input.checked && !input.disabled)
+          .map((input) => input.value);
+        errorEl.hidden = true;
+        submitButton.disabled = true;
+        try {
+          const intake = await api("/api/projects/" + encodeURIComponent(project.project_id) + "/assessments/intake", {
+            method: "POST",
+            body: {
+              student_id: STUDENT_ID,
+              self_reported_level: selectedLevel.value,
+              claimed_knowledge_point_ids: claimedIds,
+            },
+          });
+          addMsg("bot", "<p>" + escapeHtml(intake.message) + "</p>", conversation.key);
+          levelInputs.forEach((input) => { input.disabled = true; });
+          knowledgeInputs.forEach((input) => { input.disabled = true; });
+          submitButton.innerHTML = '<i data-lucide="check"></i> 基础情况已保存';
+          await refreshProjects();
+          renderProjectTree();
+          if (intake.should_start_initial_assessment) {
+            await startProjectAssessment(
+              project.project_id,
+              intake.suggested_assessment_type || "initial_diagnostic",
+              "",
+              {
+                conversationKey: conversation.key,
+                announce: true,
+              },
+            );
+          } else {
+            await openAssessmentCenter(project.project_id);
+          }
+        } catch (error) {
+          errorEl.textContent = error.message;
+          errorEl.hidden = false;
+          submitButton.disabled = false;
+        }
+        icons();
+      };
+    }
+
+    async function ensureProjectAssessmentPrompt(conversation, project) {
+      if (!conversation || !project) return;
+      if (!["awaiting_intake", "awaiting_assessment", "awaiting_practice", "awaiting_reviewed_sources", "in_progress"].includes(project.initial_assessment_state)) return;
+      const projectSelectorValue = String(project.project_id || "").replace(/"/g, '\\"');
+      const selector = '[data-assessment-intake-project="' + projectSelectorValue + '"], [data-assessment-resume-project="' + projectSelectorValue + '"]';
+      if (conversation.messages.querySelector(selector)) return;
+      try {
+        const detailResult = await api("/api/projects/" + encodeURIComponent(project.project_id) + "?student_id=" + encodeURIComponent(STUDENT_ID));
+        const detail = detailResult.project || project;
+        const activeAssessment = detail.active_assessment || {};
+        const hasSelfReport = Boolean((detail.initial_knowledge_self_report || {}).self_report_id);
+        const suggestedAssessmentType = activeAssessment.assessment_type || (
+          detail.assessment_state === "ready" ? "initial_diagnostic" : "provisional_self_check"
+        );
+        if (
+          ["initial_diagnostic", "provisional_self_check"].includes(activeAssessment.assessment_type) ||
+          (hasSelfReport && ["awaiting_assessment", "awaiting_practice"].includes(detail.initial_assessment_state))
+        ) {
+          const messageEl = addMsg(
+            "bot",
+            assessmentResumeCardHtml(project, activeAssessment),
+            conversation.key,
+          );
+          messageEl.querySelector("[data-resume-initial-assessment]").onclick = async () => {
+            if (activeAssessment.assessment_id) {
+              openStoredAssessment(project.project_id, activeAssessment);
+            } else {
+              await startProjectAssessment(project.project_id, suggestedAssessmentType, "", {
+                conversationKey: conversation.key,
+                announce: true,
+              });
+            }
+          };
+          icons();
+          return;
+        }
+        if (hasSelfReport) return;
+        const messageEl = addMsg(
+          "bot",
+          assessmentIntakeCardHtml(project, detail, project.assessment_state === "ready"),
+          conversation.key,
+        );
+        bindAssessmentIntakeCard(
+          messageEl.querySelector("[data-assessment-intake]"),
+          project,
+          detail,
+          conversation,
+        );
+        icons();
+      } catch (_) {}
+    }
+
     async function renderProjectCreated(result, sourceConversationKey) {
       const project = result.project;
       const planningReady = project.planning_state === "ready";
@@ -2017,6 +2521,13 @@
       if (state.activeConversationKey === conversation.key) state.current = project;
       state.expandedProjects.add(project.project_id);
       await refreshProjects();
+      let projectDetail = project;
+      try {
+        const detailResult = await api("/api/projects/" + encodeURIComponent(project.project_id) + "?student_id=" + encodeURIComponent(STUDENT_ID));
+        projectDetail = detailResult.project || project;
+      } catch (_error) {
+        projectDetail = project;
+      }
       const constraintParts = [];
       const constraints = project.goal_constraints || {};
       if (constraints.duration_text) constraintParts.push("期限：" + constraints.duration_text);
@@ -2024,25 +2535,8 @@
       const constraintHtml = constraintParts.length
         ? '<p style="color:var(--muted)">' + escapeHtml(constraintParts.join(" · ")) + "</p>"
         : "";
-      const nextCard = planningReady && assessmentReady
-        ? "<p>为了给你生成真正个性化的学习路径，请先完成一次能力测评（约 3 分钟）。</p>" +
-          '<div class="quiz-card">' +
-            '<div class="qc-head"><i data-lucide="clipboard-list"></i> 能力测评 · 根据目标取样</div>' +
-            "<p>系统会按目标抽取知识点，分析作答证据并更新薄弱项与学习顺序。</p>" +
-            '<div class="quiz-actions">' +
-              '<button class="primary-btn blue" id="start-quiz-btn"><i data-lucide="play"></i> 开始测评</button>' +
-              '<button class="ghost-link" id="later-quiz-btn" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">先看学习路径</button>' +
-            "</div>" +
-          "</div>"
-        : planningReady
-          ? '<div class="quiz-card">' +
-            '<div class="qc-head"><i data-lucide="route"></i> 候选学习路径已生成</div>' +
-            "<p>正式题源尚未审核。你可以先做不写入画像的 AI 临时自检，或查看候选路径；系统不会套用其他领域题目。</p>" +
-            '<div class="quiz-actions">' +
-              '<button class="primary-btn blue" id="open-provisional-assessment"><i data-lucide="flask-conical"></i> AI 临时自检</button>' +
-              '<button class="primary-btn" id="later-quiz-btn"><i data-lucide="map"></i> 查看候选路径</button>' +
-            '</div>' +
-          "</div>"
+      const nextCard = planningReady
+        ? assessmentIntakeCardHtml(project, projectDetail, assessmentReady)
           : '<div class="quiz-card">' +
             '<div class="qc-head"><i data-lucide="search-check"></i> 知识结构校验中</div>' +
             "<p>该目标尚未绑定已审核的知识图谱。系统会先检索课程标准、岗位要求或权威资料，再生成可追溯路径与测评。</p>" +
@@ -2054,12 +2548,11 @@
       const last = conversation.key === state.activeConversationKey
         ? messagesEl.lastElementChild
         : conversation.messages.lastElementChild;
-      const startButton = last.querySelector("#start-quiz-btn");
-      const pathButton = last.querySelector("#later-quiz-btn");
-      const provisionalButton = last.querySelector("#open-provisional-assessment");
-      if (startButton) startButton.onclick = startQuiz;
+      const intakeCard = last.querySelector("[data-assessment-intake]");
+      const pathButton = last.querySelector(".show-created-path");
       if (pathButton) pathButton.onclick = () => sendGoal("查看学习路径");
-      if (provisionalButton) provisionalButton.onclick = () => openAssessmentCenter(project.project_id);
+      bindAssessmentIntakeCard(intakeCard, project, projectDetail, conversation);
+      icons();
     }
 
     async function handleAgentResult(result, conversationKey) {
@@ -2134,6 +2627,8 @@
       const conversation = activeConversation();
       const conversationKey = conversation.key;
       const requestProjectId = conversation.projectId;
+      const usedPlanQuestionContext = state.planQuestionContext &&
+        state.planQuestionContext.project_id === requestProjectId;
       const selected = state.selectionContext && state.selectionContext.tab.projectId === requestProjectId
         ? selectionPayload()
         : {};
@@ -2161,12 +2656,14 @@
             use_knowledge_base: state.chatTools.knowledge,
             allow_web_search: state.chatTools.web,
             force_web_search: state.chatTools.web && /上网|联网|搜索|最新|官网|近期/.test(message),
+            use_learning_materials: state.chatTools.materials,
           },
         });
         await handleAgentResult(result, conversationKey);
       } catch (error) {
         addMsg("bot", "<p><strong>Tutor 暂时无法完成操作：</strong>" + escapeHtml(error.message) + "</p>", conversationKey);
       } finally {
+        if (usedPlanQuestionContext) state.planQuestionContext = null;
         setInputEnabled(true);
         const finalKey = state.conversations.has(conversationKey)
           ? conversationKey
@@ -2181,6 +2678,121 @@
       $("chat-textarea").value = "";
       await requestAgentTurn(value);
     }
+
+    /* ================= 学习计划 ================= */
+    async function openLearningPlan(projectId) {
+      if (!projectId) return;
+      const project = state.projects.find((item) => item.project_id === projectId);
+      if (project) {
+        const conversation = switchConversation(projectConversationKey(projectId), project);
+        await loadConversationHistory(conversation, project);
+        state.current = project;
+        renderProjectTree();
+      }
+      showWorkspaceView("learning_plan", { title: "学习计划", projectId });
+    }
+
+    async function loadLearningPlan(projectId) {
+      if (!projectId) return;
+      $("learning-plan-subtitle").textContent = "正在加载计划…";
+      $("learning-plan-context").innerHTML = "";
+      $("learning-plan-stages").innerHTML = '<div class="assessment-empty">正在加载学习计划…</div>';
+      try {
+        const result = await api(
+          "/api/projects/" + encodeURIComponent(projectId) +
+          "/plan?student_id=" + encodeURIComponent(STUDENT_ID),
+        );
+        const plan = result.learning_plan || {};
+        const context = plan.context || {};
+        const next = plan.recommended_step || {};
+        $("learning-plan-subtitle").textContent = (result.goal_name || "当前项目") +
+          " · 计划进度 " + String(plan.progress || 0) + "%" +
+          (next.knowledge_point_name ? " · 下一步：" + next.knowledge_point_name : "");
+        $("learning-plan-context").innerHTML =
+          '<span><i data-lucide="badge-check"></i><strong>' + escapeHtml((context.known || []).length) + '</strong> 已验证</span>' +
+          '<span><i data-lucide="circle-help"></i><strong>' + escapeHtml((context.unknown || []).length) + '</strong> 待验证</span>' +
+          '<span class="review"><i data-lucide="rotate-ccw"></i><strong>' + escapeHtml((context.review || []).length) + '</strong> 待补强</span>';
+        $("learning-plan-stages").innerHTML = (plan.stages || []).map((stage) => {
+          const steps = stage.steps || [];
+          const stepHtml = steps.length ? steps.map((step) => {
+            const status = step.status || "not_started";
+            const stateIcon = status === "completed" ? "check" : status === "in_progress" ? "play" : "circle";
+            const stateLabel = {
+              not_started: "未开始",
+              in_progress: "学习中",
+              completed: "已完成",
+            }[status] || "未开始";
+            return '<div class="plan-step ' + escapeHtml(status) + (step.recommended ? " recommended" : "") + '">' +
+              '<span class="plan-step-state"><i data-lucide="' + stateIcon + '"></i></span>' +
+              '<span class="plan-step-copy"><strong>' + escapeHtml(step.knowledge_point_name) + '</strong><small>' + escapeHtml(stateLabel) + '</small></span>' +
+              '<span class="plan-step-actions">' +
+                '<button type="button" data-plan-start="' + escapeHtml(step.step_id) + '" data-plan-kp="' + escapeHtml(step.knowledge_point_id) + '" data-plan-name="' + escapeHtml(step.knowledge_point_name) + '" title="开始学习" aria-label="开始学习 ' + escapeHtml(step.knowledge_point_name) + '"><i data-lucide="play"></i></button>' +
+                '<button class="plan-question" type="button" data-plan-question="' + escapeHtml(step.step_id) + '" data-plan-stage="' + escapeHtml(stage.stage_id) + '" data-plan-kp="' + escapeHtml(step.knowledge_point_id) + '" data-plan-name="' + escapeHtml(step.knowledge_point_name) + '" title="就此提问"><i data-lucide="message-circle-question"></i><span>就此提问</span></button>' +
+                '<button type="button" data-plan-complete="' + escapeHtml(step.step_id) + '" title="标记为已完成" aria-label="标记 ' + escapeHtml(step.knowledge_point_name) + ' 为已完成"><i data-lucide="check"></i></button>' +
+              '</span></div>';
+          }).join("") : '<div class="plan-empty">本阶段暂未安排知识点。</div>';
+          return '<section class="plan-stage"><div class="plan-stage-head"><span class="plan-stage-index">' +
+            escapeHtml(stage.stage_order || "") + '</span><div><h2>' + escapeHtml(stage.title) +
+            '</h2><p>' + escapeHtml(stage.description || "") + '</p></div></div><div class="plan-step-list">' +
+            stepHtml + '</div></section>';
+        }).join("") || '<div class="assessment-empty">当前还没有可用的学习计划。</div>';
+        bindLearningPlanActions(projectId);
+        icons();
+      } catch (error) {
+        $("learning-plan-subtitle").textContent = "加载失败";
+        $("learning-plan-stages").innerHTML = '<div class="assessment-empty">加载失败：' + escapeHtml(error.message) + '</div>';
+      }
+    }
+
+    function bindLearningPlanActions(projectId) {
+      $("learning-plan-stages").querySelectorAll("[data-plan-start]").forEach((button) => {
+        button.onclick = async () => {
+          await updateLearningPlanStep(projectId, button.dataset.planStart, "in_progress");
+          await openLesson(projectId, button.dataset.planKp, button.dataset.planName);
+        };
+      });
+      $("learning-plan-stages").querySelectorAll("[data-plan-complete]").forEach((button) => {
+        button.onclick = () => updateLearningPlanStep(projectId, button.dataset.planComplete, "completed");
+      });
+      $("learning-plan-stages").querySelectorAll("[data-plan-question]").forEach((button) => {
+        button.onclick = async () => {
+          state.planQuestionContext = {
+            project_id: projectId,
+            step_id: button.dataset.planQuestion,
+            stage_id: button.dataset.planStage,
+            knowledge_point_id: button.dataset.planKp,
+            knowledge_point_name: button.dataset.planName,
+          };
+          const project = state.projects.find((item) => item.project_id === projectId);
+          if (project) {
+            const conversation = switchConversation(projectConversationKey(projectId), project);
+            await loadConversationHistory(conversation, project);
+            state.current = project;
+          }
+          setMobilePanel("chat");
+          $("chat-textarea").value = "我想就“" + button.dataset.planName + "”提问：";
+          $("chat-textarea").focus();
+        };
+      });
+    }
+
+    async function updateLearningPlanStep(projectId, stepId, status) {
+      try {
+        await api(
+          "/api/projects/" + encodeURIComponent(projectId) + "/plan/steps/" + encodeURIComponent(stepId),
+          { method: "POST", body: { student_id: STUDENT_ID, status } },
+        );
+        await refreshProjects();
+        await loadLearningPlan(projectId);
+      } catch (error) {
+        window.alert("更新学习计划失败：" + error.message);
+      }
+    }
+
+    $("learning-plan-refresh").onclick = () => {
+      const tab = workspaceTab(state.activeTabId);
+      if (tab && tab.view === "learning_plan") loadLearningPlan(tab.projectId);
+    };
 
     /* ================= 测评中心与中央能力测评 ================= */
     async function openAssessmentCenter(projectId) {
@@ -2201,6 +2813,7 @@
     async function loadAssessmentCenter(projectId) {
       if (!projectId) return;
       $("assessment-catalog").innerHTML = '<div class="assessment-empty">正在加载测评方案…</div>';
+      $("practice-sheet-list").innerHTML = '<div class="assessment-empty" style="grid-column:1/-1">正在加载自主练习题单…</div>';
       $("assessment-history").innerHTML = '<div class="assessment-empty">正在读取证据记录…</div>';
       try {
         const [center, projectResult] = await Promise.all([
@@ -2208,25 +2821,28 @@
           api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID)),
         ]);
         state.assessmentCatalog = center.catalog || [];
+        state.practiceSheets = center.practice_sheets || [];
         state.assessmentHistory = center.history || [];
         const project = projectResult.project || {};
         $("assessment-center-subtitle").textContent = center.formal_assessment_available === false
           ? (project.goal_name || "当前项目") + " · " + center.availability_message
-          : (project.goal_name || "当前项目") + " · 选择检测目的，系统按能力图谱自动组卷。";
+          : (project.goal_name || "当前项目") + " · 阶段测试更新当前画像，自主练习只提供即时反馈。";
         const scope = $("assessment-scope");
         scope.innerHTML = ((project.learning_path || {}).items || []).map((item) =>
           '<option value="' + escapeHtml(item.knowledge_point_id) + '">' + escapeHtml(item.knowledge_point_name) + "</option>"
         ).join("");
+        $("assessment-stage-scope").hidden = !state.assessmentCatalog.length;
         renderAssessmentCenter(projectId, center);
       } catch (error) {
         $("assessment-catalog").innerHTML = '<div class="assessment-empty">加载失败：' + escapeHtml(error.message) + "</div>";
+        $("practice-sheet-list").innerHTML = "";
+        $("practice-sheet-summary").innerHTML = '<i data-lucide="triangle-alert"></i><span>题单加载失败</span>';
         $("assessment-history").innerHTML = "";
       }
     }
 
     function renderAssessmentCenter(projectId, center = {}) {
       const iconByType = {
-        initial_diagnostic: "scan-search",
         stage_check: "badge-check",
         self_check: "list-checks",
         provisional_self_check: "flask-conical",
@@ -2237,35 +2853,68 @@
           '<span class="card-icon"><i data-lucide="' + (iconByType[item.assessment_type] || "clipboard-list") + '"></i></span>' +
           "<strong>" + escapeHtml(item.label) + "</strong>" +
           "<p>" + escapeHtml(item.description) + "</p>" +
-          "<small>" + (item.stakes === "formal" ? "正式证据" : "低风险自检") + " · " + escapeHtml(item.recommended_knowledge_point_name) + "</small>" +
+          "<small>" + (item.stakes === "formal" ? "更新当前画像" : "不更新画像") + " · " + escapeHtml(item.recommended_knowledge_point_name) + "</small>" +
         "</button>"
       ).join("")
         : '<div class="assessment-empty" style="grid-column:1/-1">' + escapeHtml(center.availability_message || "当前还没有可用测评") + "</div>";
       $("assessment-catalog").querySelectorAll("[data-assessment-type]").forEach((button) => {
         button.onclick = () => {
           const type = button.dataset.assessmentType;
-          const knowledgePointId = type === "initial_diagnostic" ? "" : $("assessment-scope").value;
+          const knowledgePointId = $("assessment-scope").value;
           startProjectAssessment(projectId, type, knowledgePointId);
         };
       });
 
-      const history = state.assessmentHistory;
+      const practiceSheets = state.practiceSheets;
+      $("practice-sheet-summary").innerHTML = '<i data-lucide="layers-3"></i><span>' +
+        escapeHtml(practiceSheets.length
+          ? "共 " + practiceSheets.length + " 个目标知识点，题单范围独立于个性化学习路径。"
+          : "当前目标还没有可用的知识点题单。") +
+        "</span>";
+      $("practice-sheet-list").innerHTML = practiceSheets.length
+        ? practiceSheets.map((item) => {
+            const lastResult = item.last_result || null;
+            const sourceText = item.source_status === "reviewed"
+              ? (item.question_count || 0) + " 道已审核练习题"
+              : "候选练习题，仅提供即时反馈，不更新正式画像";
+            const stateValue = lastResult
+              ? (lastResult.score || 0) + "/" + (lastResult.total || 0)
+              : item.available ? "开始" : "待补充";
+            const stateLabel = lastResult
+              ? "最近作答"
+              : item.attempt_count ? "继续练习" : "自主练习";
+            return '<button class="practice-sheet" data-practice-type="' + escapeHtml(item.assessment_type) + '" data-knowledge-point-id="' + escapeHtml(item.knowledge_point_id) + '"' + (item.available ? "" : " disabled") + '>' +
+              '<span class="practice-sheet-icon"><i data-lucide="book-open-check"></i></span>' +
+              '<span class="practice-sheet-copy"><strong>' + escapeHtml(item.knowledge_point_name) + '</strong><small>' + escapeHtml(sourceText) + '</small></span>' +
+              '<span class="practice-sheet-state"><strong>' + escapeHtml(stateValue) + '</strong><small>' + escapeHtml(stateLabel) + '</small></span>' +
+            "</button>";
+          }).join("")
+        : '<div class="assessment-empty" style="grid-column:1/-1">当前目标还没有可用的自主练习题单。</div>';
+      $("practice-sheet-list").querySelectorAll("[data-practice-type]").forEach((button) => {
+        button.onclick = () => startProjectAssessment(
+          projectId,
+          button.dataset.practiceType,
+          button.dataset.knowledgePointId,
+        );
+      });
+
+      const history = state.assessmentHistory.filter((item) =>
+        item.status === "completed" && item.stakes === "formal"
+      );
       $("assessment-history").innerHTML = history.length ? history.map((item) => {
-        const result = item.result || {};
-        const score = item.status === "completed" ? (result.score || 0) + "/" + (result.total || 0) : "进行中";
+        const coverage = Array.from(new Set(((item.blueprint || {}).coverage || []).map((point) =>
+          point.knowledge_point_name || point.knowledge_point_id || ""
+        ).filter(Boolean)));
+        const knowledgePoints = coverage.length ? coverage.join("、") : "当前章节";
+        const completedAt = item.completed_at || item.started_at || "";
         return '<div class="assessment-history-row">' +
-          '<div><strong>' + escapeHtml(item.title) + '</strong><small>' + escapeHtml(item.started_at || "") + " · " + escapeHtml(item.provider || "") + "</small></div>" +
-          '<span class="assessment-score">' + escapeHtml(score) + "</span>" +
-          '<button class="evidence-button" data-evidence="' + escapeHtml(item.assessment_id) + '">查看证据</button>' +
+          '<div><strong>测评知识点：' + escapeHtml(knowledgePoints) + '</strong><small>测评时间：' + escapeHtml(completedAt) + "</small></div>" +
         "</div>";
       }).join("") : '<div class="assessment-empty">还没有测评记录。首次目标诊断通常由右侧 Tutor 在目标确认后发起。</div>';
-      $("assessment-history").querySelectorAll("[data-evidence]").forEach((button) => {
-        button.onclick = () => showAssessmentEvidence(projectId, button.dataset.evidence);
-      });
       icons();
     }
 
-    async function startProjectAssessment(projectId, assessmentType, knowledgePointId = "") {
+    async function startProjectAssessment(projectId, assessmentType, knowledgePointId = "", options = {}) {
       setInputEnabled(false);
       try {
         const assessment = await api("/api/projects/" + encodeURIComponent(projectId) + "/assessments/start", {
@@ -2291,8 +2940,21 @@
         $("quiz-title").textContent = assessment.title || "能力测评";
         openDrawer();
         renderQuiz();
+        if (options.announce) {
+          addMsg(
+            "bot",
+            "<p>初始测评已生成，共 " + escapeHtml(assessment.total || assessment.questions.length) + " 题，已在学习画布中打开。</p>",
+            options.conversationKey || state.activeConversationKey,
+          );
+        }
+        return assessment;
       } catch (error) {
-        addMsg("bot", "<p><strong>测评暂时无法开始：</strong>" + escapeHtml(error.message) + "</p>");
+        addMsg(
+          "bot",
+          "<p><strong>测评暂时无法开始：</strong>" + escapeHtml(error.message) + "</p>",
+          options.conversationKey || state.activeConversationKey,
+        );
+        return null;
       } finally {
         setInputEnabled(true);
       }
@@ -2345,32 +3007,77 @@
       const i = quiz.index;
       const q = quiz.questions[i];
       if (!q) return;
+      const questionType = q.question_type || "choice";
       const optionKeys = Object.keys(q.options || {});
       const typeLabel = {
-        initial_diagnostic: "目标能力诊断",
+        initial_diagnostic: "初始测评",
         stage_check: "阶段检查",
-        self_check: "自主能力检测",
-        provisional_self_check: "AI 临时自检",
+        self_check: "自主练习",
+        provisional_self_check: "练习题单",
       }[quiz.assessment_type] || "能力测评";
       $("quiz-context").textContent = typeLabel + " · " +
-        (quiz.stakes === "formal" ? "本次结果会形成正式能力证据。" : "本次为低风险自检，结果仅作辅助参考。") +
+        (quiz.stakes === "formal" ? "本次结果会形成正式能力证据。" : "本次为低风险练习，结果仅作辅助参考。") +
         "完成后统一生成解析与路径调整建议。";
       $("quiz-progress-bar").style.width = ((i + 1) / quiz.questions.length) * 100 + "%";
-      $("quiz-body").innerHTML =
-        '<div class="q-index">第 ' + (i + 1) + " / " + quiz.questions.length + " 题</div>" +
-        "<h2>" + escapeHtml(q.title) + "</h2>" +
-        '<div class="quiz-source"><i data-lucide="' + (q.quality_status === "reviewed" ? "shield-check" : "triangle-alert") + '"></i>' + escapeHtml(q.quality_status === "reviewed" ? "已审核题目" : "AI 临时题 · 未做领域审核") + " · " + escapeHtml(formatQuestionSource(q.source_type)) + "</div>" +
-        optionKeys.map((key, k) =>
-          '<button class="option' + (quiz.answers[i] === k ? " selected" : "") + '" data-k="' + k + '">' +
+      const questionTypeLabel = {
+        choice: "单选题",
+        multiple_choice: "多选题",
+        judgment: "判断题",
+        fill_blank: "填空题",
+        practical: "实操题",
+      }[questionType] || "题目";
+      let answerHtml = "";
+      const isMultipleChoice = questionType === "multiple_choice";
+      const selectedOptionKeys = isMultipleChoice
+        ? String(quiz.answers[i] || "").split(",").filter(Boolean)
+        : [];
+      if (questionType === "choice" || questionType === "judgment") {
+        answerHtml = optionKeys.map((key) =>
+          '<button class="option' + (quiz.answers[i] === key ? " selected" : "") + '" data-answer="' + escapeHtml(key) + '">' +
             '<span class="opt-key">' + key.toUpperCase() + "</span><span>" + escapeHtml(q.options[key]) + "</span></button>"
         ).join("");
+      } else if (isMultipleChoice) {
+        answerHtml = optionKeys.map((key) =>
+          '<button class="option' + (selectedOptionKeys.includes(key) ? " selected" : "") + '" data-answer="' + escapeHtml(key) + '">' +
+            '<span class="opt-key">' + key.toUpperCase() + "</span><span>" + escapeHtml(q.options[key]) + "</span></button>"
+        ).join("");
+      } else if (questionType === "practical") {
+        answerHtml = '<textarea class="quiz-text-answer" aria-label="实操作答" placeholder="请输入代码、操作步骤或结果说明"></textarea>';
+      } else {
+        answerHtml = '<input class="quiz-text-answer" aria-label="填空答案" placeholder="请输入答案">';
+      }
+      $("quiz-body").innerHTML =
+        '<div class="q-index">第 ' + (i + 1) + " / " + quiz.questions.length + " 题 · " + questionTypeLabel +
+          (q.estimated_minutes ? " · 约 " + q.estimated_minutes + " 分钟" : "") + "</div>" +
+        "<h2>" + escapeHtml(q.title) + "</h2>" +
+        '<div class="quiz-source"><i data-lucide="' + (q.quality_status === "reviewed" ? "shield-check" : "triangle-alert") + '"></i>' + escapeHtml(q.quality_status === "reviewed" ? "已审核题目" : "候选练习题 · 待领域审核") + " · " + escapeHtml(formatQuestionSource(q.source_type)) + "</div>" +
+        answerHtml;
       $("quiz-body").querySelectorAll(".option").forEach((b) => {
-        b.onclick = () => { quiz.answers[i] = Number(b.dataset.k); renderQuiz(); };
+        b.onclick = () => {
+          if (isMultipleChoice) {
+            const selected = new Set(String(quiz.answers[i] || "").split(",").filter(Boolean));
+            if (selected.has(b.dataset.answer)) selected.delete(b.dataset.answer);
+            else selected.add(b.dataset.answer);
+            quiz.answers[i] = Array.from(selected).sort().join(",");
+          } else {
+            quiz.answers[i] = b.dataset.answer;
+          }
+          renderQuiz();
+        };
       });
+      const textAnswer = $("quiz-body").querySelector(".quiz-text-answer");
+      if (textAnswer) {
+        textAnswer.value = quiz.answers[i] || "";
+        textAnswer.oninput = () => {
+          quiz.answers[i] = textAnswer.value;
+          $("quiz-next").disabled = !textAnswer.value.trim();
+        };
+        textAnswer.focus();
+      }
       $("quiz-prev").disabled = true;
       $("quiz-prev").title = "当前版本采用逐题提交，已形成证据的题目不可返回修改";
       const nextBtn = $("quiz-next");
-      nextBtn.disabled = quiz.answers[i] === null;
+      nextBtn.disabled = quiz.answers[i] === null || String(quiz.answers[i]).trim() === "";
       if (i === quiz.questions.length - 1) {
         nextBtn.innerHTML = '提交测评 <i data-lucide="check"></i>';
       } else {
@@ -2384,17 +3091,15 @@
     $("quiz-next").onclick = async () => {
       const quiz = state.quiz;
       const i = quiz.index;
-      const selected = quiz.answers[i];
-      if (selected === null) return;
+      const response = quiz.answers[i];
+      if (response === null || String(response).trim() === "") return;
       const nextBtn = $("quiz-next");
       nextBtn.disabled = true;
       $("quiz-error").hidden = true;
       try {
-        const optionKeys = Object.keys(quiz.questions[i].options || {});
-        const letter = optionKeys[selected] || "a";
         const result = await api("/api/projects/" + quiz.project_id + "/assessments/answer", {
           method: "POST",
-          body: { student_id: STUDENT_ID, assessment_id: quiz.assessment_id, selected: letter },
+          body: { student_id: STUDENT_ID, assessment_id: quiz.assessment_id, answer: String(response) },
         });
         if (result.status === "completed") {
           closeDrawer();
@@ -2414,7 +3119,7 @@
     async function showAnalysis(summary) {
       setInputEnabled(false);
       const typing = addMsg("bot", '<div class="typing"><i></i><i></i><i></i></div>');
-      await sleep(1400);
+      await sleep(250);
       typing.remove();
 
       const weak = summary.weak_points || [];
@@ -2428,11 +3133,11 @@
         '<div class="analysis-card">' +
           '<div class="analysis-head">' +
             '<span class="ah-icon"><i data-lucide="chart-pie"></i></span>' +
-            '<div class="ah-copy"><strong>' + (isFormalEvidence ? "测评分析完成" : "临时自检完成") + '</strong><small>' + (isFormalEvidence ? "已依据可追溯证据更新能力状态" : "仅提供即时反馈，未写入正式画像") + '</small></div>' +
+            '<div class="ah-copy"><strong>' + (isFormalEvidence ? "测评分析完成" : "练习反馈完成") + '</strong><small>' + (isFormalEvidence ? "已依据可追溯证据更新能力状态" : "仅提供即时反馈，未写入正式画像") + '</small></div>' +
           "</div>" +
           "<p class=\"analysis-note\">" + escapeHtml(summary.feedback || "已生成个性化学习路径。") + "</p>" +
           weakTags +
-          '<p class="analysis-note">' + (isFormalEvidence ? '路径已生成在<b>左侧项目树</b>中，点击章节即可打开讲解页。' : '本次未调整路径；正式题源接入后再完成目标诊断。') + '</p>' +
+          '<p class="analysis-note">' + (isFormalEvidence ? '路径已生成在<b>左侧项目树</b>中，点击章节即可打开讲解页。' : '本次练习未调整路径；正式能力包接入后可进行阶段测评。') + '</p>' +
           '<div class="quiz-actions" style="margin-top:12px"><button class="primary-btn" data-open-center><i data-lucide="file-search"></i>查看测评证据</button></div>' +
         "</div>");
       analysisMessage.querySelector("[data-open-center]").onclick = () => {
@@ -2440,6 +3145,11 @@
       };
       state.quiz = null;
       await refreshProjects();
+      if (isFormalEvidence && state.profileDashboard) await loadProfilePage();
+      const activeTab = workspaceTab(state.activeTabId);
+      if (isFormalEvidence && activeTab && activeTab.view === "assessment_center") {
+        await loadAssessmentCenter(activeTab.projectId);
+      }
       setInputEnabled(true);
       showSuggestions();
     }
@@ -2449,12 +3159,47 @@
       try {
         const result = await api("/api/projects?student_id=" + encodeURIComponent(STUDENT_ID));
         state.projects = result.projects || [];
+        state.projectDetails.clear();
         if (!state.expandedProjectsInitialized) {
           if (state.projects[0]) state.expandedProjects.add(state.projects[0].project_id);
           state.expandedProjectsInitialized = true;
         }
       } catch (_) { /* 网络异常时保留旧数据 */ }
       renderProjectTree();
+    }
+
+    async function loadProjectDetail(projectId, force = false) {
+      if (!force && state.projectDetails.has(projectId)) {
+        return state.projectDetails.get(projectId);
+      }
+      if (state.projectDetailRequests.has(projectId)) {
+        return state.projectDetailRequests.get(projectId);
+      }
+      const request = api(
+        "/api/projects/" + encodeURIComponent(projectId) +
+        "?student_id=" + encodeURIComponent(STUDENT_ID),
+        { timeoutMs: 15_000 }
+      ).then((result) => {
+        const project = result.project || {};
+        state.projectDetails.set(projectId, project);
+        return project;
+      }).finally(() => {
+        state.projectDetailRequests.delete(projectId);
+      });
+      state.projectDetailRequests.set(projectId, request);
+      return request;
+    }
+
+    function renderProjectPathError(projectId) {
+      const listEl = treeEl.querySelector('[data-path="' + projectId + '"]');
+      if (!listEl) return;
+      listEl.innerHTML =
+        '<li class="path-item pending"><button type="button" data-retry-path="' + projectId + '">' +
+          '<span class="path-state"><i data-lucide="rotate-cw"></i></span>' +
+          '<span class="path-copy"><strong>路径加载失败，点击重试</strong></span>' +
+        "</button></li>";
+      listEl.querySelector("[data-retry-path]").onclick = () => loadProjectPath(projectId, true);
+      icons();
     }
 
     async function selectProject(projectId) {
@@ -2467,8 +3212,7 @@
       state.current = summary;
       renderProjectTree();
       try {
-        const result = await api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID));
-        const project = result.project;
+        const project = await loadProjectDetail(projectId);
         state.current = {
           project_id: project.project_id,
           goal_name: project.goal_name,
@@ -2477,8 +3221,8 @@
         updateConversationContext(conversation);
         renderProjectTree();
         scrollChat();
-      } catch (error) {
-        addMsg("bot", "<p><strong>加载项目失败：</strong>" + escapeHtml(error.message) + "</p>", conversation.key);
+      } catch (_) {
+        renderProjectPathError(projectId);
       }
     }
 
@@ -2493,14 +3237,17 @@
       treeEl.innerHTML = state.projects.map((project) => {
         const isCurrent = state.current && state.current.project_id === project.project_id;
         const expanded = state.expandedProjects.has(project.project_id);
-        const progress = project.progress || 0;
+        const initialAssessmentState = project.initial_assessment_state || "awaiting_intake";
+        const progressLabel = initialAssessmentState === "completed"
+          ? String(project.progress ?? 0) + "%"
+          : "待测评";
         return '<div class="project-node' + (expanded ? " open" : "") + '" data-project="' + project.project_id + '">' +
           '<div class="project-row">' +
             '<button class="project-header" data-project="' + project.project_id + '">' +
               '<span class="chev"><i data-lucide="chevron-right"></i></span>' +
               '<span class="folder"><i data-lucide="folder"></i></span>' +
               '<span class="project-name">' + escapeHtml(project.goal_name) + "</span>" +
-              '<span class="project-meta">' + progress + "%</span>" +
+              '<span class="project-meta">' + progressLabel + "</span>" +
             "</button>" +
             '<button class="project-delete" type="button" data-delete-project="' + project.project_id + '" title="删除项目" aria-label="删除项目 ' + escapeHtml(project.goal_name).replace(/"/g, "&quot;") + '"><i data-lucide="trash-2"></i></button>' +
           "</div>" +
@@ -2509,7 +3256,9 @@
             '<button class="session-row' + (isCurrent ? " active" : "") + '" data-session-project="' + project.project_id + '">' +
               '<i data-lucide="message-circle"></i><span>目标规划与学习助手</span><small>持续</small>' +
             "</button>" +
-            '<div class="tree-section-label"><i data-lucide="route"></i>个性化学习路径</div>' +
+            '<div class="tree-section-label"><i data-lucide="route"></i>学习计划</div>' +
+            '<button class="tree-assessment-row" data-open-learning-plan="' + project.project_id + '"><i data-lucide="route"></i><span>三阶段学习计划</span><small>' + escapeHtml(String(project.plan_progress ?? 0)) + '%</small></button>' +
+            '<div class="tree-section-label"><i data-lucide="book-open"></i>个性化学习路径</div>' +
             '<ul class="path-list" data-path="' + project.project_id + '"></ul>' +
             '<div class="tree-section-label"><i data-lucide="clipboard-check"></i>测评与检查</div>' +
             '<div class="tree-assessment-list">' +
@@ -2528,16 +3277,30 @@
         };
       });
       treeEl.querySelectorAll(".session-row").forEach((button) => {
-        button.onclick = () => selectProject(button.dataset.sessionProject);
+        button.onclick = () => {
+          setMobilePanel("chat");
+          selectProject(button.dataset.sessionProject);
+        };
       });
       treeEl.querySelectorAll("[data-delete-project]").forEach((button) => {
         button.onclick = () => openDeleteProjectDialog(button.dataset.deleteProject);
       });
       treeEl.querySelectorAll("[data-open-assessment-center]").forEach((button) => {
-        button.onclick = () => openAssessmentCenter(button.dataset.openAssessmentCenter);
+        button.onclick = () => {
+          setMobilePanel("workspace");
+          openAssessmentCenter(button.dataset.openAssessmentCenter);
+        };
+      });
+      treeEl.querySelectorAll("[data-open-learning-plan]").forEach((button) => {
+        button.onclick = () => {
+          setMobilePanel("workspace");
+          openLearningPlan(button.dataset.openLearningPlan);
+        };
       });
       // 异步加载各项目路径
-      state.projects.forEach((project) => loadProjectPath(project.project_id));
+      state.projects
+        .filter((project) => state.expandedProjects.has(project.project_id))
+        .forEach((project) => loadProjectPath(project.project_id));
     }
 
     function openDeleteProjectDialog(projectId) {
@@ -2604,15 +3367,15 @@
       }
     }
 
-    async function loadProjectPath(projectId) {
-      const listEl = treeEl.querySelector('[data-path="' + projectId + '"]');
-      if (!listEl) return;
+    async function loadProjectPath(projectId, force = false) {
+      if (!treeEl.querySelector('[data-path="' + projectId + '"]')) return;
       try {
-        const result = await api("/api/projects/" + encodeURIComponent(projectId) + "?student_id=" + encodeURIComponent(STUDENT_ID));
-        const path = result.project.learning_path || { items: [] };
+        const project = await loadProjectDetail(projectId, force);
+        const listEl = treeEl.querySelector('[data-path="' + projectId + '"]');
+        if (!listEl) return;
+        const path = project.learning_path || { items: [] };
         const pathItems = path.items || [];
-        const weakIds = new Set((result.project.weak_points || []).map((w) => w.knowledge_point_id));
-        listEl.innerHTML = pathItems.map((item, index) => {
+        listEl.innerHTML = pathItems.map((item) => {
           const status = item.status || "pending";
           const lessonStatus = item.lesson_generation_status || "not_generated";
           const isActive = state.activeTabId === lessonTabId(projectId, item.knowledge_point_id);
@@ -2623,24 +3386,26 @@
             : status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
             : status === "learning" ? '<i data-lucide="book-open"></i>'
             : '<i data-lucide="lock-keyhole"></i>';
-          const statusLabel = status === "completed" ? "已通过" : status === "current" ? "当前" : status === "learning" ? "进行中" : "待解锁";
-          const contentLabel = lessonStatus === "ready" ? " · 内容已就绪"
-            : lessonStatus === "failed" ? " · 内容待重试"
-            : lessonStatus === "generating" || lessonStatus === "queued" ? " · 内容生成中" : "";
-          const weakMark = weakIds.has(item.knowledge_point_id) ? " · 薄弱" : "";
           return '<li class="path-item ' + status + (isActive ? " active" : "") + '">' +
             '<button data-project="' + projectId + '" data-kp="' + escapeHtml(item.knowledge_point_id) + '">' +
               '<span class="path-state">' + stateIcon + "</span>" +
-              '<span class="path-copy"><small>第 ' + (index + 1) + " 课 · " + statusLabel + contentLabel + weakMark + "</small><strong>" + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
-              '<span class="path-mastery">' + (item.mastery || 0) + "%</span>" +
+              '<span class="path-copy"><strong>' + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
+              '<span class="path-mastery">' +
+                (item.mastery === null || item.mastery === undefined ? "未测" : item.mastery + "%") +
+              "</span>" +
             "</button></li>";
         }).join("") || '<li class="path-item pending"><button><span class="path-state"><i data-lucide="lock-keyhole"></i></span><span class="path-copy"><strong>路径生成中…</strong></span></button></li>';
         icons();
         listEl.querySelectorAll("button[data-kp]").forEach((button, index) => {
           const item = pathItems[index];
-          button.onclick = () => openLesson(projectId, button.dataset.kp, item && item.knowledge_point_name);
+          button.onclick = () => {
+            setMobilePanel("workspace");
+            openLesson(projectId, button.dataset.kp, item && item.knowledge_point_name);
+          };
         });
-      } catch (_) { /* 单项目加载失败不阻塞整体 */ }
+      } catch (_) {
+        renderProjectPathError(projectId);
+      }
     }
 
     /* ================= 中央讲解页 ================= */
@@ -2650,6 +3415,240 @@
 
     function lessonRole(surface, name) {
       return surface.querySelector('[data-lesson-role="' + name + '"]');
+    }
+
+    function isKnowledgeExplanationBlock(block) {
+      const type = String(block && block.type || "").trim().toLowerCase();
+      const title = String(block && block.title || "").trim();
+      if (["source_notice", "weakness_connection"].includes(type)) return false;
+      return !/(来源状态|服务状态|内容状态说明|本节在路径中的位置|完成标准|验收标准)/.test(title);
+    }
+
+    function lessonBlockTitle(block) {
+      return block.title || { concept: "核心概念", steps: "学习步骤", example: "示例", warning: "常见误区", workplace: "岗位场景", standard: "规范依据", safety: "安全提示" }[block.type] || "讲解内容";
+    }
+
+    function lessonSourceMarkdown(result) {
+      return (result.content_blocks || [])
+        .filter(isKnowledgeExplanationBlock)
+        .map((block) => "## " + lessonBlockTitle(block) + "\n\n" + cleanLessonExplanationMarkdown(block.markdown || block.content || ""))
+        .join("\n\n")
+        .trim();
+    }
+
+    function cleanLessonExplanationMarkdown(value) {
+      return String(value || "")
+        .split(/\n{2,}/)
+        .filter((paragraph) => !/(?:本章|本页|以上)?内容.*(?:未引用特定教材|仅供学习参考|尚未.*审核)/.test(paragraph.trim()))
+        .join("\n\n")
+        .trim();
+    }
+
+    function normalizeLessonMarkdown(value) {
+      return String(value || "").replace(/\r\n/g, "\n").trim();
+    }
+
+    function lessonProvenanceItems(result) {
+      const items = [];
+      const add = (value) => {
+        const text = String(value || "").trim();
+        if (text && !items.includes(text)) items.push(text);
+      };
+      (result.content_blocks || []).forEach((block) => add(block && block.source));
+      (result.sources || []).forEach((source) => {
+        if (typeof source === "string") {
+          add(source);
+          return;
+        }
+        if (!source || typeof source !== "object") return;
+        const title = source.title || source.source || source.quote_text || "";
+        const locator = source.locator || source.document_id || "";
+        add([title, locator].filter(Boolean).join(" · "));
+      });
+      return items;
+    }
+
+    function renderLessonProvenance(container, result) {
+      const sourceStatus = String(result.source_status || "");
+      const isCandidate = sourceStatus.includes("candidate") || sourceStatus.includes("unverified");
+      const isAiGenerated = Boolean(result.ai_generated);
+      const sources = lessonProvenanceItems(result);
+      const notice = String(result.source_notice || "").trim() || (
+        isCandidate
+          ? "本页为未审核候选内容，仅用于预习和练习，不作为正式能力诊断依据。"
+          : isAiGenerated ? "本页讲解由 AI 生成，请结合下列来源核验关键结论。" : ""
+      );
+      if (!notice && !sources.length && !isAiGenerated) return;
+
+      const panel = document.createElement("section");
+      panel.className = "lesson-provenance" + (isCandidate ? " is-warning" : "");
+      panel.setAttribute("aria-label", "内容来源与审核状态");
+      const heading = document.createElement("div");
+      heading.className = "lesson-provenance-head";
+      heading.innerHTML = '<i data-lucide="' + (isCandidate ? "triangle-alert" : "shield-check") + '"></i>';
+      heading.appendChild(document.createTextNode(
+        isCandidate ? "候选内容 · 待来源复核" : isAiGenerated ? "AI 生成讲解 · 来源可核验" : "内容来源"
+      ));
+      panel.appendChild(heading);
+      if (notice) {
+        const description = document.createElement("p");
+        description.textContent = notice;
+        panel.appendChild(description);
+      }
+      if (sources.length) {
+        const list = document.createElement("ul");
+        sources.forEach((source) => {
+          const item = document.createElement("li");
+          item.textContent = source;
+          list.appendChild(item);
+        });
+        panel.appendChild(list);
+      }
+      container.appendChild(panel);
+      icons();
+    }
+
+    function clearLessonDocumentSave(tab) {
+      const key = lessonNotesKey(tab.projectId, tab.knowledgePointId);
+      const saveState = state.lessonDocumentSaves.get(key);
+      if (saveState && saveState.timer) window.clearTimeout(saveState.timer);
+      if (saveState) saveState.timer = null;
+      return saveState;
+    }
+
+    function queueLessonDocumentSave(tab, sourceMarkdown, value, immediate = false) {
+      const key = lessonNotesKey(tab.projectId, tab.knowledgePointId);
+      const saveState = clearLessonDocumentSave(tab) || {
+        timer: null,
+        pending: null,
+        inFlight: null,
+        retryCount: 0,
+      };
+      saveState.pending = { tab, sourceMarkdown, value };
+      saveState.retryCount = 0;
+      state.lessonDocumentSaves.set(key, saveState);
+      if (immediate) return flushLessonDocumentSave(tab);
+      saveState.timer = window.setTimeout(() => {
+        saveState.timer = null;
+        void flushLessonDocumentSave(tab);
+      }, 700);
+      return null;
+    }
+
+    async function flushLessonDocumentSave(tab) {
+      const key = lessonNotesKey(tab.projectId, tab.knowledgePointId);
+      const saveState = state.lessonDocumentSaves.get(key);
+      if (!saveState) return;
+      if (saveState.inFlight) return saveState.inFlight;
+      saveState.inFlight = (async () => {
+        try {
+          while (saveState.pending) {
+            const pending = saveState.pending;
+            saveState.pending = null;
+            try {
+              await persistLessonDocument(
+                pending.tab,
+                pending.sourceMarkdown,
+                pending.value
+              );
+              saveState.retryCount = 0;
+            } catch (error) {
+              if (!saveState.pending) saveState.pending = pending;
+              saveState.retryCount += 1;
+              const retryDelay = LESSON_SAVE_RETRY_DELAYS[saveState.retryCount - 1];
+              if (retryDelay) {
+                saveState.timer = window.setTimeout(() => {
+                  saveState.timer = null;
+                  void flushLessonDocumentSave(pending.tab);
+                }, retryDelay);
+              } else {
+                window.alert(
+                  "章节保存失败：" + error.message +
+                  "\n草稿仍保留，继续编辑或移开焦点后会再次保存。"
+                );
+              }
+              break;
+            }
+          }
+        } finally {
+          saveState.inFlight = null;
+          if (!saveState.pending && !saveState.timer) {
+            state.lessonDocumentSaves.delete(key);
+          }
+        }
+      })();
+      return saveState.inFlight;
+    }
+
+    async function saveLessonDocument(tab, sourceMarkdown, value) {
+      return queueLessonDocumentSave(tab, sourceMarkdown, value, true);
+    }
+
+    function replaceLessonDocumentOverride(tab, note) {
+      const key = lessonNotesKey(tab.projectId, tab.knowledgePointId);
+      const notes = allLessonNotes(tab).filter(
+        (item) => !noteTags(item).includes("lesson_document_override")
+      );
+      if (note) notes.unshift(note);
+      state.notesByLesson.set(key, notes);
+    }
+
+    async function persistLessonDocument(tab, sourceMarkdown, value) {
+      const markdown = normalizeLessonMarkdown(value);
+      const source = normalizeLessonMarkdown(sourceMarkdown);
+      const existing = lessonDocumentOverride(tab);
+      if (!markdown || markdown === source) {
+        if (existing) {
+          await api("/api/projects/" + encodeURIComponent(tab.projectId) + "/notes/delete", {
+            method: "POST",
+            body: { student_id: STUDENT_ID, note_id: existing.note_id },
+          });
+          replaceLessonDocumentOverride(tab, null);
+        }
+      } else {
+        const result = await api("/api/projects/" + encodeURIComponent(tab.projectId) + "/notes", {
+          method: "POST",
+          body: {
+            student_id: STUDENT_ID,
+            note_id: existing ? existing.note_id : "",
+            knowledge_point_id: tab.knowledgePointId,
+            knowledge_point_name: tab.title,
+            content_version: (tab.result || {}).content_version || "",
+            block_id: "LESSON-DOCUMENT",
+            block_title: "章节 Markdown 覆盖稿",
+            note_markdown: markdown,
+            tags: ["lesson_document_override"],
+          },
+        });
+        if (!result.note) throw new Error("服务未返回保存后的章节内容");
+        replaceLessonDocumentOverride(tab, result.note);
+      }
+      updateLessonDocumentState(tab);
+    }
+
+    function updateLessonDocumentState(tab) {
+      const hasOverride = Boolean(lessonDocumentOverride(tab));
+      document.querySelectorAll('[data-tab-id="' + CSS.escape(tab.id) + '"] [data-lesson-role="note-count"]')
+        .forEach((count) => count.textContent = String(lessonNotes(tab).length));
+      document.querySelectorAll('[data-tab-id="' + CSS.escape(tab.id) + '"] .lesson-vditor')
+        .forEach((editorHost) => updateLessonEditMarkers(editorHost, hasOverride));
+    }
+
+    function updateLessonEditMarkers(editorHost, hasUserChanges) {
+      if (!editorHost) return;
+      editorHost.querySelectorAll(".lesson-user-edit-eye").forEach((eye) => eye.remove());
+      if (!hasUserChanges) return;
+      const hostRect = editorHost.getBoundingClientRect();
+      const block = editorHost.querySelector(".vditor-ir__node--expand") ||
+        editorHost.querySelector(".vditor-ir > .vditor-reset > [data-block]:last-child");
+      if (!block) return;
+      const eye = document.createElement("span");
+      eye.className = "lesson-user-edit-eye";
+      eye.style.top = Math.max(0, block.getBoundingClientRect().top - hostRect.top + 5) + "px";
+      eye.setAttribute("aria-hidden", "true");
+      eye.innerHTML = '<i data-lucide="eye"></i>';
+      editorHost.appendChild(eye);
+      icons();
     }
 
     function renderLessonTab(tab) {
@@ -2674,10 +3673,19 @@
       lessonRole(surface, "title").textContent = tab.loading
         ? "正在加载讲解…"
         : tab.error ? "讲解加载失败" : tab.title;
-      lessonRole(surface, "objective").textContent = "";
-      lessonRole(surface, "meta").innerHTML = "";
-      lessonRole(surface, "tag").textContent = tab.loading ? "知识点" : "章节讲解 · 依据课程知识库";
+      const objective = lessonRole(surface, "objective");
+      const meta = lessonRole(surface, "meta");
+      const tag = lessonRole(surface, "tag");
+      objective.textContent = "";
+      objective.hidden = true;
+      meta.replaceChildren();
+      meta.hidden = true;
+      tag.textContent = "知识点讲解";
+      tag.hidden = true;
       const body = lessonRole(surface, "body");
+      body.querySelectorAll(".lesson-vditor").forEach((editorHost) => {
+        if (editorHost._vditor) editorHost._vditor.destroy();
+      });
       body.replaceChildren();
 
       const notes = lessonNotes(tab);
@@ -2701,35 +3709,76 @@
       }
 
       const result = tab.result || {};
-      const isCandidate = result.source_status === "candidate_unverified";
-      const isFallback = result.source_status === "verified_local_fallback";
-      lessonRole(surface, "tag").textContent = isCandidate
+      const sourceStatus = String(result.source_status || "");
+      const isCandidate = sourceStatus.includes("candidate") || sourceStatus.includes("unverified");
+      const isFallback = sourceStatus === "verified_local_fallback";
+      tag.textContent = isCandidate
         ? "候选讲解 · 待权威来源复核"
-        : isFallback ? "课程知识库讲解 · 远程服务已降级" : "章节讲解 · 依据课程知识库";
-      lessonRole(surface, "objective").textContent = result.lesson_objective || "";
-      const modes = (result.alternative_modes || []).slice(0, 3);
-      lessonRole(surface, "meta").innerHTML =
-        '<span><i data-lucide="book-open"></i> Markdown 学习文档</span>' +
-        (isCandidate
-          ? '<span><i data-lucide="triangle-alert"></i>' +
-            (result.ai_generated ? "AI 候选内容" : "候选框架") +
-            '，尚未完成来源审核</span>'
-          : isFallback
-            ? '<span><i data-lucide="shield-check"></i> 已使用本地课程知识库兜底</span>'
-            : '<span><i data-lucide="shield-check"></i> 内容带来源标注</span>') +
-        (modes.length ? '<span><i data-lucide="refresh-cw"></i> 支持换种讲法</span>' : "");
-
-      if (result.source_notice) {
-        renderLessonBlock(body, {
-          block_id: "BLOCK-SOURCE-NOTICE",
-          type: isCandidate ? "warning" : "standard",
-          title: isCandidate ? "来源状态" : "服务状态",
-          markdown: result.source_notice,
-        }, tab, notes);
-      }
-      (result.content_blocks || []).forEach((block) => renderLessonBlock(body, block, tab, notes));
+        : isFallback ? "课程知识库讲解 · 本地降级" : "知识点讲解 · 来源可核验";
+      tag.classList.toggle("is-warning", isCandidate);
+      tag.hidden = false;
+      objective.textContent = result.lesson_objective || "";
+      objective.hidden = !objective.textContent;
+      meta.innerHTML = isCandidate
+        ? '<span><i data-lucide="triangle-alert"></i>AI 候选内容，尚未完成来源审核</span>'
+        : result.ai_generated
+          ? '<span><i data-lucide="sparkles"></i>AI 生成讲解，关键结论需结合来源核验</span>'
+          : '<span><i data-lucide="shield-check"></i>内容带来源标注</span>';
+      meta.hidden = false;
+      renderLessonProvenance(body, result);
+      renderLessonEditor(body, tab, result);
       renderLessonVideos(body, result.resources || []);
       icons();
+    }
+
+    function renderLessonEditor(container, tab, result) {
+      const sourceMarkdown = lessonSourceMarkdown(result);
+      const override = lessonDocumentOverride(tab);
+      const initialMarkdown = override ? override.note_markdown : sourceMarkdown;
+      const card = document.createElement("section");
+      card.className = "lesson-card";
+      card.dataset.blockId = "LESSON-DOCUMENT";
+      card.dataset.blockTitle = "知识点讲解";
+      const editorHost = document.createElement("div");
+      editorHost.className = "lesson-vditor";
+      card.appendChild(editorHost);
+      container.appendChild(card);
+      if (!window.Vditor) {
+        editorHost.className = "markdown-body";
+        editorHost.innerHTML = renderMarkdown(initialMarkdown);
+        icons();
+        return;
+      }
+      const editor = new window.Vditor(editorHost, {
+        value: initialMarkdown,
+        mode: "ir",
+        height: "auto",
+        minHeight: 360,
+        toolbar: [],
+        cache: { enable: false },
+        counter: { enable: false },
+        resize: { enable: false },
+        outline: { enable: false },
+        typewriterMode: false,
+        placeholder: "在这里输入 Markdown…",
+        cdn: VDITOR_ASSET_ROOT,
+        preview: {
+          delay: 100,
+          actions: [],
+          hljs: { enable: false },
+          math: { inlineDigit: false },
+        },
+        input: (value) => {
+          queueLessonDocumentSave(tab, sourceMarkdown, value);
+          requestAnimationFrame(() => updateLessonEditMarkers(editorHost, true));
+        },
+        blur: (value) => saveLessonDocument(tab, sourceMarkdown, value),
+        after: () => {
+          editorHost._vditor = editor;
+          editorHost._lessonSourceMarkdown = sourceMarkdown;
+          updateLessonEditMarkers(editorHost, Boolean(override));
+        },
+      });
     }
 
     function renderLessonBlock(container, block, tab, notes) {
@@ -2745,12 +3794,6 @@
         "## " + title + "\n\n" + (block.markdown || block.content || "")
       );
       card.appendChild(markdown);
-      if (block.source) {
-        const source = document.createElement("div");
-        source.className = "block-source";
-        source.innerHTML = '<i data-lucide="book-marked"></i> 依据：' + escapeHtml(block.source);
-        card.appendChild(source);
-      }
       container.appendChild(card);
       blockNotes.filter((note) => note.quote_text).forEach((note) => highlightNoteQuote(markdown, note));
       blockNotes.filter((note) => !note.quote_text).forEach((note) => insertCaretNoteAnchor(markdown, note));
@@ -2791,7 +3834,7 @@
       const project = state.projects.find((item) => item.project_id === projectId);
       if (project) {
         const conversation = switchConversation(projectConversationKey(projectId), project);
-        await loadConversationHistory(conversation, project);
+        loadConversationHistory(conversation, project);
         state.current = project;
         renderProjectTree();
       }
@@ -2815,7 +3858,11 @@
         error: prefetchedPreparing ? (prefetchedResult.message || "章节内容仍在预生成，请稍后再打开。") : "",
         result: prefetchedPreparing ? null : (prefetchedResult || null),
       });
-      await loadLessonNotes(tab);
+      loadLessonNotes(tab).then(() => {
+        if (!tab.loading && !tab.error && tab.result && workspaceTab(tabId) === tab) {
+          if (state.activeTabId === tabId) renderLessonTab(tab);
+        }
+      });
       if (state.activeTabId === tabId) renderLessonTab(tab);
 
       if (prefetchedResult) {
@@ -2830,7 +3877,7 @@
         renderEditorTabs();
         renderLessonTab(tab);
         await refreshProjects();
-        await loadProjectPath(projectId);
+        await loadProjectPath(projectId, true);
         return;
       }
 
@@ -2839,6 +3886,7 @@
         const result = await api("/api/projects/" + encodeURIComponent(projectId) + "/explain", {
           method: "POST",
           body: { student_id: STUDENT_ID, knowledge_point_id: knowledgePointId },
+          timeoutMs: 30_000,
         });
         if (result.status === "preparing") {
           tab.loading = false;
@@ -2853,14 +3901,15 @@
         if (state.activeTabId === tabId) renderLessonTab(tab);
         renderEditorTabs();
         await refreshProjects();
-        await loadProjectPath(projectId);
+        await loadProjectPath(projectId, true);
       } catch (error) {
         tab.loading = false;
         tab.error = error.message;
         if (state.activeTabId === tabId) renderLessonTab(tab);
         renderEditorTabs();
+      } finally {
+        setInputEnabled(true);
       }
-      setInputEnabled(true);
     }
 
     $("crumb-home").onclick = () => {
@@ -2955,23 +4004,28 @@
     }
 
     async function loadProfilePage() {
+      $("profile-ability-radar").innerHTML = '<p class="profile-empty-state">正在加载六维学习能力…</p>';
+      $("profile-model-summary").innerHTML = '<p class="profile-empty-state">正在加载当前目标能力模型…</p>';
+      $("profile-strength-summary").innerHTML = '<p class="profile-empty-state">正在加载补强建议…</p>';
+      $("profile-activity-list").innerHTML = '<p class="profile-empty-state">正在加载学习动态…</p>';
       try {
-        const [profile, records] = await Promise.all([
+        const [profile, records, portrait] = await Promise.all([
           api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null),
           api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/records").catch(() => null),
+          api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/portrait").catch(() => null),
         ]);
-        const p = profile && profile.profile;
-        if (p) {
-          const name = p.display_name || "学习者";
-          $("fp-name").textContent = name;
-          $("fp-avatar").textContent = name.slice(0, 1);
-          $("fp-id").textContent = p.student_id || STUDENT_ID;
-          if (p.program_name) $("fp-program").textContent = p.program_name;
-        }
-        $("fp-stat-projects").textContent = state.projects.length;
-        $("fp-stat-explanations").textContent = records ? (records.explanations || []).length : 0;
-        $("fp-stat-attempts").textContent = records ? (records.attempts || []).length : 0;
-      } catch (_) { /* 统计加载失败时保留默认值 */ }
+        state.profileDashboard = {
+          profile: (profile && profile.profile) || {},
+          records: records || { attempts: [], explanations: [] },
+          portrait: portrait || {},
+        };
+        renderProfileDashboard(state.profileDashboard);
+      } catch (_) {
+        $("profile-ability-radar").innerHTML = '<p class="profile-empty-state">六维学习能力暂时无法加载，请稍后重试。</p>';
+        $("profile-model-summary").innerHTML = '<p class="profile-empty-state">学习档案暂时无法加载，请稍后重试。</p>';
+        $("profile-strength-summary").innerHTML = '<p class="profile-empty-state">暂时无法获取补强建议。</p>';
+        $("profile-activity-list").innerHTML = '<p class="profile-empty-state">暂时无法获取学习动态。</p>';
+      }
       icons();
     }
 
@@ -3021,8 +4075,11 @@
     function renderPortrait(portrait) {
       const identity = portrait.identity || {};
       const kpi = identity.kpi || {};
+      const masteryLabel = kpi.overall_mastery === null || kpi.overall_mastery === undefined
+        ? "待测评"
+        : kpi.overall_mastery + "%";
       $("portrait-kpi").innerHTML =
-        '<div class="kpi-card"><strong>' + (kpi.overall_mastery || 0) + "%</strong><small>总体掌握度</small></div>" +
+        '<div class="kpi-card"><strong>' + escapeHtml(masteryLabel) + "</strong><small>总体掌握度</small></div>" +
         '<div class="kpi-card"><strong>' + escapeHtml(kpi.mastered_knowledge_points || "0/0") + "</strong><small>掌握知识点</small></div>" +
         '<div class="kpi-card"><strong>' + (kpi.streak_days || 0) + " 天</strong><small>连续学习</small></div>" +
         '<div class="kpi-card"><strong>' + (kpi.lesson_count_this_month || 0) + "</strong><small>本月讲解</small></div>";
@@ -3051,10 +4108,14 @@
 
       const nodes = (portrait.knowledge_mastery || {}).nodes || [];
       $("portrait-points").innerHTML = nodes.length
-        ? nodes.map((n) =>
-            '<div class="point-row"><span class="point-name">' + escapeHtml(n.name || n.id) + "</span>" +
-            '<span class="bar-track"><span class="bar-fill" style="width:' + (n.mastery || 0) + '%"></span></span>' +
-            '<span class="point-val">' + (n.mastery || 0) + "%</span></div>").join("")
+        ? nodes.map((n) => {
+            const measured = n.mastery !== null && n.mastery !== undefined;
+            const sourceCount = (n.source_event_ids || []).length;
+            return '<div class="point-row" title="' + escapeHtml(sourceCount ? sourceCount + " 条可追溯测评证据" : "尚无正式测评证据") + '">' +
+              '<span class="point-name">' + escapeHtml(n.name || n.id) + "</span>" +
+              '<span class="bar-track"><span class="bar-fill" style="width:' + (measured ? n.mastery : 0) + '%"></span></span>' +
+              '<span class="point-val">' + (measured ? n.mastery + "%" : "未测") + "</span></div>";
+          }).join("")
         : '<p class="fp-guide">暂无知识点数据</p>';
 
       renderJobCompetencyGraphs(portrait.job_competency_graphs || []);
@@ -3127,6 +4188,372 @@
       svg.innerHTML = markup;
     }
 
+    const PROFILE_TARGET_MASTERY = 80;
+
+    function profileMasteryValue(value) {
+      const mastery = Number(value);
+      return Number.isFinite(mastery) ? Math.max(0, Math.min(100, Math.round(mastery))) : null;
+    }
+
+    function profileMasteryLabel(value) {
+      const mastery = profileMasteryValue(value);
+      return mastery === null ? "待测评" : mastery + "%";
+    }
+
+    const PROFILE_ABILITY_DIMENSION_NAMES = ["理解能力", "应用能力", "推理能力", "表达能力", "复盘能力", "迁移能力"];
+
+    function profileAbilityDimensions(portrait) {
+      const abilities = (portrait && portrait.abilities) || {};
+      const entries = Array.isArray(abilities.dimensions) ? abilities.dimensions : [];
+      const entriesByName = new Map(entries.map((entry) => [String(entry && entry.name || ""), entry || {}]));
+      return PROFILE_ABILITY_DIMENSION_NAMES.map((name) => {
+        const entry = entriesByName.get(name) || {};
+        return { name, score: profileMasteryValue(entry.score) };
+      });
+    }
+
+    function profileRadarPoint(index, scale, total) {
+      const angle = -Math.PI / 2 + (2 * Math.PI * index) / total;
+      const radius = 75 * scale;
+      return [120 + radius * Math.cos(angle), 116 + radius * Math.sin(angle)];
+    }
+
+    function profileAbilityRadarSvg(dimensions) {
+      const measured = dimensions.filter((dimension) => dimension.score !== null);
+      const hasCompleteMeasurement = measured.length === dimensions.length && dimensions.length === PROFILE_ABILITY_DIMENSION_NAMES.length;
+      const total = dimensions.length;
+      const polygonPoints = (scale) => dimensions.map((_dimension, index) => profileRadarPoint(index, scale, total).join(",")).join(" ");
+      const scorePoints = hasCompleteMeasurement
+        ? dimensions.map((dimension, index) => profileRadarPoint(index, dimension.score / 100, total))
+        : [];
+      const ariaLabel = hasCompleteMeasurement
+        ? dimensions.map((dimension) => dimension.name + " " + dimension.score + "%").join("，")
+        : "六维学习能力待测评";
+      let markup = '<svg class="profile-radar-svg" viewBox="0 0 240 240" role="img" aria-label="六维学习能力雷达图：' + escapeHtml(ariaLabel) + '">';
+      [0.25, 0.5, 0.75, 1].forEach((scale) => {
+        markup += '<polygon points="' + polygonPoints(scale) + '" fill="none" stroke="#dce2dd" stroke-width="1"/>';
+      });
+      dimensions.forEach((_dimension, index) => {
+        const point = profileRadarPoint(index, 1, total);
+        markup += '<line x1="120" y1="116" x2="' + point[0] + '" y2="' + point[1] + '" stroke="#dce2dd" stroke-width="1"/>';
+      });
+      if (hasCompleteMeasurement) {
+        markup += '<polygon points="' + scorePoints.map((point) => point.join(",")).join(" ") + '" fill="rgba(31,107,85,.18)" stroke="#1f6b55" stroke-width="2"/>';
+        scorePoints.forEach((point) => {
+          markup += '<circle cx="' + point[0] + '" cy="' + point[1] + '" r="3" fill="#1f6b55"/>';
+        });
+      }
+      dimensions.forEach((dimension, index) => {
+        const point = profileRadarPoint(index, 1.27, total);
+        markup += '<text x="' + point[0] + '" y="' + point[1] + '" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#57615c">' + escapeHtml(dimension.name.replace("能力", "")) + '</text>';
+      });
+      return markup + '</svg>';
+    }
+
+    function profileAbilityGapRows(dimensions) {
+      const measured = dimensions.filter((dimension) => dimension.score !== null);
+      if (!measured.length) return "";
+      const average = Math.round(measured.reduce((total, dimension) => total + dimension.score, 0) / measured.length);
+      return '<div class="profile-ability-gap-list">' + measured.slice().sort((first, second) => first.score - second.score).slice(0, 3).map((dimension) => {
+        const relativeGap = Math.max(0, average - dimension.score);
+        const note = relativeGap
+          ? "较个人六维平均低 " + relativeGap + " 个百分点，建议结合下方知识点补强项安排练习。"
+          : "与个人六维平均接近，建议继续通过任务积累可追溯证据。";
+        return '<div class="profile-ability-gap"><strong>' + escapeHtml(dimension.name) + '</strong><span>' + dimension.score + '%</span><small>' + escapeHtml(note) + '</small></div>';
+      }).join("") + '</div>';
+    }
+
+    function profileAbilityRadarSummary(portrait) {
+      const dimensions = profileAbilityDimensions(portrait);
+      const measured = dimensions.filter((dimension) => dimension.score !== null);
+      if (measured.length !== dimensions.length) {
+        return '<div class="profile-radar-overview">' +
+          '<figure class="profile-radar-figure">' + profileAbilityRadarSvg(dimensions) + '<figcaption>六维能力范围 · 等待测评</figcaption></figure>' +
+          '<div class="profile-radar-copy"><p class="profile-model-label">六维学习能力</p><h3 class="profile-radar-title">完成测评后生成当前表现</h3><p class="profile-radar-pending">理解、应用、推理、表达、复盘、迁移将依据初始或阶段测评呈现；未测维度不会按 0 分绘制，也不会生成虚假的能力差距。</p></div>' +
+        '</div>';
+      }
+      const isFallback = Boolean((portrait && portrait.abilities || {}).is_fallback);
+      const sourceNote = isFallback
+        ? "当前得分由本目标下已有的正式测评掌握度按规则聚合，不包含自评或计划完成记录。"
+        : "当前得分已由学习档案生成；具体学习证据可在完整能力详情中查看。";
+      return '<div class="profile-radar-overview">' +
+        '<figure class="profile-radar-figure">' + profileAbilityRadarSvg(dimensions) + '<figcaption>当前学习表现 · 六维能力</figcaption></figure>' +
+        '<div class="profile-radar-copy"><p class="profile-model-label">六维学习能力</p><h3 class="profile-radar-title">当前需要重点关注的维度</h3><p class="profile-radar-note">' + escapeHtml(sourceNote) + ' 暂未接入正式的维度达成标准，以下仅显示个人维度间的相对差异。</p>' + profileAbilityGapRows(dimensions) + '</div>' +
+      '</div>';
+    }
+
+    function profileTargetPoints(portrait) {
+      const knowledge = portrait && portrait.knowledge_mastery;
+      return Array.isArray(knowledge && knowledge.nodes) ? knowledge.nodes : [];
+    }
+
+    function profileJobTarget(portrait) {
+      const graphs = Array.isArray(portrait && portrait.job_competency_graphs)
+        ? portrait.job_competency_graphs
+        : [];
+      return graphs[0] || null;
+    }
+
+    function profileCurrentProject(portrait) {
+      const assessmentProfile = (portrait && portrait.assessment_profile) || {};
+      const projectId = String(assessmentProfile.project_id || "");
+      if (projectId) {
+        const matched = state.projects.find((project) => project.project_id === projectId);
+        if (matched) return matched;
+      }
+      const goalName = String(((portrait && portrait.identity) || {}).learning_goal?.goal_name || "");
+      return state.projects.find((project) => project.goal_name === goalName) || state.projects[0] || null;
+    }
+
+    function profilePointById(points, knowledgePointId) {
+      return points.find((point) => String(point.id || point.knowledge_point_id || "") === String(knowledgePointId || "")) || null;
+    }
+
+    function profilePointLabel(points, knowledgePointId) {
+      const point = profilePointById(points, knowledgePointId);
+      return point ? String(point.name || point.id || "知识点") : "对应知识点";
+    }
+
+    function profileSkillRows(points, limit) {
+      const visiblePoints = points.slice(0, limit);
+      if (!visiblePoints.length) return '<p class="profile-empty-state">当前目标尚未生成能力项。</p>';
+      return '<div class="profile-skill-list">' + visiblePoints.map((point) => {
+        const pointId = String(point.id || point.knowledge_point_id || "");
+        const pointName = String(point.name || pointId || "知识点");
+        const mastery = profileMasteryValue(point.mastery);
+        const currentWidth = mastery === null ? 0 : mastery;
+        return '<button class="profile-skill-row" type="button" data-profile-knowledge-id="' + escapeHtml(pointId) + '" data-profile-knowledge-name="' + escapeHtml(pointName) + '">' +
+          '<span class="profile-skill-copy"><span class="profile-skill-name">' + escapeHtml(pointName) + '</span><span class="profile-skill-value">' + escapeHtml(profileMasteryLabel(mastery)) + '</span></span>' +
+          '<span class="profile-skill-track"><span class="profile-skill-current" style="width:' + currentWidth + '%"></span><span class="profile-skill-target" style="left:' + PROFILE_TARGET_MASTERY + '%"></span></span>' +
+          '<span class="profile-skill-caption">当前掌握度 · 建议达成线 ' + PROFILE_TARGET_MASTERY + '%</span>' +
+        '</button>';
+      }).join("") + '</div>';
+    }
+
+    function profileStrengtheningItems(portrait, points) {
+      const recommendations = Array.isArray(portrait && portrait.recommendations) ? portrait.recommendations : [];
+      const selected = [];
+      const included = new Set();
+      recommendations.slice().sort((first, second) => Number(first.priority || 99) - Number(second.priority || 99)).forEach((recommendation) => {
+        const point = profilePointById(points, recommendation.knowledge_point_id);
+        const pointId = String(recommendation.knowledge_point_id || "");
+        if (!point || !pointId || included.has(pointId) || profileMasteryValue(point.mastery) === null) return;
+        included.add(pointId);
+        selected.push({ point, recommendation });
+      });
+      points.slice().sort((first, second) => {
+        const firstMastery = profileMasteryValue(first.mastery);
+        const secondMastery = profileMasteryValue(second.mastery);
+        return (firstMastery === null ? 101 : firstMastery) - (secondMastery === null ? 101 : secondMastery);
+      }).forEach((point) => {
+        const pointId = String(point.id || point.knowledge_point_id || "");
+        const mastery = profileMasteryValue(point.mastery);
+        if (!pointId || included.has(pointId) || mastery === null || mastery >= PROFILE_TARGET_MASTERY) return;
+        included.add(pointId);
+        selected.push({ point, recommendation: null });
+      });
+      return selected.slice(0, 3);
+    }
+
+    function profileStrengtheningReason(item) {
+      const mastery = profileMasteryValue(item.point.mastery);
+      const gap = mastery === null ? null : Math.max(0, PROFILE_TARGET_MASTERY - mastery);
+      const sourceReason = item.recommendation && String(item.recommendation.reason || "").trim();
+      const measuredReason = mastery === null
+        ? "尚未形成正式测评证据"
+        : "当前掌握度 " + mastery + "%" + (gap ? "，距离建议达成线还差 " + gap + "%" : "");
+      return sourceReason ? measuredReason + "；推荐原因：" + sourceReason : measuredReason + "，建议优先补强当前目标中的该能力项。";
+    }
+
+    function profileStrengtheningRows(items) {
+      if (!items.length) {
+        return '<p class="profile-empty-state">完成初始测评后，系统会依据正式作答证据给出优先补强顺序。</p>';
+      }
+      return '<div class="profile-strength-list">' + items.map((item, index) => {
+        const point = item.point;
+        const pointId = String(point.id || point.knowledge_point_id || "");
+        const pointName = String(point.name || pointId || "知识点");
+        return '<div class="profile-strength-item">' +
+          '<div class="profile-strength-item-head"><span class="profile-strength-rank">' + (index + 1) + '</span><div class="profile-strength-copy"><strong>' + escapeHtml(pointName) + '</strong><p>' + escapeHtml(profileStrengtheningReason(item)) + '</p></div></div>' +
+          '<button class="profile-strength-action" type="button" data-profile-knowledge-id="' + escapeHtml(pointId) + '" data-profile-knowledge-name="' + escapeHtml(pointName) + '">打开对应讲解</button>' +
+        '</div>';
+      }).join("") + '</div>';
+    }
+
+    function renderProfileDashboard(dashboard) {
+      const profile = dashboard.profile || {};
+      const portrait = dashboard.portrait || {};
+      const records = dashboard.records || {};
+      const identity = portrait.identity || {};
+      const goal = identity.learning_goal || {};
+      const points = profileTargetPoints(portrait);
+      const jobTarget = profileJobTarget(portrait);
+      const name = String(profile.display_name || identity.name || "林同学");
+      const currentProgram = String(profile.program_name || "");
+      const program = currentProgram.includes("Java") ? "Java 应用开发" : (currentProgram || "暂未设置");
+      const overallMastery = (identity.kpi || {}).overall_mastery;
+      $("fp-name").textContent = name;
+      $("fp-avatar").textContent = name.slice(0, 1);
+      $("fp-id").textContent = profile.student_id || STUDENT_ID;
+      $("fp-program").textContent = program;
+      $("fp-learning-goal").textContent = goal.goal_name || "暂未设置";
+      $("fp-career-goal").textContent = jobTarget ? (jobTarget.goal_name || "应聘岗位") : "暂未设置";
+      $("fp-stat-projects").textContent = state.projects.length;
+      $("fp-stat-explanations").textContent = Array.isArray(records.explanations) ? records.explanations.length : 0;
+      $("fp-stat-attempts").textContent = Array.isArray(records.attempts) ? records.attempts.length : 0;
+      $("fp-stat-mastery").textContent = profileMasteryLabel(overallMastery);
+      $("profile-ability-radar").innerHTML = profileAbilityRadarSummary(portrait);
+
+      const measuredPoints = points.map((point) => profileMasteryValue(point.mastery)).filter((value) => value !== null);
+      const match = measuredPoints.length
+        ? Math.round(measuredPoints.reduce((total, value) => total + value, 0) / measuredPoints.length)
+        : null;
+      const modelLabel = jobTarget ? "岗位能力匹配概览" : "当前学习目标能力模型";
+      const modelTitle = jobTarget
+        ? (jobTarget.goal_name || goal.goal_name || "当前岗位")
+        : (goal.goal_name || "当前学习目标");
+      const modelNote = jobTarget
+        ? (match === null
+          ? "岗位匹配度待初始测评后计算；当前仅展示已关联的目标能力项。"
+          : "当前目标能力匹配度 " + match + "%；基于本项目已有正式测评掌握度计算。")
+        : "进度条仅使用正式测评掌握度；竖线表示建议达成线 " + PROFILE_TARGET_MASTERY + "% 。";
+      $("profile-model-summary").innerHTML =
+        '<p class="profile-model-label">' + modelLabel + '</p>' +
+        '<h3 class="profile-model-title">' + escapeHtml(modelTitle) + '</h3>' +
+        '<p class="profile-model-note">' + escapeHtml(modelNote) + '</p>' +
+        profileSkillRows(points, 4);
+
+      const strengtheningItems = profileStrengtheningItems(portrait, points);
+      $("profile-strength-summary").innerHTML =
+        '<p class="profile-model-label">优先补强与下一步</p>' +
+        '<h3 class="profile-model-title">' + (strengtheningItems.length ? "从最需要的能力项开始" : "等待正式测评结果") + '</h3>' +
+        profileStrengtheningRows(strengtheningItems);
+      renderProfileActivity(records, portrait, points);
+
+      const todayPoint = strengtheningItems[0] && strengtheningItems[0].point ||
+        points.find((point) => String(point.status || "") === "current") || points[0] || null;
+      const todayProject = profileCurrentProject(portrait);
+      const todayReason = todayPoint && todayProject
+        ? (strengtheningItems[0]
+          ? "推荐原因：" + profileStrengtheningReason(strengtheningItems[0])
+          : "推荐原因：这是当前学习路径中待开始的能力项。")
+        : "完成目标澄清并创建学习项目后，系统会生成今日学习任务。";
+      $("profile-today-reason").textContent = todayReason;
+      const startButton = $("profile-start-today");
+      startButton.disabled = !todayPoint || !todayProject;
+      startButton.dataset.profileKnowledgeId = todayPoint && todayProject ? String(todayPoint.id || todayPoint.knowledge_point_id || "") : "";
+      startButton.dataset.profileKnowledgeName = todayPoint && todayProject ? String(todayPoint.name || todayPoint.id || "") : "";
+    }
+
+    function renderProfileActivity(records, portrait, points) {
+      const statusLabels = { correct: "回答正确", incorrect: "需要复盘", skipped: "已跳过" };
+      const sceneLabels = { learn: "学习讲解", review: "复习讲解", error_correction: "纠错讲解", re_explain: "针对性讲解" };
+      const attempts = Array.isArray(records.attempts) ? records.attempts : [];
+      const explanations = Array.isArray(records.explanations) ? records.explanations : [];
+      const activities = [
+        ...attempts.map((attempt) => ({
+          createdAt: attempt.created_at,
+          title: "完成“" + profilePointLabel(points, attempt.knowledge_point_id) + "”练习",
+          detail: statusLabels[String(attempt.status || "")] || "已完成作答",
+        })),
+        ...explanations.map((explanation) => ({
+          createdAt: explanation.created_at,
+          title: "完成 AI " + (sceneLabels[String(explanation.scene || "")] || "学习讲解"),
+          detail: "讲解记录已保存到学习档案",
+        })),
+      ].filter((activity) => activity.createdAt).sort((first, second) => String(second.createdAt).localeCompare(String(first.createdAt))).slice(0, 5);
+      $("profile-activity-list").innerHTML = activities.length
+        ? activities.map((activity) => '<div class="profile-activity-item"><time class="profile-activity-time">' + escapeHtml(relativeLearningTime(activity.createdAt)) + '</time><div class="profile-activity-copy"><strong>' + escapeHtml(activity.title) + '</strong><small>' + escapeHtml(activity.detail) + '</small></div></div>').join("")
+        : '<p class="profile-empty-state">暂无可展示的学习动态，开始一次讲解或作答后会在这里留下记录。</p>';
+    }
+
+    function relativeLearningTime(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value || "").slice(0, 10);
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const activityDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const dayDifference = Math.round((today - activityDay) / 86400000);
+      if (dayDifference === 0) return "今天";
+      if (dayDifference === 1) return "昨天";
+      if (dayDifference > 1 && dayDifference < 7) return dayDifference + " 天前";
+      return (date.getMonth() + 1) + " 月 " + date.getDate() + " 日";
+    }
+
+    function openProfileKnowledgePoint(knowledgePointId, knowledgePointName) {
+      const dashboard = state.profileDashboard || {};
+      const project = profileCurrentProject(dashboard.portrait || {});
+      if (!project || !knowledgePointId) {
+        showToast("当前目标还没有可打开的学习任务，请先在对话中创建或选择学习项目。");
+        return;
+      }
+      openLesson(project.project_id, knowledgePointId, knowledgePointName || knowledgePointId);
+    }
+
+    async function openCapabilityDetail() {
+      hideUserMenu();
+      showWorkspaceView("capability_detail");
+    }
+
+    async function loadCapabilityDetailPage() {
+      $("capability-detail-root").innerHTML = '<p class="profile-empty-state">正在加载完整能力详情…</p>';
+      try {
+        const [portrait, records] = await Promise.all([
+          api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/portrait"),
+          api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/records").catch(() => ({ attempts: [], explanations: [] })),
+        ]);
+        if (state.profileDashboard) {
+          state.profileDashboard.portrait = portrait;
+          state.profileDashboard.records = records;
+        }
+        renderCapabilityDetail(portrait, records);
+      } catch (error) {
+        $("capability-detail-intro").textContent = "能力详情暂时无法加载。";
+        $("capability-detail-root").innerHTML = '<p class="profile-empty-state">' + escapeHtml(error.message || "请稍后重试") + '</p>';
+      }
+      icons();
+    }
+
+    function renderCapabilityDetail(portrait, records) {
+      const identity = portrait.identity || {};
+      const goal = identity.learning_goal || {};
+      const points = profileTargetPoints(portrait);
+      const jobTarget = profileJobTarget(portrait);
+      const strengtheningItems = profileStrengtheningItems(portrait, points);
+      const evidence = Array.isArray(portrait.data_evidence) ? portrait.data_evidence.slice(0, 6) : [];
+      const title = jobTarget ? "岗位能力详情" : "当前学习目标能力详情";
+      $("capability-detail-page-title").textContent = title;
+      $("capability-detail-intro").textContent = jobTarget
+        ? "当前展示“" + (jobTarget.goal_name || goal.goal_name || "目标岗位") + "”相关的已关联能力项。产业链、岗位群与能力单元图谱尚未接入时，系统不会用示例数据替代正式图谱。"
+        : "这里展示“" + (goal.goal_name || "当前学习目标") + "”的完整能力项与可追溯学习证据。设置职业目标后，可切换为岗位能力匹配概览。";
+      const careerCard = jobTarget
+        ? '<section class="fp-card capability-detail-card"><h2><i data-lucide="briefcase-business"></i>岗位能力图谱状态</h2><div class="capability-detail-note">当前岗位匹配仅依据本目标下已有正式测评能力项汇总。完整“产业链 → 岗位群 → 能力单元 → 知识点/技能点”图谱需等待已对接的岗位图谱数据，当前不会伪造节点或匹配结论。</div></section>'
+        : '<section class="fp-card capability-detail-card"><h2><i data-lucide="briefcase-business"></i>职业方向</h2><p class="profile-empty-state">尚未设置应聘岗位。设置后，首页将展示与当前学生相关的岗位能力差距摘要。</p><button class="secondary-btn" type="button" data-profile-set-career><i data-lucide="plus"></i>设置职业目标</button></section>';
+      const evidenceRows = evidence.length
+        ? evidence.map((entry) => '<div class="capability-evidence-item"><span class="capability-evidence-type">' + escapeHtml(entry.type || "事件") + '</span><span class="capability-evidence-copy"><strong>' + escapeHtml(entry.title || "学习记录") + '</strong></span><time class="capability-evidence-time">' + escapeHtml(relativeLearningTime(entry.created_at)) + '</time></div>').join("")
+        : '<p class="profile-empty-state">暂无可追溯的正式学习证据。</p>';
+      $("capability-detail-root").innerHTML =
+        '<section class="fp-card capability-detail-card capability-detail-card--wide"><h2><i data-lucide="chart-no-axes-combined"></i>六维学习能力</h2>' + profileAbilityRadarSummary(portrait) + '</section>' +
+        '<section class="fp-card capability-detail-card"><h2><i data-lucide="layers-3"></i>完整能力项</h2>' + profileSkillRows(points, points.length || 4) + '</section>' +
+        '<section class="fp-card capability-detail-card"><h2><i data-lucide="list-todo"></i>优先补强</h2>' + profileStrengtheningRows(strengtheningItems) + '</section>' +
+        careerCard +
+        '<section class="fp-card capability-detail-card capability-detail-card--wide"><h2><i data-lucide="file-search"></i>学习证据</h2><div class="capability-evidence-list">' + evidenceRows + '</div></section>';
+    }
+
+    function openProfileGoalDialog(careerOnly = false) {
+      const dialog = $("profile-goal-dialog");
+      const form = $("profile-goal-form");
+      const dashboard = state.profileDashboard || {};
+      const goal = ((dashboard.portrait || {}).identity || {}).learning_goal || {};
+      form.elements.goal_type.value = careerOnly ? "job" : (profileJobTarget(dashboard.portrait || {}) ? "job" : "course");
+      form.elements.goal_name.value = careerOnly ? "" : (goal.goal_name || "");
+      $("profile-goal-help").textContent = "";
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      icons();
+      form.elements.goal_name.focus();
+    }
+
     $("user-card").onclick = (event) => {
       event.stopPropagation();
       const open = userMenuEl.hidden;
@@ -3144,7 +4571,54 @@
         hideUserMenu();
       }
     });
-    $("fp-tile-portrait").onclick = openPortrait;
+    $("profile-adjust-goal").onclick = () => openProfileGoalDialog(false);
+    $("profile-view-capability-detail").onclick = openCapabilityDetail;
+    $("profile-start-today").onclick = (event) => {
+      openProfileKnowledgePoint(event.currentTarget.dataset.profileKnowledgeId, event.currentTarget.dataset.profileKnowledgeName);
+    };
+    profileEl.addEventListener("click", (event) => {
+      const knowledgeTarget = event.target.closest("[data-profile-knowledge-id]");
+      if (knowledgeTarget && knowledgeTarget !== $("profile-start-today")) {
+        openProfileKnowledgePoint(knowledgeTarget.dataset.profileKnowledgeId, knowledgeTarget.dataset.profileKnowledgeName);
+        return;
+      }
+      const metric = event.target.closest("[data-profile-metric]");
+      if (!metric) return;
+      if (metric.dataset.profileMetric === "projects") {
+        setMobilePanel("projects");
+        showToast("已定位到左侧学习项目列表。");
+        return;
+      }
+      $("profile-activity").scrollIntoView({ behavior: "smooth", block: "start" });
+      showToast(metric.dataset.profileMetric === "mastery" ? "已定位到当前能力模型。" : "已定位到最近学习记录。");
+    });
+    capabilityDetailEl.addEventListener("click", (event) => {
+      const knowledgeTarget = event.target.closest("[data-profile-knowledge-id]");
+      if (knowledgeTarget) {
+        openProfileKnowledgePoint(knowledgeTarget.dataset.profileKnowledgeId, knowledgeTarget.dataset.profileKnowledgeName);
+        return;
+      }
+      if (event.target.closest("[data-profile-set-career]")) openProfileGoalDialog(true);
+    });
+    $("profile-goal-cancel").onclick = () => $("profile-goal-dialog").close();
+    $("profile-goal-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const goalType = form.elements.goal_type.value;
+      const goalName = form.elements.goal_name.value.trim();
+      const studyPeriod = form.elements.study_period.value;
+      if (!goalName) {
+        $("profile-goal-help").textContent = "请填写目标岗位、课程或实训名称。";
+        form.elements.goal_name.focus();
+        return;
+      }
+      const goalTypeLabels = { course: "课程或实训", job: "应聘岗位", competition: "技能竞赛", self_improvement: "自我提升" };
+      $("chat-textarea").value = "我想调整学习目标：目标类型为“" + (goalTypeLabels[goalType] || "学习目标") + "”，目标是“" + goalName + "”，计划学习周期为“" + studyPeriod + "”。请先确认目标范围，再创建或更新学习项目。";
+      $("profile-goal-dialog").close();
+      setMobilePanel("chat");
+      $("chat-textarea").focus();
+      showToast("已将目标调整请求写入对话，请发送后由助手确认。");
+    });
     $("settings-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = event.target;
@@ -3172,6 +4646,7 @@
     $("selection-ask").onclick = prepareSelectionQuestion;
     $("selection-context-clear").onclick = () => clearSelectionContext(true);
     document.addEventListener("mouseup", (event) => {
+      if (event.target.closest(".lesson-vditor")) return;
       if (event.target.closest(".selection-toolbar, .inline-note-editor, .inline-note-popover, .user-inline-note-content, .note-caret-anchor, dialog, .chat")) return;
       requestAnimationFrame(() => {
         const selection = window.getSelection();
@@ -3213,6 +4688,7 @@
       this.style.height = Math.min(this.scrollHeight, 120) + "px";
     });
     $("new-project-btn").onclick = () => {
+      setMobilePanel("chat");
       const key = createDraftConversationKey();
       const conversation = switchConversation(key);
       state.current = null;
@@ -3233,8 +4709,11 @@
     });
     document.querySelectorAll(".chat-tool").forEach((button) => {
       button.onclick = () => {
-        if (button.dataset.tool === "materials") {
-          addMsg("bot", "<p><strong>学习资料问答尚未接入。</strong> 当前可以使用领域知识库和联网检索；后续需要补充文件上传、文本提取、向量检索和项目级权限隔离后再开放。</p>");
+        if (button.dataset.tool === "materials" && !state.materialKnowledgeAvailable) {
+          const message = state.materialKnowledgeStatus === "insecure_transport_blocked"
+            ? "学习资料插件使用不安全的 HTTP 地址，系统已阻止发送学习内容。"
+            : "学习资料插件尚未完成服务配置，当前不会向外部服务发送内容。";
+          addMsg("bot", "<p><strong>学习资料暂不可用。</strong> " + escapeHtml(message) + "</p>");
           button.setAttribute("aria-pressed", "false");
           state.chatTools.materials = false;
           return;
@@ -3252,8 +4731,20 @@
       renderEditorTabs();
       try {
         await refreshProjects();
-        const profile = await api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null);
+        const [profile, health] = await Promise.all([
+          api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null),
+          api("/api/health").catch(() => null),
+        ]);
         const p = profile && profile.profile;
+        state.materialKnowledgeAvailable = Boolean(health && health.material_knowledge_enabled);
+        state.materialKnowledgeStatus = health && health.material_knowledge_status || "disabled";
+        const materialsButton = document.querySelector('[data-tool="materials"]');
+        if (materialsButton) {
+          materialsButton.title = state.materialKnowledgeAvailable
+            ? "使用外部学习资料插件（返回内容未经审核）"
+            : "学习资料插件尚未配置";
+          materialsButton.classList.toggle("unavailable", !state.materialKnowledgeAvailable);
+        }
         $("conn-state").textContent = "服务已连接";
         if (p) {
           const name = p.display_name || "学习者";
