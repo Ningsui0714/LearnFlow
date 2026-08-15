@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -87,3 +89,63 @@ async def test_gateway_normalizes_remote_failures():
     with pytest.raises(LearningTaskConversionError, match="503") as failure:
         await gateway.capabilities()
     assert failure.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_gateway_runs_xingchen_workflow_and_resolves_bundle():
+    task_card_id = "ltc_generated_01"
+    poll_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal poll_count
+        if request.url.path.endswith("/async/chat/completions"):
+            assert request.headers["Authorization"] == "Bearer key:secret"
+            body = json.loads(request.content)
+            assert body["parameters"]["AGENT_USER_INPUT"] == "实现 REST API"
+            return httpx.Response(200, json={"code": 0, "data": {"execute_id": "exec_1"}})
+        if request.url.path.endswith("/async/chat/result"):
+            poll_count += 1
+            if poll_count == 1:
+                return httpx.Response(200, json={"code": 0, "data": {"status": "running"}})
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "status": "success",
+                        "output": {
+                            "content": (
+                                "[打开交互式任务页](https://example.test/api/v1/"
+                                f"learning-task-conversion/tasks/{task_card_id}/interactive.html)"
+                            )
+                        },
+                    },
+                },
+            )
+        if request.url.path.endswith(f"/tasks/{task_card_id}/bundle"):
+            return httpx.Response(200, json=_bundle(task_card_id))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://conversion.example",
+        transport=httpx.MockTransport(handler),
+        xingchen_api_key="key",
+        xingchen_api_secret="secret",
+        xingchen_flow_id="flow",
+        workflow_poll_interval_seconds=0,
+    )
+    result = await gateway.generate_from_conversation("实现 REST API")
+    assert result["task_card_id"] == task_card_id
+    assert result["bundle"]["schema_version"] == "learning-task-conversion-integration-bundle-v1"
+
+
+@pytest.mark.asyncio
+async def test_gateway_requires_server_side_xingchen_credentials():
+    gateway = LearningTaskConversionGateway(
+        xingchen_api_key="",
+        xingchen_api_secret="",
+        xingchen_flow_id="",
+    )
+    with pytest.raises(LearningTaskConversionError, match="尚未配置") as failure:
+        await gateway.generate_from_conversation("实现 REST API")
+    assert failure.value.status_code == 503

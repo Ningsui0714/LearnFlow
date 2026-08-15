@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     # and never writes five-kernel learner state directly.
     learning_task_conversion_base_url: str = "http://82.156.199.145"
     learning_task_conversion_timeout_seconds: float = 30.0
+    # Published Xunfei Xingchen workflow. Credentials stay on the server and
+    # are never returned to the browser-facing API.
+    xingchen_api_key: str = ""
+    xingchen_api_secret: str = ""
+    xingchen_flow_id: str = ""
+    xingchen_uid: str = "learnflow-wf03"
+    xingchen_workflow_timeout_seconds: float = 240.0
     # Desktop sidecar mode. Keep disabled in browser/server deployments.
     desktop_mode: bool = False
     desktop_token: str = ""

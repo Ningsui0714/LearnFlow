@@ -21,6 +21,13 @@ class _FakeGateway:
             "task_card_id": task_card_id,
         }
 
+    async def generate_from_conversation(self, query: str):
+        return {
+            "schema_version": "learnflow-wf03-generation-v1",
+            "task_card_id": "ltc_generated_01",
+            "query": query,
+        }
+
 
 def _registration(username: str) -> dict:
     return {
@@ -47,6 +54,13 @@ def test_learning_task_conversion_proxy_requires_login_and_keeps_task_id(monkeyp
         capabilities = client.get("/api/learning-task-conversion/capabilities")
         assert capabilities.status_code == 200
         assert capabilities.json()["service"] == "learning-task-conversion"
+
+        generated = client.post(
+            "/api/learning-task-conversion/generate",
+            json={"query": "为课程管理系统实现 REST API"},
+        )
+        assert generated.status_code == 200
+        assert generated.json()["task_card_id"] == "ltc_generated_01"
 
         bundle = client.get(
             "/api/learning-task-conversion/tasks/ltc_contract_01/bundle"

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ExternalLink, Plus, RefreshCw } from 'lucide-react'
+import { Check, ExternalLink, FilePenLine, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import {
   createTutorSession, sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
+  generateLearningTaskConversion,
 } from '../../services/api'
-import type { ProjectProposal, ProjectProposalSource } from '../../services/api'
+import type { ProjectProposal, ProjectProposalSource, WF03GenerationResult } from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
 
@@ -35,6 +36,8 @@ interface Props {
   addingCandidateUrl?: string | null
   onRefreshCandidateSources?: () => void | Promise<void>
   onAddCandidateSource?: (candidate: ProjectProposalSource) => void | Promise<void>
+  learningTaskGenerationEnabled?: boolean
+  onLearningTaskGenerated?: (result: WF03GenerationResult) => void
 }
 
 const terminal = new Set(['completed', 'failed', 'canceled'])
@@ -200,6 +203,7 @@ export default function TutorPanel({
   onProposalAccepted, proposalDragEnabled = false, projectProposal,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
   onRefreshCandidateSources, onAddCandidateSource,
+  learningTaskGenerationEnabled = false, onLearningTaskGenerated,
 }: Props) {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -210,6 +214,7 @@ export default function TutorPanel({
   const [proposals, setProposals] = useState<ProjectProposal[]>([])
   const [proposalBusy, setProposalBusy] = useState(false)
   const [milestoneNotice, setMilestoneNotice] = useState<any>(null)
+  const [learningTaskMode, setLearningTaskMode] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<number | null>(null)
 
@@ -402,6 +407,21 @@ export default function TutorPanel({
     }
     setLoading(true)
     try {
+      if (learningTaskGenerationEnabled && learningTaskMode && text && !selectedActionId) {
+        const generated = await generateLearningTaskConversion(text)
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: '学习型任务网页已经生成，内容已在中间工作区打开。你可以直接拖选任意文字添加批注。',
+          meta_data: {
+            message_kind: 'learning_task_generated',
+            task_card_id: generated.task_card_id,
+          },
+        }])
+        setLearningTaskMode(false)
+        setLoading(false)
+        onLearningTaskGenerated?.(generated)
+        return
+      }
       const data = await sendTutorTurn(sessionId, {
         message: text || '确认',
         project_id: projectId,
@@ -605,6 +625,24 @@ export default function TutorPanel({
             ))}
           </div>
         )}
+        {learningTaskGenerationEnabled && (
+          <div className="mb-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setLearningTaskMode(value => !value)}
+              disabled={loading}
+              aria-pressed={learningTaskMode}
+              className={`flex h-7 items-center gap-1.5 border px-2.5 text-[10px] font-medium transition-colors ${
+                learningTaskMode
+                  ? 'border-emerald-600 bg-emerald-700 text-white'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-400'
+              }`}
+            >
+              <FilePenLine size={12} /> 生成学习型任务网页
+            </button>
+            {learningTaskMode && <span className="flex items-center gap-1 text-[10px] text-emerald-700"><Sparkles size={11} /> 将通过讯飞工作流生成</span>}
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -616,7 +654,7 @@ export default function TutorPanel({
               }
             }}
             rows={2}
-            placeholder="问一个问题，或直接告诉我下一步要做什么"
+            placeholder={learningTaskMode ? '描述一个计算机专业真实工作任务…' : '问一个问题，或直接告诉我下一步要做什么'}
             className="min-w-0 flex-1 resize-none border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-lg"
           />
           <button

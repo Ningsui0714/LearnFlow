@@ -100,6 +100,26 @@ export interface LearningTaskStepHandoff {
   skill_point_ids: string[]
 }
 
+export interface LearningTaskKnowledgePoint {
+  knowledge_id: string
+  display_code?: string
+  name: string
+  scope?: string
+  description?: string
+  concept?: string
+  operation?: string
+  verification?: string
+}
+
+export interface LearningTaskSkillPoint {
+  skill_id: string
+  display_code?: string
+  name: string
+  observable_action?: string
+  expected_artifact?: string
+  description?: string
+}
+
 export interface LearningTaskConversionBundle {
   schema_version: 'learning-task-conversion-integration-bundle-v1'
   task_card_id: string
@@ -114,8 +134,8 @@ export interface LearningTaskConversionBundle {
       teaching_task_name: string
       teaching_task_description?: string
       task_steps: LearningTaskStepHandoff[]
-      knowledge_points: Array<Record<string, any>>
-      skill_points: Array<Record<string, any>>
+      knowledge_points: LearningTaskKnowledgePoint[]
+      skill_points: LearningTaskSkillPoint[]
       tools?: string[]
     }
     knowledge_entry_contract?: Record<string, any>
@@ -131,8 +151,42 @@ export interface LearningTaskConversionBundle {
   }
 }
 
+export interface WF03GenerationResult {
+  schema_version: 'learnflow-wf03-generation-v1'
+  execute_id: string
+  status: string
+  task_card_id: string
+  message: string
+  bundle: LearningTaskConversionBundle
+}
+
+export type WF03FeedbackCode =
+  | 'weak_relation'
+  | 'incorrect_knowledge_scope'
+  | 'incorrect_skill_scope'
+  | 'step_mapping_mismatch'
+  | 'missing_prerequisite'
+  | 'unsupported_task_fact'
+  | 'other'
+
+export interface WF03FeedbackIssue {
+  issue_id: string
+  feedback_code: WF03FeedbackCode
+  severity: 'info' | 'warning' | 'error'
+  relation_id?: string
+  step_id?: string
+  knowledge_id?: string
+  skill_id?: string
+  message: string
+  suggested_correction: string
+}
+
 export const getLearningTaskConversionCapabilities = () =>
   api.get('/learning-task-conversion/capabilities').then(r => r.data)
+
+export const generateLearningTaskConversion = (query: string) =>
+  api.post('/learning-task-conversion/generate', { query }, { timeout: 300000 })
+    .then(r => r.data as WF03GenerationResult)
 
 export const submitCompetencyGraphHandoff = (handoff: Record<string, any>) =>
   api.post('/learning-task-conversion/upstream-handoffs', handoff).then(r => r.data)

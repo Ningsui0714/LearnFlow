@@ -11,9 +11,14 @@
 ```env
 LEARNING_TASK_CONVERSION_BASE_URL=http://82.156.199.145
 LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
+XINGCHEN_API_KEY=...
+XINGCHEN_API_SECRET=...
+XINGCHEN_FLOW_ID=...
+XINGCHEN_UID=learnflow-wf03
+XINGCHEN_WORKFLOW_TIMEOUT_SECONDS=240
 ```
 
-调用目标地址只来自服务端配置，前端不能传入任意主机，避免形成开放代理。生产环境可以把地址替换为 HTTPS 域名；讯飞凭据仍只保存在岗位任务转化服务端，不进入 LearnFlow 浏览器。
+调用目标地址只来自服务端配置，前端不能传入任意主机，避免形成开放代理。生产环境可以把地址替换为 HTTPS 域名。讯飞 APIKey、API Secret 和 Flow ID 只保存在 LearnFlow 后端环境变量中，不进入浏览器或前端 `.env`。
 
 ## LearnFlow API
 
@@ -22,6 +27,7 @@ LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 | LearnFlow 接口 | 用途 | 远端接口 |
 |---|---|---|
 | `GET /api/learning-task-conversion/capabilities` | 契约发现与健康检查 | `/api/v1/learning-task-conversion/capabilities` |
+| `POST /api/learning-task-conversion/generate` | 以对话原文调用已发布的讯飞异步工作流并取得任务包 | 讯飞 `async/chat/completions` 与 `async/chat/result` |
 | `POST /api/learning-task-conversion/upstream-handoffs` | 转交岗位能力图谱确认的单项企业任务 | `/api/v1/learning-task-conversion/upstream-handoffs` |
 | `GET /api/learning-task-conversion/tasks/{task_card_id}/bundle` | 获取任务、强关系、追溯和展示产物 | `/api/v1/learning-task-conversion/tasks/{task_card_id}/bundle` |
 | `GET /api/learning-task-conversion/tasks/{task_card_id}/personalized-learning` | 获取个性化学习输入 JSON | `/api/v1/learning-task-conversion/tasks/{task_card_id}/personalized-learning.json` |
@@ -29,10 +35,18 @@ LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 
 ## 前端使用
 
-`frontend/src/services/api.ts` 已提供：
+主工作区的使用流程：
+
+1. 用户在右侧主 Agent 对话栏开启“生成学习型任务网页”，输入计算机专业真实工作任务。
+2. LearnFlow 后端调用讯飞异步工作流，轮询完成后解析任务卡 ID，并取得通过契约校验的结构化任务包。
+3. 结果直接在中间编辑区渲染，左侧项目栏和右侧对话栏保持不变，不打开新的浏览器窗口。
+4. 用户可以用鼠标左键拖选任务步骤、知识点或技能点，在任务页右侧添加批注并提交复核。
+
+`frontend/src/services/api.ts` 提供生成、读取和反馈调用：
 
 ```ts
-const bundle = await getLearningTaskConversionBundle(taskCardId)
+const generated = await generateLearningTaskConversion(userMessage)
+const bundle = generated.bundle
 const task = bundle.task.work_task
 
 // 一个企业真实工作任务，对应按真实作业顺序生成的可变数量步骤。
@@ -40,8 +54,6 @@ for (const step of task.task_steps) {
   console.log(step.action, step.deliverable, step.check)
   console.log(step.knowledge_point_ids, step.skill_point_ids)
 }
-
-window.open(bundle.artifacts.interactive_html_url, '_blank', 'noopener,noreferrer')
 ```
 
 LearnFlow 后续个性化学习只组织“怎么学”：路线、讲解、练习、反馈与补弱；不得改写交付中的企业任务名称、任务步骤以及步骤—知识点—技能点映射。
@@ -114,5 +126,5 @@ LearnFlow 后续个性化学习只组织“怎么学”：路线、讲解、练�
 
 ## v1 验收边界
 
-- 已实现：服务端固定地址代理、超时和错误归一化、版本校验、步骤字段校验、知识/技能引用完整性校验、前端调用封装、上下游反馈通道。
+- 已实现：服务端固定地址代理、讯飞异步 Workflow API 调用、超时和错误归一化、版本校验、步骤字段校验、知识/技能引用完整性校验、中间编辑区任务网页、鼠标选区批注、前端调用封装、上下游反馈通道。
 - 未在本版实现：把任务自动物化为 LearnFlow 项目和关卡。该操作会引入 Action Board 副作用、学习者作用域和路线确认，需要作为下一阶段单独登记和实现。

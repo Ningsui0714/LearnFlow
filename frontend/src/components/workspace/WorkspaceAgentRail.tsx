@@ -163,6 +163,14 @@ export default function WorkspaceAgentRail({
         addingCandidateUrl={state.checkpointId ? null : projectContext?.addingCandidateUrl}
         onRefreshCandidateSources={state.checkpointId ? undefined : projectContext?.onRefreshCandidateSources}
         onAddCandidateSource={state.checkpointId ? undefined : projectContext?.onAddCandidateSource}
+        learningTaskGenerationEnabled={location.pathname === '/agent'}
+        onLearningTaskGenerated={generated => openPath(
+          `/wf03/tasks/${generated.task_card_id}`,
+          {
+            title: generated.bundle.task.work_task.teaching_task_name || '学习型任务网页',
+            kind: 'wf03',
+          },
+        )}
       />
       {showAgentProfiles && <LocalAgentProfilesDialog onClose={() => setShowAgentProfiles(false)} />}
     </aside>
