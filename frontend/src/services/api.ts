@@ -88,6 +88,66 @@ export const restoreProfileMemory = (memoryId: string) =>
   api.post(`/profile/memories/${encodeURIComponent(memoryId)}/restore`).then(r => r.data)
 export const getLearningJourney = () => api.get('/profile/journey').then(r => r.data)
 
+// ── 岗位典型工作任务转化（外部星辰工作流适配器） ──
+export interface LearningTaskStepHandoff {
+  step: number
+  step_id: string
+  name: string
+  action: string
+  deliverable: string
+  check: string
+  knowledge_point_ids: string[]
+  skill_point_ids: string[]
+}
+
+export interface LearningTaskConversionBundle {
+  schema_version: 'learning-task-conversion-integration-bundle-v1'
+  task_card_id: string
+  status: string
+  verification_status: string
+  task: {
+    schema_version: 'learning-task-to-personalized-learning-v1'
+    work_task: {
+      work_task_id: string
+      enterprise_task_name: string
+      enterprise_task_description?: string
+      teaching_task_name: string
+      teaching_task_description?: string
+      task_steps: LearningTaskStepHandoff[]
+      knowledge_points: Array<Record<string, any>>
+      skill_points: Array<Record<string, any>>
+      tools?: string[]
+    }
+    knowledge_entry_contract?: Record<string, any>
+  }
+  strong_relationships: Array<Record<string, any>>
+  traceability?: Record<string, any>
+  upstream_feedback?: Record<string, any>
+  downstream_feedback?: Record<string, any>
+  artifacts: {
+    interactive_html_url: string
+    pdf_url: string
+    personalized_learning_json_url: string
+  }
+}
+
+export const getLearningTaskConversionCapabilities = () =>
+  api.get('/learning-task-conversion/capabilities').then(r => r.data)
+
+export const submitCompetencyGraphHandoff = (handoff: Record<string, any>) =>
+  api.post('/learning-task-conversion/upstream-handoffs', handoff).then(r => r.data)
+
+export const getLearningTaskConversionBundle = (taskCardId: string) =>
+  api.get(`/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}/bundle`)
+    .then(r => r.data as LearningTaskConversionBundle)
+
+export const getPersonalizedLearningHandoff = (taskCardId: string) =>
+  api.get(`/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}/personalized-learning`)
+    .then(r => r.data)
+
+export const submitPersonalizedLearningFeedback = (feedback: Record<string, any>) =>
+  api.post('/learning-task-conversion/downstream-feedback', feedback).then(r => r.data)
+
 export type MemoryKernel = 'structure' | 'knowledge' | 'human' | 'value' | 'practice'
 export type MemoryNodeType = 'fact' | 'module' | 'claim'
 
