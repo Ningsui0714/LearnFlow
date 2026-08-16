@@ -81,7 +81,7 @@ export default function WorkspaceTabs() {
   const { tabs } = useWorkspace()
   return (
     <div className="flex h-10 shrink-0 items-stretch border-b border-slate-700 bg-slate-950" role="tablist" aria-label="已打开的学习页面">
-      <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden">
+      <div className="workspace-tabs-scroll flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden">
         {tabs.map(tab => <Tab key={tab.id} tab={tab} />)}
       </div>
       <div className="hidden shrink-0 items-center gap-1 border-l border-slate-700 px-3 text-[10px] text-slate-400 2xl:flex">
