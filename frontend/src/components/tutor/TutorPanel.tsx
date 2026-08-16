@@ -9,6 +9,7 @@ import {
   generateLearningTaskConversion,
 } from '../../services/api'
 import type { ProjectProposal, ProjectProposalSource, WF03GenerationResult } from '../../services/api'
+import { shouldSendMessageOnEnter } from '../../utils/keyboard'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
 
@@ -734,7 +735,7 @@ export default function TutorPanel({
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
+              if (shouldSendMessageOnEnter(event)) {
                 event.preventDefault()
                 send()
               }
