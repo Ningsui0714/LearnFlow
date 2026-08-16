@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-14.2"
+REGISTRY_VERSION = "2026-08-16.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -27,7 +27,7 @@ SEMANTIC_MEMORY_KEYS = {
     },
     "knowledge": {
         "concept_understanding", "knowledge_gap", "pending_question",
-        "misconceptions", "active_concepts", "recent_errors",
+        "misconceptions", "active_concepts", "recent_errors", "retention_status",
     },
     "human": {
         "affect", "cognitive_load", "attention", "frustration",
@@ -39,7 +39,7 @@ SEMANTIC_MEMORY_KEYS = {
     },
     "practice": {
         "current_attempt", "assistance_level", "artifact_state",
-        "recent_feedback", "transfer_readiness",
+        "recent_feedback", "transfer_readiness", "review_history",
     },
 }
 
@@ -184,6 +184,8 @@ TOOLS = {
         ToolContract("deterministic_assessment", "Deterministic Assessment", "practice_agent", "learnflow", "assessment"),
         ToolContract("deterministic_remediation", "RemediationStrategy", "practice_agent", "fused", "policy",
                      ("knowledge", "human", "practice"), (), "EvidenceEvent"),
+        ToolContract("review_scheduler", "Deterministic Spaced Review Scheduler", "practice_agent", "learnflow", "projection",
+                     ("knowledge", "practice"), (), "LearningAttempt/Event -> ReviewSchedule"),
         ToolContract("evidence_ledger", "Evidence Ledger Gateway", "tutor_agent", "learnflow", "event_gateway",
                      (), (), "append-only EvidenceEvent"),
         ToolContract("five_kernel_reducer", "Five-kernel Deterministic Reducer", "tutor_agent", "learnflow", "projection",
@@ -226,6 +228,10 @@ SKILLS = {
         SkillContract("remediation_loop", "答错—纠错—重做—变式—回写", "practice_agent",
                       ("deterministic_remediation", "deterministic_assessment", "evidence_ledger"),
                       "RemediationCase + ordered evidence chain", "RemediationStrategy", "fused"),
+        SkillContract("spaced_review", "检索练习与可解释间隔复习", "practice_agent",
+                      ("review_scheduler", "deterministic_assessment", "deterministic_remediation", "evidence_ledger"),
+                      "QuestionLearningState + ReviewSchedule + graded review evidence",
+                      "review-policy-v1"),
         SkillContract("learner_memory_synthesis", "五核画像与可检查记忆", "tutor_agent",
                       ("five_kernel_reducer", "memory_graph"),
                       "kernel projection + evidence-backed claims", "deterministic reducer", "fused"),
@@ -260,10 +266,14 @@ WORKBENCHES = {
                           ("evaluate_attempt", "retry_attempt", "evaluate_transfer_variant")),
         WorkbenchContract("remediation", "Remediation Panel", "RemediationPanel", "practice_agent",
                           ("request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
+        WorkbenchContract("review", "Global Review Workbench", "/review", "tutor_agent",
+                          ("plan_review_queue", "evaluate_review_attempt", "manage_review_item")),
         WorkbenchContract("profile", "Learner Profile", "/profile", "tutor_agent", ()),
         WorkbenchContract("memory", "Inspectable Memory", "/memory", "tutor_agent", ()),
         WorkbenchContract("competition_demo", "Seeded Demo Entry", "/demo", "tutor_agent",
-                          ("evaluate_attempt", "request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
+                          ("plan_review_queue", "evaluate_review_attempt", "manage_review_item",
+                           "evaluate_attempt", "request_remediation_explanation", "retry_attempt",
+                           "evaluate_transfer_variant"), "fused"),
         WorkbenchContract("desktop_workspace", "Desktop File Workspace", "tauri://workspace", "tutor_agent",
                           ("link_project_workspace", "inspect_workspace_files", "propose_workspace_change", "apply_workspace_change", "open_managed_learning_artifact", "edit_managed_lecture", "annotate_learning_artifact", "delegate_local_agent_task", "inspect_local_agent_run", "cancel_local_agent_run", "apply_local_agent_result")),
         WorkbenchContract("xingchen_studio", "Xingchen Workflow Studio", "external", "learning_design_agent",
@@ -292,6 +302,9 @@ CAPABILITY_OWNERS = {
     "request_remediation_explanation": ("practice_agent", "deterministic_remediation", "remediation"),
     "retry_attempt": ("practice_agent", "deterministic_assessment", "remediation"),
     "evaluate_transfer_variant": ("practice_agent", "deterministic_assessment", "remediation"),
+    "plan_review_queue": ("tutor_agent", "review_scheduler", "review"),
+    "evaluate_review_attempt": ("practice_agent", "deterministic_assessment", "review"),
+    "manage_review_item": ("practice_agent", "review_scheduler", "review"),
     "record_task_outcome": ("tutor_agent", "task_runtime", "project_tutor"),
     "link_project_workspace": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
     "inspect_workspace_files": ("tutor_agent", "workspace_file_service", "desktop_workspace"),
@@ -345,6 +358,11 @@ EVENTS = {
         _event("remediation_retry_evaluated", "retry_attempt", ("knowledge", "practice"), "graded_retry", origin="fused"),
         _event("remediation_variant_evaluated", "evaluate_transfer_variant", ("knowledge", "practice"), "transfer_evidence", origin="fused"),
         _event("remediation_completed", "evaluate_transfer_variant", ("knowledge", "human", "practice"), "evidence_writeback", origin="fused"),
+        _event("review_attempt_evaluated", "evaluate_review_attempt", ("knowledge", "practice"), "spaced_retrieval"),
+        _event("review_item_skipped", "manage_review_item", (), "operational"),
+        _event("review_item_deferred", "manage_review_item", (), "operational"),
+        _event("review_item_suspended", "manage_review_item", (), "operational"),
+        _event("review_item_resumed", "manage_review_item", (), "operational"),
         _event("project_completed", "advance_checkpoint", ("structure", "value", "practice"), "milestone"),
         _event("workspace_linked", "link_project_workspace", (), "operational"),
         _event("workspace_change_applied", "apply_workspace_change", (), "operational"),

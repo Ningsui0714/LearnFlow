@@ -98,6 +98,7 @@ DESKTOP_WORKSPACE_MIGRATION = "v6-desktop-workspace"
 CHECKPOINT_TUTOR_MIGRATION = "v7-checkpoint-tutor-sessions"
 MANAGED_ARTIFACT_MIGRATION = "v8-managed-learning-artifacts"
 LOCAL_AGENT_BROKER_MIGRATION = "v9-local-agent-broker"
+REVIEW_WORKBENCH_MIGRATION = "v10-review-workbench"
 
 
 def _sqlite_path() -> Path | None:
@@ -347,6 +348,42 @@ def _backup_before_managed_artifact_migration():
     backup_dir = path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     backup_path = backup_dir / f"{path.stem}-pre-managed-artifacts-v8{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
+def _backup_before_review_workbench_migration():
+    path = _sqlite_path()
+    if (
+        not path or not path.exists() or path.stat().st_size == 0
+        or _migration_applied(path, REVIEW_WORKBENCH_MIGRATION)
+    ):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = path.parent / "backups" / f"{path.stem}-pre-review-v10{path.suffix}"
     if backup_path.exists():
         return
     required = path.stat().st_size + 64 * 1024 * 1024
@@ -866,6 +903,22 @@ async def _mark_local_agent_broker_migration():
         print(f"[migrate] applied {LOCAL_AGENT_BROKER_MIGRATION}")
 
 
+async def _backfill_review_workbench():
+    from app.models.learning import SchemaMigration
+    from app.services.review import rebuild_review_schedules
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == REVIEW_WORKBENCH_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        count = await rebuild_review_schedules(db)
+        db.add(SchemaMigration(version=REVIEW_WORKBENCH_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {REVIEW_WORKBENCH_MIGRATION}: {count} attempts projected")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -874,6 +927,7 @@ async def init_db():
     _backup_before_desktop_workspace_migration()
     _backup_before_checkpoint_tutor_migration()
     _backup_before_managed_artifact_migration()
+    _backup_before_review_workbench_migration()
     async with engine.begin() as conn:
         from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -886,3 +940,4 @@ async def init_db():
     await _mark_checkpoint_tutor_migration()
     await _migrate_managed_artifacts()
     await _mark_local_agent_broker_migration()
+    await _backfill_review_workbench()

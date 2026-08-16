@@ -941,6 +941,37 @@ export const submitRemediationVariant = (
   caseId: number, data: { answer_indexes?: number[]; answer_text?: string },
 ) => api.post(`/remediation/${caseId}/variant/submit`, data).then(r => r.data)
 
+// ── Global spaced review workbench ──
+export const getReviewSummary = (params: Record<string, string | number | undefined> = {}) =>
+  api.get('/review/summary', { params }).then(r => r.data)
+
+export const listReviewItems = (params: Record<string, string | number | undefined> = {}) =>
+  api.get('/review/items', { params }).then(r => r.data)
+
+export const getReviewItem = (scheduleId: number) =>
+  api.get(`/review/items/${scheduleId}`).then(r => r.data)
+
+export const getReviewHistory = (scheduleId: number) =>
+  api.get(`/review/items/${scheduleId}/history`).then(r => r.data)
+
+export const submitReviewItem = (scheduleId: number, data: {
+  expected_version: number
+  client_submission_id: string
+  response_status: 'answered' | 'unknown' | 'skipped'
+  answer_indexes?: number[]
+  answer_text?: string
+  code?: string
+  files?: Array<Record<string, any>>
+  assistance_level?: 'none' | 'hint' | 'guided'
+  presentation_version: string
+}) => api.post(`/review/items/${scheduleId}/submit`, data).then(r => r.data)
+
+export const manageReviewItem = (
+  scheduleId: number,
+  action: 'defer' | 'suspend' | 'resume',
+  data: { expected_version: number; client_event_id: string },
+) => api.post(`/review/items/${scheduleId}/${action}`, data).then(r => r.data)
+
 export const getCompetitionDemoStatus = () =>
   api.get('/demo/status').then(r => r.data)
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  BookOpen, Braces, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
+  BookOpen, Braces, CalendarClock, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
   GitBranch, Plus, Route, UserRound,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
@@ -236,6 +236,13 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
         <div className="mb-1 mt-4 flex items-center gap-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
           <BookOpen size={12} /> Learner
         </div>
+        <button
+          type="button"
+          onClick={() => open('/review', { title: '全局复习台', kind: 'review' })}
+          className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-slate-600 hover:bg-slate-100"
+        >
+          <CalendarClock size={14} className="text-indigo-600" /> 复习与错题
+        </button>
         <button
           type="button"
           onClick={() => open('/memory', { title: '五核记忆', kind: 'memory' })}

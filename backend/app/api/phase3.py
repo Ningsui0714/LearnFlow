@@ -514,6 +514,27 @@ async def submit_concept(
     ))).scalar_one_or_none()
     if not q:
         raise HTTPException(404, "Question not found")
+    submission_key = None
+    client_submission_id = str((data or {}).get("client_submission_id") or "").strip()
+    if client_submission_id:
+        raw_key = (
+            f"concept:{current.learner.id}:{checkpoint_id}:{question_id}:"
+            f"{client_submission_id}"
+        )
+        submission_key = raw_key if len(raw_key) <= 160 else (
+            f"concept:{current.learner.id}:sha256:"
+            f"{hashlib.sha256(raw_key.encode()).hexdigest()}"
+        )
+        replay = (await db.execute(select(LearningAttempt).where(
+            LearningAttempt.learner_id == current.learner.id,
+            LearningAttempt.client_submission_id == submission_key,
+        ))).scalar_one_or_none()
+        if replay:
+            return {
+                **dict(replay.result or {}),
+                "attempt_id": replay.id,
+                "idempotent_replay": True,
+            }
     correct = sorted(q.answer_indexes or [])
     user = sorted(int(i) for i in (data or {}).get("answer_indexes", []))
     is_correct = user == correct and len(user) > 0
@@ -532,6 +553,8 @@ async def submit_concept(
         submission={"answer_indexes": user},
         result={"correct": is_correct, "answer_indexes": correct},
         assistance_level=assistance_level,
+        attempt_role=str((data or {}).get("attempt_role") or "original"),
+        client_submission_id=submission_key,
     )
     cp = await db.get(Checkpoint, checkpoint_id)
     roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
@@ -587,13 +610,22 @@ async def submit_concept(
             },
         )
         remediation_payload = serialize_case(remediation)
+    from app.services.review import apply_assessment_result
+    schedule = await apply_assessment_result(
+        db,
+        attempt=attempt,
+        passed=is_correct,
+        event_id=evaluation_event.id,
+        question_form="original",
+        remediation_status=(remediation_payload or {}).get("status"),
+        is_review=False,
+    )
     await evaluate_checkpoint_status(db, checkpoint_id, learner_id=current.learner.id)
     if roadmap:
         await evaluate_project_badge(
             db, learner_id=current.learner.id, project_id=roadmap.project_id,
         )
-    await db.commit()
-    return {
+    response = {
         "correct": is_correct,
         "answer_indexes": correct,
         "user_answer_indexes": user,
@@ -601,7 +633,12 @@ async def submit_concept(
         "attempt_id": attempt.id,
         "assistance_level": assistance_level,
         "remediation": remediation_payload,
+        "review_schedule_id": schedule.id,
+        "review_due_at": schedule.due_at.isoformat(),
     }
+    attempt.result = response
+    await db.commit()
+    return response
 
 
 # ── Generate Exercises ──
@@ -718,6 +755,7 @@ async def submit_exercise(
             submission=submission,
             result=response,
             assistance_level=req.assistance_level or "none",
+            attempt_role=req.attempt_role or "original",
             client_submission_id=submission_key,
         )
         cp = await db.get(Checkpoint, exercise.checkpoint_id)
@@ -768,6 +806,16 @@ async def submit_exercise(
                 evaluation=response,
             )
             remediation_payload = serialize_case(remediation)
+        from app.services.review import apply_assessment_result
+        schedule = await apply_assessment_result(
+            db,
+            attempt=attempt,
+            passed=passed_ok,
+            event_id=evaluation_event.id,
+            question_form="original",
+            remediation_status=(remediation_payload or {}).get("status"),
+            is_review=False,
+        )
         await evaluate_checkpoint_status(
             db, exercise.checkpoint_id, learner_id=current.learner.id,
         )
@@ -775,10 +823,14 @@ async def submit_exercise(
             await evaluate_project_badge(
                 db, learner_id=current.learner.id, project_id=roadmap.project_id,
             )
+        response["review_schedule_id"] = schedule.id
+        response["review_due_at"] = schedule.due_at.isoformat()
         attempt.result = {
             **response,
             "attempt_id": attempt.id,
             "remediation": remediation_payload,
+            "review_schedule_id": schedule.id,
+            "review_due_at": schedule.due_at.isoformat(),
         }
         await db.commit()
         return attempt.id, remediation_payload

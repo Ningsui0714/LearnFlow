@@ -1,5 +1,5 @@
 import {
-  BookOpen, Braces, Columns2, FileCode2, FolderKanban, GitBranch, LayoutDashboard,
+  BookOpen, Braces, CalendarClock, Columns2, FileCode2, FolderKanban, GitBranch, LayoutDashboard,
   Settings2, UserRound, X,
 } from 'lucide-react'
 import type { WorkspaceTab, WorkspaceTabKind } from './WorkspaceContext'
@@ -13,6 +13,7 @@ const iconByKind: Record<WorkspaceTabKind, typeof LayoutDashboard> = {
   exercise: Braces,
   file: FileCode2,
   memory: GitBranch,
+  review: CalendarClock,
   profile: UserRound,
   settings: Settings2,
 }

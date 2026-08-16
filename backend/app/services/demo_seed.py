@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.learning import Learner, LearnerProfile, UserAccount
+from app.models.learning import Learner, LearnerProfile, LearningAttempt, UserAccount
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Lecture, Project, Roadmap
-from app.services.learning_runtime import ensure_kernel_states, record_event
+from app.services.learning_runtime import create_attempt, ensure_kernel_states, record_event
+from app.services.remediation import create_remediation_case
+from app.services.review import apply_assessment_result
 
 
 DEMO_USERNAME = "competition-demo"
@@ -164,6 +168,7 @@ async def seed_competition_demo(db: AsyncSession) -> dict:
                 "evidence_claim": "学习者能选择覆盖空列表的前置判断",
                 "variant": {
                     "type": "concept_choice",
+                    "validated": True,
                     "prompt": "迁移到配置加载：entries 为空元组时也要返回默认配置，哪项判断最合适？",
                     "options": [
                         "if entries is None:",
@@ -223,6 +228,7 @@ async def seed_competition_demo(db: AsyncSession) -> dict:
                 "evidence_target": {"practice": "retry_then_variant"},
                 "variant": {
                     "type": "predict_output",
+                    "validated": True,
                     "prompt": "迁移验证：不运行程序，预测修复后的函数处理新输入时的输出。",
                     "input": "[10, 20, 30, 40]",
                     "expected": "25.0",
@@ -232,6 +238,130 @@ async def seed_competition_demo(db: AsyncSession) -> dict:
         db.add(exercise)
 
     await db.flush()
+
+    # Seed two canonical evidence histories so /review is useful immediately:
+    # a concept due for a validated transfer variant, and an open code error.
+    concept_seed_key = "competition-demo-review-concept-baseline"
+    concept_attempt = (await db.execute(select(LearningAttempt).where(
+        LearningAttempt.client_submission_id == concept_seed_key,
+    ))).scalar_one_or_none()
+    if not concept_attempt:
+        baseline_at = datetime.utcnow() - timedelta(days=3, minutes=1)
+        concept_attempt = await create_attempt(
+            db,
+            learner_id=learner.id,
+            checkpoint_id=checkpoint.id,
+            item_type="concept",
+            item_id=concept.id,
+            submission={"answer_indexes": [1]},
+            result={"correct": True, "answer_indexes": [1]},
+            assistance_level="none",
+            attempt_role="original",
+            client_submission_id=concept_seed_key,
+        )
+        concept_attempt.started_at = baseline_at
+        concept_attempt.submitted_at = baseline_at
+        concept_attempt.evaluated_at = baseline_at
+        concept_event = await record_event(
+            db,
+            learner_id=learner.id,
+            project_id=project.id,
+            checkpoint_id=checkpoint.id,
+            event_type="concept_attempt_evaluated",
+            source="seed",
+            payload={
+                "attempt_id": concept_attempt.id,
+                "item_id": concept.id,
+                "question": concept.question,
+                "correct": True,
+                "independent": True,
+                "assistance_level": "none",
+            },
+            occurred_at=baseline_at,
+            provenance={"seed": "competition-review-v1", "grader": "exact_match"},
+            client_event_id="competition-demo-review-concept-baseline-evaluated",
+        )
+        await apply_assessment_result(
+            db,
+            attempt=concept_attempt,
+            passed=True,
+            event_id=concept_event.id,
+            question_form="original",
+            is_review=False,
+            now=baseline_at,
+        )
+
+    exercise_seed_key = "competition-demo-review-exercise-wrong"
+    exercise_attempt = (await db.execute(select(LearningAttempt).where(
+        LearningAttempt.client_submission_id == exercise_seed_key,
+    ))).scalar_one_or_none()
+    if not exercise_attempt:
+        failed_result = {
+            "passed": 2,
+            "total": 3,
+            "results": [
+                {
+                    "input": "[]",
+                    "expected": "0.0",
+                    "actual": "",
+                    "stderr": "ZeroDivisionError: division by zero",
+                    "passed": False,
+                },
+                {"input": "[2, 4, 6]", "expected": "4.0", "actual": "4.0", "passed": True},
+                {"input": "[-2, 2]", "expected": "0.0", "actual": "0.0", "passed": True},
+            ],
+        }
+        exercise_attempt = await create_attempt(
+            db,
+            learner_id=learner.id,
+            checkpoint_id=checkpoint.id,
+            item_type="exercise",
+            item_id=exercise.id,
+            submission={"code": exercise.starter_code, "seeded": True},
+            result=failed_result,
+            assistance_level="none",
+            attempt_role="original",
+            client_submission_id=exercise_seed_key,
+        )
+        exercise_event = await record_event(
+            db,
+            learner_id=learner.id,
+            project_id=project.id,
+            checkpoint_id=checkpoint.id,
+            event_type="exercise_attempt_evaluated",
+            source="seed",
+            payload={
+                "attempt_id": exercise_attempt.id,
+                "item_id": exercise.id,
+                "passed": False,
+                "assistance_level": "none",
+            },
+            provenance={"seed": "competition-review-v1", "grader": "test_cases"},
+            client_event_id="competition-demo-review-exercise-wrong-evaluated",
+        )
+        remediation = await create_remediation_case(
+            db,
+            attempt=exercise_attempt,
+            evidence_event_id=exercise_event.id,
+            item_snapshot={
+                "title": exercise.title,
+                "description": exercise.description,
+                "hints": exercise.hints or [],
+                "judge_mode": exercise.judge_mode,
+                "assessment_meta": exercise.assessment_meta or {},
+            },
+            evaluation=failed_result,
+        )
+        await apply_assessment_result(
+            db,
+            attempt=exercise_attempt,
+            passed=False,
+            event_id=exercise_event.id,
+            question_form="original",
+            remediation_status=remediation.status,
+            is_review=False,
+        )
+
     await record_event(
         db,
         learner_id=learner.id,
@@ -256,7 +386,8 @@ async def seed_competition_demo(db: AsyncSession) -> dict:
         "checkpoint_id": checkpoint.id,
         "concept_question_id": concept.id,
         "exercise_id": exercise.id,
-        "entry_path": f"/projects/{project.id}/checkpoints/{checkpoint.id}/exercises",
+        "entry_path": "/review",
+        "remediation_entry_path": f"/projects/{project.id}/checkpoints/{checkpoint.id}/exercises",
         "project_name": project.name,
         "offline": True,
     }
@@ -280,6 +411,7 @@ async def demo_manifest(db: AsyncSession, learner_id: int) -> dict | None:
         "project_id": project.id,
         "checkpoint_id": checkpoint.id,
         "project_name": project.name,
-        "entry_path": f"/projects/{project.id}/checkpoints/{checkpoint.id}/exercises",
+        "entry_path": "/review",
+        "remediation_entry_path": f"/projects/{project.id}/checkpoints/{checkpoint.id}/exercises",
         "offline": True,
     }
