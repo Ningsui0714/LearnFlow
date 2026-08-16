@@ -619,6 +619,39 @@ export function subscribeTaskEvents(
   onError: (message: string) => void,
 ): TaskEventSubscription {
   const controller = new AbortController()
+  let polling = false
+
+  const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
+
+  // The sidecar can briefly restart or the WebView can lose an SSE stream.
+  // Keep observing the persisted task instead of turning a still-running job
+  // into a false UI failure.  The task API is the same source of truth used by
+  // the SSE endpoint, so reconnecting is safe and idempotent.
+  const pollUntilTerminal = async () => {
+    if (polling || controller.signal.aborted) return
+    polling = true
+    let failures = 0
+    try {
+      while (!controller.signal.aborted && failures < 12) {
+        try {
+          const snapshot = (await api.get(`/tasks/${taskId}`)).data
+          failures = 0
+          onSnapshot(snapshot)
+          if (['completed', 'failed', 'canceled'].includes(snapshot.status)) return
+        } catch (error: any) {
+          failures += 1
+          if (failures >= 12) {
+            onError(error instanceof Error ? error.message : '任务状态同步失败')
+            return
+          }
+        }
+        await sleep(1000)
+      }
+    } finally {
+      polling = false
+    }
+  }
+
   void fetch(apiUrl(`/tasks/${taskId}/events`), {
     headers: streamingHeaders(),
     credentials: 'include',
@@ -627,7 +660,9 @@ export function subscribeTaskEvents(
     .then(response => consumeSSE(response, onSnapshot, controller.signal))
     .catch((error: unknown) => {
       if (!controller.signal.aborted) {
-        onError(error instanceof Error ? error.message : '网络错误')
+        void pollUntilTerminal().catch(() => {
+          if (!controller.signal.aborted) onError(error instanceof Error ? error.message : '网络错误')
+        })
       }
     })
 

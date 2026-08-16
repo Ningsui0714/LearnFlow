@@ -321,17 +321,26 @@ async def run_lecture_generation(task_id: int):
                 plan_sections = lec.plan
 
     if plan_sections is None:
-        await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在规划大纲..."})
+        await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在准备讲义结构..."})
         try:
             skeleton = []
             scope_files = (brief or {}).get("scope", {}).get("files") or []
             if scope_files:
                 skeleton = agent.build_structure_skeleton(brief, chunks)
-            if skeleton:
-                plan_sections = await agent.plan_lecture_structured(
-                    checkpoint.title, checkpoint.description or "", user_level,
-                    brief, chunks, skeleton, feedback=feedback,
-                )
+            if skeleton and not feedback.strip():
+                # The repository structure is already a deterministic outline.
+                # Do not spend another long model round trip re-planning it
+                # before the first visible section can be generated.  This
+                # restores the incremental, observable generation behavior.
+                plan_sections = [{
+                    "title": item["title"],
+                    "keywords": [],
+                    "goal": f"学习 {item['title']}",
+                    "source_file": item["file"],
+                    "source_heading": item.get("heading", ""),
+                    "chunk_ids": item["chunk_ids"],
+                    "adjust_reason": "keep",
+                } for item in skeleton]
             else:
                 plan_sections = await agent.plan_lecture(
                     checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief, feedback=feedback
@@ -353,6 +362,12 @@ async def run_lecture_generation(task_id: int):
     if total == 0:
         plan_sections = [{"title": checkpoint.title, "keywords": [], "goal": checkpoint.description or ""}]
         total = 1
+
+    await update_task(task_id, progress={
+        "current": 0,
+        "total": total,
+        "message": f"大纲已就绪，共 {total} 节，准备生成第 1 节...",
+    })
 
     # ── Load existing lecture (for resume / incremental append) ──
     async with async_session() as db:
@@ -403,6 +418,11 @@ async def run_lecture_generation(task_id: int):
             content = saved[i].get("content", "")
             questions = saved[i].get("questions", [])
         else:
+            await update_task(task_id, progress={
+                "current": i,
+                "total": total,
+                "message": f"正在生成第 {i + 1}/{total} 节：{title}",
+            })
             try:
                 content = await agent.generate_section(
                     checkpoint.title, ps, chunks,

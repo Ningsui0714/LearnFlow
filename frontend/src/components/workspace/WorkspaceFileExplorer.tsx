@@ -10,7 +10,7 @@ import {
   revealWorkspaceItem, saveWorkspaceFile, type WorkspaceNode, type WorkspaceOperation,
   type WorkspaceTree,
 } from '../../services/api'
-import { chooseWorkspaceDirectory, getDesktopRuntime } from '../../services/desktopRuntime'
+import { chooseWorkspaceDirectory, getDesktopRuntime, initializeDesktopRuntime, type DesktopRuntime } from '../../services/desktopRuntime'
 
 
 function errorMessage(error: any) {
@@ -214,7 +214,7 @@ export default function WorkspaceFileExplorer({
   projectName: string
   onOpen: (path: string) => void
 }) {
-  const desktop = getDesktopRuntime()
+  const [desktop, setDesktop] = useState<DesktopRuntime>(() => getDesktopRuntime())
   const [tree, setTree] = useState<WorkspaceTree | null>(null)
   const [linked, setLinked] = useState<boolean | null>(null)
   const [trash, setTrash] = useState<WorkspaceOperation[]>([])
@@ -223,8 +223,14 @@ export default function WorkspaceFileExplorer({
   const [linking, setLinking] = useState(false)
   const [notice, setNotice] = useState('')
 
+  useEffect(() => {
+    const refreshRuntime = () => setDesktop(getDesktopRuntime())
+    window.addEventListener('learnflow:desktop-runtime-changed', refreshRuntime)
+    return () => window.removeEventListener('learnflow:desktop-runtime-changed', refreshRuntime)
+  }, [])
+
   const load = useCallback(async () => {
-    if (!desktop.available) return
+    if (!desktop.available || !desktop.ready) return
     setLoading(true)
     try {
       const next = await getWorkspaceTree(projectId)
@@ -243,7 +249,7 @@ export default function WorkspaceFileExplorer({
     } finally {
       setLoading(false)
     }
-  }, [desktop.available, projectId])
+  }, [desktop.available, desktop.ready, projectId])
 
   useEffect(() => { void load() }, [load])
   useEffect(() => {
@@ -342,7 +348,18 @@ export default function WorkspaceFileExplorer({
         )}
       </div>
 
-      {desktop.startupError && <p className="px-2 py-2 text-[10px] leading-4 text-red-600">本地服务：{desktop.startupError}</p>}
+      {desktop.startupError && !desktop.ready && (
+        <div className="mx-1 rounded-md border border-red-200 bg-red-50 p-2 text-[10px] leading-4 text-red-700">
+          <p>本地服务尚未就绪：{desktop.startupError}</p>
+          <button
+            type="button"
+            onClick={() => void initializeDesktopRuntime()}
+            className="mt-1 rounded border border-red-300 bg-white px-2 py-1 text-red-700 hover:bg-red-100"
+          >
+            重试连接
+          </button>
+        </div>
+      )}
       {notice && <p className="px-2 py-1 text-[10px] leading-4 text-amber-700">{notice}</p>}
       {loading && <p className="flex items-center gap-1.5 px-2 py-2 text-[10px] text-slate-400"><Loader2 size={11} className="animate-spin" /> 正在读取文件…</p>}
 
