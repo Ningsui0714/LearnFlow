@@ -103,6 +103,10 @@ async def create_or_resume_session(
         session_type = "checkpoint"
     elif session_type == "checkpoint":
         raise HTTPException(400, "checkpoint session requires checkpoint_id")
+    elif project_id is not None and session_type == "global":
+        # Keep legacy global+project_id clients on exactly the same normalized
+        # scope used by get_or_create_session, including force_new archival.
+        session_type = "project"
     if data.force_new:
         scope_query = select(AgentSession).where(
             AgentSession.learner_id == current.learner.id,
@@ -127,7 +131,7 @@ async def create_or_resume_session(
     session = await get_or_create_session(
         db,
         learner_id=current.learner.id,
-        session_type="project" if project_id and session_type == "global" else session_type,
+        session_type=session_type,
         project_id=project_id,
         checkpoint_id=data.checkpoint_id,
     )

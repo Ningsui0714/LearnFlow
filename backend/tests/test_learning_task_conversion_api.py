@@ -141,6 +141,20 @@ class _WorkflowSelfLinkClient(_FakeXfyunClient):
         }
 
 
+class _ClarificationWithInternalLinkClient(_FakeXfyunClient):
+    async def run(self, user_input: str, *, uid: str):
+        self.calls.append({"user_input": user_input, "uid": uid})
+        return {
+            "run_id": "run-clarification-with-internal-link",
+            "content": (
+                "请补充一个具体任务。"
+                "[继续编排](https://agent.xfyun.cn/agentbuilder/work_flow/internal)"
+                "[空入口]()"
+            ),
+            "usage": {},
+        }
+
+
 def _registration(username: str) -> dict:
     return {
         "username": username,
@@ -255,6 +269,43 @@ def test_learning_task_generation_persists_and_replays_session_turn(monkeypatch)
         assert "https://example.test/tasks/ltc_generated_01/interactive.html" in generated[0]["content"]
 
 
+def test_learning_task_generation_persistence_tolerates_stale_replay_check(monkeypatch):
+    fake_xfyun = _FakeXfyunClient()
+
+    async def always_miss_replay(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    monkeypatch.setattr(
+        learning_task_conversion,
+        "_replay_generation_result",
+        always_miss_replay,
+    )
+    with TestClient(app) as client:
+        username = f"conversion_race_{uuid.uuid4().hex[:10]}"
+        assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
+        session = client.post("/api/agent/sessions", json={"session_type": "global"}).json()
+        payload = {
+            "query": "Unity游戏客户端登录与场景加载模块开发",
+            "session_id": session["id"],
+            "client_turn_id": "conversion-race-001",
+        }
+
+        first = client.post("/api/learning-task-conversion/generate", json=payload)
+        second = client.post("/api/learning-task-conversion/generate", json=payload)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert len(fake_xfyun.calls) == 2
+        loaded = client.get(f"/api/agent/sessions/{session['id']}").json()
+        matching_messages = [
+            item for item in loaded["messages"]
+            if item.get("meta_data", {}).get("client_turn_id") == "conversion-race-001"
+        ]
+        assert len(matching_messages) == 2
+
+
 def test_learning_task_generation_turns_intake_conflict_into_clarification(monkeypatch):
     fake_xfyun = _StageConflictClient()
     monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
@@ -292,6 +343,26 @@ def test_learning_task_generation_never_exposes_empty_or_workflow_self_links(mon
         assert payload["status"] == "needs_revision"
         assert payload["task_card_id"] == ""
         assert payload["bundle"] is None
+        assert "agent.xfyun.cn" not in payload["message"]
+        assert "[]()" not in payload["message"]
+
+
+def test_learning_task_clarification_never_exposes_workflow_content(monkeypatch):
+    fake_xfyun = _ClarificationWithInternalLinkClient()
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    with TestClient(app) as client:
+        username = f"safe_clarify_{uuid.uuid4().hex[:10]}"
+        assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
+
+        response = client.post(
+            "/api/learning-task-conversion/generate",
+            json={"query": "Unity游戏客户端开发"},
+        )
+
+        payload = response.json()
+        assert response.status_code == 200
+        assert payload["status"] == "needs_clarification"
+        assert "请再补充一个可执行对象或结果" in payload["message"]
         assert "agent.xfyun.cn" not in payload["message"]
         assert "[]()" not in payload["message"]
 
@@ -367,3 +438,13 @@ def test_learning_task_conversion_proxies_both_handoff_directions(monkeypatch):
         )
         assert feedback_response.status_code == 200
         assert gateway.submitted_feedback[-1]["task_card_id"] == "ltc_generated_01"
+
+        submitted_count = len(gateway.submitted_feedback)
+        invalid_feedback = {**feedback, "issues": {"issue_id": "not-an-array"}}
+        invalid_feedback["correlation_id"] = f"invalid-{uuid.uuid4().hex}"
+        invalid_response = client.post(
+            "/api/learning-task-conversion/downstream-feedback",
+            json=invalid_feedback,
+        )
+        assert invalid_response.status_code == 422
+        assert len(gateway.submitted_feedback) == submitted_count

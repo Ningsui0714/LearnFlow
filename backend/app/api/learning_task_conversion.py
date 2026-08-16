@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
@@ -263,7 +264,10 @@ def _non_success_result(
         "请补充", "还无法从这句话确定", "不能唯一确定", "需要确认一个",
     )
     if any(marker in content for marker in clarification_markers):
-        message = content or _clarification_result(user_input)["message"]
+        # Workflow output may contain provider-only URLs or empty Markdown
+        # links. Clarification is a fixed public response, never a pass-through
+        # of orchestration content.
+        message = _clarification_result(user_input)["message"]
         status = "needs_clarification"
     else:
         reason = _failure_reason_from_content(content)
@@ -373,7 +377,7 @@ async def _persist_generation_exchange(
     learner_id = session.learner_id
     request_key = f"learning-task-request:{learner_id}:{client_turn_id}"
     result_key = f"learning-task-result:{learner_id}:{client_turn_id}"
-    db.add(AgentMessage(
+    request_statement = sqlite_insert(AgentMessage).values(
         session_id=session.id,
         role="user",
         content=user_input,
@@ -382,13 +386,14 @@ async def _persist_generation_exchange(
             "client_turn_id": client_turn_id,
         },
         idempotency_key=request_key,
-    ))
+    ).on_conflict_do_nothing(index_elements=["idempotency_key"])
+    await db.execute(request_statement)
     public_result = {
         "status": result["status"],
         "task_card_id": result.get("task_card_id") or "",
         "execute_id": result.get("execute_id") or "",
     }
-    db.add(AgentMessage(
+    result_statement = sqlite_insert(AgentMessage).values(
         session_id=session.id,
         role="assistant",
         content=str(result.get("message") or ""),
@@ -402,27 +407,29 @@ async def _persist_generation_exchange(
             "client_turn_id": client_turn_id,
         },
         idempotency_key=result_key,
-    ))
-    await record_event(
-        db,
-        learner_id=learner_id,
-        event_type=(
-            "learning_work_task_generated"
-            if result["status"] == "success"
-            else "learning_work_task_generation_follow_up"
-        ),
-        source="learning_task_conversion",
-        session_id=session.id,
-        payload={
-            "query": user_input,
-            **public_result,
-        },
-        artifact_refs=(
-            [f"learning-task:{result['task_card_id']}"]
-            if result.get("task_card_id") else []
-        ),
-        client_event_id=f"learning-task:{client_turn_id}",
-    )
+    ).on_conflict_do_nothing(index_elements=["idempotency_key"])
+    inserted_result = await db.execute(result_statement)
+    if inserted_result.rowcount:
+        await record_event(
+            db,
+            learner_id=learner_id,
+            event_type=(
+                "learning_work_task_generated"
+                if result["status"] == "success"
+                else "learning_work_task_generation_follow_up"
+            ),
+            source="learning_task_conversion",
+            session_id=session.id,
+            payload={
+                "query": user_input,
+                **public_result,
+            },
+            artifact_refs=(
+                [f"learning-task:{result['task_card_id']}"]
+                if result.get("task_card_id") else []
+            ),
+            client_event_id=f"learning-task:{client_turn_id}",
+        )
     await db.commit()
 
 
@@ -650,6 +657,11 @@ async def submit_personalized_learning_feedback(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    issues = payload.get("issues")
+    if issues is None:
+        issues = []
+    elif not isinstance(issues, list):
+        raise HTTPException(status_code=422, detail="issues 必须是数组")
     try:
         result = await _gateway().submit_downstream_feedback(payload)
         task_card_id = str(payload.get("task_card_id") or "")
@@ -660,7 +672,7 @@ async def submit_personalized_learning_feedback(
             source="learning_task_conversion",
             payload={
                 "task_card_id": task_card_id,
-                "issue_count": len(payload.get("issues") or []),
+                "issue_count": len(issues),
                 "status": str(payload.get("status") or ""),
             },
             artifact_refs=([f"learning-task:{task_card_id}"] if task_card_id else []),
