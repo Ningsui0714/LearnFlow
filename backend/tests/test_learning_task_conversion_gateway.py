@@ -87,3 +87,37 @@ async def test_gateway_normalizes_remote_failures():
     with pytest.raises(LearningTaskConversionError, match="503") as failure:
         await gateway.capabilities()
     assert failure.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_gateway_retries_transient_get_without_replaying_post():
+    attempts = {"get": 0, "post": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            attempts["get"] += 1
+            if attempts["get"] < 3:
+                return httpx.Response(502, request=request)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "schema_version": "learning-task-conversion-capabilities-v1",
+                    "service": "learning-task-conversion",
+                },
+            )
+        attempts["post"] += 1
+        return httpx.Response(502, request=request)
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://task.example",
+        transport=httpx.MockTransport(handler),
+    )
+    assert (await gateway.capabilities())["service"] == "learning-task-conversion"
+    assert attempts["get"] == 3
+
+    with pytest.raises(LearningTaskConversionError):
+        await gateway.submit_downstream_feedback({
+            "schema_version": "personalized-learning-to-task-conversion-feedback-v1",
+        })
+    assert attempts["post"] == 1

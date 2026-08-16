@@ -44,6 +44,9 @@ export default function WF03TaskPage() {
   const { taskCardId = '' } = useParams()
   const navigate = useNavigate()
   const contentRef = useRef<HTMLDivElement>(null)
+  const loadRequestRef = useRef(0)
+  const activeTaskIdRef = useRef(taskCardId)
+  const loadedTaskIdRef = useRef('')
   const [bundle, setBundle] = useState<LearningTaskConversionBundle | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -77,16 +80,27 @@ export default function WF03TaskPage() {
 
   const load = useCallback(async () => {
     if (!taskCardId) return
+    activeTaskIdRef.current = taskCardId
+    const requestId = ++loadRequestRef.current
     setLoading(true)
-    setError('')
+    if (loadedTaskIdRef.current !== taskCardId) setError('')
     try {
       const nextBundle = await getLearningTaskConversionBundle(taskCardId)
+      if (activeTaskIdRef.current !== taskCardId) return
+      loadedTaskIdRef.current = taskCardId
       setBundle(nextBundle)
       setSubmittedCount(submittedIssueCount(nextBundle))
+      setError('')
+      setLoading(false)
     } catch (failure) {
+      if (
+        requestId !== loadRequestRef.current
+        || activeTaskIdRef.current !== taskCardId
+        || loadedTaskIdRef.current === taskCardId
+      ) return
       setError(errorMessage(failure))
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestRef.current) setLoading(false)
     }
   }, [taskCardId])
 

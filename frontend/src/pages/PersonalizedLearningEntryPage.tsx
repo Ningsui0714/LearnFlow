@@ -2,7 +2,7 @@ import {
   ArrowLeft, ArrowRight, Braces, CheckCircle2, Clipboard, Download,
   ExternalLink, Loader2, Network, Sparkles,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import {
@@ -43,6 +43,9 @@ export default function PersonalizedLearningEntryPage() {
   const { taskCardId = '', knowledgeId = '' } = useParams()
   const location = useLocation()
   const initialEntry = (location.state as { entry?: PersonalizedLearningKnowledgeEntry } | null)?.entry
+  const loadRequestRef = useRef(0)
+  const activeEntryKeyRef = useRef(`${taskCardId}:${knowledgeId}`)
+  const loadedEntryKeyRef = useRef(initialEntry ? `${taskCardId}:${knowledgeId}` : '')
   const [entry, setEntry] = useState<PersonalizedLearningKnowledgeEntry | null>(initialEntry || null)
   const [loading, setLoading] = useState(!initialEntry)
   const [error, setError] = useState('')
@@ -51,14 +54,27 @@ export default function PersonalizedLearningEntryPage() {
 
   const load = useCallback(async () => {
     if (!taskCardId || !knowledgeId) return
+    const entryKey = `${taskCardId}:${knowledgeId}`
+    activeEntryKeyRef.current = entryKey
+    const requestId = ++loadRequestRef.current
     setLoading(true)
-    setError('')
+    if (loadedEntryKeyRef.current !== entryKey) setError('')
     try {
-      setEntry(await getPersonalizedLearningKnowledgeEntry(taskCardId, knowledgeId))
+      const nextEntry = await getPersonalizedLearningKnowledgeEntry(taskCardId, knowledgeId)
+      if (activeEntryKeyRef.current !== entryKey) return
+      loadedEntryKeyRef.current = entryKey
+      setEntry(nextEntry)
+      setError('')
+      setLoading(false)
     } catch (failure) {
+      if (
+        requestId !== loadRequestRef.current
+        || activeEntryKeyRef.current !== entryKey
+        || loadedEntryKeyRef.current === entryKey
+      ) return
       setError(errorMessage(failure))
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestRef.current) setLoading(false)
     }
   }, [knowledgeId, taskCardId])
 

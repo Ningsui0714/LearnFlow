@@ -6,6 +6,7 @@ checks the versioned handoff contracts before returning them to the API layer.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -22,6 +23,9 @@ class LearningTaskConversionError(RuntimeError):
 
 
 class LearningTaskConversionGateway:
+    _READ_ATTEMPTS = 6
+    _TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+
     def __init__(
         self,
         *,
@@ -45,23 +49,42 @@ class LearningTaskConversionGateway:
         *,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout_seconds,
-                follow_redirects=False,
-                transport=self.transport,
-            ) as client:
-                response = await client.request(method, path, json=payload)
-        except httpx.TimeoutException as exc:
+        normalized_method = method.upper()
+        attempts = self._READ_ATTEMPTS if normalized_method == "GET" else 1
+        response: httpx.Response | None = None
+        last_error: httpx.HTTPError | None = None
+
+        async with httpx.AsyncClient(
+            base_url=self.base_url,
+            timeout=self.timeout_seconds,
+            follow_redirects=False,
+            transport=self.transport,
+        ) as client:
+            for attempt in range(attempts):
+                try:
+                    response = await client.request(
+                        normalized_method, path, json=payload,
+                    )
+                    if (
+                        response.status_code not in self._TRANSIENT_STATUS_CODES
+                        or attempt == attempts - 1
+                    ):
+                        break
+                except httpx.HTTPError as exc:
+                    last_error = exc
+                    if attempt == attempts - 1:
+                        break
+                await asyncio.sleep(min(0.15 * (2 ** attempt), 1.2))
+
+        if response is None:
+            if isinstance(last_error, httpx.TimeoutException):
+                raise LearningTaskConversionError(
+                    "岗位典型工作任务转化服务响应超时",
+                    status_code=504,
+                ) from last_error
             raise LearningTaskConversionError(
-                "岗位典型工作任务转化服务响应超时",
-                status_code=504,
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise LearningTaskConversionError(
-                f"岗位典型工作任务转化服务不可用: {exc}"
-            ) from exc
+                f"岗位典型工作任务转化服务不可用: {last_error or '连接失败'}"
+            ) from last_error
 
         if response.status_code >= 400:
             detail = response.text.strip()[:500]

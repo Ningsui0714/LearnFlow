@@ -71,6 +71,10 @@ LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 | `POST /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-entry` | 显式进入个性化学习并记录零核导航事件 | 返回同版本交接 JSON |
 | `POST /api/learning-task-conversion/downstream-feedback` | 回传弱关系、知识范围错误、步骤映射问题等批注 | `/api/v1/learning-task-conversion/downstream-feedback` |
 
+任务包、能力发现和个性化学习 JSON 都是只读查询。远端出现 429、502、503、504
+或连接中断时，LearnFlow 会在有限次数内退避重试；上游交接和下游反馈等写入接口
+不会自动重放，避免产生重复任务或重复反馈。
+
 `/generate` 只从工作流输出中接受真实 `ltc_*` 任务 ID。没有任务 ID 时必须返回 `needs_clarification` 或 `needs_revision`，不能把讯飞编排页或空 Markdown 链接伪装成任务网页。
 
 ## 中央任务网页
