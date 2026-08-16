@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from backend.server import Settings, create_server
+from backend.server import ApiError, GatewayError, LearningApplication
 
 
 class AgentProjectApiTests(unittest.TestCase):
@@ -480,14 +481,17 @@ class AgentProjectApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(started["stakes"], "low")
-        self.assertEqual(len(started["questions"]), 5)
+        self.assertEqual(len(started["questions"]), 6)
         self.assertEqual(
             {question["question_type"] for question in started["questions"]},
-            {"choice", "multiple_choice", "judgment", "fill_blank", "practical"},
+            {"choice", "multiple_choice", "judgment", "fill_blank", "short_answer", "practical"},
         )
         self.assertTrue(
-            all(question["quality_status"] == "unverified" for question in started["questions"])
+            all(question["quality_status"] == "validated" for question in started["questions"])
         )
+        self.assertTrue(all(question["source_type"] == "wf04_api" for question in started["questions"]))
+        self.assertTrue(all("answer" not in question for question in started["questions"]))
+        self.assertTrue(all("rubric" not in question for question in started["questions"]))
         session = self.server.RequestHandlerClass.application.store.get_project(
             project_id
         )["state"]["assessment_session"]
@@ -517,6 +521,274 @@ class AgentProjectApiTests(unittest.TestCase):
             [item["mastery"] for item in after["learning_path"]["items"]],
             mastery_before,
         )
+
+    def test_question_contract_rejects_unknown_type_instead_of_choice(self):
+        with self.assertRaisesRegex(ApiError, "不支持的题型") as raised:
+            LearningApplication._question_contract({"question_type": "essay_v2"})
+        self.assertEqual(raised.exception.code, "UNSUPPORTED_QUESTION_TYPE")
+
+    def test_wf04_quality_gate_rejects_generic_learning_evidence_question(self):
+        request = {
+            "action": "generate_question", "student_id": self.student_id,
+            "project_id": "PROJ-QUALITY", "task_instance_id": "ASSESSMENT-QUALITY-1",
+            "request_id": "REQ-QUALITY", "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE", "knowledge_point_name": "HTML 页面结构",
+            },
+            "requested_question_type": "choice",
+        }
+        result = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1", "workflow_mode": "wf04_training_evaluation",
+            "status": "ok", "action": "generate_question", "student_id": self.student_id,
+            "project_id": "PROJ-QUALITY", "task_instance_id": "ASSESSMENT-QUALITY-1",
+            "request_id": "REQ-QUALITY", "host_write_allowed": True,
+            "question_spec": {
+                "question_template_id": "TPL-QUALITY", "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "question_type": "choice", "title": "HTML 页面结构", "prompt": "对于 HTML 页面结构，下面哪项最能作为完成本阶段学习的可检查证据？",
+                "expected_answer": "c",
+            },
+            "public_question": {
+                "question_type": "choice", "title": "HTML 页面结构", "prompt": "对于 HTML 页面结构，下面哪项最能作为完成本阶段学习的可检查证据？",
+                "options": {"a": "看资料", "b": "背术语", "c": "完成任务"},
+            },
+        }
+        with self.assertRaisesRegex(Exception, "通用学习行为题"):
+            LearningApplication._wf04_question_candidate(request, result)
+
+    def test_wf04_quality_gate_requires_core_concept_in_question_and_answer(self):
+        request = {
+            "action": "generate_question", "student_id": self.student_id,
+            "project_id": "PROJ-LINK", "task_instance_id": "ASSESSMENT-LINK-1",
+            "request_id": "REQ-LINK", "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE", "knowledge_point_name": "HTML 页面结构",
+            },
+            "requested_question_type": "choice",
+            "knowledge_context": {"core_concepts": ["header", "main", "footer"]},
+        }
+        result = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1", "workflow_mode": "wf04_training_evaluation",
+            "status": "ok", "action": "generate_question", "student_id": self.student_id,
+            "project_id": "PROJ-LINK", "task_instance_id": "ASSESSMENT-LINK-1",
+            "request_id": "REQ-LINK", "host_write_allowed": True,
+            "question_spec": {
+                "question_template_id": "TPL-LINK", "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "question_type": "choice", "title": "HTML 页面结构", "prompt": "学习 HTML 页面结构时，哪种做法更重要？",
+                "expected_answer": "a", "reference_answer": "应按页面结构要求组织内容。",
+            },
+            "public_question": {
+                "question_type": "choice", "title": "HTML 页面结构", "prompt": "学习 HTML 页面结构时，哪种做法更重要？",
+                "options": {"a": "完成练习", "b": "记住术语", "c": "浏览资料"},
+            },
+        }
+        with self.assertRaisesRegex(Exception, "核心概念"):
+            LearningApplication._wf04_question_candidate(request, result)
+
+    def test_wf04_generation_revises_question_after_linkage_rejection(self):
+        application = self.server.RequestHandlerClass.application
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1", "request_id": "REQ-REVISE",
+            "action": "generate_question", "student_id": self.student_id,
+            "project_id": "PROJ-REVISE", "task_instance_id": "ASSESSMENT-REVISE-1",
+            "knowledge_point": {"knowledge_point_id": "KP-HTML", "knowledge_point_name": "HTML 页面结构"},
+            "requested_question_type": "choice", "task_contract": {},
+            "knowledge_context": {"core_concepts": ["header"]},
+        }
+        original = application.gateway.invoke_wf04_workflow
+        calls = []
+
+        def generate_with_bad_first(payload):
+            calls.append(payload)
+            result = original(payload)
+            if len(calls) == 1:
+                result["question_spec"]["prompt"] = "HTML 页面结构的学习重点是什么？"
+                result["question_spec"]["reference_answer"] = "应理解页面结构的作用。"
+                result["question_spec"]["options"] = {"a": "完成练习", "b": "记住术语", "c": "浏览资料"}
+                result["public_question"]["prompt"] = result["question_spec"]["prompt"]
+                result["public_question"]["options"] = result["question_spec"]["options"]
+            return result
+
+        application.gateway.invoke_wf04_workflow = generate_with_bad_first
+        try:
+            question, attempts = application._generate_wf04_question_with_revisions(request)
+        finally:
+            application.gateway.invoke_wf04_workflow = original
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("header", question["prompt"])
+        self.assertTrue(calls[1]["task_contract"]["revision_feedback"])
+
+    def test_wf04_gateway_extracts_business_json_from_choice_delta_content(self):
+        business = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1", "status": "ok",
+            "action": "generate_question", "question_spec": {"question_template_id": "TPL-1"},
+            "public_question": {"title": "题目", "prompt": "题干", "question_type": "short_answer"},
+        }
+        outer_response = {"code": 0, "choices": [{"delta": {"content": json.dumps(business)}}]}
+        result = self.server.RequestHandlerClass.application.gateway._extract_result(outer_response)
+        self.assertEqual(result, business)
+
+    def test_wf04_accepts_short_answer_when_requested_type_was_choice(self):
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-SHORT-ANSWER",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-SHORT-ANSWER",
+            "task_instance_id": "TASK-SHORT-ANSWER",
+            "requested_question_type": "choice",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+            "knowledge_context": {"core_concepts": ["header"]},
+        }
+        result = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1",
+            "workflow_mode": "wf04_training_evaluation",
+            "status": "ok",
+            "action": "generate_question",
+            "request_id": "REQ-SHORT-ANSWER",
+            "student_id": self.student_id,
+            "project_id": "PROJ-SHORT-ANSWER",
+            "task_instance_id": "TASK-SHORT-ANSWER",
+            "host_write_allowed": True,
+            "question_spec": {
+                "question_template_id": "TPL-SHORT-ANSWER",
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "question_type": "short_answer",
+                "title": "HTML 页面结构",
+                "prompt": "说明 header 元素在 HTML 页面结构中的作用。",
+                "reference_answer": "header 用于表达页面或区块的头部结构。",
+                "rubric": [
+                    {"description": "说明 header 的语义"},
+                    {"description": "说明 header 的结构用途"},
+                ],
+            },
+            "public_question": {
+                "question_type": "short_answer",
+                "title": "HTML 页面结构",
+                "prompt": "说明 header 元素在 HTML 页面结构中的作用。",
+                "answer_schema": {"type": "text"},
+            },
+        }
+        question = LearningApplication._wf04_question_candidate(request, result)
+        public = LearningApplication._public_assessment_question(question)
+        self.assertEqual(question["question_type"], "short_answer")
+        self.assertEqual(question["estimated_minutes"], 3)
+        self.assertNotEqual(question["question_instance_id"], question["question_template_id"])
+        for private_key in (
+            "answer", "expected_answer", "reference_answer", "rubric",
+            "hard_required_points", "_wf04_question_spec",
+        ):
+            self.assertNotIn(private_key, public)
+
+    def test_wf04_status_error_is_not_retried_as_question_quality(self):
+        application = self.server.RequestHandlerClass.application
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WF04-ERROR",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WF04-ERROR",
+            "task_instance_id": "TASK-WF04-ERROR",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+        }
+        calls = []
+        original = application.gateway.invoke_wf04_workflow
+
+        def return_error(payload):
+            calls.append(payload)
+            return {
+                "schema_version": "ZHIXING_WF04_RESULT.v1",
+                "workflow_mode": "wf04_training_evaluation",
+                "status": "error",
+                "action": "generate_question",
+                "request_id": "REQ-WF04-ERROR",
+                "student_id": self.student_id,
+                "host_write_allowed": False,
+                "error": {"code": "E_REQUEST_VALIDATION", "message": "请求参数不符合协议"},
+            }
+
+        application.gateway.invoke_wf04_workflow = return_error
+        try:
+            with self.assertRaisesRegex(GatewayError, "E_REQUEST_VALIDATION"):
+                application._generate_wf04_question_with_revisions(request)
+        finally:
+            application.gateway.invoke_wf04_workflow = original
+        self.assertEqual(len(calls), 1)
+
+    def test_wf04_regenerates_unknown_question_type_with_protocol_feedback(self):
+        application = self.server.RequestHandlerClass.application
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WF04-UNKNOWN-TYPE",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WF04-UNKNOWN-TYPE",
+            "task_instance_id": "TASK-WF04-UNKNOWN-TYPE",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+            "requested_question_type": "choice",
+            "task_contract": {},
+            "knowledge_context": {"core_concepts": ["header"]},
+        }
+        calls = []
+        original = application.gateway.invoke_wf04_workflow
+
+        def generate_with_unknown_type_first(payload):
+            calls.append(payload)
+            result = original(payload)
+            if len(calls) == 1:
+                result["question_spec"]["question_type"] = "code"
+                result["public_question"]["question_type"] = "code"
+            return result
+
+        application.gateway.invoke_wf04_workflow = generate_with_unknown_type_first
+        try:
+            question, attempts = application._generate_wf04_question_with_revisions(request)
+        finally:
+            application.gateway.invoke_wf04_workflow = original
+        self.assertEqual(attempts, 2)
+        self.assertEqual(question["question_type"], "choice")
+        self.assertEqual(len(calls), 2)
+        self.assertIn(
+            "short_answer",
+            calls[1]["task_contract"]["revision_instruction"],
+        )
+
+    def test_provisional_wf04_request_omits_knowledge_type(self):
+        project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
+        application = self.server.RequestHandlerClass.application
+        calls = []
+        original = application.gateway.invoke_wf04_workflow
+
+        def capture_request(payload):
+            calls.append(payload)
+            return original(payload)
+
+        application.gateway.invoke_wf04_workflow = capture_request
+        try:
+            self.request_json(
+                "POST",
+                f"/api/projects/{project['project_id']}/assessments/start",
+                {
+                    "student_id": self.student_id,
+                    "assessment_type": "provisional_self_check",
+                },
+            )
+        finally:
+            application.gateway.invoke_wf04_workflow = original
+        self.assertTrue(calls)
+        for payload in calls:
+            self.assertEqual(
+                set(payload["knowledge_point"]),
+                {"knowledge_point_id", "knowledge_point_name"},
+            )
+            self.assertNotIn("knowledge_type", payload["knowledge_context"])
 
     def test_clear_certification_goal_is_not_forced_to_java(self):
         result = self.create_project("三个月内通过大学英语四级考试")

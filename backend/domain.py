@@ -302,6 +302,18 @@ class LearningDomainStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_attempts_student
                     ON attempts(student_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS wrongbook_events (
+                    event_id TEXT PRIMARY KEY, student_id TEXT NOT NULL,
+                    project_id TEXT NOT NULL, root_question_instance_id TEXT NOT NULL,
+                    event_json TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS wrongbook_items (
+                    student_id TEXT NOT NULL, project_id TEXT NOT NULL,
+                    root_question_instance_id TEXT NOT NULL, knowledge_point_id TEXT NOT NULL,
+                    status TEXT NOT NULL, last_error_json TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+                    PRIMARY KEY(student_id, project_id, root_question_instance_id)
+                );
                 CREATE TABLE IF NOT EXISTS explanation_sessions (
                     explanation_session_id TEXT PRIMARY KEY,
                     student_id TEXT NOT NULL,
@@ -516,6 +528,31 @@ class LearningDomainStore:
                         f"ALTER TABLE generated_questions ADD COLUMN {column_name} "
                         f"{column_definition}"
                     )
+            question_columns = {
+                str(row["name"])
+                for row in connection.execute("PRAGMA table_info(question_instances)").fetchall()
+            }
+            question_migrations = {
+                "source_question_instance_id": "TEXT NOT NULL DEFAULT ''",
+                "root_question_instance_id": "TEXT NOT NULL DEFAULT ''",
+                "question_spec_json": "TEXT NOT NULL DEFAULT ''",
+                "question_template_id": "TEXT NOT NULL DEFAULT ''",
+                "question_role": "TEXT NOT NULL DEFAULT ''",
+                "assessment_mode": "TEXT NOT NULL DEFAULT ''",
+                "generation_request_id": "TEXT NOT NULL DEFAULT ''",
+                "generation_provider": "TEXT NOT NULL DEFAULT ''",
+                "project_id": "TEXT NOT NULL DEFAULT ''",
+            }
+            for column_name, column_definition in question_migrations.items():
+                if column_name not in question_columns:
+                    connection.execute(
+                        f"ALTER TABLE question_instances ADD COLUMN {column_name} {column_definition}"
+                    )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_generation_request "
+                "ON question_instances(student_id, generation_request_id) "
+                "WHERE generation_request_id <> ''"
+            )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_knowledge_review_status "
                 "ON knowledge_entries(review_status, knowledge_point_id)"
@@ -2002,6 +2039,8 @@ class LearningDomainStore:
         expected: str,
         selected: str,
         explanation: str = "",
+        project_id: str = "",
+        correct_override: bool | None = None,
     ) -> dict[str, Any]:
         """选择题作答落库：按 (student, mode, source_question_id) 复用题目实例，
         每次作答写入 attempts，返回判题结果与 attempt 信息。
@@ -2011,7 +2050,13 @@ class LearningDomainStore:
         """
         expected_key = str(expected).strip().lower()
         selected_key = str(selected).strip().lower()
-        correct = bool(expected_key) and selected_key == expected_key
+        # 选择题之外的题型已由调用方按其确定性规则完成判分；不得在此处
+        # 用字符串相等覆盖多选、填空或实操题的结果。
+        correct = (
+            bool(correct_override)
+            if correct_override is not None
+            else bool(expected_key) and selected_key == expected_key
+        )
         attempt_id = new_id("ATTEMPT")
         now = utc_now()
         with self._lock, closing(self._connect()) as connection:
@@ -2033,8 +2078,9 @@ class LearningDomainStore:
                     INSERT INTO question_instances(
                         question_instance_id, student_id, task_instance_id, source_question_id,
                         mode, knowledge_point_id, title, prompt, answer_schema_json,
-                        expected_answer, status, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)
+                        expected_answer, status, created_at, updated_at,
+                        source_question_instance_id, root_question_instance_id, project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, '', ?, ?)
                     """,
                     (
                         question_instance_id,
@@ -2054,6 +2100,8 @@ class LearningDomainStore:
                         expected,
                         now,
                         now,
+                        question_instance_id,
+                        project_id,
                     ),
                 )
             evaluation = {
@@ -2096,6 +2144,33 @@ class LearningDomainStore:
                 "UPDATE question_instances SET status = 'submitted', updated_at = ? WHERE question_instance_id = ?",
                 (now, question_instance_id),
             )
+            # 正式项目测评的选择题同样由宿主后端按确定性结果投影到错题本。
+            # 非项目题库/临时自测不传 project_id，不会冒充项目错题证据。
+            if project_id:
+                root_row = connection.execute(
+                    "SELECT root_question_instance_id FROM question_instances WHERE question_instance_id = ?",
+                    (question_instance_id,),
+                ).fetchone()
+                root_id = str(root_row["root_question_instance_id"] or question_instance_id) if root_row else question_instance_id
+                existing_item = connection.execute(
+                    "SELECT status FROM wrongbook_items WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?",
+                    (student_id, project_id, root_id),
+                ).fetchone()
+                if not correct:
+                    event_id = "WB-" + hashlib.sha256(f"{attempt_id}:incorrect".encode("utf-8")).hexdigest()[:16].upper()
+                    connection.execute(
+                        "INSERT OR IGNORE INTO wrongbook_events(event_id, student_id, project_id, root_question_instance_id, event_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (event_id, student_id, project_id, root_id, json_text({"event_id": event_id, "projection_instruction": "upsert_needs_review", "attempt_id": attempt_id, "knowledge_point_id": knowledge_point_id}), now),
+                    )
+                    connection.execute(
+                        "INSERT INTO wrongbook_items(student_id, project_id, root_question_instance_id, knowledge_point_id, status, last_error_json, attempt_count, updated_at) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?) ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET status = 'needs_review', last_error_json = excluded.last_error_json, attempt_count = wrongbook_items.attempt_count + 1, updated_at = excluded.updated_at",
+                        (student_id, project_id, root_id, knowledge_point_id, json_text(evaluation["error_points"]), now),
+                    )
+                elif existing_item:
+                    connection.execute(
+                        "UPDATE wrongbook_items SET status = 'improved_not_deleted', attempt_count = attempt_count + 1, updated_at = ? WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?",
+                        (now, student_id, project_id, root_id),
+                    )
             connection.commit()
         return {
             "status": "ok",
@@ -2104,6 +2179,85 @@ class LearningDomainStore:
             "correct": correct,
             "evaluation": evaluation,
         }
+
+    def project_wrongbook_result(
+        self,
+        student_id: str,
+        project_id: str,
+        assessment_id: str,
+        question: dict[str, Any],
+        correct: bool,
+    ) -> None:
+        """Idempotently restore an assessment result into a project's wrongbook.
+
+        This is for completed low-stakes assessment sessions created before
+        attempts were persisted. It intentionally creates no fabricated answer
+        or formal evidence.
+        """
+        if correct or not project_id:
+            return
+        source_question_id = str(question.get("question_id", "")).strip()
+        knowledge_point_id = str(question.get("knowledge_point_id", "")).strip()
+        if not source_question_id or not knowledge_point_id:
+            return
+        now = utc_now()
+        with self._lock, closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT question_instance_id, root_question_instance_id FROM question_instances "
+                "WHERE student_id = ? AND source_question_id = ? ORDER BY created_at DESC LIMIT 1",
+                (student_id, source_question_id),
+            ).fetchone()
+            if row:
+                root_id = str(row["root_question_instance_id"] or row["question_instance_id"])
+            else:
+                root_id = new_id("QUESTION")
+                connection.execute(
+                    """INSERT INTO question_instances(
+                        question_instance_id, student_id, task_instance_id, source_question_id,
+                        mode, knowledge_point_id, title, prompt, answer_schema_json,
+                        expected_answer, status, created_at, updated_at,
+                        source_question_instance_id, root_question_instance_id, project_id
+                    ) VALUES (?, ?, '', ?, 'assessment_projection', ?, ?, ?, '{}', '', 'submitted', ?, ?, '', ?, ?)""",
+                    (
+                        root_id, student_id, source_question_id, knowledge_point_id,
+                        str(question.get("title") or knowledge_point_id),
+                        str(question.get("title") or ""), now, now, root_id, project_id,
+                    ),
+                )
+            event_id = "WB-ASSESS-" + hashlib.sha256(
+                f"{assessment_id}:{project_id}:{source_question_id}".encode("utf-8")
+            ).hexdigest()[:16].upper()
+            event = {
+                "event_id": event_id,
+                "projection_instruction": "upsert_needs_review",
+                "assessment_id": assessment_id,
+                "knowledge_point_id": knowledge_point_id,
+                "source": "assessment_session_backfill",
+            }
+            connection.execute(
+                "INSERT OR IGNORE INTO wrongbook_events(event_id, student_id, project_id, root_question_instance_id, event_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (event_id, student_id, project_id, root_id, json_text(event), now),
+            )
+            connection.execute(
+                """INSERT INTO wrongbook_items(
+                    student_id, project_id, root_question_instance_id, knowledge_point_id,
+                    status, last_error_json, attempt_count, updated_at
+                ) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?)
+                ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET
+                    status = 'needs_review', last_error_json = excluded.last_error_json,
+                    updated_at = excluded.updated_at""",
+                (
+                    student_id, project_id, root_id, knowledge_point_id,
+                    json_text([{
+                        "error_id": "ASSESSMENT_ANSWER_INCORRECT",
+                        "knowledge_point_id": knowledge_point_id,
+                        "knowledge_point_name": str(question.get("knowledge_point_name") or knowledge_point_id),
+                        "error_type": "assessment",
+                        "diagnosis": "该题在项目测评中答错，建议回顾对应知识点。",
+                    }]), now,
+                ),
+            )
+            connection.commit()
 
     def create_practice(self, student_id: str, incoming: dict[str, Any]) -> dict[str, Any]:
         mode = str(incoming.get("mode") or "retry_original")
@@ -2189,6 +2343,179 @@ class LearningDomainStore:
         except json.JSONDecodeError:
             result["answer_schema"] = {"type": "text", "label": "你的答案"}
         return result
+
+    def create_wf04_question(
+        self, student_id: str, project_id: str, task_instance_id: str,
+        request_id: str, question_spec: dict[str, Any], public_question: dict[str, Any],
+        assessment_mode: str,
+    ) -> dict[str, Any]:
+        """Persist the private WF04 specification while returning only public fields."""
+        now = utc_now()
+        with self._lock, closing(self._connect()) as connection:
+            existing = connection.execute(
+                "SELECT * FROM question_instances WHERE student_id = ? AND generation_request_id = ?",
+                (student_id, request_id),
+            ).fetchone()
+            if existing:
+                question_id = str(existing["question_instance_id"])
+            else:
+                question_id = new_id("QUESTION")
+                source_id = str(question_spec.get("source_question_instance_id", ""))
+                root_id = source_id or question_id
+                if source_id:
+                    source_row = connection.execute(
+                        "SELECT root_question_instance_id FROM question_instances WHERE question_instance_id = ? AND student_id = ?",
+                        (source_id, student_id),
+                    ).fetchone()
+                    if source_row and source_row["root_question_instance_id"]:
+                        root_id = str(source_row["root_question_instance_id"])
+                connection.execute(
+                    """
+                    INSERT INTO question_instances(
+                        question_instance_id, student_id, task_instance_id, source_question_id,
+                        mode, knowledge_point_id, title, prompt, answer_schema_json,
+                        expected_answer, status, created_at, updated_at,
+                        source_question_instance_id, root_question_instance_id, question_spec_json,
+                        question_template_id, question_role, assessment_mode,
+                        generation_request_id, generation_provider, project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'wf04', ?)
+                    """,
+                    (question_id, student_id, task_instance_id, source_id,
+                     str(question_spec.get("question_role", "recommended")),
+                     str(question_spec.get("knowledge_point_id", "")),
+                     str(question_spec.get("title", "当前知识点练习")),
+                     str(question_spec.get("prompt", "")), json_text(as_dict(question_spec.get("answer_schema"))),
+                     str(question_spec.get("expected_answer", "")), now, now, source_id, root_id,
+                     json_text(question_spec), str(question_spec.get("question_template_id", "")),
+                     str(question_spec.get("question_role", "recommended")), assessment_mode,
+                     request_id, project_id),
+                )
+            connection.commit()
+            row = connection.execute("SELECT * FROM question_instances WHERE question_instance_id = ?", (question_id,)).fetchone()
+        safe = {
+            "question_instance_id": question_id, "task_instance_id": task_instance_id,
+            "source_question_instance_id": str(row["source_question_instance_id"]),
+            "mode": str(row["mode"]), "knowledge_point_id": str(row["knowledge_point_id"]),
+            "title": str(public_question.get("title") or row["title"]),
+            "prompt": str(public_question.get("prompt") or row["prompt"]),
+            "question_type": str(public_question.get("question_type") or question_spec.get("question_type", "text")),
+            "answer_schema": as_dict(public_question.get("answer_schema")) or as_dict(question_spec.get("answer_schema")),
+        }
+        return {"status": "ok", "question": safe}
+
+    def submit_wf04_attempt(
+        self, student_id: str, question_instance_id: str, answer: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        question = self.question(question_instance_id, student_id)
+        if not question:
+            raise LookupError("题目实例不存在")
+        evaluation = as_dict(result.get("validated_evaluation"))
+        wrongbook_event = as_dict(result.get("wrongbook_event"))
+        attempt_id = str(result.get("attempt_id", ""))
+        if not attempt_id or not evaluation:
+            raise ValueError("WF04 评价结果不完整")
+        now = utc_now()
+        with self._lock, closing(self._connect()) as connection:
+            existing = connection.execute("SELECT attempt_id FROM attempts WHERE attempt_id = ?", (attempt_id,)).fetchone()
+            if not existing:
+                connection.execute(
+                    "INSERT INTO attempts(attempt_id, question_instance_id, student_id, answer_text, evaluation_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (attempt_id, question_instance_id, student_id, answer, json_text(evaluation), str(evaluation.get("evaluation_status", "invalid")), now),
+                )
+                connection.execute("UPDATE question_instances SET status = 'submitted', updated_at = ? WHERE question_instance_id = ?", (now, question_instance_id))
+            event_id = str(wrongbook_event.get("event_id", ""))
+            if event_id:
+                event_exists = connection.execute("SELECT 1 FROM wrongbook_events WHERE event_id = ?", (event_id,)).fetchone()
+                if not event_exists:
+                    root_id = str(wrongbook_event.get("root_question_instance_id") or question.get("root_question_instance_id") or question_instance_id)
+                    project_id = str(wrongbook_event.get("project_id") or question.get("project_id", ""))
+                    connection.execute("INSERT INTO wrongbook_events(event_id, student_id, project_id, root_question_instance_id, event_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", (event_id, student_id, project_id, root_id, json_text(wrongbook_event), now))
+                    prior = connection.execute("SELECT status, attempt_count FROM wrongbook_items WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?", (student_id, project_id, root_id)).fetchone()
+                    instruction = str(wrongbook_event.get("projection_instruction", ""))
+                    if instruction == "upsert_needs_review":
+                        connection.execute("INSERT INTO wrongbook_items(student_id, project_id, root_question_instance_id, knowledge_point_id, status, last_error_json, attempt_count, updated_at) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?) ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET status = 'needs_review', last_error_json = excluded.last_error_json, attempt_count = wrongbook_items.attempt_count + 1, updated_at = excluded.updated_at", (student_id, project_id, root_id, str(wrongbook_event.get("knowledge_point_id", "")), json_text(evaluation.get("error_points", [])), now))
+                    elif prior:
+                        status = "improved_not_deleted" if instruction == "mark_improved_not_deleted_if_prior_wrong" and bool(evaluation.get("independent_evidence")) else str(prior["status"])
+                        connection.execute("UPDATE wrongbook_items SET status = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?", (status, now, student_id, project_id, root_id))
+            connection.commit()
+        return {"status": "ok", "attempt_id": attempt_id, "question_instance_id": question_instance_id, "correct": str(evaluation.get("evaluation_status")) == "correct", "evaluation": evaluation, "adaptive_policy": as_dict(result.get("adaptive_policy")), "explanation_input": {"question_instance_id": question_instance_id, "task_instance_id": str(question.get("task_instance_id", "")), "attempt_id": attempt_id, "question_snapshot": {"question_id": question_instance_id, "question_text": str(question.get("prompt", ""))}, "current_attempt": {"student_answer": answer}, "validated_evaluation": evaluation}}
+
+    def wrongbook(
+        self,
+        student_id: str,
+        project_id: str,
+        status: str = "all",
+        query: str = "",
+        knowledge_point_id: str = "",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return a compact, searchable project wrongbook page and its totals."""
+        allowed_statuses = {"all", "needs_review", "improved_not_deleted"}
+        status = status if status in allowed_statuses else "all"
+        limit = max(1, min(int(limit or 20), 100))
+        offset = max(0, int(offset or 0))
+        clauses = ["student_id = ?", "project_id = ?"]
+        values: list[Any] = [student_id, project_id]
+        if status != "all":
+            clauses.append("status = ?")
+            values.append(status)
+        if knowledge_point_id:
+            clauses.append("knowledge_point_id = ?")
+            values.append(knowledge_point_id)
+        if query:
+            clauses.append("(knowledge_point_id LIKE ? OR last_error_json LIKE ?)")
+            needle = f"%{query.strip()}%"
+            values.extend([needle, needle])
+        where = " AND ".join(clauses)
+        with self._lock, closing(self._connect()) as connection:
+            counts = {
+                str(row["status"]): int(row["count"])
+                for row in connection.execute(
+                    "SELECT status, COUNT(*) AS count FROM wrongbook_items "
+                    "WHERE student_id = ? AND project_id = ? GROUP BY status",
+                    (student_id, project_id),
+                ).fetchall()
+            }
+            knowledge_points = [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT knowledge_point_id, COUNT(*) AS count FROM wrongbook_items "
+                    "WHERE student_id = ? AND project_id = ? GROUP BY knowledge_point_id "
+                    "ORDER BY count DESC, knowledge_point_id",
+                    (student_id, project_id),
+                ).fetchall()
+            ]
+            total = int(connection.execute(
+                f"SELECT COUNT(*) FROM wrongbook_items WHERE {where}", values
+            ).fetchone()[0])
+            rows = connection.execute(
+                f"SELECT * FROM wrongbook_items WHERE {where} "
+                "ORDER BY CASE status WHEN 'needs_review' THEN 0 ELSE 1 END, updated_at DESC "
+                "LIMIT ? OFFSET ?",
+                [*values, limit, offset],
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["last_error_points"] = json.loads(str(item.pop("last_error_json")))
+            except json.JSONDecodeError:
+                item["last_error_points"] = []
+            result.append(item)
+        return {
+            "items": result,
+            "total": total,
+            "counts": {
+                "needs_review": counts.get("needs_review", 0),
+                "improved_not_deleted": counts.get("improved_not_deleted", 0),
+                "all": sum(counts.values()),
+            },
+            "knowledge_points": knowledge_points,
+            "limit": limit,
+            "offset": offset,
+        }
 
     def submit_attempt(
         self, student_id: str, question_instance_id: str, answer: str

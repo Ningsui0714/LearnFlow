@@ -1193,6 +1193,76 @@ class BackendIntegrationTests(unittest.TestCase):
 
         missing_flow_gateway = XingchenGateway(replace(settings, flow_id=""))
         self.assertFalse(missing_flow_gateway.remote_ready())
+        with self.assertRaisesRegex(GatewayError, "XINGCHEN_WF04_FLOW_ID"):
+            missing_flow_gateway.invoke_wf04_workflow(
+                {"student_id": "STU-REMOTE-001", "action": "generate_question"}
+            )
+
+    def test_wf04_request_includes_workflow_extension(self):
+        settings = Settings(
+            host="127.0.0.1",
+            port=0,
+            database_path=Path(self.temporary_directory.name) / "wf04-remote.db",
+            xingchen_mode="remote",
+            api_url="https://generic.example.invalid/workflow",
+            api_key="api-key",
+            api_secret="api-secret",
+            auth_header="Authorization",
+            auth_scheme="Bearer",
+            flow_id="",
+            input_key="AGENT_USER_INPUT",
+            request_style="workflow_v1",
+            request_timeout=5,
+            seed_demo=False,
+            wf04_flow_id="wf04-flow-id",
+            wf04_api_url="https://xingchen-api.xf-yun.com/workflow/v1/chat/completions",
+            wf04_api_key="wf04-api-key",
+            wf04_api_secret="wf04-api-secret",
+        )
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exception_type, exception, traceback):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "code": 0,
+                    "choices": [{"delta": {"content": json.dumps({
+                        "status": "ok",
+                        "workflow_mode": "wf04_training_evaluation",
+                        "action": "generate_question",
+                        "public_question": {},
+                    })}}],
+                }).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["request"] = request
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch("backend.server.urllib.request.urlopen", fake_urlopen):
+            XingchenGateway(settings).invoke_wf04_workflow({
+                "student_id": "STU-WF04-001",
+                "action": "generate_question",
+            })
+
+        self.assertEqual(captured["body"]["flow_id"], "wf04-flow-id")
+        self.assertEqual(
+            captured["request"].full_url,
+            "https://xingchen-api.xf-yun.com/workflow/v1/chat/completions",
+        )
+        self.assertEqual(
+            captured["request"].get_header("Authorization"),
+            "Bearer wf04-api-key:wf04-api-secret",
+        )
+        self.assertEqual(
+            captured["body"]["ext"],
+            {"caller": "workflow"},
+        )
 
     def test_remote_gateway_recovers_fragmented_result_package(self):
         settings = Settings(

@@ -34,9 +34,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 try:
-    from backend.domain import LearningDomainStore, StudentModelCache
+    from backend.domain import LearningDomainStore, StudentModelCache, new_id
 except ModuleNotFoundError:
-    from domain import LearningDomainStore, StudentModelCache
+    from domain import LearningDomainStore, StudentModelCache, new_id
 
 try:
     from backend.goal_engine import (
@@ -209,6 +209,10 @@ class Settings:
     recommend_flow_id: str = ""
     chat_flow_id: str = ""
     quiz_flow_id: str = ""
+    wf04_flow_id: str = ""
+    wf04_api_url: str = ""
+    wf04_api_key: str = ""
+    wf04_api_secret: str = ""
     video_search_mode: str = "off"
     video_search_url: str = "https://www.bing.com/search?format=rss&q={query}"
     video_search_timeout: float = 12
@@ -268,6 +272,10 @@ class Settings:
             recommend_flow_id=os.getenv("XINGCHEN_RECOMMEND_FLOW_ID", "").strip(),
             chat_flow_id=os.getenv("XINGCHEN_CHAT_FLOW_ID", "").strip(),
             quiz_flow_id=os.getenv("XINGCHEN_QUIZ_FLOW_ID", "").strip(),
+            wf04_flow_id=os.getenv("XINGCHEN_WF04_FLOW_ID", "").strip(),
+            wf04_api_url=os.getenv("XINGCHEN_WF04_API_URL", "").strip(),
+            wf04_api_key=os.getenv("XINGCHEN_WF04_API_KEY", "").strip(),
+            wf04_api_secret=os.getenv("XINGCHEN_WF04_API_SECRET", "").strip(),
             # 正式页面默认在章节预生成阶段检索教学视频；仍可通过显式 off 关闭。
             video_search_mode=os.getenv("VIDEO_SEARCH_MODE", "bilibili").strip().lower(),
             video_search_url=os.getenv(
@@ -2021,6 +2029,124 @@ class XingchenGateway:
             "quiz", payload, self.settings.quiz_flow_id or self.settings.flow_id
         )
 
+    def invoke_wf04_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Invoke the stateless WF04 training/evaluation contract.
+
+        The returned data is deliberately not trusted until the application
+        validates its request binding and write permission.
+        """
+        if self.mode == "mock":
+            return self._mock_wf04(payload)
+        self._require_remote_mode()
+        return self._invoke_remote(
+            "wf04", payload, self.settings.wf04_flow_id or self.settings.flow_id
+        )
+
+    def _mock_wf04(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Deterministic local contract fixture; never a formal remote result."""
+        action = str(payload.get("action", ""))
+        base = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1",
+            "workflow_mode": "wf04_training_evaluation",
+            "status": "ok",
+            "action": action,
+            "request_id": str(payload.get("request_id", "")),
+            "student_id": str(payload.get("student_id", "")),
+            "project_id": str(payload.get("project_id", "")),
+            "task_instance_id": str(payload.get("task_instance_id", "")),
+            "host_write_allowed": True,
+        }
+        if action == "generate_question":
+            point = as_dict(payload.get("knowledge_point"))
+            contract = as_dict(payload.get("task_contract"))
+            knowledge_context = as_dict(payload.get("knowledge_context"))
+            point_name = str(point.get("knowledge_point_name") or "当前知识点")
+            core_concepts = [
+                str(value).strip()
+                for value in as_list(knowledge_context.get("core_concepts"))
+                if str(value).strip()
+            ]
+            focus_concept = core_concepts[0] if core_concepts else point_name
+            question_type = str(payload.get("requested_question_type") or "short_answer").strip().lower()
+            if question_type == "choice":
+                prompt = f"在“{point_name}”的实现中，下列哪项做法正确体现了“{focus_concept}”？"
+                options, expected = {
+                    "a": f"依据“{focus_concept}”的规则完成实现并验证结果",
+                    "b": f"忽略“{focus_concept}”的约束，改用无关操作",
+                    "c": f"只描述“{point_name}”的名称，不检查“{focus_concept}”",
+                }, "a"
+            elif question_type == "multiple_choice":
+                prompt = f"应用“{point_name}”时，哪些做法体现了“{focus_concept}”的要求？"
+                options, expected = {
+                    "a": f"依据“{focus_concept}”的规则完成实现",
+                    "b": f"检查实现结果是否符合“{focus_concept}”的约束",
+                    "c": f"忽略“{focus_concept}”的限制",
+                    "d": f"用与“{focus_concept}”无关的概念替代",
+                }, "a,b"
+            elif question_type == "judgment":
+                prompt = f"判断：实现“{point_name}”时，应遵守“{focus_concept}”的规则并验证结果。"
+                options, expected = {"true": "正确", "false": "错误"}, "true"
+            elif question_type == "fill_blank":
+                prompt = f"填空：完成“{point_name}”相关任务时，应依据“{focus_concept}”的______检查实现结果。"
+                options, expected = {}, "规则"
+            elif question_type == "practical":
+                prompt = f"实操：写出一个能体现“{point_name}”中“{focus_concept}”的最小实现，并说明验证结果。"
+                options, expected = {}, focus_concept
+            else:
+                question_type = "short_answer"
+                prompt = f"请说明“{point_name}”中“{focus_concept}”的规则，并给出一个符合该规则的应用场景。"
+                options, expected = {}, focus_concept
+            spec = {
+                "question_template_id": "MOCK-WF04-TEMPLATE",
+                "knowledge_point_id": point.get("knowledge_point_id", ""),
+                "difficulty": str(payload.get("difficulty", "medium")),
+                "question_role": str(payload.get("question_role", "recommended")),
+                "source_question_instance_id": str(payload.get("source_question_instance_id", "")),
+                "title": point_name,
+                "prompt": prompt,
+                "options": options,
+                "question_type": question_type,
+                "answer_schema": {"type": "text", "label": "请输入答案"},
+                "expected_answer": expected,
+                "accepted_answers": [expected] if question_type in {"fill_blank", "practical"} else [],
+                "reference_answer": f"围绕“{point_name}”中的“{focus_concept}”说明规则，并给出直接相关的应用场景。",
+                "rubric": as_list(contract.get("rubric")) or [
+                    "说明指定知识点的核心规则或结构。",
+                    "给出与该知识点直接相关的应用或验证结果。",
+                ],
+                "hard_required_points": as_list(contract.get("hard_required_points")),
+                "validation_rules": as_dict(contract.get("validation_rules")),
+                "source_refs": as_list(as_dict(payload.get("knowledge_context")).get("source_refs")),
+            }
+            return {**base, "question_spec": spec, "public_question": {
+                "title": spec["title"], "prompt": prompt, "options": options,
+                "question_type": question_type, "answer_schema": spec["answer_schema"],
+            }}
+        if action == "evaluate_answer":
+            snapshot = as_dict(payload.get("question_snapshot"))
+            answer = str(as_dict(payload.get("current_attempt")).get("student_answer", "")).strip()
+            assisted = bool(as_dict(payload.get("current_attempt")).get("hint_used")) or bool(as_dict(payload.get("current_attempt")).get("solution_revealed"))
+            correct = bool(answer) and str(snapshot.get("expected_answer", "")) in answer
+            evaluation_id = "EVAL-" + hashlib.sha256(
+                f"{payload.get('request_id')}:{payload.get('attempt_id')}".encode("utf-8")
+            ).hexdigest()[:16].upper()
+            evaluation = {"validation_passed": True, "evaluation_id": evaluation_id,
+                "evaluation_status": "correct" if correct else "incorrect", "score": 100 if correct else 0,
+                "max_score": 100, "pass_score": int(as_dict(snapshot.get("validation_rules")).get("pass_score", 80)),
+                "hard_requirements_met": correct, "independent_evidence": correct and not assisted,
+                "criterion_results": [], "hard_requirement_results": [], "error_points": [] if correct else [{"error_id": "MOCK_INCORRECT", "error_type": "practice", "severity": "medium"}],
+                "summary": "本地联调评价", "confidence": 1.0}
+            instruction = "upsert_needs_review" if not correct else ("mark_improved_not_deleted_if_prior_wrong" if not assisted else "retain_needs_review_if_prior_wrong")
+            event_id = "WB-" + hashlib.sha256(f"{payload.get('request_id')}:{payload.get('attempt_id')}".encode("utf-8")).hexdigest()[:16].upper()
+            return {**base, "question_instance_id": str(payload.get("question_instance_id", "")), "attempt_id": str(payload.get("attempt_id", "")),
+                "evaluation_id": evaluation_id, "correct": correct, "validated_evaluation": evaluation,
+                "adaptive_policy": {"recommended_action": "retry_original" if not correct else "continue_practice", "advisory_only": True},
+                "evidence_event": {"event_id": "EVID-" + event_id[3:], "event_type": "independent_correct" if evaluation["independent_evidence"] else ("assisted_correct" if correct else "incorrect"), "knowledge_point_id": snapshot.get("knowledge_point_id", ""), "score": evaluation["score"], "confidence": 1.0, "question_instance_id": payload.get("question_instance_id", ""), "attempt_id": payload.get("attempt_id", ""), "evaluation_id": evaluation_id},
+                "wrongbook_event": {"event_id": event_id, "projection_instruction": instruction, "student_id": payload.get("student_id", ""), "project_id": payload.get("project_id", ""), "task_instance_id": payload.get("task_instance_id", ""), "knowledge_point_id": snapshot.get("knowledge_point_id", ""), "question_instance_id": payload.get("question_instance_id", ""), "source_question_instance_id": snapshot.get("source_question_instance_id", ""), "root_question_instance_id": snapshot.get("root_question_instance_id", payload.get("question_instance_id", "")), "attempt_id": payload.get("attempt_id", ""), "evaluation_id": evaluation_id, "independent_evidence": evaluation["independent_evidence"]}}
+        if action == "recommend_next_practice":
+            return {**base, "adaptive_policy": {"recommended_action": "continue_practice", "advisory_only": True, "reason": "本地联调建议。"}}
+        raise GatewayError("WF04 不支持的 action")
+
     def _require_remote_mode(self) -> None:
         if self.mode != "remote":
             raise GatewayError("XINGCHEN_MODE 只能是 mock 或 remote")
@@ -2044,12 +2170,22 @@ class XingchenGateway:
         self, workflow: str, payload: dict[str, Any], flow_id: str
     ) -> dict[str, Any]:
         endpoint = self.settings.api_url
+        api_key = self.settings.api_key
+        api_secret = self.settings.api_secret
+        if workflow == "wf04":
+            endpoint = self.settings.wf04_api_url or endpoint
+            api_key = self.settings.wf04_api_key or api_key
+            api_secret = self.settings.wf04_api_secret or api_secret
         if not endpoint:
             raise GatewayError("未配置星辰调用地址")
-        if not self.settings.api_key:
-            raise GatewayError("未配置 XINGCHEN_API_KEY")
-        if not self.settings.api_secret:
-            raise GatewayError("未配置 XINGCHEN_API_SECRET")
+        if not api_key:
+            variable_name = "XINGCHEN_WF04_API_KEY" if workflow == "wf04" else "XINGCHEN_API_KEY"
+            raise GatewayError(f"未配置 {variable_name}")
+        if not api_secret:
+            variable_name = (
+                "XINGCHEN_WF04_API_SECRET" if workflow == "wf04" else "XINGCHEN_API_SECRET"
+            )
+            raise GatewayError(f"未配置 {variable_name}")
 
         if self.settings.request_style == "direct":
             request_body = payload
@@ -2059,6 +2195,7 @@ class XingchenGateway:
                     "profile": "XINGCHEN_PROFILE_FLOW_ID",
                     "learning": "XINGCHEN_LEARNING_FLOW_ID",
                     "remediation": "XINGCHEN_REMEDIATION_FLOW_ID",
+                    "wf04": "XINGCHEN_WF04_FLOW_ID",
                 }.get(workflow, "XINGCHEN_FLOW_ID")
                 raise GatewayError(f"未配置工作流 ID：{variable_name}")
             request_body = {
@@ -2069,8 +2206,10 @@ class XingchenGateway:
                 },
                 "stream": False,
             }
+            if workflow == "wf04":
+                request_body["ext"] = {"caller": "workflow"}
 
-        authorization = f"{self.settings.api_key}:{self.settings.api_secret}"
+        authorization = f"{api_key}:{api_secret}"
         if self.settings.auth_scheme:
             authorization = f"{self.settings.auth_scheme} {authorization}"
         request = urllib.request.Request(
@@ -2159,6 +2298,9 @@ class XingchenGateway:
                     "learning_goal",
                     "recommendations",
                     "questions",
+                    "question_spec",
+                    "public_question",
+                    "validated_evaluation",
                     "message",
                     "answer",
                 )
@@ -4061,6 +4203,7 @@ class LearningApplication:
                 "judgment",
                 "fill_blank",
                 "practical",
+                "short_answer",
             }:
                 dropped += 1
                 continue
@@ -4107,6 +4250,12 @@ class LearningApplication:
                 if grading_mode != "exact_text":
                     dropped += 1
                     continue
+            if question_type == "short_answer" and (
+                not str(raw.get("reference_answer") or "").strip()
+                or len(as_list(raw.get("rubric"))) < 2
+            ):
+                dropped += 1
+                continue
             valid.append(
                 {
                     "question_id": str(raw.get("question_id") or "").strip()
@@ -4130,6 +4279,8 @@ class LearningApplication:
                                     if question_type == "practical"
                                     else 2
                                     if question_type in {"multiple_choice", "fill_blank"}
+                                    else 3
+                                    if question_type == "short_answer"
                                     else 1
                                 )
                             ),
@@ -6881,6 +7032,19 @@ class LearningApplication:
                     "source_status": str(
                         item.get("source_status") or source_status
                     ),
+                    "description": str(item.get("description") or "")[:600],
+                    "goal_connection": str(item.get("goal_connection") or "")[:300],
+                    "learning_outcome": str(item.get("learning_outcome") or "")[:240],
+                    "prerequisites": [
+                        str(value).strip()
+                        for value in as_list(item.get("prerequisites"))
+                        if str(value).strip()
+                    ],
+                    "video_context_keywords": [
+                        str(value).strip()
+                        for value in as_list(item.get("video_context_keywords"))
+                        if str(value).strip()
+                    ][:8],
                 }
             )
         return normalized
@@ -6935,8 +7099,20 @@ class LearningApplication:
                 canonical_points, "candidate"
             )
 
+        path_by_id = {
+            str(item.get("knowledge_point_id") or ""): as_dict(item)
+            for item in as_list(as_dict(state.get("learning_path")).get("items"))
+            if str(as_dict(item).get("knowledge_point_id") or "")
+        }
         stored = self._normalize_goal_knowledge_points(
-            as_list(state.get("goal_knowledge_points")), "candidate"
+            [
+                {
+                    **path_by_id.get(str(as_dict(raw).get("knowledge_point_id") or ""), {}),
+                    **as_dict(raw),
+                }
+                for raw in as_list(state.get("goal_knowledge_points"))
+            ],
+            "candidate",
         )
         if stored:
             return stored
@@ -6953,20 +7129,7 @@ class LearningApplication:
         questions = []
         for raw in as_list(session.get("questions")):
             question = as_dict(raw)
-            questions.append(
-                {
-                    key: value
-                    for key, value in question.items()
-                    if key
-                    not in {
-                        "answer",
-                        "accepted_answers",
-                        "explanation",
-                        "grading_tests",
-                        "rubric",
-                    }
-                }
-            )
+            questions.append(LearningApplication._public_assessment_question(question))
         blueprint = as_dict(session.get("blueprint"))
         return {
             "assessment_id": str(session.get("assessment_id") or ""),
@@ -7196,22 +7359,44 @@ class LearningApplication:
         )
 
     @staticmethod
+    def _public_assessment_question(question: dict[str, Any]) -> dict[str, Any]:
+        """Return the only assessment-question fields a learner may receive.
+
+        Question specifications from WF04 contain expected answers and grading
+        rules.  Keeping this as a whitelist (rather than an evolving blacklist)
+        prevents a newly-added private field from leaking to the browser.
+        """
+        allowed = {
+            "question_id", "question_instance_id", "knowledge_point_id",
+            "knowledge_point_name", "title", "prompt", "options",
+            "question_type", "answer_schema", "estimated_minutes",
+            "difficulty", "source", "source_type", "quality_status",
+        }
+        return {key: value for key, value in question.items() if key in allowed}
+
+    @staticmethod
     def _question_contract(item: dict[str, Any]) -> dict[str, Any]:
-        question_type = str(item.get("question_type") or "choice").strip().lower()
+        question_type = str(item.get("question_type") or "").strip().lower()
         if question_type not in {
             "choice",
             "multiple_choice",
             "judgment",
             "fill_blank",
             "practical",
+            "short_answer",
         }:
-            question_type = "choice"
+            raise ApiError(
+                422,
+                "UNSUPPORTED_QUESTION_TYPE",
+                f"不支持的题型：{question_type or '（空）'}",
+            )
         default_minutes = {
             "choice": 1,
             "multiple_choice": 2,
             "judgment": 1,
             "fill_blank": 2,
             "practical": 4,
+            "short_answer": 3,
         }[question_type]
         try:
             estimated_minutes = int(item.get("estimated_minutes") or default_minutes)
@@ -7222,6 +7407,303 @@ class LearningApplication:
             "question_type": question_type,
             "estimated_minutes": max(1, min(30, estimated_minutes)),
         }
+
+    @staticmethod
+    def _knowledge_concept_terms(values: list[str], limit: int = 12) -> list[str]:
+        ignored = {
+            "知识点", "学习", "任务", "结果", "相关", "能够", "完成", "通过",
+            "核心", "规则", "方法", "内容", "步骤", "应用", "要求", "使用",
+        }
+        ignored_fragments = (
+            "直接服务", "学习产出", "学习目标", "可检查", "专项训练",
+            "基础概念", "综合应用", "实训任务", "知识或实践能力",
+        )
+        terms: list[str] = []
+        for value in values:
+            for term in re.findall(r"[A-Za-z][A-Za-z0-9+#._-]*|[\u4e00-\u9fff]{2,12}", str(value or "")):
+                normalized = term.strip()
+                if (
+                    normalized
+                    and normalized not in ignored
+                    and not any(fragment in normalized for fragment in ignored_fragments)
+                    and normalized not in terms
+                ):
+                    terms.append(normalized)
+                    if len(terms) >= limit:
+                        return terms
+        return terms
+
+    def _wf04_knowledge_context(
+        self,
+        state: dict[str, Any],
+        point: dict[str, Any],
+        path_items: list[dict[str, Any]],
+        supplied_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        point_id = str(point.get("knowledge_point_id") or "")
+        point_name = str(point.get("knowledge_point_name") or point_id)
+        graph_point = as_dict(GRAPH_KNOWLEDGE_POINTS.get(point_id))
+        evidence_items = self.domain.search_knowledge(
+            query=point_name, knowledge_point_id=point_id, limit=4
+        )
+        if not evidence_items and point_name:
+            evidence_items = self.domain.search_knowledge(query=point_name, limit=4)
+        by_id = {
+            str(item.get("knowledge_point_id") or ""): item
+            for item in path_items
+            if isinstance(item, dict)
+        }
+        prerequisite_names = [
+            str(by_id.get(prerequisite_id, {}).get("knowledge_point_name") or prerequisite_id)
+            for prerequisite_id in as_list(point.get("prerequisites"))
+            if str(prerequisite_id).strip()
+        ]
+        goal = as_dict(state.get("goal"))
+        supplied_context = as_dict(supplied_context)
+        knowledge_evidence = [
+            {
+                "title": str(item.get("title") or ""),
+                "category": str(item.get("category") or ""),
+                "content": str(item.get("content") or "")[:900],
+            }
+            for item in evidence_items
+        ]
+        source_refs = [
+            {
+                "title": str(item.get("title") or ""),
+                "source": str(item.get("source") or ""),
+                "source_type": str(item.get("source_type") or ""),
+                "document_id": str(item.get("document_id") or ""),
+                "locator": str(item.get("locator") or ""),
+            }
+            for item in evidence_items
+        ]
+        source_refs.extend(
+            item for item in as_list(supplied_context.get("source_refs"))
+            if isinstance(item, dict)
+        )
+        source_refs = list({
+            json_text(item): item for item in source_refs if item.get("source") or item.get("title")
+        }.values())[:6]
+        core_concepts = self._knowledge_concept_terms(
+            [
+                str(graph_point.get("description") or ""),
+                str(point.get("learning_outcome") or ""),
+                str(point.get("goal_connection") or ""),
+                *[str(value) for value in as_list(point.get("video_context_keywords"))],
+                *[str(item.get("title") or "") for item in evidence_items],
+                *[str(item.get("content") or "")[:500] for item in evidence_items],
+            ]
+        )
+        return {
+            **supplied_context,
+            "knowledge_point_id": point_id,
+            "knowledge_point_name": point_name,
+            "knowledge_type": str(point.get("knowledge_type") or graph_point.get("knowledge_type") or "conceptual"),
+            "definition": str(point.get("description") or graph_point.get("description") or "")[:900],
+            "goal_connection": str(point.get("goal_connection") or "")[:300],
+            "learning_outcome": str(point.get("learning_outcome") or "")[:240],
+            "prerequisite_knowledge": prerequisite_names,
+            "goal_name": str(goal.get("goal_name") or "")[:240],
+            "target_outcome": str(as_dict(goal.get("constraints")).get("target_outcome") or "")[:240],
+            "source_status": str(point.get("source_status") or "candidate"),
+            "core_concepts": core_concepts,
+            "knowledge_evidence": knowledge_evidence,
+            "source_refs": source_refs,
+        }
+
+    @staticmethod
+    def _validate_wf04_knowledge_linkage(
+        request: dict[str, Any], spec: dict[str, Any], public: dict[str, Any]
+    ) -> None:
+        context = as_dict(request.get("knowledge_context"))
+        core_concepts = [
+            str(value).strip() for value in as_list(context.get("core_concepts"))
+            if str(value).strip()
+        ]
+        if not core_concepts:
+            return
+        visible_text = " ".join(
+            [
+                str(public.get("title") or ""),
+                str(public.get("prompt") or ""),
+                *[str(value) for value in as_dict(public.get("options")).values()],
+            ]
+        ).casefold()
+        answer_text = " ".join(
+            [
+                str(spec.get("expected_answer") or ""),
+                str(spec.get("reference_answer") or ""),
+                *[str(value) for value in as_list(spec.get("rubric"))],
+            ]
+        ).casefold()
+        linked = [
+            term for term in core_concepts
+            if term.casefold() in visible_text and term.casefold() in answer_text
+        ]
+        if not linked:
+            raise GatewayError(
+                "WF04 题目没有同时在题干和答案依据中使用当前知识点的核心概念"
+            )
+
+    @staticmethod
+    def _wf04_question_candidate(
+        request: dict[str, Any], result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply the host-side quality gate to a WF04 generated question.
+
+        WF04 may generate wording, but it cannot decide whether that wording is
+        admitted to a learner's assessment.  This gate checks the immutable
+        request binding, the public/private split, type-specific answer
+        contract, and rejects the generic "learning evidence" templates that
+        are not domain questions.
+        """
+        LearningApplication._validate_wf04_result(request, result)
+        spec = as_dict(result.get("question_spec"))
+        public = as_dict(result.get("public_question"))
+        point = as_dict(request.get("knowledge_point"))
+        point_id = str(point.get("knowledge_point_id") or "").strip()
+        point_name = str(point.get("knowledge_point_name") or "").strip()
+        if not spec or not public:
+            raise GatewayError("WF04 未同时返回题目规格和学生可见题目")
+        if str(spec.get("knowledge_point_id") or "").strip() != point_id:
+            raise GatewayError("WF04 题目的知识点与本次请求不一致")
+        if not str(spec.get("question_template_id") or "").strip():
+            raise GatewayError("WF04 题目缺少 question_template_id")
+
+        question_type = str(spec.get("question_type") or public.get("question_type") or "").strip().lower()
+        candidate = LearningApplication._question_contract({"question_type": question_type})
+        question_type = str(candidate["question_type"])
+        if str(public.get("question_type") or "").strip().lower() != question_type:
+            raise GatewayError("WF04 的 public_question 与题目规格题型不一致")
+        title = str(public.get("title") or "").strip()
+        prompt = str(public.get("prompt") or "").strip()
+        if not title or not prompt:
+            raise GatewayError("WF04 学生可见题目缺少标题或题干")
+        if title != str(spec.get("title") or "").strip() or prompt != str(spec.get("prompt") or "").strip():
+            raise GatewayError("WF04 学生可见题目与后端题目规格不一致")
+
+        content = " ".join([title, prompt, *[str(value) for value in as_dict(public.get("options")).values()]])
+        compact_content = re.sub(r"\s+", "", content).casefold()
+        generic_markers = (
+            "可检查证据", "学习证据", "收藏教程", "教程链接", "看过一遍",
+            "记住了几个术语", "只背诵术语", "完成本阶段学习",
+        )
+        if any(marker.casefold() in compact_content for marker in generic_markers):
+            raise GatewayError("WF04 题目未考查标注知识点，属于通用学习行为题")
+        point_terms = [
+            term.casefold() for term in re.findall(r"[A-Za-z][A-Za-z0-9+#._-]*|[\u4e00-\u9fff]{2,}", point_name)
+            if len(term) >= 2
+        ]
+        if point_terms and not any(term in compact_content for term in point_terms):
+            raise GatewayError("WF04 题干未出现可验证的目标知识点语境")
+        LearningApplication._validate_wf04_knowledge_linkage(request, spec, public)
+
+        options = as_dict(public.get("options"))
+        private_options = as_dict(spec.get("options"))
+        if private_options and options != private_options:
+            raise GatewayError("WF04 公开选项与后端题目规格不一致")
+        answer = str(spec.get("expected_answer") or spec.get("answer") or "").strip()
+        accepted_answers = [
+            str(value or "").strip() for value in as_list(spec.get("accepted_answers"))
+            if str(value or "").strip()
+        ]
+        if question_type in {"choice", "judgment"}:
+            minimum = 2 if question_type == "judgment" else 3
+            if len(options) < minimum or answer not in options or len(set(options.values())) != len(options):
+                raise GatewayError("WF04 客观题选项或唯一答案不符合质量要求")
+        elif question_type == "multiple_choice":
+            keys = {key.strip() for key in answer.replace("，", ",").split(",") if key.strip()}
+            if len(options) < 3 or len(keys) < 2 or not keys.issubset(options):
+                raise GatewayError("WF04 多选题选项或正确答案集合不符合质量要求")
+        elif question_type in {"fill_blank", "practical"}:
+            if not answer and not accepted_answers:
+                raise GatewayError("WF04 填空或实操题缺少后端判定答案")
+        elif question_type == "short_answer":
+            if not str(spec.get("reference_answer") or "").strip() or len(as_list(spec.get("rubric"))) < 2:
+                raise GatewayError("WF04 简答题缺少参考答案或可检查评分点")
+
+        return {
+            "question_id": f"WF04-{uuid.uuid4().hex[:12].upper()}",
+            "question_instance_id": new_id("ASSESS-Q"),
+            "knowledge_point_id": point_id,
+            "knowledge_point_name": point_name,
+            "title": title,
+            "prompt": prompt,
+            "options": options,
+            "answer_schema": as_dict(public.get("answer_schema")),
+            "answer": answer,
+            "accepted_answers": accepted_answers,
+            "question_type": question_type,
+            "grading_mode": str(spec.get("grading_mode") or ""),
+            "estimated_minutes": LearningApplication._question_contract({
+                "question_type": question_type,
+                "estimated_minutes": public.get("estimated_minutes") or spec.get("estimated_minutes"),
+            })["estimated_minutes"],
+            "difficulty": max(1, min(3, int(spec.get("difficulty", 1) or 1))) if str(spec.get("difficulty", "")).isdigit() else 1,
+            "source": "讯飞星辰 WF04（本地质量校验通过）",
+            "source_type": "wf04_api",
+            "quality_status": "validated",
+            "question_template_id": str(spec.get("question_template_id")),
+            "_wf04_question_spec": spec,
+        }
+
+    def _generate_wf04_question_with_revisions(
+        self, request: dict[str, Any], max_attempts: int = 3
+    ) -> tuple[dict[str, Any], int]:
+        rejection_reasons: list[str] = []
+        unsupported_type_reasons: list[str] = []
+        for attempt in range(1, max(1, max_attempts) + 1):
+            task_contract = dict(as_dict(request.get("task_contract")))
+            if rejection_reasons:
+                task_contract["revision_feedback"] = rejection_reasons[-2:]
+                if unsupported_type_reasons:
+                    task_contract["revision_instruction"] = (
+                        "上一版题型不符合 ZHIXING_WF04_RESULT.v1。"
+                        "question_spec.question_type 和 public_question.question_type "
+                        "必须使用 short_answer，不得使用 code、single_choice 或其他未定义值。"
+                    )
+                else:
+                    task_contract["revision_instruction"] = (
+                        "上一版未通过知识点关联校验。请依据失败原因重写题目，"
+                        "必须考查给定核心概念，不得只修改措辞。"
+                    )
+            revised_request = {
+                **request,
+                "generation_attempt": attempt,
+                "task_contract": task_contract,
+            }
+            try:
+                result = self.gateway.invoke_wf04_workflow(revised_request)
+                self._validate_wf04_result(revised_request, result)
+            except ApiError:
+                raise
+            except GatewayError as error:
+                # 远程服务、鉴权或工作流绑定失败不能通过改写题干解决，
+                # 直接保留平台原因，避免学生等待无意义的重复调用。
+                raise GatewayError(f"WF04 调用失败：{error}") from error
+            try:
+                question = self._wf04_question_candidate(revised_request, result)
+                return question, attempt
+            except ApiError as error:
+                if error.code != "UNSUPPORTED_QUESTION_TYPE":
+                    raise
+                reason = f"{error.code}: {error.message}"
+                rejection_reasons.append(reason)
+                unsupported_type_reasons.append(reason)
+            except GatewayError as error:
+                rejection_reasons.append(str(error))
+        if unsupported_type_reasons:
+            raise ApiError(
+                422,
+                "UNSUPPORTED_QUESTION_TYPE",
+                "WF04 多次生成了协议未定义题型："
+                + "；".join(unsupported_type_reasons[-2:])[:700],
+            )
+        raise GatewayError(
+            "WF04 已按知识点关联要求重生成多次，仍未获得可用题目："
+            + "；".join(rejection_reasons[-2:])[:700]
+        )
 
     @staticmethod
     def _question_identifier(item: dict[str, Any]) -> str:
@@ -7562,7 +8044,7 @@ class LearningApplication:
         return normalized, provider, blueprint
 
     def _provisional_assessment_questions(
-        self, student_id: str, state: dict[str, Any], knowledge_point_id: str
+        self, student_id: str, project_id: str, state: dict[str, Any], knowledge_point_id: str
     ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
         path_items = self._project_goal_knowledge_points(state)
         if knowledge_point_id:
@@ -7571,103 +8053,115 @@ class LearningApplication:
                 for item in path_items
                 if str(item.get("knowledge_point_id") or "") == knowledge_point_id
             ]
-        scope = [
-            {
-                "knowledge_point_id": str(item.get("knowledge_point_id") or ""),
-                "knowledge_point_name": str(item.get("knowledge_point_name") or ""),
-            }
-            for item in path_items[:6]
-        ]
+        scope = [dict(item) for item in path_items[:6]]
         if not scope:
             raise ApiError(409, "ASSESSMENT_SCOPE_EMPTY", "当前项目还没有可练习的学习节点")
-        questions: list[dict[str, Any]] = []
-        provider = "provisional_readiness_fallback"
-        if not questions:
-            anchors = [scope[index % len(scope)] for index in range(5)]
-            questions = [
-                {
-                    "question_id": f"PROVISIONAL-{uuid.uuid4().hex[:10].upper()}",
-                    "knowledge_point_id": anchors[0]["knowledge_point_id"],
-                    "knowledge_point_name": anchors[0]["knowledge_point_name"],
-                    "title": (
-                        f"对于“{anchors[0]['knowledge_point_name']}”，下面哪项最能作为完成本阶段学习的可检查证据？"
-                    ),
-                    "options": {
-                        "a": "看过一遍相关资料",
-                        "b": "记住了几个术语",
-                        "c": "能独立完成一个小任务，并解释结果和常见错误",
-                        "d": "收藏了一个教程链接",
+        required_types = (
+            "choice", "multiple_choice", "judgment", "fill_blank",
+            "short_answer", "practical",
+        )
+        normalized: list[dict[str, Any]] = []
+        generation_attempts: list[dict[str, Any]] = []
+        for index, question_type in enumerate(required_types):
+            point = scope[index % len(scope)]
+            knowledge_context = self._wf04_knowledge_context(
+                state, point, path_items
+            )
+            wf04_point = {
+                "knowledge_point_id": str(point.get("knowledge_point_id") or ""),
+                "knowledge_point_name": str(point.get("knowledge_point_name") or ""),
+            }
+            wf04_knowledge_context = {
+                key: knowledge_context[key]
+                for key in (
+                    "knowledge_point_id",
+                    "knowledge_point_name",
+                    "definition",
+                    "goal_connection",
+                    "learning_outcome",
+                    "prerequisite_knowledge",
+                    "core_concepts",
+                    "knowledge_evidence",
+                    "source_refs",
+                )
+                if key in knowledge_context
+            }
+            request = {
+                "schema_version": "ZHIXING_WF04_REQUEST.v1",
+                "request_id": new_id("REQ"),
+                "action": "generate_question",
+                "student_id": student_id,
+                "project_id": project_id,
+                "training_cycle_id": f"ASSESSMENT-{project_id}",
+                "learning_task_id": f"ASSESSMENT-{point['knowledge_point_id']}",
+                "task_instance_id": f"ASSESSMENT-{project_id}-{index + 1}",
+                "knowledge_point": wf04_point,
+                "difficulty": "medium",
+                "question_role": "recommended",
+                "learner_context": {"assessment_mode": "provisional"},
+                "task_contract": {
+                    "assessment_mode": "provisional",
+                    "knowledge_binding": {
+                        "knowledge_point_id": wf04_point["knowledge_point_id"],
+                        "knowledge_point_name": wf04_point["knowledge_point_name"],
+                        "core_concepts": as_list(wf04_knowledge_context.get("core_concepts")),
+                        "learning_outcome": wf04_knowledge_context.get("learning_outcome", ""),
+                        "goal_connection": wf04_knowledge_context.get("goal_connection", ""),
+                        "prerequisite_knowledge": as_list(wf04_knowledge_context.get("prerequisite_knowledge")),
                     },
-                    "answer": "c",
-                    "question_type": "choice",
-                    "explanation": "独立产出、解释结果并识别错误，才是更可检查的学习证据。",
-                    "difficulty": 1,
-                    "source": "通用学习证据规则（非领域知识题）",
-                },
-                {
-                    "question_id": f"PROVISIONAL-{uuid.uuid4().hex[:10].upper()}",
-                    "knowledge_point_id": anchors[1]["knowledge_point_id"],
-                    "knowledge_point_name": anchors[1]["knowledge_point_name"],
-                    "title": f"为“{anchors[1]['knowledge_point_name']}”准备学习证据时，哪些做法有助于验证已掌握？",
-                    "options": {
-                        "a": "完成一个可运行或可检查的小任务",
-                        "b": "只保存教程链接",
-                        "c": "说明关键步骤和结果",
-                        "d": "只背诵术语",
+                    "quality_requirements": [
+                        "题干必须要求学习者运用当前知识点的具体规则、结构、代码或判断，不能只出现知识点名称。",
+                        "题干与参考答案或 Rubric 必须共同包含至少一个 core_concepts 中的概念；没有 core_concepts 时，必须共同说明一个具体技术概念。",
+                        "选择题的错误选项必须是该知识点常见的真实误区、错误嵌套、错误 API 或错误步骤，不能使用看资料、背术语、收藏教程等学习行为选项。",
+                        "题目应使用 learning_outcome 或 goal_connection 中的真实任务语境；不得引用未提供的上下文、阶段或材料。",
+                    ],
+                    "rubric": [
+                        {
+                            "criterion_id": "C_KNOWLEDGE_APPLICATION",
+                            "description": "回答明确使用当前知识点的核心概念、规则或操作。",
+                            "max_points": 60,
+                            "required": True,
+                        },
+                        {
+                            "criterion_id": "C_CONTEXT_REASONING",
+                            "description": "回答能解释该概念在指定任务语境中的正确应用或结果。",
+                            "max_points": 40,
+                            "required": True,
+                        },
+                    ],
+                    "hard_required_points": [
+                        {
+                            "requirement_id": "R_KNOWLEDGE_BINDING",
+                            "description": "题目与答案必须共同使用当前知识点的具体概念。",
+                        }
+                    ],
+                    "validation_rules": {
+                        "pass_score": 80,
+                        "mastery_threshold": 0.8,
+                        "confidence_threshold": 0.4,
+                        "minimum_independent_evidence": 2,
                     },
-                    "answer": "a,c",
-                    "question_type": "multiple_choice",
-                    "explanation": "任务产出和过程说明都能形成可核验的学习证据。",
-                    "difficulty": 1,
-                    "source": "通用学习证据规则（非领域知识题）",
                 },
-                {
-                    "question_id": f"PROVISIONAL-{uuid.uuid4().hex[:10].upper()}",
-                    "knowledge_point_id": anchors[2]["knowledge_point_id"],
-                    "knowledge_point_name": anchors[2]["knowledge_point_name"],
-                    "title": "判断：只看完教程但没有完成任何练习，不能作为已掌握的充分证据。",
-                    "options": {"true": "正确", "false": "错误"},
-                    "answer": "true",
-                    "question_type": "judgment",
-                    "explanation": "学习证据需要体现可复现的应用或可检查的结果。",
-                    "difficulty": 1,
-                    "source": "通用学习证据规则（非领域知识题）",
-                },
-                {
-                    "question_id": f"PROVISIONAL-{uuid.uuid4().hex[:10].upper()}",
-                    "knowledge_point_id": anchors[3]["knowledge_point_id"],
-                    "knowledge_point_name": anchors[3]["knowledge_point_name"],
-                    "title": "填空：能够复现过程并说明结果的学习产出，属于可______的学习证据。",
-                    "answer": "检查",
-                    "accepted_answers": ["检查", "验证", "核验"],
-                    "question_type": "fill_blank",
-                    "explanation": "学习产出应能够被检查或验证。",
-                    "difficulty": 1,
-                    "source": "通用学习证据规则（非领域知识题）",
-                },
-                {
-                    "question_id": f"PROVISIONAL-{uuid.uuid4().hex[:10].upper()}",
-                    "knowledge_point_id": anchors[4]["knowledge_point_id"],
-                    "knowledge_point_name": anchors[4]["knowledge_point_name"],
-                    "title": f"实操填写：为“{anchors[4]['knowledge_point_name']}”记录完成凭证，请输入“已完成小任务”。",
-                    "answer": "已完成小任务",
-                    "accepted_answers": ["已完成小任务"],
-                    "question_type": "practical",
-                    "grading_mode": "exact_text",
-                    "explanation": "候选方向的练习只用于建立可检查的学习习惯，不构成正式能力结论。",
-                    "difficulty": 1,
-                    "source": "通用学习证据规则（非领域知识题）",
-                },
-            ]
-        normalized = [
-            self._question_contract({
-                **item,
-                "source": str(item.get("source") or "候选练习题（待领域审核）"),
-                "source_type": "ai_generated_unreviewed",
-                "quality_status": "unverified",
-            })
-            for item in questions
-        ]
+                "knowledge_context": wf04_knowledge_context,
+            }
+            if self.gateway.mode == "mock":
+                request["requested_question_type"] = question_type
+            try:
+                question, attempts = self._generate_wf04_question_with_revisions(request)
+                normalized.append(question)
+                generation_attempts.append({
+                    "knowledge_point_id": point["knowledge_point_id"],
+                    "question_type": question["question_type"],
+                    "attempts": attempts,
+                })
+            except ApiError:
+                raise
+            except GatewayError as error:
+                raise ApiError(
+                    503,
+                    "WF04_QUESTION_GENERATION_UNAVAILABLE",
+                    f"当前知识点的题目重生成失败：{str(error)[:800]}",
+                ) from error
         blueprint = {
             "assessment_type": "provisional_self_check",
             "goal": "custom",
@@ -7676,13 +8170,15 @@ class LearningApplication:
             "estimated_minutes": sum(
                 int(item.get("estimated_minutes", 1) or 1) for item in normalized
             ),
-            "selection_rule": "按候选学习路径节点生成练习题单",
+            "selection_rule": "WF04 按候选学习路径、核心概念和题型覆盖生成；不满足关联要求时携带原因重生成",
             "pass_rule": "只提供即时反馈，不形成正式通过结论",
             "source_policy": (
-                "候选练习题未经领域审核；结果不进入画像、不更新掌握度、不调整路径"
+                "题目来自 WF04 且已通过结构与领域相关性校验；候选方向练习结果仍不进入画像、不更新掌握度、不调整路径"
             ),
+            "generation_attempts": generation_attempts,
+            "fallback_reason": "",
         }
-        return normalized, provider, blueprint
+        return normalized, "wf04_api", blueprint
 
     def project_assessment_start(self, incoming: dict[str, Any]) -> dict[str, Any]:
         student_id = str(incoming.get("student_id", "")).strip()
@@ -7733,7 +8229,7 @@ class LearningApplication:
             goal_key = "custom"
             goal_label = str(project.get("goal_name") or "自定义目标")
             questions, provider, blueprint = self._provisional_assessment_questions(
-                student_id, state, requested_point
+                student_id, project_id, state, requested_point
             )
         else:
             goal_key = self.PROJECT_GOAL_DIAGNOSIS.get(
@@ -7782,21 +8278,7 @@ class LearningApplication:
             state["diagnosis_session"] = session
             state["initial_assessment_state"] = "in_progress"
         self.store.save_project_state(project_id, state, status="assessment")
-        public_questions = [
-            {
-                k: v
-                for k, v in q.items()
-                if k
-                not in (
-                    "answer",
-                    "accepted_answers",
-                    "explanation",
-                    "grading_tests",
-                    "rubric",
-                )
-            }
-            for q in questions
-        ]
+        public_questions = [self._public_assessment_question(q) for q in questions]
         return {
             "status": "ok",
             "project_id": project_id,
@@ -7882,11 +8364,50 @@ class LearningApplication:
                 if str(value or "").strip()
             }
             return normalized_answer in accepted_answers
+        if question_type == "short_answer":
+            raise ApiError(
+                409,
+                "SHORT_ANSWER_GRADER_REQUIRED",
+                "简答题必须经 WF04 评分后才能提交",
+            )
         raise ApiError(
             409,
             "PRACTICAL_GRADER_UNAVAILABLE",
             "该实操题尚未配置确定性测试或 Rubric，不能计入正式测评",
         )
+
+    def _grade_wf04_assessment_short_answer(
+        self, student_id: str, project_id: str, question: dict[str, Any], response: str
+    ) -> bool:
+        spec = as_dict(question.get("_wf04_question_spec"))
+        if not spec:
+            raise GatewayError("简答题缺少后端评分规格")
+        attempt_id = new_id("ATTEMPT")
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": new_id("REQ"),
+            "action": "evaluate_answer",
+            "student_id": student_id,
+            "project_id": project_id,
+            "training_cycle_id": f"ASSESSMENT-{project_id}",
+            "learning_task_id": f"ASSESSMENT-{question.get('knowledge_point_id', '')}",
+            "task_instance_id": str(question.get("question_instance_id") or ""),
+            "question_instance_id": str(question.get("question_instance_id") or ""),
+            "attempt_id": attempt_id,
+            "question_snapshot": {
+                key: spec.get(key)
+                for key in (
+                    "knowledge_point_id", "knowledge_point_name", "difficulty",
+                    "question_role", "prompt", "expected_answer", "reference_answer",
+                    "rubric", "hard_required_points", "validation_rules",
+                )
+            },
+            "current_attempt": {"student_answer": response, "hint_used": False, "solution_revealed": False},
+        }
+        result = self.gateway.invoke_wf04_workflow(request)
+        self._validate_wf04_result(request, result)
+        evaluation = as_dict(result.get("validated_evaluation"))
+        return str(evaluation.get("evaluation_status") or "") == "correct"
 
     def project_assessment_answer(self, incoming: dict[str, Any]) -> dict[str, Any]:
         student_id = str(incoming.get("student_id", "")).strip()
@@ -7920,17 +8441,19 @@ class LearningApplication:
             correct = False
             session["skipped"] = int(session.get("skipped", 0) or 0) + 1
         else:
-            correct = self._grade_assessment_response(current, selected)
+            correct = (
+                self._grade_wf04_assessment_short_answer(
+                    student_id, project_id, current, selected
+                )
+                if str(current.get("question_type") or "") == "short_answer"
+                else self._grade_assessment_response(current, selected)
+            )
             key = "correct" if correct else "wrong"
             session[key] = int(session.get(key, 0) or 0) + 1
         attempt_result: dict[str, Any] = {}
-        record_practice = session.get("assessment_type") == "self_check"
-        if (
-            not skipped
-            and (formal_evidence or record_practice)
-            and str(current.get("question_type") or "choice") in {"choice", "judgment"}
-        ):
-            # 测评作答落库（与现有诊断一致），供画像溯源/学习记录使用
+        if not skipped:
+            # 测评中心的正式与练习型题单都要留下练习记录并进入项目错题本；
+            # 是否更新画像仍只由 formal_evidence 决定。
             attempt_result = self.domain.record_choice_attempt(
                 student_id=student_id,
                 source_question_id=str(current.get("question_id", "")),
@@ -7947,6 +8470,8 @@ class LearningApplication:
                 expected=str(current.get("answer", "")),
                 selected=selected,
                 explanation=str(current.get("explanation", "")),
+                project_id=project_id,
+                correct_override=correct,
             )
         confidence = (
             0.3
@@ -8013,7 +8538,6 @@ class LearningApplication:
             "explanation": current.get("explanation", ""),
             "knowledge_point_id": current.get("knowledge_point_id", ""),
             "knowledge_point_name": current.get("knowledge_point_name", ""),
-            "answer": current.get("answer", ""),
             "assessment_id": expected_assessment_id,
             "assessment_type": session.get("assessment_type", "initial_diagnostic"),
             "evidence_event_id": evidence_event_id,
@@ -8067,6 +8591,29 @@ class LearningApplication:
 
     def project_diagnosis_answer(self, incoming: dict[str, Any]) -> dict[str, Any]:
         return self.project_assessment_answer(incoming)
+
+    def _backfill_project_wrongbook(self, student_id: str, project: dict[str, Any]) -> None:
+        """Project-state sessions predate persisted practice attempts; restore only wrong results."""
+        state = as_dict(project.get("state"))
+        session = as_dict(state.get("assessment_session") or state.get("diagnosis_session"))
+        if not session.get("done"):
+            return
+        assessment_id = str(session.get("assessment_id") or "")
+        if not assessment_id:
+            return
+        questions_by_id = {
+            str(item.get("question_id") or ""): item
+            for item in as_list(session.get("questions"))
+            if isinstance(item, dict)
+        }
+        for result in as_list(session.get("results")):
+            if not isinstance(result, dict) or bool(result.get("correct")) or bool(result.get("skipped")):
+                continue
+            question = questions_by_id.get(str(result.get("question_id") or ""), {})
+            self.domain.project_wrongbook_result(
+                student_id, str(project.get("project_id") or ""), assessment_id,
+                question, False,
+            )
 
     def _finalize_project_assessment(
         self,
@@ -11076,6 +11623,8 @@ class LearningApplication:
 
     def create_practice(self, incoming: dict[str, Any]) -> dict[str, Any]:
         student_id, _ = self._require_identity(incoming)
+        if str(incoming.get("provider", "")).strip().lower() == "wf04":
+            return self._create_wf04_practice(student_id, incoming)
         try:
             return self.domain.create_practice(student_id, incoming)
         except ValueError as error:
@@ -11087,6 +11636,9 @@ class LearningApplication:
         if str(incoming.get("student_id", "")).strip() != student_id:
             raise ApiError(403, "STUDENT_MISMATCH", "不能提交其他学生的题目")
         try:
+            question = self.domain.question(question_instance_id, student_id)
+            if question and str(question.get("generation_provider", "")) == "wf04":
+                return self._submit_wf04_attempt(student_id, question, incoming)
             result = self.domain.submit_attempt(
                 student_id, question_instance_id, str(incoming.get("answer", ""))
             )
@@ -11116,6 +11668,149 @@ class LearningApplication:
             raise ApiError(404, "QUESTION_NOT_FOUND", str(error)) from error
         except ValueError as error:
             raise ApiError(400, "INVALID_ANSWER", str(error)) from error
+
+    @staticmethod
+    def _validate_wf04_result(request: dict[str, Any], result: dict[str, Any]) -> None:
+        if str(result.get("status") or "") == "error":
+            error = as_dict(result.get("error"))
+            error_code = str(error.get("code") or "WF04_ERROR")
+            error_message = str(error.get("message") or result.get("message") or "未知错误")
+            raise GatewayError(f"WF04 返回 status=error（{error_code}）：{error_message}")
+        required = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1",
+            "workflow_mode": "wf04_training_evaluation",
+            "status": "ok",
+        }
+        for key, expected in required.items():
+            if result.get(key) != expected:
+                raise GatewayError(f"WF04 响应校验失败：{key}")
+        if result.get("host_write_allowed") is not True:
+            raise GatewayError("WF04 未授权宿主写入")
+        for key in ("request_id", "action", "student_id", "project_id", "task_instance_id"):
+            if str(result.get(key, "")) != str(request.get(key, "")):
+                raise GatewayError(f"WF04 响应与本次请求不匹配：{key}")
+        if request["action"] == "evaluate_answer":
+            for key in ("question_instance_id", "attempt_id"):
+                if str(result.get(key, "")) != str(request.get(key, "")):
+                    raise GatewayError(f"WF04 评价响应与本次作答不匹配：{key}")
+            evaluation = as_dict(result.get("validated_evaluation"))
+            if not evaluation.get("validation_passed") or not evaluation.get("evaluation_id"):
+                raise GatewayError("WF04 未返回有效的确定性评价")
+
+    def _wf04_task_context(self, student_id: str, project_id: str, task_instance_id: str) -> dict[str, Any]:
+        project = self._require_project(student_id, project_id)
+        if not task_instance_id:
+            raise ApiError(400, "MISSING_TASK_INSTANCE", "WF04 练习必须指定 task_instance_id")
+        with self.domain._lock, closing(self.domain._connect()) as connection:
+            row = connection.execute(
+                """SELECT ti.task_instance_id, ti.student_id, lt.learning_task_id,
+                          tc.training_cycle_id, tc.goal_id, lt.knowledge_point_id, lt.title
+                   FROM task_instances ti JOIN learning_tasks lt ON lt.learning_task_id = ti.learning_task_id
+                   JOIN training_cycles tc ON tc.training_cycle_id = lt.training_cycle_id
+                   WHERE ti.task_instance_id = ? AND ti.student_id = ?""",
+                (task_instance_id, student_id),
+            ).fetchone()
+        if not row:
+            raise ApiError(404, "TASK_INSTANCE_NOT_FOUND", "未找到当前学习任务")
+        context = dict(row)
+        if str(context["goal_id"]) != str(project.get("goal_id", "")):
+            raise ApiError(403, "TASK_PROJECT_MISMATCH", "当前学习任务不属于该项目")
+        return context
+
+    def _create_wf04_practice(self, student_id: str, incoming: dict[str, Any]) -> dict[str, Any]:
+        project_id = str(incoming.get("project_id", "")).strip()
+        task_id = str(incoming.get("task_instance_id", "")).strip()
+        context = self._wf04_task_context(student_id, project_id, task_id)
+        project = self._require_project(student_id, project_id)
+        project_state = as_dict(project.get("state"))
+        path_items = self._project_goal_knowledge_points(project_state)
+        contract = as_dict(incoming.get("task_contract"))
+        assessment_mode = str(contract.get("assessment_mode") or "formal")
+        rubric = as_list(contract.get("rubric"))
+        validation_rules = as_dict(contract.get("validation_rules"))
+        point_id = str(incoming.get("knowledge_point_id") or context["knowledge_point_id"])
+        point = next(
+            (
+                item for item in path_items
+                if str(item.get("knowledge_point_id") or "") == point_id
+            ),
+            {
+                "knowledge_point_id": point_id,
+                "knowledge_point_name": str(incoming.get("knowledge_point_name") or context["title"]),
+            },
+        )
+        knowledge_context = self._wf04_knowledge_context(
+            project_state, point, path_items, as_dict(incoming.get("knowledge_context"))
+        )
+        if assessment_mode == "formal" and (not rubric or not validation_rules or not as_list(knowledge_context.get("source_refs"))):
+            raise ApiError(400, "FORMAL_QUESTION_CONTRACT_INCOMPLETE", "正式题必须提供 rubric、校验规则和可信知识来源")
+        source_id = str(incoming.get("source_question_instance_id", ""))
+        role = str(incoming.get("question_role") or incoming.get("mode") or "recommended")
+        if role == "variant" and not source_id:
+            raise ApiError(400, "VARIANT_SOURCE_REQUIRED", "变式题必须指定原题实例")
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1", "request_id": str(incoming.get("request_id") or new_id("REQ")),
+            "action": "generate_question", "student_id": student_id, "project_id": project_id,
+            "training_cycle_id": context["training_cycle_id"], "learning_task_id": context["learning_task_id"], "task_instance_id": task_id,
+            "knowledge_point": {
+                "knowledge_point_id": point_id,
+                "knowledge_point_name": str(point.get("knowledge_point_name") or context["title"]),
+            },
+            "difficulty": str(incoming.get("difficulty") or "medium"), "question_role": role,
+            "source_question_instance_id": source_id, "learner_context": as_dict(incoming.get("learner_context")),
+            "task_contract": contract, "knowledge_context": knowledge_context,
+        }
+        candidate, _ = self._generate_wf04_question_with_revisions(request)
+        spec = as_dict(candidate.get("_wf04_question_spec"))
+        public = self._public_assessment_question(candidate)
+        for key in ("knowledge_point_id", "title", "prompt", "answer_schema", "rubric", "validation_rules", "source_refs"):
+            if not spec.get(key):
+                raise GatewayError(f"WF04 题目规格不完整：{key}")
+        if assessment_mode == "formal" and (not as_list(spec.get("rubric")) or not as_dict(spec.get("validation_rules")) or not as_list(spec.get("source_refs"))):
+            raise GatewayError("WF04 正式题未返回可审核题目规格")
+        return self.domain.create_wf04_question(student_id, project_id, task_id, request["request_id"], spec, public, assessment_mode)
+
+    def _submit_wf04_attempt(self, student_id: str, question: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+        answer = str(incoming.get("answer", "")).strip()
+        if not answer:
+            raise ApiError(400, "INVALID_ANSWER", "答案不能为空")
+        project_id = str(question.get("project_id", ""))
+        context = self._wf04_task_context(student_id, project_id, str(question.get("task_instance_id", "")))
+        try:
+            spec = json.loads(str(question.get("question_spec_json") or "{}"))
+        except json.JSONDecodeError as error:
+            raise GatewayError("正式题目规格已损坏，拒绝评分") from error
+        attempt_id = str(incoming.get("attempt_id") or new_id("ATTEMPT"))
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1", "request_id": str(incoming.get("request_id") or new_id("REQ")), "action": "evaluate_answer",
+            "student_id": student_id, "project_id": project_id, "training_cycle_id": context["training_cycle_id"], "learning_task_id": context["learning_task_id"], "task_instance_id": question["task_instance_id"],
+            "question_instance_id": question["question_instance_id"], "attempt_id": attempt_id,
+            "question_snapshot": {key: spec.get(key) for key in ("knowledge_point_id", "knowledge_point_name", "difficulty", "question_role", "source_question_instance_id", "prompt", "expected_answer", "reference_answer", "rubric", "hard_required_points", "validation_rules") } | {"root_question_instance_id": question.get("root_question_instance_id") or question["question_instance_id"]},
+            "current_attempt": {"student_answer": answer, "hint_used": bool(incoming.get("hint_used")), "solution_revealed": bool(incoming.get("solution_revealed"))},
+        }
+        result = self.gateway.invoke_wf04_workflow(request)
+        self._validate_wf04_result(request, result)
+        return self.domain.submit_wf04_attempt(student_id, str(question["question_instance_id"]), answer, result)
+
+    def recommend_wf04_practice(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        student_id, _ = self._require_identity(incoming)
+        project_id = str(incoming.get("project_id", "")).strip()
+        task_id = str(incoming.get("task_instance_id", "")).strip()
+        context = self._wf04_task_context(student_id, project_id, task_id)
+        point_id = str(incoming.get("knowledge_point_id") or context["knowledge_point_id"])
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1", "request_id": str(incoming.get("request_id") or new_id("REQ")),
+            "action": "recommend_next_practice", "student_id": student_id, "project_id": project_id,
+            "training_cycle_id": context["training_cycle_id"], "learning_task_id": context["learning_task_id"], "task_instance_id": task_id,
+            "knowledge_point": {"knowledge_point_id": point_id, "knowledge_point_name": str(incoming.get("knowledge_point_name") or context["title"])},
+            "evidence_summary": as_dict(incoming.get("evidence_summary")),
+        }
+        result = self.gateway.invoke_wf04_workflow(request)
+        self._validate_wf04_result(request, result)
+        policy = as_dict(result.get("adaptive_policy"))
+        if policy.get("advisory_only") is not True:
+            raise GatewayError("WF04 训练建议必须是非强制的")
+        return {"status": "ok", "request_id": request["request_id"], "adaptive_policy": policy}
 
     def learning_state(self, student_id: str) -> dict[str, Any]:
         state = self.store.get_student_state(student_id)
@@ -11545,6 +12240,25 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             assessment_evidence_match = re.fullmatch(
                 r"/api/projects/([^/]+)/assessments/([^/]+)/evidence", parsed.path
             )
+            wrongbook_match = re.fullmatch(r"/api/projects/([^/]+)/wrongbook", parsed.path)
+            if wrongbook_match:
+                student_id = parse_qs(parsed.query).get("student_id", [""])[0].strip()
+                if not student_id:
+                    raise ApiError(400, "MISSING_STUDENT_ID", "student_id 不能为空")
+                project_id = unquote(wrongbook_match.group(1))
+                project = self.application._require_project(student_id, project_id)
+                self.application._backfill_project_wrongbook(student_id, project)
+                query_params = parse_qs(parsed.query)
+                page = self.application.domain.wrongbook(
+                    student_id, project_id,
+                    status=query_params.get("status", ["all"])[0],
+                    query=query_params.get("q", [""])[0],
+                    knowledge_point_id=query_params.get("knowledge_point_id", [""])[0],
+                    limit=query_params.get("limit", ["20"])[0],
+                    offset=query_params.get("offset", ["0"])[0],
+                )
+                self._send_json(200, {"status": "ok", **page})
+                return
             if assessment_evidence_match:
                 student_id = parse_qs(parsed.query).get("student_id", [""])[0].strip()
                 if not student_id:
@@ -11778,6 +12492,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 result = self.application.chat(payload)
             elif parsed.path == "/api/practice/questions":
                 result = self.application.create_practice(payload)
+            elif parsed.path == "/api/practice/recommendations/wf04":
+                result = self.application.recommend_wf04_practice(payload)
             elif parsed.path == "/api/goal/analyze":
                 result = self.application.analyze_goal(payload)
             elif parsed.path == "/api/diagnosis/start":
