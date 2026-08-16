@@ -16,9 +16,14 @@ MAX_EXECUTION_TIME = 10  # seconds
 MAX_OUTPUT_SIZE = 100 * 1024  # 100KB
 
 
-def _python_binary() -> str:
-    """Prefer the project-mode runtime venv python (has torch etc.),
-    fall back to the interpreter running LearnFlow."""
+def _python_command(script_path: str) -> list[str]:
+    """Build the command that executes a Python script.
+
+    In a source checkout ``sys.executable`` is Python.  In the packaged desktop
+    app it is the PyInstaller sidecar, so launching it with a ``.py`` argument
+    starts the API parser instead of running the script.  The sidecar exposes a
+    small, explicit script mode for that frozen-runtime fallback.
+    """
     try:
         from app.services.project_runner import venv_dir
         candidates = (
@@ -27,10 +32,12 @@ def _python_binary() -> str:
         )
         for candidate in candidates:
             if os.path.isfile(candidate):
-                return candidate
+                return [candidate, script_path]
     except Exception:
         pass
-    return sys.executable
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--run-python-script", script_path]
+    return [sys.executable, script_path]
 
 
 def execute_code(
@@ -53,7 +60,7 @@ def execute_code(
     try:
         start = time.time()
         process = subprocess.Popen(
-            [_python_binary(), fpath],
+            _python_command(fpath),
             stdin=subprocess.PIPE if test_input else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

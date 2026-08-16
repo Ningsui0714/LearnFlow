@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_db
+from app.db.database import async_session, get_db
 from app.models.project import Task, Lecture
 from app.services.task_manager import manager, TERMINAL_STATUSES
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_task
@@ -79,34 +79,50 @@ async def task_events(
     # MissingGreenlet before it can emit the first snapshot.
     learner_id = current.learner.id
     task = await require_owned_task(db, learner_id, task_id)
+    # FastAPI keeps dependency-scoped sessions alive until a StreamingResponse
+    # finishes.  Releasing the ownership-check transaction here is essential
+    # for SQLite: otherwise this long-lived reader can block background task
+    # progress writes for the entire lifetime of the SSE connection.
+    await db.rollback()
 
     async def event_stream():
         last_payload = None
         try:
             while True:
-                db.expire_all()
-                t = (await db.execute(select(Task).where(
-                    Task.id == task_id, Task.learner_id == learner_id,
-                ))).scalar_one_or_none()
-                if t is None:
-                    yield f"data: {json.dumps({'type': 'error', 'message': '任务不存在'}, ensure_ascii=False)}\n\n"
-                    break
+                # Use a short session per poll and close it before yielding or
+                # sleeping.  A session spanning the whole stream keeps a read
+                # transaction open and starves task-runner writes in SQLite.
+                async with async_session() as stream_db:
+                    t = (await stream_db.execute(select(Task).where(
+                        Task.id == task_id, Task.learner_id == learner_id,
+                    ))).scalar_one_or_none()
+                    if t is None:
+                        payload = json.dumps(
+                            {"type": "error", "message": "任务不存在"},
+                            ensure_ascii=False,
+                        )
+                        terminal = True
+                    else:
+                        # For lecture tasks include accumulated sections
+                        # (partial content).
+                        sections = None
+                        if t.type == "lecture_generate" and t.checkpoint_id:
+                            lecture = (await stream_db.execute(
+                                select(Lecture).where(Lecture.checkpoint_id == t.checkpoint_id)
+                            )).scalar_one_or_none()
+                            if lecture and lecture.sections:
+                                sections = [s for s in lecture.sections if s]
 
-                # For lecture tasks include accumulated sections (partial content)
-                sections = None
-                if t.type == "lecture_generate" and t.checkpoint_id:
-                    lecture = (await db.execute(
-                        select(Lecture).where(Lecture.checkpoint_id == t.checkpoint_id)
-                    )).scalar_one_or_none()
-                    if lecture and lecture.sections:
-                        sections = [s for s in lecture.sections if s]
+                        payload = json.dumps(
+                            _snapshot(t, sections), ensure_ascii=False, sort_keys=True,
+                        )
+                        terminal = t.status in TERMINAL_STATUSES
 
-                payload = json.dumps(_snapshot(t, sections), ensure_ascii=False, sort_keys=True)
                 if payload != last_payload:
                     yield f"data: {payload}\n\n"
                     last_payload = payload
 
-                if t.status in TERMINAL_STATUSES:
+                if terminal:
                     break
                 await asyncio.sleep(1)
         except asyncio.CancelledError:

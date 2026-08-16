@@ -117,7 +117,6 @@ def _rewrite_image_paths(content: str, source_file: str, source_id: int,
 def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
     """Execute a matplotlib code block → save png → return absolute URL (or '')."""
     import subprocess as _sp
-    import sys as _sys
     import tempfile as _tf
     import time as _time
     gen_dir = os.path.join(persist_dir, "generated")
@@ -135,9 +134,10 @@ def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
         f.write(script)
         fpath = f.name
     try:
-        # Run with the venv python (has matplotlib), not system python3
-        venv_python = _sys.executable
-        proc = _sp.run([venv_python, fpath], capture_output=True, text=True, timeout=45)
+        # Use the project venv when available, or the packaged sidecar's
+        # explicit script mode when running from the desktop bundle.
+        from app.services.code_executor import _python_command
+        proc = _sp.run(_python_command(fpath), capture_output=True, text=True, timeout=45)
         if proc.returncode != 0 or not os.path.exists(out_path):
             print(f"[matplotlib] render failed: {proc.stderr[-200:]}")
             return ""
