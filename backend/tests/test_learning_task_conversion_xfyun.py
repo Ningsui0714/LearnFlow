@@ -83,3 +83,21 @@ async def test_xfyun_client_rejects_empty_task_before_network_call():
     with pytest.raises(XfyunWorkflowError, match="不能为空") as failure:
         await client.run("   ", uid="learner-1")
     assert failure.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_xfyun_client_retries_connect_failure_and_keeps_error_detail():
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectError("TLS handshake failed", request=request)
+
+    client = XfyunLearningTaskWorkflowClient(
+        credentials=_credentials(),
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(XfyunWorkflowError, match="ConnectError.*TLS handshake failed"):
+        await client.run("任务", uid="learner-1")
+    assert attempts == 3

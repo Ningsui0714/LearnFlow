@@ -6,6 +6,7 @@ so unrelated backend features cannot accidentally depend on this integration.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -90,6 +91,8 @@ def load_xfyun_workflow_credentials(
 class XfyunLearningTaskWorkflowClient:
     """Invoke only the 岗位典型工作任务转化 Plan workflow."""
 
+    _CONNECT_ATTEMPTS = 3
+
     def __init__(
         self,
         *,
@@ -135,26 +138,43 @@ class XfyunLearningTaskWorkflowClient:
             "Content-Type": "application/json",
         }
 
-        try:
-            async with httpx.AsyncClient(
-                base_url=self.credentials.base_url,
-                timeout=self.credentials.timeout_seconds,
-                transport=self.transport,
-            ) as client:
-                response = await client.post(
-                    "/workflow/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-        except httpx.TimeoutException as exc:
-            raise XfyunWorkflowError(
-                "岗位典型工作任务转化工作流响应超时",
-                status_code=504,
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise XfyunWorkflowError(
-                f"讯飞星辰工作流服务不可用: {exc}"
-            ) from exc
+        response: httpx.Response | None = None
+        async with httpx.AsyncClient(
+            base_url=self.credentials.base_url,
+            timeout=self.credentials.timeout_seconds,
+            transport=self.transport,
+        ) as client:
+            for attempt in range(self._CONNECT_ATTEMPTS):
+                try:
+                    response = await client.post(
+                        "/workflow/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
+                    break
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    # The request did not reach Xingchen, so retrying cannot
+                    # duplicate a workflow run. Do not replay read/write or
+                    # protocol failures whose delivery state is ambiguous.
+                    if attempt == self._CONNECT_ATTEMPTS - 1:
+                        raise XfyunWorkflowError(
+                            "讯飞星辰工作流连接失败（"
+                            f"{_http_error_summary(exc)}）。请检查网络或代理后重试"
+                        ) from exc
+                    await asyncio.sleep(0.25 * (2 ** attempt))
+                except httpx.TimeoutException as exc:
+                    raise XfyunWorkflowError(
+                        "岗位典型工作任务转化工作流响应超时",
+                        status_code=504,
+                    ) from exc
+                except httpx.HTTPError as exc:
+                    raise XfyunWorkflowError(
+                        "讯飞星辰工作流请求失败（"
+                        f"{_http_error_summary(exc)}）"
+                    ) from exc
+
+        if response is None:  # defensive; every loop exit above sets or raises
+            raise XfyunWorkflowError("讯飞星辰工作流连接失败（未收到响应）")
 
         if response.status_code >= 400:
             raise XfyunWorkflowError(
@@ -192,3 +212,18 @@ class XfyunLearningTaskWorkflowClient:
             "content": content,
             "usage": data.get("usage") or {},
         }
+
+
+def _http_error_summary(exc: BaseException) -> str:
+    """Preserve useful transport details without leaking request secrets."""
+
+    details: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(details) < 4:
+        seen.add(id(current))
+        message = str(current).strip()
+        label = type(current).__name__
+        details.append(f"{label}: {message}" if message else label)
+        current = current.__cause__ or current.__context__
+    return " → ".join(details)
