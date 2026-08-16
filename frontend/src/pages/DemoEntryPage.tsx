@@ -18,7 +18,7 @@ export default function DemoEntryPage() {
         if (!status.enabled) throw new Error('当前未启用比赛演示模式，请运行 bash start.sh demo')
         setMessage('正在进入隔离的演示账号…')
         await enterCompetitionDemo()
-        setMessage('正在定位纠错闭环演示关卡…')
+        setMessage('正在定位复习与纠错演示台…')
         const manifest = await getCompetitionDemoManifest()
         if (active) {
           // The seeded demo must start from a deterministic IDE layout too.

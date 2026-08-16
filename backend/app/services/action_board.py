@@ -116,6 +116,21 @@ ACTION_BOARD = {
             ("advance_checkpoint",),
         ),
         ActionDefinition(
+            "plan_review_queue", "读取并编排复习队列", "none", "none",
+            {},
+            ("evaluate_review_attempt", "manage_review_item"),
+        ),
+        ActionDefinition(
+            "evaluate_review_attempt", "评估间隔复习尝试", "evidence", "explicit",
+            {"knowledge": "spaced_retrieval", "practice": "review_attempt"},
+            ("request_remediation_explanation", "plan_review_queue"),
+        ),
+        ActionDefinition(
+            "manage_review_item", "延期、暂停或恢复复习题", "context", "explicit_or_click",
+            {},
+            ("plan_review_queue",),
+        ),
+        ActionDefinition(
             "explain_selection", "解释选中内容", "none", "explicit",
             {"knowledge": "explanation_exposure"},
             ("generate_assessment",),

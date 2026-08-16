@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ExternalLink, FilePenLine, MessageSquarePlus, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { Check, ExternalLink, FilePenLine, MessageSquarePlus, Plus, RefreshCw } from 'lucide-react'
 import {
   createTutorSession, sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
@@ -173,7 +173,7 @@ function normalizeTutorContent(content: unknown): string {
     original === '未接入模型。'
     || original === '我可以继续帮你整理学习问题；要进行 AI 讲解，请先在设置页配置 LLM API Key。'
   ) {
-    return '普通学习对话暂未接入模型；生成学习型任务功能已独立接入讯飞，请在输入框上方切换功能。'
+    return '主 Agent 对话模型尚未配置；项目、复习、讲义、练习与文件功能仍可正常使用。'
   }
   let text = original
   if (text.startsWith('```')) {
@@ -420,6 +420,7 @@ export default function TutorPanel({
       setSummary(data.state_summary || null)
       setProposals(data.project_proposals || [])
       setInput('')
+      setLearningTaskMode(false)
     } catch (error: any) {
       setMessages(previous => [...previous, {
         role: 'assistant',
@@ -430,7 +431,7 @@ export default function TutorPanel({
     }
   }
 
-  const send = async (selectedActionId?: number, presetText?: string) => {
+  const send = async (selectedActionId?: number, presetText?: string, forceTutor = false) => {
     if (!sessionId || loading) return
     const text = (presetText ?? input).trim()
     if (!text && !selectedActionId) return
@@ -440,7 +441,7 @@ export default function TutorPanel({
     }
     setLoading(true)
     try {
-      if (learningTaskGenerationEnabled && learningTaskMode && text && !selectedActionId) {
+      if (learningTaskGenerationEnabled && learningTaskMode && text && !selectedActionId && !forceTutor) {
         const clientTurnId = globalThis.crypto?.randomUUID?.() || `learning-task-${Date.now()}-${Math.random()}`
         const generated = await generateLearningTaskConversion(text, sessionId, clientTurnId)
         if (generated.status !== 'success') {
@@ -464,6 +465,7 @@ export default function TutorPanel({
           },
         }])
         onLearningTaskGenerated?.(generated)
+        setLearningTaskMode(false)
         return
       }
       const data = await sendTutorTurn(sessionId, {
@@ -681,7 +683,7 @@ export default function TutorPanel({
               <button
                 key={prompt}
                 type="button"
-                onClick={() => send(undefined, prompt)}
+                onClick={() => send(undefined, prompt, true)}
                 disabled={loading || !sessionId}
                 className="rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[10px] text-gray-600 hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
               >
@@ -691,43 +693,26 @@ export default function TutorPanel({
           </div>
         )}
         {learningTaskGenerationEnabled && (
-          <div className="mb-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold text-slate-600">本次发送使用</span>
-              {learningTaskMode && (
-                <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-700">
-                  <Sparkles size={11} /> 岗位任务转化 · 讯飞星辰 Plan 已接入
-                </span>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-1" role="group" aria-label="选择 Agent 功能">
-              <button
-                type="button"
-                onClick={() => setLearningTaskMode(false)}
-                disabled={loading}
-                aria-pressed={!learningTaskMode}
-                className={`h-8 border px-2 text-[11px] font-medium transition-colors rounded-md ${
-                  !learningTaskMode
-                    ? 'border-slate-800 bg-slate-900 text-white'
-                    : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'
-                }`}
-              >
-                普通学习对话
-              </button>
-              <button
-                type="button"
-                onClick={() => setLearningTaskMode(true)}
-                disabled={loading}
-                aria-pressed={learningTaskMode}
-                className={`flex h-8 items-center justify-center gap-1.5 border px-2 text-[11px] font-medium transition-colors rounded-md ${
-                  learningTaskMode
-                    ? 'border-emerald-700 bg-emerald-700 text-white'
-                    : 'border-emerald-200 bg-white text-emerald-800 hover:border-emerald-500'
-                }`}
-              >
-                <FilePenLine size={12} /> 生成学习型任务
-              </button>
-            </div>
+          <div className="mb-2 flex min-w-0 items-center gap-2" aria-label="Agent 扩展工具">
+            <span className="shrink-0 text-[10px] font-semibold text-slate-500">扩展工具</span>
+            <button
+              type="button"
+              onClick={() => setLearningTaskMode(value => !value)}
+              disabled={loading}
+              aria-pressed={learningTaskMode}
+              title={learningTaskMode ? '退出岗位任务转化，返回主 Agent' : '调用岗位任务转化工作流'}
+              className={`flex h-7 min-w-0 items-center gap-1.5 rounded-full border px-2.5 text-[10px] font-medium transition-colors ${
+                learningTaskMode
+                  ? 'border-emerald-700 bg-emerald-700 text-white'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-500'
+              }`}
+            >
+              <FilePenLine size={12} className="shrink-0" />
+              <span className="truncate">{learningTaskMode ? '岗位任务转化已启用' : '岗位任务转化'}</span>
+            </button>
+            {learningTaskMode && (
+              <span className="min-w-0 truncate text-[10px] text-slate-500">再次点击可返回主 Agent</span>
+            )}
           </div>
         )}
         <div className="flex items-end gap-2">

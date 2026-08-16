@@ -56,6 +56,7 @@ export default function ExercisePage() {
   const [submitting, setSubmitting] = useState(false)
   const [genTaskId, setGenTaskId] = useState<number | null>(null)
   const [genProgress, setGenProgress] = useState('')
+  const [genError, setGenError] = useState('')
   // IDE extras
   const editorRef = useRef<any>(null)
   const vimDisposeRef = useRef<any>(null)
@@ -72,6 +73,17 @@ export default function ExercisePage() {
 
   useEffect(() => {
     loadExercises()
+    // Recover a task that was started before a page reload or a transient
+    // desktop-sidecar disconnect.
+    getExerciseTask(cid).then((snap: any) => {
+      if (snap?.task_id && ['queued', 'running'].includes(snap.status)) {
+        setGenTaskId(snap.task_id)
+        setGenProgress(snap.progress?.message || '生成中...')
+        subscribeExerciseTask(snap.task_id)
+      } else if (snap?.status === 'failed') {
+        setGenError(snap.error?.guidance || snap.error?.message || '生成失败')
+      }
+    }).catch(() => {})
     return () => genTaskSubscriptionRef.current?.close()
   }, [cid])
 
@@ -170,32 +182,49 @@ export default function ExercisePage() {
     setSaving(false)
   }
 
+  const subscribeExerciseTask = (taskId: number) => {
+    genTaskSubscriptionRef.current?.close()
+    genTaskSubscriptionRef.current = subscribeTaskEvents(taskId, snap => {
+      if (snap.progress?.message) setGenProgress(snap.progress.message)
+      if (snap.status === 'completed') {
+        setGenProgress('✅ 完成')
+        setGenTaskId(null)
+        genTaskSubscriptionRef.current?.close()
+        void loadExercises()
+      } else if (snap.status === 'failed') {
+        setGenError(snap.error?.guidance || snap.error?.message || '生成失败')
+        setGenProgress('❌ 生成失败')
+        setGenTaskId(null)
+        genTaskSubscriptionRef.current?.close()
+      }
+    }, message => {
+      setGenError(`习题状态同步失败：${message}`)
+      setGenTaskId(null)
+      genTaskSubscriptionRef.current?.close()
+    })
+  }
+
   const handleGenerateEx = async () => {
-    setLoading(true)
+    setGenError('')
+    setGenProgress('排队中...')
     try {
       const { default: api } = await import('../services/api')
       const res = await api.post(`/checkpoints/${cid}/exercises/generate`)
       setGenTaskId(res.data.task_id)
-      setGenProgress('排队中...')
-      genTaskSubscriptionRef.current?.close()
-      genTaskSubscriptionRef.current = subscribeTaskEvents(res.data.task_id, snap => {
-        if (snap.progress?.message) setGenProgress(snap.progress.message)
-        if (snap.status === 'completed') {
-          setGenProgress('✅ 完成')
-          genTaskSubscriptionRef.current?.close()
-          loadExercises()
-        } else if (snap.status === 'failed') {
-          setGenProgress('❌ ' + (snap.error?.guidance || snap.error?.message || '失败'))
-          genTaskSubscriptionRef.current?.close()
-        }
-      }, message => {
-        setGenProgress(`❌ 练习状态同步失败：${message}`)
-        genTaskSubscriptionRef.current?.close()
-      })
+      subscribeExerciseTask(res.data.task_id)
     } catch (e: any) {
-      alert('生成失败: ' + (e?.response?.data?.detail || e.message))
+      try {
+        const snap = await getExerciseTask(cid)
+        if (snap?.task_id && ['queued', 'running'].includes(snap.status)) {
+          setGenTaskId(snap.task_id)
+          setGenProgress(snap.progress?.message || '生成中...')
+          subscribeExerciseTask(snap.task_id)
+          return
+        }
+      } catch { /* surface the original error below */ }
+      setGenError(e?.response?.data?.detail || e.message || '生成失败')
+      setGenProgress('❌ 生成失败')
     }
-    setLoading(false)
   }
 
   const handleSubmit = async () => {
@@ -404,6 +433,13 @@ export default function ExercisePage() {
           </span>
         )}
       </div>
+
+      {tab === 'code' && genError && (
+        <div className="border-b border-red-200 bg-red-50 px-6 py-2 text-xs text-red-700">
+          {genError}
+          <button type="button" onClick={() => setGenError('')} className="ml-3 underline">关闭</button>
+        </div>
+      )}
 
       {/* Main area */}
       {tab === 'concepts' ? (

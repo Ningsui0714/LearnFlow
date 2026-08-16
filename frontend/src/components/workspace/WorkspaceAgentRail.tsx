@@ -136,7 +136,7 @@ export default function WorkspaceAgentRail({
         <button type="button" onClick={onToggle} title="收起 Agent 对话" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <ChevronRight size={16} />
         </button>
-        {desktop.available && state.checkpointId && (
+        {desktop.available && desktop.ready && state.checkpointId && (
           <button type="button" onClick={() => setShowAgentProfiles(true)} title="配置本地代码 Agent" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
             <Settings2 size={15} />
           </button>

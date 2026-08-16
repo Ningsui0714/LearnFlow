@@ -626,6 +626,99 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
+    if et == "review_attempt_evaluated":
+        passed = bool(p.get("passed"))
+        outcome = str(p.get("outcome") or ("correct" if passed else "incorrect"))
+        independent = bool(p.get("independent", True))
+        item_type = str(p.get("source_item_type") or p.get("item_type") or "concept")
+        item_id = p.get("item_id")
+        if item_id is None:
+            return
+        item_key = f"{item_type}:{item_id}"
+
+        from app.services.review import stable_review_events
+        matching = await stable_review_events(
+            db, event.learner_id, item_type, int(item_id),
+        )
+        spaced_stable = bool(matching)
+
+        knowledge = await _kernel(db, event.learner_id, "knowledge")
+        retention = dict((knowledge.short_term or {}).get("retention_status") or {})
+        retention[item_key] = {
+            "status": (
+                "spaced_stable" if spaced_stable
+                else "retrieved" if passed and independent
+                else "retrieved_with_support" if passed
+                else "retrieval_gap" if outcome == "unknown"
+                else "needs_review"
+            ),
+            "attempt_id": p.get("attempt_id"),
+            "evidence_id": event.id,
+            "question_form": p.get("question_form", "original"),
+            "checkpoint_id": event.checkpoint_id,
+        }
+        recent_errors = list((knowledge.short_term or {}).get("recent_errors") or [])
+        error_ref = f"{item_type}:{item_id}"
+        if passed:
+            recent_errors = [value for value in recent_errors if value != error_ref]
+        elif error_ref not in recent_errors:
+            recent_errors.append(error_ref)
+        short_patch = {
+            "retention_status": retention,
+            "recent_errors": recent_errors[-12:],
+        }
+        if not passed:
+            short_patch["pending_question"] = (
+                "本轮未能提取答案，需要重新学习" if outcome == "unknown"
+                else p.get("prompt", "复习题答错，需要纠错")
+            )
+        long_patch = None
+        if spaced_stable:
+            mastery = dict((knowledge.long_term or {}).get("mastery") or {})
+            mastery[f"review:{item_key}"] = {
+                "level": "stable",
+                "policy_version": "review-policy-v1",
+                "evidence_ids": [row.id for row in matching[-10:]],
+            }
+            long_patch = {"mastery": mastery}
+        await _apply_patch(
+            db, event, "knowledge", short_patch,
+            "间隔检索结果更新知识保持状态",
+            long_patch=long_patch,
+        )
+
+        practice = await _kernel(db, event.learner_id, "practice")
+        review_history = dict((practice.short_term or {}).get("review_history") or {})
+        review_history[item_key] = {
+            "attempt_id": p.get("attempt_id"),
+            "outcome": outcome,
+            "assistance_level": p.get("assistance_level", "none"),
+            "question_form": p.get("question_form", "original"),
+            "evidence_id": event.id,
+        }
+        practice_long = None
+        if spaced_stable:
+            proof_chain = dict((practice.long_term or {}).get("proof_chain") or {})
+            proof_chain[f"review:{item_key}"] = {
+                "event_id": event.id,
+                "checkpoint_id": event.checkpoint_id,
+                "kind": "spaced_independent_transfer",
+                "evidence_ids": [row.id for row in matching[-10:]],
+            }
+            practice_long = {"proof_chain": proof_chain}
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "current_attempt": p.get("attempt_id"),
+                "assistance_level": p.get("assistance_level", "none"),
+                "recent_feedback": f"review_{outcome}",
+                "review_history": review_history,
+            },
+            "复习尝试记录独立性、辅助程度与题目形式",
+            long_patch=practice_long,
+        )
+        return
+
     if et == "concept_attempt_evaluated":
         correct = bool(p.get("correct"))
         independent = bool(p.get("independent", True))
@@ -774,6 +867,8 @@ async def create_attempt(
     submission: dict,
     result: dict,
     assistance_level: str = "none",
+    attempt_role: str = "original",
+    status: str = "evaluated",
     client_submission_id: str | None = None,
 ) -> LearningAttempt:
     if learner_id is None:
@@ -797,10 +892,11 @@ async def create_attempt(
         checkpoint_id=checkpoint_id,
         item_type=item_type,
         item_id=item_id,
-        status="evaluated",
+        status=status,
         submission=submission,
         result=result,
         assistance_level=assistance_level,
+        attempt_role=attempt_role,
         client_submission_id=client_submission_id,
         submitted_at=now,
         evaluated_at=now,

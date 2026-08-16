@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  GitBranch, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
+  CalendarClock, GitBranch, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
   Sparkles, UserRound, X,
 } from 'lucide-react'
 import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -153,6 +153,9 @@ function WorkspaceFrame() {
         </div>
         <button type="button" onClick={() => openPath('/memory', { title: '五核记忆', kind: 'memory' })} title="五核记忆" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
           <GitBranch size={17} />
+        </button>
+        <button type="button" onClick={() => openPath('/review', { title: '全局复习台', kind: 'review' })} title="复习与错题" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
+          <CalendarClock size={17} />
         </button>
         <button type="button" onClick={() => openPath('/profile', { title: '个人画像', kind: 'profile' })} title="个人画像" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
           <UserRound size={17} />

@@ -1,6 +1,6 @@
 # LearnFlow 比赛维护包
 
-本目录用于比赛演示、离线验收和最终提交维护。演示主线固定为：
+本目录用于比赛演示、离线验收和最终提交维护。演示入口先进入全局复习台，预置一项到期变式和一项未闭环错题；主线固定为：
 
 ```text
 答错 -> 错误证据 -> 确定性纠错策略 -> 换讲法/步骤/示例
@@ -14,7 +14,7 @@ bash start.sh demo
 # 或 make demo
 ```
 
-脚本会安全重建专用的 `backend/data/competition-demo.db`，不会修改日常数据库，因此每次都从相同状态开始；同时清空 LLM key、关闭外部资源搜索和自动记忆综合，seed 完成后打开 `/demo`。如果日常实例已占用 8010/5173，脚本会自动选择成对的可用端口，并让前端代理到本次 demo 后端。`/demo` 自动进入隔离演示账号和预置关卡。
+脚本会安全重建专用的 `backend/data/competition-demo.db`，不会修改日常数据库，因此每次都从相同状态开始；同时清空 LLM key、关闭外部资源搜索和自动记忆综合，seed 完成后打开 `/demo`。如果日常实例已占用 8010/5173，脚本会自动选择成对的可用端口，并让前端代理到本次 demo 后端。`/demo` 自动进入隔离演示账号并跳到 `/review`，整个取题、纠错、变式和状态写回不依赖 LLM 或网络。
 
 ## 文档索引
 
@@ -30,7 +30,7 @@ bash start.sh demo
 
 ```bash
 cd backend
-venv/bin/python -m pytest tests/test_architecture_registry.py tests/test_remediation.py -q
+venv/bin/python -m pytest tests/test_architecture_registry.py tests/test_remediation.py tests/test_review.py -q
 
 cd ../frontend
 npm run build

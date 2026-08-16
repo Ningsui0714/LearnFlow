@@ -18,6 +18,19 @@
 
 `KernelState` 继续作为兼容投影。其短期区会附加 `memory_graph_recent_facts`，长期区会附加 `memory_graph_claims`。
 
+## 复习如何维护长短期记忆
+
+复习台不直接读取或修改一份独立的“错题画像”。它从原始题目、`LearningAttempt`、`RemediationCase` 和有作用域的五核投影构造当前题目状态，再由确定性调度器决定何时重现题目。
+
+- 本轮答错或明确“不会”：Knowledge 短期 `retention_status` 标记检索缺口，Practice 短期 `review_history` 保留尝试；进入纠错和立即到期，但不凭一次失败形成固定误解。
+- 辅助答对：记录 `retrieved_with_support` 与辅助等级，只形成过程证据。
+- 独立答对：记录一次检索成功；原题成功不是迁移证明。
+- 已校验变式独立答对：记录题目形式和迁移证据，但单次仍不等于长期稳定。
+- 至少两次相隔 72 小时的独立成功，且包含已校验变式：Knowledge 长期区可形成 `spaced_stable` mastery，Practice 长期区形成 `spaced_independent_transfer` proof chain。
+- 稳定后再次答错：短期状态回到 `needs_review`，调度阶梯重置并保留 lapse；既有事实、模块和声明不删除，以新事实表达风险并支持后续纠正。
+
+`ReviewSchedule` 保存到期时间、阶梯、成功数、遗忘数和并发版本，但它是可从 Attempt 与纠错事件回填的运行投影。暂停、恢复、延期和跳过不会升级掌握，也不会生成 `MemoryFact`，因为对应事件的 kernel targets 为空。
+
 ## 写入与合成
 
 事件写入请求不调用 LLM。归约器写入 `KernelMutation` 后同步生成事实和确定性边，并按五核规则创建 `MemorySynthesisRun`。

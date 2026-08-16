@@ -629,6 +629,11 @@ async def submit_variant(
         remediation.evidence_event_ids = _unique_ids([
             *list(remediation.evidence_event_ids or []), completed.id,
         ])
+        from app.services.review import schedule_after_remediation
+        await schedule_after_remediation(db, remediation)
+    else:
+        from app.services.review import mark_remediation_pending
+        await mark_remediation_pending(db, remediation)
     return remediation, public_result
 
 

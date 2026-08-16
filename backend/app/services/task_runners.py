@@ -117,7 +117,6 @@ def _rewrite_image_paths(content: str, source_file: str, source_id: int,
 def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
     """Execute a matplotlib code block → save png → return absolute URL (or '')."""
     import subprocess as _sp
-    import sys as _sys
     import tempfile as _tf
     import time as _time
     gen_dir = os.path.join(persist_dir, "generated")
@@ -135,9 +134,10 @@ def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
         f.write(script)
         fpath = f.name
     try:
-        # Run with the venv python (has matplotlib), not system python3
-        venv_python = _sys.executable
-        proc = _sp.run([venv_python, fpath], capture_output=True, text=True, timeout=45)
+        # Use the project venv when available, or the packaged sidecar's
+        # explicit script mode when running from the desktop bundle.
+        from app.services.code_executor import _python_command
+        proc = _sp.run(_python_command(fpath), capture_output=True, text=True, timeout=45)
         if proc.returncode != 0 or not os.path.exists(out_path):
             print(f"[matplotlib] render failed: {proc.stderr[-200:]}")
             return ""
@@ -321,17 +321,26 @@ async def run_lecture_generation(task_id: int):
                 plan_sections = lec.plan
 
     if plan_sections is None:
-        await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在规划大纲..."})
+        await update_task(task_id, progress={"current": 0, "total": 0, "message": "正在准备讲义结构..."})
         try:
             skeleton = []
             scope_files = (brief or {}).get("scope", {}).get("files") or []
             if scope_files:
                 skeleton = agent.build_structure_skeleton(brief, chunks)
-            if skeleton:
-                plan_sections = await agent.plan_lecture_structured(
-                    checkpoint.title, checkpoint.description or "", user_level,
-                    brief, chunks, skeleton, feedback=feedback,
-                )
+            if skeleton and not feedback.strip():
+                # The repository structure is already a deterministic outline.
+                # Do not spend another long model round trip re-planning it
+                # before the first visible section can be generated.  This
+                # restores the incremental, observable generation behavior.
+                plan_sections = [{
+                    "title": item["title"],
+                    "keywords": [],
+                    "goal": f"学习 {item['title']}",
+                    "source_file": item["file"],
+                    "source_heading": item.get("heading", ""),
+                    "chunk_ids": item["chunk_ids"],
+                    "adjust_reason": "keep",
+                } for item in skeleton]
             else:
                 plan_sections = await agent.plan_lecture(
                     checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief, feedback=feedback
@@ -353,6 +362,12 @@ async def run_lecture_generation(task_id: int):
     if total == 0:
         plan_sections = [{"title": checkpoint.title, "keywords": [], "goal": checkpoint.description or ""}]
         total = 1
+
+    await update_task(task_id, progress={
+        "current": 0,
+        "total": total,
+        "message": f"大纲已就绪，共 {total} 节，准备生成第 1 节...",
+    })
 
     # ── Load existing lecture (for resume / incremental append) ──
     async with async_session() as db:
@@ -403,6 +418,11 @@ async def run_lecture_generation(task_id: int):
             content = saved[i].get("content", "")
             questions = saved[i].get("questions", [])
         else:
+            await update_task(task_id, progress={
+                "current": i,
+                "total": total,
+                "message": f"正在生成第 {i + 1}/{total} 节：{title}",
+            })
             try:
                 content = await agent.generate_section(
                     checkpoint.title, ps, chunks,

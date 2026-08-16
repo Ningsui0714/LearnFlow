@@ -213,6 +213,46 @@ class RemediationCase(Base):
     completed_at = Column(DateTime, nullable=True)
 
 
+class ReviewSchedule(Base):
+    """Rebuildable spaced-review projection for one learner-owned item.
+
+    This row is operational scheduling state, not a parallel mastery source of
+    truth.  LearningAttempt and EvidenceEvent remain authoritative evidence.
+    """
+
+    __tablename__ = "review_schedules"
+    __table_args__ = (
+        UniqueConstraint(
+            "learner_id", "item_type", "item_id",
+            name="uq_review_schedule_learner_item",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    item_type = Column(String(30), nullable=False, index=True)  # concept | exercise
+    item_id = Column(Integer, nullable=False, index=True)
+    subject_key = Column(String(255), nullable=False, default="", index=True)
+    phase = Column(String(30), nullable=False, default="active", index=True)
+    due_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    interval_level = Column(Integer, nullable=False, default=0)
+    successful_reviews = Column(Integer, nullable=False, default=0)
+    lapse_count = Column(Integer, nullable=False, default=0)
+    defer_count = Column(Integer, nullable=False, default=0)
+    last_grade = Column(String(20), default="")
+    last_attempt_id = Column(Integer, ForeignKey("learning_attempts.id"), nullable=True, index=True)
+    last_event_id = Column(Integer, ForeignKey("evidence_events.id"), nullable=True, index=True)
+    last_question_form = Column(String(40), default="original")
+    last_reviewed_at = Column(DateTime, nullable=True, index=True)
+    suspended_at = Column(DateTime, nullable=True)
+    policy_version = Column(String(40), nullable=False, default="review-policy-v1")
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class KernelState(Base):
     __tablename__ = "kernel_states"
     __table_args__ = (

@@ -8,6 +8,7 @@ import ExercisePage from './pages/ExercisePage'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
 import MemoryGraphPage from './pages/MemoryGraphPage'
+import ReviewPage from './pages/ReviewPage'
 import ProfilePage from './pages/ProfilePage'
 import ProjectPage from './pages/ProjectPage'
 import RegisterPage from './pages/RegisterPage'
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/projects" element={<HomePage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/memory" element={<MemoryGraphPage />} />
+          <Route path="/review" element={<ReviewPage />} />
           <Route path="/settings" element={<DevSettingsRoute />} />
           <Route path="/projects/:projectId" element={<ProjectPage />} />
           <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />

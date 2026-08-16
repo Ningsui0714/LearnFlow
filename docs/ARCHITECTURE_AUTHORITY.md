@@ -63,6 +63,20 @@
 
 工具和 Agent 只能读取经过 learner/project/checkpoint scope 的投影。它们不能直接更新 `KernelState`，也不能把模型生成的教学内容当成掌握证据。
 
+### 复习调度与事实权威
+
+`ReviewSchedule` 是由 `LearningAttempt`、`RemediationCase` 和已登记事件重建的运行投影，不是第六个 Kernel，也不是第二套掌握事实。全局 `/review` 工作台可以读取题目、历史 Attempt、纠错案例、Knowledge/Practice 的有作用域投影与调度状态，形成 `QuestionLearningState`；但它只有在完成确定性判题后，才可追加 `review_attempt_evaluated`。
+
+```text
+原练习 / 复习提交
+  -> LearningAttempt(attempt_role=review)
+  -> review_attempt_evaluated
+  -> five_kernel_reducer -> Knowledge / Practice
+  -> ReviewSchedule 重投影
+```
+
+跳过、延期、暂停和恢复是零 kernel target 的运行事件。`review-policy-v1` 使用固定 `1/3/7/14/30/60 天`阶梯；失败、辅助、独立成功和已校验变式只改变可审计调度，不自行宣布掌握。长期稳定至少需要两次相隔 72 小时的独立复习成功，且至少一次来自已校验变式。稳定后再次失败只增加风险与重新调度，不删除历史证据或长期声明。
+
 ## 4. 两个维护域
 
 ### 维护域 A：主要架构与记忆权威
@@ -80,7 +94,7 @@
 
 - Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
-- `/agent`、项目、讲义、练习、纠错、画像、记忆、demo 等工作台。
+- `/agent`、项目、讲义、练习、纠错、全局复习、画像、记忆、demo 等工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
 
 ### 重合区处理

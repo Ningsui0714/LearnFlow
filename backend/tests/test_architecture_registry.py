@@ -4,6 +4,9 @@ from app.services.architecture_registry import (
     CAPABILITY_OWNERS,
     EVENTS,
     KERNEL_NAMES,
+    SKILLS,
+    TOOLS,
+    WORKBENCHES,
     normalize_event_provenance,
     registry_manifest,
     validate_registry,
@@ -64,3 +67,25 @@ def test_learning_work_task_events_are_zero_kernel_adapter_events():
         )
         assert provenance["kernel_targets"] == []
         assert provenance["tool"] == "learning_task_conversion_gateway"
+
+
+def test_review_workbench_is_registered_without_new_kernel_writer():
+    assert "review" in WORKBENCHES
+    assert "spaced_review" in SKILLS
+    assert "review_scheduler" in TOOLS
+    assert {
+        "plan_review_queue", "evaluate_review_attempt", "manage_review_item",
+    } <= set(ACTION_BOARD)
+    assert CAPABILITY_OWNERS["plan_review_queue"][0] == "tutor_agent"
+    assert CAPABILITY_OWNERS["evaluate_review_attempt"][0] == "practice_agent"
+    assert EVENTS["review_attempt_evaluated"].kernel_targets == (
+        "knowledge", "practice",
+    )
+    for event_type in {
+        "review_item_skipped", "review_item_deferred",
+        "review_item_suspended", "review_item_resumed",
+    }:
+        assert EVENTS[event_type].kernel_targets == ()
+    assert {
+        tool.id for tool in TOOLS.values() if tool.writes_kernels
+    } == {"five_kernel_reducer"}

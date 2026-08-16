@@ -151,7 +151,12 @@ export default function CheckpointPage() {
     closeEventSource()
     esRef.current = subscribeTaskEvents(id, snap => {
       if (snap.type !== 'snapshot') return
-      if (snap.sections) setSections(snap.sections)
+      if (snap.sections) {
+        setSections(snap.sections)
+        // Partial sections are already valid draft content and should be
+        // rendered while later sections are still being generated.
+        if (snap.sections.length > 0) setStatus('draft')
+      }
       if (snap.progress?.message) setProgress(snap.progress.message)
 
       if (snap.status === 'completed') {

@@ -842,6 +842,39 @@ export function subscribeTaskEvents(
   onError: (message: string) => void,
 ): TaskEventSubscription {
   const controller = new AbortController()
+  let polling = false
+
+  const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
+
+  // The sidecar can briefly restart or the WebView can lose an SSE stream.
+  // Keep observing the persisted task instead of turning a still-running job
+  // into a false UI failure.  The task API is the same source of truth used by
+  // the SSE endpoint, so reconnecting is safe and idempotent.
+  const pollUntilTerminal = async () => {
+    if (polling || controller.signal.aborted) return
+    polling = true
+    let failures = 0
+    try {
+      while (!controller.signal.aborted && failures < 12) {
+        try {
+          const snapshot = (await api.get(`/tasks/${taskId}`)).data
+          failures = 0
+          onSnapshot(snapshot)
+          if (['completed', 'failed', 'canceled'].includes(snapshot.status)) return
+        } catch (error: any) {
+          failures += 1
+          if (failures >= 12) {
+            onError(error instanceof Error ? error.message : '任务状态同步失败')
+            return
+          }
+        }
+        await sleep(1000)
+      }
+    } finally {
+      polling = false
+    }
+  }
+
   void fetch(apiUrl(`/tasks/${taskId}/events`), {
     headers: streamingHeaders(),
     credentials: 'include',
@@ -850,7 +883,9 @@ export function subscribeTaskEvents(
     .then(response => consumeSSE(response, onSnapshot, controller.signal))
     .catch((error: unknown) => {
       if (!controller.signal.aborted) {
-        onError(error instanceof Error ? error.message : '网络错误')
+        void pollUntilTerminal().catch(() => {
+          if (!controller.signal.aborted) onError(error instanceof Error ? error.message : '网络错误')
+        })
       }
     })
 
@@ -1128,6 +1163,37 @@ export const createRemediationVariant = (caseId: number) =>
 export const submitRemediationVariant = (
   caseId: number, data: { answer_indexes?: number[]; answer_text?: string },
 ) => api.post(`/remediation/${caseId}/variant/submit`, data).then(r => r.data)
+
+// ── Global spaced review workbench ──
+export const getReviewSummary = (params: Record<string, string | number | undefined> = {}) =>
+  api.get('/review/summary', { params }).then(r => r.data)
+
+export const listReviewItems = (params: Record<string, string | number | undefined> = {}) =>
+  api.get('/review/items', { params }).then(r => r.data)
+
+export const getReviewItem = (scheduleId: number) =>
+  api.get(`/review/items/${scheduleId}`).then(r => r.data)
+
+export const getReviewHistory = (scheduleId: number) =>
+  api.get(`/review/items/${scheduleId}/history`).then(r => r.data)
+
+export const submitReviewItem = (scheduleId: number, data: {
+  expected_version: number
+  client_submission_id: string
+  response_status: 'answered' | 'unknown' | 'skipped'
+  answer_indexes?: number[]
+  answer_text?: string
+  code?: string
+  files?: Array<Record<string, any>>
+  assistance_level?: 'none' | 'hint' | 'guided'
+  presentation_version: string
+}) => api.post(`/review/items/${scheduleId}/submit`, data).then(r => r.data)
+
+export const manageReviewItem = (
+  scheduleId: number,
+  action: 'defer' | 'suspend' | 'resume',
+  data: { expected_version: number; client_event_id: string },
+) => api.post(`/review/items/${scheduleId}/${action}`, data).then(r => r.data)
 
 export const getCompetitionDemoStatus = () =>
   api.get('/demo/status').then(r => r.data)

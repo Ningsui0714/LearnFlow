@@ -97,9 +97,20 @@ export default function ConceptQuestions({ checkpointId }: { checkpointId: numbe
     setProgress('排队中...')
     generateConcepts(checkpointId)
       .then((res: any) => subscribeTask(res.task_id))
-      .catch((e: any) => {
+      .catch(async (e: any) => {
+        // If the request response was lost after the server committed the
+        // task, recover it instead of showing a misleading "Network Error".
+        try {
+          const snap = await getConceptTask(checkpointId)
+          if (snap?.task_id && ['queued', 'running'].includes(snap.status)) {
+            setGenerating(true)
+            setProgress(snap.progress?.message || '生成中...')
+            subscribeTask(snap.task_id)
+            return
+          }
+        } catch { /* surface the original error below */ }
         setGenerating(false)
-        setError(e?.response?.data?.detail || e.message)
+        setError(e?.response?.data?.detail || e.message || '生成失败')
       })
   }
 

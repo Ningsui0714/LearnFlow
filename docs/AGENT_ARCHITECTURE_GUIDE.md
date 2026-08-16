@@ -244,7 +244,25 @@ Action Board 是所有聊天按钮和页面按钮共享的语义事务层。每�
 后台任务的完成、产物生成与失败也必须使用已登记的 EventContract：内容生成或来源
 处理只记录产物/操作状态，失败只记录当前结构阻塞，均不能被解释为学习掌握证据。
 
-### 8.1 桌面文件工作台
+### 8.1 全局复习工作台
+
+`/review` 是 Tutor 导航和过滤、Practice Agent 判题与调度、Learning Design Agent 仅提供候选变式的协作面。它不新增第四类主 Agent。
+
+```text
+Tutor: plan_review_queue / 导航 / 过滤
+  -> Practice: evaluate_review_attempt / manage_review_item
+  -> Learning Design: 仅候选变式
+  -> LearningAttempt + EvidenceEvent
+  -> 五核与 ReviewSchedule 投影
+```
+
+`QuestionLearningState` 联合题目、历史 Attempt、`RemediationCase`、Knowledge/Practice 投影和 `ReviewSchedule`，统一表达作答、纠错、到期、证据与错题状态。队列按未完成纠错、逾期错题、辅助成功题、普通到期题排序；答对后不删除错题历史。
+
+`review_scheduler` 只能写 `ReviewSchedule`，不能写 `KernelState`。复习提交必须携带 `client_submission_id` 和 `expected_version`；重复提交重放原结果，陈旧版本返回 409。跳过不创建 Attempt，延期/暂停/恢复只产生零 kernel target 事件。答案、测试期望和变式正确项只存在于后端判题契约中，取题响应不得暴露。
+
+详细规则和接口见 `docs/REVIEW_WORKBENCH.md`。
+
+### 8.2 桌面文件工作台
 
 桌面工作区复用 Tutor 控制平面，不增加主 Agent 类型。文件能力链固定为：
 
@@ -569,6 +587,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | Tutor 结构化输入输出 | `backend/app/schemas/agent.py` |
 | Action 能力与确认策略 | `backend/app/services/action_board.py` |
 | 五核归约、Evidence、Attempt、通关 | `backend/app/services/learning_runtime.py` |
+| 全局复习状态、调度与 API | `backend/app/services/review.py`、`backend/app/api/review.py` |
 | 可演化项目提案 | `backend/app/services/project_proposals.py` |
 | 路线规划 | `backend/app/services/roadmap_agent.py` |
 | 讲义生成 | `backend/app/services/lecture_agent.py` |
@@ -589,7 +608,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 学习者与 Agent 持久化模型 | `backend/app/models/learning.py` |
 | 前端路由与空间划分 | `frontend/src/App.tsx` |
 | Tutor UI 与提案轨道 | `frontend/src/components/tutor/` |
-| 项目、关卡与练习页面 | `frontend/src/pages/ProjectPage.tsx`、`CheckpointPage.tsx`、`ExercisePage.tsx` |
+| 项目、关卡、练习与复习页面 | `frontend/src/pages/ProjectPage.tsx`、`CheckpointPage.tsx`、`ExercisePage.tsx`、`ReviewPage.tsx` |
 
 ## 23. 最终判断准则
 

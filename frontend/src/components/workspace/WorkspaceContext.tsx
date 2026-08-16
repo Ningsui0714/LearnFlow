@@ -12,12 +12,13 @@ export type WorkspaceTabKind =
   | 'exercise'
   | 'file'
   | 'memory'
+  | 'review'
   | 'profile'
   | 'settings'
   | 'wf03'
 
 const WORKSPACE_TAB_KINDS: WorkspaceTabKind[] = [
-  'home', 'projects', 'project', 'lecture', 'exercise', 'file', 'memory', 'profile', 'settings', 'wf03',
+  'home', 'projects', 'project', 'lecture', 'exercise', 'file', 'memory', 'review', 'profile', 'settings', 'wf03',
 ]
 
 export interface WorkspaceTab {
@@ -159,6 +160,7 @@ function pathMeta(path: string): WorkspaceTab {
     '/agent': { title: '学习工作台', kind: 'home', pinned: true },
     '/projects': { title: '学习项目', kind: 'projects' },
     '/memory': { title: '五核记忆', kind: 'memory' },
+    '/review': { title: '全局复习台', kind: 'review' },
     '/profile': { title: '个人画像', kind: 'profile' },
     '/settings': { title: '模型设置', kind: 'settings' },
   }
