@@ -54,6 +54,30 @@ def new_session(client: TestClient) -> int:
     return response.json()["id"]
 
 
+def test_force_new_global_tutor_session_archives_previous_conversation(client: TestClient):
+    previous = client.post("/api/agent/sessions", json={"session_type": "global"})
+    assert previous.status_code == 200
+
+    fresh = client.post("/api/agent/sessions", json={
+        "session_type": "global",
+        "force_new": True,
+    })
+    assert fresh.status_code == 200
+    assert fresh.json()["id"] != previous.json()["id"]
+    assert fresh.json()["messages"] == []
+
+    resumed = client.post("/api/agent/sessions", json={"session_type": "global"})
+    assert resumed.status_code == 200
+    assert resumed.json()["id"] == fresh.json()["id"]
+
+    async def previous_status():
+        async with async_session() as db:
+            session = await db.get(AgentSession, previous.json()["id"])
+            return session.status
+
+    assert asyncio.run(previous_status()) == "archived"
+
+
 def test_checkpoint_tutor_session_and_context_are_isolated(client: TestClient, tmp_path):
     root = tmp_path / "checkpoint-workspace"
     root.mkdir()

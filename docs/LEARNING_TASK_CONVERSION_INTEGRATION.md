@@ -1,52 +1,94 @@
-# 岗位典型工作任务转化模块接入 LearnFlow（v1）
+# 岗位典型工作任务转化模块接入 LearnFlow（v2）
 
-## 定位
+## 功能定位
 
-岗位典型工作任务转化服务由讯飞星辰工作流负责任务规划、检索与候选评审，由独立后端负责语义锁、确定性校验、持久化以及 HTML、PDF、结构化 JSON 交付。LearnFlow 将它作为 `workflow_gateway` 外部产物适配器使用。
+本模块把岗位方向或单个企业真实工作任务转化为可执行、可验收的学习型工作任务。讯飞星辰 Plan 负责输入判定、检索、候选生成与评审；独立任务服务负责语义锁、确定性门禁、持久化，以及 HTML、PDF 和结构化 JSON 交付；LearnFlow 负责登录态、会话、中央任务网页、批注复核及上下游接口。
 
-该适配器属于学习设计能力平面，不是第四类主 Agent。它的输出必须先通过 LearnFlow 契约校验，不能直接写五核、宣布掌握、决定个性化学习策略或跳过正式验证。
+它属于学习设计能力平面，不是第四类主 Agent。任务转化结果不能直接写五核、宣布掌握或替代个性化学习策略。
 
-## 配置
+## 端到端链路
+
+```text
+右侧主 Agent：选择“生成学习型任务”
+  -> POST /api/learning-task-conversion/generate
+  -> 功能私有讯飞星辰工作流（每次使用独立 uid）
+  -> 独立任务服务生成并保存任务包
+  -> LearnFlow 从工作流结果提取 ltc_* 任务 ID
+  -> 校验集成包与步骤—知识点—技能点引用
+  -> 自动打开 /wf03/tasks/{task_card_id}
+  -> 步骤资源链接、PDF、JSON、图谱回传均可点击
+  -> 点击知识点，裁剪出知识点级交接 JSON 并进入个性化学习入口
+  -> 批注提交给任务转化服务并形成可追溯复核事件
+```
+
+岗位输入会先由工作流选择一个可执行的典型工作任务；明确的单项任务则保持任务对象不变。步骤数量依据真实作业过程生成，不固定为五步。
+
+## 功能私有配置
+
+讯飞密钥不得写入全局 `backend/.env`。执行：
+
+```bash
+make setup-learning-task-conversion
+```
+
+随后填写被 Git 忽略的文件：
+
+```text
+backend/.private/learning_task_conversion.xfyun.env
+```
+
+必填键为：
+
+```env
+XFYUN_APP_ID=
+XFYUN_API_KEY=
+XFYUN_API_SECRET=
+XFYUN_FLOW_ID=
+```
+
+任务服务地址仍由 LearnFlow 服务端固定配置，前端不能传入任意主机：
 
 ```env
 LEARNING_TASK_CONVERSION_BASE_URL=http://82.156.199.145
 LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 ```
 
-调用目标地址只来自服务端配置，前端不能传入任意主机，避免形成开放代理。生产环境可以把地址替换为 HTTPS 域名；讯飞凭据仍只保存在岗位任务转化服务端，不进入 LearnFlow 浏览器。
+生产环境应替换为 HTTPS 域名。
 
 ## LearnFlow API
 
-所有接口位于 LearnFlow 自身 `/api` 下并复用当前登录态：
+所有接口复用 LearnFlow 当前登录态：
 
-| LearnFlow 接口 | 用途 | 远端接口 |
+| LearnFlow 接口 | 用途 | 远端/讯飞去向 |
 |---|---|---|
+| `POST /api/learning-task-conversion/generate` | 从右侧对话生成任务并解析任务 ID | 功能私有讯飞星辰 Plan + 任务集成包 |
+| `POST /api/learning-task-conversion/workflow-runs` | 仅调试已绑定工作流 | 讯飞工作流 API |
 | `GET /api/learning-task-conversion/capabilities` | 契约发现与健康检查 | `/api/v1/learning-task-conversion/capabilities` |
-| `POST /api/learning-task-conversion/upstream-handoffs` | 转交岗位能力图谱确认的单项企业任务 | `/api/v1/learning-task-conversion/upstream-handoffs` |
-| `GET /api/learning-task-conversion/tasks/{task_card_id}/bundle` | 获取任务、强关系、追溯和展示产物 | `/api/v1/learning-task-conversion/tasks/{task_card_id}/bundle` |
-| `GET /api/learning-task-conversion/tasks/{task_card_id}/personalized-learning` | 获取个性化学习输入 JSON | `/api/v1/learning-task-conversion/tasks/{task_card_id}/personalized-learning.json` |
-| `POST /api/learning-task-conversion/downstream-feedback` | 回传关系过弱、知识范围错误或步骤映射问题 | `/api/v1/learning-task-conversion/downstream-feedback` |
+| `POST /api/learning-task-conversion/upstream-handoffs` | 接收岗位能力图谱确认的单项企业任务 | `/api/v1/learning-task-conversion/upstream-handoffs` |
+| `GET /api/learning-task-conversion/tasks/{id}/bundle` | 获取中央页面需要的完整任务包 | `/api/v1/learning-task-conversion/tasks/{id}/bundle` |
+| `GET /api/learning-task-conversion/tasks/{id}/personalized-learning` | 获取个性化学习输入 JSON | `/api/v1/learning-task-conversion/tasks/{id}/personalized-learning.json` |
+| `GET /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-entry` | 获取单知识点级交接 JSON | 由 LearnFlow 从已校验任务包确定性裁剪 |
+| `POST /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-entry` | 显式进入个性化学习并记录零核导航事件 | 返回同版本交接 JSON |
+| `POST /api/learning-task-conversion/downstream-feedback` | 回传弱关系、知识范围错误、步骤映射问题等批注 | `/api/v1/learning-task-conversion/downstream-feedback` |
 
-## 前端使用
+`/generate` 只从工作流输出中接受真实 `ltc_*` 任务 ID。没有任务 ID 时必须返回 `needs_clarification` 或 `needs_revision`，不能把讯飞编排页或空 Markdown 链接伪装成任务网页。
 
-`frontend/src/services/api.ts` 已提供：
+## 中央任务网页
 
-```ts
-const bundle = await getLearningTaskConversionBundle(taskCardId)
-const task = bundle.task.work_task
+路由 `/wf03/tasks/{task_card_id}` 直接渲染已校验的结构化任务包，包含：
 
-// 一个企业真实工作任务，对应按真实作业顺序生成的可变数量步骤。
-for (const step of task.task_steps) {
-  console.log(step.action, step.deliverable, step.check)
-  console.log(step.knowledge_point_ids, step.skill_point_ids)
-}
+- 企业典型工作任务、学习型任务名称、描述和工作情境；
+- 依据实际过程生成的可变数量步骤；
+- 每步的操作动作、阶段产物、检查方式；
+- 每步强关联的知识点、技能点；
+- 知识点旁可直接点击的 B 站、抖音或其他学习资源；
+- 安全要点、工具环境；
+- 原交互页、PDF、个性化学习 JSON 和图谱回传 JSON；
+- 步骤、知识点、技能点及任意选区的批注复核。
 
-window.open(bundle.artifacts.interactive_html_url, '_blank', 'noopener,noreferrer')
-```
+前端只渲染合法的 HTTP(S) 资源地址。空地址、相对空链接和工作流编排页不会被当作步骤资源。
 
-LearnFlow 后续个性化学习只组织“怎么学”：路线、讲解、练习、反馈与补弱；不得改写交付中的企业任务名称、任务步骤以及步骤—知识点—技能点映射。
-
-## 上游交接示例
+## 上游岗位能力图谱交接
 
 ```json
 {
@@ -84,16 +126,18 @@ LearnFlow 后续个性化学习只组织“怎么学”：路线、讲解、练�
 }
 ```
 
-远端服务会执行完整契约校验并返回可回传上游的语义反馈。
+## 个性化学习交付与回传
 
-## 下游反馈示例
+个性化学习功能接收任务简介、强相关知识技能点及步骤关系，继续组织“怎么学”；它不能改写企业任务名称、任务步骤或强关系。
+
+发现不密切或理解错误时使用：
 
 ```json
 {
   "schema_version": "personalized-learning-to-task-conversion-feedback-v1",
   "task_card_id": "ltc_xxx",
   "correlation_id": "learnflow-demo-001",
-  "source_system": "LearnFlow",
+  "source_system": "learnflow-task-review",
   "status": "accepted_with_feedback",
   "issues": [
     {
@@ -110,9 +154,37 @@ LearnFlow 后续个性化学习只组织“怎么学”：路线、讲解、练�
 }
 ```
 
-反馈只提出问题，不能在 LearnFlow 内静默改写企业任务事实。修订后的任务必须重新经过岗位任务转化服务的门禁。
+反馈只形成可追溯复核请求，不会静默覆盖任务事实。修订结果必须重新经过内容与关系门禁。
 
-## v1 验收边界
+### 知识点级生成入口
 
-- 已实现：服务端固定地址代理、超时和错误归一化、版本校验、步骤字段校验、知识/技能引用完整性校验、前端调用封装、上下游反馈通道。
-- 未在本版实现：把任务自动物化为 LearnFlow 项目和关卡。该操作会引入 Action Board 副作用、学习者作用域和路线确认，需要作为下一阶段单独登记和实现。
+任务网页中的步骤知识标签和“支撑知识”卡片均可点击“个性化学习”。LearnFlow 不会把整份任务无差别交给下游，而是构造 `learning-task-knowledge-to-personalized-learning-v1`：
+
+- `task_context`：企业任务名称、简介、学习型任务和工作情境；
+- `focus.knowledge_point`：本次要学的唯一知识点及已整理资源；
+- `focus.source_steps`：真正使用该知识点的任务步骤、动作、产物和验收点；
+- `focus.strongly_related_skills`：上述步骤显式引用的技能点；
+- `focus.relationships`：知识点—步骤—技能点强关系及来源依据；
+- `generation_contract`：下游允许生成的学习目标、内容、顺序、练习、评价与学习者适配，以及不得改写的任务事实；
+- `feedback_contract`：下游发现关系不密切或理解有误时的回传接口。
+
+个性化学习前端可配置：
+
+```env
+VITE_PERSONALIZED_LEARNING_GENERATOR_URL=/personalized-learning/generate
+```
+
+任务交接页会向该地址附加 `handoff_url`、`entry_id`、`task_card_id`、`knowledge_id` 和 `return_url`。下游使用当前 LearnFlow 登录态读取 `handoff_url` 即可开始生成；不需要在 URL 中携带大段 JSON。
+
+未配置下游生成路由时，`/personalized-learning/tasks/{task_card_id}/knowledge/{knowledge_id}` 作为可验收的交接预览页，可复制 JSON 接口或下载单知识点 JSON。
+
+## 运行与验收
+
+```bash
+make start
+make verify-learning-task-conversion
+```
+
+验证脚本不会打印密钥值，会检查功能私有配置字段、后端契约/API/架构测试和前端生产构建。
+
+当前边界：知识点交接与进入行为已实现；个性化学习功能何时物化学习项目或关卡，仍由下游根据学习者作用域和 Action Board 确认策略决定。
