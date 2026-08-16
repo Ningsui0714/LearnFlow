@@ -2222,7 +2222,9 @@ class XingchenGateway:
             },
             method="POST",
         )
-        for attempt in range(2):
+        max_attempts = 3 if workflow == "wf04" else 2
+        last_wf04_execution_failure: tuple[Any, str] | None = None
+        for attempt in range(max_attempts):
             try:
                 with urllib.request.urlopen(request, timeout=self.settings.request_timeout) as response:
                     response_text = response.read().decode("utf-8", errors="replace")
@@ -2235,13 +2237,25 @@ class XingchenGateway:
             remote_payload = self._parse_remote_response(response_text)
             response_code = remote_payload.get("code")
             if response_code is not None and int(response_code) != 0:
+                message = str(remote_payload.get("message", "未知错误"))
+                if workflow == "wf04" and int(response_code) == 21600:
+                    last_wf04_execution_failure = (response_code, message)
+                    if attempt + 1 < max_attempts:
+                        continue
+                    break
                 raise GatewayError(
-                    f"星辰工作流执行失败（{response_code}）：{remote_payload.get('message', '未知错误')}"
+                    f"星辰工作流执行失败（{response_code}）：{message}"
                 )
             result = self._extract_result(remote_payload)
             if result:
                 return result
 
+        if last_wf04_execution_failure:
+            response_code, message = last_wf04_execution_failure
+            raise GatewayError(
+                f"星辰工作流执行失败（{response_code}）：{message}"
+                f"（已自动重试 {max_attempts - 1} 次）"
+            )
         raise GatewayError("星辰响应未返回可识别的结果包，已自动重试一次")
 
     def _parse_remote_response(self, response_text: str) -> dict[str, Any]:
@@ -7576,6 +7590,13 @@ class LearningApplication:
         question_type = str(candidate["question_type"])
         if str(public.get("question_type") or "").strip().lower() != question_type:
             raise GatewayError("WF04 的 public_question 与题目规格题型不一致")
+        requested_question_type = str(request.get("requested_question_type") or "").strip().lower()
+        if requested_question_type and question_type != requested_question_type:
+            raise ApiError(
+                422,
+                "UNSUPPORTED_QUESTION_TYPE",
+                f"WF04 返回题型 {question_type} 与请求题型 {requested_question_type} 不一致",
+            )
         title = str(public.get("title") or "").strip()
         prompt = str(public.get("prompt") or "").strip()
         if not title or not prompt:
@@ -7591,10 +7612,17 @@ class LearningApplication:
         )
         if any(marker.casefold() in compact_content for marker in generic_markers):
             raise GatewayError("WF04 题目未考查标注知识点，属于通用学习行为题")
-        point_terms = [
-            term.casefold() for term in re.findall(r"[A-Za-z][A-Za-z0-9+#._-]*|[\u4e00-\u9fff]{2,}", point_name)
-            if len(term) >= 2
-        ]
+        point_terms: list[str] = []
+        for raw_term in re.findall(
+            r"[A-Za-z][A-Za-z0-9+#._-]*|[\u4e00-\u9fff]{2,}", point_name
+        ):
+            # 中文知识点名常以"与/和/及/、"连接多个概念(如"类的定义与对象创建")。
+            # 按连接词切分后再匹配,避免把整个名称当作单一术语而误杀
+            # 只包含部分概念的合格题目(如题干含"对象创建"的题)。
+            for part in re.split(r"[与和及、,，]", raw_term):
+                part = part.strip()
+                if len(part) >= 2:
+                    point_terms.append(part.casefold())
         if point_terms and not any(term in compact_content for term in point_terms):
             raise GatewayError("WF04 题干未出现可验证的目标知识点语境")
         LearningApplication._validate_wf04_knowledge_linkage(request, spec, public)
@@ -7653,20 +7681,44 @@ class LearningApplication:
     ) -> tuple[dict[str, Any], int]:
         rejection_reasons: list[str] = []
         unsupported_type_reasons: list[str] = []
+        last_was_model_output_invalid = False
+        retryable_generation_error_codes = {
+            "E_MODEL_OUTPUT_INVALID",
+            "E_MODEL_QUESTION_TYPE_INVALID",
+            "E_QUESTION_TYPE_MISMATCH",
+            "E_QUESTION_INCOMPLETE",
+            "E_ANSWER_LEAK",
+            "E_CHOICE_SCHEMA",
+            "E_MULTIPLE_CHOICE_SCHEMA",
+            "E_JUDGMENT_SCHEMA",
+            "E_ACCEPTED_ANSWERS_MISSING",
+            "E_RUBRIC_MISSING",
+            "E_VARIANT_NOT_CHANGED",
+        }
         for attempt in range(1, max(1, max_attempts) + 1):
             task_contract = dict(as_dict(request.get("task_contract")))
             if rejection_reasons:
                 task_contract["revision_feedback"] = rejection_reasons[-2:]
-                if unsupported_type_reasons:
+                if last_was_model_output_invalid:
+                    task_contract["revision_instruction"] = (
+                        "上一轮出题模型未返回可解析的合法 JSON 题目对象。"
+                        "请重新输出一个符合 ZHIXING_WF04_RESULT.v1 的完整题目 JSON，"
+                        "必须同时包含 question_spec 与 public_question 两个对象。"
+                    )
+                elif unsupported_type_reasons:
+                    requested_question_type = str(
+                        request.get("requested_question_type") or ""
+                    ).strip().lower()
                     task_contract["revision_instruction"] = (
                         "上一版题型不符合 ZHIXING_WF04_RESULT.v1。"
                         "question_spec.question_type 和 public_question.question_type "
-                        "必须使用 short_answer，不得使用 code、single_choice 或其他未定义值。"
+                        f"必须使用 {requested_question_type or '请求中的合法目标题型'}，"
+                        "不得使用 code、single_choice 或其他未定义值。"
                     )
                 else:
                     task_contract["revision_instruction"] = (
-                        "上一版未通过知识点关联校验。请依据失败原因重写题目，"
-                        "必须考查给定核心概念，不得只修改措辞。"
+                        "上一版未通过题目协议或知识点关联校验。请依据失败原因重写题目，"
+                        "必须同时满足当前题型结构、给定核心概念和质量要求，不得只修改措辞。"
                     )
             revised_request = {
                 **request,
@@ -7675,6 +7727,26 @@ class LearningApplication:
             }
             try:
                 result = self.gateway.invoke_wf04_workflow(revised_request)
+                workflow_error = as_dict(result.get("error"))
+                workflow_error_code = str(workflow_error.get("code") or "").strip()
+                if (
+                    str(result.get("status") or "").lower() == "error"
+                    and (
+                        workflow_error.get("retryable") is True
+                        or workflow_error_code in retryable_generation_error_codes
+                    )
+                    and attempt < max(1, max_attempts)
+                ):
+                    workflow_error_message = str(
+                        workflow_error.get("message") or "WF04 未说明具体原因"
+                    ).strip()
+                    rejection_reasons.append(
+                        f"{workflow_error_code}: {workflow_error_message}，已重试"
+                    )
+                    last_was_model_output_invalid = (
+                        workflow_error_code == "E_MODEL_OUTPUT_INVALID"
+                    )
+                    continue
                 self._validate_wf04_result(revised_request, result)
             except ApiError:
                 raise
@@ -7720,6 +7792,7 @@ class LearningApplication:
             "multiple_choice",
             "judgment",
             "fill_blank",
+            "short_answer",
             "practical",
         )
         result = [dict(item) for item in selected[:target_count]]
@@ -7730,7 +7803,7 @@ class LearningApplication:
         }
 
         def question_type(item: dict[str, Any]) -> str:
-            return str(item.get("question_type") or "choice").strip().lower()
+            return str(item.get("question_type") or "").strip().lower()
 
         for required_type in required_types:
             if any(question_type(item) == required_type for item in result):
@@ -8011,13 +8084,14 @@ class LearningApplication:
                 question_type: sum(
                     1
                     for item in normalized
-                    if str(item.get("question_type") or "choice") == question_type
+                    if str(item.get("question_type") or "").strip().lower() == question_type
                 )
                 for question_type in (
                     "choice",
                     "multiple_choice",
                     "judgment",
                     "fill_blank",
+                    "short_answer",
                     "practical",
                 )
             },
@@ -8144,8 +8218,7 @@ class LearningApplication:
                 },
                 "knowledge_context": wf04_knowledge_context,
             }
-            if self.gateway.mode == "mock":
-                request["requested_question_type"] = question_type
+            request["requested_question_type"] = question_type
             try:
                 question, attempts = self._generate_wf04_question_with_revisions(request)
                 normalized.append(question)
@@ -11720,6 +11793,20 @@ class LearningApplication:
     def _create_wf04_practice(self, student_id: str, incoming: dict[str, Any]) -> dict[str, Any]:
         project_id = str(incoming.get("project_id", "")).strip()
         task_id = str(incoming.get("task_instance_id", "")).strip()
+        requested_question_type = str(
+            incoming.get("requested_question_type")
+            or incoming.get("question_type")
+            or "short_answer"
+        ).strip().lower()
+        if requested_question_type not in {
+            "choice",
+            "multiple_choice",
+            "judgment",
+            "fill_blank",
+            "short_answer",
+            "practical",
+        }:
+            raise ApiError(400, "UNSUPPORTED_QUESTION_TYPE", "WF04 请求题型不受支持")
         context = self._wf04_task_context(student_id, project_id, task_id)
         project = self._require_project(student_id, project_id)
         project_state = as_dict(project.get("state"))
@@ -11756,6 +11843,7 @@ class LearningApplication:
                 "knowledge_point_id": point_id,
                 "knowledge_point_name": str(point.get("knowledge_point_name") or context["title"]),
             },
+            "requested_question_type": requested_question_type,
             "difficulty": str(incoming.get("difficulty") or "medium"), "question_role": role,
             "source_question_instance_id": source_id, "learner_context": as_dict(incoming.get("learner_context")),
             "task_contract": contract, "knowledge_context": knowledge_context,

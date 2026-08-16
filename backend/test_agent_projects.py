@@ -481,6 +481,7 @@ class AgentProjectApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(started["stakes"], "low")
+        self.assertEqual(started["provider"], "wf04_api")
         self.assertEqual(len(started["questions"]), 6)
         self.assertEqual(
             {question["question_type"] for question in started["questions"]},
@@ -626,7 +627,7 @@ class AgentProjectApiTests(unittest.TestCase):
         result = self.server.RequestHandlerClass.application.gateway._extract_result(outer_response)
         self.assertEqual(result, business)
 
-    def test_wf04_accepts_short_answer_when_requested_type_was_choice(self):
+    def test_wf04_rejects_short_answer_when_requested_type_was_choice(self):
         request = {
             "schema_version": "ZHIXING_WF04_REQUEST.v1",
             "request_id": "REQ-SHORT-ANSWER",
@@ -670,16 +671,8 @@ class AgentProjectApiTests(unittest.TestCase):
                 "answer_schema": {"type": "text"},
             },
         }
-        question = LearningApplication._wf04_question_candidate(request, result)
-        public = LearningApplication._public_assessment_question(question)
-        self.assertEqual(question["question_type"], "short_answer")
-        self.assertEqual(question["estimated_minutes"], 3)
-        self.assertNotEqual(question["question_instance_id"], question["question_template_id"])
-        for private_key in (
-            "answer", "expected_answer", "reference_answer", "rubric",
-            "hard_required_points", "_wf04_question_spec",
-        ):
-            self.assertNotIn(private_key, public)
+        with self.assertRaisesRegex(ApiError, "返回题型 short_answer 与请求题型 choice 不一致"):
+            LearningApplication._wf04_question_candidate(request, result)
 
     def test_wf04_status_error_is_not_retried_as_question_quality(self):
         application = self.server.RequestHandlerClass.application
@@ -719,6 +712,222 @@ class AgentProjectApiTests(unittest.TestCase):
             application.gateway.invoke_wf04_workflow = original
         self.assertEqual(len(calls), 1)
 
+    def test_wf04_accepts_question_with_partial_knowledge_point_name(self):
+        """知识点名含连接词时,题干含其一部分术语即可通过语境门禁。
+
+        回归:KN_JAVA_CLASS(类的定义与对象创建)生成的题目标题为
+        "Java类与对象创建选择题",被旧逻辑(整串中文作为单一术语)误杀。
+        """
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WF04-PARTIAL-KP",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WF04-PARTIAL-KP",
+            "task_instance_id": "TASK-WF04-PARTIAL-KP",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-JAVA-CLASS",
+                "knowledge_point_name": "类的定义与对象创建",
+            },
+            "requested_question_type": "choice",
+            "task_contract": {},
+            "knowledge_context": {"core_concepts": []},
+        }
+        result = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1",
+            "workflow_mode": "wf04_training_evaluation",
+            "status": "ok",
+            "action": "generate_question",
+            "request_id": request["request_id"],
+            "student_id": self.student_id,
+            "project_id": request["project_id"],
+            "task_instance_id": request["task_instance_id"],
+            "host_write_allowed": True,
+            "question_spec": {
+                "knowledge_point_id": "KP-JAVA-CLASS",
+                "question_template_id": "TPL-WF04-PARTIAL-KP",
+                "question_type": "choice",
+                "title": "Java类与对象创建选择题",
+                "prompt": "某学生编写了如下代码，使用 new 关键字创建 Student 对象，请选择正确的说法。",
+                "options": {"a": "new 关键字返回新对象的引用", "b": "直接赋值即可创建对象", "c": "无需构造器即可使用"},
+                "expected_answer": "a",
+                "answer_schema": {"type": "single_choice"},
+            },
+            "public_question": {
+                "question_type": "choice",
+                "title": "Java类与对象创建选择题",
+                "prompt": "某学生编写了如下代码，使用 new 关键字创建 Student 对象，请选择正确的说法。",
+                "options": {"a": "new 关键字返回新对象的引用", "b": "直接赋值即可创建对象", "c": "无需构造器即可使用"},
+                "answer_schema": {"type": "single_choice"},
+            },
+        }
+        question = LearningApplication._wf04_question_candidate(request, result)
+        self.assertEqual(question["question_type"], "choice")
+
+    def test_wf04_retries_transient_invalid_model_output(self):
+        application = self.server.RequestHandlerClass.application
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WF04-MODEL-OUTPUT",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WF04-MODEL-OUTPUT",
+            "task_instance_id": "TASK-WF04-MODEL-OUTPUT",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+            "requested_question_type": "short_answer",
+            "task_contract": {},
+            "knowledge_context": {"core_concepts": ["header"]},
+        }
+        calls = []
+        original = application.gateway.invoke_wf04_workflow
+
+        def return_transient_error_then_question(payload):
+            calls.append(payload)
+            if len(calls) == 1:
+                return {
+                    "schema_version": "ZHIXING_WF04_RESULT.v1",
+                    "workflow_mode": "wf04_training_evaluation",
+                    "status": "error",
+                    "action": "generate_question",
+                    "request_id": request["request_id"],
+                    "student_id": self.student_id,
+                    "host_write_allowed": False,
+                    "error": {
+                        "code": "E_MODEL_OUTPUT_INVALID",
+                        "message": "出题模型未返回合法 JSON 对象",
+                    },
+                }
+            return original(payload)
+
+        application.gateway.invoke_wf04_workflow = return_transient_error_then_question
+        try:
+            question, attempts = application._generate_wf04_question_with_revisions(request)
+        finally:
+            application.gateway.invoke_wf04_workflow = original
+
+        self.assertEqual(question["question_type"], "short_answer")
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["requested_question_type"], "short_answer")
+        self.assertEqual(calls[1]["requested_question_type"], "short_answer")
+
+    def test_wf04_retries_explicitly_retryable_and_missing_rubric_errors(self):
+        application = self.server.RequestHandlerClass.application
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WF04-RETRYABLE-ERROR",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WF04-RETRYABLE-ERROR",
+            "task_instance_id": "TASK-WF04-RETRYABLE-ERROR",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+            "requested_question_type": "short_answer",
+            "task_contract": {},
+            "knowledge_context": {"core_concepts": ["header"]},
+        }
+        original = application.gateway.invoke_wf04_workflow
+        error_cases = (
+            {
+                "code": "E_FUTURE_RECOVERABLE",
+                "message": "工作流声明该错误可重试",
+                "retryable": True,
+            },
+            {
+                "code": "E_RUBRIC_MISSING",
+                "message": "评价缺少可计算的 rubric",
+            },
+        )
+
+        for workflow_error in error_cases:
+            with self.subTest(error_code=workflow_error["code"]):
+                calls = []
+
+                def return_error_then_question(payload):
+                    calls.append(payload)
+                    if len(calls) == 1:
+                        return {
+                            "schema_version": "ZHIXING_WF04_RESULT.v1",
+                            "workflow_mode": "wf04_training_evaluation",
+                            "status": "error",
+                            "action": "generate_question",
+                            "request_id": request["request_id"],
+                            "student_id": self.student_id,
+                            "host_write_allowed": False,
+                            "error": workflow_error,
+                        }
+                    return original(payload)
+
+                application.gateway.invoke_wf04_workflow = return_error_then_question
+                try:
+                    question, attempts = application._generate_wf04_question_with_revisions(request)
+                finally:
+                    application.gateway.invoke_wf04_workflow = original
+
+                self.assertEqual(question["question_type"], "short_answer")
+                self.assertEqual(attempts, 2)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(calls[1]["requested_question_type"], "short_answer")
+
+    def test_wf04_retries_invalid_multiple_choice_schema(self):
+        application = self.server.RequestHandlerClass.application
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WF04-MULTIPLE-CHOICE",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WF04-MULTIPLE-CHOICE",
+            "task_instance_id": "TASK-WF04-MULTIPLE-CHOICE",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+            "requested_question_type": "multiple_choice",
+            "task_contract": {},
+            "knowledge_context": {"core_concepts": ["header"]},
+        }
+        calls = []
+        original = application.gateway.invoke_wf04_workflow
+
+        def return_invalid_schema_then_question(payload):
+            calls.append(payload)
+            if len(calls) == 1:
+                return {
+                    "schema_version": "ZHIXING_WF04_RESULT.v1",
+                    "workflow_mode": "wf04_training_evaluation",
+                    "status": "error",
+                    "action": "generate_question",
+                    "request_id": request["request_id"],
+                    "student_id": self.student_id,
+                    "host_write_allowed": False,
+                    "error": {
+                        "code": "E_MULTIPLE_CHOICE_SCHEMA",
+                        "message": "多选题必须至少有三个选项、两个正确选项，且答案键必须属于 options",
+                    },
+                }
+            return original(payload)
+
+        application.gateway.invoke_wf04_workflow = return_invalid_schema_then_question
+        try:
+            question, attempts = application._generate_wf04_question_with_revisions(request)
+        finally:
+            application.gateway.invoke_wf04_workflow = original
+
+        self.assertEqual(question["question_type"], "multiple_choice")
+        self.assertEqual(attempts, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(
+            any(
+                "E_MULTIPLE_CHOICE_SCHEMA" in reason
+                for reason in calls[1]["task_contract"]["revision_feedback"]
+            )
+        )
+
     def test_wf04_regenerates_unknown_question_type_with_protocol_feedback(self):
         application = self.server.RequestHandlerClass.application
         request = {
@@ -756,11 +965,11 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(question["question_type"], "choice")
         self.assertEqual(len(calls), 2)
         self.assertIn(
-            "short_answer",
+            "choice",
             calls[1]["task_contract"]["revision_instruction"],
         )
 
-    def test_provisional_wf04_request_omits_knowledge_type(self):
+    def test_provisional_wf04_request_includes_requested_question_types(self):
         project = self.create_project("六周内掌握 Python 数据分析并完成销售数据看板")["project"]
         application = self.server.RequestHandlerClass.application
         calls = []
@@ -783,12 +992,85 @@ class AgentProjectApiTests(unittest.TestCase):
         finally:
             application.gateway.invoke_wf04_workflow = original
         self.assertTrue(calls)
+        self.assertEqual(
+            [payload["requested_question_type"] for payload in calls],
+            [
+                "choice",
+                "multiple_choice",
+                "judgment",
+                "fill_blank",
+                "short_answer",
+                "practical",
+            ],
+        )
         for payload in calls:
             self.assertEqual(
                 set(payload["knowledge_point"]),
                 {"knowledge_point_id", "knowledge_point_name"},
             )
             self.assertNotIn("knowledge_type", payload["knowledge_context"])
+
+    def test_formal_wf04_practice_always_passes_requested_question_type(self):
+        from unittest.mock import patch
+
+        application = self.server.RequestHandlerClass.application
+        captured_requests = []
+        context = {
+            "training_cycle_id": "CYCLE-1",
+            "learning_task_id": "TASK-1",
+            "knowledge_point_id": "KN-1",
+            "title": "HTML 语义结构",
+        }
+        spec = {
+            "knowledge_point_id": "KN-1",
+            "title": "HTML 语义结构",
+            "prompt": "说明 header 元素在页面语义结构中的作用。",
+            "question_type": "short_answer",
+            "answer_schema": {"type": "text"},
+            "rubric": [{"criterion": "说明 header 的语义作用", "points": 1}],
+            "validation_rules": {"minimum_points": 1},
+            "source_refs": [{"url": "https://developer.mozilla.org/zh-CN/docs/Web/HTML/Element/header"}],
+        }
+        candidate = {
+            **spec,
+            "question_instance_id": "WF04-TEST",
+            "_wf04_question_spec": spec,
+        }
+
+        def generate(request):
+            captured_requests.append(request)
+            return candidate, 1
+
+        incoming = {
+            "project_id": "PROJ-1",
+            "task_instance_id": "TASK-INSTANCE-1",
+            "knowledge_point_id": "KN-1",
+            "question_type": "short_answer",
+            "task_contract": {
+                "assessment_mode": "formal",
+                "rubric": spec["rubric"],
+                "validation_rules": spec["validation_rules"],
+            },
+        }
+        with (
+            patch.object(application, "_wf04_task_context", return_value=context),
+            patch.object(application, "_require_project", return_value={"state": {}}),
+            patch.object(application, "_project_goal_knowledge_points", return_value=[]),
+            patch.object(
+                application,
+                "_wf04_knowledge_context",
+                return_value={"source_refs": spec["source_refs"]},
+            ),
+            patch.object(application, "_generate_wf04_question_with_revisions", side_effect=generate),
+            patch.object(application.domain, "create_wf04_question", return_value={"status": "ok"}),
+        ):
+            application._create_wf04_practice(self.student_id, incoming)
+
+        self.assertEqual(captured_requests[0]["requested_question_type"], "short_answer")
+
+        invalid = {**incoming, "requested_question_type": "code"}
+        with self.assertRaisesRegex(ApiError, "请求题型不受支持"):
+            application._create_wf04_practice(self.student_id, invalid)
 
     def test_clear_certification_goal_is_not_forced_to_java(self):
         result = self.create_project("三个月内通过大学英语四级考试")

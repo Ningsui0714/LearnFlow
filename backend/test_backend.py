@@ -1264,6 +1264,130 @@ class BackendIntegrationTests(unittest.TestCase):
             {"caller": "workflow"},
         )
 
+    def test_wf04_retries_21600_with_the_same_request_payload(self):
+        settings = Settings(
+            host="127.0.0.1", port=0,
+            database_path=Path(self.temporary_directory.name) / "wf04-retry.db",
+            xingchen_mode="remote",
+            api_url="https://xingchen-api.xf-yun.com/workflow/v1/chat/completions",
+            api_key="api-key", api_secret="api-secret", auth_header="Authorization",
+            auth_scheme="Bearer", flow_id="", input_key="AGENT_USER_INPUT",
+            request_style="workflow_v1", request_timeout=5, seed_demo=False,
+            wf04_flow_id="wf04-flow-id",
+        )
+        calls = []
+        responses = [
+            {"code": 21600, "message": "Code execution failed"},
+            {"code": 0, "choices": [{"delta": {"content": json.dumps({
+                "status": "ok", "workflow_mode": "wf04_training_evaluation",
+                "action": "generate_question", "public_question": {},
+            })}}]},
+        ]
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exception_type, exception, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            calls.append(json.loads(request.data.decode("utf-8")))
+            return FakeResponse(responses[len(calls) - 1])
+
+        workflow_input = {
+            "student_id": "STU-WF04-RETRY", "request_id": "REQ-WF04-RETRY",
+            "action": "generate_question", "requested_question_type": "short_answer",
+        }
+        with patch("backend.server.urllib.request.urlopen", fake_urlopen):
+            result = XingchenGateway(settings).invoke_wf04_workflow(workflow_input)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(
+            json.loads(calls[0]["parameters"]["AGENT_USER_INPUT"]), workflow_input
+        )
+
+    def test_wf04_reports_21600_after_bounded_retries(self):
+        settings = Settings(
+            host="127.0.0.1", port=0,
+            database_path=Path(self.temporary_directory.name) / "wf04-retry-exhausted.db",
+            xingchen_mode="remote",
+            api_url="https://xingchen-api.xf-yun.com/workflow/v1/chat/completions",
+            api_key="api-key", api_secret="api-secret", auth_header="Authorization",
+            auth_scheme="Bearer", flow_id="", input_key="AGENT_USER_INPUT",
+            request_style="workflow_v1", request_timeout=5, seed_demo=False,
+            wf04_flow_id="wf04-flow-id",
+        )
+        calls = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exception_type, exception, traceback):
+                return False
+
+            def read(self):
+                return b'{"code": 21600, "message": "Code execution failed"}'
+
+        def fake_urlopen(request, timeout):
+            calls.append(json.loads(request.data.decode("utf-8")))
+            return FakeResponse()
+
+        with patch("backend.server.urllib.request.urlopen", fake_urlopen):
+            with self.assertRaisesRegex(GatewayError, "21600.*已自动重试 2 次"):
+                XingchenGateway(settings).invoke_wf04_workflow({
+                    "student_id": "STU-WF04-RETRY", "request_id": "REQ-WF04-RETRY",
+                    "action": "generate_question",
+                })
+
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(calls[1], calls[2])
+
+    def test_wf04_does_not_retry_other_platform_errors(self):
+        settings = Settings(
+            host="127.0.0.1", port=0,
+            database_path=Path(self.temporary_directory.name) / "wf04-non-retry.db",
+            xingchen_mode="remote",
+            api_url="https://xingchen-api.xf-yun.com/workflow/v1/chat/completions",
+            api_key="api-key", api_secret="api-secret", auth_header="Authorization",
+            auth_scheme="Bearer", flow_id="", input_key="AGENT_USER_INPUT",
+            request_style="workflow_v1", request_timeout=5, seed_demo=False,
+            wf04_flow_id="wf04-flow-id",
+        )
+        calls = []
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exception_type, exception, traceback):
+                return False
+
+            def read(self):
+                return b'{"code": 21601, "message": "Other platform error"}'
+
+        def fake_urlopen(request, timeout):
+            calls.append(request)
+            return FakeResponse()
+
+        with patch("backend.server.urllib.request.urlopen", fake_urlopen):
+            with self.assertRaisesRegex(GatewayError, "21601"):
+                XingchenGateway(settings).invoke_wf04_workflow({
+                    "student_id": "STU-WF04-NON-RETRY", "action": "generate_question",
+                })
+
+        self.assertEqual(len(calls), 1)
+
     def test_remote_gateway_recovers_fragmented_result_package(self):
         settings = Settings(
             host="127.0.0.1",
