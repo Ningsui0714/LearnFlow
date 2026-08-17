@@ -94,6 +94,7 @@ export interface LearningTaskStepHandoff {
   step_id: string
   name: string
   action: string
+  instruction?: string
   deliverable: string
   check: string
   knowledge_point_ids: string[]
