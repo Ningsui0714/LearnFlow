@@ -218,7 +218,10 @@ export default function TutorPanel({
   const [proposals, setProposals] = useState<ProjectProposal[]>([])
   const [proposalBusy, setProposalBusy] = useState(false)
   const [milestoneNotice, setMilestoneNotice] = useState<any>(null)
-  const [learningTaskMode, setLearningTaskMode] = useState(false)
+  const [learningTaskMode, setLearningTaskMode] = useState(() => (
+    learningTaskGenerationEnabled
+    && new URLSearchParams(window.location.search).get('tool') === 'learning-task-conversion'
+  ))
   const [startingConversation, setStartingConversation] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<number | null>(null)
