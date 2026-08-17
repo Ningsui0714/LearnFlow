@@ -7,6 +7,7 @@ import { Link, useLocation, useParams } from 'react-router-dom'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import {
   getPersonalizedLearningKnowledgeEntry,
+  launchPersonalizedLearningKnowledgeEntry,
   type PersonalizedLearningKnowledgeEntry,
 } from '../services/api'
 
@@ -21,24 +22,6 @@ function displaySituation(value: unknown) {
   return String(item.description || item.name || item.title || '')
 }
 
-function buildGeneratorUrl(entry: PersonalizedLearningKnowledgeEntry) {
-  const configured = String(import.meta.env.VITE_PERSONALIZED_LEARNING_GENERATOR_URL || '').trim()
-  if (!configured) return ''
-  const target = new URL(configured, window.location.origin)
-  target.searchParams.set(
-    'handoff_url',
-    new URL(entry.navigation.handoff_json_path, window.location.origin).toString(),
-  )
-  target.searchParams.set('entry_id', entry.entry_id)
-  target.searchParams.set('task_card_id', entry.source.task_card_id)
-  target.searchParams.set('knowledge_id', entry.focus.knowledge_point.knowledge_id)
-  target.searchParams.set(
-    'return_url',
-    new URL(entry.navigation.return_path, window.location.origin).toString(),
-  )
-  return target.toString()
-}
-
 export default function PersonalizedLearningEntryPage() {
   const { taskCardId = '', knowledgeId = '' } = useParams()
   const location = useLocation()
@@ -50,6 +33,7 @@ export default function PersonalizedLearningEntryPage() {
   const [loading, setLoading] = useState(!initialEntry)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [launching, setLaunching] = useState(false)
   useWorkspaceTitle(entry?.focus.knowledge_point.name || '个性化学习交接', { kind: 'wf03' })
 
   const load = useCallback(async () => {
@@ -82,7 +66,23 @@ export default function PersonalizedLearningEntryPage() {
     if (!initialEntry) load()
   }, [initialEntry, load])
 
-  const generatorUrl = useMemo(() => entry ? buildGeneratorUrl(entry) : '', [entry])
+  const sourceStepCount = useMemo(() => entry?.focus.source_steps.length || 0, [entry])
+
+  const launch = async () => {
+    if (!entry || launching) return
+    setLaunching(true)
+    setError('')
+    try {
+      const result = await launchPersonalizedLearningKnowledgeEntry(
+        entry.source.task_card_id,
+        entry.focus.knowledge_point.knowledge_id,
+      )
+      window.location.assign(result.redirect_url)
+    } catch (failure) {
+      setError(errorMessage(failure))
+      setLaunching(false)
+    }
+  }
 
   const copyJsonUrl = async () => {
     if (!entry) return
@@ -153,13 +153,22 @@ export default function PersonalizedLearningEntryPage() {
             <p className="mt-1 text-sm font-semibold text-slate-800">{entry.task_context.enterprise_task_name}</p>
             <p className="mt-1 text-xs leading-5 text-slate-500">{entry.task_context.enterprise_task_description}</p>
           </div>
-          {generatorUrl ? (
-            <a href={generatorUrl} className="mt-6 inline-flex h-11 items-center gap-2 bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-700">
-              <Sparkles size={16} /> 开始生成个性化学习 <ArrowRight size={15} />
-            </a>
-          ) : (
-            <div className="mt-6 border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-              交接 JSON 已就绪。个性化学习功能接入后，配置 <code className="font-mono">VITE_PERSONALIZED_LEARNING_GENERATOR_URL</code> 即可由此直接进入生成页，不需要改动任务转化接口。
+          <button
+            type="button"
+            onClick={launch}
+            disabled={launching}
+            className="mt-6 inline-flex h-11 items-center gap-2 bg-indigo-600 px-5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-70"
+          >
+            {launching ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {launching ? '正在创建个性化学习项目…' : '开始生成个性化学习'}
+            {!launching && <ArrowRight size={15} />}
+          </button>
+          <p className="mt-2 text-[11px] leading-5 text-slate-500">
+            将当前知识点、{sourceStepCount} 个来源步骤及强关联技能安全交接给个性化学习。
+          </p>
+          {error && (
+            <div className="mt-4 border border-red-200 bg-red-50 px-4 py-3 text-xs leading-5 text-red-700">
+              {error}
             </div>
           )}
         </header>

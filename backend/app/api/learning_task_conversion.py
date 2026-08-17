@@ -24,6 +24,11 @@ from app.services.learning_task_conversion_xfyun import (
     XfyunWorkflowConfigError,
     XfyunWorkflowError,
 )
+from app.services.personalized_learning_handoff import (
+    PersonalizedLearningHandoffClient,
+    PersonalizedLearningHandoffConfigError,
+    PersonalizedLearningHandoffError,
+)
 from app.services.learning_runtime import record_event
 
 
@@ -109,7 +114,66 @@ def _knowledge_handoff_entry(
         and str(relation.get("knowledge_id") or "") == knowledge_id
     ]
     if explicit_relations:
-        relationships = explicit_relations
+        relationships = []
+        for relation in explicit_relations:
+            raw_requested_steps = relation.get("applies_to_steps") or []
+            if not isinstance(raw_requested_steps, (list, tuple, set)):
+                raw_requested_steps = [raw_requested_steps]
+            requested_steps = {
+                str(value).strip()
+                for value in raw_requested_steps
+                if str(value).strip()
+            }
+            explicit_step_id = str(relation.get("step_id") or "").strip()
+            matched_steps = [
+                step for step in source_steps
+                if (
+                    (explicit_step_id and str(step.get("step_id") or "") == explicit_step_id)
+                    or bool(
+                        requested_steps.intersection({
+                            str(step.get("step_id") or "").strip(),
+                            str(step.get("name") or "").strip(),
+                            str(step.get("title") or "").strip(),
+                            str(step.get("action") or "").strip(),
+                        })
+                    )
+                )
+            ]
+            # Some providers emit only a knowledge-level relation.  It can be
+            # assigned deterministically when this handoff has one source step.
+            if not matched_steps and len(source_steps) == 1:
+                matched_steps = source_steps
+            raw_skill_ids = relation.get("skill_ids") or []
+            if not isinstance(raw_skill_ids, (list, tuple, set)):
+                raw_skill_ids = [raw_skill_ids]
+            else:
+                raw_skill_ids = list(raw_skill_ids)
+            if relation.get("skill_id"):
+                raw_skill_ids = [*raw_skill_ids, relation["skill_id"]]
+            normalized_skill_ids = list(dict.fromkeys(
+                str(value).strip() for value in raw_skill_ids if str(value).strip()
+            ))
+            for match_index, step in enumerate(matched_steps):
+                relationship = dict(relation)
+                relationship.update({
+                    "relation_id": (
+                        str(relation.get("relation_id") or "")
+                        + (f":{match_index + 1}" if len(matched_steps) > 1 else "")
+                    ),
+                    "relation_type": str(
+                        relation.get("relation_type") or "required_for_step"
+                    ),
+                    "strength": "strong",
+                    "step_id": str(step.get("step_id") or ""),
+                    "knowledge_id": knowledge_id,
+                    "skill_ids": normalized_skill_ids,
+                })
+                relationships.append(relationship)
+        if not relationships:
+            raise LearningTaskConversionError(
+                "知识点强关系无法定位到已校验任务步骤",
+                status_code=422,
+            )
     else:
         relationships = [
             {
@@ -217,6 +281,10 @@ def _xfyun_client() -> XfyunLearningTaskWorkflowClient:
     # This client alone reads backend/.private/learning_task_conversion.xfyun.env.
     # Do not move these credentials into app.core.config or the global .env.
     return XfyunLearningTaskWorkflowClient()
+
+
+def _personalized_learning_client() -> PersonalizedLearningHandoffClient:
+    return PersonalizedLearningHandoffClient()
 
 
 def _raise_gateway_error(exc: LearningTaskConversionError) -> None:
@@ -647,6 +715,55 @@ async def open_knowledge_personalized_learning_entry(
         return entry
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
+
+
+@router.post(
+    "/tasks/{task_card_id}/knowledge/{knowledge_id}/personalized-learning-launch"
+)
+async def launch_knowledge_personalized_learning(
+    task_card_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,100}$"),
+    knowledge_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,100}$"),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Import the verified handoff with server-owned identity and return a URL."""
+
+    try:
+        bundle = await _gateway().task_bundle(task_card_id)
+        entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
+        result = await _personalized_learning_client().import_entry(
+            learner_id=current.learner.id,
+            handoff=entry,
+        )
+        await record_event(
+            db,
+            learner_id=current.learner.id,
+            event_type="personalized_learning_handoff_opened",
+            source="learning_task_conversion",
+            payload={
+                "entry_id": entry["entry_id"],
+                "task_card_id": task_card_id,
+                "knowledge_id": knowledge_id,
+                "schema_version": entry["schema_version"],
+                "downstream_project_id": result["project_id"],
+                "downstream_created": result["created"],
+            },
+            artifact_refs=[
+                f"learning-task:{task_card_id}",
+                f"knowledge:{knowledge_id}",
+            ],
+            client_event_id=(
+                f"personalized-launch:{current.learner.id}:{entry['entry_id']}"
+            ),
+        )
+        await db.commit()
+        return result
+    except LearningTaskConversionError as exc:
+        _raise_gateway_error(exc)
+    except PersonalizedLearningHandoffConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PersonalizedLearningHandoffError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post("/downstream-feedback")

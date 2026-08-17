@@ -64,7 +64,17 @@ class _FakeGateway:
                     ],
                 },
             },
-            "strong_relationships": [],
+            "strong_relationships": [
+                {
+                    "relation_id": "REL-CAMERA-01",
+                    "knowledge_id": "kp_camera",
+                    "skill_id": "sp_camera",
+                    "relation_type": "required_for_step",
+                    "strength": "high",
+                    "applies_to_steps": ["配置摄像机跟随"],
+                    "reason": "知识点直接支撑本步骤技能动作。",
+                }
+            ],
             "artifacts": {
                 "interactive_html_url": f"https://example.test/tasks/{task_card_id}/interactive.html",
                 "pdf_url": f"https://example.test/tasks/{task_card_id}/document.pdf",
@@ -106,6 +116,26 @@ class _FakeXfyunClient:
                 "tasks/ltc_generated_01/interactive.html)"
             ),
             "usage": {},
+        }
+
+
+class _FakePersonalizedLearningClient:
+    def __init__(self):
+        self.imports = []
+
+    async def import_entry(self, *, learner_id: int, handoff: dict):
+        self.imports.append({"learner_id": learner_id, "handoff": handoff})
+        knowledge_id = handoff["focus"]["knowledge_point"]["knowledge_id"]
+        return {
+            "status": "ok",
+            "entry_id": handoff["entry_id"],
+            "project_id": "PROJ-DOWNSTREAM-001",
+            "knowledge_point_id": knowledge_id,
+            "redirect_url": (
+                "http://127.0.0.1:4173/?project_id=PROJ-DOWNSTREAM-001"
+                f"&knowledge_point_id={knowledge_id}"
+            ),
+            "created": True,
         }
 
 
@@ -371,7 +401,13 @@ def test_learning_task_clarification_never_exposes_workflow_content(monkeypatch)
 
 def test_learning_task_conversion_proxies_both_handoff_directions(monkeypatch):
     gateway = _FakeGateway()
+    personalized = _FakePersonalizedLearningClient()
     monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: gateway)
+    monkeypatch.setattr(
+        learning_task_conversion,
+        "_personalized_learning_client",
+        lambda: personalized,
+    )
     with TestClient(app) as client:
         username = f"conversion_handoff_{uuid.uuid4().hex[:10]}"
         assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
@@ -408,6 +444,8 @@ def test_learning_task_conversion_proxies_both_handoff_directions(monkeypatch):
         assert entry["focus"]["source_steps"][0]["step_id"] == "step_01"
         assert entry["focus"]["strongly_related_skills"][0]["skill_id"] == "sp_camera"
         assert entry["focus"]["relationships"][0]["strength"] == "strong"
+        assert entry["focus"]["relationships"][0]["step_id"] == "step_01"
+        assert entry["focus"]["relationships"][0]["skill_ids"] == ["sp_camera"]
         assert "focus.relationships" in entry["generation_contract"]["immutable_fields"]
 
         opened = client.post(
@@ -418,6 +456,18 @@ def test_learning_task_conversion_proxies_both_handoff_directions(monkeypatch):
         assert opened.json()["navigation"]["entry_path"].endswith(
             "/ltc_generated_01/knowledge/kp_camera"
         )
+
+        launched = client.post(
+            "/api/learning-task-conversion/tasks/ltc_generated_01/knowledge/"
+            "kp_camera/personalized-learning-launch"
+        )
+        assert launched.status_code == 200
+        assert launched.json()["project_id"] == "PROJ-DOWNSTREAM-001"
+        assert launched.json()["knowledge_point_id"] == "kp_camera"
+        assert launched.json()["redirect_url"].startswith("http://127.0.0.1:4173/")
+        assert len(personalized.imports) == 1
+        assert personalized.imports[0]["learner_id"] > 0
+        assert personalized.imports[0]["handoff"]["entry_id"] == entry["entry_id"]
 
         missing_knowledge = client.get(
             "/api/learning-task-conversion/tasks/ltc_generated_01/knowledge/"

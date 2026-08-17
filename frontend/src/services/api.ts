@@ -248,6 +248,15 @@ export interface PersonalizedLearningKnowledgeEntry {
   }
 }
 
+export interface PersonalizedLearningLaunchResult {
+  status: 'ok'
+  entry_id: string
+  project_id: string
+  knowledge_point_id: string
+  redirect_url: string
+  created: boolean
+}
+
 export const getLearningTaskConversionCapabilities = () =>
   api.get('/learning-task-conversion/capabilities').then(r => r.data)
 
@@ -308,6 +317,14 @@ export const openPersonalizedLearningKnowledgeEntry = (
   knowledgeId: string,
 ) => api.post(personalizedLearningKnowledgeEntryPath(taskCardId, knowledgeId))
   .then(r => r.data as PersonalizedLearningKnowledgeEntry)
+
+export const launchPersonalizedLearningKnowledgeEntry = (
+  taskCardId: string,
+  knowledgeId: string,
+) => api.post(
+  `/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}`
+  + `/knowledge/${encodeURIComponent(knowledgeId)}/personalized-learning-launch`,
+).then(r => r.data as PersonalizedLearningLaunchResult)
 
 export const submitPersonalizedLearningFeedback = (feedback: Record<string, any>) =>
   api.post('/learning-task-conversion/downstream-feedback', feedback).then(r => r.data)
