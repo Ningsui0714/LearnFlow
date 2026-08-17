@@ -2,18 +2,20 @@
 from __future__ import annotations
 
 import re
+import hmac
 from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.models.learning import AgentMessage, AgentSession
+from app.core.config import settings
+from app.models.learning import AgentMessage, AgentSession, Learner, UserAccount
 from app.services.auth import CurrentLearner, get_current_learner
 from app.services.learning_task_conversion_gateway import (
     LearningTaskConversionError,
@@ -42,6 +44,24 @@ class LearningTaskGenerationRequest(BaseModel):
     query: str = Field(min_length=2, max_length=2000)
     session_id: int | None = Field(default=None, ge=1)
     client_turn_id: str | None = Field(default=None, min_length=3, max_length=120)
+
+
+class LearningTaskIntegrationRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=2000)
+    student_id: str = Field(default="", max_length=120)
+
+
+def _require_learning_task_integration(request: Request) -> None:
+    configured = settings.learning_task_conversion_integration_token.strip()
+    supplied = request.headers.get("x-learning-task-conversion-token", "").strip()
+    if configured:
+        if supplied and hmac.compare_digest(supplied, configured):
+            return
+        raise HTTPException(status_code=401, detail="学习型任务转化服务凭据无效")
+    host = request.client.host if request.client else ""
+    if settings.dev_test_login_enabled and host in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        return
+    raise HTTPException(status_code=503, detail="学习型任务转化服务接口尚未配置")
 
 
 def _knowledge_handoff_entry(
@@ -615,6 +635,64 @@ async def generate_learning_task_from_conversation(
                 user_input=user_input, result=result,
             )
             return result
+        _raise_xfyun_error(exc)
+    except LearningTaskConversionError as exc:
+        _raise_gateway_error(exc)
+
+
+@router.post("/integration-generate")
+async def generate_learning_task_for_integration(
+    payload: LearningTaskIntegrationRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Generate a WF03 task for an approved external learning shell.
+
+    The caller never supplies provider credentials or a workflow id.  In
+    development this endpoint is loopback-only; deployments must configure a
+    shared integration token.  The response contains the validated bundle and
+    the task artifact URL so the caller can render it in its own workbench.
+    """
+
+    _require_learning_task_integration(request)
+    learner_id = (await db.execute(
+        select(Learner.id)
+        .join(UserAccount, UserAccount.id == Learner.user_id)
+        .where(UserAccount.status == "active")
+        .order_by(Learner.id.asc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if learner_id is None:
+        raise HTTPException(status_code=503, detail="学习型任务转化服务尚无可用运行身份")
+
+    user_input = payload.query.strip()
+    try:
+        workflow_run = await _run_isolated_workflow(
+            _xfyun_client(), user_input, learner_id=learner_id,
+        )
+        task_card_id = _task_card_id_from_content(workflow_run["content"])
+        if not task_card_id:
+            return _non_success_result(workflow_run, user_input)
+        bundle = await _gateway().task_bundle(task_card_id)
+        artifacts = bundle.get("artifacts") if isinstance(bundle, dict) else None
+        artifact_url = (
+            str(artifacts.get("interactive_html_url") or "").strip()
+            if isinstance(artifacts, dict)
+            else ""
+        )
+        return {
+            "schema_version": "learnflow-learning-task-generation-v2",
+            "execute_id": workflow_run.get("run_id") or "",
+            "status": "success",
+            "task_card_id": task_card_id,
+            "message": "学习型任务已经生成，可在当前工作台查看并选择知识点进入个性化学习。",
+            "usage": workflow_run.get("usage") or {},
+            "artifact_url": artifact_url,
+            "bundle": bundle,
+        }
+    except (XfyunWorkflowError, XfyunWorkflowConfigError) as exc:
+        if isinstance(exc, XfyunWorkflowError) and _is_workflow_stage_conflict(exc):
+            return _clarification_result(user_input)
         _raise_xfyun_error(exc)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)

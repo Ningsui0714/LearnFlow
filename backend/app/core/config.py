@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # and never writes five-kernel learner state directly.
     learning_task_conversion_base_url: str = "http://82.156.199.145"
     learning_task_conversion_timeout_seconds: float = 30.0
+    # Machine-to-machine entry used by the personalized-learning shell.  When
+    # unset, the endpoint is available only from loopback in development.
+    learning_task_conversion_integration_token: str = ""
     # Desktop sidecar mode. Keep disabled in browser/server deployments.
     desktop_mode: bool = False
     desktop_token: str = ""

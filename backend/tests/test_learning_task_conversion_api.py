@@ -244,6 +244,26 @@ def test_learning_task_conversion_proxy_requires_login_and_keeps_task_id(monkeyp
         assert generated.json()["bundle"]["task_card_id"] == "ltc_generated_01"
         assert fake_xfyun.calls[0]["uid"] != fake_xfyun.calls[1]["uid"]
 
+
+def test_learning_task_integration_generates_embeddable_artifact(monkeypatch):
+    fake_xfyun = _FakeXfyunClient()
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    with TestClient(app) as client:
+        username = f"conversion_embed_{uuid.uuid4().hex[:10]}"
+        assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
+
+        generated = client.post(
+            "/api/learning-task-conversion/integration-generate",
+            json={"query": "Unity第三人称摄像机跟随模块开发", "student_id": "STU-001"},
+        )
+
+        assert generated.status_code == 200
+        payload = generated.json()
+        assert payload["status"] == "success"
+        assert payload["task_card_id"] == "ltc_generated_01"
+        assert payload["artifact_url"].endswith("/ltc_generated_01/interactive.html")
+
         empty_run = client.post(
             "/api/learning-task-conversion/workflow-runs",
             json={"user_input": "  "},
