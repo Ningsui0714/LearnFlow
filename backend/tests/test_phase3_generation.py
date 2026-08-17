@@ -11,7 +11,8 @@ from app.api.tasks import task_events
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import Learner
-from app.models.project import Checkpoint, Project, Roadmap, Task
+from app.models.project import Checkpoint, Lecture, Project, Roadmap, Task
+from app.services.lecture_agent import normalize_lecture_section_titles, resolve_lecture_section_title
 from app.services.task_manager import manager, update_task
 
 
@@ -128,3 +129,68 @@ def test_task_event_stream_releases_sqlite_reads_before_background_writes():
     updated = asyncio.run(exercise_stream())
     assert updated is not None
     assert updated.progress["message"] == "完成"
+
+
+def test_singleton_source_filename_uses_checkpoint_title_for_display():
+    section = {
+        "title": "ch03.ipynb",
+        "content": "因果注意力正文",
+        "source_file": "ch03/01_main-chapter-code/ch03.ipynb",
+        "source_heading": "",
+    }
+
+    assert resolve_lecture_section_title(
+        "因果自注意力与多头注意力",
+        section["title"],
+        source_file=section["source_file"],
+        source_heading=section["source_heading"],
+        section_count=1,
+    ) == "因果自注意力与多头注意力"
+
+    normalized = normalize_lecture_section_titles(
+        "因果自注意力与多头注意力", [section],
+    )
+    assert normalized[0]["title"] == "因果自注意力与多头注意力"
+    assert normalized[0]["source_file"] == section["source_file"]
+    assert section["title"] == "ch03.ipynb"
+
+
+def test_explicit_or_multi_section_titles_are_preserved():
+    assert resolve_lecture_section_title(
+        "自注意力核心",
+        "3.3 自注意力计算",
+        source_file="ch03.ipynb",
+        source_heading="3.3 自注意力计算",
+        section_count=1,
+    ) == "3.3 自注意力计算"
+    assert resolve_lecture_section_title(
+        "自注意力核心",
+        "ch03.ipynb",
+        source_file="ch03.ipynb",
+        section_count=2,
+    ) == "ch03.ipynb"
+
+
+def test_lecture_api_normalizes_legacy_singleton_filename_title(client: TestClient):
+    checkpoint_id, _learner_id = asyncio.run(_seed_checkpoint())
+
+    async def seed_lecture():
+        async with async_session() as db:
+            db.add(Lecture(
+                checkpoint_id=checkpoint_id,
+                status="published",
+                sections=[{
+                    "title": "ch03.ipynb",
+                    "content": "因果注意力正文",
+                    "source_file": "ch03/01_main-chapter-code/ch03.ipynb",
+                    "source_heading": "",
+                }],
+            ))
+            await db.commit()
+
+    asyncio.run(seed_lecture())
+    response = client.get(f"/api/checkpoints/{checkpoint_id}/lecture")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["sections"][0]["title"] == "Generation checkpoint"
+    assert response.json()["sections"][0]["source_file"].endswith("ch03.ipynb")

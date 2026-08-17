@@ -15,6 +15,44 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from app.core.config import settings
 
+
+def resolve_lecture_section_title(
+    checkpoint_title: str,
+    current_title: str,
+    *,
+    source_file: str = "",
+    source_heading: str = "",
+    section_count: int = 1,
+) -> str:
+    """Keep source provenance out of a singleton learner-facing title."""
+    title = str(current_title or "").strip()
+    checkpoint = str(checkpoint_title or "").strip()
+    heading = str(source_heading or "").strip()
+    filename = os.path.basename(str(source_file or "").strip())
+    if section_count == 1 and filename and not heading and title == filename and checkpoint:
+        return checkpoint
+    return title or heading or checkpoint or filename or "讲义"
+
+
+def normalize_lecture_section_titles(checkpoint_title: str, sections: List[Dict]) -> List[Dict]:
+    """Return display copies while preserving stored section provenance."""
+    section_count = len(sections or [])
+    normalized = []
+    for section in sections or []:
+        if not isinstance(section, dict):
+            normalized.append(section)
+            continue
+        item = dict(section)
+        item["title"] = resolve_lecture_section_title(
+            checkpoint_title,
+            item.get("title", ""),
+            source_file=item.get("source_file", ""),
+            source_heading=item.get("source_heading", ""),
+            section_count=section_count,
+        )
+        normalized.append(item)
+    return normalized
+
 PLAN_PROMPT = """你是学习内容专家。你需要为某个学习关卡规划一份讲义大纲。
 
 ## 学习关卡

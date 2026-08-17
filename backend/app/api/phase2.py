@@ -20,7 +20,7 @@ from app.models.project import (
 from app.schemas.project import (
     AgentMessage, LectureAskRequest, AnimationGenerateRequest,
 )
-from app.services.lecture_agent import LectureAgent, QAAgent
+from app.services.lecture_agent import LectureAgent, QAAgent, normalize_lecture_section_titles
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_animation,
     require_owned_annotation, require_owned_checkpoint,
@@ -336,7 +336,7 @@ async def get_lecture(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     """Get stored lecture for a checkpoint."""
-    await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
+    checkpoint = await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
     result = await db.execute(
         select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
     )
@@ -361,7 +361,7 @@ async def get_lecture(
     return {
         "id": lecture.id,
         "checkpoint_id": lecture.checkpoint_id,
-        "sections": lecture.sections or [],
+        "sections": normalize_lecture_section_titles(checkpoint.title, lecture.sections or []),
         "status": lecture.status,
         "version": int(lecture.version or 1),
         "concept_graph": lecture.concept_graph or {},

@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.db.database import async_session
 from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion, ConceptQuestion, Exercise, Source
-from app.services.lecture_agent import LectureAgent
+from app.services.lecture_agent import LectureAgent, resolve_lecture_section_title
 
 
 async def run_source_ingestion(task_id: int):
@@ -332,15 +332,25 @@ async def run_lecture_generation(task_id: int):
                 # Do not spend another long model round trip re-planning it
                 # before the first visible section can be generated.  This
                 # restores the incremental, observable generation behavior.
-                plan_sections = [{
-                    "title": item["title"],
-                    "keywords": [],
-                    "goal": f"学习 {item['title']}",
-                    "source_file": item["file"],
-                    "source_heading": item.get("heading", ""),
-                    "chunk_ids": item["chunk_ids"],
-                    "adjust_reason": "keep",
-                } for item in skeleton]
+                def skeleton_plan_item(item: dict) -> dict:
+                    title = resolve_lecture_section_title(
+                        checkpoint.title,
+                        item["title"],
+                        source_file=item["file"],
+                        source_heading=item.get("heading", ""),
+                        section_count=len(skeleton),
+                    )
+                    return {
+                        "title": title,
+                        "keywords": [],
+                        "goal": f"学习 {title}",
+                        "source_file": item["file"],
+                        "source_heading": item.get("heading", ""),
+                        "chunk_ids": item["chunk_ids"],
+                        "adjust_reason": "keep",
+                    }
+
+                plan_sections = [skeleton_plan_item(item) for item in skeleton]
             else:
                 plan_sections = await agent.plan_lecture(
                     checkpoint.title, checkpoint.description or "", user_level, chunks, brief=brief, feedback=feedback
