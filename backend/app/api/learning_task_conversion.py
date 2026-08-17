@@ -527,11 +527,9 @@ async def generate_learning_task_from_conversation(
             "status": "success",
             "task_card_id": task_card_id,
             "message": (
-                "学习型任务网页已经生成并在中间工作区打开。\n\n"
-                f"[打开 LearnFlow 任务页]({local_url}) · "
-                f"[原交互页]({bundle['artifacts']['interactive_html_url']}) · "
-                f"[PDF]({bundle['artifacts']['pdf_url']}) · "
-                f"[个性化学习 JSON]({bundle['artifacts']['personalized_learning_json_url']})"
+                "学习型任务已经生成并在中间工作区打开。"
+                "你可以按步骤查看产物与验收点，点击知识点直接进入个性化学习。\n\n"
+                f"[查看学习型任务]({local_url})"
             ),
             "usage": workflow_run.get("usage") or {},
             "bundle": bundle,

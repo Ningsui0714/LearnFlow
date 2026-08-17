@@ -259,14 +259,16 @@ def test_learning_task_generation_persists_and_replays_session_turn(monkeypatch)
         assert second.status_code == 200
         assert second.json()["replayed"] is True
         assert len(fake_xfyun.calls) == 1
-        assert "原交互页" in first.json()["message"]
+        assert "查看学习型任务" in first.json()["message"]
+        assert "PDF" not in first.json()["message"]
+        assert "JSON" not in first.json()["message"]
         loaded = client.get(f"/api/agent/sessions/{session['id']}").json()
         generated = [
             item for item in loaded["messages"]
             if item.get("meta_data", {}).get("message_kind") == "learning_task_generated"
         ]
         assert len(generated) == 1
-        assert "https://example.test/tasks/ltc_generated_01/interactive.html" in generated[0]["content"]
+        assert "/wf03/tasks/ltc_generated_01" in generated[0]["content"]
 
 
 def test_learning_task_generation_persistence_tolerates_stale_replay_check(monkeypatch):

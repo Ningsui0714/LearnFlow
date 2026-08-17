@@ -1,9 +1,9 @@
-import { Download, ExternalLink, Loader2, RefreshCw, ShieldCheck } from 'lucide-react'
+import { Loader2, MessageSquarePlus, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import WF03AnnotationPanel from '../components/wf03/WF03AnnotationPanel'
 import WF03SelectionToolbar from '../components/wf03/WF03SelectionToolbar'
-import WF03TaskDocument, { externalHref } from '../components/wf03/WF03TaskDocument'
+import WF03TaskDocument from '../components/wf03/WF03TaskDocument'
 import type { WF03Annotation, WF03Selection } from '../components/wf03/types'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import {
@@ -57,6 +57,7 @@ export default function WF03TaskPage() {
   const [submittedCount, setSubmittedCount] = useState(0)
   const [annotationsHydrated, setAnnotationsHydrated] = useState(false)
   const [openingKnowledgeId, setOpeningKnowledgeId] = useState('')
+  const [reviewPanelOpen, setReviewPanelOpen] = useState(false)
   useWorkspaceTitle(bundle?.task.work_task.teaching_task_name || '学习型任务网页', { kind: 'wf03' })
 
   const storageKey = `learnflow.learning-task.annotations.${taskCardId}`
@@ -139,6 +140,7 @@ export default function WF03TaskPage() {
   const startAnnotation = () => {
     if (!selection) return
     setComposerSelection(selection)
+    setReviewPanelOpen(true)
     setSelection(null)
     window.getSelection()?.removeAllRanges()
   }
@@ -215,41 +217,29 @@ export default function WF03TaskPage() {
     )
   }
 
-  const artifactLinks = [
-    { label: '原交互页', href: externalHref(bundle.artifacts.interactive_html_url), icon: ExternalLink },
-    { label: 'PDF', href: externalHref(bundle.artifacts.pdf_url), icon: Download },
-    { label: 'JSON', href: externalHref(bundle.artifacts.personalized_learning_json_url), icon: ExternalLink },
-    {
-      label: '图谱回传',
-      href: externalHref(
-        bundle.upstream_feedback?.feedback_json_url
-          || bundle.artifacts.feedback_json_url,
-      ),
-      icon: ExternalLink,
-    },
-  ].filter(item => item.href)
-
   return (
-    <div className="flex h-full min-h-0 bg-slate-100">
+    <div className="relative flex h-full min-h-0 bg-slate-100">
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4">
-          <span className="flex h-7 w-7 items-center justify-center bg-emerald-700 text-white"><ShieldCheck size={14} /></span>
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 xl:mr-[390px] 2xl:mr-0">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-700 text-white"><ShieldCheck size={14} /></span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold text-slate-900">生成的学习型任务网页</p>
-            <p className="truncate font-mono text-[9px] text-slate-400">{taskCardId}</p>
+            <p className="truncate text-xs font-semibold text-slate-900">学习型任务工作台</p>
+            <p className="truncate text-[9px] text-slate-400">任务步骤、知识技能映射与复核</p>
           </div>
-          <span className="hidden text-[10px] text-slate-400 md:block">点击“批注”或拖选文字</span>
-          {artifactLinks.map(({ label, href, icon: Icon }) => (
-            <a key={label} href={href} target="_blank" rel="noreferrer" className="flex h-8 items-center gap-1.5 border border-slate-200 px-2.5 text-[10px] text-slate-600 hover:bg-slate-50">
-              <Icon size={12} /> {label}
-            </a>
-          ))}
+          <span className="hidden items-center gap-1.5 text-[10px] text-slate-400 md:flex">选中文字或点击步骤可批注</span>
+          <button
+            type="button"
+            onClick={() => setReviewPanelOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 px-2.5 text-[10px] font-semibold text-slate-600 transition hover:border-emerald-300 hover:text-emerald-800"
+          >
+            <MessageSquarePlus size={12} /> 批注与复核{annotations.length ? ` · ${annotations.length}` : ''}
+          </button>
         </header>
-        {error && <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">{error}</div>}
+        {error && <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700 xl:mr-[390px] 2xl:mr-0">{error}</div>}
         <div
           ref={contentRef}
           onMouseUp={captureSelection}
-          className="min-h-0 flex-1 overflow-y-auto px-4 py-5 selection:bg-amber-200 selection:text-slate-950 sm:px-7"
+          className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,#ecfdf5_0,transparent_32rem)] px-4 py-6 selection:bg-amber-200 selection:text-slate-950 sm:px-7 xl:pr-[417px] 2xl:pr-7"
         >
           <WF03TaskDocument
             bundle={bundle}
@@ -258,22 +248,31 @@ export default function WF03TaskPage() {
             onAnnotate={target => {
               setSelection(null)
               setComposerSelection(target)
+              setReviewPanelOpen(true)
               window.getSelection()?.removeAllRanges()
             }}
           />
         </div>
       </section>
 
-      <WF03AnnotationPanel
-        selection={composerSelection}
-        annotations={annotations}
-        submitting={submitting}
-        submittedCount={submittedCount}
-        onCancelSelection={() => setComposerSelection(null)}
-        onAdd={annotation => setAnnotations(previous => [...previous, annotation])}
-        onRemove={id => setAnnotations(previous => previous.filter(annotation => annotation.id !== id))}
-        onSubmit={submitAnnotations}
-      />
+      {reviewPanelOpen && (
+        <>
+          <button type="button" aria-label="关闭批注面板" onClick={() => setReviewPanelOpen(false)} className="absolute inset-0 z-20 bg-slate-950/10" />
+          <div className="absolute inset-y-0 right-0 z-30 w-[min(92%,350px)] shadow-2xl xl:right-[390px] 2xl:right-0">
+            <WF03AnnotationPanel
+              selection={composerSelection}
+              annotations={annotations}
+              submitting={submitting}
+              submittedCount={submittedCount}
+              onCancelSelection={() => setComposerSelection(null)}
+              onAdd={annotation => setAnnotations(previous => [...previous, annotation])}
+              onRemove={id => setAnnotations(previous => previous.filter(annotation => annotation.id !== id))}
+              onSubmit={submitAnnotations}
+              onClose={() => setReviewPanelOpen(false)}
+            />
+          </div>
+        </>
+      )}
 
       {selection && <WF03SelectionToolbar selection={selection} onAnnotate={startAnnotation} />}
     </div>
