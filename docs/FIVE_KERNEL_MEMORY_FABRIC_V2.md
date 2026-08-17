@@ -11,7 +11,7 @@
 
 - 五核仍是 `structure / knowledge / human / value / practice`。
 - 唯一事实权威仍是 `EvidenceEvent`；唯一 KernelState 写入者仍是确定性 reducer。
-- `MemoryFact -> MemoryModule -> MemoryClaim` 的历史可检查、可纠正、不覆盖。
+- `MemoryFact -> MemoryModule(Vn) -> MemoryClaim` 的历史可检查、可纠正、不覆盖。
 - `KernelHead` 与 `ContextPacket` 都可重建，不能成为第二套画像权威。
 - 领域知识 RAG、学习者记忆 RAG、题目/调度等运行数据分别治理，不能混成一个向量池。
 - Agent、Skill、Tool 和 Workbench 只读有 scope 的包；评分、掌握和纠错策略仍由确定性规则裁决。
@@ -24,7 +24,7 @@
   -> EvidenceEvent
   -> five_kernel_reducer
   -> KernelMutation + KernelState
-  -> MemoryFact -> MemoryModule -> MemoryClaim
+  -> MemoryFact -> MemoryModule(Vn) -> MemoryClaim
                        \-> sparse MemoryEdge
 
 读取上下文面
@@ -103,7 +103,9 @@ KernelState + Memory Graph
 - Practice：attempt、assistance、artifact、feedback、remediation、transfer。
 
 Module 统一标记为 `topic_summary`，Claim 统一标记为 `semantic_claim`；更细语义仍由
-predicate、subject 和 provenance 表达。
+predicate、subject 和 provenance 表达。Module 还携带 `version`、父版本、证据闭包、
+增量 Fact、修订类型和策略版本；同一主题只有最新有效版本进入 Head，历史版本通过
+`REFINES` 或 `SUPERSEDES` 保持可检查。
 
 ## 5. ContextPolicy
 
@@ -190,9 +192,12 @@ Practice 负责确定性判题/纠错。`FiveKernelRetriever` 是 Tutor 所有�
 4. 为每位学习者重建五条 KernelHead；
 5. 记录 SchemaMigration，重复执行不重复建事实或事件。
 
-旧的 `KernelState`、Memory Fact/Module/Claim、Memory API、EvidenceEvent 和掌握规则保持
-向后兼容。关卡上下文仍保留 `five_kernel_projection` 兼容字段，但其内容来自有界热头部；
-新调用方应优先使用 `five_kernel_context`。
+后续 `v12-memory-module-versioning` 在一致性备份后，为旧 Module 回填版本号、父版本、
+证据闭包和历史状态，并建立每个 learner/kernel/subject 只有一个 active Module 的数据库
+约束。Memory API 保留原字段并增量返回版本信息。旧的 `KernelState`、Memory
+Fact/Module/Claim、EvidenceEvent 和掌握规则保持向后兼容。关卡上下文仍保留
+`five_kernel_projection` 兼容字段，但其内容来自有界热头部；新调用方应优先使用
+`five_kernel_context`。
 
 ## 10. 验收边界
 
@@ -201,6 +206,8 @@ Practice 负责确定性判题/纠错。`FiveKernelRetriever` 是 Tutor 所有�
 - Human transient 不跨 session。
 - answer/solution/expected/test cases 不进入 ContextPacket。
 - superseded 不作为当前 item，冲突历史仍可见。
+- 同一 learner/kernel/subject 只有一个 active Module，V2+ 具有直接父版本。
+- 继承 Fact 只在同核同主题版本链内复用，delta reservation 可失败恢复。
 - 默认 items 不超过 12、paths 不超过 6。
 - 注册表仍只有 `five_kernel_reducer` 可写 KernelState。
 - 无 LLM、无网络时可以完成投影、检索和 seeded demo。

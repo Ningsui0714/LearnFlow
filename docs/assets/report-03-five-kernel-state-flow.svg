@@ -19,7 +19,7 @@
   <!-- stage legend -->
   <g filter="url(#shadow3)"><rect x="70" y="145" width="1780" height="76" rx="19" fill="#FFFFFF" stroke="#B0C4E4"/></g>
   <rect x="96" y="164" width="486" height="38" rx="19" fill="#FFF5E5"/><circle cx="122" cy="183" r="9" fill="#E28717"/><text x="144" y="189" class="pill" fill="#955C0C">阶段 A｜1–4 证据归约：行为 → 当前状态与原子事实</text>
-  <rect x="602" y="164" width="486" height="38" rx="19" fill="#EEF9F8"/><circle cx="628" cy="183" r="9" fill="#108A8B"/><text x="650" y="189" class="pill" fill="#0C7476">阶段 B｜5–6 记忆巩固：主题聚合 → 长期声明</text>
+  <rect x="602" y="164" width="486" height="38" rx="19" fill="#EEF9F8"/><circle cx="628" cy="183" r="9" fill="#108A8B"/><text x="650" y="189" class="pill" fill="#0C7476">阶段 B｜5–6 记忆巩固：版本聚合 → 当前声明</text>
   <rect x="1108" y="164" width="716" height="38" rx="19" fill="#EEF4FF"/><circle cx="1134" cy="183" r="9" fill="#1E5BBB"/><text x="1156" y="189" class="pill" fill="#1B50A0">阶段 C｜7–8 上下文装配：热点检索 → 多源 AgentContext</text>
 
   <!-- top row -->
@@ -80,11 +80,11 @@
   <!-- step 5 -->
   <g filter="url(#shadow3)"><rect x="70" y="638" width="395" height="274" rx="22" fill="#EEF9F8" stroke="#5FB0AA" stroke-width="1.5"/></g>
   <circle cx="113" cy="682" r="26" fill="#108A8B"/><text x="113" y="691" text-anchor="middle" class="num">5</text>
-  <text x="153" y="690" class="h3" fill="#0C7476">MemoryModule 主题聚合</text>
+  <text x="153" y="690" class="h3" fill="#0C7476">MemoryModule Vn 版本聚合</text>
   <text x="96" y="733" class="body">同一 learner + kernel + subject</text>
   <rect x="96" y="758" width="343" height="91" rx="14" fill="#FFFFFF" stroke="#9BCFCB"/>
-  <text x="120" y="786" class="small">多条 Fact 按主题汇集</text><text x="120" y="811" class="small">保留时间范围与来源引用</text><text x="120" y="836" class="small">形成可检查的主题证据集合</text>
-  <text x="96" y="883" class="small">输出：每个核心自己的主题 Module</text>
+  <text x="120" y="786" class="small">当前版本证据闭包 + 新增 Fact</text><text x="120" y="811" class="small">REFINES / SUPERSEDES 连接父版本</text><text x="120" y="836" class="small">保留版本、增量与完整来源引用</text>
+  <text x="96" y="883" class="small">输出：唯一 active 的当前 Module 版本</text>
 
   <path d="M465 775H504" stroke="#108A8B" stroke-width="4" marker-end="url(#teal3)"/>
 

@@ -21,7 +21,15 @@ from app.models.learning import (
     MemoryNode,
     MemorySynthesisRun,
 )
-from app.services.memory_graph import _add_edge, rebuild_kernel_long_term_from_modules
+from app.services.memory_graph import (
+    MODULE_VERSION_POLICY,
+    _add_edge,
+    _bounded_evidence_ids,
+    current_memory_module,
+    input_fingerprint,
+    module_evidence_fact_ids,
+    rebuild_kernel_long_term_from_modules,
+)
 from app.services.five_kernel_context import (
     MEMORY_SCHEMA_VERSION,
     memory_salience,
@@ -173,7 +181,7 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         if not run or run.status != "queued" or run.due_at > datetime.utcnow():
             return run
         candidate_ids = [int(item) for item in (run.candidate_fact_ids or [])]
-        rows = (await db.execute(
+        delta_rows = (await db.execute(
             select(MemoryNode, MemoryFact, EvidenceEvent)
             .join(MemoryFact, MemoryFact.node_id == MemoryNode.id)
             .join(EvidenceEvent, EvidenceEvent.id == MemoryFact.source_event_id)
@@ -186,13 +194,55 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
             )
             .order_by(MemoryNode.occurred_at.asc(), MemoryNode.id.asc())
         )).all()
-        if len(rows) != len(candidate_ids):
+        if len(delta_rows) != len(candidate_ids):
             run.status = "stale"
             run.validation_errors = ["candidate_fact_unavailable"]
             run.finished_at = datetime.utcnow()
             await db.commit()
             return run
-        for _, fact, _ in rows:
+        current = await current_memory_module(
+            db, run.learner_id, run.kernel_name, run.subject_key,
+        )
+        base_node, base_module = current if current else (None, None)
+        base_fact_ids = await module_evidence_fact_ids(db, base_module) if base_module else []
+        evidence_ids = _bounded_evidence_ids(base_fact_ids, candidate_ids)
+        fingerprint = input_fingerprint(run.kernel_name, run.subject_key, evidence_ids)
+        duplicate = (await db.execute(select(MemorySynthesisRun.id).where(
+            MemorySynthesisRun.learner_id == run.learner_id,
+            MemorySynthesisRun.input_fingerprint == fingerprint,
+            MemorySynthesisRun.id != run.id,
+        ))).scalar_one_or_none()
+        if duplicate:
+            run.status = "stale"
+            run.validation_errors = ["version_input_already_synthesized"]
+            run.finished_at = datetime.utcnow()
+            await db.commit()
+            return run
+        run.base_module_node_id = base_node.id if base_node else None
+        run.target_module_version = int(base_module.version or 1) + 1 if base_module else 1
+        run.evidence_fact_ids = evidence_ids
+        run.input_fingerprint = fingerprint
+        run.prompt_version = "memory-synthesis-v2"
+        rows = (await db.execute(
+            select(MemoryNode, MemoryFact, EvidenceEvent)
+            .join(MemoryFact, MemoryFact.node_id == MemoryNode.id)
+            .join(EvidenceEvent, EvidenceEvent.id == MemoryFact.source_event_id)
+            .where(
+                MemoryNode.id.in_(evidence_ids),
+                MemoryNode.learner_id == run.learner_id,
+                MemoryNode.kernel_name == run.kernel_name,
+                MemoryNode.subject_key == run.subject_key,
+                MemoryFact.consumption_status.in_(["eligible", "consumed"]),
+            )
+            .order_by(MemoryNode.occurred_at.asc(), MemoryNode.id.asc())
+        )).all()
+        if len(rows) != len(evidence_ids):
+            run.status = "stale"
+            run.validation_errors = ["version_evidence_unavailable"]
+            run.finished_at = datetime.utcnow()
+            await db.commit()
+            return run
+        for _, fact, _ in delta_rows:
             fact.consumption_status = "reserved"
             fact.reservation_run_id = run.id
         run.status = "running"
@@ -214,13 +264,23 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         run = await db.get(MemorySynthesisRun, run_id)
         if not run or run.status != "running":
             return run
+        evidence_ids = [int(item) for item in (run.evidence_fact_ids or [])]
         rows = (await db.execute(
             select(MemoryNode, MemoryFact, EvidenceEvent)
             .join(MemoryFact, MemoryFact.node_id == MemoryNode.id)
             .join(EvidenceEvent, EvidenceEvent.id == MemoryFact.source_event_id)
-            .where(MemoryFact.reservation_run_id == run.id)
+            .where(
+                MemoryNode.id.in_(evidence_ids),
+                MemoryNode.learner_id == run.learner_id,
+                MemoryNode.kernel_name == run.kernel_name,
+                MemoryNode.subject_key == run.subject_key,
+                MemoryFact.consumption_status.in_(["reserved", "consumed"]),
+            )
             .order_by(MemoryNode.occurred_at.asc(), MemoryNode.id.asc())
         )).all()
+        if len(rows) != len(evidence_ids):
+            await _release_run(db, run, "version_evidence_changed")
+            return run
         errors = _validate_draft(run, draft, rows)
         if errors:
             run.raw_output = draft.model_dump(mode="json")
@@ -239,6 +299,27 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         project_id = next(iter(project_ids)) if len(project_ids) == 1 else None
         checkpoint_id = next(iter(checkpoint_ids)) if len(checkpoint_ids) == 1 else None
         session_id = next(iter(session_ids)) if len(session_ids) == 1 else None
+        relation = "SUPERSEDES" if run.trigger_reason == "correction" else "REFINES"
+        previous_modules = (await db.execute(
+            select(MemoryNode)
+            .join(MemoryModule, MemoryModule.node_id == MemoryNode.id)
+            .where(
+                MemoryNode.learner_id == run.learner_id,
+                MemoryNode.kernel_name == run.kernel_name,
+                MemoryNode.subject_key == run.subject_key,
+                MemoryNode.id == run.base_module_node_id,
+            )
+        )).scalars().all()
+        for previous in previous_modules:
+            previous.status = "superseded" if relation == "SUPERSEDES" else "refined"
+            old_claims = (await db.execute(
+                select(MemoryNode)
+                .join(MemoryClaim, MemoryClaim.node_id == MemoryNode.id)
+                .where(MemoryClaim.module_node_id == previous.id)
+            )).scalars().all()
+            for old_claim in old_claims:
+                old_claim.status = previous.status
+        await db.flush()
         module_node = MemoryNode(
             learner_id=run.learner_id,
             node_type="module",
@@ -256,6 +337,11 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
                 "project_id": project_id,
                 "checkpoint_id": checkpoint_id,
                 "session_id": session_id,
+                "module_version": run.target_module_version,
+                "parent_module_node_id": run.base_module_node_id,
+                "evidence_fact_ids": evidence_ids,
+                "delta_fact_ids": [int(item) for item in (run.candidate_fact_ids or [])],
+                "policy_version": MODULE_VERSION_POLICY,
             },
             confidence=confidence,
             salience=memory_salience(
@@ -274,6 +360,12 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
             else "confirmation" if run.trigger_reason == "confirmation"
             else "synthesis"
         )
+        revision_kind = (
+            "correction" if run.trigger_reason == "correction"
+            else "confirmation" if run.trigger_reason == "confirmation"
+            else "initial" if run.base_module_node_id is None
+            else "refinement"
+        )
         db.add(MemoryModule(
             node_id=module_node.id,
             synthesis_run_id=run.id,
@@ -283,6 +375,12 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
             time_end=time_end,
             input_fingerprint=run.input_fingerprint,
             immutable=True,
+            version=run.target_module_version,
+            parent_module_node_id=run.base_module_node_id,
+            revision_kind=revision_kind,
+            evidence_fact_ids=evidence_ids,
+            delta_fact_ids=[int(item) for item in (run.candidate_fact_ids or [])],
+            policy_version=MODULE_VERSION_POLICY,
         ))
         await db.flush()
 
@@ -308,6 +406,7 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
                     "checkpoint_id": checkpoint_id,
                     "session_id": session_id,
                     "evidence_fact_ids": claim.evidence_fact_ids,
+                    "module_version": run.target_module_version,
                 },
                 confidence=claim_confidence,
                 salience=memory_salience(
@@ -338,47 +437,24 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
                     origin="synthesis", confidence=claim_confidence,
                 )
 
+        delta_ids = {int(item) for item in (run.candidate_fact_ids or [])}
         for node, fact, _ in rows:
             await _add_edge(
                 db, learner_id=run.learner_id, source_node_id=node.id,
                 target_node_id=module_node.id, relation_type="CONSOLIDATED_INTO",
                 origin="synthesis", confidence=node.confidence or 0,
             )
-            fact.consumption_status = "consumed"
-            fact.consumed_by_module_id = module_node.id
-            fact.reservation_run_id = None
+            if node.id in delta_ids:
+                fact.consumption_status = "consumed"
+                fact.consumed_by_module_id = module_node.id
+                fact.reservation_run_id = None
 
-        previous_modules = (await db.execute(
-            select(MemoryNode)
-            .join(MemoryModule, MemoryModule.node_id == MemoryNode.id)
-            .where(
-                MemoryNode.learner_id == run.learner_id,
-                MemoryNode.kernel_name == run.kernel_name,
-                MemoryNode.subject_key == run.subject_key,
-                MemoryNode.id != module_node.id,
-                MemoryNode.status.in_(["active", "legacy"]),
-            )
-        )).scalars().all()
-        relation = (
-            "SUPERSEDES" if run.trigger_reason == "correction"
-            else "SUPPORTS" if run.trigger_reason == "confirmation"
-            else "REFINES"
-        )
         for previous in previous_modules:
             await _add_edge(
                 db, learner_id=run.learner_id, source_node_id=module_node.id,
                 target_node_id=previous.id, relation_type=relation,
                 origin="post_synthesis", confidence=confidence,
             )
-            if relation == "SUPERSEDES":
-                previous.status = "superseded"
-                old_claims = (await db.execute(
-                    select(MemoryNode)
-                    .join(MemoryClaim, MemoryClaim.node_id == MemoryNode.id)
-                    .where(MemoryClaim.module_node_id == previous.id)
-                )).scalars().all()
-                for old_claim in old_claims:
-                    old_claim.status = "superseded"
 
         run.status = "completed"
         run.model_name = model_name

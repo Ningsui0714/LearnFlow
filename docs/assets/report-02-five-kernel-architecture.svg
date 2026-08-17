@@ -13,7 +13,7 @@
   </defs>
   <rect width="1920" height="1080" fill="url(#bg2)"/><rect width="1920" height="1080" fill="url(#grid2)"/>
   <text x="72" y="76" class="title">02｜五核架构：五个状态维度协同教学决策</text>
-  <text x="74" y="112" class="subtitle">行为证据按契约进入相关核心；每核形成 Fact → Module → Claim，并通过 Head 支持当轮上下文</text>
+  <text x="74" y="112" class="subtitle">行为证据按契约进入相关核心；每核形成 Fact → Module Vn → Claim，并通过 Head 支持当轮上下文</text>
   <rect x="1722" y="44" width="126" height="48" rx="24" fill="#EAF1FF" stroke="#9DB9EB"/><text x="1785" y="75" text-anchor="middle" class="pill" fill="#1D4E9B">CORE 02</text>
 
   <!-- agent context assembly -->
@@ -53,7 +53,7 @@
   <text x="94" y="483" class="pill" fill="#2157A6">状态主题</text><text x="94" y="508" class="body">路径 · 项目 · 关卡 · 依赖</text>
   <text x="94" y="545" class="pill" fill="#2157A6">长期形成</text><text x="94" y="570" class="body">稳定路径模式与确认结构</text>
   <text x="94" y="610" class="small">同核同主题记忆链</text>
-  <g text-anchor="middle" class="tiny"><rect x="94" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="132" y="645">Fact</text><path d="M170 640H186" stroke="#4E7FC8" stroke-width="2" marker-end="url(#blue2)"/><rect x="188" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="231" y="645">Module</text><path d="M274 640H290" stroke="#4E7FC8" stroke-width="2" marker-end="url(#blue2)"/><rect x="292" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="336" y="645">Claim</text></g>
+  <g text-anchor="middle" class="tiny"><rect x="94" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="132" y="645">Fact</text><path d="M170 640H186" stroke="#4E7FC8" stroke-width="2" marker-end="url(#blue2)"/><rect x="188" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="231" y="645">Module Vn</text><path d="M274 640H290" stroke="#4E7FC8" stroke-width="2" marker-end="url(#blue2)"/><rect x="292" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="336" y="645">Claim</text></g>
   <rect x="94" y="678" width="286" height="40" rx="11" fill="#FFFFFF" opacity=".8"/><text x="238" y="703" text-anchor="middle" class="small">Head：位置 · 阻塞 · 返回锚点</text>
 
   <!-- knowledge -->
@@ -63,7 +63,7 @@
   <text x="455" y="483" class="pill" fill="#147159">状态主题</text><text x="455" y="508" class="body">概念 · 问题 · 缺口 · 理解</text>
   <text x="455" y="545" class="pill" fill="#147159">长期形成</text><text x="455" y="570" class="body">评分与迁移支持的理解声明</text>
   <text x="455" y="610" class="small">同核同主题记忆链</text>
-  <g text-anchor="middle" class="tiny"><rect x="455" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="493" y="645">Fact</text><path d="M531 640H547" stroke="#3B9676" stroke-width="2" marker-end="url(#blue2)"/><rect x="549" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="592" y="645">Module</text><path d="M635 640H651" stroke="#3B9676" stroke-width="2" marker-end="url(#blue2)"/><rect x="653" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="697" y="645">Claim</text></g>
+  <g text-anchor="middle" class="tiny"><rect x="455" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="493" y="645">Fact</text><path d="M531 640H547" stroke="#3B9676" stroke-width="2" marker-end="url(#blue2)"/><rect x="549" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="592" y="645">Module Vn</text><path d="M635 640H651" stroke="#3B9676" stroke-width="2" marker-end="url(#blue2)"/><rect x="653" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="697" y="645">Claim</text></g>
   <rect x="455" y="678" width="286" height="40" rx="11" fill="#FFFFFF" opacity=".8"/><text x="599" y="703" text-anchor="middle" class="small">Head：焦点 · 缺口 · 保持状态</text>
 
   <!-- human -->
@@ -73,7 +73,7 @@
   <text x="816" y="483" class="pill" fill="#A34250">状态主题</text><text x="816" y="508" class="body">负荷 · 注意 · 反馈 · 支持</text>
   <text x="816" y="545" class="pill" fill="#A34250">长期形成</text><text x="816" y="570" class="body">确认偏好与跨会话支持模式</text>
   <text x="816" y="610" class="small">同核同主题记忆链</text>
-  <g text-anchor="middle" class="tiny"><rect x="816" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="854" y="645">Fact</text><path d="M892 640H908" stroke="#C45B68" stroke-width="2" marker-end="url(#blue2)"/><rect x="910" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="953" y="645">Module</text><path d="M996 640H1012" stroke="#C45B68" stroke-width="2" marker-end="url(#blue2)"/><rect x="1014" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="1058" y="645">Claim</text></g>
+  <g text-anchor="middle" class="tiny"><rect x="816" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="854" y="645">Fact</text><path d="M892 640H908" stroke="#C45B68" stroke-width="2" marker-end="url(#blue2)"/><rect x="910" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="953" y="645">Module Vn</text><path d="M996 640H1012" stroke="#C45B68" stroke-width="2" marker-end="url(#blue2)"/><rect x="1014" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="1058" y="645">Claim</text></g>
   <rect x="816" y="678" width="286" height="40" rx="11" fill="#FFFFFF" opacity=".8"/><text x="960" y="703" text-anchor="middle" class="small">Head：负荷 · 偏好 · 支持需求</text>
 
   <!-- value -->
@@ -83,7 +83,7 @@
   <text x="1177" y="483" class="pill" fill="#94600E">状态主题</text><text x="1177" y="508" class="body">目标 · 优先级 · 动机 · 相关性</text>
   <text x="1177" y="545" class="pill" fill="#94600E">长期形成</text><text x="1177" y="570" class="body">用户确认的目标与价值排序</text>
   <text x="1177" y="610" class="small">同核同主题记忆链</text>
-  <g text-anchor="middle" class="tiny"><rect x="1177" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="1215" y="645">Fact</text><path d="M1253 640H1269" stroke="#B57B18" stroke-width="2" marker-end="url(#blue2)"/><rect x="1271" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="1314" y="645">Module</text><path d="M1357 640H1373" stroke="#B57B18" stroke-width="2" marker-end="url(#blue2)"/><rect x="1375" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="1419" y="645">Claim</text></g>
+  <g text-anchor="middle" class="tiny"><rect x="1177" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="1215" y="645">Fact</text><path d="M1253 640H1269" stroke="#B57B18" stroke-width="2" marker-end="url(#blue2)"/><rect x="1271" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="1314" y="645">Module Vn</text><path d="M1357 640H1373" stroke="#B57B18" stroke-width="2" marker-end="url(#blue2)"/><rect x="1375" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="1419" y="645">Claim</text></g>
   <rect x="1177" y="678" width="286" height="40" rx="11" fill="#FFFFFF" opacity=".8"/><text x="1321" y="703" text-anchor="middle" class="small">Head：目标 · 优先级 · 相关性</text>
 
   <!-- practice -->
@@ -93,7 +93,7 @@
   <text x="1538" y="483" class="pill" fill="#6548AE">状态主题</text><text x="1538" y="508" class="body">尝试 · 辅助 · 反馈 · 迁移</text>
   <text x="1538" y="545" class="pill" fill="#6548AE">长期形成</text><text x="1538" y="570" class="body">独立完成与变式迁移能力</text>
   <text x="1538" y="610" class="small">同核同主题记忆链</text>
-  <g text-anchor="middle" class="tiny"><rect x="1538" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="1576" y="645">Fact</text><path d="M1614 640H1630" stroke="#795ABB" stroke-width="2" marker-end="url(#blue2)"/><rect x="1632" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="1675" y="645">Module</text><path d="M1718 640H1734" stroke="#795ABB" stroke-width="2" marker-end="url(#blue2)"/><rect x="1736" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="1780" y="645">Claim</text></g>
+  <g text-anchor="middle" class="tiny"><rect x="1538" y="624" width="76" height="32" rx="9" fill="#FFF"/><text x="1576" y="645">Fact</text><path d="M1614 640H1630" stroke="#795ABB" stroke-width="2" marker-end="url(#blue2)"/><rect x="1632" y="624" width="86" height="32" rx="9" fill="#FFF"/><text x="1675" y="645">Module Vn</text><path d="M1718 640H1734" stroke="#795ABB" stroke-width="2" marker-end="url(#blue2)"/><rect x="1736" y="624" width="88" height="32" rx="9" fill="#FFF"/><text x="1780" y="645">Claim</text></g>
   <rect x="1538" y="678" width="286" height="40" rx="11" fill="#FFFFFF" opacity=".8"/><text x="1682" y="703" text-anchor="middle" class="small">Head：尝试 · 纠错 · 迁移准备</text>
 
   <!-- evidence chain -->

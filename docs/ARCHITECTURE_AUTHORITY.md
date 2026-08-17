@@ -58,8 +58,21 @@
   -> EvidenceEvent（只追加、带统一 provenance）
   -> five_kernel_reducer（确定性）
   -> KernelMutation + KernelState
-  -> MemoryFact -> MemoryModule -> MemoryClaim
+  -> MemoryFact -> MemoryModule(Vn) -> MemoryClaim
 ```
+
+`MemoryModule` 采用不可变版本快照。第一个达到本核巩固门槛的事实集合形成 V1；后续
+有意义的新事实作为 delta，与当前版本的证据闭包共同形成 V2、V3。普通增量使用
+`REFINES` 连接父版本，学习者纠正使用 `SUPERSEDES`；父 Module 与其 Claim 转为历史
+状态，当前 `(learner, kernel, subject)` 只保留一个 active 版本供 `KernelHead` 使用。
+每个版本必须公开 `version`、`parent_module_node_id`、`evidence_fact_ids`、
+`delta_fact_ids`、`revision_kind` 和 `policy_version`，因此可以完整解释“新结论继承了
+什么、增加了什么、替换了什么”。事实仍保持原始来源；同一事实可以通过图边支持
+多个 Module 版本，首次消费归属不会被改写。
+
+未被 reducer 归入某核的相关事件继续保留在 `EvidenceEvent` 账本中。若未来增加跨事件
+模式发现，模式判断必须生成带 `source_event_ids` 的派生 `EvidenceEvent`，再经统一
+reducer 形成该核的 Fact；模式分析器本身不直接生成 Module 或修改 KernelState。
 
 五核 v2 在这条权威链之上增加两类可重建读取投影，但不增加事实来源：
 

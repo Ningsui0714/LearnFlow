@@ -355,6 +355,9 @@ class MemorySynthesisRun(Base):
     status = Column(String(30), default="queued", nullable=False, index=True)
     trigger_reason = Column(String(80), default="threshold")
     candidate_fact_ids = Column(JSON, default=list)
+    evidence_fact_ids = Column(JSON, default=list)
+    base_module_node_id = Column(Integer, ForeignKey("memory_modules.node_id"), nullable=True, index=True)
+    target_module_version = Column(Integer, default=1, nullable=False)
     input_fingerprint = Column(String(64), nullable=False, index=True)
     prompt_version = Column(String(40), default="memory-synthesis-v1")
     model_name = Column(String(100), default="deterministic")
@@ -401,6 +404,12 @@ class MemoryModule(Base):
     time_end = Column(DateTime, nullable=False, index=True)
     input_fingerprint = Column(String(64), nullable=False, unique=True, index=True)
     immutable = Column(Boolean, default=True, nullable=False)
+    version = Column(Integer, default=1, nullable=False, index=True)
+    parent_module_node_id = Column(Integer, ForeignKey("memory_modules.node_id"), nullable=True, index=True)
+    revision_kind = Column(String(40), default="initial", nullable=False, index=True)
+    evidence_fact_ids = Column(JSON, default=list)
+    delta_fact_ids = Column(JSON, default=list)
+    policy_version = Column(String(40), default="memory-module-version-v1", nullable=False)
 
 
 class MemoryClaim(Base):

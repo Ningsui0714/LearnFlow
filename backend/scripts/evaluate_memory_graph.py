@@ -66,7 +66,7 @@ def evaluate(path: Path) -> dict:
             SELECT COUNT(*) FROM memory_claims c
             JOIN memory_nodes n ON n.id=c.node_id
             JOIN memory_modules m ON m.node_id=c.module_node_id
-            WHERE n.status != 'legacy' AND m.module_type != 'legacy_import'
+            WHERE n.status = 'active' AND m.module_type != 'legacy_import'
         """)
         supported_current_claims = scalar(conn, """
             SELECT COUNT(DISTINCT c.node_id) FROM memory_claims c
@@ -74,7 +74,7 @@ def evaluate(path: Path) -> dict:
             JOIN memory_modules m ON m.node_id=c.module_node_id
             JOIN memory_edges e ON e.target_node_id=c.node_id AND e.relation_type='SUPPORTS'
             JOIN memory_facts f ON f.node_id=e.source_node_id
-            WHERE n.status != 'legacy' AND m.module_type != 'legacy_import'
+            WHERE n.status = 'active' AND m.module_type != 'legacy_import'
         """)
         cross_kernel_inputs = scalar(conn, """
             SELECT COUNT(*) FROM memory_edges e
@@ -83,11 +83,34 @@ def evaluate(path: Path) -> dict:
             WHERE e.relation_type='CONSOLIDATED_INTO'
               AND fact_node.kernel_name != module_node.kernel_name
         """)
-        reused_facts = scalar(conn, """
+        cross_subject_reuse = scalar(conn, """
+            SELECT COUNT(*) FROM memory_edges e
+            JOIN memory_nodes fact_node ON fact_node.id=e.source_node_id
+            JOIN memory_nodes module_node ON module_node.id=e.target_node_id
+            WHERE e.relation_type='CONSOLIDATED_INTO'
+              AND (
+                fact_node.kernel_name != module_node.kernel_name
+                OR fact_node.subject_key != module_node.subject_key
+              )
+        """)
+        duplicate_active_modules = scalar(conn, """
             SELECT COUNT(*) FROM (
-              SELECT source_node_id FROM memory_edges
-              WHERE relation_type='CONSOLIDATED_INTO'
-              GROUP BY source_node_id HAVING COUNT(DISTINCT target_node_id) > 1
+              SELECT learner_id, kernel_name, subject_key FROM memory_nodes
+              WHERE node_type='module' AND status='active'
+              GROUP BY learner_id, kernel_name, subject_key HAVING COUNT(*) > 1
+            )
+        """)
+        broken_version_parents = scalar(conn, """
+            SELECT COUNT(*) FROM memory_modules m
+            JOIN memory_nodes n ON n.id=m.node_id
+            LEFT JOIN memory_modules parent_m ON parent_m.node_id=m.parent_module_node_id
+            LEFT JOIN memory_nodes parent_n ON parent_n.id=parent_m.node_id
+            WHERE m.version > 1 AND (
+              m.parent_module_node_id IS NULL
+              OR parent_m.version != m.version - 1
+              OR parent_n.learner_id != n.learner_id
+              OR parent_n.kernel_name != n.kernel_name
+              OR parent_n.subject_key != n.subject_key
             )
         """)
         mutable_modules = scalar(conn, "SELECT COUNT(*) FROM memory_modules WHERE immutable != 1")
@@ -136,7 +159,9 @@ def evaluate(path: Path) -> dict:
         acceptance = {
             "all_current_claims_have_fact_evidence": supported_current_claims == current_claims,
             "no_cross_kernel_module_inputs": cross_kernel_inputs == 0,
-            "facts_consumed_at_most_once": reused_facts == 0,
+            "versioned_fact_reuse_stays_within_subject": cross_subject_reuse == 0,
+            "one_active_module_per_subject": duplicate_active_modules == 0,
+            "version_chain_has_direct_parents": broken_version_parents == 0,
             "modules_are_immutable": mutable_modules == 0,
             "corrections_preserve_history": correction_modules == 0 or correction_links >= correction_modules,
             "idempotent_fact_keys": duplicate_facts == 0,
@@ -198,4 +223,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

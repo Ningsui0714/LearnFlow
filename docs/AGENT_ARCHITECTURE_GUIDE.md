@@ -396,13 +396,30 @@ evidence manifest。它是一次 Agent 回合的只读快照，不是第六个�
 - `EvidenceEvent`：不可变动作账本，保留发生时间、记录时间和学习者内序号。
 - `KernelMutation`：某个事件对某一核造成的补丁及前后版本。
 - `MemoryFact`：由 mutation 展开的原子事实，可幂等重放。
-- `MemoryModule`：同一学习者、同一核、同一主题事实的不可变综合。
+- `MemoryModule`：同一学习者、同一核、同一主题事实的不可变版本快照；新事实与当前版本证据闭包形成下一版本。
 - `MemoryClaim`：模块中可独立检查的声明，必须有事实支持。
 - `MemoryEdge`：稀疏、高价值关系，例如支持、关联和合并。
 
 事件写入请求本身不调用 LLM。确定性 reducer 先生成事实；记忆合成可以异步进行，并且只能引用预先声明的候选 fact ID。
 
 用户对错误记忆进行归档、纠正或撤回时，系统追加纠正证据，不删除历史。归档内容必须从 Tutor 当前投影中排除。
+
+### 11.1 Module 版本化与当前版本
+
+同一 `(learner, kernel, subject)` 的 Module 形成单向版本链。V1 记录首次巩固；后续
+版本显式保存父 Module、继承证据、增量事实、修订类型和策略版本。普通增量生成
+`REFINES`，学习者纠正生成 `SUPERSEDES`。父 Module 与父 Claim 保留为历史节点，只有
+最新有效版本保持 `active`，因此 Agent 使用的是当前解释，同时审计页面可以还原完整
+演变过程。
+
+版本合成以当前 Module 的 `evidence_fact_ids` 和新一批 `delta_fact_ids` 为白名单，最多
+保留 64 条证据。worker 只锁定尚未消费的 delta；继承事实可以继续通过图边支持新
+Claim，其首次消费归属保持不变。每次运行在 `MemorySynthesisRun` 中保存 base module、
+目标版本和完整证据指纹，用于并发重基、幂等与失败恢复。
+
+Reducer 仍负责单事件的确定性归约。某条事件当时未形成某核 Fact 时，原始
+`EvidenceEvent` 继续保留；后续跨事件模式能力若要补充该核证据，必须先生成引用原始
+事件的派生 EvidenceEvent，再进入统一写入链。
 
 ## 12. 上下文装配与 Handoff
 

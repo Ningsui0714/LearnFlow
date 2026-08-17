@@ -12,9 +12,34 @@
 
 1. `EvidenceEvent` 是不可变动作账本，`occurred_at` 表示动作发生时间，`created_at` 表示系统记录时间，`learner_seq` 是学习者内单调序号。
 2. `MemoryFact` 是由一次 `KernelMutation` 展开的原子事实。唯一键 `(source_mutation_id, fact_ordinal)` 保证重放幂等。
-3. `MemoryModule` 只消费同一学习者、同一核、同一主题的事实。模块内容不可变，且不会再次成为合成输入。
+3. `MemoryModule` 只合成同一学习者、同一核、同一主题的事实。模块内容不可变；后续新事实以 delta 与当前版本的证据闭包生成下一版本。
 4. `MemoryClaim` 是模块内可单独检查的声明。非历史导入声明必须由 `SUPPORTS` 边直接回到事实。
 5. `MemoryEdge` 只保存高价值稀疏关系。跨核关系可以存在，但 `CONSOLIDATED_INTO` 两端必须同核。
+
+## Module 版本链
+
+`memory-module-version-v1` 将 Module 定义为带时间范围的不可变认知快照，而不是持续
+原地修改的摘要：
+
+```text
+F1 + F2 + F3 -> Module V1 -> Claim V1
+Module V1 evidence + F4 + F5 -> Module V2 -> Claim V2
+Module V2 --REFINES--> Module V1
+KernelHead -> 当前 active 的 V2
+```
+
+- `evidence_fact_ids`：当前版本实际分析的证据闭包，包含继承证据与新证据，最多 64 条。
+- `delta_fact_ids`：相对父版本新增的事实。
+- `parent_module_node_id`：直接父版本；版本号在同一 learner/kernel/subject 内递增。
+- `revision_kind`：`initial`、`refinement`、`confirmation` 或 `correction`。
+- 普通证据更新形成 `REFINES`；学习者纠正形成 `SUPERSEDES`。
+- 父版本和父 Claim 保留为 `refined`/`superseded` 历史节点；读取投影只采用一个 active 版本。
+- 继承事实仍保留首次消费归属，并通过 `SUPPORTS`、`CONSOLIDATED_INTO` 图边支持新版本。
+
+初始 Module 继续执行五核各自的确定性门槛。已有 Module 后，一个 verified、corrected
+或 self-reported 增量可以触发新版本；普通 Knowledge/Practice/Structure 增量至少覆盖
+两个独立事件，Human/Value 普通增量还需跨两个 session。合成任务使用
+`memory-synthesis-v2`，并在运行记录中保存 base module、目标版本、delta 与完整证据集合。
 
 `KernelState` 继续作为兼容投影。其短期区会附加 `memory_graph_recent_facts`，长期区会附加 `memory_graph_claims`。
 
@@ -57,7 +82,10 @@ queued -> running/reserved -> completed/consumed
                            -> failed/eligible
 ```
 
-合成器只能引用运行记录中的候选 fact ID。越界引用、跨核候选和证据不足的知识掌握声明会整批拒绝。进程中断时，启动恢复会释放 reservation 并把运行重新排队。
+合成器只能引用运行记录中的版本证据集合。越界引用、跨核候选和证据不足的知识掌握声明会整批拒绝。进程中断时，启动恢复会释放 delta reservation 并把运行重新排队。
+
+旧库通过带备份的 `v12-memory-module-versioning` 迁移回填版本号、父版本、证据闭包和
+历史状态。回填不修改 EvidenceEvent、KernelMutation 或 Fact 的事实内容。
 
 自动合成默认关闭：
 
@@ -88,4 +116,4 @@ cd backend
 ./venv/bin/python scripts/evaluate_memory_graph.py
 ```
 
-脚本对照字段覆盖、单体摘要和五核事实图，并检查声明证据覆盖、跨核输入、重复消费、模块不可变、纠错历史、幂等键、序号唯一性及 300 节点查询 p95。
+脚本对照字段覆盖、单体摘要和五核事实图，并检查声明证据覆盖、同核同主题的版本证据复用、单一 active 版本、父版本完整性、模块不可变、纠错历史、幂等键、序号唯一性及 300 节点查询 p95。

@@ -120,6 +120,12 @@ async def _serialize_nodes(db: AsyncSession, nodes: list[MemoryNode]) -> list[di
                 "time_start": _iso(module.time_start),
                 "time_end": _iso(module.time_end),
                 "immutable": bool(module.immutable),
+                "version": int(module.version or 1),
+                "parent_module_id": module.parent_module_node_id,
+                "revision_kind": module.revision_kind,
+                "evidence_fact_ids": module.evidence_fact_ids or [],
+                "delta_fact_ids": module.delta_fact_ids or [],
+                "policy_version": module.policy_version,
             }
         claim = claims.get(node.id)
         if claim:
@@ -341,6 +347,9 @@ def _run_view(run: MemorySynthesisRun) -> dict:
         "status": run.status,
         "trigger_reason": run.trigger_reason,
         "candidate_fact_ids": run.candidate_fact_ids or [],
+        "evidence_fact_ids": run.evidence_fact_ids or [],
+        "base_module_id": run.base_module_node_id,
+        "target_module_version": int(run.target_module_version or 1),
         "input_fingerprint": run.input_fingerprint,
         "prompt_version": run.prompt_version,
         "model_name": run.model_name,

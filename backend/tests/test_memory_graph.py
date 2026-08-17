@@ -19,7 +19,11 @@ from app.models.learning import (
 )
 from app.models.project import Checkpoint, Project, Roadmap
 from app.services.learning_runtime import get_kernel_projection, record_event
-from app.services.memory_graph import backfill_memory_graph, input_fingerprint
+from app.services.memory_graph import (
+    backfill_memory_graph,
+    backfill_module_versions,
+    input_fingerprint,
+)
 from app.services.memory_worker import (
     SynthesisClaimDraft,
     SynthesisDraft,
@@ -167,6 +171,133 @@ def test_same_kernel_synthesis_has_complete_evidence_path_and_consumes_once():
     assert all(fact.consumption_status == "consumed" for _, fact in facts)
     assert projection["knowledge"]["long_term"]["memory_graph_claims"]
     assert before == after == 1
+
+
+def test_new_facts_create_versioned_module_with_inherited_evidence_and_single_current_head():
+    async def scenario():
+        await init_db()
+        async with async_session() as db:
+            learner = Learner(key=_key("memory-version"), display_name="Memory Version")
+            db.add(learner)
+            await db.flush()
+            project = Project(learner_id=learner.id, name="版本化记忆")
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={})
+            db.add(roadmap)
+            await db.flush()
+            checkpoint = Checkpoint(roadmap_id=roadmap.id, title="版本链", order=1)
+            db.add(checkpoint)
+            await db.flush()
+            for item_id in (201, 202):
+                await record_event(
+                    db,
+                    learner_id=learner.id,
+                    project_id=project.id,
+                    checkpoint_id=checkpoint.id,
+                    event_type="concept_attempt_evaluated",
+                    source="grader",
+                    payload={
+                        "item_id": item_id,
+                        "concept_id": "module-versioning",
+                        "question": f"题目 {item_id}",
+                        "correct": True,
+                        "independent": True,
+                    },
+                    confidence=0.95,
+                )
+            first_run = (await db.execute(select(MemorySynthesisRun).where(
+                MemorySynthesisRun.learner_id == learner.id,
+                MemorySynthesisRun.kernel_name == "knowledge",
+                MemorySynthesisRun.subject_key == "concept:module-versioning",
+            ).order_by(MemorySynthesisRun.id.desc()))).scalars().first()
+            assert first_run is not None
+            first_run.due_at = datetime.utcnow()
+            await db.commit()
+            first_run_id = first_run.id
+
+        await process_synthesis_run(first_run_id)
+
+        async with async_session() as db:
+            first_module = (await db.execute(select(MemoryModule).where(
+                MemoryModule.synthesis_run_id == first_run_id,
+            ))).scalar_one()
+            first_evidence = list(first_module.evidence_fact_ids or [])
+            await record_event(
+                db,
+                learner_id=learner.id,
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+                event_type="concept_attempt_evaluated",
+                source="grader",
+                payload={
+                    "item_id": 203,
+                    "concept_id": "module-versioning",
+                    "question": "题目 203",
+                    "correct": True,
+                    "independent": True,
+                },
+                confidence=0.95,
+            )
+            second_run = (await db.execute(select(MemorySynthesisRun).where(
+                MemorySynthesisRun.learner_id == learner.id,
+                MemorySynthesisRun.kernel_name == "knowledge",
+                MemorySynthesisRun.subject_key == "concept:module-versioning",
+                MemorySynthesisRun.status == "queued",
+            ).order_by(MemorySynthesisRun.id.desc()))).scalars().first()
+            assert second_run is not None
+            second_run.due_at = datetime.utcnow()
+            await db.commit()
+            second_run_id = second_run.id
+
+        await process_synthesis_run(second_run_id)
+
+        async with async_session() as db:
+            await backfill_module_versions(db)
+            await backfill_module_versions(db)
+            modules = list((await db.execute(
+                select(MemoryNode, MemoryModule)
+                .join(MemoryModule, MemoryModule.node_id == MemoryNode.id)
+                .where(
+                    MemoryNode.learner_id == learner.id,
+                    MemoryNode.kernel_name == "knowledge",
+                    MemoryNode.subject_key == "concept:module-versioning",
+                )
+                .order_by(MemoryModule.version.asc())
+            )).all())
+            active_claims = list((await db.execute(
+                select(MemoryNode, MemoryClaim)
+                .join(MemoryClaim, MemoryClaim.node_id == MemoryNode.id)
+                .where(
+                    MemoryNode.learner_id == learner.id,
+                    MemoryNode.kernel_name == "knowledge",
+                    MemoryNode.subject_key == "concept:module-versioning",
+                    MemoryNode.status == "active",
+                )
+            )).all())
+            refine_edges = list((await db.execute(select(MemoryEdge).where(
+                MemoryEdge.learner_id == learner.id,
+                MemoryEdge.relation_type == "REFINES",
+            ))).scalars().all())
+            return first_evidence, modules, active_claims, refine_edges
+
+    first_evidence, modules, active_claims, refine_edges = asyncio.run(scenario())
+    assert len(modules) == 2
+    (first_node, first_module), (second_node, second_module) = modules
+    assert first_module.version == 1
+    assert second_module.version == 2
+    assert second_module.parent_module_node_id == first_node.id
+    assert first_node.status == "refined"
+    assert second_node.status == "active"
+    assert second_module.revision_kind == "refinement"
+    assert set(first_evidence) <= set(second_module.evidence_fact_ids or [])
+    assert set(second_module.delta_fact_ids or []).isdisjoint(set(first_evidence))
+    assert active_claims
+    assert {claim.module_node_id for _, claim in active_claims} == {second_node.id}
+    assert any(
+        edge.source_node_id == second_node.id and edge.target_node_id == first_node.id
+        for edge in refine_edges
+    )
 
 
 def test_synthesis_validator_rejects_out_of_whitelist_and_unproven_mastery():
@@ -337,3 +468,18 @@ def test_memory_api_isolated_and_feedback_appends_history():
         correction_fact = owner.get(f"/api/memory/nodes/{feedback.json()['fact_id']}").json()
         assert correction_fact["source_event"]["event_type"] == "memory_correction_added"
         assert any(item["relation"] == "CONTRADICTS" for item in correction_fact["relations"])
+        queued_id = feedback.json()["queued_consolidation_id"]
+        assert queued_id is not None
+        completed = asyncio.run(process_synthesis_run(queued_id))
+        assert completed and completed.status == "completed"
+        modules = owner.get("/api/memory/graph", params={
+            "node_types": "module",
+            "subject": claim["subject"],
+        }).json()["nodes"]
+        versions = sorted(modules, key=lambda item: item["module"]["version"])
+        assert len(versions) >= 2
+        previous, current = versions[-2:]
+        assert previous["status"] == "superseded"
+        assert current["status"] == "active"
+        assert current["module"]["revision_kind"] == "correction"
+        assert current["module"]["parent_module_id"] == previous["id"]

@@ -91,6 +91,19 @@ EXTRA_COLUMNS = {
         ("salience", "REAL DEFAULT 0.5"),
         ("schema_version", "TEXT DEFAULT 'memory-item.v2'"),
     ],
+    "memory_synthesis_runs": [
+        ("evidence_fact_ids", "JSON DEFAULT '[]'"),
+        ("base_module_node_id", "INTEGER"),
+        ("target_module_version", "INTEGER DEFAULT 1"),
+    ],
+    "memory_modules": [
+        ("version", "INTEGER DEFAULT 1"),
+        ("parent_module_node_id", "INTEGER"),
+        ("revision_kind", "TEXT DEFAULT 'initial'"),
+        ("evidence_fact_ids", "JSON DEFAULT '[]'"),
+        ("delta_fact_ids", "JSON DEFAULT '[]'"),
+        ("policy_version", "TEXT DEFAULT 'memory-module-version-v1'"),
+    ],
     "process_animations": [
         ("kind", "TEXT"),         # animation | static（表已存在时补列）
     ],
@@ -110,6 +123,7 @@ MANAGED_ARTIFACT_MIGRATION = "v8-managed-learning-artifacts"
 LOCAL_AGENT_BROKER_MIGRATION = "v9-local-agent-broker"
 REVIEW_WORKBENCH_MIGRATION = "v10-review-workbench"
 FIVE_KERNEL_MEMORY_FABRIC_MIGRATION = "v11-five-kernel-memory-fabric"
+MEMORY_MODULE_VERSIONING_MIGRATION = "v12-memory-module-versioning"
 
 
 def _sqlite_path() -> Path | None:
@@ -457,6 +471,42 @@ def _backup_before_five_kernel_memory_fabric_migration():
     print(f"[migrate] backup created: {backup_path}")
 
 
+def _backup_before_memory_module_versioning_migration():
+    path = _sqlite_path()
+    if (
+        not path or not path.exists() or path.stat().st_size == 0
+        or _migration_applied(path, MEMORY_MODULE_VERSIONING_MIGRATION)
+    ):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-memory-module-v12{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
 async def _ensure_columns():
     async with engine.begin() as conn:
         for table, cols in EXTRA_COLUMNS.items():
@@ -487,6 +537,10 @@ async def _ensure_columns():
             ("ix_memory_nodes_checkpoint_id", "memory_nodes", "checkpoint_id"),
             ("ix_memory_nodes_session_id", "memory_nodes", "session_id"),
             ("ix_memory_nodes_salience", "memory_nodes", "salience"),
+            ("ix_memory_synthesis_runs_base_module_node_id", "memory_synthesis_runs", "base_module_node_id"),
+            ("ix_memory_modules_version", "memory_modules", "version"),
+            ("ix_memory_modules_parent_module_node_id", "memory_modules", "parent_module_node_id"),
+            ("ix_memory_modules_revision_kind", "memory_modules", "revision_kind"),
             ("ix_lecture_versions_idempotency_key", "lecture_versions", "idempotency_key"),
         ]
         for name, table, column in indexes:
@@ -989,6 +1043,27 @@ async def _backfill_five_kernel_memory_fabric():
         print(f"[migrate] applied {FIVE_KERNEL_MEMORY_FABRIC_MIGRATION}: {counts}")
 
 
+async def _backfill_memory_module_versioning():
+    from app.models.learning import SchemaMigration
+    from app.services.memory_graph import backfill_module_versions
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == MEMORY_MODULE_VERSIONING_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        counts = await backfill_module_versions(db)
+        await db.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_current_memory_module_idx "
+            "ON memory_nodes (learner_id, kernel_name, subject_key) "
+            "WHERE node_type = 'module' AND status = 'active'"
+        ))
+        db.add(SchemaMigration(version=MEMORY_MODULE_VERSIONING_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {MEMORY_MODULE_VERSIONING_MIGRATION}: {counts}")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -999,6 +1074,7 @@ async def init_db():
     _backup_before_managed_artifact_migration()
     _backup_before_review_workbench_migration()
     _backup_before_five_kernel_memory_fabric_migration()
+    _backup_before_memory_module_versioning_migration()
     async with engine.begin() as conn:
         from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -1013,3 +1089,4 @@ async def init_db():
     await _mark_local_agent_broker_migration()
     await _backfill_review_workbench()
     await _backfill_five_kernel_memory_fabric()
+    await _backfill_memory_module_versioning()

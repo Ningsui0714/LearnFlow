@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-17.1"
+REGISTRY_VERSION = "2026-08-17.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -191,7 +191,7 @@ TOOLS = {
         ToolContract("five_kernel_reducer", "Five-kernel Deterministic Reducer", "tutor_agent", "learnflow", "projection",
                      (), KERNEL_NAMES, "EvidenceEvent -> KernelMutation"),
         ToolContract("memory_graph", "Inspectable Memory Graph", "tutor_agent", "learnflow", "projection",
-                     KERNEL_NAMES, (), "KernelMutation -> Fact -> Module -> Claim"),
+                     KERNEL_NAMES, (), "KernelMutation -> Fact -> versioned Module -> Claim"),
         ToolContract("kernel_head_projector", "Bounded Kernel Head Projector", "tutor_agent", "learnflow", "projection",
                      KERNEL_NAMES, (), "KernelState/Memory Graph -> rebuildable KernelHead"),
         ToolContract("five_kernel_retriever", "Scoped Five-kernel Retriever", "tutor_agent", "learnflow", "read",
@@ -241,7 +241,7 @@ SKILLS = {
         SkillContract("learner_memory_synthesis", "五核画像与可检查记忆", "tutor_agent",
                       ("five_kernel_reducer", "memory_graph", "kernel_head_projector",
                        "five_kernel_retriever", "context_packet_assembler"),
-                      "bounded kernel heads + scoped ContextPacket + evidence-backed claims",
+                      "versioned modules + bounded kernel heads + scoped ContextPacket + evidence-backed claims",
                       "deterministic reducer and ContextPolicy", "fused"),
         SkillContract("external_workflow_rendering", "星辰/Mock 教学内容适配", "learning_design_agent",
                       ("workflow_gateway", "workflow_validator"),
@@ -457,7 +457,8 @@ def registry_manifest() -> dict[str, Any]:
         "authority": {
             "kernel_source_of_truth": "EvidenceEvent ledger",
             "kernel_write_path": "EvidenceEvent -> five_kernel_reducer -> KernelMutation",
-            "memory_projection": "KernelMutation -> MemoryFact -> MemoryModule -> MemoryClaim",
+            "memory_projection": "KernelMutation -> MemoryFact -> versioned MemoryModule -> MemoryClaim",
+            "module_versioning": "immutable snapshots; evidence closure + delta facts; REFINES/SUPERSEDES; one active version",
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
         },

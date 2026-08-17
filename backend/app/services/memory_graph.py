@@ -53,6 +53,8 @@ EXPLICIT_PREFERENCE_KEYS = {
     "weekly_hours", "preferred_modes", "learning_preferences", "pace_preference",
     "format_preference",
 }
+MODULE_VERSION_POLICY = "memory-module-version-v1"
+MODULE_EVIDENCE_LIMIT = 64
 
 
 def actor_type_for_source(source: str) -> str:
@@ -428,8 +430,89 @@ def _trigger_reason(
 
 
 def input_fingerprint(kernel_name: str, subject_key: str, fact_ids: list[int]) -> str:
-    body = f"{kernel_name}|{subject_key}|" + ",".join(str(item) for item in sorted(fact_ids))
+    body = (
+        f"{MODULE_VERSION_POLICY}|{kernel_name}|{subject_key}|"
+        + ",".join(str(item) for item in sorted(fact_ids))
+    )
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+async def current_memory_module(
+    db: AsyncSession,
+    learner_id: int,
+    kernel_name: str,
+    subject_key: str,
+) -> tuple[MemoryNode, MemoryModule] | None:
+    """Return the single current module snapshot for one kernel subject."""
+    return (await db.execute(
+        select(MemoryNode, MemoryModule)
+        .join(MemoryModule, MemoryModule.node_id == MemoryNode.id)
+        .where(
+            MemoryNode.learner_id == learner_id,
+            MemoryNode.kernel_name == kernel_name,
+            MemoryNode.subject_key == subject_key,
+            MemoryNode.status.in_(["active", "legacy"]),
+        )
+        .order_by(MemoryModule.version.desc(), MemoryNode.id.desc())
+        .limit(1)
+    )).first()
+
+
+async def module_evidence_fact_ids(
+    db: AsyncSession, module: MemoryModule,
+) -> list[int]:
+    """Read a module's evidence closure, including pre-versioning modules."""
+    stored = [int(item) for item in (module.evidence_fact_ids or [])]
+    if stored:
+        return list(dict.fromkeys(stored))
+    edge_ids = list((await db.execute(select(MemoryEdge.source_node_id).where(
+        MemoryEdge.target_node_id == module.node_id,
+        MemoryEdge.relation_type == "CONSOLIDATED_INTO",
+    ).order_by(MemoryEdge.source_node_id.asc()))).scalars().all())
+    consumed_ids = list((await db.execute(select(MemoryFact.node_id).where(
+        MemoryFact.consumed_by_module_id == module.node_id,
+    ).order_by(MemoryFact.node_id.asc()))).scalars().all())
+    return list(dict.fromkeys(int(item) for item in edge_ids + consumed_ids))
+
+
+async def module_delta_fact_ids(
+    db: AsyncSession, module: MemoryModule,
+) -> list[int]:
+    """Read only the facts introduced by this module version."""
+    stored = [int(item) for item in (module.delta_fact_ids or [])]
+    if stored:
+        return list(dict.fromkeys(stored))
+    consumed_ids = list((await db.execute(select(MemoryFact.node_id).where(
+        MemoryFact.consumed_by_module_id == module.node_id,
+    ).order_by(MemoryFact.node_id.asc()))).scalars().all())
+    if consumed_ids:
+        return [int(item) for item in consumed_ids]
+    return list((await db.execute(select(MemoryEdge.source_node_id).where(
+        MemoryEdge.target_node_id == module.node_id,
+        MemoryEdge.relation_type == "CONSOLIDATED_INTO",
+    ).order_by(MemoryEdge.source_node_id.asc()))).scalars().all())
+
+
+def _bounded_evidence_ids(base_ids: list[int], delta_ids: list[int]) -> list[int]:
+    delta = list(dict.fromkeys(int(item) for item in delta_ids))
+    delta_set = set(delta)
+    base = [int(item) for item in base_ids if int(item) not in delta_set]
+    room = max(0, MODULE_EVIDENCE_LIMIT - len(delta))
+    return base[-room:] + delta if room else delta[-MODULE_EVIDENCE_LIMIT:]
+
+
+def _refinement_trigger_reason(
+    kernel_name: str,
+    rows: list[tuple[MemoryNode, MemoryFact, EvidenceEvent]],
+) -> str | None:
+    """Trigger a new immutable version from meaningful evidence deltas."""
+    decisive_grades = {"verified", "corrected", "self_reported"}
+    if any(fact.evidence_grade in decisive_grades for _, fact, _ in rows):
+        return "module_refinement"
+    event_count = len({event.id for _, _, event in rows})
+    if kernel_name in {"human", "value"}:
+        return "module_refinement" if event_count >= 2 and _sessions_count(rows) >= 2 else None
+    return "module_refinement" if event_count >= 2 else None
 
 
 async def maybe_queue_synthesis(
@@ -441,11 +524,17 @@ async def maybe_queue_synthesis(
     trigger_event: EvidenceEvent,
 ) -> MemorySynthesisRun | None:
     rows = await _eligible_facts(db, learner_id, kernel_name, subject_key)
+    current = await current_memory_module(db, learner_id, kernel_name, subject_key)
     reason = _trigger_reason(kernel_name, rows, trigger_event)
+    if current and not reason:
+        reason = _refinement_trigger_reason(kernel_name, rows)
     if not reason:
         return None
-    fact_ids = [node.id for node, _, _ in rows]
-    fingerprint = input_fingerprint(kernel_name, subject_key, fact_ids)
+    delta_fact_ids = [node.id for node, _, _ in rows]
+    base_node, base_module = current if current else (None, None)
+    base_fact_ids = await module_evidence_fact_ids(db, base_module) if base_module else []
+    evidence_fact_ids = _bounded_evidence_ids(base_fact_ids, delta_fact_ids)
+    fingerprint = input_fingerprint(kernel_name, subject_key, evidence_fact_ids)
     existing = (await db.execute(select(MemorySynthesisRun).where(
         MemorySynthesisRun.learner_id == learner_id,
         MemorySynthesisRun.input_fingerprint == fingerprint,
@@ -463,8 +552,12 @@ async def maybe_queue_synthesis(
         MemorySynthesisRun.status == "queued",
     ).order_by(MemorySynthesisRun.id.desc()).limit(1))).scalar_one_or_none()
     if pending:
-        pending.candidate_fact_ids = fact_ids
+        pending.candidate_fact_ids = delta_fact_ids
+        pending.evidence_fact_ids = evidence_fact_ids
+        pending.base_module_node_id = base_node.id if base_node else None
+        pending.target_module_version = int(base_module.version or 1) + 1 if base_module else 1
         pending.input_fingerprint = fingerprint
+        pending.prompt_version = "memory-synthesis-v2"
         pending.trigger_reason = reason
         if immediate:
             pending.due_at = datetime.utcnow()
@@ -476,8 +569,12 @@ async def maybe_queue_synthesis(
         subject_key=subject_key,
         status="queued",
         trigger_reason=reason,
-        candidate_fact_ids=fact_ids,
+        candidate_fact_ids=delta_fact_ids,
+        evidence_fact_ids=evidence_fact_ids,
+        base_module_node_id=base_node.id if base_node else None,
+        target_module_version=int(base_module.version or 1) + 1 if base_module else 1,
         input_fingerprint=fingerprint,
+        prompt_version="memory-synthesis-v2",
         due_at=datetime.utcnow() if immediate else datetime.utcnow() + timedelta(seconds=2),
     )
     db.add(run)
@@ -691,3 +788,80 @@ async def backfill_memory_graph(db: AsyncSession) -> dict[str, int]:
         module_count += 1
     await db.flush()
     return {"events": event_count, "facts": fact_count, "modules": module_count}
+
+
+async def backfill_module_versions(db: AsyncSession) -> dict[str, int]:
+    """Assign immutable version chains and cumulative evidence to existing modules."""
+    rows = list((await db.execute(
+        select(MemoryNode, MemoryModule)
+        .join(MemoryModule, MemoryModule.node_id == MemoryNode.id)
+        .order_by(
+            MemoryNode.learner_id.asc(), MemoryNode.kernel_name.asc(),
+            MemoryNode.subject_key.asc(), MemoryNode.occurred_at.asc(), MemoryNode.id.asc(),
+        )
+    )).all())
+    groups: dict[tuple[int, str, str], list[tuple[MemoryNode, MemoryModule]]] = {}
+    for node, module in rows:
+        groups.setdefault(
+            (node.learner_id, node.kernel_name, node.subject_key), [],
+        ).append((node, module))
+
+    versioned = 0
+    historical = 0
+    for group in groups.values():
+        cumulative: list[int] = []
+        previous_id: int | None = None
+        for index, (node, module) in enumerate(group, start=1):
+            direct_ids = await module_delta_fact_ids(db, module)
+            cumulative = _bounded_evidence_ids(cumulative, direct_ids)
+            module.version = index
+            module.parent_module_node_id = previous_id
+            module.revision_kind = (
+                "correction" if module.module_type == "correction"
+                else "confirmation" if module.module_type == "confirmation"
+                else "initial" if index == 1
+                else "refinement"
+            )
+            module.evidence_fact_ids = cumulative
+            module.delta_fact_ids = direct_ids
+            module.policy_version = MODULE_VERSION_POLICY
+            node.payload = {
+                **dict(node.payload or {}),
+                "module_version": index,
+                "parent_module_node_id": previous_id,
+                "evidence_fact_ids": cumulative,
+                "delta_fact_ids": direct_ids,
+                "policy_version": MODULE_VERSION_POLICY,
+            }
+            claim_nodes = list((await db.execute(
+                select(MemoryNode)
+                .join(MemoryClaim, MemoryClaim.node_id == MemoryNode.id)
+                .where(MemoryClaim.module_node_id == node.id)
+            )).scalars().all())
+            for claim_node in claim_nodes:
+                claim_node.payload = {
+                    **dict(claim_node.payload or {}),
+                    "module_version": index,
+                }
+            if previous_id is not None:
+                await _add_edge(
+                    db,
+                    learner_id=node.learner_id,
+                    source_node_id=node.id,
+                    target_node_id=previous_id,
+                    relation_type=(
+                        "SUPERSEDES" if module.revision_kind == "correction" else "REFINES"
+                    ),
+                    origin="module_version_migration",
+                    confidence=node.confidence or 0,
+                )
+            if index < len(group) and node.status in {"active", "legacy"}:
+                node.status = "refined"
+                for claim_node in claim_nodes:
+                    if claim_node.status in {"active", "legacy"}:
+                        claim_node.status = "refined"
+                historical += 1
+            previous_id = node.id
+            versioned += 1
+    await db.flush()
+    return {"versioned_modules": versioned, "historical_modules": historical}

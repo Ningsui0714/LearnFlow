@@ -21,6 +21,10 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     manifest = registry_manifest()
     assert manifest["validation_errors"] == []
     assert len(manifest["digest"]) == 64
+    assert manifest["authority"]["memory_projection"] == (
+        "KernelMutation -> MemoryFact -> versioned MemoryModule -> MemoryClaim"
+    )
+    assert "one active version" in manifest["authority"]["module_versioning"]
 
 
 def test_remediation_events_have_standard_authority_provenance():

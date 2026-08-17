@@ -448,7 +448,13 @@ def _serialize_item(
             "module_id": claim.module_node_id,
         }
     elif module:
-        detail = {"module_type": module.module_type}
+        detail = {
+            "module_type": module.module_type,
+            "version": int(module.version or 1),
+            "parent_module_id": module.parent_module_node_id,
+            "revision_kind": module.revision_kind,
+            "policy_version": module.policy_version,
+        }
     return {
         "id": node.id,
         "kernel": node.kernel_name,
