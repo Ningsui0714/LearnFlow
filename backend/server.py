@@ -10357,7 +10357,7 @@ class LearningApplication:
         resolved = self._resolve_reference(message, history)
         if selected_text:
             resolved = f"{message}\n选中讲解片段：{selected_text}"
-        if use_learning_materials:
+        if use_learning_materials and self.gateway.mode != "remote":
             material_answer = self._material_knowledge_answer(resolved, session_id)
             if bool(incoming.get("persist_history", True)):
                 self._save_chat_history(
@@ -10506,6 +10506,7 @@ class LearningApplication:
                     "student_id": student_id,
                     "student_profile": as_dict(self.domain.profile(student_id).get("profile")),
                     "assistant_mode": assistant_mode,
+                    "use_learning_materials": use_learning_materials,
                     "source_kind": "web" if web_answer else ("knowledge_base" if items else "none"),
                     "kb_text": source_context + project_context_text,
                     "history_memory": context_memory,

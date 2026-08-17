@@ -2288,6 +2288,48 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertIn("Java 封装", captured["message"])
         self.assertNotIn("外部记忆", result["answer"])
 
+    def test_remote_chat_workflow_receives_learning_material_flag(self):
+        application = self.server.RequestHandlerClass.application
+        gateway = application.gateway
+        original_settings = gateway.settings
+        original_invoke = gateway.invoke_chat_workflow
+        captured = {}
+        gateway.settings = Settings(
+            **{
+                **original_settings.__dict__,
+                "xingchen_mode": "remote",
+                "chat_flow_id": "chat-flow-id",
+                "api_key": "test-key",
+                "api_secret": "test-secret",
+                "api_url": "https://example.invalid/workflow",
+            }
+        )
+
+        def invoke_chat(payload):
+            captured.update(payload)
+            return {"status": "ok", "answer": "基于学习资料的回答。"}
+
+        gateway.invoke_chat_workflow = invoke_chat
+        try:
+            result = self.request_json(
+                "POST",
+                "/api/chat",
+                {
+                    "student_id": self.student_id,
+                    "session_id": "remote-material-workflow",
+                    "message": "请根据学习资料说明 Java 封装的作用",
+                    "use_learning_materials": True,
+                    "allow_web_search": False,
+                },
+            )
+        finally:
+            gateway.invoke_chat_workflow = original_invoke
+            gateway.settings = original_settings
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["answer"], "基于学习资料的回答。")
+        self.assertTrue(captured["use_learning_materials"])
+
     def test_agent_turn_clarifies_unknown_intent(self):
         result = self.agent_turn("随便来点")
         self.assertEqual(result["status"], "needs_clarification")
