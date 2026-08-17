@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, ChevronLeft, ChevronRight, Settings2, Sparkles } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import TutorPanel from '../tutor/TutorPanel'
 import LocalAgentProfilesDialog from '../tutor/LocalAgentProfilesDialog'
@@ -134,6 +134,13 @@ export default function WorkspaceAgentRail({
       ? ['分析当前错误', '给下一步提示', '解释选中代码']
       : ['换种讲法', '看步骤', '看示例'])
     : []
+  const contextDescription = reviewContext
+    ? '题目、错因、调度与五核证据已装配'
+    : state.checkpointId
+    ? '同一关讲义、练习与文件协作'
+    : state.projectId
+    ? '项目路线、资料与文件协作'
+    : '跨项目学习目标与状态协作'
 
   if (!expanded) {
     return (
@@ -156,13 +163,8 @@ export default function WorkspaceAgentRail({
       <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-slate-200 bg-white px-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-white"><Bot size={16} /></span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <h2 className="truncate text-xs font-semibold text-slate-900">{state.title}</h2>
-            <Sparkles size={11} className="shrink-0 text-amber-500" />
-          </div>
-          <p className="truncate text-[10px] text-slate-500">
-            {state.scope} · {reviewContext ? '题目、错因、调度与五核证据已装配' : '同一关讲义、练习与文件协作'}
-          </p>
+          <h2 className="truncate text-xs font-semibold text-slate-900">{state.scope}</h2>
+          <p className="truncate text-[10px] text-slate-500">{contextDescription}</p>
         </div>
         <button type="button" onClick={onToggle} title="收起 Agent 对话" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <ChevronRight size={16} />
@@ -180,7 +182,7 @@ export default function WorkspaceAgentRail({
         checkpointId={state.checkpointId}
         turnContext={turnContext}
         quickPrompts={quickPrompts}
-        surfaceTitle={reviewContext ? '主 Agent · 复习协作' : undefined}
+        surfaceTitle={reviewContext ? '主 Agent · 复习协作' : state.title}
         surfaceDescription={reviewContext ? '当前题目、错因、调度与证据上下文已安全装配' : undefined}
         className="min-h-0 flex-1 rounded-none border-0"
         onProjectChange={project => project?.id && openPath(`/projects/${project.id}`, { title: project.name || `项目 ${project.id}`, kind: 'project', projectId: project.id })}

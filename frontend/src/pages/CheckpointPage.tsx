@@ -8,7 +8,6 @@ import {
 } from '../services/api'
 import LectureRenderer, { type LectureNote } from '../components/lecture/LectureRenderer'
 import ConceptGraphModal from '../components/lecture/ConceptGraphModal'
-import TutorPanel from '../components/tutor/TutorPanel'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
 
@@ -47,7 +46,6 @@ export default function CheckpointPage() {
   const [showGraph, setShowGraph] = useState(false)
   const [conceptGraph, setConceptGraph] = useState<any>(null)
   const [feedback, setFeedback] = useState('')
-  const [showTutor, setShowTutor] = useState(false)
   const esRef = useRef<TaskEventSubscription | null>(null)
   const embedded = new URLSearchParams(location.search).get('embed') === '1'
 
@@ -255,6 +253,13 @@ export default function CheckpointPage() {
     setSelectedSection(sectionIndex)
   }, [])
 
+  const openTutor = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('learnflow:agent-open'))
+    if (window.parent !== window) {
+      window.parent.dispatchEvent(new CustomEvent('learnflow:agent-open'))
+    }
+  }, [])
+
   const handleAskSelection = useCallback((text: string, sectionIndex: number = 0) => {
     setSelectedText(text)
     setSelectedSection(sectionIndex)
@@ -265,8 +270,8 @@ export default function CheckpointPage() {
       selection: text,
       sectionIndex,
     })
-    window.dispatchEvent(new CustomEvent('learnflow:agent-open'))
-  }, [checkpointTitle, cid])
+    openTutor()
+  }, [checkpointTitle, cid, openTutor])
 
   const handleCreateAnchoredNote = useCallback(async (selection: string, sectionIndex: number, note: string) => {
     try {
@@ -360,10 +365,10 @@ export default function CheckpointPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-3 shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setShowTutor(true)}
+            onClick={openTutor}
             className="border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 rounded-lg"
           >
-            Tutor
+            关卡 Tutor
           </button>
           <button onClick={() => navigate(`/projects/${pid}`)}
             className="text-sm text-gray-400 hover:text-gray-600">
@@ -458,17 +463,6 @@ export default function CheckpointPage() {
           )}
         </div>
       </div>
-
-      {showTutor && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onClick={() => setShowTutor(false)}>
-          <div className="h-full w-full max-w-md bg-white p-3 shadow-xl" onClick={event => event.stopPropagation()}>
-            <div className="mb-2 flex justify-end">
-              <button onClick={() => setShowTutor(false)} className="h-8 w-8 text-gray-500 hover:bg-gray-100 rounded">×</button>
-            </div>
-            <TutorPanel projectId={pid} checkpointId={cid} className="h-[calc(100%_-_2.5rem)]" />
-          </div>
-        </div>
-      )}
 
       {/* Progress / error bar */}
       {(generating || progress) && (
