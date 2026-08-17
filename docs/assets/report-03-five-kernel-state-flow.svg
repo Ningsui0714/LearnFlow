@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F7FAFF"/><stop offset=".55" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F2F7FF"/></linearGradient>
+    <linearGradient id="navy3" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0B2F70"/><stop offset="1" stop-color="#165FC7"/></linearGradient>
+    <pattern id="grid3" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#D8E4F6" stroke-width="1" opacity=".34"/></pattern>
+    <filter id="shadow3" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#173B70" flood-opacity=".12"/></filter>
+    <marker id="o3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#E28717"/></marker>
+    <marker id="t3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#108A8B"/></marker>
+    <marker id="b3" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#1E5BBB"/></marker>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei",sans-serif}.title{font-size:50px;font-weight:800;fill:#092B68}.subtitle{font-size:23px;font-weight:600;fill:#2B5598}.h2{font-size:27px;font-weight:780}.h3{font-size:22px;font-weight:760}.body{font-size:17px;fill:#314A69}.small{font-size:14px;fill:#61748D}.tiny{font-size:12px;fill:#6B7F96}.pill{font-size:15px;font-weight:700}.num{font-size:24px;font-weight:850;fill:#FFF}.white{fill:#FFF}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    </style>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg3)"/><rect width="1920" height="1080" fill="url(#grid3)"/>
+  <text x="72" y="76" class="title">03｜五核状态流转：从行为证据到下一轮教学</text>
+  <text x="74" y="112" class="subtitle">前五步形成可审计事实，后三步装配可重建上下文；读取永远不能绕回去直接改状态</text>
+  <rect x="1722" y="44" width="126" height="48" rx="24" fill="#EAF1FF" stroke="#9DB9EB"/><text x="1785" y="75" text-anchor="middle" class="pill" fill="#1D4E9B">FLOW 03</text>
+
+  <!-- legend -->
+  <rect x="70" y="145" width="1780" height="66" rx="18" fill="#FFFFFF" stroke="#B2C5E5"/>
+  <line x1="104" y1="178" x2="168" y2="178" stroke="#E28717" stroke-width="4" marker-end="url(#o3)"/><text x="184" y="184" class="body">证据写入与长期巩固</text>
+  <line x1="478" y1="178" x2="542" y2="178" stroke="#108A8B" stroke-width="4" stroke-dasharray="9 7" marker-end="url(#t3)"/><text x="558" y="184" class="body">可重建热投影</text>
+  <line x1="790" y1="178" x2="854" y2="178" stroke="#1E5BBB" stroke-width="4" marker-end="url(#b3)"/><text x="870" y="184" class="body">只读上下文装配</text>
+  <rect x="1320" y="160" width="500" height="37" rx="18" fill="#FFF6E7"/><text x="1570" y="184" text-anchor="middle" class="pill" fill="#96600F">贯穿规则：scope · provenance · idempotency</text>
+
+  <!-- row one labels -->
+  <text x="72" y="255" class="h2" fill="#A1620D">A｜权威事实链</text>
+
+  <!-- 1 -->
+  <g filter="url(#shadow3)"><rect x="70" y="278" width="310" height="292" rx="22" fill="#FFF9EF" stroke="#E5AE58" stroke-width="1.5"/></g>
+  <circle cx="111" cy="320" r="25" fill="#E28717"/><text x="111" y="329" text-anchor="middle" class="num">1</text>
+  <text x="149" y="327" class="h3" fill="#9A5E0D">唯一写入入口</text>
+  <text x="96" y="368" class="body">用户 / UI / Tool / Agent 行为</text>
+  <path d="M106 398H344" stroke="#E28717" stroke-width="2.5" marker-end="url(#o3)"/>
+  <rect x="96" y="414" width="258" height="43" rx="11" fill="#FFFFFF" stroke="#E8C486"/><text x="225" y="441" text-anchor="middle" class="pill" fill="#965B0B">EvidenceEvent</text>
+  <path d="M225 457V481" stroke="#E28717" stroke-width="2.5" marker-end="url(#o3)"/>
+  <rect x="96" y="485" width="258" height="43" rx="11" fill="#FFFFFF" stroke="#E8C486"/><text x="225" y="512" text-anchor="middle" class="pill" fill="#965B0B">five_kernel_reducer</text>
+  <text x="96" y="544" class="tiny">Reducer 输出 KernelMutation</text><text x="96" y="563" class="tiny">它是唯一直接写入者</text>
+
+  <path d="M380 424H408" stroke="#E28717" stroke-width="4" marker-end="url(#o3)"/>
+
+  <!-- 2 -->
+  <g filter="url(#shadow3)"><rect x="410" y="278" width="310" height="292" rx="22" fill="#FFF9EF" stroke="#E5AE58" stroke-width="1.5"/></g>
+  <circle cx="451" cy="320" r="25" fill="#E28717"/><text x="451" y="329" text-anchor="middle" class="num">2</text>
+  <text x="489" y="327" class="h3" fill="#9A5E0D">KernelState</text>
+  <text x="436" y="370" class="body">五核当前状态完整投影</text>
+  <g class="small">
+    <rect x="436" y="395" width="118" height="32" rx="10" fill="#EAF1FF"/><text x="495" y="416" text-anchor="middle">Structure</text>
+    <rect x="566" y="395" width="128" height="32" rx="10" fill="#EAF8F3"/><text x="630" y="416" text-anchor="middle">Knowledge</text>
+    <rect x="436" y="439" width="118" height="32" rx="10" fill="#FFF0F1"/><text x="495" y="460" text-anchor="middle">Human</text>
+    <rect x="566" y="439" width="128" height="32" rx="10" fill="#FFF5E2"/><text x="630" y="460" text-anchor="middle">Value</text>
+    <rect x="500" y="483" width="128" height="32" rx="10" fill="#F3EDFF"/><text x="564" y="504" text-anchor="middle">Practice</text>
+  </g>
+  <text x="436" y="551" class="small">同一事件可影响多个核，但必须逐核有理由</text>
+
+  <path d="M720 424H748" stroke="#E28717" stroke-width="4" marker-end="url(#o3)"/>
+
+  <!-- 3 -->
+  <g filter="url(#shadow3)"><rect x="750" y="278" width="310" height="292" rx="22" fill="#FFF9EF" stroke="#E5AE58" stroke-width="1.5"/></g>
+  <circle cx="791" cy="320" r="25" fill="#E28717"/><text x="791" y="329" text-anchor="middle" class="num">3</text>
+  <text x="829" y="327" class="h3" fill="#9A5E0D">MemoryFact</text>
+  <text x="776" y="370" class="body">不可变的原子学习事实</text>
+  <rect x="776" y="395" width="258" height="116" rx="14" fill="#FFFFFF" stroke="#E8C486"/>
+  <text x="798" y="425" class="small">• 发生了什么</text><text x="798" y="451" class="small">• 在哪个项目 / 关卡 / session</text><text x="798" y="477" class="small">• 证据等级与辅助程度</text><text x="798" y="503" class="small">• 回到哪个 EvidenceEvent</text>
+  <text x="776" y="551" class="small">后来答对只增加新事实，不删除旧错误</text>
+
+  <path d="M1060 424H1088" stroke="#E28717" stroke-width="4" marker-end="url(#o3)"/>
+
+  <!-- 4 -->
+  <g filter="url(#shadow3)"><rect x="1090" y="278" width="310" height="292" rx="22" fill="#FFF9EF" stroke="#E5AE58" stroke-width="1.5"/></g>
+  <circle cx="1131" cy="320" r="25" fill="#E28717"/><text x="1131" y="329" text-anchor="middle" class="num">4</text>
+  <text x="1169" y="327" class="h3" fill="#9A5E0D">MemoryModule</text>
+  <text x="1116" y="370" class="body">同核、同主题事实聚合</text>
+  <rect x="1116" y="397" width="258" height="108" rx="14" fill="#FFFFFF" stroke="#E8C486"/>
+  <text x="1140" y="428" class="small">原题失败</text><text x="1140" y="454" class="small">＋ 讲解 / 提示过程</text><text x="1140" y="480" class="small">＋ 重做 / 变式 / 复习结果</text>
+  <text x="1116" y="528" class="small">像“证据文件夹”</text><text x="1116" y="551" class="small">聚合不改变原始事实</text>
+
+  <path d="M1400 424H1428" stroke="#E28717" stroke-width="4" marker-end="url(#o3)"/>
+
+  <!-- 5 -->
+  <g filter="url(#shadow3)"><rect x="1430" y="278" width="420" height="292" rx="22" fill="#FFF9EF" stroke="#E5AE58" stroke-width="1.5"/></g>
+  <circle cx="1471" cy="320" r="25" fill="#E28717"/><text x="1471" y="329" text-anchor="middle" class="num">5</text>
+  <text x="1509" y="327" class="h3" fill="#9A5E0D">MemoryClaim</text>
+  <text x="1456" y="370" class="body">有证据、可证伪的长期声明</text>
+  <rect x="1456" y="396" width="368" height="88" rx="14" fill="#FFFFFF" stroke="#E8C486"/>
+  <text x="1480" y="427" class="small">SUPPORTS · CONTRADICTS · REFINES</text><text x="1480" y="455" class="small">SUPERSEDES · BLOCKS · ENABLES</text>
+  <rect x="1456" y="500" width="368" height="45" rx="11" fill="#FFF0DF"/><text x="1640" y="528" text-anchor="middle" class="pill" fill="#975B0C">一次成功不能直接生成稳定掌握</text>
+
+  <!-- transition to read plane -->
+  <path d="M1640 570V616H1228" fill="none" stroke="#108A8B" stroke-width="4" stroke-dasharray="10 8" marker-end="url(#t3)"/>
+  <text x="72" y="657" class="h2" fill="#0C7476">B｜可重建投影与只读消费</text>
+
+  <!-- 6 -->
+  <g filter="url(#shadow3)"><rect x="330" y="680" width="390" height="240" rx="22" fill="#EEF9F8" stroke="#5FB0AA" stroke-width="1.5"/></g>
+  <circle cx="373" cy="722" r="25" fill="#108A8B"/><text x="373" y="731" text-anchor="middle" class="num">6</text>
+  <text x="411" y="729" class="h3" fill="#0C7476">KernelHead</text>
+  <text x="356" y="772" class="body">每核的短期“桌面”</text>
+  <g class="small" text-anchor="middle">
+    <rect x="356" y="796" width="75" height="35" rx="10" fill="#FFF"/><text x="394" y="819">focus 3</text>
+    <rect x="441" y="796" width="82" height="35" rx="10" fill="#FFF"/><text x="482" y="819">alerts 5</text>
+    <rect x="533" y="796" width="90" height="35" rx="10" fill="#FFF"/><text x="578" y="819">working 8</text>
+    <rect x="633" y="796" width="61" height="35" rx="10" fill="#FFF"/><text x="664" y="819">stable 5</text>
+  </g>
+  <text x="356" y="860" class="small">引用被淘汰 ≠ 记忆被删除</text><text x="356" y="886" class="small">可从 KernelState + Memory Graph 重建</text>
+
+  <path d="M720 800H772" stroke="#1E5BBB" stroke-width="4" marker-end="url(#b3)"/>
+
+  <!-- 7 -->
+  <g filter="url(#shadow3)"><rect x="774" y="680" width="390" height="240" rx="22" fill="#EEF4FF" stroke="#6D96D7" stroke-width="1.5"/></g>
+  <circle cx="817" cy="722" r="25" fill="#1E5BBB"/><text x="817" y="731" text-anchor="middle" class="num">7</text>
+  <text x="855" y="729" class="h3" fill="#1B50A0">ContextPolicy + Retriever</text>
+  <text x="800" y="772" class="body">根据能力决定“取什么”</text>
+  <rect x="800" y="794" width="338" height="95" rx="14" fill="#FFFFFF" stroke="#B2C7E8"/>
+  <text x="824" y="824" class="small">① learner / project / checkpoint / session</text><text x="824" y="850" class="small">② subject exact → lexical + salience</text><text x="824" y="876" class="small">③ allow-listed one-hop relation + 脱敏</text>
+  <text x="800" y="909" class="tiny">无 LLM 热路径；确定性排序与安全过滤</text>
+
+  <path d="M1164 800H1216" stroke="#1E5BBB" stroke-width="4" marker-end="url(#b3)"/>
+
+  <!-- 8 -->
+  <g filter="url(#shadow3)"><rect x="1218" y="680" width="430" height="240" rx="22" fill="#EEF4FF" stroke="#6D96D7" stroke-width="1.5"/></g>
+  <circle cx="1261" cy="722" r="25" fill="#1E5BBB"/><text x="1261" y="731" text-anchor="middle" class="num">8</text>
+  <text x="1299" y="729" class="h3" fill="#1B50A0">ContextPacket → Agent</text>
+  <text x="1244" y="772" class="body">一次回合的可解释只读快照</text>
+  <g class="small" text-anchor="middle">
+    <rect x="1244" y="796" width="112" height="35" rx="10" fill="#FFF"/><text x="1300" y="819">items ≤ 12</text>
+    <rect x="1366" y="796" width="128" height="35" rx="10" fill="#FFF"/><text x="1430" y="819">paths ≤ 6</text>
+    <rect x="1504" y="796" width="118" height="35" rx="10" fill="#FFF"/><text x="1563" y="819">conflicts</text>
+  </g>
+  <text x="1244" y="862" class="small">manifest：证据 ID、预算、策略、快照 ID</text><text x="1244" y="888" class="small">Agent 只能消费；不能直接升级掌握</text>
+
+  <!-- loop -->
+  <path d="M1433 920V954H205V586H82" fill="none" stroke="#1E5BBB" stroke-width="3" stroke-dasharray="10 8" marker-end="url(#b3)"/>
+  <text x="554" y="978" class="small" fill="#1B50A0">Agent 引导下一次行为 → 新 EvidenceEvent → 新一轮闭环</text>
+
+  <rect x="70" y="998" width="1780" height="52" rx="15" fill="url(#navy3)"/>
+  <text x="960" y="1031" text-anchor="middle" class="body white">读图口诀：1–5“记得可信”｜6“放在手边”｜7“取得准确”｜8“用得合适”</text>
+</svg>

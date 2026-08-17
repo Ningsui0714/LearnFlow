@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F7FAFF"/><stop offset=".55" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F7FF"/></linearGradient>
+    <linearGradient id="navy2" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0B2F70"/><stop offset="1" stop-color="#165FC7"/></linearGradient>
+    <pattern id="grid2" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#D8E4F6" stroke-width="1" opacity=".34"/></pattern>
+    <filter id="shadow2" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="6" stdDeviation="9" flood-color="#173B70" flood-opacity=".12"/></filter>
+    <marker id="b2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#1E5BBB"/></marker>
+    <marker id="o2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#E28717"/></marker>
+    <marker id="t2" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#108A8B"/></marker>
+    <style>
+      text{font-family:"PingFang SC","Microsoft YaHei",sans-serif}.title{font-size:50px;font-weight:800;fill:#092B68}.subtitle{font-size:23px;font-weight:600;fill:#2B5598}.h2{font-size:27px;font-weight:760}.h3{font-size:22px;font-weight:760}.q{font-size:26px;font-weight:820}.body{font-size:17px;fill:#314A69}.small{font-size:14px;fill:#61748D}.tiny{font-size:12px;fill:#6B7F96}.pill{font-size:15px;font-weight:700}.white{fill:#FFF}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    </style>
+  </defs>
+  <rect width="1920" height="1080" fill="url(#bg2)"/><rect width="1920" height="1080" fill="url(#grid2)"/>
+  <text x="72" y="76" class="title">02｜五核架构：同一学习者的五个决策视角</text>
+  <text x="74" y="112" class="subtitle">五核不是五个 Agent；每个核拥有独立证据边界、短期热头部与长期巩固门槛</text>
+  <rect x="1722" y="44" width="126" height="48" rx="24" fill="#EAF1FF" stroke="#9DB9EB"/><text x="1785" y="75" text-anchor="middle" class="pill" fill="#1D4E9B">CORE 02</text>
+
+  <!-- read band -->
+  <g filter="url(#shadow2)"><rect x="70" y="145" width="1780" height="105" rx="22" fill="#FFFFFF" stroke="#91AFE0" stroke-width="1.5"/></g>
+  <rect x="96" y="168" width="300" height="58" rx="15" fill="#EDF4FF" stroke="#7CA2DE"/><text x="246" y="193" text-anchor="middle" class="h3" fill="#1B50A0">Agent / Workbench</text><text x="246" y="215" text-anchor="middle" class="small">按当前 capability 请求上下文</text>
+  <path d="M396 197H462" stroke="#1E5BBB" stroke-width="3" marker-end="url(#b2)"/>
+  <rect x="464" y="168" width="330" height="58" rx="15" fill="#EEF9F8" stroke="#67B7B0"/><text x="629" y="193" text-anchor="middle" class="h3" fill="#0C7073">ContextPolicy + Retriever</text><text x="629" y="215" text-anchor="middle" class="small">scope · relevance · salience · relation</text>
+  <path d="M794 197H860" stroke="#1E5BBB" stroke-width="3" marker-end="url(#b2)"/>
+  <rect x="862" y="168" width="420" height="58" rx="15" fill="#F4F7FF" stroke="#7E9ED7"/><text x="1072" y="193" text-anchor="middle" class="h3" fill="#274F91">FiveKernelContextPacket</text><text x="1072" y="215" text-anchor="middle" class="small">一次回合的有界、只读、答案脱敏快照</text>
+  <rect x="1320" y="168" width="504" height="58" rx="15" fill="#FFF8E9" stroke="#DCAA54"/><text x="1572" y="192" text-anchor="middle" class="pill" fill="#96600F">读取不会改变掌握</text><text x="1572" y="215" text-anchor="middle" class="small">ContextPacket ≠ EvidenceEvent ≠ KernelState</text>
+
+  <path d="M960 250V281" stroke="#108A8B" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#t2)"/>
+  <text x="72" y="301" class="h2" fill="#12366E">KernelHead｜每核短期热投影：focus 3 · alerts 5 · working 8 · stable 5</text>
+
+  <!-- five kernel cards -->
+  <g filter="url(#shadow2)">
+    <rect x="70" y="322" width="336" height="457" rx="22" fill="#EEF4FF" stroke="#5F8FD9" stroke-width="1.6"/>
+    <rect x="431" y="322" width="336" height="457" rx="22" fill="#ECFAF6" stroke="#57AD8D" stroke-width="1.6"/>
+    <rect x="792" y="322" width="336" height="457" rx="22" fill="#FFF4F4" stroke="#D2737D" stroke-width="1.6"/>
+    <rect x="1153" y="322" width="336" height="457" rx="22" fill="#FFF8E8" stroke="#D5A148" stroke-width="1.6"/>
+    <rect x="1514" y="322" width="336" height="457" rx="22" fill="#F5F0FF" stroke="#8E70D1" stroke-width="1.6"/>
+  </g>
+
+  <!-- structure -->
+  <rect x="70" y="322" width="336" height="72" rx="22" fill="#DCE9FF"/><rect x="70" y="373" width="336" height="21" fill="#DCE9FF"/>
+  <text x="238" y="357" text-anchor="middle" class="h2" fill="#2157A6">Structure</text><text x="238" y="381" text-anchor="middle" class="small">结构核</text>
+  <text x="238" y="435" text-anchor="middle" class="q" fill="#173F7C">走哪儿？</text>
+  <text x="94" y="474" class="pill" fill="#2157A6">状态对象</text><text x="94" y="501" class="body">路径 · 项目 · 关卡 · 依赖</text>
+  <line x1="94" y1="523" x2="382" y2="523" stroke="#B4C9EA"/>
+  <text x="94" y="552" class="pill" fill="#2157A6">典型证据</text><text x="94" y="579" class="body">导航、阻塞、转向、返回锚点</text>
+  <line x1="94" y1="601" x2="382" y2="601" stroke="#B4C9EA"/>
+  <text x="94" y="630" class="pill" fill="#2157A6">长期门槛</text><text x="94" y="657" class="body">稳定路径模式</text><text x="94" y="681" class="body">或已确认项目结构</text>
+  <rect x="94" y="709" width="288" height="44" rx="11" fill="#FFF" opacity=".78"/><text x="238" y="737" text-anchor="middle" class="small">不承担：概念掌握判断</text>
+
+  <!-- knowledge -->
+  <rect x="431" y="322" width="336" height="72" rx="22" fill="#DDF5EC"/><rect x="431" y="373" width="336" height="21" fill="#DDF5EC"/>
+  <text x="599" y="357" text-anchor="middle" class="h2" fill="#147159">Knowledge</text><text x="599" y="381" text-anchor="middle" class="small">知识核</text>
+  <text x="599" y="435" text-anchor="middle" class="q" fill="#105F4C">学什么？</text>
+  <text x="455" y="474" class="pill" fill="#147159">状态对象</text><text x="455" y="501" class="body">概念 · 问题 · 缺口 · 误解</text>
+  <line x1="455" y1="523" x2="743" y2="523" stroke="#AED9C9"/>
+  <text x="455" y="552" class="pill" fill="#147159">典型证据</text><text x="455" y="579" class="body">评分答案、理由、迁移表现</text>
+  <line x1="455" y1="601" x2="743" y2="601" stroke="#AED9C9"/>
+  <text x="455" y="630" class="pill" fill="#147159">长期门槛</text><text x="455" y="657" class="body">评分证据支持</text><text x="455" y="681" class="body">且可被后续证伪或修正</text>
+  <rect x="455" y="709" width="288" height="44" rx="11" fill="#FFF" opacity=".78"/><text x="599" y="737" text-anchor="middle" class="small">一次答对 ≠ 稳定掌握</text>
+
+  <!-- human -->
+  <rect x="792" y="322" width="336" height="72" rx="22" fill="#FFE2E4"/><rect x="792" y="373" width="336" height="21" fill="#FFE2E4"/>
+  <text x="960" y="357" text-anchor="middle" class="h2" fill="#A34250">Human</text><text x="960" y="381" text-anchor="middle" class="small">人因核</text>
+  <text x="960" y="435" text-anchor="middle" class="q" fill="#913844">怎么教？</text>
+  <text x="816" y="474" class="pill" fill="#A34250">状态对象</text><text x="816" y="501" class="body">负荷 · 注意 · 情绪反应 · 偏好</text>
+  <line x1="816" y1="523" x2="1104" y2="523" stroke="#E8B7BC"/>
+  <text x="816" y="552" class="pill" fill="#A34250">典型证据</text><text x="816" y="579" class="body">明确反馈、讲法有效/无效</text>
+  <line x1="816" y1="601" x2="1104" y2="601" stroke="#E8B7BC"/>
+  <text x="816" y="630" class="pill" fill="#A34250">长期门槛</text><text x="816" y="657" class="body">学习者确认</text><text x="816" y="681" class="body">或跨 session 一致证据</text>
+  <rect x="816" y="709" width="288" height="44" rx="11" fill="#FFF" opacity=".78"/><text x="960" y="737" text-anchor="middle" class="small">一次答错 ≠ 焦虑或固定风格</text>
+
+  <!-- value -->
+  <rect x="1153" y="322" width="336" height="72" rx="22" fill="#FFEBC5"/><rect x="1153" y="373" width="336" height="21" fill="#FFEBC5"/>
+  <text x="1321" y="357" text-anchor="middle" class="h2" fill="#94600E">Value</text><text x="1321" y="381" text-anchor="middle" class="small">价值核</text>
+  <text x="1321" y="435" text-anchor="middle" class="q" fill="#80500A">为什么现在学？</text>
+  <text x="1177" y="474" class="pill" fill="#94600E">状态对象</text><text x="1177" y="501" class="body">目标 · 优先级 · 动机 · 相关性</text>
+  <line x1="1177" y1="523" x2="1465" y2="523" stroke="#E5C98F"/>
+  <text x="1177" y="552" class="pill" fill="#94600E">典型证据</text><text x="1177" y="579" class="body">用户陈述、确认、价值理由</text>
+  <line x1="1177" y1="601" x2="1465" y2="601" stroke="#E5C98F"/>
+  <text x="1177" y="630" class="pill" fill="#94600E">长期门槛</text><text x="1177" y="657" class="body">用户明确确认</text><text x="1177" y="681" class="body">长期目标或价值排序</text>
+  <rect x="1177" y="709" width="288" height="44" rx="11" fill="#FFF" opacity=".78"/><text x="1321" y="737" text-anchor="middle" class="small">目标不能替代能力证据</text>
+
+  <!-- practice -->
+  <rect x="1514" y="322" width="336" height="72" rx="22" fill="#E7DDFF"/><rect x="1514" y="373" width="336" height="21" fill="#E7DDFF"/>
+  <text x="1682" y="357" text-anchor="middle" class="h2" fill="#6548AE">Practice</text><text x="1682" y="381" text-anchor="middle" class="small">实践核</text>
+  <text x="1682" y="435" text-anchor="middle" class="q" fill="#593B9D">怎么验证？</text>
+  <text x="1538" y="474" class="pill" fill="#6548AE">状态对象</text><text x="1538" y="501" class="body">尝试 · 辅助 · 产物 · 迁移</text>
+  <line x1="1538" y1="523" x2="1826" y2="523" stroke="#C9B9EB"/>
+  <text x="1538" y="552" class="pill" fill="#6548AE">典型证据</text><text x="1538" y="579" class="body">Attempt、测试、反馈、变式</text>
+  <line x1="1538" y1="601" x2="1826" y2="601" stroke="#C9B9EB"/>
+  <text x="1538" y="630" class="pill" fill="#6548AE">长期门槛</text><text x="1538" y="657" class="body">独立完成优先</text><text x="1538" y="681" class="body">且有已校验变式迁移</text>
+  <rect x="1538" y="709" width="288" height="44" rx="11" fill="#FFF" opacity=".78"/><text x="1682" y="737" text-anchor="middle" class="small">提示成功 ≠ 独立迁移</text>
+
+  <!-- memory fabric -->
+  <path d="M960 779V812" stroke="#108A8B" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#t2)"/>
+  <g filter="url(#shadow2)"><rect x="70" y="814" width="1780" height="154" rx="22" fill="#FFFFFF" stroke="#7F9FCC" stroke-width="1.5"/></g>
+  <text x="96" y="849" class="h2" fill="#12366E">长期可检查记忆｜Typed Memory Fabric</text>
+  <rect x="96" y="872" width="390" height="66" rx="14" fill="#EDF4FF" stroke="#78A0DE"/><text x="291" y="900" text-anchor="middle" class="h3" fill="#1E55A5">MemoryFact</text><text x="291" y="925" text-anchor="middle" class="small">不可变原子事实｜直接追溯 EvidenceEvent</text>
+  <path d="M486 905H565" stroke="#1E5BBB" stroke-width="3" marker-end="url(#b2)"/>
+  <rect x="567" y="872" width="390" height="66" rx="14" fill="#ECFAF6" stroke="#66B499"/><text x="762" y="900" text-anchor="middle" class="h3" fill="#12715B">MemoryModule</text><text x="762" y="925" text-anchor="middle" class="small">同核同主题聚合｜保留来源与时间范围</text>
+  <path d="M957 905H1036" stroke="#1E5BBB" stroke-width="3" marker-end="url(#b2)"/>
+  <rect x="1038" y="872" width="430" height="66" rx="14" fill="#F5F0FF" stroke="#9B80DC"/><text x="1253" y="900" text-anchor="middle" class="h3" fill="#6849B5">MemoryClaim</text><text x="1253" y="925" text-anchor="middle" class="small">可证伪长期声明｜支持、冲突、修正、替代</text>
+  <rect x="1500" y="872" width="324" height="66" rx="14" fill="#FFF8E9" stroke="#DCAA54"/><text x="1662" y="899" text-anchor="middle" class="pill" fill="#96600F">subject · scope · salience</text><text x="1662" y="924" text-anchor="middle" class="small">provenance · schema version</text>
+
+  <!-- authority footer -->
+  <path d="M960 968V991" stroke="#E28717" stroke-width="3" marker-end="url(#o2)"/>
+  <rect x="70" y="992" width="1780" height="58" rx="16" fill="url(#navy2)"/>
+  <text x="960" y="1028" text-anchor="middle" class="body white">唯一写入：行为 → EvidenceEvent → Reducer → KernelMutation → KernelState；KernelHead 和 ContextPacket 只是可重建的只读投影</text>
+</svg>
