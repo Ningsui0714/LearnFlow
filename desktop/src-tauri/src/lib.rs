@@ -65,6 +65,9 @@ pub fn run() {
                 .env("REPO_FILES_DIR", source_cache_dir.to_string_lossy().as_ref())
                 .env("SOURCE_UPLOADS_DIR", source_uploads_dir.to_string_lossy().as_ref())
                 .env("LEARNFLOW_SETTINGS_PATH", settings_path.to_string_lossy().as_ref())
+                // A learner-visible memory graph must continuously consume
+                // eligible Fact batches into versioned Module/Claim nodes.
+                .env("MEMORY_AUTO_SYNTHESIS_ENABLED", "true")
                 .env(
                     "CORS_ORIGINS",
                     "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:5173",

@@ -27,6 +27,7 @@ from app.services.memory_graph import (
     _bounded_evidence_ids,
     current_memory_module,
     input_fingerprint,
+    maybe_queue_synthesis,
     module_evidence_fact_ids,
     rebuild_kernel_long_term_from_modules,
 )
@@ -161,6 +162,63 @@ async def recover_interrupted_runs() -> int:
         return len(runs)
 
 
+async def reconcile_eligible_synthesis_runs() -> int:
+    """Rebuild missing queues for historical eligible Fact groups.
+
+    Facts are the source projection, so this scan is safe to repeat on every
+    worker start. ``maybe_queue_synthesis`` re-applies the deterministic
+    per-kernel threshold and fingerprint rules; no Module or Claim is created
+    here directly.
+    """
+    async with async_session() as db:
+        groups = list((await db.execute(
+            select(
+                MemoryNode.learner_id,
+                MemoryNode.kernel_name,
+                MemoryNode.subject_key,
+            )
+            .join(MemoryFact, MemoryFact.node_id == MemoryNode.id)
+            .where(
+                MemoryNode.node_type == "fact",
+                MemoryFact.consumption_status == "eligible",
+            )
+            .distinct()
+            .order_by(
+                MemoryNode.learner_id.asc(),
+                MemoryNode.kernel_name.asc(),
+                MemoryNode.subject_key.asc(),
+            )
+        )).all())
+        actionable: set[int] = set()
+        for learner_id, kernel_name, subject_key in groups:
+            trigger_event = (await db.execute(
+                select(EvidenceEvent)
+                .join(MemoryFact, MemoryFact.source_event_id == EvidenceEvent.id)
+                .join(MemoryNode, MemoryNode.id == MemoryFact.node_id)
+                .where(
+                    MemoryNode.learner_id == learner_id,
+                    MemoryNode.kernel_name == kernel_name,
+                    MemoryNode.subject_key == subject_key,
+                    MemoryFact.consumption_status == "eligible",
+                )
+                .order_by(EvidenceEvent.occurred_at.desc(), EvidenceEvent.id.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            if trigger_event is None:
+                continue
+            run = await maybe_queue_synthesis(
+                db,
+                int(learner_id),
+                str(kernel_name),
+                str(subject_key),
+                trigger_event=trigger_event,
+            )
+            if run is not None and run.status == "queued":
+                actionable.add(int(run.id))
+        await db.commit()
+        return len(actionable)
+
+
 async def _release_run(db: AsyncSession, run: MemorySynthesisRun, error: str) -> None:
     facts = (await db.execute(select(MemoryFact).where(
         MemoryFact.reservation_run_id == run.id,
@@ -253,12 +311,12 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
     try:
         draft, model_name, usage = await _model_draft(run.kernel_name, run.subject_key, rows)
     except Exception as exc:
-        async with async_session() as db:
-            current = await db.get(MemorySynthesisRun, run_id)
-            if current:
-                await _release_run(db, current, f"model_error:{type(exc).__name__}:{exc}")
-                return current
-        return None
+        # Consolidation must remain available offline and during provider
+        # outages. The deterministic draft uses the exact same evidence
+        # whitelist and still passes the validator below.
+        draft = _deterministic_draft(run.kernel_name, run.subject_key, rows)
+        model_name = "deterministic-fallback"
+        usage = {"fallback_reason": type(exc).__name__}
 
     async with async_session() as db:
         run = await db.get(MemorySynthesisRun, run_id)
@@ -484,6 +542,7 @@ async def memory_worker_loop(stop_event: asyncio.Event) -> None:
     if not settings.memory_auto_synthesis_enabled:
         await stop_event.wait()
         return
+    await reconcile_eligible_synthesis_runs()
     while not stop_event.is_set():
         try:
             processed = await process_due_runs()

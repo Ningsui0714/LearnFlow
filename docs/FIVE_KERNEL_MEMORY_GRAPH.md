@@ -84,16 +84,21 @@ queued -> running/reserved -> completed/consumed
 
 合成器只能引用运行记录中的版本证据集合。越界引用、跨核候选和证据不足的知识掌握声明会整批拒绝。进程中断时，启动恢复会释放 delta reservation 并把运行重新排队。
 
+worker 启动时还会扫描 `eligible` Fact 的 `(learner, kernel, subject)` 分组，重新执行本核
+确定性门槛并补齐历史遗漏队列。该过程可重复执行，合成指纹保证不会重复生成同一版本。
+在线模型调用失败时自动回退到确定性合成器，仍经过相同的事实白名单和声明校验。
+
 旧库通过带备份的 `v12-memory-module-versioning` 迁移回填版本号、父版本、证据闭包和
 历史状态。回填不修改 EvidenceEvent、KernelMutation 或 Fact 的事实内容。
 
-自动合成默认关闭：
+自动合成默认开启：
 
 ```env
-MEMORY_AUTO_SYNTHESIS_ENABLED=false
+MEMORY_AUTO_SYNTHESIS_ENABLED=true
 ```
 
-在带标签轨迹的语义质量评测通过后，将其设为 `true` 并重启后端。未配置 LLM key 时，worker 使用确定性合成器，便于本地验证完整事务链路。
+只有需要专门检查未消费队列时才临时关闭。未配置 LLM key 或模型供应商不可用时，worker
+使用确定性合成器；Module/Claim 的形成不依赖网络，且不会改变 reducer 的证据判断。
 
 ## API
 

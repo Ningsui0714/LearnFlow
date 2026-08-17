@@ -70,6 +70,10 @@
 什么、增加了什么、替换了什么”。事实仍保持原始来源；同一事实可以通过图边支持
 多个 Module 版本，首次消费归属不会被改写。
 
+Module/Claim 异步合成属于默认开启的正常读取投影。worker 启动时会从仍为 `eligible`
+的 Fact 重建遗漏的合成队列，再按每核门槛消费；模型供应商不可用时使用同一事实白名单
+生成确定性降级摘要。因此已有学习者不会长期停留在“只有 Fact”的不完整图谱状态。
+
 未被 reducer 归入某核的相关事件继续保留在 `EvidenceEvent` 账本中。若未来增加跨事件
 模式发现，模式判断必须生成带 `source_event_ids` 的派生 `EvidenceEvent`，再经统一
 reducer 形成该核的 Fact；模式分析器本身不直接生成 Module 或修改 KernelState。

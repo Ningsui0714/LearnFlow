@@ -70,7 +70,7 @@ prepare_competition_demo() {
   export DATABASE_URL="sqlite+aiosqlite:///$demo_database"
   export LLM_API_KEY=""
   export GITHUB_RESOURCE_SEARCH_ENABLED=false
-  export MEMORY_AUTO_SYNTHESIS_ENABLED=false
+  export MEMORY_AUTO_SYNTHESIS_ENABLED=true
   PID_FILE="$DEMO_PID_FILE"
   BACKEND_PORT="$(next_available_port 8010)"
   FRONTEND_PORT="$(next_available_port 5173)"

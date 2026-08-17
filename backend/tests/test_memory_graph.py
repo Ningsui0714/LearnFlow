@@ -29,6 +29,7 @@ from app.services.memory_worker import (
     SynthesisDraft,
     _validate_draft,
     process_synthesis_run,
+    reconcile_eligible_synthesis_runs,
 )
 
 
@@ -171,6 +172,76 @@ def test_same_kernel_synthesis_has_complete_evidence_path_and_consumes_once():
     assert all(fact.consumption_status == "consumed" for _, fact in facts)
     assert projection["knowledge"]["long_term"]["memory_graph_claims"]
     assert before == after == 1
+
+
+def test_worker_startup_rebuilds_missing_historical_synthesis_queue():
+    async def scenario():
+        await init_db()
+        async with async_session() as db:
+            learner = Learner(key=_key("memory-reconcile"), display_name="Memory Reconcile")
+            db.add(learner)
+            await db.flush()
+            project = Project(learner_id=learner.id, name="历史队列修复")
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={})
+            db.add(roadmap)
+            await db.flush()
+            checkpoint = Checkpoint(roadmap_id=roadmap.id, title="历史事实", order=1)
+            db.add(checkpoint)
+            await db.flush()
+            for item_id in (111, 112):
+                await record_event(
+                    db,
+                    learner_id=learner.id,
+                    project_id=project.id,
+                    checkpoint_id=checkpoint.id,
+                    event_type="concept_attempt_evaluated",
+                    source="grader",
+                    payload={
+                        "item_id": item_id,
+                        "concept_id": "historical-reconciliation",
+                        "question": f"历史题目 {item_id}",
+                        "correct": True,
+                        "independent": True,
+                    },
+                    confidence=0.95,
+                )
+            queued = list((await db.execute(select(MemorySynthesisRun).where(
+                MemorySynthesisRun.learner_id == learner.id,
+            ))).scalars().all())
+            for run in queued:
+                await db.delete(run)
+            await db.commit()
+            learner_id = learner.id
+
+        rebuilt = await reconcile_eligible_synthesis_runs()
+        async with async_session() as db:
+            run = (await db.execute(select(MemorySynthesisRun).where(
+                MemorySynthesisRun.learner_id == learner_id,
+                MemorySynthesisRun.kernel_name == "knowledge",
+                MemorySynthesisRun.subject_key == "concept:historical-reconciliation",
+                MemorySynthesisRun.status == "queued",
+            ))).scalar_one()
+            run.due_at = datetime.utcnow()
+            await db.commit()
+            run_id = run.id
+        completed = await process_synthesis_run(run_id)
+        async with async_session() as db:
+            module_count = await db.scalar(select(func.count(MemoryModule.node_id)).where(
+                MemoryModule.synthesis_run_id == run_id,
+            ))
+            claim_count = await db.scalar(
+                select(func.count(MemoryClaim.node_id))
+                .join(MemoryModule, MemoryModule.node_id == MemoryClaim.module_node_id)
+                .where(MemoryModule.synthesis_run_id == run_id)
+            )
+        return rebuilt, completed, module_count, claim_count
+
+    rebuilt, completed, module_count, claim_count = asyncio.run(scenario())
+    assert rebuilt >= 1
+    assert completed and completed.status == "completed"
+    assert module_count == claim_count == 1
 
 
 def test_new_facts_create_versioned_module_with_inherited_evidence_and_single_current_head():
@@ -367,7 +438,7 @@ def test_cross_kernel_run_is_rejected_without_consuming_facts():
     assert all(fact.consumption_status == "eligible" for fact in facts)
 
 
-def test_model_failure_releases_fact_reservations(monkeypatch):
+def test_model_failure_falls_back_to_deterministic_module(monkeypatch):
     async def fail_model(*_args, **_kwargs):
         raise TimeoutError("synthetic timeout")
 
@@ -408,13 +479,19 @@ def test_model_failure_releases_fact_reservations(monkeypatch):
             run_id, fact_id = run.id, fact.node_id
         result = await process_synthesis_run(run_id)
         async with async_session() as db:
-            released = await db.get(MemoryFact, fact_id)
-        return result, released
+            consumed = await db.get(MemoryFact, fact_id)
+            module = (await db.execute(select(MemoryModule).where(
+                MemoryModule.synthesis_run_id == run_id,
+            ))).scalar_one()
+        return result, consumed, module
 
-    result, fact = asyncio.run(scenario())
-    assert result and result.status == "failed"
-    assert fact.consumption_status == "eligible"
+    result, fact, module = asyncio.run(scenario())
+    assert result and result.status == "completed"
+    assert result.model_name == "deterministic-fallback"
+    assert result.usage == {"fallback_reason": "TimeoutError"}
+    assert fact.consumption_status == "consumed"
     assert fact.reservation_run_id is None
+    assert module.synthesis_run_id == result.id
 
 
 def test_memory_api_isolated_and_feedback_appends_history():

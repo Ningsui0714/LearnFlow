@@ -51,7 +51,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./learnflow.db"
     five_kernel_enabled: bool = True
-    memory_auto_synthesis_enabled: bool = False
+    # Module/Claim consolidation is part of the normal memory projection. It
+    # remains asynchronous, but must be enabled by default so queued Facts do
+    # not leave a learner's graph permanently incomplete.
+    memory_auto_synthesis_enabled: bool = True
     github_token: str = ""
     github_resource_search_enabled: bool = True
     dev_test_login_enabled: bool = True

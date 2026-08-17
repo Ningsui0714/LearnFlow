@@ -25,6 +25,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
         "KernelMutation -> MemoryFact -> versioned MemoryModule -> MemoryClaim"
     )
     assert "one active version" in manifest["authority"]["module_versioning"]
+    assert "startup queue reconciliation" in manifest["authority"]["memory_consolidation"]
 
 
 def test_remediation_events_have_standard_authority_provenance():

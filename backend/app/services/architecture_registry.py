@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-17.2"
+REGISTRY_VERSION = "2026-08-17.3"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -459,6 +459,7 @@ def registry_manifest() -> dict[str, Any]:
             "kernel_write_path": "EvidenceEvent -> five_kernel_reducer -> KernelMutation",
             "memory_projection": "KernelMutation -> MemoryFact -> versioned MemoryModule -> MemoryClaim",
             "module_versioning": "immutable snapshots; evidence closure + delta facts; REFINES/SUPERSEDES; one active version",
+            "memory_consolidation": "enabled async worker; startup queue reconciliation; deterministic offline/provider-failure fallback",
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
         },

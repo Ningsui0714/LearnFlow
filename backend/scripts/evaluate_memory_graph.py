@@ -198,7 +198,10 @@ def evaluate(path: Path) -> dict:
             "passed": all(acceptance.values()),
             "notes": {
                 "legacy_imports": "Legacy/unverified modules are excluded from claim evidence coverage.",
-                "semantic_quality": "Run labeled trajectory replay before enabling automatic synthesis.",
+                "semantic_quality": (
+                    "Automatic synthesis is enabled; keep labeled trajectory replay as the quality gate "
+                    "for generated wording. Deterministic fallback preserves the validated graph projection."
+                ),
             },
         }
     finally:
