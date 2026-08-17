@@ -60,6 +60,7 @@ TUTOR_SYSTEM_PROMPT = """你是 LearnFlow 中常驻的学习 Tutor。你可以�
 11. 用户要求调整阶段、增删关卡或改变节奏时，先生成路线修订方案；确认后再写入正式路线。聊天中的路线描述本身不算已建立路线。
 12. 严格区分结构观察与知识观察：结构只记录学习者位于哪条路径、哪个阶段、依赖什么、为何转向以及回来时从哪里继续；知识只记录某个具体知识点的理解程度、待解疑问、明确误解与验证结果。学习目标属于价值，学习负荷属于人因，实践产物属于实践。
 13. 普通疑问或答错只能形成知识缺口，不能自动写成“误解”。只有用户明确表达了可指出其错误之处的具体理解，或评估证据诊断出稳定错误模式时，才记录 misconceptions。两个维度需要联动时，用检查点、概念或证据引用关联，不在两个维度重复同一段判断。
+14. 复习台上下文是服务端装配的只读题目、错因、调度与证据投影。你可以解释、提示和说明安排，但不能替代后端判题、修改间隔、宣布掌握，或从一次失败推断固定误解。
 
 严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。只有在 checkpoint 会话中，且任务确实需要修改或测试共享项目文件时，才可设置 local_agent_task.should_delegate=true；只描述任务类型、目标、约束与能力，不选择 Agent、不拼接命令，也不要声称已经启动。"""
 
@@ -69,7 +70,9 @@ GLOBAL_MAIN_AGENT_PROMPT = """当前是 global 主 Agent 会话。你的主要�
 - 关注挫败、焦虑、负荷和节奏，用教师式支持帮助用户恢复可行动状态，不做医学诊断；
 - 识别值得长期推进的目标，维护项目提案，并在用户明确授权时创建或进入项目。
 
-项目列表、最近活跃项目、关卡位置以及结构/知识短期记忆都只是理解学习者的参考，不代表你正在负责那个项目。不要自称某个项目的负责人，不要主动续接某个项目的当前关卡、路线、来源或课前后辅导，也不要把最近活跃项目当作本轮默认主题。涉及正式路线、关卡学习、深入练习或项目推进时，说明应由对应项目 Tutor 或关卡承接。除非用户明确要求操作某个项目，否则保持全局视角。"""
+项目列表、最近活跃项目、关卡位置以及结构/知识短期记忆都只是理解学习者的参考，不代表你正在负责那个项目。不要自称某个项目的负责人，不要主动续接某个项目的当前关卡、路线、来源或课前后辅导，也不要把最近活跃项目当作本轮默认主题。涉及正式路线、关卡学习、深入练习或项目推进时，说明应由对应项目 Tutor 或关卡承接。除非用户明确要求操作某个项目，否则保持全局视角。
+
+如果 active_surface_context.kind 是 review_item，表示用户正从全局复习台发起本轮对话。此时可以围绕当前题目、已记录错因、辅助程度、间隔等级和证据状态直接协作；不要泄露答案，也不要把聊天讲解当作作答或掌握证据。"""
 
 PROJECT_TUTOR_PROMPT = """当前是 project 项目 Tutor 会话。你只负责当前绑定项目，并持续承接它的来源、正式路线、路线修订、阶段推进和课前后答疑。其他项目及全局记忆只能作为背景参考，不能替换当前项目上下文。正式教学与验证必须落入路线关卡。"""
 
@@ -1551,8 +1554,9 @@ async def _generate_tutor_reply(
     session: AgentSession,
 ) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None]:
     latest_messages = await get_messages(db, session.id, limit=1)
+    latest_context = dict(latest_messages[-1].meta_data or {}) if latest_messages else {}
     latest_interaction = str(
-        ((latest_messages[-1].meta_data or {}).get("interaction") if latest_messages else "") or ""
+        latest_context.get("interaction") or ""
     )
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
         return "未接入模型。", [], None, None, [], None
@@ -1573,6 +1577,11 @@ async def _generate_tutor_reply(
     proposals = await list_session_proposals(db, session.id)
     project_workspace: dict[str, Any] = {}
     checkpoint_workspace: dict[str, Any] = {}
+    review_workspace = (
+        dict(latest_context.get("review_context") or {})
+        if latest_context.get("surface") == "review"
+        else {}
+    )
     if session.session_type == "project" and session.project_id:
         active_project = (await db.execute(select(Project).where(
             Project.id == session.project_id,
@@ -1643,8 +1652,6 @@ async def _generate_tutor_reply(
             } if accepted_proposal else None,
         }
     elif session.session_type == "checkpoint" and session.project_id and session.checkpoint_id:
-        latest = await get_messages(db, session.id, limit=1)
-        latest_context = dict(latest[-1].meta_data or {}) if latest else {}
         checkpoint_workspace = await build_checkpoint_tutor_context(
             db,
             learner_id=session.learner_id,
@@ -1668,6 +1675,7 @@ async def _generate_tutor_reply(
                 else "portfolio_and_memory_reference_only"
             ),
         },
+        "active_surface_context": review_workspace,
         "current_state": state,
         "available_projects": [{"id": p.id, "name": p.name, "description": p.description} for p in projects],
         "learning_projection": prompt_projection,
@@ -1904,6 +1912,16 @@ async def process_turn(
     ):
         if key in incoming_context:
             message_context[key] = incoming_context[key]
+    if incoming_context.get("surface") == "review":
+        review_schedule_id = incoming_context.get("review_schedule_id")
+        if isinstance(review_schedule_id, int):
+            from app.services.review import build_review_tutor_context
+            review_context = await build_review_tutor_context(
+                db, session.learner_id, review_schedule_id,
+            )
+            if review_context:
+                message_context["review_schedule_id"] = review_schedule_id
+                message_context["review_context"] = review_context
     if candidate_sources_completed:
         message_context["interaction"] = "candidate_sources_completed"
         proposal_id = incoming_context.get("proposal_id")

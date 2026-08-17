@@ -17,7 +17,7 @@ from app.services.demo_seed import seed_competition_demo
 from app.services.learning_runtime import create_attempt, record_event
 from app.services.review import (
     _valid_choice_variant, _valid_output_variant, apply_assessment_result,
-    rebuild_review_schedules,
+    build_review_tutor_context, rebuild_review_schedules,
 )
 
 
@@ -145,6 +145,48 @@ def test_all_assessed_items_are_scheduled_and_answers_are_hidden(client: TestCli
     history = client.get(f"/api/review/items/{schedule_id}/history")
     assert history.status_code == 200
     assert not _contains_hidden_answers(history.json()["attempts"])
+
+    async def tutor_context():
+        async with async_session() as db:
+            owned = await build_review_tutor_context(db, state["learner_id"], schedule_id)
+            foreign = await build_review_tutor_context(db, state["learner_id"] + 999999, schedule_id)
+            return owned, foreign
+
+    context, foreign_context = asyncio.run(tutor_context())
+    assert context["authority"] == "server_scoped_read_only_projection"
+    assert context["review_schedule_id"] == schedule_id
+    assert context["source"]["item_id"] == question_id
+    assert context["guardrails"]["answers_included"] is False
+    assert not _contains_hidden_answers(context)
+    assert foreign_context is None
+
+    tutor_session = client.post("/api/agent/sessions", json={"session_type": "global"})
+    assert tutor_session.status_code == 200
+    turn_text = f"解释当前复习安排 {uuid.uuid4().hex[:8]}"
+    tutor_turn = client.post(
+        f"/api/agent/sessions/{tutor_session.json()['id']}/turns",
+        json={
+            "message": turn_text,
+            "client_turn_id": f"review-context-{uuid.uuid4()}",
+            "context": {
+                "surface": "review",
+                "resource_kind": "review_item",
+                "resource_id": schedule_id,
+                "review_schedule_id": schedule_id,
+            },
+        },
+    )
+    assert tutor_turn.status_code == 200, tutor_turn.text
+    tutor_state = client.get(
+        f"/api/agent/sessions/{tutor_session.json()['id']}"
+    ).json()
+    saved_turn = next(
+        item for item in reversed(tutor_state["messages"])
+        if item["role"] == "user" and item["content"] == turn_text
+    )
+    assert saved_turn["meta_data"]["surface"] == "review"
+    assert saved_turn["meta_data"]["review_context"]["review_schedule_id"] == schedule_id
+    assert not _contains_hidden_answers(saved_turn["meta_data"]["review_context"])
 
     summary = client.get("/api/review/summary").json()
     assert summary["total"] >= 1

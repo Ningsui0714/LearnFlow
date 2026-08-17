@@ -23,6 +23,8 @@ interface Props {
   checkpointId?: number
   turnContext?: Record<string, any>
   quickPrompts?: string[]
+  surfaceTitle?: string
+  surfaceDescription?: string
   className?: string
   onProjectChange?: (project: any) => void
   onRoadmapUpdate?: (roadmap: any) => void
@@ -196,7 +198,8 @@ function normalizeTutorContent(content: unknown): string {
 }
 
 export default function TutorPanel({
-  projectId, checkpointId, turnContext = {}, quickPrompts = [], className = '', onProjectChange, onRoadmapUpdate, onCheckpointChange,
+  projectId, checkpointId, turnContext = {}, quickPrompts = [], surfaceTitle, surfaceDescription,
+  className = '', onProjectChange, onRoadmapUpdate, onCheckpointChange,
   onProposalAccepted, proposalDragEnabled = false, projectProposal,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
   onRefreshCandidateSources, onAddCandidateSource,
@@ -446,16 +449,16 @@ export default function TutorPanel({
     <section className={`flex min-h-0 flex-col overflow-hidden border border-gray-200 bg-white rounded-lg ${className}`}>
       <header className="flex min-h-14 items-center justify-between border-b border-gray-200 px-4 py-3">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-gray-900">{checkpointId ? '关卡 Tutor' : projectId ? '学习 Tutor' : '主 Agent'}</h2>
+          <h2 className="text-sm font-semibold text-gray-900">{surfaceTitle || (checkpointId ? '关卡 Tutor' : projectId ? '学习 Tutor' : '主 Agent')}</h2>
           <p className="truncate text-xs text-gray-500">
-            {checkpointId
+            {surfaceDescription || (checkpointId
               ? (summary?.active_checkpoint?.title || '正在接入本关讲义、练习与文件上下文...')
               : projectId
               ? (summary?.active_checkpoint?.title
                 || (summary?.active_project?.name
                   ? `负责「${summary.active_project.name}」的路线、来源与课前后答疑`
                   : '正在接入项目上下文...'))
-              : '学习方向、目标澄清、简要答疑与学习状态支持'}
+              : '学习方向、目标澄清、简要答疑与学习状态支持')}
           </p>
         </div>
         {projectId && summary?.progress?.total > 0 && (

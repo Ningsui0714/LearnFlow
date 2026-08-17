@@ -25,6 +25,11 @@ export type WorkspaceAgentContext =
       onAddCandidateSource?: (candidate: any) => void | Promise<void>
       onRoadmapUpdate?: (roadmap: any) => void
     }
+  | {
+      kind: 'review'
+      reviewScheduleId: number
+      title?: string
+    }
 
 let currentContext: WorkspaceAgentContext | null = null
 const listeners = new Set<(context: WorkspaceAgentContext) => void>()

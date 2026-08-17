@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   AlertTriangle, ArrowRight, Brain, CalendarClock, CheckCircle2, ChevronRight,
-  Clock3, Code2, Eye, Filter, History, Pause, Play, RotateCcw, Search,
+  ChevronDown, ChevronUp, Clock3, Code2, Eye, Filter, History, Pause, Play, RotateCcw, Search,
   ShieldCheck, SkipForward, Sparkles, X,
 } from 'lucide-react'
 import RemediationPanel from '../components/exercise/RemediationPanel'
 import { useWorkspace, useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
 import {
   getReviewHistory, getReviewSummary, listReviewItems, manageReviewItem,
   submitReviewItem,
@@ -421,6 +422,9 @@ export default function ReviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [overviewExpanded, setOverviewExpanded] = useState(
+    () => localStorage.getItem('learnflow.review.overview.v1') === 'expanded',
+  )
 
   const params = useMemo(() => ({
     project_id: projectId ? Number(projectId) : undefined,
@@ -459,6 +463,23 @@ export default function ReviewPage() {
   const projects = useMemo(() => Array.from(new Map(allItems.filter(item => item.project_id).map(item => [item.project_id, item.project_name])).entries()), [allItems])
   const checkpoints = useMemo(() => Array.from(new Map(allItems.filter(item => !projectId || String(item.project_id) === projectId).map(item => [item.checkpoint_id, item.checkpoint_title])).entries()), [allItems, projectId])
 
+  useEffect(() => {
+    if (!activeItem) return
+    publishWorkspaceAgentContext({
+      kind: 'review',
+      reviewScheduleId: activeItem.id,
+      title: activeItem.title,
+    })
+  }, [activeItem])
+
+  const toggleOverview = () => {
+    setOverviewExpanded(current => {
+      const next = !current
+      localStorage.setItem('learnflow.review.overview.v1', next ? 'expanded' : 'collapsed')
+      return next
+    })
+  }
+
   const act = async (action: 'defer' | 'suspend' | 'resume') => {
     if (!activeItem) return
     setError('')
@@ -475,23 +496,46 @@ export default function ReviewPage() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-slate-50">
-      <header className="shrink-0 border-b border-slate-200 bg-white px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-indigo-700"><RotateCcw size={18} /><span className="text-[11px] font-bold uppercase tracking-[0.18em]">Review Workbench</span></div>
-            <h1 className="mt-1 text-xl font-semibold text-slate-950">全局复习台</h1>
-            <p className="mt-1 text-xs text-slate-500">错题纠正、检索练习与 1/3/7/14/30/60 天可解释间隔</p>
+      <header className="shrink-0 border-b border-slate-200 bg-white px-5 py-2.5">
+        <div className="flex min-h-10 flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700"><RotateCcw size={17} /></span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <h1 className="text-sm font-semibold text-slate-950">全局复习台</h1>
+                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-600">Review Workbench</span>
+              </div>
+              <p className="truncate text-[10px] text-slate-500">
+                {overviewExpanded
+                  ? '错题纠正、检索练习与 1/3/7/14/30/60 天可解释间隔'
+                  : `到期 ${summary.due} · 待纠错 ${summary.remediation} · 逾期 ${summary.overdue}`}
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-[11px] text-indigo-800"><Sparkles size={14} /> 调度器只安排复习，掌握仍由五核证据裁决</div>
+          <button
+            type="button"
+            onClick={toggleOverview}
+            aria-expanded={overviewExpanded}
+            aria-controls="review-overview"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+          >
+            {overviewExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {overviewExpanded ? '收起概览' : '展开概览'}
+          </button>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-          <MetricCard icon={<CalendarClock size={16} />} label="今日到期" value={summary.due} tone="bg-indigo-50 text-indigo-700" />
-          <MetricCard icon={<Clock3 size={16} />} label="已逾期" value={summary.overdue} tone="bg-rose-50 text-rose-700" />
-          <MetricCard icon={<AlertTriangle size={16} />} label="待纠错" value={summary.remediation} tone="bg-amber-50 text-amber-700" />
-          <MetricCard icon={<RotateCcw size={16} />} label="即将复习" value={summary.upcoming} tone="bg-sky-50 text-sky-700" />
-          <MetricCard icon={<CheckCircle2 size={16} />} label="稳定项目" value={summary.stable} tone="bg-emerald-50 text-emerald-700" />
-          <MetricCard icon={<Pause size={16} />} label="已暂停" value={summary.suspended} tone="bg-slate-100 text-slate-600" />
-        </div>
+        {overviewExpanded ? (
+          <div id="review-overview">
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-[11px] text-indigo-800"><Sparkles size={14} /> 调度器只安排复习，掌握仍由五核证据裁决</div>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+              <MetricCard icon={<CalendarClock size={16} />} label="今日到期" value={summary.due} tone="bg-indigo-50 text-indigo-700" />
+              <MetricCard icon={<Clock3 size={16} />} label="已逾期" value={summary.overdue} tone="bg-rose-50 text-rose-700" />
+              <MetricCard icon={<AlertTriangle size={16} />} label="待纠错" value={summary.remediation} tone="bg-amber-50 text-amber-700" />
+              <MetricCard icon={<RotateCcw size={16} />} label="即将复习" value={summary.upcoming} tone="bg-sky-50 text-sky-700" />
+              <MetricCard icon={<CheckCircle2 size={16} />} label="稳定项目" value={summary.stable} tone="bg-emerald-50 text-emerald-700" />
+              <MetricCard icon={<Pause size={16} />} label="已暂停" value={summary.suspended} tone="bg-slate-100 text-slate-600" />
+            </div>
+          </div>
+        ) : null}
       </header>
 
       <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-200 bg-white px-5">

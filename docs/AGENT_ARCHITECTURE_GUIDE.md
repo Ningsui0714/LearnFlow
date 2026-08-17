@@ -260,6 +260,8 @@ Tutor: plan_review_queue / 导航 / 过滤
 
 `review_scheduler` 只能写 `ReviewSchedule`，不能写 `KernelState`。复习提交必须携带 `client_submission_id` 和 `expected_version`；重复提交重放原结果，陈旧版本返回 409。跳过不创建 Attempt，延期/暂停/恢复只产生零 kernel target 事件。答案、测试期望和变式正确项只存在于后端判题契约中，取题响应不得暴露。
 
+复习台选择题目后，Workspace 只向 Tutor 回合发送 `review_schedule_id`。后端必须验证 learner ownership，并从题目、Attempt、纠错案例、Knowledge/Practice 投影和 `ReviewSchedule` 重新装配 answer-free 的 `active_surface_context`；不得信任浏览器提交的熟悉度、错因或证据状态。Tutor 只可解释、提示与说明调度，不能通过对话改变判题、间隔或掌握。
+
 详细规则和接口见 `docs/REVIEW_WORKBENCH.md`。
 
 ### 8.2 桌面文件工作台

@@ -46,6 +46,14 @@ function deriveConversation(pathname: string) {
       scope: `项目 ${project[1]}`,
     }
   }
+  if (pathname === '/review') {
+    return {
+      projectId: undefined,
+      checkpointId: undefined,
+      title: '复习 Tutor',
+      scope: '全局复习台 · 当前题目',
+    }
+  }
   return {
     projectId: undefined,
     checkpointId: undefined,
@@ -58,7 +66,12 @@ function checkpointTurnContext(
   context: WorkspaceAgentContext | null,
   checkpointId?: number,
 ): Record<string, any> {
-  if (!checkpointId || !context || context.kind === 'project_tutor' || context.checkpointId !== checkpointId) {
+  if (
+    !checkpointId
+    || !context
+    || (context.kind !== 'learning_design' && context.kind !== 'practice')
+    || context.checkpointId !== checkpointId
+  ) {
     return {}
   }
   if (context.kind === 'learning_design') {
@@ -77,6 +90,17 @@ function checkpointTurnContext(
     title: context.title,
     selected_text: context.selection || '',
     language: 'python',
+  }
+}
+
+function reviewTurnContext(context: WorkspaceAgentContext | null): Record<string, any> {
+  if (!context || context.kind !== 'review') return {}
+  return {
+    surface: 'review',
+    resource_kind: 'review_item',
+    resource_id: context.reviewScheduleId,
+    review_schedule_id: context.reviewScheduleId,
+    title: context.title,
   }
 }
 
@@ -99,8 +123,13 @@ export default function WorkspaceAgentRail({
     && operationContext.projectId === state.projectId
     ? operationContext
     : null
-  const turnContext = checkpointTurnContext(operationContext, state.checkpointId)
-  const quickPrompts = state.checkpointId
+  const reviewContext = location.pathname === '/review'
+    ? reviewTurnContext(operationContext)
+    : null
+  const turnContext = reviewContext || checkpointTurnContext(operationContext, state.checkpointId)
+  const quickPrompts = reviewContext
+    ? ['分析当前错因', '给我下一步提示', '解释这次复习安排']
+    : state.checkpointId
     ? (turnContext.surface === 'exercise'
       ? ['分析当前错误', '给下一步提示', '解释选中代码']
       : ['换种讲法', '看步骤', '看示例'])
@@ -131,7 +160,9 @@ export default function WorkspaceAgentRail({
             <h2 className="truncate text-xs font-semibold text-slate-900">{state.title}</h2>
             <Sparkles size={11} className="shrink-0 text-amber-500" />
           </div>
-          <p className="truncate text-[10px] text-slate-500">{state.scope} · 同一关讲义、练习与文件协作</p>
+          <p className="truncate text-[10px] text-slate-500">
+            {state.scope} · {reviewContext ? '题目、错因、调度与五核证据已装配' : '同一关讲义、练习与文件协作'}
+          </p>
         </div>
         <button type="button" onClick={onToggle} title="收起 Agent 对话" className="flex h-8 w-8 items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700">
           <ChevronRight size={16} />
@@ -149,6 +180,8 @@ export default function WorkspaceAgentRail({
         checkpointId={state.checkpointId}
         turnContext={turnContext}
         quickPrompts={quickPrompts}
+        surfaceTitle={reviewContext ? '主 Agent · 复习协作' : undefined}
+        surfaceDescription={reviewContext ? '当前题目、错因、调度与证据上下文已安全装配' : undefined}
         className="min-h-0 flex-1 rounded-none border-0"
         onProjectChange={project => project?.id && openPath(`/projects/${project.id}`, { title: project.name || `项目 ${project.id}`, kind: 'project', projectId: project.id })}
         onProposalAccepted={project => project?.id && openPath(`/projects/${project.id}`, { title: project.name || `项目 ${project.id}`, kind: 'project', projectId: project.id })}

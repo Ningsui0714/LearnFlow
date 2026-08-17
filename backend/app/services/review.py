@@ -14,8 +14,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.learning import EvidenceEvent, LearningAttempt, RemediationCase, ReviewSchedule
-from app.models.project import ConceptQuestion, Exercise
+from app.models.learning import (
+    EvidenceEvent, KernelState, LearningAttempt, RemediationCase, ReviewSchedule,
+)
+from app.models.project import Checkpoint, ConceptQuestion, Exercise, Project
 
 
 POLICY_VERSION = "review-policy-v1"
@@ -463,6 +465,152 @@ async def review_presentation(
             "requirements": list(exercise.requirements or []),
         },
         "private": {"type": "code"},
+    }
+
+
+async def build_review_tutor_context(
+    db: AsyncSession,
+    learner_id: int,
+    schedule_id: int,
+) -> dict[str, Any] | None:
+    """Build an answer-free, learner-scoped snapshot for the Tutor prompt.
+
+    The browser only supplies the schedule id. All learning state in this
+    snapshot is reloaded from server-owned projections so client context cannot
+    masquerade as evidence or change scheduling/mastery decisions.
+    """
+    schedule = await load_owned_schedule(db, learner_id, schedule_id)
+    if not schedule:
+        return None
+
+    presentation = await review_presentation(db, schedule)
+    public = dict(presentation.get("public") or {})
+    attempts = list((await db.execute(
+        select(LearningAttempt)
+        .where(
+            LearningAttempt.learner_id == learner_id,
+            LearningAttempt.item_type == schedule.item_type,
+            LearningAttempt.item_id == schedule.item_id,
+        )
+        .order_by(LearningAttempt.evaluated_at.desc(), LearningAttempt.id.desc())
+        .limit(20)
+    )).scalars().all())
+    cases = list((await db.execute(
+        select(RemediationCase)
+        .where(
+            RemediationCase.learner_id == learner_id,
+            RemediationCase.item_type == schedule.item_type,
+            RemediationCase.item_id == schedule.item_id,
+        )
+        .order_by(RemediationCase.updated_at.desc(), RemediationCase.id.desc())
+    )).scalars().all())
+    latest = attempts[0] if attempts else None
+    open_case = next((item for item in cases if item.status != "completed"), None)
+    completed_case = next((item for item in cases if item.status == "completed"), None)
+    wrong_count = sum(not _passed(item) for item in attempts)
+
+    if not latest:
+        attempt_state = "unseen"
+    elif _passed(latest):
+        attempt_state = (
+            "correct_independent" if latest.assistance_level == "none"
+            else "correct_with_support"
+        )
+    elif latest.status == "abstained":
+        attempt_state = "unknown"
+    else:
+        attempt_state = "incorrect"
+
+    item_key = f"{schedule.item_type}:{schedule.item_id}"
+    kernels = list((await db.execute(select(KernelState).where(
+        KernelState.learner_id == learner_id,
+        KernelState.kernel_name.in_(("knowledge", "practice")),
+    ))).scalars().all())
+    kernel_map = {item.kernel_name: item for item in kernels}
+    retention = dict(
+        ((kernel_map.get("knowledge").short_term if kernel_map.get("knowledge") else {}) or {})
+        .get("retention_status") or {}
+    ).get(item_key, {})
+    practice_review = dict(
+        ((kernel_map.get("practice").short_term if kernel_map.get("practice") else {}) or {})
+        .get("review_history") or {}
+    ).get(item_key, {})
+    if retention.get("status") == "spaced_stable":
+        evidence_state = "spaced_stable"
+    elif completed_case:
+        evidence_state = "transfer_verified"
+    elif latest and _passed(latest):
+        evidence_state = (
+            "verified_once" if latest.assistance_level == "none" else "assisted_success"
+        )
+    else:
+        evidence_state = "none"
+
+    project = await db.get(Project, schedule.project_id) if schedule.project_id else None
+    checkpoint = await db.get(Checkpoint, schedule.checkpoint_id)
+    title = str(public.get("title") or public.get("prompt") or "复习题")[:180]
+    question = {
+        "type": public.get("type"),
+        "title": str(public.get("title") or "")[:300],
+        "prompt": str(public.get("prompt") or "")[:4000],
+        "input": str(public.get("input") or "")[:1000],
+        "options": [str(item)[:800] for item in list(public.get("options") or [])[:12]],
+        "starter_code": str(public.get("starter_code") or "")[:5000],
+    }
+    return {
+        "kind": "review_item",
+        "authority": "server_scoped_read_only_projection",
+        "review_schedule_id": schedule.id,
+        "source": {
+            "project_id": schedule.project_id,
+            "project_name": project.name if project else "",
+            "checkpoint_id": schedule.checkpoint_id,
+            "checkpoint_title": checkpoint.title if checkpoint else "",
+            "item_type": schedule.item_type,
+            "item_id": schedule.item_id,
+            "title": title,
+            "subject_key": schedule.subject_key,
+        },
+        "question": question,
+        "learning_state": {
+            "phase": schedule.phase,
+            "bucket": schedule_bucket(schedule),
+            "attempt_state": attempt_state,
+            "remediation_state": open_case.status if open_case else "completed" if completed_case else "none",
+            "evidence_state": evidence_state,
+            "wrong_count": wrong_count,
+            "lapse_count": int(schedule.lapse_count or 0),
+        },
+        "schedule": {
+            "policy_version": schedule.policy_version,
+            "due_at": schedule.due_at.isoformat() if schedule.due_at else None,
+            "interval_level": int(schedule.interval_level or 0),
+            "interval_days": interval_days(int(schedule.interval_level or 0)),
+            "last_grade": schedule.last_grade or "",
+            "question_form": presentation.get("question_form", "original"),
+        },
+        "remediation": ({
+            "case_id": open_case.id,
+            "status": open_case.status,
+            "error_class": open_case.error_class,
+            "misconception_tag": open_case.misconception_tag,
+            "current_delivery_mode": open_case.current_delivery_mode,
+            "ineffective_modes": list(open_case.ineffective_modes or []),
+        } if open_case else None),
+        "kernel_projection": {
+            "knowledge_retention": retention,
+            "practice_review": practice_review,
+        },
+        "evidence_refs": {
+            "latest_attempt_id": latest.id if latest else None,
+            "last_event_id": schedule.last_event_id,
+            "remediation_case_id": open_case.id if open_case else None,
+        },
+        "guardrails": {
+            "answers_included": False,
+            "may_explain_or_suggest": True,
+            "may_grade_or_change_mastery": False,
+        },
     }
 
 
