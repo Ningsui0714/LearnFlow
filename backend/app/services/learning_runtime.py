@@ -213,6 +213,8 @@ async def _apply_patch(
 
     from app.services.memory_graph import create_facts_for_mutation
     await create_facts_for_mutation(db, event, mutation)
+    from app.services.five_kernel_context import refresh_kernel_head
+    await refresh_kernel_head(db, event.learner_id, kernel_name)
 
 
 async def _reduce_event(db: AsyncSession, event: EvidenceEvent):

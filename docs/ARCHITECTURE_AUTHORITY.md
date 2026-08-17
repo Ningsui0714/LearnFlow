@@ -61,6 +61,22 @@
   -> MemoryFact -> MemoryModule -> MemoryClaim
 ```
 
+五核 v2 在这条权威链之上增加两类可重建读取投影，但不增加事实来源：
+
+```text
+KernelState + Memory Graph
+  -> KernelHead（每核有界热头部）
+  -> ContextPolicy（按 capability / workbench 选择）
+  -> FiveKernelRetriever（精确 scope、混合召回、一跳关系）
+  -> ContextPacket（带预算、证据清单、冲突与省略说明）
+  -> Agent / Skill / Workbench 只读消费
+```
+
+`KernelHead` 被清空或重建不会丢失事实；`ContextPacket` 也不是新的长期记忆。它们不能
+写 `KernelState`，不能改变掌握、评分或纠错策略。项目、关卡、session 与复习题 scope
+必须由服务端确定，跨 scope 内容和答案字段在装配前过滤。详细契约见
+`docs/FIVE_KERNEL_MEMORY_FABRIC_V2.md`。
+
 工具和 Agent 只能读取经过 learner/project/checkpoint scope 的投影。它们不能直接更新 `KernelState`，也不能把模型生成的教学内容当成掌握证据。
 
 ### 复习调度与事实权威

@@ -377,6 +377,22 @@ EvidenceEvent
   -> MemoryEdge
 ```
 
+运行时读取不再把完整 `KernelState.short_term/long_term` 和全部图谱塞入 prompt。每个核
+维护一个有界 `KernelHead`：`summary`、最多 3 个 focus、5 个 alert、8 个 working、
+5 个 stable 引用和少量 facets。引用只指向 Memory Graph 节点，移出热头部不会删除
+`MemoryFact`、`MemoryModule` 或 `MemoryClaim`。
+
+每个 capability 先选择 `ContextPolicy`，再经过 `FiveKernelRetriever` 按顺序执行：
+
+1. learner ownership 与 project/checkpoint/session 精确过滤；
+2. subject key 精确召回，再用本地词项匹配和 salience 排序；
+3. 只展开白名单内的一跳稀疏关系；
+4. 按 item、path 与 token 预算生成 answer-free `ContextPacket`。
+
+`ContextPacket` 包含五核热头部、召回项、关系路径、冲突、缺失 facet、省略统计和
+evidence manifest。它是一次 Agent 回合的只读快照，不是第六个核，也不参与掌握归约。
+完整字段与能力策略见 `docs/FIVE_KERNEL_MEMORY_FABRIC_V2.md`。
+
 - `EvidenceEvent`：不可变动作账本，保留发生时间、记录时间和学习者内序号。
 - `KernelMutation`：某个事件对某一核造成的补丁及前后版本。
 - `MemoryFact`：由 mutation 展开的原子事实，可幂等重放。
@@ -393,13 +409,17 @@ EvidenceEvent
 Tutor 的上下文不是简单拼接全部历史，而是分层装配：
 
 - 当前 session 最近消息。
-- 当前学习者五核投影。
+- 当前学习者五核 `KernelHead` 与按能力召回的 `ContextPacket`。
 - 当前状态摘要。
 - 当前学习者可见的项目与活跃提案。
 - project session 中的当前项目、来源、正式路线和已接受目标。
 - 从 global 进入 project 时的 handoff 引用。
 
 Global session 中的 active project 必须降级为 `recent_project_reference` 语义，避免污染主 Agent 身份。
+
+Project/Checkpoint/Review 上下文会在热头部和深层记忆两个位置同时执行 scope 过滤；
+`human` 的瞬时情绪与负荷还必须匹配当前 session。上下文序列化按字段逐级降级并保持
+合法 JSON，不再对整包五核 JSON 做字符串截断。
 
 Handoff 只保存原始消息 ID、EvidenceEvent ID 和目标摘要，不复制或改写证据。这样可以保持连续性，同时避免出现两份不同版本的学习历史。
 
@@ -600,6 +620,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 动画与静态图决策 | `backend/app/services/animation_agent.py` |
 | 后台任务编排 | `backend/app/services/task_runners.py` |
 | 记忆图谱写入与查询 | `backend/app/services/memory_graph.py` |
+| 五核热头部、ContextPolicy 与检索包 | `backend/app/services/five_kernel_context.py` |
 | 记忆异步合成 | `backend/app/services/memory_worker.py` |
 | 重大事件、Badge、画像 | `backend/app/services/profile.py` |
 | 身份与会话 | `backend/app/services/auth.py`、`backend/app/api/auth.py` |

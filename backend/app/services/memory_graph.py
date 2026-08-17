@@ -20,6 +20,12 @@ from app.models.learning import (
     MemoryNode,
     MemorySynthesisRun,
 )
+from app.services.five_kernel_context import (
+    MEMORY_SCHEMA_VERSION,
+    memory_kind_for,
+    memory_salience,
+    subject_parts,
+)
 
 
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
@@ -214,14 +220,22 @@ async def create_facts_for_mutation(
     occurred_at = event.occurred_at or event.created_at or datetime.utcnow()
     for ordinal, (scope, key, value) in enumerate(_fact_pairs(mutation)):
         subject = _subject_key(event, mutation.kernel_name, key, value)
+        subject_type, subject_id = subject_parts(subject)
         grade = _evidence_grade(event, key)
         transient = mutation.kernel_name == "human" and key in TRANSIENT_HUMAN_KEYS
         valid_to = occurred_at + timedelta(hours=8) if transient else None
+        memory_kind = memory_kind_for(mutation.kernel_name, key)
         node = MemoryNode(
             learner_id=event.learner_id,
             node_type="fact",
             kernel_name=mutation.kernel_name,
+            memory_kind=memory_kind,
             subject_key=subject,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            project_id=event.project_id,
+            checkpoint_id=event.checkpoint_id,
+            session_id=event.session_id,
             text=f"{key}: {_compact(value)}",
             payload={
                 "scope": scope,
@@ -230,6 +244,13 @@ async def create_facts_for_mutation(
                 "key": key,
             },
             confidence=event.confidence or 0.0,
+            salience=memory_salience(
+                memory_kind=memory_kind,
+                evidence_grade=grade,
+                scope=scope,
+                confidence=event.confidence or 0.0,
+            ),
+            schema_version=MEMORY_SCHEMA_VERSION,
             status="active" if not transient else "transient",
             valid_from=occurred_at,
             valid_to=valid_to,
@@ -613,10 +634,15 @@ async def backfill_memory_graph(db: AsyncSession) -> dict[str, int]:
             learner_id=state.learner_id,
             node_type="module",
             kernel_name=state.kernel_name,
+            memory_kind="topic_summary",
             subject_key="legacy:kernel-state",
+            subject_type="legacy",
+            subject_id="kernel-state",
             text=summary,
             payload={"legacy": True, "unverified": True},
             confidence=min(state.confidence or 0.0, 0.4),
+            salience=0.2,
+            schema_version=MEMORY_SCHEMA_VERSION,
             status="legacy",
             occurred_at=now,
             valid_from=now,
@@ -639,10 +665,15 @@ async def backfill_memory_graph(db: AsyncSession) -> dict[str, int]:
                 learner_id=state.learner_id,
                 node_type="claim",
                 kernel_name=state.kernel_name,
+                memory_kind="semantic_claim",
                 subject_key="legacy:kernel-state",
+                subject_type="legacy",
+                subject_id="kernel-state",
                 text=f"{key}: {_compact(value)}",
                 payload={"legacy": True, "project_id": None},
                 confidence=min(state.confidence or 0.0, 0.4),
+                salience=0.2,
+                schema_version=MEMORY_SCHEMA_VERSION,
                 status="legacy",
                 occurred_at=now,
                 valid_from=now,

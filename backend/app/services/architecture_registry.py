@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-16.1"
+REGISTRY_VERSION = "2026-08-17.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -118,7 +118,7 @@ AGENTS = {
         AgentContract(
             "tutor_agent", "Tutor 控制 Agent", "control",
             ("global_main_agent", "project_tutor", "checkpoint_tutor"),
-            ("current_learner", "page_context", "five_kernel_projection", "recent_evidence"),
+            ("current_learner", "page_context", "five_kernel_context_packet", "recent_evidence"),
             ("structured_intent", "reply", "action_proposal", "handoff_refs"),
             "read projections; emit events through Action Board",
             ("direct database writes", "claim mastery", "bypass confirmation policy"),
@@ -192,6 +192,12 @@ TOOLS = {
                      (), KERNEL_NAMES, "EvidenceEvent -> KernelMutation"),
         ToolContract("memory_graph", "Inspectable Memory Graph", "tutor_agent", "learnflow", "projection",
                      KERNEL_NAMES, (), "KernelMutation -> Fact -> Module -> Claim"),
+        ToolContract("kernel_head_projector", "Bounded Kernel Head Projector", "tutor_agent", "learnflow", "projection",
+                     KERNEL_NAMES, (), "KernelState/Memory Graph -> rebuildable KernelHead"),
+        ToolContract("five_kernel_retriever", "Scoped Five-kernel Retriever", "tutor_agent", "learnflow", "read",
+                     KERNEL_NAMES, (), "exact scope -> hybrid recall -> one-hop relations"),
+        ToolContract("context_packet_assembler", "Capability ContextPacket Assembler", "tutor_agent", "learnflow", "read",
+                     KERNEL_NAMES, (), "ContextPolicy -> bounded answer-free ContextPacket"),
         ToolContract("workflow_gateway", "Mock / Xingchen Workflow Gateway", "learning_design_agent", "companion", "optional_adapter",
                      KERNEL_NAMES, (), "validated artifact or EvidenceEvent only"),
         ToolContract("workflow_validator", "Workflow Builder + Validator", "learning_design_agent", "companion", "maintenance"),
@@ -213,7 +219,7 @@ SKILLS = {
                       ("tutor_context", "action_board", "evidence_ledger"),
                       "structured intent + auditable action/handoff", "Action Board"),
         SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
-                      ("checkpoint_context", "hierarchical_rag", "workspace_file_service"),
+                      ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
                       "checkpoint-scoped Tutor reply + internal design/practice handoff",
                       "immutable checkpoint session scope"),
         SkillContract("learning_path_planning", "来源约束的学习路线规划", "learning_design_agent",
@@ -233,8 +239,10 @@ SKILLS = {
                       "QuestionLearningState + ReviewSchedule + graded review evidence",
                       "review-policy-v1"),
         SkillContract("learner_memory_synthesis", "五核画像与可检查记忆", "tutor_agent",
-                      ("five_kernel_reducer", "memory_graph"),
-                      "kernel projection + evidence-backed claims", "deterministic reducer", "fused"),
+                      ("five_kernel_reducer", "memory_graph", "kernel_head_projector",
+                       "five_kernel_retriever", "context_packet_assembler"),
+                      "bounded kernel heads + scoped ContextPacket + evidence-backed claims",
+                      "deterministic reducer and ContextPolicy", "fused"),
         SkillContract("external_workflow_rendering", "星辰/Mock 教学内容适配", "learning_design_agent",
                       ("workflow_gateway", "workflow_validator"),
                       "validated content artifact; no direct kernel mutation", "LearnFlow contract", "companion"),
@@ -450,6 +458,7 @@ def registry_manifest() -> dict[str, Any]:
             "kernel_source_of_truth": "EvidenceEvent ledger",
             "kernel_write_path": "EvidenceEvent -> five_kernel_reducer -> KernelMutation",
             "memory_projection": "KernelMutation -> MemoryFact -> MemoryModule -> MemoryClaim",
+            "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
         },
         "agents": [asdict(item) for item in AGENTS.values()],

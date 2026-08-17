@@ -10,59 +10,17 @@ from app.models.project import (
     Checkpoint, CheckpointChunk, Chunk, Exercise, Lecture, Project,
     ProjectWorkspace, Roadmap,
 )
-from app.services.learning_runtime import get_kernel_projection
+from app.services.five_kernel_context import (
+    build_five_kernel_context,
+    compact_projection_from_packet,
+    resolve_context_policy,
+)
 from app.services.workspace_files import WorkspaceError, canonical_root, scan_workspace_tree
 
 
 def _short(value: object, limit: int = 240) -> str:
     text = " ".join(str(value or "").split())
     return text[:limit]
-
-
-def _scoped_five_kernel_projection(
-    projection: dict[str, Any], *, project_id: int, checkpoint_id: int,
-) -> dict[str, Any]:
-    """Return a compact learner projection with an explicit immutable scope.
-
-    The five kernels remain learner-owned. This adapter removes unrelated active
-    navigation pointers and marks the scope used for this checkpoint turn; it
-    never writes a kernel or treats workspace activity as learning evidence.
-    """
-    excluded = object()
-
-    def filter_value(value: Any):
-        if isinstance(value, dict):
-            if value.get("project_id") not in {None, project_id}:
-                return excluded
-            if value.get("checkpoint_id") not in {None, checkpoint_id}:
-                return excluded
-            filtered = {}
-            for key, item in value.items():
-                nested = filter_value(item)
-                if nested is not excluded:
-                    filtered[key] = nested
-            return filtered
-        if isinstance(value, list):
-            return [item for original in value if (item := filter_value(original)) is not excluded]
-        return value
-
-    result: dict[str, Any] = {}
-    for kernel_name in ("structure", "knowledge", "human", "value", "practice"):
-        source = dict(projection.get(kernel_name) or {})
-        short_term = filter_value(dict(source.get("short_term") or {}))
-        if kernel_name == "structure":
-            short_term.pop("active_project_id", None)
-            short_term.pop("active_checkpoint_id", None)
-            short_term["session_scope"] = {
-                "project_id": project_id,
-                "checkpoint_id": checkpoint_id,
-            }
-        result[kernel_name] = {
-            "short_term": short_term,
-            "long_term": filter_value(dict(source.get("long_term") or {})),
-            "confidence": float(source.get("confidence") or 0.0),
-        }
-    return result
 
 
 def _flatten_workspace_nodes(nodes: list[dict], limit: int = 300) -> list[dict]:
@@ -151,6 +109,8 @@ async def build_checkpoint_tutor_context(
     learner_id: int,
     project_id: int,
     checkpoint_id: int,
+    session_id: int | None = None,
+    query: str = "",
     surface_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     artifacts = await checkpoint_artifacts(
@@ -172,8 +132,6 @@ async def build_checkpoint_tutor_context(
         .where(CheckpointChunk.checkpoint_id == checkpoint_id)
         .order_by(CheckpointChunk.id)
     )).all())
-    projection = await get_kernel_projection(db, learner_id)
-
     workspace_nodes: list[dict] = []
     workspace = (await db.execute(select(ProjectWorkspace).where(
         ProjectWorkspace.project_id == project_id,
@@ -202,6 +160,20 @@ async def build_checkpoint_tutor_context(
         )
         if key in incoming
     }
+    subject_keys = [f"checkpoint:{checkpoint_id}"]
+    selected_path = allowed_surface.get("selected_path")
+    if selected_path:
+        subject_keys.append(f"file:{selected_path}")
+    packet = await build_five_kernel_context(
+        db,
+        learner_id=learner_id,
+        policy=resolve_context_policy(session_type="checkpoint"),
+        project_id=project_id,
+        checkpoint_id=checkpoint_id,
+        session_id=session_id,
+        subject_keys=subject_keys,
+        query=query or str(allowed_surface.get("selected_text") or ""),
+    )
 
     return {
         "scope": {
@@ -210,9 +182,10 @@ async def build_checkpoint_tutor_context(
             "checkpoint_id": checkpoint_id,
             "history_policy": "this_checkpoint_session_only",
         },
-        "five_kernel_projection": _scoped_five_kernel_projection(
-            projection, project_id=project_id, checkpoint_id=checkpoint_id,
+        "five_kernel_projection": compact_projection_from_packet(
+            packet, project_id=project_id, checkpoint_id=checkpoint_id,
         ),
+        "five_kernel_context": packet,
         "checkpoint": {
             **artifacts["checkpoint"],
             "brief": dict(checkpoint.brief or {}) if checkpoint else {},
@@ -223,14 +196,14 @@ async def build_checkpoint_tutor_context(
             "index": chunk.index,
             "summary": _short(chunk.content),
             "metadata": dict(chunk.meta_data or {}),
-        } for _, chunk in assigned[:40]],
+        } for _, chunk in assigned[:24]],
         "lecture_summary": ({
             "id": lecture.id,
             "status": lecture.status,
             "sections": [{
                 "title": _short(section.get("title", ""), 120),
                 "summary": _short(section.get("content", ""), 180),
-            } for section in (lecture.sections or []) if isinstance(section, dict)],
+            } for section in (lecture.sections or [])[:18] if isinstance(section, dict)],
         } if lecture else None),
         "exercise_summaries": [{
             "id": item.id,
@@ -241,8 +214,8 @@ async def build_checkpoint_tutor_context(
                 {"name": value.get("name"), "read_only": bool(value.get("read_only"))}
                 for value in (item.files or []) if isinstance(value, dict)
             ],
-        } for item in exercises],
-        "project_file_tree": workspace_nodes,
+        } for item in exercises[:24]],
+        "project_file_tree": workspace_nodes[:120],
         "current_surface": allowed_surface,
         "content_policy": (
             "Do not infer file contents from the tree. Read ordinary files on demand. "

@@ -22,6 +22,12 @@ from app.models.learning import (
     MemorySynthesisRun,
 )
 from app.services.memory_graph import _add_edge, rebuild_kernel_long_term_from_modules
+from app.services.five_kernel_context import (
+    MEMORY_SCHEMA_VERSION,
+    memory_salience,
+    refresh_kernel_head,
+    subject_parts,
+)
 
 
 class SynthesisClaimDraft(BaseModel):
@@ -227,17 +233,36 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         time_end = max(node.occurred_at for node in fact_nodes)
         confidence = round(sum(node.confidence or 0 for node in fact_nodes) / len(fact_nodes), 3)
         project_ids = {fact.project_id for _, fact, _ in rows if fact.project_id is not None}
+        checkpoint_ids = {fact.checkpoint_id for _, fact, _ in rows if fact.checkpoint_id is not None}
+        session_ids = {fact.session_id for _, fact, _ in rows if fact.session_id is not None}
+        subject_type, subject_id = subject_parts(run.subject_key)
+        project_id = next(iter(project_ids)) if len(project_ids) == 1 else None
+        checkpoint_id = next(iter(checkpoint_ids)) if len(checkpoint_ids) == 1 else None
+        session_id = next(iter(session_ids)) if len(session_ids) == 1 else None
         module_node = MemoryNode(
             learner_id=run.learner_id,
             node_type="module",
             kernel_name=run.kernel_name,
+            memory_kind="topic_summary",
             subject_key=run.subject_key,
+            subject_type=subject_type,
+            subject_id=subject_id,
+            project_id=project_id,
+            checkpoint_id=checkpoint_id,
+            session_id=session_id,
             text=draft.summary,
             payload={
                 "trigger_reason": run.trigger_reason,
-                "project_id": next(iter(project_ids)) if len(project_ids) == 1 else None,
+                "project_id": project_id,
+                "checkpoint_id": checkpoint_id,
+                "session_id": session_id,
             },
             confidence=confidence,
+            salience=memory_salience(
+                memory_kind="topic_summary", evidence_grade="observed",
+                scope="long_term", confidence=confidence,
+            ),
+            schema_version=MEMORY_SCHEMA_VERSION,
             status="active",
             valid_from=time_start,
             occurred_at=time_end,
@@ -270,13 +295,27 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
                 learner_id=run.learner_id,
                 node_type="claim",
                 kernel_name=run.kernel_name,
+                memory_kind="semantic_claim",
                 subject_key=run.subject_key,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                project_id=project_id,
+                checkpoint_id=checkpoint_id,
+                session_id=session_id,
                 text=claim.text,
                 payload={
-                    "project_id": next(iter(project_ids)) if len(project_ids) == 1 else None,
+                    "project_id": project_id,
+                    "checkpoint_id": checkpoint_id,
+                    "session_id": session_id,
                     "evidence_fact_ids": claim.evidence_fact_ids,
                 },
                 confidence=claim_confidence,
+                salience=memory_salience(
+                    memory_kind="semantic_claim",
+                    evidence_grade="verified" if verified else "observed",
+                    scope="long_term", confidence=claim_confidence,
+                ),
+                schema_version=MEMORY_SCHEMA_VERSION,
                 status="active",
                 valid_from=time_start,
                 occurred_at=time_end,
@@ -348,6 +387,7 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         run.usage = usage
         run.finished_at = datetime.utcnow()
         await rebuild_kernel_long_term_from_modules(db, run.learner_id)
+        await refresh_kernel_head(db, run.learner_id, run.kernel_name)
         await db.commit()
         return run
 

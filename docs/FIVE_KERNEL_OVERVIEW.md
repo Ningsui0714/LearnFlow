@@ -4,6 +4,11 @@
 >
 > 一句话理解：五核不是五个 Agent，而是 LearnFlow 用来描述“学习者当前状态”的五个互补维度。它们共同帮助系统决定：学习者该走哪儿、学什么、怎么教、为什么现在学，以及如何验证是否真的会做。
 
+> 当前实现已升级为“五核记忆织网 v2”：每核使用有界 `KernelHead` 维护短期热上下文，
+> 长期事实保留在类型化 Memory Graph 中，并由 capability 级 `ContextPolicy` 装配
+> answer-free `ContextPacket`。完整工程契约与架构图见
+> [FIVE_KERNEL_MEMORY_FABRIC_V2.md](FIVE_KERNEL_MEMORY_FABRIC_V2.md)。
+
 ## 1. 为什么需要五核
 
 普通聊天记录很难稳定回答这些问题：

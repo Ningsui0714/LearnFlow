@@ -18,6 +18,21 @@
 
 `KernelState` 继续作为兼容投影。其短期区会附加 `memory_graph_recent_facts`，长期区会附加 `memory_graph_claims`。
 
+五核 v2 另有 `KernelHead` 作为低延迟热投影。每个学习者、每个核只有一行，且固定限制
+为 focus 3、alert 5、working 8、stable 5。头部只保存摘要、facet 与 MemoryNode ID；
+超出窗口的事实仍完整保留在图谱中。`KernelHead.source_kernel_version` 使读取方可以发现
+陈旧头部并确定性重建。
+
+`MemoryNode` 统一补充 `memory_kind`、`subject_type/subject_id`、project/checkpoint/session
+scope、`salience` 与 `schema_version`。Fact、Module、Claim 的原有表和证据关系不变，
+因此旧 API 与历史审计保持兼容。
+
+Agent 使用记忆时必须经过 `ContextPolicy -> FiveKernelRetriever -> ContextPacket`，不能
+直接转储完整 `KernelState`。检索先做精确 scope 和 subject，再做本地混合排序，最后只
+展开一跳高价值边。复习策略只深读 Knowledge/Practice；关卡 Tutor 深读本关五核；
+Global Tutor 只把项目记忆当作 portfolio reference。ContextPacket 默认最多 12 个项目、
+6 条关系路径，并声明证据 ID、预算、冲突和省略原因。
+
 ## 复习如何维护长短期记忆
 
 复习台不直接读取或修改一份独立的“错题画像”。它从原始题目、`LearningAttempt`、`RemediationCase` 和有作用域的五核投影构造当前题目状态，再由确定性调度器决定何时重现题目。

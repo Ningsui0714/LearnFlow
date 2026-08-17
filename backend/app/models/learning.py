@@ -271,6 +271,34 @@ class KernelState(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class KernelHead(Base):
+    """Bounded, rebuildable hot projection for one learner kernel.
+
+    KernelState remains the compatibility projection and EvidenceEvent remains
+    authoritative.  A head only keeps small references and facets needed for
+    low-latency context assembly; evicting a reference never deletes memory.
+    """
+
+    __tablename__ = "kernel_heads"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "kernel_name", name="uq_kernel_head_learner_name"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    kernel_name = Column(String(30), nullable=False, index=True)
+    summary = Column(Text, default="", nullable=False)
+    focus_refs = Column(JSON, default=list)
+    alert_refs = Column(JSON, default=list)
+    working_refs = Column(JSON, default=list)
+    stable_refs = Column(JSON, default=list)
+    facets = Column(JSON, default=dict)
+    token_estimate = Column(Integer, default=0, nullable=False)
+    source_kernel_version = Column(Integer, default=0, nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class KernelMutation(Base):
     __tablename__ = "kernel_mutations"
 
@@ -294,10 +322,18 @@ class MemoryNode(Base):
     learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
     node_type = Column(String(20), nullable=False, index=True)  # fact | module | claim
     kernel_name = Column(String(30), nullable=False, index=True)
+    memory_kind = Column(String(50), nullable=False, default="observation", index=True)
     subject_key = Column(String(255), nullable=False, default="global", index=True)
+    subject_type = Column(String(50), nullable=False, default="global", index=True)
+    subject_id = Column(String(255), nullable=False, default="", index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=True, index=True)
     text = Column(Text, nullable=False, default="")
     payload = Column(JSON, default=dict)
     confidence = Column(Float, default=0.0)
+    salience = Column(Float, default=0.5, nullable=False, index=True)
+    schema_version = Column(String(40), default="memory-item.v2", nullable=False)
     status = Column(String(30), default="active", nullable=False, index=True)
     valid_from = Column(DateTime, nullable=True, index=True)
     valid_to = Column(DateTime, nullable=True, index=True)

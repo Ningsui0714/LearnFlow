@@ -77,10 +77,20 @@ async def _serialize_nodes(db: AsyncSession, nodes: list[MemoryNode]) -> list[di
             "id": node.id,
             "type": node.node_type,
             "kernel": node.kernel_name,
+            "memory_kind": node.memory_kind,
             "subject": node.subject_key,
+            "subject_type": node.subject_type,
+            "subject_id": node.subject_id,
+            "scope": {
+                "project_id": node.project_id,
+                "checkpoint_id": node.checkpoint_id,
+                "session_id": node.session_id,
+            },
             "text": node.text,
             "payload": node.payload or {},
             "confidence": node.confidence or 0.0,
+            "salience": node.salience or 0.0,
+            "schema_version": node.schema_version,
             "status": node.status,
             "valid_from": _iso(node.valid_from),
             "valid_to": _iso(node.valid_to),
@@ -441,4 +451,3 @@ async def submit_claim_feedback(
         "queued_consolidation_id": queued.id if queued else None,
         "status": "queued",
     }
-

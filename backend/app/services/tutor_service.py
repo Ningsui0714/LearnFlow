@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import datetime
 import json
 import re
@@ -29,6 +28,11 @@ from app.services.project_proposals import (
     proposal_view, start_resource_search,
 )
 from app.services.checkpoint_context import build_checkpoint_tutor_context
+from app.services.five_kernel_context import (
+    build_five_kernel_context,
+    compact_projection_from_packet,
+    resolve_context_policy,
+)
 
 
 CONFIRM_WORDS = {
@@ -84,6 +88,48 @@ CHECKPOINT_TUTOR_PROMPT = """当前是 checkpoint 关卡 Tutor 会话。你只�
 - 可以把明确的项目代码修改或测试委派给已配置的本地代码 Agent。它是工具而非第四类主 Agent；由 Broker 确定性选择配置，用户确认后才在隔离副本启动，结果再次确认后才写回。
 - 编辑文件或运行成功不代表掌握；只有正式判题结果可以形成掌握证据。
 - 回答围绕用户当前选中的讲义、练习或文件，最多给一个明确下一步。"""
+
+
+def _bounded_context_value(value: Any, *, string_limit: int, list_limit: int) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _bounded_context_value(
+                item, string_limit=string_limit, list_limit=list_limit,
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _bounded_context_value(
+                item, string_limit=string_limit, list_limit=list_limit,
+            )
+            for item in value[:list_limit]
+        ]
+    if isinstance(value, str):
+        return value if len(value) <= string_limit else value[: string_limit - 1] + "…"
+    return value
+
+
+def _render_prompt_context(context: dict[str, Any], max_chars: int = 28000) -> str:
+    """Render valid JSON with field-aware degradation instead of slicing a blob."""
+    for string_limit, list_limit in ((4000, 120), (1800, 40), (800, 16)):
+        bounded = _bounded_context_value(
+            context, string_limit=string_limit, list_limit=list_limit,
+        )
+        rendered = json.dumps(bounded, ensure_ascii=False)
+        if len(rendered) <= max_chars:
+            return rendered
+    priority = {
+        key: context.get(key)
+        for key in (
+            "session_scope", "active_surface_context", "current_state",
+            "learning_projection", "five_kernel_context", "session_handoff",
+            "recent_project_reference", "project_workspace", "checkpoint_workspace",
+        )
+        if context.get(key) not in (None, "", [], {})
+    }
+    compact = _bounded_context_value(priority, string_limit=420, list_limit=8)
+    return json.dumps(compact, ensure_ascii=False)
 
 
 def _normalize_url(value: str) -> str:
@@ -1561,14 +1607,9 @@ async def _generate_tutor_reply(
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
         return "未接入模型。", [], None, None, [], None
 
-    projection = await get_kernel_projection(db, session.learner_id)
-    prompt_projection = deepcopy(projection)
-    if session.session_type == "global":
-        structure_memory = prompt_projection.get("structure", {}).get("short_term", {})
-        if structure_memory.get("active_project_id") is not None:
-            structure_memory["recent_project_reference_id"] = structure_memory.pop("active_project_id")
-        if structure_memory.get("active_checkpoint_id") is not None:
-            structure_memory["recent_checkpoint_reference_id"] = structure_memory.pop("active_checkpoint_id")
+    latest_query = latest_messages[-1].content if latest_messages else ""
+    prompt_projection: dict[str, Any] = {}
+    five_kernel_context: dict[str, Any] = {}
     state = await get_session_state_summary(db, session)
     projects = (await db.execute(
         select(Project).where(Project.learner_id == session.learner_id)
@@ -1657,9 +1698,40 @@ async def _generate_tutor_reply(
             learner_id=session.learner_id,
             project_id=session.project_id,
             checkpoint_id=session.checkpoint_id,
+            session_id=session.id,
+            query=latest_query,
             surface_context=latest_context,
         )
         prompt_projection = checkpoint_workspace["five_kernel_projection"]
+        five_kernel_context = checkpoint_workspace["five_kernel_context"]
+    if not five_kernel_context:
+        focus_subjects: list[str] = []
+        review_source = dict(review_workspace.get("source") or {})
+        if review_source.get("subject_key"):
+            focus_subjects.append(str(review_source["subject_key"]))
+        if review_source.get("item_type") and review_source.get("item_id") is not None:
+            focus_subjects.append(
+                f"{review_source['item_type']}:{review_source['item_id']}"
+            )
+        policy = resolve_context_policy(
+            session_type=session.session_type,
+            surface=str(latest_context.get("surface") or ""),
+        )
+        five_kernel_context = await build_five_kernel_context(
+            db,
+            learner_id=session.learner_id,
+            policy=policy,
+            project_id=session.project_id,
+            checkpoint_id=session.checkpoint_id,
+            session_id=session.id,
+            subject_keys=focus_subjects,
+            query=latest_query,
+        )
+        prompt_projection = compact_projection_from_packet(
+            five_kernel_context,
+            project_id=session.project_id if session.session_type != "global" else None,
+            checkpoint_id=session.checkpoint_id if session.session_type == "checkpoint" else None,
+        )
     role = {
         "global": "main_agent",
         "project": "project_tutor",
@@ -1679,10 +1751,14 @@ async def _generate_tutor_reply(
         "current_state": state,
         "available_projects": [{"id": p.id, "name": p.name, "description": p.description} for p in projects],
         "learning_projection": prompt_projection,
+        "five_kernel_context": five_kernel_context,
         "session_handoff": dict(session.context_summary or {}) if session.session_type == "project" else {},
         "recent_project_reference": dict(session.context_summary or {}) if session.session_type == "global" else {},
         "project_workspace": project_workspace,
-        "checkpoint_workspace": checkpoint_workspace,
+        "checkpoint_workspace": {
+            key: value for key, value in checkpoint_workspace.items()
+            if key not in {"five_kernel_projection", "five_kernel_context"}
+        },
         "active_project_proposals": [
             {
                 "proposal_key": item.proposal_key,
@@ -1701,12 +1777,13 @@ async def _generate_tutor_reply(
         else PROJECT_TUTOR_PROMPT if session.session_type == "project"
         else GLOBAL_MAIN_AGENT_PROMPT
     )
+    rendered_context = _render_prompt_context(context)
     system = (
         TUTOR_SYSTEM_PROMPT
         + "\n\n"
         + scope_prompt
         + "\n\n当前内部上下文：\n"
-        + json.dumps(context, ensure_ascii=False)[:12000]
+        + rendered_context
     )
     history = await get_messages(db, session.id, limit=18)
     messages: list[Any] = [SystemMessage(content=system)]
