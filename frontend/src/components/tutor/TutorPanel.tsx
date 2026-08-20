@@ -6,9 +6,9 @@ import {
   createTutorSession, sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
-  generateLearningTaskConversion,
+  createLearningTaskPlan,
 } from '../../services/api'
-import type { ProjectProposal, ProjectProposalSource, WF03GenerationResult } from '../../services/api'
+import type { LearningTaskPlanRun, ProjectProposal, ProjectProposalSource } from '../../services/api'
 import { shouldSendMessageOnEnter } from '../../utils/keyboard'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
@@ -38,7 +38,7 @@ interface Props {
   onRefreshCandidateSources?: () => void | Promise<void>
   onAddCandidateSource?: (candidate: ProjectProposalSource) => void | Promise<void>
   learningTaskGenerationEnabled?: boolean
-  onLearningTaskGenerated?: (result: WF03GenerationResult) => void
+  onLearningTaskPlanCreated?: (result: LearningTaskPlanRun) => void
 }
 
 const terminal = new Set(['completed', 'failed', 'canceled'])
@@ -207,7 +207,7 @@ export default function TutorPanel({
   onProposalAccepted, proposalDragEnabled = false, projectProposal,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
   onRefreshCandidateSources, onAddCandidateSource,
-  learningTaskGenerationEnabled = false, onLearningTaskGenerated,
+  learningTaskGenerationEnabled = false, onLearningTaskPlanCreated,
 }: Props) {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -446,28 +446,16 @@ export default function TutorPanel({
     try {
       if (learningTaskGenerationEnabled && learningTaskMode && text && !selectedActionId && !forceTutor) {
         const clientTurnId = globalThis.crypto?.randomUUID?.() || `learning-task-${Date.now()}-${Math.random()}`
-        const generated = await generateLearningTaskConversion(text, sessionId, clientTurnId)
-        if (generated.status !== 'success') {
-          setMessages(prev => [...prev, {
-            role: 'assistant',
-            content: generated.message,
-            meta_data: {
-              message_kind: generated.status === 'needs_clarification'
-                ? 'learning_task_clarification'
-                : 'learning_task_revision',
-            },
-          }])
-          return
-        }
+        const planned = await createLearningTaskPlan(text, sessionId, clientTurnId)
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: generated.message,
+          content: planned.message,
           meta_data: {
-            message_kind: 'learning_task_generated',
-            task_card_id: generated.task_card_id,
+            message_kind: 'learning_task_plan',
+            plan_run_id: planned.run_id,
           },
         }])
-        onLearningTaskGenerated?.(generated)
+        onLearningTaskPlanCreated?.(planned)
         setLearningTaskMode(false)
         return
       }
@@ -672,7 +660,7 @@ export default function TutorPanel({
           <div className="flex justify-start">
             <div className="border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 rounded-lg">
               {learningTaskMode
-                ? '正在调用岗位任务转化工作流，检索、核验并生成任务网页…'
+                ? '正在锁定任务契约并生成可检查的 Agent Plan…'
                 : '正在思考...'}
             </div>
           </div>
@@ -703,7 +691,7 @@ export default function TutorPanel({
               onClick={() => setLearningTaskMode(value => !value)}
               disabled={loading}
               aria-pressed={learningTaskMode}
-              title={learningTaskMode ? '退出岗位任务转化，返回主 Agent' : '调用岗位任务转化工作流'}
+              title={learningTaskMode ? '退出任务规划，返回主 Agent' : '创建学习型任务 Plan'}
               className={`flex h-7 min-w-0 items-center gap-1.5 rounded-full border px-2.5 text-[10px] font-medium transition-colors ${
                 learningTaskMode
                   ? 'border-emerald-700 bg-emerald-700 text-white'
@@ -711,7 +699,7 @@ export default function TutorPanel({
               }`}
             >
               <FilePenLine size={12} className="shrink-0" />
-              <span className="truncate">{learningTaskMode ? '岗位任务转化已启用' : '岗位任务转化'}</span>
+              <span className="truncate">{learningTaskMode ? '任务规划已启用' : '学习型任务规划'}</span>
             </button>
             {learningTaskMode && (
               <span className="min-w-0 truncate text-[10px] text-slate-500">再次点击可返回主 Agent</span>
@@ -729,7 +717,7 @@ export default function TutorPanel({
               }
             }}
             rows={2}
-            placeholder={learningTaskMode ? '输入一个岗位或企业真实工作任务，生成学习型任务网页…' : '问一个问题，或直接告诉我下一步要做什么'}
+            placeholder={learningTaskMode ? '输入一个企业真实工作任务，先生成可检查的任务 Plan…' : '问一个问题，或直接告诉我下一步要做什么'}
             className="min-w-0 flex-1 resize-none border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-lg"
           />
           <button

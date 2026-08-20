@@ -81,6 +81,11 @@ ACTION_BOARD = {
             ("evaluate_attempt",),
         ),
         ActionDefinition(
+            "plan_learning_work_task", "规划学习型工作任务", "artifact", "explicit",
+            {},
+            ("generate_learning_work_task",),
+        ),
+        ActionDefinition(
             "generate_learning_work_task", "岗位典型工作任务转化", "artifact", "explicit",
             {},
             ("review_learning_work_task",),

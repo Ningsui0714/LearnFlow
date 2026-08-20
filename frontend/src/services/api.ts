@@ -270,6 +270,76 @@ export interface LearningTaskConversionWorkflowRun {
   usage: Record<string, any>
 }
 
+export interface LearningTaskPlanUnknown {
+  unknown_id: string
+  question: string
+  required_evidence: 'upstream' | 'database' | 'knowledge_base' | 'official_web' | 'official_or_upstream' | 'user_confirmation'
+  blocking: boolean
+}
+
+export interface LearningTaskPlanWorkPackage {
+  package_id: string
+  agent_role: string
+  objective: string
+  depends_on: string[]
+  allowed_tools: string[]
+  expected_artifact: string
+  completion_condition: string
+}
+
+export interface LearningTaskPlanArtifact {
+  schema_version: 'learning-work-task-plan-v1'
+  run_id: string
+  plan_version: number
+  goal: string
+  task_contract_fingerprint: string
+  success_criteria: string[]
+  unknowns: LearningTaskPlanUnknown[]
+  work_packages: LearningTaskPlanWorkPackage[]
+  repair_budget: number
+  stop_conditions: string[]
+}
+
+export interface LearningTaskPlanRun {
+  schema_version: 'learning-work-task-agent-state-v1'
+  run_id: string
+  phase: 'INTAKE' | 'CONTRACT_READY' | 'PLAN_READY' | 'EVIDENCE_READY' | 'STEP_PLAN_READY' | 'CANDIDATES_READY' | 'REVIEWED' | 'PATCH_REQUIRED' | 'COMMIT_READY' | 'COMMITTED' | 'FAILED'
+  status: 'active' | 'needs_input' | 'completed' | 'failed'
+  checkpoint_version: number
+  task_contract: Record<string, any>
+  plan: LearningTaskPlanArtifact
+  state: Record<string, any>
+  next_actions: string[]
+  message: string
+  workspace_path: string
+}
+
+export const createLearningTaskPlan = (
+  query: string,
+  sessionId: number,
+  clientTurnId: string,
+) => api.post('/learning-task-conversion/plans', {
+  query,
+  session_id: sessionId,
+  client_turn_id: clientTurnId,
+}).then(r => r.data as LearningTaskPlanRun)
+
+export const getLearningTaskPlan = (runId: string) =>
+  api.get(`/learning-task-conversion/plans/${encodeURIComponent(runId)}`)
+    .then(r => r.data as LearningTaskPlanRun)
+
+export const confirmLearningTaskPlan = (
+  runId: string,
+  expectedPlanVersion: number,
+  clientEventId?: string,
+) => api.post(
+  `/learning-task-conversion/plans/${encodeURIComponent(runId)}/confirm`,
+  {
+    expected_plan_version: expectedPlanVersion,
+    client_event_id: clientEventId,
+  },
+).then(r => r.data as LearningTaskPlanRun)
+
 export const runLearningTaskConversionWorkflow = (userInput: string) =>
   api.post('/learning-task-conversion/workflow-runs', { user_input: userInput }, {
     timeout: 240000,

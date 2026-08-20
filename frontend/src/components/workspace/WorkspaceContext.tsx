@@ -145,6 +145,15 @@ function pathMeta(path: string): WorkspaceTab {
       kind: 'wf03',
     }
   }
+  const learningTaskPlan = pathname.match(/^\/learning-task-plans\/(run_[A-Fa-f0-9]+)$/)
+  if (learningTaskPlan) {
+    return {
+      id: normalized,
+      path: normalized,
+      title: '学习型任务 Plan',
+      kind: 'wf03',
+    }
+  }
   const personalizedLearning = pathname.match(
     /^\/personalized-learning\/tasks\/([A-Za-z0-9_-]+)\/knowledge\/([A-Za-z0-9_-]+)$/,
   )

@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-16.2"
+REGISTRY_VERSION = "2026-08-20.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -252,7 +252,7 @@ SKILLS = {
             "岗位典型工作任务转化与复核",
             "learning_design_agent",
             ("learning_task_conversion_gateway", "evidence_ledger"),
-            "versioned task page + PDF + knowledge-scoped personalized-learning JSON + relation feedback",
+            "versioned TaskPlan + task page + PDF + knowledge-scoped personalized-learning JSON + relation feedback",
             "task identity, evidence and relation gates",
             "companion",
         ),
@@ -275,7 +275,7 @@ SKILLS = {
 WORKBENCHES = {
     item.id: item for item in (
         WorkbenchContract("global_tutor", "Global Tutor", "/agent", "tutor_agent",
-                          ("search_projects", "draft_learning_project", "create_project", "generate_learning_work_task")),
+                          ("search_projects", "draft_learning_project", "create_project", "plan_learning_work_task", "generate_learning_work_task")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
                           ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
@@ -296,6 +296,14 @@ WORKBENCHES = {
                           ("link_project_workspace", "inspect_workspace_files", "propose_workspace_change", "apply_workspace_change", "open_managed_learning_artifact", "edit_managed_lecture", "annotate_learning_artifact", "delegate_local_agent_task", "inspect_local_agent_run", "cancel_local_agent_run", "apply_local_agent_result")),
         WorkbenchContract("xingchen_studio", "Xingchen Workflow Studio", "external", "learning_design_agent",
                           ("generate_lecture", "request_remediation_explanation"), "companion"),
+        WorkbenchContract(
+            "learning_work_task_plan",
+            "学习型工作任务 Plan",
+            "/learning-task-plans/:runId",
+            "learning_design_agent",
+            ("plan_learning_work_task",),
+            "companion",
+        ),
         WorkbenchContract(
             "learning_work_task_review",
             "学习型工作任务网页与关系复核",
@@ -333,6 +341,9 @@ CAPABILITY_OWNERS = {
     "navigate_checkpoint": ("tutor_agent", "action_board", "project_tutor"),
     "generate_lecture": ("learning_design_agent", "content_generation", "lecture"),
     "generate_assessment": ("learning_design_agent", "content_generation", "assessment"),
+    "plan_learning_work_task": (
+        "learning_design_agent", "learning_task_conversion_gateway", "learning_work_task_plan",
+    ),
     "generate_learning_work_task": (
         "learning_design_agent", "learning_task_conversion_gateway", "global_tutor",
     ),
@@ -394,6 +405,8 @@ EVENTS = {
         _event("lecture_generated", "generate_lecture", ("knowledge",), "exposure"),
         _event("lecture_viewed", "generate_lecture", ("knowledge",), "exposure"),
         _event("assessment_generated", "generate_assessment", (), "artifact"),
+        _event("learning_work_task_plan_created", "plan_learning_work_task", (), "artifact", origin="companion"),
+        _event("learning_work_task_plan_confirmed", "plan_learning_work_task", (), "confirmed_action", origin="companion"),
         _event("learning_work_task_generated", "generate_learning_work_task", (), "artifact", origin="companion"),
         _event("learning_work_task_generation_follow_up", "generate_learning_work_task", (), "operational", origin="companion"),
         _event("learning_work_task_review_submitted", "review_learning_work_task", (), "operational", origin="companion"),

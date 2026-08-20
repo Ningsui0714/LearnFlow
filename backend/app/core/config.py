@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # never forwards a caller supplied host, so this cannot become an open
     # proxy.  The external workflow only returns validated learning artifacts
     # and never writes five-kernel learner state directly.
-    learning_task_conversion_base_url: str = "http://82.156.199.145"
+    learning_task_conversion_base_url: str = "https://82.156.199.145"
     learning_task_conversion_timeout_seconds: float = 30.0
     # Machine-to-machine entry used by the personalized-learning shell.  When
     # unset, the endpoint is available only from loopback in development.

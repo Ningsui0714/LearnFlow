@@ -55,6 +55,8 @@ def test_background_task_events_are_registered_with_their_actual_authority():
 
 def test_learning_work_task_events_are_zero_kernel_adapter_events():
     expected = {
+        "learning_work_task_plan_created",
+        "learning_work_task_plan_confirmed",
         "learning_work_task_generated",
         "learning_work_task_generation_follow_up",
         "learning_work_task_review_submitted",
@@ -67,6 +69,14 @@ def test_learning_work_task_events_are_zero_kernel_adapter_events():
         )
         assert provenance["kernel_targets"] == []
         assert provenance["tool"] == "learning_task_conversion_gateway"
+
+    assert "plan_learning_work_task" in ACTION_BOARD
+    assert "learning_work_task_plan" in WORKBENCHES
+    assert CAPABILITY_OWNERS["plan_learning_work_task"] == (
+        "learning_design_agent",
+        "learning_task_conversion_gateway",
+        "learning_work_task_plan",
+    )
 
 
 def test_review_workbench_is_registered_without_new_kernel_writer():
