@@ -24,6 +24,59 @@ function displaySituation(value: unknown) {
   return String(item.description || item.name || item.title || '')
 }
 
+const EMBEDDED_PROJECT_DESIGN_WIDTH = 1180
+
+function ResponsiveEmbeddedProject({
+  src,
+  title,
+  revision,
+  onLoad,
+}: {
+  src: string
+  title: string
+  revision: number
+  onLoad: () => void
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
+
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return undefined
+    const resize = () => {
+      const nextScale = viewport.clientWidth > 0
+        ? Math.min(1, viewport.clientWidth / EMBEDDED_PROJECT_DESIGN_WIDTH)
+        : 1
+      setScale(current => Math.abs(current - nextScale) < 0.002 ? current : nextScale)
+    }
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [])
+
+  const inverseScale = 1 / scale
+  return (
+    <div ref={viewportRef} className="h-full min-h-0 w-full overflow-hidden bg-white">
+      <iframe
+        key={`${revision}:${src}`}
+        src={src}
+        title={title}
+        className="block border-0 bg-white"
+        style={{
+          width: `${inverseScale * 100}%`,
+          height: `${inverseScale * 100}%`,
+          transform: `scale(${scale})`,
+          transformOrigin: 'left top',
+        }}
+        allow="clipboard-read; clipboard-write"
+        referrerPolicy="strict-origin"
+        onLoad={onLoad}
+      />
+    </div>
+  )
+}
+
 export default function PersonalizedLearningEntryPage() {
   const { taskCardId = '', knowledgeId = '' } = useParams()
   const location = useLocation()
@@ -218,12 +271,10 @@ export default function PersonalizedLearningEntryPage() {
               <Loader2 size={17} className="mr-2 animate-spin text-indigo-600" />正在打开个性化学习项目…
             </div>
           )}
-          <iframe
-            key={`${launched.project_id}:${frameRevision}`}
+          <ResponsiveEmbeddedProject
             src={launched.redirect_url}
             title={`个性化学习：${knowledge.name}`}
-            className="h-full w-full border-0"
-            allow="clipboard-read; clipboard-write"
+            revision={frameRevision}
             onLoad={() => setFrameLoading(false)}
           />
         </div>

@@ -70,7 +70,7 @@ function WorkspaceStage() {
         </div>
       )}
 
-      <section className="h-full min-w-[460px] flex-1 overflow-hidden bg-slate-50" aria-label="主学习编辑组">
+      <section className="h-full min-w-0 flex-1 overflow-hidden bg-slate-50" aria-label="主学习编辑组">
         <Outlet />
       </section>
 
@@ -106,6 +106,15 @@ function WorkspaceFrame() {
   // rail already becomes an overlay below 2xl, so hiding it at 1280px made the
   // task-to-personalized-learning path look as if the chat had disappeared.
   const [agentRailExpanded, setAgentRailExpanded] = useState(() => window.innerWidth >= 1100)
+
+  useEffect(() => {
+    const fitPanelsToViewport = () => {
+      if (window.innerWidth < 1024) setExplorerVisible(false)
+      if (window.innerWidth < 1100) setAgentRailExpanded(false)
+    }
+    window.addEventListener('resize', fitPanelsToViewport)
+    return () => window.removeEventListener('resize', fitPanelsToViewport)
+  }, [])
 
   useEffect(() => {
     const openAgentConversation = () => {
