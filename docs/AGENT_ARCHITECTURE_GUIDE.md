@@ -462,6 +462,7 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 | `/projects/:id/checkpoints/:id/exercises` | 概念验证、代码实践与尝试结果 |
 | `/learning-task-plans/:runId` | 学习型工作任务的版本化 Plan、任务契约、阻塞项和工作包依赖 |
 | `/wf03/tasks/:taskCardId` | 已交付学习型工作任务的步骤、产物、验收与关系复核 |
+| `/personalized-learning/tasks/:taskCardId/knowledge/:knowledgeId` | 预览知识点级交接，并在中央工作区嵌入下游个性化学习项目 |
 | `/profile` | 基本画像、五维友好记忆和学习旅程 Badge |
 | `/memory` | 可检查记忆图谱、时间线、事实与声明来源 |
 
@@ -542,7 +543,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 
 ## 20. 常见反模式
 
-学习型工作任务网页可以通过 `open_personalized_learning` 把单个知识点、来源步骤、强关联技能和回传契约交给个性化学习功能。该动作只是上下文交接，不是掌握证据；后续内容生成仍属学习设计 Agent，练习和验证仍属实践与验证 Agent。
+学习型工作任务网页可以通过 `open_personalized_learning` 把单个知识点、来源步骤、强关联技能和回传契约交给个性化学习功能。后端对返回的任务、知识点、项目身份和跳转地址进行锁定，前端只在中央工作区展示可信项目，并可将关系问题回传复核。这些动作只是上下文交接和运营事件，不是掌握证据；后续内容生成仍属学习设计 Agent，练习和验证仍属实践与验证 Agent。
 
 后续智能体修改代码时，应主动检查以下问题：
 

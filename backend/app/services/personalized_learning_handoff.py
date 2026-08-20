@@ -7,6 +7,7 @@ features cannot depend on this integration accidentally.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urljoin, urlsplit
@@ -80,15 +81,130 @@ class PersonalizedLearningHandoffClient:
         self.config = config or load_personalized_learning_handoff_config(config_path)
         self.transport = transport
 
+    @staticmethod
+    def _validate_handoff(handoff: dict[str, Any]) -> tuple[str, str]:
+        if handoff.get("schema_version") != (
+            "learning-task-knowledge-to-personalized-learning-v1"
+        ):
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接协议版本不受支持",
+                status_code=422,
+            )
+        entry_id = str(handoff.get("entry_id") or "").strip()
+        source = handoff.get("source")
+        focus = handoff.get("focus")
+        knowledge = focus.get("knowledge_point") if isinstance(focus, dict) else None
+        task_card_id = str(
+            source.get("task_card_id") if isinstance(source, dict) else ""
+        ).strip()
+        knowledge_id = str(
+            knowledge.get("knowledge_id") if isinstance(knowledge, dict) else ""
+        ).strip()
+        knowledge_name = str(
+            knowledge.get("name") if isinstance(knowledge, dict) else ""
+        ).strip()
+        source_steps = focus.get("source_steps") if isinstance(focus, dict) else None
+        related_skills = (
+            focus.get("strongly_related_skills") if isinstance(focus, dict) else None
+        )
+        relationships = focus.get("relationships") if isinstance(focus, dict) else None
+        if not entry_id or not task_card_id or not knowledge_id or not knowledge_name:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接缺少稳定任务或知识点身份",
+                status_code=422,
+            )
+        if not isinstance(source_steps, list) or not source_steps:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接缺少来源任务步骤",
+                status_code=422,
+            )
+        step_ids = {
+            str(item.get("step_id") or "").strip()
+            for item in source_steps
+            if isinstance(item, dict) and str(item.get("step_id") or "").strip()
+        }
+        if len(step_ids) != len(source_steps):
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接的步骤 ID 必须唯一且非空",
+                status_code=422,
+            )
+        if not isinstance(related_skills, list):
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接的强相关技能必须是数组",
+                status_code=422,
+            )
+        skill_ids = {
+            str(item.get("skill_id") or "").strip()
+            for item in related_skills
+            if isinstance(item, dict) and str(item.get("skill_id") or "").strip()
+        }
+        if len(skill_ids) != len(related_skills):
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接的技能 ID 必须唯一且非空",
+                status_code=422,
+            )
+        if not isinstance(relationships, list) or not relationships:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接缺少步骤—知识点强关系",
+                status_code=422,
+            )
+        for relation in relationships:
+            if not isinstance(relation, dict):
+                raise PersonalizedLearningHandoffError(
+                    "个性化学习交接关系必须是 JSON 对象",
+                    status_code=422,
+                )
+            if str(relation.get("step_id") or "").strip() not in step_ids:
+                raise PersonalizedLearningHandoffError(
+                    "个性化学习交接关系引用了不存在的步骤",
+                    status_code=422,
+                )
+            relation_knowledge_id = str(
+                relation.get("knowledge_id") or knowledge_id
+            ).strip()
+            if relation_knowledge_id != knowledge_id:
+                raise PersonalizedLearningHandoffError(
+                    "个性化学习交接关系的知识点与当前入口不一致",
+                    status_code=422,
+                )
+            relation_skill_ids = relation.get("skill_ids")
+            if not isinstance(relation_skill_ids, list):
+                raise PersonalizedLearningHandoffError(
+                    "个性化学习交接关系的技能 ID 必须是数组",
+                    status_code=422,
+                )
+            normalized_relation_skill_ids = {
+                str(value).strip()
+                for value in relation_skill_ids
+                if str(value).strip()
+            }
+            if (
+                len(normalized_relation_skill_ids) != len(relation_skill_ids)
+                or normalized_relation_skill_ids - skill_ids
+            ):
+                raise PersonalizedLearningHandoffError(
+                    "个性化学习交接关系引用了不存在的技能",
+                    status_code=422,
+                )
+        return entry_id, knowledge_id
+
     async def import_entry(
         self,
         *,
         learner_id: int,
         handoff: dict[str, Any],
     ) -> dict[str, Any]:
+        source_entry_id, knowledge_id = self._validate_handoff(handoff)
+        # WF04 owns a globally unique entry_id. Scope the stable source entry
+        # to one learner so retries resume the same project without allowing
+        # different learners to share or conflict on that project.
+        entry_id = "ple_" + sha256(
+            f"{source_entry_id}:learner:{learner_id}".encode("utf-8")
+        ).hexdigest()[:24]
+        scoped_handoff = {**handoff, "entry_id": entry_id}
         payload = {
             "student_id": f"LEARNFLOW-{learner_id}",
-            "handoff": handoff,
+            "handoff": scoped_handoff,
         }
         try:
             async with httpx.AsyncClient(
@@ -151,11 +267,24 @@ class PersonalizedLearningHandoffClient:
             raise PersonalizedLearningHandoffError(
                 "个性化学习服务返回了不受信任的跳转地址"
             )
+        returned_entry_id = str(result.get("entry_id") or "").strip()
+        returned_knowledge_id = str(
+            result.get("knowledge_point_id") or ""
+        ).strip()
+        project_id = str(result.get("project_id") or "").strip()
+        if returned_entry_id != entry_id or returned_knowledge_id != knowledge_id:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习服务返回的任务或知识点身份不一致"
+            )
+        if not project_id:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习服务未返回可恢复的项目 ID"
+            )
         return {
             "status": "ok",
-            "entry_id": str(result.get("entry_id") or handoff.get("entry_id") or ""),
-            "project_id": str(result.get("project_id") or ""),
-            "knowledge_point_id": str(result.get("knowledge_point_id") or ""),
+            "entry_id": returned_entry_id,
+            "project_id": project_id,
+            "knowledge_point_id": returned_knowledge_id,
             "redirect_url": redirect_url,
             "created": bool(result.get("created")),
         }

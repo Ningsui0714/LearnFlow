@@ -1,6 +1,6 @@
 import {
-  ArrowLeft, ArrowRight, Braces, CheckCircle2, Clipboard, Download,
-  ExternalLink, Loader2, Network, Sparkles,
+  AlertTriangle, ArrowLeft, ArrowRight, Braces, CheckCircle2,
+  Loader2, Network, RotateCcw, Send, Sparkles,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
@@ -8,7 +8,9 @@ import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import {
   getPersonalizedLearningKnowledgeEntry,
   launchPersonalizedLearningKnowledgeEntry,
+  submitPersonalizedLearningFeedback,
   type PersonalizedLearningKnowledgeEntry,
+  type PersonalizedLearningLaunchResult,
 } from '../services/api'
 
 function errorMessage(error: any) {
@@ -32,8 +34,16 @@ export default function PersonalizedLearningEntryPage() {
   const [entry, setEntry] = useState<PersonalizedLearningKnowledgeEntry | null>(initialEntry || null)
   const [loading, setLoading] = useState(!initialEntry)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
   const [launching, setLaunching] = useState(false)
+  const [launched, setLaunched] = useState<PersonalizedLearningLaunchResult | null>(null)
+  const [frameLoading, setFrameLoading] = useState(false)
+  const [frameRevision, setFrameRevision] = useState(0)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [feedbackCode, setFeedbackCode] = useState('step_mapping_mismatch')
+  const [feedbackMessage, setFeedbackMessage] = useState('')
+  const [feedbackCorrection, setFeedbackCorrection] = useState('')
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
+  const [feedbackStatus, setFeedbackStatus] = useState('')
   useWorkspaceTitle(entry?.focus.knowledge_point.name || '个性化学习交接', { kind: 'wf03' })
 
   const load = useCallback(async () => {
@@ -66,6 +76,17 @@ export default function PersonalizedLearningEntryPage() {
     if (!initialEntry) load()
   }, [initialEntry, load])
 
+  useEffect(() => {
+    const storageKey = `personalized-learning-launch:${taskCardId}:${knowledgeId}`
+    try {
+      const stored = window.sessionStorage.getItem(storageKey)
+      setLaunched(stored ? JSON.parse(stored) as PersonalizedLearningLaunchResult : null)
+    } catch {
+      setLaunched(null)
+      window.sessionStorage.removeItem(storageKey)
+    }
+  }, [knowledgeId, taskCardId])
+
   const sourceStepCount = useMemo(() => entry?.focus.source_steps.length || 0, [entry])
 
   const launch = async () => {
@@ -77,30 +98,60 @@ export default function PersonalizedLearningEntryPage() {
         entry.source.task_card_id,
         entry.focus.knowledge_point.knowledge_id,
       )
-      window.location.assign(result.redirect_url)
+      window.sessionStorage.setItem(
+        `personalized-learning-launch:${taskCardId}:${knowledgeId}`,
+        JSON.stringify(result),
+      )
+      setLaunched(result)
+      setFrameLoading(true)
     } catch (failure) {
       setError(errorMessage(failure))
       setLaunching(false)
     }
   }
 
-  const copyJsonUrl = async () => {
-    if (!entry) return
-    const url = new URL(entry.navigation.handoff_json_path, window.location.origin).toString()
-    await navigator.clipboard.writeText(url)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+  const closeEmbeddedProject = () => {
+    setLaunched(null)
+    setFrameLoading(false)
+    setFeedbackOpen(false)
   }
 
-  const downloadJson = () => {
-    if (!entry) return
-    const blob = new Blob([JSON.stringify(entry, null, 2)], { type: 'application/json;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `${entry.source.task_card_id}-${entry.focus.knowledge_point.knowledge_id}-personalized-learning.json`
-    anchor.click()
-    URL.revokeObjectURL(url)
+  const submitFeedback = async () => {
+    if (!entry || !feedbackMessage.trim() || feedbackSubmitting) return
+    const relation = entry.focus.relationships[0] || {}
+    const sourceStep = entry.focus.source_steps[0]
+    const skillIds = Array.isArray(relation.skill_ids) ? relation.skill_ids : []
+    const correlationId = globalThis.crypto?.randomUUID?.() || `personalized-review-${Date.now()}`
+    setFeedbackSubmitting(true)
+    setFeedbackStatus('')
+    try {
+      await submitPersonalizedLearningFeedback({
+        schema_version: 'personalized-learning-to-task-conversion-feedback-v1',
+        task_card_id: entry.source.task_card_id,
+        correlation_id: correlationId,
+        source_system: '个性化自适应学习功能',
+        status: 'accepted_with_feedback',
+        issues: [{
+          issue_id: `issue_${correlationId.replace(/[^A-Za-z0-9]/g, '').slice(0, 24)}`,
+          feedback_code: feedbackCode,
+          severity: 'warning',
+          relation_id: String(relation.relation_id || ''),
+          step_id: String(relation.step_id || sourceStep?.step_id || ''),
+          knowledge_id: entry.focus.knowledge_point.knowledge_id,
+          skill_id: String(skillIds[0] || ''),
+          message: feedbackMessage.trim(),
+          suggested_correction: feedbackCorrection.trim(),
+        }],
+        summary: feedbackMessage.trim(),
+      })
+      setFeedbackStatus('已回传任务关系复核，原任务事实不会被直接覆盖。')
+      setFeedbackMessage('')
+      setFeedbackCorrection('')
+    } catch (failure) {
+      setFeedbackStatus(errorMessage(failure))
+    } finally {
+      setFeedbackSubmitting(false)
+    }
   }
 
   if (loading) {
@@ -120,6 +171,66 @@ export default function PersonalizedLearningEntryPage() {
   }
 
   const knowledge = entry.focus.knowledge_point
+  if (launched) {
+    return (
+      <main className="flex h-full min-h-0 flex-col bg-slate-100">
+        <header className="shrink-0 border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={closeEmbeddedProject} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <ArrowLeft size={13} /> 返回交接说明
+            </button>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">
+              <CheckCircle2 size={11} className="mr-1 inline" />知识点交接已锁定
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs text-slate-500">
+              {knowledge.name} · {launched.project_id}
+            </span>
+            <button type="button" onClick={() => setFeedbackOpen(value => !value)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-medium text-amber-800 hover:bg-amber-100">
+              <AlertTriangle size={13} /> 回传映射问题
+            </button>
+            <button type="button" onClick={() => { setFrameLoading(true); setFrameRevision(value => value + 1) }} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <RotateCcw size={13} /> 刷新
+            </button>
+          </div>
+          {feedbackOpen && (
+            <div className="mt-3 grid gap-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 md:grid-cols-[180px_1fr_1fr_auto]">
+              <select value={feedbackCode} onChange={event => setFeedbackCode(event.target.value)} className="h-9 rounded-lg border border-amber-200 bg-white px-2 text-xs text-slate-700">
+                <option value="step_mapping_mismatch">步骤映射不一致</option>
+                <option value="weak_relation">关系较弱</option>
+                <option value="incorrect_knowledge_scope">知识点范围不准</option>
+                <option value="incorrect_skill_scope">技能范围不准</option>
+                <option value="missing_prerequisite">缺少前置知识</option>
+                <option value="unsupported_task_fact">任务事实缺少依据</option>
+                <option value="other">其他</option>
+              </select>
+              <input value={feedbackMessage} onChange={event => setFeedbackMessage(event.target.value)} placeholder="说明哪个关系不准确" className="h-9 rounded-lg border border-amber-200 bg-white px-3 text-xs outline-none focus:border-amber-500" />
+              <input value={feedbackCorrection} onChange={event => setFeedbackCorrection(event.target.value)} placeholder="建议如何修正（可选）" className="h-9 rounded-lg border border-amber-200 bg-white px-3 text-xs outline-none focus:border-amber-500" />
+              <button type="button" onClick={submitFeedback} disabled={!feedbackMessage.trim() || feedbackSubmitting} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-amber-700 px-3 text-xs font-semibold text-white disabled:opacity-50">
+                {feedbackSubmitting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}提交复核
+              </button>
+            </div>
+          )}
+          {feedbackStatus && <p className="mt-2 text-[11px] text-slate-600">{feedbackStatus}</p>}
+        </header>
+        <div className="relative min-h-0 flex-1 bg-white">
+          {frameLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white text-sm text-slate-500">
+              <Loader2 size={17} className="mr-2 animate-spin text-indigo-600" />正在打开个性化学习项目…
+            </div>
+          )}
+          <iframe
+            key={`${launched.project_id}:${frameRevision}`}
+            src={launched.redirect_url}
+            title={`个性化学习：${knowledge.name}`}
+            className="h-full w-full border-0"
+            allow="clipboard-read; clipboard-write"
+            onLoad={() => setFrameLoading(false)}
+          />
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="h-full overflow-y-auto bg-slate-100 px-5 py-6 sm:px-8">
       <div className="mx-auto max-w-5xl pb-16">
@@ -127,17 +238,7 @@ export default function PersonalizedLearningEntryPage() {
           <Link to={entry.navigation.return_path} className="inline-flex h-9 items-center gap-1.5 border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:border-slate-400">
             <ArrowLeft size={13} /> 返回学习型任务
           </Link>
-          <button type="button" onClick={copyJsonUrl} className="inline-flex h-9 items-center gap-1.5 border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-700">
-            <Clipboard size={13} /> {copied ? '已复制 JSON 接口' : '复制 JSON 接口'}
-          </button>
-          <button type="button" onClick={downloadJson} className="inline-flex h-9 items-center gap-1.5 border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-700">
-            <Download size={13} /> 下载本知识点 JSON
-          </button>
-          {entry.source.full_handoff_json_url && (
-            <a href={entry.source.full_handoff_json_url} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:border-indigo-300 hover:text-indigo-700">
-              <ExternalLink size={13} /> 查看完整任务 JSON
-            </a>
-          )}
+          <span className="text-[11px] text-slate-500">JSON 由系统直接交接，无需下载或重新上传。</span>
         </div>
 
         <header className="border border-indigo-200 bg-white p-7 shadow-sm sm:p-9">
