@@ -95,3 +95,14 @@ def test_focused_micro_learning_reuses_existing_agent_and_evidence_authority():
     assert {
         tool.id for tool in TOOLS.values() if tool.writes_kernels
     } == {"five_kernel_reducer"}
+
+
+def test_learner_growth_is_an_additive_read_only_workbench():
+    growth = WORKBENCHES["learner_growth"]
+    assert growth.surface == "/growth"
+    assert growth.owner_agent == "tutor_agent"
+    assert growth.capabilities == ()
+    assert {"profile", "memory"} <= set(WORKBENCHES)
+    assert {
+        tool.id for tool in TOOLS.values() if tool.writes_kernels
+    } == {"five_kernel_reducer"}

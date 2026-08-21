@@ -116,6 +116,18 @@ KernelState + Memory Graph
 
 `MicroLearningRun` 只保存可恢复步骤和 answer-free 的 UI 投影。题目结果以 `LearningAttempt` 和 `concept_attempt_evaluated` 为权威，纠错以 `RemediationCase` 为权威，后续计划以 `ReviewSchedule` 为投影。`teach_back_analyzed` 只写诊断缺口并固定 `mastery_unchanged`；`micro_learning_completed` 是零 kernel target 的运行里程碑。微学习题在同一轮的多次正确不能直接形成稳定掌握，跨时间稳定规则仍由 `review-policy-v1` 裁决。详细契约与前端状态机见 `docs/MICRO_LEARNING_MVP.md`。
 
+### 用户成长只读投影
+
+`/growth` 将个人资料、五核当前状态、Memory Fact 依据、复习待办、重大事件和 Badge
+合并为用户可理解的“我的成长”工作台。它只读取现有权威数据，不创建第二套画像，
+不直接写 `KernelState`，也不改变掌握、评分、纠错或复习策略。
+
+默认界面使用“正在进行、理解情况、实践表现、学习节奏、目标与兴趣”等用户语言，
+不展示 Kernel 名称、节点 ID、predicate、原始置信度或 JSON。归档和恢复仍走已有
+`memory_archived` / `memory_restored` 事件链；这只改变后续是否参考该内容，不删除
+历史 EvidenceEvent、Attempt、重大事件或 Badge。`/profile` 与 `/memory` 保留为兼容
+跳转，避免旧书签和已保存工作区标签失效。
+
 ## 4. 两个维护域
 
 ### 维护域 A：主要架构与记忆权威
@@ -133,7 +145,7 @@ KernelState + Memory Graph
 
 - Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
-- `/agent` 学习首页、`/learn/:runId` 专注学习、项目、讲义、练习、纠错、全局复习、画像、记忆、demo 等工作台。
+- `/agent` 学习首页、`/learn/:runId` 专注学习、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
 
 ### 重合区处理

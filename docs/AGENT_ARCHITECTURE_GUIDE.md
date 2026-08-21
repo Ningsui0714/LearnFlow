@@ -281,7 +281,19 @@ start_micro_learning
 
 完整产品、API、事件与离线比对契约见 `docs/MICRO_LEARNING_MVP.md`。
 
-### 8.3 桌面文件工作台
+### 8.3 用户成长工作台
+
+`/growth` 是 Tutor 所有的只读用户投影，把个人资料、五核当前状态、Memory Fact
+依据、复习待办、重大事件和 Badge 组合为一个“我的成长”空间。它不是新的画像权威，
+也不增加 Kernel、Agent 或写入路径；所有数据继续来自既有权威表与确定性投影。
+
+面向学习者时，五核名称必须转换为“正在进行、理解情况、实践表现、学习节奏、目标与
+兴趣”等行动语言；证据等级转换为“你告诉我的、学习中验证过、根据学习记录”等来源
+说明。原始置信度、节点 ID、predicate、provenance 和 JSON 不得出现在默认体验中。
+学习者可以归档或恢复系统当前参考的记忆，但归档不能删除原始 EvidenceEvent、历史
+Attempt、重大事件或 Badge。`/profile` 与 `/memory` 只作为旧地址兼容并跳转到对应页签。
+
+### 8.4 桌面文件工作台
 
 桌面工作区复用 Tutor 控制平面，不增加主 Agent 类型。文件能力链固定为：
 
@@ -518,8 +530,8 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |
 | `/projects/:id/checkpoints/:id` | 正式讲义、关卡学习与选中内容追问 |
 | `/projects/:id/checkpoints/:id/exercises` | 概念验证、代码实践与尝试结果 |
-| `/profile` | 基本画像、五维友好记忆和学习旅程 Badge |
-| `/memory` | 可检查记忆图谱、时间线、事实与声明来源 |
+| `/growth` | 当前状态、下一步、成长成就、可管理记忆、可读依据与个人资料 |
+| `/profile`、`/memory` | 旧地址兼容；分别跳转到 `/growth` 的资料与记忆页签 |
 
 页面只显示用户能理解和行动的信息。内部 Kernel 名称、工具 handler、路由权重和原始 JSON 不应直接暴露在主要学习体验中。
 

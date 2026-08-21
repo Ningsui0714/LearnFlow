@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarClock, GitBranch, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
-  Sparkles, UserRound, X,
+  CalendarClock, Check, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
+  Sparkles, TrendingUp, X,
 } from 'lucide-react'
 import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
@@ -70,12 +70,12 @@ function WorkspaceStage() {
         </div>
       )}
 
-      <section className="h-full min-w-[460px] flex-1 overflow-hidden bg-slate-50" aria-label="主学习编辑组">
+      <section className="h-full min-w-0 flex-1 overflow-hidden bg-slate-50 md:min-w-[460px]" aria-label="主学习编辑组">
         <Outlet />
       </section>
 
       {splitTabs.map(tab => tab && (
-        <section key={tab.id} className="flex h-full min-w-[460px] flex-1 flex-col overflow-hidden border-l border-slate-700 bg-slate-50" aria-label={`并排页面：${tab.title}`}>
+        <section key={tab.id} className="flex h-full min-w-0 flex-1 flex-col overflow-hidden border-l border-slate-700 bg-slate-50 md:min-w-[460px]" aria-label={`并排页面：${tab.title}`}>
           <header className="flex h-9 shrink-0 items-center gap-2 border-b border-slate-700 bg-slate-900 px-3 text-xs text-slate-200">
             <PanelsTopLeft size={13} className="text-sky-300" />
             <span className="min-w-0 flex-1 truncate">{tab.title}</span>
@@ -102,7 +102,9 @@ function WorkspaceFrame() {
   const navigate = useNavigate()
   const { openPath } = useWorkspace()
   const [explorerVisible, setExplorerVisible] = useState(() => window.innerWidth >= 1024)
-  const [agentRailExpanded, setAgentRailExpanded] = useState(() => window.innerWidth >= 1280)
+  // Below the 2xl breakpoint the Tutor is an overlay drawer, so keep it
+  // collapsed by default instead of covering the primary learning surface.
+  const [agentRailExpanded, setAgentRailExpanded] = useState(() => window.innerWidth >= 1536)
 
   useEffect(() => {
     const openAgentConversation = () => {
@@ -146,16 +148,13 @@ function WorkspaceFrame() {
         <div className="min-w-0 flex-1" />
         <div className="hidden items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-medium text-emerald-800 md:flex">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          三类 Agent · 五核证据在线
+          <Check size={11} /> 学习记录已同步
         </div>
-        <button type="button" onClick={() => openPath('/memory', { title: '五核记忆', kind: 'memory' })} title="五核记忆" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
-          <GitBranch size={17} />
+        <button type="button" onClick={() => openPath('/growth', { title: '我的成长', kind: 'growth' })} title="我的成长" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
+          <TrendingUp size={17} />
         </button>
         <button type="button" onClick={() => openPath('/review', { title: '全局复习台', kind: 'review' })} title="复习与错题" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
           <CalendarClock size={17} />
-        </button>
-        <button type="button" onClick={() => openPath('/profile', { title: '个人画像', kind: 'profile' })} title="个人画像" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
-          <UserRound size={17} />
         </button>
         {(user?.is_dev_login || Boolean(getDesktopRuntime().apiBaseUrl)) && (
           <button type="button" onClick={() => openPath('/settings', { title: '模型设置', kind: 'settings' })} title="设置" aria-label="设置" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">

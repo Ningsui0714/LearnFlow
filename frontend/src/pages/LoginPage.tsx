@@ -94,7 +94,7 @@ export default function LoginPage() {
             <span aria-hidden className="text-3xl">✦</span> LearnFlow
           </Link>
           <h1 className="mt-7 text-2xl font-semibold text-gray-950">继续你的学习</h1>
-          <p className="mt-2 text-sm text-gray-500">对话、项目和学习画像只属于当前账号。</p>
+          <p className="mt-2 text-sm text-gray-500">对话、项目和成长记录只属于当前账号。</p>
         </div>
 
         <form onSubmit={submit} className="space-y-4">

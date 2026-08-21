@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen, Braces, CalendarClock, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
-  GitBranch, Plus, Route, UserRound,
+  Plus, Route, TrendingUp,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { getCheckpointWorkspaceArtifacts, getRoadmap, listProjects } from '../../services/api'
@@ -245,17 +245,10 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
         </button>
         <button
           type="button"
-          onClick={() => open('/memory', { title: '五核记忆', kind: 'memory' })}
+          onClick={() => open('/growth', { title: '我的成长', kind: 'growth' })}
           className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-slate-600 hover:bg-slate-100"
         >
-          <GitBranch size={14} className="text-indigo-600" /> 五核记忆与证据
-        </button>
-        <button
-          type="button"
-          onClick={() => open('/profile', { title: '个人画像', kind: 'profile' })}
-          className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-slate-600 hover:bg-slate-100"
-        >
-          <UserRound size={14} className="text-indigo-600" /> 个人画像与旅程
+          <TrendingUp size={14} className="text-indigo-600" /> 我的成长
         </button>
       </div>
 
@@ -266,7 +259,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-semibold text-slate-700">{user?.display_name || '学习者'}</p>
-            <p className="truncate text-[10px] text-slate-400">五核证据持续同步</p>
+            <p className="truncate text-[10px] text-slate-400">学习记录已自动保存</p>
           </div>
         </div>
       </footer>

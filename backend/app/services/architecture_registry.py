@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-21.1"
+REGISTRY_VERSION = "2026-08-21.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -294,8 +294,9 @@ WORKBENCHES = {
                           ("request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
         WorkbenchContract("review", "Global Review Workbench", "/review", "tutor_agent",
                           ("plan_review_queue", "evaluate_review_attempt", "manage_review_item")),
-        WorkbenchContract("profile", "Learner Profile", "/profile", "tutor_agent", ()),
-        WorkbenchContract("memory", "Inspectable Memory", "/memory", "tutor_agent", ()),
+        WorkbenchContract("learner_growth", "Learner Growth", "/growth", "tutor_agent", ()),
+        WorkbenchContract("profile", "Learner Profile Legacy Redirect", "/profile", "tutor_agent", ()),
+        WorkbenchContract("memory", "Inspectable Memory Legacy Redirect", "/memory", "tutor_agent", ()),
         WorkbenchContract("competition_demo", "Seeded Demo Entry", "/demo", "tutor_agent",
                           ("plan_review_queue", "evaluate_review_attempt", "manage_review_item",
                            "evaluate_attempt", "request_remediation_explanation", "retry_attempt",

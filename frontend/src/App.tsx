@@ -7,7 +7,6 @@ import CheckpointPage from './pages/CheckpointPage'
 import ExercisePage from './pages/ExercisePage'
 import HomePage from './pages/HomePage'
 import LoginPage from './pages/LoginPage'
-import MemoryGraphPage from './pages/MemoryGraphPage'
 import ReviewPage from './pages/ReviewPage'
 import ProfilePage from './pages/ProfilePage'
 import ProjectPage from './pages/ProjectPage'
@@ -35,8 +34,9 @@ export default function App() {
           <Route path="/agent" element={<AgentPage />} />
           <Route path="/learn/:runId" element={<LearningRunPage />} />
           <Route path="/projects" element={<HomePage />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/memory" element={<MemoryGraphPage />} />
+          <Route path="/growth" element={<ProfilePage />} />
+          <Route path="/profile" element={<Navigate to="/growth?section=profile" replace />} />
+          <Route path="/memory" element={<Navigate to="/growth?section=memories" replace />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/settings" element={<DevSettingsRoute />} />
           <Route path="/projects/:projectId" element={<ProjectPage />} />

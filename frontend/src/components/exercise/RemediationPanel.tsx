@@ -100,7 +100,7 @@ export default function RemediationPanel({ remediation, onChange, onRetry }: Pro
             <span className={`px-2 py-0.5 text-[10px] rounded-full ${
               completed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'
             }`}>
-              {completed ? '证据已回写' : remediation.status === 'variant_ready' ? '等待变式验证' : '正在纠错'}
+              {completed ? '学习记录已更新' : remediation.status === 'variant_ready' ? '等待变式验证' : '正在纠错'}
             </span>
           </div>
           <p className="mt-1 text-[11px] text-gray-500">
@@ -191,7 +191,7 @@ export default function RemediationPanel({ remediation, onChange, onRetry }: Pro
 
       {completed && (
         <div className="mt-3 bg-green-50 px-3 py-2 text-xs text-green-800 rounded-lg">
-          ✅ 原题重做与变式验证均通过；本次纠错的作答、策略和证据编号已写回五核记忆。
+          ✅ 原题重做与变式验证均通过；本次纠错过程和结果已经保存到学习记录。
         </div>
       )}
       {remediation.ineffective_modes?.length > 0 && (

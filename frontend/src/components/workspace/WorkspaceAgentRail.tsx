@@ -135,7 +135,7 @@ export default function WorkspaceAgentRail({
       : ['换种讲法', '看步骤', '看示例'])
     : []
   const contextDescription = reviewContext
-    ? '题目、错因、调度与五核证据已装配'
+    ? '当前题目、错因与复习记录已准备好'
     : state.checkpointId
     ? '同一关讲义、练习与文件协作'
     : state.projectId
@@ -183,7 +183,7 @@ export default function WorkspaceAgentRail({
         turnContext={turnContext}
         quickPrompts={quickPrompts}
         surfaceTitle={reviewContext ? '主 Agent · 复习协作' : state.title}
-        surfaceDescription={reviewContext ? '当前题目、错因、调度与证据上下文已安全装配' : undefined}
+        surfaceDescription={reviewContext ? '当前题目、错因和复习记录已准备好' : undefined}
         className="min-h-0 flex-1 rounded-none border-0"
         onProjectChange={project => project?.id && openPath(`/projects/${project.id}`, { title: project.name || `项目 ${project.id}`, kind: 'project', projectId: project.id })}
         onLearningRunCreated={run => run?.id && openPath(`/learn/${run.id}`, { title: run.goal || `专注学习 ${run.id}`, kind: 'learning_run', projectId: run.project_id, checkpointId: run.checkpoint_id })}

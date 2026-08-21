@@ -12,13 +12,14 @@ export type WorkspaceTabKind =
   | 'exercise'
   | 'learning_run'
   | 'file'
+  | 'growth'
   | 'memory'
   | 'review'
   | 'profile'
   | 'settings'
 
 const WORKSPACE_TAB_KINDS: WorkspaceTabKind[] = [
-  'home', 'projects', 'project', 'lecture', 'exercise', 'learning_run', 'file', 'memory', 'review', 'profile', 'settings',
+  'home', 'projects', 'project', 'lecture', 'exercise', 'learning_run', 'file', 'growth', 'memory', 'review', 'profile', 'settings',
 ]
 
 export interface WorkspaceTab {
@@ -91,6 +92,14 @@ function normalizePath(path: string) {
 function pathMeta(path: string): WorkspaceTab {
   const normalized = normalizePath(path)
   const pathname = new URL(normalized, window.location.origin).pathname
+  if (pathname === '/growth' || pathname === '/memory' || pathname === '/profile') {
+    return {
+      id: '/growth',
+      path: '/growth',
+      title: '我的成长',
+      kind: 'growth',
+    }
+  }
   const learningRun = pathname.match(/^\/learn\/(\d+)$/)
   if (learningRun) {
     return {
@@ -148,9 +157,7 @@ function pathMeta(path: string): WorkspaceTab {
   const staticMeta: Record<string, Pick<WorkspaceTab, 'title' | 'kind' | 'pinned'>> = {
     '/agent': { title: '学习工作台', kind: 'home', pinned: true },
     '/projects': { title: '学习项目', kind: 'projects' },
-    '/memory': { title: '五核记忆', kind: 'memory' },
     '/review': { title: '全局复习台', kind: 'review' },
-    '/profile': { title: '个人画像', kind: 'profile' },
     '/settings': { title: '模型设置', kind: 'settings' },
   }
   const meta = staticMeta[pathname] || { title: 'LearnFlow', kind: 'home' as const }
@@ -164,13 +171,19 @@ function validTab(value: unknown): value is WorkspaceTab {
     && typeof tab.path === 'string'
     && typeof tab.title === 'string'
     && tab.path.startsWith('/')
-    && tab.id === normalizePath(tab.path)
+    && tab.id === pathMeta(tab.path).id
     && WORKSPACE_TAB_KINDS.includes(tab.kind)
 }
 
 function limitTabs(items: WorkspaceTab[]) {
   const home = items.find(tab => tab.id === HOME_TAB.id) || HOME_TAB
-  return [home, ...items.filter(tab => tab.id !== HOME_TAB.id).slice(-15)]
+  const seen = new Set([HOME_TAB.id])
+  const unique = items.filter(tab => {
+    if (seen.has(tab.id)) return false
+    seen.add(tab.id)
+    return true
+  })
+  return [home, ...unique.slice(-15)]
 }
 
 export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string; children: ReactNode }) {
@@ -186,7 +199,21 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || '{}')
-      const restored = Array.isArray(saved.tabs) ? saved.tabs.filter(validTab) : []
+      const restored = Array.isArray(saved.tabs)
+        ? saved.tabs.flatMap((value: unknown) => {
+          if (!value || typeof value !== 'object' || typeof (value as WorkspaceTab).path !== 'string') return []
+          const tab = value as WorkspaceTab
+          const base = pathMeta(tab.path)
+          const migrated = {
+            ...tab,
+            id: base.id,
+            path: base.path,
+            title: base.kind === 'growth' ? base.title : tab.title,
+            kind: base.kind === 'growth' ? base.kind : tab.kind,
+          }
+          return validTab(migrated) ? [migrated] : []
+        })
+        : []
       const withHome = restored.some((tab: WorkspaceTab) => tab.id === HOME_TAB.id)
         ? restored.map((tab: WorkspaceTab) => tab.id === HOME_TAB.id ? HOME_TAB : tab)
         : [HOME_TAB, ...restored]
@@ -294,7 +321,7 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
   }, [activeTabId, navigate, tabs])
 
   const updateCurrentTab = useCallback((patch: WorkspaceTabPatch) => {
-    const currentId = normalizePath(`${location.pathname}${location.search}${location.hash}`)
+    const currentId = pathMeta(`${location.pathname}${location.search}${location.hash}`).id
     setTabs(previous => previous.map(tab => tab.id === currentId ? { ...tab, ...patch } : tab))
   }, [location.hash, location.pathname, location.search])
 

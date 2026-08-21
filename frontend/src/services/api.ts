@@ -80,6 +80,7 @@ export const devLogin = (accountId: number) =>
   api.post(`/dev/accounts/${accountId}/login`).then(r => r.data as AuthUser)
 
 export const getProfile = () => api.get('/profile').then(r => r.data)
+export const getGrowth = () => api.get('/profile/growth').then(r => r.data)
 export const updateProfile = (data: Record<string, any>) => api.patch('/profile', data).then(r => r.data)
 export const getProfileMemories = () => api.get('/profile/memories').then(r => r.data)
 export const archiveProfileMemory = (memoryId: string, reason = '') =>

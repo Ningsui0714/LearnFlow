@@ -5,13 +5,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.models.learning import LearnerBadge, LearnerProfile, LearningLifeEvent
+from app.models.learning import LearnerBadge
 from app.models.project import Project
 from app.schemas.auth import MemoryArchiveRequest, ProfileUpdateRequest
 from app.services.auth import CurrentLearner, get_current_learner
 from app.services.learning_runtime import record_event
 from app.services.profile import (
-    award_career_goal, badge_view, life_event_view, memory_projection, set_memory_archive,
+    award_career_goal, growth_projection, journey_projection, memory_projection,
+    set_memory_archive,
 )
 
 
@@ -104,6 +105,16 @@ async def get_memories(
     return {"dimensions": await memory_projection(db, current.learner.id)}
 
 
+@router.get("/growth")
+async def get_growth(
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the single learner-facing view of profile, progress and memory."""
+    projection = await growth_projection(db, current.learner.id)
+    return {"profile": _profile_fields(current), **projection}
+
+
 @router.post("/memories/{memory_id}/archive")
 async def archive_memory(
     memory_id: str,
@@ -144,14 +155,4 @@ async def get_journey(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    events = (await db.execute(select(LearningLifeEvent).where(
-        LearningLifeEvent.learner_id == current.learner.id,
-    ).order_by(LearningLifeEvent.occurred_at.desc()).limit(min(max(limit, 1), 100)))).scalars().all()
-    badges = (await db.execute(select(LearnerBadge).where(
-        LearnerBadge.learner_id == current.learner.id,
-    ))).scalars().all()
-    badge_by_event = {badge.life_event_id: badge for badge in badges}
-    return {
-        "events": [life_event_view(event, badge_by_event.get(event.id)) for event in events],
-        "badges": [badge_view(badge) for badge in sorted(badges, key=lambda item: item.awarded_at, reverse=True)],
-    }
+    return await journey_projection(db, current.learner.id, limit=limit)

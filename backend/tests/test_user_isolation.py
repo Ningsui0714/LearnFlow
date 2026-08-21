@@ -97,6 +97,19 @@ def test_two_cookie_clients_are_strictly_isolated():
         assert "只学过 JavaScript" not in str(alice_memories)
         assert "只学过 JavaScript" in str(bob_memories)
 
+        alice_growth = alice.get("/api/profile/growth")
+        bob_growth = bob.get("/api/profile/growth")
+        assert alice_growth.status_code == bob_growth.status_code == 200
+        assert alice_growth.json()["profile"]["display_name"] == "Alice"
+        assert "学过 Python" in str(alice_growth.json()["areas"])
+        assert "只学过 JavaScript" not in str(alice_growth.json())
+        assert [area["title"] for area in alice_growth.json()["areas"]] == [
+            "正在进行", "理解情况", "实践表现", "学习节奏", "目标与兴趣",
+        ]
+        assert all("kernel" not in area for area in alice_growth.json()["areas"])
+        assert alice_growth.json()["stats"]["learning_records"] > 0
+        assert "学过 Python" not in str(bob_growth.json())
+
         assert alice.get("/api/settings").status_code == 404
         assert alice.post("/api/auth/logout").status_code == 200
         assert alice.get("/api/projects").status_code == 401
@@ -160,6 +173,12 @@ def test_badges_are_idempotent_and_memory_correction_keeps_history():
             json={"reason": "职业方向正在重新考虑"},
         )
         assert archived.status_code == 200
+        growth = client.get("/api/profile/growth").json()
+        direction = next(item for item in growth["areas"] if item["id"] == "direction")
+        assert next(
+            item for item in direction["memories"]
+            if item["memory_id"] == career_memory["memory_id"]
+        )["status"] == "archived"
 
         async def verify_archived_projection():
             async with async_session() as db:

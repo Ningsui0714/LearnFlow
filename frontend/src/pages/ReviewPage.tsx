@@ -193,7 +193,7 @@ function HistoryDrawer({ item, onClose }: { item: ReviewItem; onClose: () => voi
   return (
     <aside className="absolute inset-y-0 right-0 z-40 w-[min(92vw,430px)] overflow-y-auto border-l border-slate-200 bg-white shadow-2xl">
       <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800"><History size={16} /> 学习证据时间线</div>
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800"><History size={16} /> 学习记录时间线</div>
         <button type="button" onClick={onClose} aria-label="关闭详情" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100"><X size={16} /></button>
       </header>
       <div className="space-y-5 p-4">
@@ -201,7 +201,7 @@ function HistoryDrawer({ item, onClose }: { item: ReviewItem; onClose: () => voi
           <p className="text-sm font-semibold text-slate-900">{item.title}</p>
           <p className="mt-1 text-xs text-slate-500">{item.project_name} · {item.checkpoint_title}</p>
         </div>
-        {!history && !error ? <p className="text-xs text-slate-400">正在读取 Attempt、纠错与事件证据…</p> : null}
+        {!history && !error ? <p className="text-xs text-slate-400">正在读取作答、纠错与复习记录…</p> : null}
         {error ? <p className="rounded-lg bg-rose-50 p-3 text-xs text-rose-700">{error}</p> : null}
         {history ? (
           <>
@@ -525,7 +525,7 @@ export default function ReviewPage() {
         </div>
         {overviewExpanded ? (
           <div id="review-overview">
-            <div className="mt-2 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-[11px] text-indigo-800"><Sparkles size={14} /> 调度器只安排复习，掌握仍由五核证据裁决</div>
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-[11px] text-indigo-800"><Sparkles size={14} /> 复习计划负责提醒；是否真正掌握，会结合独立作答与练习表现判断</div>
             <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
               <MetricCard icon={<CalendarClock size={16} />} label="今日到期" value={summary.due} tone="bg-indigo-50 text-indigo-700" />
               <MetricCard icon={<Clock3 size={16} />} label="已逾期" value={summary.overdue} tone="bg-rose-50 text-rose-700" />
@@ -565,7 +565,7 @@ export default function ReviewPage() {
           {activeItem ? (
             <div className="mx-auto max-w-4xl">
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => setHistoryOpen(true)} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"><Eye size={13} /> 证据详情</button>
+                <button type="button" onClick={() => setHistoryOpen(true)} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"><Eye size={13} /> 查看依据</button>
                 {activeItem.phase !== 'remediation' && activeItem.phase !== 'suspended' ? <button type="button" onClick={() => act('defer')} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"><Clock3 size={13} /> 稍后一天</button> : null}
                 {activeItem.phase === 'suspended' ? <button type="button" onClick={() => act('resume')} className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] text-emerald-700"><Play size={13} /> 恢复复习</button> : <button type="button" onClick={() => act('suspend')} className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] text-slate-600 hover:bg-slate-50"><Pause size={13} /> 暂停此题</button>}
                 <span className="ml-auto text-[10px] text-slate-400">错题 {activeItem.wrong_count} 次 · 遗忘 {activeItem.lapse_count} 次</span>

@@ -9,10 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.learning import (
     EvidenceEvent, KernelState, LearnerBadge, LearnerProfile, LearningLifeEvent,
-    MemoryArchive,
+    MemoryArchive, MemoryFact, MemoryNode, MicroLearningRun, ReviewSchedule,
 )
 from app.models.project import Checkpoint, Project, Roadmap
 from app.services.learning_runtime import KERNEL_NAMES, record_event
+from app.services.review import schedule_bucket
 
 
 KERNEL_LABELS = {
@@ -21,6 +22,58 @@ KERNEL_LABELS = {
     "human": "人因记忆",
     "value": "价值记忆",
     "practice": "实践记忆",
+}
+
+GROWTH_AREA_META = {
+    "structure": {
+        "id": "progress",
+        "title": "正在进行",
+        "description": "你正在学什么，以及下次从哪里继续",
+    },
+    "knowledge": {
+        "id": "understanding",
+        "title": "理解情况",
+        "description": "已经理解、还需巩固和有待解决的内容",
+    },
+    "practice": {
+        "id": "ability",
+        "title": "实践表现",
+        "description": "练习、作品和独立完成情况",
+    },
+    "human": {
+        "id": "rhythm",
+        "title": "学习节奏",
+        "description": "更适合你的时间、节奏和支持方式",
+    },
+    "value": {
+        "id": "direction",
+        "title": "目标与兴趣",
+        "description": "你想去哪里，以及当下更值得投入的方向",
+    },
+}
+
+GROWTH_AREA_ORDER = ("structure", "knowledge", "practice", "human", "value")
+
+EVIDENCE_KIND_LABELS = {
+    "verified": "学习中验证过",
+    "corrected": "你主动修正过",
+    "self_reported": "你告诉我的",
+    "exposure_only": "刚接触，还需验证",
+    "inferred": "根据对话整理",
+    "legacy": "过去的学习记录",
+    "observed": "根据学习记录",
+}
+
+EVIDENCE_EVENT_LABELS = {
+    "registration_profile_completed": "你补充了学习资料",
+    "profile_updated": "你更新了个人资料",
+    "career_goal_confirmed": "你确认了一个长期方向",
+    "concept_attempt_evaluated": "完成了一次知识检验",
+    "exercise_attempt_evaluated": "完成了一次练习",
+    "transfer_attempt_evaluated": "完成了一次变式验证",
+    "review_attempt_evaluated": "完成了一次复习",
+    "lecture_viewed": "学习了一段新内容",
+    "teach_back_analyzed": "完成了一次复述",
 }
 
 MEMORY_LABELS = {
@@ -36,21 +89,21 @@ MEMORY_LABELS = {
     "current_goal": "当前学习目标",
     "current_blocker": "当前阻塞",
     "project_graph": "长期项目图谱",
-    "declared_background": "自述基础（未验证）",
-    "declared_starting_point": "自述学习起点（未验证）",
+    "declared_background": "你填写的已有基础",
+    "declared_starting_point": "你描述的学习起点",
     "concept_understanding": "知识点理解状态",
     "knowledge_gap": "待补知识缺口",
     "misconceptions": "重要误解",
     "mastery": "稳定掌握",
     "pending_question": "待解决问题",
-    "learning_preferences": "稳定学习偏好",
+    "learning_preferences": "学习节奏与偏好",
     "weekly_hours": "每周投入",
-    "preferred_modes": "偏好方式",
+    "preferred_modes": "喜欢的学习方式",
     "affect": "近期状态",
     "cognitive_load": "近期认知负荷",
     "focus_areas": "关注方向",
     "career_goal": "职业理想",
-    "career_goal_candidate": "职业方向候选",
+    "career_goal_candidate": "正在考虑的长期方向",
     "current_priority": "当前优先级",
     "proof_chain": "独立实践证明",
     "artifact_candidate": "实践产物目标",
@@ -84,6 +137,14 @@ VALUE_LABELS = {
     "none": "独立完成",
 }
 
+MODE_VALUE_LABELS = {
+    "explanation": "小讲解",
+    "example": "例子",
+    "practice": "动手练习",
+    "project": "项目推进",
+    "reflection": "复盘",
+}
+
 
 def _memory_id(kernel: str, scope: str, key: str) -> str:
     return f"{kernel}:{scope}:{key}"
@@ -108,6 +169,8 @@ def _display_value(value, key: str = ""):
                 if isinstance(item, dict) and item.get("title")
             ]
             return "需先衔接：" + "、".join(titles[:8]) if titles else "暂无显式先修关卡"
+        if key == "preferred_modes":
+            return "、".join(MODE_VALUE_LABELS.get(str(item), str(item)) for item in value[:8]) or "暂无"
         return "、".join(str(item) for item in value[:8]) or "暂无"
     if isinstance(value, dict):
         if not value:
@@ -153,11 +216,14 @@ def _display_value(value, key: str = ""):
         if key == "learning_preferences":
             hours = value.get("weekly_hours")
             modes = value.get("preferred_modes") or []
-            return f"每周 {hours} 小时；偏好 {'、'.join(modes)}"
+            mode_text = "、".join(MODE_VALUE_LABELS.get(str(item), str(item)) for item in modes)
+            return f"每周 {hours} 小时；偏好 {mode_text}"
         return "；".join(
             f"{MEMORY_LABELS.get(str(item_key), str(item_key))}：{_display_value(item_value, str(item_key))}"
             for item_key, item_value in list(value.items())[:6]
         )
+    if key == "weekly_hours" and isinstance(value, (int, float)):
+        return f"每周 {value:g} 小时"
     return str(value)
 
 
@@ -386,7 +452,7 @@ async def memory_projection(db: AsyncSession, learner_id: int) -> list[dict]:
                     confidence = float(source_state.confidence or 0.0)
                     summary = _display_value(value, key)
                     if key in {"declared_background", "declared_starting_point"}:
-                        summary = f"{summary}（用户自述，尚未通过答题或实践验证）"
+                        summary = f"{summary}（由你提供，尚未通过答题或实践验证）"
                     if key == "active_project_id":
                         project = (await db.execute(select(Project).where(
                             Project.id == value, Project.learner_id == learner_id,
@@ -425,6 +491,213 @@ async def memory_projection(db: AsyncSession, learner_id: int) -> list[dict]:
                     })
         dimensions.append({"kernel": kernel, "label": KERNEL_LABELS[kernel], "memories": memories})
     return dimensions
+
+
+async def journey_projection(
+    db: AsyncSession, learner_id: int, *, limit: int = 50,
+) -> dict:
+    events = (await db.execute(select(LearningLifeEvent).where(
+        LearningLifeEvent.learner_id == learner_id,
+    ).order_by(LearningLifeEvent.occurred_at.desc()).limit(min(max(limit, 1), 100)))).scalars().all()
+    badges = (await db.execute(select(LearnerBadge).where(
+        LearnerBadge.learner_id == learner_id,
+    ))).scalars().all()
+    badge_by_event = {badge.life_event_id: badge for badge in badges}
+    return {
+        "events": [life_event_view(event, badge_by_event.get(event.id)) for event in events],
+        "badges": [
+            badge_view(badge)
+            for badge in sorted(badges, key=lambda item: item.awarded_at, reverse=True)
+        ],
+    }
+
+
+def _growth_memory(memory: dict) -> dict:
+    source_kind = memory.get("verification_status") or "observed"
+    return {
+        "memory_id": memory["memory_id"],
+        "title": memory["label"],
+        "summary": memory["summary"],
+        "retention": "long" if memory["scope"] == "long_term" else "recent",
+        "retention_label": "长期保留" if memory["scope"] == "long_term" else "近期参考",
+        "source_kind": source_kind,
+        "source_label": EVIDENCE_KIND_LABELS.get(source_kind, "根据学习记录"),
+        "related_record_count": int(memory.get("evidence_count") or 0),
+        "updated_at": memory.get("updated_at"),
+        "status": memory.get("status") or "active",
+        "expires_at": memory.get("transient_expires_at"),
+    }
+
+
+async def recent_growth_evidence(
+    db: AsyncSession, learner_id: int, *, limit: int = 12,
+) -> list[dict]:
+    rows = (await db.execute(
+        select(MemoryNode, MemoryFact, EvidenceEvent)
+        .join(MemoryFact, MemoryFact.node_id == MemoryNode.id)
+        .join(EvidenceEvent, EvidenceEvent.id == MemoryFact.source_event_id)
+        .where(
+            MemoryNode.learner_id == learner_id,
+            EvidenceEvent.learner_id == learner_id,
+            MemoryNode.status.in_(["active", "transient", "legacy"]),
+        )
+        .order_by(MemoryNode.occurred_at.desc(), MemoryNode.id.desc())
+        .limit(min(max(limit, 1), 30) * 5)
+    )).all()
+    hidden_keys = HIDDEN_MEMORY_KEYS | {
+        "active_project_id", "active_checkpoint_id", "project_graph", "memory_graph_claims",
+    }
+    results: list[dict] = []
+    seen_events: set[int] = set()
+    for node, fact, event in rows:
+        key = str((node.payload or {}).get("key") or fact.predicate.rsplit(".", 1)[-1])
+        if key in hidden_keys or event.id in seen_events:
+            continue
+        seen_events.add(event.id)
+        meta = GROWTH_AREA_META.get(node.kernel_name, GROWTH_AREA_META["structure"])
+        summary = _display_value(fact.object_value, key)
+        if key in {"declared_background", "declared_starting_point"}:
+            summary = f"{summary}（由你提供，尚未经过练习验证）"
+        results.append({
+            "id": event.id,
+            "title": EVIDENCE_EVENT_LABELS.get(event.event_type, "新增了一条学习记录"),
+            "summary": f"{MEMORY_LABELS.get(key, key.replace('_', ' '))}：{summary}",
+            "area": meta["id"],
+            "area_title": meta["title"],
+            "source_kind": fact.evidence_grade,
+            "source_label": EVIDENCE_KIND_LABELS.get(fact.evidence_grade, "根据学习记录"),
+            "occurred_at": (event.occurred_at or node.occurred_at).isoformat(),
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+async def growth_projection(db: AsyncSession, learner_id: int) -> dict:
+    """Build a learner-facing read model from existing authoritative projections.
+
+    This function only reads KernelState, evidence-backed memory facts, review
+    schedules and journey records. It deliberately does not create evidence or
+    infer new mastery state.
+    """
+    dimensions = await memory_projection(db, learner_id)
+    dimension_map = {item["kernel"]: item for item in dimensions}
+    raw_memories = [
+        memory
+        for dimension in dimensions
+        for memory in dimension.get("memories", [])
+    ]
+    active_memories = [item for item in raw_memories if item.get("status") != "archived"]
+    memory_by_key = {item["key"]: item for item in active_memories}
+
+    areas = []
+    for kernel in GROWTH_AREA_ORDER:
+        meta = GROWTH_AREA_META[kernel]
+        memories = [
+            _growth_memory(memory)
+            for memory in dimension_map.get(kernel, {}).get("memories", [])
+        ]
+        areas.append({
+            **meta,
+            "active_count": sum(item["status"] != "archived" for item in memories),
+            "memories": memories,
+        })
+
+    journey = await journey_projection(db, learner_id)
+    evidence = await recent_growth_evidence(db, learner_id)
+    evidence_counts = dict((await db.execute(
+        select(MemoryFact.evidence_grade, func.count(MemoryFact.node_id))
+        .join(MemoryNode, MemoryNode.id == MemoryFact.node_id)
+        .where(MemoryNode.learner_id == learner_id)
+        .group_by(MemoryFact.evidence_grade)
+    )).all())
+    schedules = (await db.execute(select(ReviewSchedule).where(
+        ReviewSchedule.learner_id == learner_id,
+    ))).scalars().all()
+    due_reviews = sum(
+        schedule_bucket(schedule) in {"wrong", "overdue", "due"}
+        for schedule in schedules
+    )
+    project_count = int(await db.scalar(select(func.count(Project.id)).where(
+        Project.learner_id == learner_id,
+    )) or 0)
+    completed_loops = int(await db.scalar(select(func.count(MicroLearningRun.id)).where(
+        MicroLearningRun.learner_id == learner_id,
+        MicroLearningRun.status == "completed",
+    )) or 0)
+
+    current_project = memory_by_key.get("active_project_id")
+    current_checkpoint = memory_by_key.get("active_checkpoint_id")
+    current_task = memory_by_key.get("current_task")
+    current_goal = (
+        memory_by_key.get("current_goal")
+        or memory_by_key.get("current_priority")
+        or memory_by_key.get("career_goal")
+        or memory_by_key.get("career_goal_candidate")
+    )
+    focus_memory = current_task or current_checkpoint or current_project or current_goal
+    current_focus = focus_memory["summary"] if focus_memory else "还没有确定当前学习重点"
+    if current_checkpoint and current_project and focus_memory is current_checkpoint:
+        focus_context = f"当前项目：{current_project['summary']}"
+    elif current_goal and focus_memory is not current_goal:
+        focus_context = f"当前目标：{current_goal['summary']}"
+    else:
+        focus_context = "从一个足够小、可以完成验证的目标开始"
+
+    if due_reviews:
+        next_action = {
+            "title": f"完成 {due_reviews} 项待处理复习",
+            "description": "先处理最需要巩固的内容，学习会更稳。",
+            "route": "/review",
+            "action_label": "去复习",
+        }
+    elif current_project and isinstance(current_project.get("value"), int):
+        next_action = {
+            "title": f"继续「{current_project['summary']}」",
+            "description": current_checkpoint["summary"] if current_checkpoint else "回到上次的学习位置继续推进。",
+            "route": f"/projects/{current_project['value']}",
+            "action_label": "继续学习",
+        }
+    else:
+        next_action = {
+            "title": "完成第一个可验证的小目标",
+            "description": "告诉主 Agent 你现在最想学会什么，它会带你跑完一个小闭环。",
+            "route": "/agent",
+            "action_label": "开始学习",
+        }
+
+    badge_count = len(journey["badges"])
+    verified_records = int(evidence_counts.get("verified", 0) or 0)
+    if badge_count:
+        encouragement = f"你已经获得 {badge_count} 枚成长徽章。每一枚都对应一次真实完成。"
+    elif completed_loops:
+        encouragement = f"你已经完成 {completed_loops} 次专注学习闭环，进步正在累积。"
+    elif verified_records:
+        encouragement = f"已有 {verified_records} 条学习表现经过验证，可以继续积累稳定掌握。"
+    else:
+        encouragement = "完成一次复述或练习后，这里会开始记录你的真实进步。"
+
+    return {
+        "overview": {
+            "current_focus": current_focus,
+            "focus_context": focus_context,
+            "encouragement": encouragement,
+            "next_action": next_action,
+        },
+        "stats": {
+            "projects": project_count,
+            "badges": badge_count,
+            "completed_learning_loops": completed_loops,
+            "active_memories": len(active_memories),
+            "archived_memories": len(raw_memories) - len(active_memories),
+            "verified_records": verified_records,
+            "learning_records": sum(int(value or 0) for value in evidence_counts.values()),
+            "due_reviews": due_reviews,
+        },
+        "areas": areas,
+        "evidence": evidence,
+        "journey": journey,
+    }
 
 
 async def set_memory_archive(

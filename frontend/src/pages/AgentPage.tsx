@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ArrowRight, BookOpen, CalendarClock, CheckCircle2, ChevronDown,
-  Clock3, FileText, GitBranch, Loader2, MessageSquareText, Sparkles,
+  Clock3, FileText, Loader2, MessageSquareText, Sparkles, TrendingUp,
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useWorkspace, useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
@@ -158,7 +158,7 @@ export default function AgentPage() {
           <div className="flex items-end justify-between gap-3"><div><h2 className="text-base font-semibold text-slate-950">需要更长的学习方式？</h2><p className="mt-1 text-xs text-slate-500">项目式学习现在是一种深度模式，而不是进入系统前的必选配置。</p></div><span className="hidden items-center gap-1 text-xs text-slate-400 sm:inline-flex"><MessageSquareText size={13} />右侧 Tutor 也可推荐合适模式</span></div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <button type="button" onClick={() => openPath('/projects', { title: '学习项目', kind: 'projects' })} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-emerald-300"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800"><BookOpen size={17} /></span><strong className="mt-3 block text-sm text-slate-900">项目式深度学习</strong><span className="mt-1 block text-xs leading-5 text-slate-500">适合多周目标：组织来源、路线、讲义、代码实践与成果。</span></button>
-            <button type="button" onClick={() => openPath('/memory', { title: '五核记忆', kind: 'memory' })} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-indigo-300"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-800"><GitBranch size={17} /></span><strong className="mt-3 block text-sm text-slate-900">检查学习证据</strong><span className="mt-1 block text-xs leading-5 text-slate-500">查看系统为何认为你需要继续学习、纠错或复习。</span></button>
+            <button type="button" onClick={() => openPath('/growth', { title: '我的成长', kind: 'growth' })} className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-indigo-300"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-800"><TrendingUp size={17} /></span><strong className="mt-3 block text-sm text-slate-900">查看我的成长</strong><span className="mt-1 block text-xs leading-5 text-slate-500">了解当前状态、真实进步和系统记住的学习情况。</span></button>
           </div>
         </section>
       </main>
