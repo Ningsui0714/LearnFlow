@@ -112,7 +112,17 @@ KernelState + Memory Graph
 
 ### 可验证微学习与流程投影
 
-`/agent` 的快速入口和 `/learn/:runId` 专注工作台由 Tutor 控制 Agent 所有，并通过 `verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错和复习调度。它不是第四类主 Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/session scope，用户无需先配置项目。
+`/agent` 与 `/agent/:sessionId` 是独立学习对话空间。学习者可以拥有多段 global Session，
+项目则是对话可以创建、进入或挂载的长期上下文，不是开始学习前的必选入口。清晰讲解、
+苏格拉底追问和费曼复述等学习方法由当前 Session 调用；选择结果保存在 Session 上，
+`learning_skill_selected` 只记录零 Kernel target 的操作事实，不构成偏好巩固或掌握证据。
+Tutor 可以推荐已登记 Skill，但未得到用户选择时不得声称已经切换。
+
+`/learn/:runId` 是对话按需产生的专注工作台附件，由 Tutor 控制 Agent 所有，并通过
+`verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错
+和复习调度。只有明确的“15 分钟/微学习/可验证学习”请求才应启动它；普通“帮我学”
+继续留在当前对话。它不是第四类主 Agent；内部创建的单关卡 Project 只提供
+learner/project/checkpoint/session scope，用户无需先配置项目。
 
 `MicroLearningRun` 只保存可恢复步骤和 answer-free 的 UI 投影。题目结果以 `LearningAttempt` 和 `concept_attempt_evaluated` 为权威，纠错以 `RemediationCase` 为权威，后续计划以 `ReviewSchedule` 为投影。`teach_back_analyzed` 只写诊断缺口并固定 `mastery_unchanged`；`micro_learning_completed` 是零 kernel target 的运行里程碑。微学习题在同一轮的多次正确不能直接形成稳定掌握，跨时间稳定规则仍由 `review-policy-v1` 裁决。详细契约与前端状态机见 `docs/MICRO_LEARNING_MVP.md`。
 
@@ -145,7 +155,7 @@ KernelState + Memory Graph
 
 - Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
-- `/agent` 学习首页、`/learn/:runId` 专注学习、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
+- `/agent/:sessionId` 独立对话、`/learn/:runId` 对话附件、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
 
 ### 重合区处理

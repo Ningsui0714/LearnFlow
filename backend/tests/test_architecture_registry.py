@@ -9,6 +9,7 @@ from app.services.architecture_registry import (
     WORKBENCHES,
     normalize_event_provenance,
     registry_manifest,
+    selectable_learning_skill_manifest,
     validate_registry,
 )
 
@@ -95,6 +96,20 @@ def test_focused_micro_learning_reuses_existing_agent_and_evidence_authority():
     assert {
         tool.id for tool in TOOLS.values() if tool.writes_kernels
     } == {"five_kernel_reducer"}
+
+
+def test_conversational_learning_skills_are_registered_without_mastery_side_effects():
+    assert {
+        "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+    } == {item["id"] for item in selectable_learning_skill_manifest()}
+    assert "use_learning_skill" in ACTION_BOARD
+    assert CAPABILITY_OWNERS["use_learning_skill"] == (
+        "tutor_agent", "tutor_context", "global_tutor",
+    )
+    assert EVENTS["learning_skill_selected"].kernel_targets == ()
+    assert WORKBENCHES["global_tutor"].surface == "/agent/:sessionId"
+    assert "use_learning_skill" in WORKBENCHES["global_tutor"].capabilities
+    assert len(AGENTS) == 3
 
 
 def test_learner_growth_is_an_additive_read_only_workbench():

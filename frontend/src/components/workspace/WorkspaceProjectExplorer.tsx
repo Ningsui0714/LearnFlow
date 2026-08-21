@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen, Braces, CalendarClock, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
-  Plus, Route, TrendingUp,
+  Loader2, MessageSquare, Plus, Route, TrendingUp,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
-import { getCheckpointWorkspaceArtifacts, getRoadmap, listProjects } from '../../services/api'
+import {
+  createTutorSession, getCheckpointWorkspaceArtifacts, getRoadmap,
+  listProjects, listTutorSessions,
+} from '../../services/api'
+import type { TutorSessionSummary } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { useWorkspace } from './WorkspaceContext'
 import WorkspaceFileExplorer from './WorkspaceFileExplorer'
@@ -31,6 +35,8 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
   const location = useLocation()
   const { openPath, activeTabId } = useWorkspace()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
+  const [sessions, setSessions] = useState<TutorSessionSummary[]>([])
+  const [creatingChat, setCreatingChat] = useState(false)
   const [expandedIds, setExpandedIds] = useState<number[]>([])
   const [roadmaps, setRoadmaps] = useState<Record<number, CheckpointSummary[]>>({})
   const [artifacts, setArtifacts] = useState<Record<number, any>>({})
@@ -43,6 +49,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
       checkpointId: match?.[2] ? Number(match[2]) : undefined,
     }
   }, [location.pathname])
+  const currentChatId = Number(location.pathname.match(/^\/agent\/(\d+)$/)?.[1] || 0)
 
   const refreshProjects = async () => {
     try {
@@ -52,14 +59,26 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
     }
   }
 
+  const refreshSessions = async () => {
+    try {
+      setSessions(await listTutorSessions('global', 20))
+    } catch {
+      setSessions(previous => previous)
+    }
+  }
+
   useEffect(() => {
     refreshProjects()
+    refreshSessions()
     const refresh = () => refreshProjects()
+    const refreshChats = () => refreshSessions()
     window.addEventListener('learnflow:projects-changed', refresh)
     window.addEventListener('learnflow:roadmap-changed', refresh)
+    window.addEventListener('learnflow:sessions-changed', refreshChats)
     return () => {
       window.removeEventListener('learnflow:projects-changed', refresh)
       window.removeEventListener('learnflow:roadmap-changed', refresh)
+      window.removeEventListener('learnflow:sessions-changed', refreshChats)
     }
   }, [])
 
@@ -109,25 +128,62 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
     open(`/projects/${project.id}`, { title: project.name, kind: 'project', projectId: project.id })
   }
 
+  const createChat = async () => {
+    if (creatingChat) return
+    setCreatingChat(true)
+    try {
+      const session = await createTutorSession({ session_type: 'global', create_new: true })
+      setSessions(previous => [session, ...previous.filter(item => item.id !== session.id)])
+      open(`/agent/${session.id}`, { title: session.title || '新对话', kind: 'home' })
+      window.dispatchEvent(new CustomEvent('learnflow:sessions-changed'))
+    } finally {
+      setCreatingChat(false)
+    }
+  }
+
   return (
     <aside className="flex h-full min-h-0 w-full flex-col bg-white">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-3">
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Explorer</p>
-          <h2 className="truncate text-xs font-semibold text-slate-700">项目与学习路径</h2>
+          <h2 className="truncate text-xs font-semibold text-slate-700">对话与项目</h2>
         </div>
         <button
           type="button"
-          onClick={() => {
-            open('/agent', { title: '学习工作台', kind: 'home' })
-          }}
+          onClick={createChat}
+          disabled={creatingChat}
           className="flex h-8 items-center gap-1 rounded-md bg-emerald-700 px-2.5 text-[11px] font-semibold text-white hover:bg-emerald-800"
         >
-          <Plus size={13} /> 新建
+          {creatingChat ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} 新对话
         </button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        <div className="mb-1 flex items-center gap-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+          <MessageSquare size={12} /> Chats
+        </div>
+        <div className="space-y-0.5">
+          {sessions.map(session => (
+            <button
+              key={session.id}
+              type="button"
+              onClick={() => open(`/agent/${session.id}`, { title: session.title || '对话', kind: 'home' })}
+              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs ${
+                currentChatId === session.id ? 'bg-emerald-50 font-semibold text-emerald-900' : 'text-slate-600 hover:bg-slate-100'
+              }`}
+              title={session.last_message || session.title}
+            >
+              <MessageSquare size={13} className={currentChatId === session.id ? 'text-emerald-700' : 'text-slate-400'} />
+              <span className="min-w-0 flex-1 truncate">{session.title || '新对话'}</span>
+              {session.active_skill?.name && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" title={session.active_skill.name} />}
+            </button>
+          ))}
+          {sessions.length === 0 && <p className="px-2.5 py-2 text-[11px] text-slate-400">点击“新对话”开始学习</p>}
+        </div>
+
+        <div className="mb-1 mt-4 flex items-center gap-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
+          <FolderKanban size={12} /> Projects
+        </div>
         <button
           type="button"
           onClick={() => open('/projects', { title: '学习项目', kind: 'projects' })}
@@ -135,12 +191,8 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
             activeTabId === '/projects' ? 'bg-emerald-50 font-semibold text-emerald-800' : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          <FolderKanban size={14} /> 全部学习项目
+          <FolderKanban size={14} /> 全部项目
         </button>
-
-        <div className="mb-1 mt-3 flex items-center gap-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
-          <Folder size={12} /> Workspace
-        </div>
 
         {projects.length === 0 && (
           <div className="mx-1 rounded-lg border border-dashed border-slate-300 px-3 py-7 text-center text-xs leading-5 text-slate-400">

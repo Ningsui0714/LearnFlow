@@ -139,16 +139,19 @@ Tutor 负责把学习者带到正确关卡；关卡内的领域能力负责教�
 
 1. 使用服务端 `CurrentLearner` 校验 session、project、checkpoint 与 action 归属。
 2. 使用 `client_turn_id` 检查是否为重复请求；若已有完整结果，直接重放。
-3. 持久化用户消息，并追加 `user_message` 类型的 `EvidenceEvent`。
-4. 解析页面上下文，例如选中文本、候选来源选择完成或当前关卡。
-5. 优先解析明确行动指令和已有 Pending Action。
-6. 参数充分时直接进入 Action Board；不要先生成一句“可以帮你”。
-7. 只缺一个必要参数时，保存 Pending Action 并询问一个最小问题。
-8. 非直接行动回合才调用 Tutor LLM，要求返回受约束结构化结果。
-9. 验证并应用本轮短期 observations，越权字段必须丢弃。
-10. 根据长期目标创建或补丁式修订一个项目提案。
-11. 处理满足严格条件的重大事件候选与 Badge。
-12. 返回自然消息、状态摘要、可选 executed action、可选 action card 和当前项目提案。
+3. 解析显式 `selected_skill_id` 或自然语言方法切换指令；只允许使用注册表中
+   `learner_selectable` 的 Skill，并把选择保存在当前 Session。
+4. 持久化用户消息，并追加 `user_message` 类型的 `EvidenceEvent`；方法发生变化时追加
+   零 Kernel target 的 `learning_skill_selected`，不得据此巩固偏好或掌握。
+5. 解析页面上下文，例如选中文本、候选来源选择完成或当前关卡。
+6. 优先解析明确行动指令和已有 Pending Action。
+7. 参数充分时直接进入 Action Board；不要先生成一句“可以帮你”。
+8. 只缺一个必要参数时，保存 Pending Action 并询问一个最小问题。
+9. 非直接行动回合才调用 Tutor LLM，并把当前 Session Skill 的受约束教学指令加入上下文。
+10. 验证并应用本轮短期 observations，越权字段必须丢弃。
+11. 根据长期目标创建或补丁式修订一个项目提案。
+12. 处理满足严格条件的重大事件候选与 Badge。
+13. 返回自然消息、当前 Skill、Session 标题、状态摘要、可选 action 和项目提案。
 
 路线提案是一个专门的 Action Board 编排：Roadmap Agent 先给出可迭代的关卡方案，
 Tutor 必须在同一回合创建 `apply_learning_path` 的 `pending_confirmation` Action 卡。用户点击
@@ -264,9 +267,21 @@ Tutor: plan_review_queue / 导航 / 过滤
 
 详细规则和接口见 `docs/REVIEW_WORKBENCH.md`。
 
-### 8.2 可验证微学习工作台
+### 8.2 对话 Session、学习 Skill 与可验证工作台
 
-`/agent` 的首要入口是一次具体微学习目标；长期、多来源或产物导向的需求仍可由 Tutor 推荐项目式学习。`/learn/:runId` 是 Tutor 所有的专注工作台，内部依次调用 Learning Design 和 Practice 能力，不新增第四个主 Agent。
+`/agent/:sessionId` 是 global Tutor 的独立对话主界面。一个学习者可以拥有多段并列对话；
+项目是可由对话创建、进入或挂载的长期上下文，工作台则是 Skill 在需要时生成的结构化
+附件。前端不得以固定学习方法表单替代 Session，也不得让右侧上下文 Tutor 与独立对话
+同时竞争主输入。
+
+学习者可在输入区选择“清晰讲解、苏格拉底追问、费曼复述”，也可用自然语言明确切换。
+Tutor 可以推荐注册表中的 learner-selectable Skill，但不能静默切换。普通对话中的 Skill
+只改变教学行为；讲解、追问或复述反馈都不是掌握证据。需要可评分证据时，必须进入已有
+确定性评估或 `verified_micro_learning` 流程。
+
+`/learn/:runId` 是 Tutor 所有、由对话按需产生的专注工作台附件，内部依次调用 Learning
+Design 和 Practice 能力，不新增第四个主 Agent。只有明确请求“15 分钟、微学习或可验证
+学习”才自动启动；普通“帮我学”留在当前对话。
 
 ```text
 start_micro_learning
@@ -525,7 +540,8 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 
 | 页面 | 主要责任 |
 |---|---|
-| `/agent` | Global Main Agent、学习方向、项目提案与高层行动 |
+| `/agent` | 打开最近一段独立 global 对话，首次使用时创建 Session |
+| `/agent/:sessionId` | 独立学习对话、会话级 Skill 选择、项目/工作台附件与高层行动 |
 | `/projects` | 项目组合、待创建提案和项目管理 |
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |
 | `/projects/:id/checkpoints/:id` | 正式讲义、关卡学习与选中内容追问 |

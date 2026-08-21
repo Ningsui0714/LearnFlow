@@ -19,6 +19,11 @@ ACTION_BOARD = {
             ("enter_project", "draft_learning_project"),
         ),
         ActionDefinition(
+            "use_learning_skill", "在当前对话中使用学习方法", "none", "none",
+            {},
+            ("start_micro_learning", "draft_learning_project"),
+        ),
+        ActionDefinition(
             "start_micro_learning", "开始一次可验证微学习", "write", "explicit",
             {"structure": "focused_learning_started", "value": "goal_confirmation"},
             ("continue_micro_learning", "analyze_teach_back"),

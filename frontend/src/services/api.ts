@@ -337,7 +337,31 @@ export const getRoadmapHistory = (projectId: number) =>
   api.get(`/projects/${projectId}/roadmap/history`).then(r => r.data)
 
 // ── Main Tutor ──
-export const createTutorSession = (data: { session_type?: 'global' | 'project' | 'checkpoint'; project_id?: number; checkpoint_id?: number }) =>
+export interface LearningSkill {
+  id: string
+  name: string
+  description: string
+}
+
+export interface TutorSessionSummary {
+  id: number
+  title: string
+  session_type: 'global' | 'project' | 'checkpoint'
+  project_id?: number | null
+  checkpoint_id?: number | null
+  active_skill?: LearningSkill | null
+  last_message?: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export const listTutorSessions = (sessionType?: 'global' | 'project' | 'checkpoint', limit = 30) =>
+  api.get('/agent/sessions', { params: { session_type: sessionType, limit } }).then(r => r.data as TutorSessionSummary[])
+
+export const listLearningSkills = () =>
+  api.get('/agent/skills').then(r => r.data as LearningSkill[])
+
+export const createTutorSession = (data: { session_type?: 'global' | 'project' | 'checkpoint'; project_id?: number; checkpoint_id?: number; create_new?: boolean }) =>
   api.post('/agent/sessions', data).then(r => r.data)
 
 export const getTutorSession = (sessionId: number) =>
@@ -348,6 +372,7 @@ export const sendTutorTurn = (sessionId: number, data: {
   project_id?: number
   checkpoint_id?: number
   selected_action_id?: number
+  selected_skill_id?: string
   client_turn_id?: string
   context?: Record<string, any>
 }) => api.post(`/agent/sessions/${sessionId}/turns`, data).then(r => r.data)

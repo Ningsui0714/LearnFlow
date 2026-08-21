@@ -7,6 +7,7 @@ class AgentSessionCreate(BaseModel):
     session_type: Literal["global", "project", "checkpoint"] = "global"
     project_id: Optional[int] = None
     checkpoint_id: Optional[int] = None
+    create_new: bool = False
 
 
 class TutorTurnRequest(BaseModel):
@@ -14,6 +15,7 @@ class TutorTurnRequest(BaseModel):
     project_id: Optional[int] = None
     checkpoint_id: Optional[int] = None
     selected_action_id: Optional[int] = None
+    selected_skill_id: Optional[str] = Field(default=None, max_length=80)
     client_turn_id: Optional[str] = Field(default=None, min_length=3, max_length=160)
     context: dict[str, Any] = Field(default_factory=dict)
 

@@ -34,6 +34,11 @@ from app.services.five_kernel_context import (
     compact_projection_from_packet,
     resolve_context_policy,
 )
+from app.services.architecture_registry import (
+    detect_learning_skill,
+    selectable_learning_skill,
+    selectable_learning_skill_manifest,
+)
 
 
 CONFIRM_WORDS = {
@@ -48,8 +53,7 @@ CREATE_RE = re.compile(
 URL_RE = re.compile(r"https?://[^\s，。!?！？)\]}>]+", re.I)
 ADD_SOURCE_HINTS = ("添加", "加入", "加到", "加进", "导入", "作为来源", "作为资料")
 MICRO_LEARNING_MARKERS = (
-    "15分钟", "十五分钟", "快速学习", "快速学", "微学习",
-    "带我学", "带我学习", "开始学习", "学一下",
+    "15分钟", "十五分钟", "快速学习", "快速学", "微学习", "可验证学习",
 )
 
 
@@ -114,6 +118,42 @@ CHECKPOINT_TUTOR_PROMPT = """当前是 checkpoint 关卡 Tutor 会话。你只�
 - 可以把明确的项目代码修改或测试委派给已配置的本地代码 Agent。它是工具而非第四类主 Agent；由 Broker 确定性选择配置，用户确认后才在隔离副本启动，结果再次确认后才写回。
 - 编辑文件或运行成功不代表掌握；只有正式判题结果可以形成掌握证据。
 - 回答围绕用户当前选中的讲义、练习或文件，最多给一个明确下一步。"""
+
+
+def session_learning_skill(session: AgentSession) -> dict[str, str] | None:
+    skill_id = str((session.context_summary or {}).get("active_learning_skill_id") or "")
+    skill = selectable_learning_skill(skill_id)
+    if not skill:
+        return None
+    return {"id": skill.id, "name": skill.name, "description": skill.description}
+
+
+def _select_session_learning_skill(
+    session: AgentSession,
+    requested_skill_id: str | None,
+    message: str,
+) -> tuple[dict[str, str] | None, bool]:
+    current = session_learning_skill(session)
+    requested = requested_skill_id
+    if requested is None:
+        detected = detect_learning_skill(message)
+        if not detected:
+            return current, False
+        requested = detected.id
+    normalized = requested.strip()
+    context = dict(session.context_summary or {})
+    if normalized in {"", "adaptive"}:
+        changed = current is not None
+        context.pop("active_learning_skill_id", None)
+        session.context_summary = context
+        return None, changed
+    skill = selectable_learning_skill(normalized)
+    if not skill:
+        raise ValueError("这个学习方法当前不可用")
+    changed = not current or current["id"] != skill.id
+    context["active_learning_skill_id"] = skill.id
+    session.context_summary = context
+    return {"id": skill.id, "name": skill.name, "description": skill.description}, changed
 
 
 def _bounded_context_value(value: Any, *, string_limit: int, list_limit: int) -> Any:
@@ -579,6 +619,7 @@ async def get_or_create_session(
     session_type: str = "global",
     project_id: int | None = None,
     checkpoint_id: int | None = None,
+    create_new: bool = False,
 ) -> AgentSession:
     query = select(AgentSession).where(
         AgentSession.learner_id == learner_id,
@@ -596,7 +637,7 @@ async def get_or_create_session(
         query = query.where(AgentSession.project_id == project_id)
     else:
         query = query.where(AgentSession.project_id.is_(None))
-    session = (await db.execute(
+    session = None if create_new else (await db.execute(
         query.order_by(AgentSession.updated_at.desc()).limit(1)
     )).scalar_one_or_none()
     if not session:
@@ -1814,6 +1855,9 @@ async def _generate_tutor_reply(
         "project": "project_tutor",
         "checkpoint": "checkpoint_tutor",
     }.get(session.session_type, "main_agent")
+    active_skill = selectable_learning_skill(
+        str((session.context_summary or {}).get("active_learning_skill_id") or "")
+    )
     context = {
         "session_scope": {
             "type": session.session_type,
@@ -1848,6 +1892,11 @@ async def _generate_tutor_reply(
             }
             for item in proposals
         ],
+        "active_learning_skill": (
+            {"id": active_skill.id, "name": active_skill.name}
+            if active_skill else None
+        ),
+        "available_learning_skills": selectable_learning_skill_manifest(),
     }
     scope_prompt = (
         CHECKPOINT_TUTOR_PROMPT if session.session_type == "checkpoint"
@@ -1859,6 +1908,12 @@ async def _generate_tutor_reply(
         TUTOR_SYSTEM_PROMPT
         + "\n\n"
         + scope_prompt
+        + (
+            "\n\n当前会话调用的学习 Skill：\n" + active_skill.invocation_prompt
+            if active_skill else
+            "\n\n当前会话未固定学习 Skill。按当前问题自然回应；需要时可以推荐一个可选学习方法，"
+            "但不要在用户未选择时声称已经切换。"
+        )
         + "\n\n当前内部上下文：\n"
         + rendered_context
     )
@@ -2020,6 +2075,7 @@ async def process_turn(
     project_id: int | None = None,
     checkpoint_id: int | None = None,
     selected_action_id: int | None = None,
+    selected_skill_id: str | None = None,
     client_turn_id: str | None = None,
     context: dict | None = None,
 ) -> dict:
@@ -2032,6 +2088,10 @@ async def process_turn(
         cached_response = dict((replay_message.meta_data or {}).get("turn_response") or {}) if replay_message else {}
         if cached_response:
             return cached_response
+
+    active_learning_skill, learning_skill_changed = _select_session_learning_skill(
+        session, selected_skill_id, message,
+    )
 
     if session.session_type == "checkpoint":
         if project_id is not None and project_id != session.project_id:
@@ -2058,6 +2118,8 @@ async def process_turn(
     incoming_context = context or {}
     candidate_sources_completed = incoming_context.get("interaction") == "candidate_sources_completed"
     message_context = {}
+    if active_learning_skill:
+        message_context["learning_skill"] = active_learning_skill
     if isinstance(incoming_context.get("selected_text"), str):
         message_context["selected_text"] = incoming_context["selected_text"][:12000]
     for key in (
@@ -2101,6 +2163,9 @@ async def process_turn(
         db.add(user_message)
         await db.flush()
         user_event = None
+        if session.session_type == "global" and session.title in {"学习 Tutor", "新对话"}:
+            title = re.sub(r"\s+", " ", message).strip()
+            session.title = title[:36] + ("…" if len(title) > 36 else "")
     if not user_event:
         user_event = await record_event(
             db, event_type="user_message", source="user",
@@ -2112,6 +2177,20 @@ async def process_turn(
             } else 1.0,
             provenance={"message_id": user_message.id},
             client_event_id=f"message:{user_message.id}:user",
+        )
+    if learning_skill_changed:
+        await record_event(
+            db, event_type="learning_skill_selected", source="user",
+            learner_id=session.learner_id,
+            project_id=session.project_id, checkpoint_id=session.checkpoint_id,
+            session_id=session.id,
+            payload={
+                "skill_id": active_learning_skill["id"] if active_learning_skill else "adaptive",
+                "skill_name": active_learning_skill["name"] if active_learning_skill else "自动选择",
+            },
+            confidence=1.0,
+            provenance={"message_id": user_message.id},
+            client_event_id=f"message:{user_message.id}:learning-skill",
         )
     await db.commit()
 
@@ -2349,6 +2428,7 @@ async def process_turn(
             session_id=session.id, role="assistant", content=reply,
             meta_data={
                 "action_id": action.id,
+                "learning_skill": active_learning_skill,
                 "local_agent_run_id": (
                     ((action.result or {}).get("local_agent_run") or {}).get("id")
                 ),
@@ -2360,6 +2440,8 @@ async def process_turn(
         proposals = await list_session_proposals(db, session.id)
         response = {
             "session_id": session.id,
+            "session_title": session.title,
+            "active_skill": active_learning_skill,
             "message": reply,
             "state_summary": state,
             "executed_action": action_result(action),
@@ -2427,7 +2509,10 @@ async def process_turn(
         )
     assistant = AgentMessage(
         session_id=session.id, role="assistant", content=reply,
-        meta_data={"proposal_id": proposal_update.id if proposal_update else None},
+        meta_data={
+            "proposal_id": proposal_update.id if proposal_update else None,
+            "learning_skill": active_learning_skill,
+        },
     )
     db.add(assistant)
     await db.commit()
@@ -2437,6 +2522,8 @@ async def process_turn(
     proposals = await list_session_proposals(db, session.id)
     response = {
         "session_id": session.id,
+        "session_title": session.title,
+        "active_skill": active_learning_skill,
         "message": reply,
         "state_summary": state,
         "executed_action": None,

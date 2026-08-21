@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-21.2"
+REGISTRY_VERSION = "2026-08-21.3"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -86,6 +86,10 @@ class SkillContract:
     output_contract: str
     strategy_authority: str
     origin: str = "learnflow"
+    learner_selectable: bool = False
+    description: str = ""
+    invocation_prompt: str = ""
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -222,6 +226,48 @@ SKILLS = {
         SkillContract("intent_and_handoff", "意图理解与跨空间交接", "tutor_agent",
                       ("tutor_context", "action_board", "evidence_ledger"),
                       "structured intent + auditable action/handoff", "Action Board"),
+        SkillContract(
+            "guided_explanation", "清晰讲解", "tutor_agent",
+            ("tutor_context", "context_packet_assembler"),
+            "one focused explanation + one example + one optional check question",
+            "Tutor session instruction; never mastery evidence",
+            learner_selectable=True,
+            description="先讲清核心，再用一个例子确认理解。",
+            invocation_prompt=(
+                "当前对话已由学习者选择“清晰讲解”技能。先直接解释当前问题的核心，"
+                "控制在一个清晰层次；需要时给一个最小例子，最后最多留一个可选检查问题。"
+                "不要把讲解或用户自述当作掌握证据。"
+            ),
+            aliases=("清晰讲解", "直接讲解", "讲解模式"),
+        ),
+        SkillContract(
+            "socratic_dialogue", "苏格拉底追问", "tutor_agent",
+            ("tutor_context", "context_packet_assembler"),
+            "one-question-at-a-time guided reasoning dialogue",
+            "Tutor session instruction; learner may request a direct answer",
+            learner_selectable=True,
+            description="用连续的小问题，引导你自己推到答案。",
+            invocation_prompt=(
+                "当前对话已由学习者选择“苏格拉底追问”技能。不要一开始给出完整答案；"
+                "先判断学习者当前推理位置，每轮只问一个能推动思考的问题，并根据回答继续。"
+                "如果学习者明确要求直接解释，应尊重选择并切换为简明说明。追问结果本身不是掌握证据。"
+            ),
+            aliases=("苏格拉底", "苏格拉底追问", "启发式提问"),
+        ),
+        SkillContract(
+            "feynman_dialogue", "费曼复述", "tutor_agent",
+            ("tutor_context", "context_packet_assembler"),
+            "conversational teach-back scaffold + bounded gap feedback",
+            "Tutor coaching only; deterministic analyzer is required for evidence",
+            learner_selectable=True,
+            description="请你用自己的话讲一遍，再一起找出模糊处。",
+            invocation_prompt=(
+                "当前对话已由学习者选择“费曼复述”技能。请让学习者先用自己的话解释目标概念；"
+                "收到复述后，先指出讲清楚的一点，再定位最关键的一处模糊或跳步，并只追问一个问题。"
+                "普通对话反馈不能宣布掌握；需要形成学习证据时，只能建议进入已登记的可验证微学习。"
+            ),
+            aliases=("费曼", "费曼学习", "费曼复述"),
+        ),
         SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
                       ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
                       "checkpoint-scoped Tutor reply + internal design/practice handoff",
@@ -278,8 +324,8 @@ SKILLS = {
 
 WORKBENCHES = {
     item.id: item for item in (
-        WorkbenchContract("global_tutor", "Global Tutor", "/agent", "tutor_agent",
-                          ("start_micro_learning", "search_projects", "draft_learning_project", "create_project")),
+        WorkbenchContract("global_tutor", "Global Tutor", "/agent/:sessionId", "tutor_agent",
+                          ("use_learning_skill", "start_micro_learning", "search_projects", "draft_learning_project", "create_project")),
         WorkbenchContract("focused_learning", "Focused Learning", "/learn/:runId", "tutor_agent",
                           ("continue_micro_learning", "analyze_teach_back", "evaluate_attempt",
                            "request_remediation_explanation", "retry_attempt",
@@ -310,6 +356,7 @@ WORKBENCHES = {
 
 
 CAPABILITY_OWNERS = {
+    "use_learning_skill": ("tutor_agent", "tutor_context", "global_tutor"),
     "start_micro_learning": ("tutor_agent", "micro_learning_orchestrator", "global_tutor"),
     "continue_micro_learning": ("tutor_agent", "micro_learning_orchestrator", "focused_learning"),
     "analyze_teach_back": ("practice_agent", "teach_back_analyzer", "focused_learning"),
@@ -360,6 +407,7 @@ def _event(event_id: str, capability: str, targets: tuple[str, ...], role: str,
 
 EVENTS = {
     item.id: item for item in (
+        _event("learning_skill_selected", "use_learning_skill", (), "operational"),
         _event("micro_learning_started", "start_micro_learning", ("structure", "value"), "confirmed_goal"),
         _event("learning_card_generated", "start_micro_learning", (), "artifact"),
         _event("micro_learning_card_viewed", "continue_micro_learning", ("knowledge",), "exposure"),
@@ -422,6 +470,37 @@ def capability_manifest() -> list[dict[str, Any]]:
         row.update({"owner_agent": owner, "tool": tool, "workbench": workbench})
         result.append(row)
     return result
+
+
+def selectable_learning_skill_manifest() -> list[dict[str, str]]:
+    """Return the learner-facing portion of registered conversational skills."""
+    return [
+        {
+            "id": skill.id,
+            "name": skill.name,
+            "description": skill.description,
+        }
+        for skill in SKILLS.values()
+        if skill.learner_selectable
+    ]
+
+
+def selectable_learning_skill(skill_id: str | None) -> SkillContract | None:
+    skill = SKILLS.get(str(skill_id or "").strip())
+    return skill if skill and skill.learner_selectable else None
+
+
+def detect_learning_skill(message: str) -> SkillContract | None:
+    """Resolve only explicit natural-language requests to switch teaching method."""
+    normalized = "".join(str(message or "").lower().split())
+    if not any(marker in normalized for marker in ("用", "切换", "选择", "换成", "按照")):
+        return None
+    for skill in SKILLS.values():
+        if skill.learner_selectable and any(
+            "".join(alias.lower().split()) in normalized for alias in skill.aliases
+        ):
+            return skill
+    return None
 
 
 def validate_registry() -> list[str]:

@@ -54,6 +54,50 @@ def new_session(client: TestClient) -> int:
     return response.json()["id"]
 
 
+def test_independent_global_chats_invoke_registered_session_skills(client: TestClient):
+    first = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    })
+    second = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    })
+    assert first.status_code == second.status_code == 200
+    assert first.json()["id"] != second.json()["id"]
+
+    skills = client.get("/api/agent/skills")
+    assert skills.status_code == 200
+    assert {item["id"] for item in skills.json()} == {
+        "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+    }
+
+    turn = client.post(f"/api/agent/sessions/{first.json()['id']}/turns", json={
+        "message": "带我学习边际成本",
+        "selected_skill_id": "feynman_dialogue",
+        "client_turn_id": f"skill-turn-{uuid.uuid4().hex}",
+    })
+    assert turn.status_code == 200, turn.text
+    assert turn.json()["executed_action"] is None
+    assert turn.json()["active_skill"]["id"] == "feynman_dialogue"
+    assert turn.json()["session_title"].startswith("带我学习边际成本")
+
+    restored = client.get(f"/api/agent/sessions/{first.json()['id']}").json()
+    untouched = client.get(f"/api/agent/sessions/{second.json()['id']}").json()
+    assert restored["active_skill"]["name"] == "费曼复述"
+    assert untouched["active_skill"] is None
+    assert untouched["messages"] == []
+    listed = client.get("/api/agent/sessions", params={"session_type": "global"})
+    assert listed.status_code == 200
+    assert {first.json()["id"], second.json()["id"]} <= {
+        item["id"] for item in listed.json()
+    }
+
+    invalid = client.post(f"/api/agent/sessions/{second.json()['id']}/turns", json={
+        "message": "测试不存在的方法",
+        "selected_skill_id": "imaginary_skill",
+    })
+    assert invalid.status_code == 400
+
+
 def test_checkpoint_tutor_session_and_context_are_isolated(client: TestClient, tmp_path):
     root = tmp_path / "checkpoint-workspace"
     root.mkdir()

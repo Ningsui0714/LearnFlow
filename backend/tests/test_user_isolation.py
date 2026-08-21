@@ -51,6 +51,11 @@ def test_two_cookie_clients_are_strictly_isolated():
 
         session_id = alice.post("/api/agent/sessions", json={"session_type": "global"}).json()["id"]
         assert bob.get(f"/api/agent/sessions/{session_id}").status_code == 404
+        assert session_id not in {
+            item["id"] for item in bob.get(
+                "/api/agent/sessions", params={"session_type": "global"},
+            ).json()
+        }
         proposal_response = alice.post(
             f"/api/agent/sessions/{session_id}/turns",
             json={"message": "我想系统学习离散数学并持续完成证明练习"},

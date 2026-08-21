@@ -100,7 +100,9 @@ function WorkspaceStage() {
 function WorkspaceFrame() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const { openPath } = useWorkspace()
+  const standaloneChat = /^\/agent(?:\/\d+)?$/.test(location.pathname)
   const [explorerVisible, setExplorerVisible] = useState(() => window.innerWidth >= 1024)
   // Below the 2xl breakpoint the Tutor is an overlay drawer, so keep it
   // collapsed by default instead of covering the primary learning surface.
@@ -128,20 +130,20 @@ function WorkspaceFrame() {
         <button
           type="button"
           onClick={() => setExplorerVisible(value => !value)}
-          title={explorerVisible ? '收起项目资源管理器' : '展开项目资源管理器'}
+          title={explorerVisible ? '收起对话与项目' : '展开对话与项目'}
           className={`flex h-9 w-9 items-center justify-center rounded-lg ${explorerVisible ? 'bg-emerald-50 text-emerald-800' : 'text-slate-500 hover:bg-slate-100'}`}
         >
           <PanelLeft size={18} />
         </button>
         <button
           type="button"
-          onClick={() => openPath('/agent', { title: '学习工作台', kind: 'home' })}
+          onClick={() => openPath('/agent', { title: '对话', kind: 'home' })}
           className="flex shrink-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-slate-50"
         >
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-700 text-white"><Sparkles size={17} /></span>
           <span className="hidden sm:block">
             <strong className="block text-sm leading-4 text-slate-900">LearnFlow</strong>
-            <small className="text-[10px] text-slate-400">学习工作区</small>
+            <small className="text-[10px] text-slate-400">对话与学习空间</small>
           </span>
         </button>
 
@@ -162,9 +164,11 @@ function WorkspaceFrame() {
           </button>
         )}
         <span className="hidden max-w-28 truncate text-xs text-slate-500 lg:block">{user?.display_name}</span>
-        <button type="button" onClick={() => setAgentRailExpanded(value => !value)} title={agentRailExpanded ? '收起 Agent 对话' : '展开 Agent 对话'} className={`flex h-9 w-9 items-center justify-center rounded-lg ${agentRailExpanded ? 'bg-emerald-50 text-emerald-800' : 'text-slate-500 hover:bg-slate-100'}`}>
-          <PanelRight size={18} />
-        </button>
+        {!standaloneChat && (
+          <button type="button" onClick={() => setAgentRailExpanded(value => !value)} title={agentRailExpanded ? '收起 Agent 对话' : '展开 Agent 对话'} className={`flex h-9 w-9 items-center justify-center rounded-lg ${agentRailExpanded ? 'bg-emerald-50 text-emerald-800' : 'text-slate-500 hover:bg-slate-100'}`}>
+            <PanelRight size={18} />
+          </button>
+        )}
         <button type="button" onClick={exit} title="退出登录" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600">
           <LogOut size={17} />
         </button>
@@ -189,7 +193,7 @@ function WorkspaceFrame() {
             </div>
           </div>
         )}
-        {agentRailExpanded && (
+        {!standaloneChat && agentRailExpanded && (
           <button
             type="button"
             aria-label="关闭 Agent 对话"
@@ -197,7 +201,7 @@ function WorkspaceFrame() {
             className="absolute inset-0 z-40 bg-slate-950/30 xl:hidden"
           />
         )}
-        <div className={`${
+        {!standaloneChat && <div className={`${
           agentRailExpanded
             ? 'absolute inset-y-0 right-0 z-50 w-[min(92vw,390px)] 2xl:relative 2xl:inset-auto 2xl:z-auto 2xl:w-[390px]'
             : 'hidden xl:block xl:w-[52px]'
@@ -206,7 +210,7 @@ function WorkspaceFrame() {
             expanded={agentRailExpanded}
             onToggle={() => setAgentRailExpanded(value => !value)}
           />
-        </div>
+        </div>}
       </div>
     </div>
   )

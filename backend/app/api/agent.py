@@ -20,8 +20,9 @@ from app.services.tutor_service import (
     get_or_create_session, get_messages, process_turn, execute_action,
     action_card, action_result, finalize_action_for_task,
     proposal_acceptance_action, finalize_proposal_acceptance,
-    get_session_state_summary, _is_confirmation,
+    get_session_state_summary, session_learning_skill, _is_confirmation,
 )
+from app.services.architecture_registry import selectable_learning_skill_manifest
 from app.services.project_proposals import (
     list_session_proposals, proposal_view, set_proposal_status,
     start_resource_search, update_project_proposal,
@@ -82,6 +83,73 @@ async def _owned_action(
     return action
 
 
+async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
+    messages = await get_messages(db, session.id)
+    pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
+    proposals = await list_session_proposals(db, session.id)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "session_type": session.session_type,
+        "project_id": session.project_id,
+        "checkpoint_id": session.checkpoint_id,
+        "messages": [_message_out(m) for m in messages],
+        "state_summary": await get_session_state_summary(db, session),
+        "action_card": action_card(pending),
+        "project_proposals": [proposal_view(item) for item in proposals],
+        "active_skill": session_learning_skill(session),
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+    }
+
+
+@router.get("/skills")
+async def list_learning_skills(
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    del current
+    return selectable_learning_skill_manifest()
+
+
+@router.get("/sessions")
+async def list_sessions(
+    session_type: str | None = None,
+    limit: int = 30,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    if session_type not in {None, "global", "project", "checkpoint"}:
+        raise HTTPException(400, "Unsupported Tutor session type")
+    query = select(AgentSession).where(
+        AgentSession.learner_id == current.learner.id,
+        AgentSession.status == "active",
+    )
+    if session_type:
+        query = query.where(AgentSession.session_type == session_type)
+    sessions = (await db.execute(
+        query.order_by(AgentSession.updated_at.desc(), AgentSession.id.desc())
+        .limit(max(1, min(limit, 100)))
+    )).scalars().all()
+    result = []
+    for session in sessions:
+        last_message = (await db.execute(
+            select(AgentMessage).where(AgentMessage.session_id == session.id)
+            .order_by(AgentMessage.id.desc()).limit(1)
+        )).scalar_one_or_none()
+        result.append({
+            "id": session.id,
+            "title": session.title,
+            "session_type": session.session_type,
+            "project_id": session.project_id,
+            "checkpoint_id": session.checkpoint_id,
+            "active_skill": session_learning_skill(session),
+            "last_message": last_message.content[:120] if last_message else "",
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        })
+    return result
+
+
 @router.post("/sessions")
 async def create_or_resume_session(
     data: AgentSessionCreate,
@@ -109,21 +177,10 @@ async def create_or_resume_session(
         session_type="project" if project_id and session_type == "global" else session_type,
         project_id=project_id,
         checkpoint_id=data.checkpoint_id,
+        create_new=data.create_new,
     )
     await db.commit()
-    messages = await get_messages(db, session.id)
-    pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
-    proposals = await list_session_proposals(db, session.id)
-    return {
-        "id": session.id,
-        "session_type": session.session_type,
-        "project_id": session.project_id,
-        "checkpoint_id": session.checkpoint_id,
-        "messages": [_message_out(m) for m in messages],
-        "state_summary": await get_session_state_summary(db, session),
-        "action_card": action_card(pending),
-        "project_proposals": [proposal_view(item) for item in proposals],
-    }
+    return await _session_payload(db, session)
 
 
 @router.get("/sessions/{session_id}")
@@ -133,19 +190,7 @@ async def get_session(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     session = await _owned_session(db, current.learner.id, session_id)
-    messages = await get_messages(db, session.id)
-    pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
-    proposals = await list_session_proposals(db, session.id)
-    return {
-        "id": session.id,
-        "session_type": session.session_type,
-        "project_id": session.project_id,
-        "checkpoint_id": session.checkpoint_id,
-        "messages": [_message_out(m) for m in messages],
-        "state_summary": await get_session_state_summary(db, session),
-        "action_card": action_card(pending),
-        "project_proposals": [proposal_view(item) for item in proposals],
-    }
+    return await _session_payload(db, session)
 
 
 @router.post("/sessions/{session_id}/turns")
@@ -173,15 +218,19 @@ async def tutor_turn(
         await require_owned_project(db, current.learner.id, data.project_id)
     if data.checkpoint_id is not None:
         await require_owned_checkpoint(db, current.learner.id, data.checkpoint_id)
-    return await process_turn(
-        db, session,
-        message=data.message,
-        project_id=data.project_id,
-        checkpoint_id=data.checkpoint_id,
-        selected_action_id=data.selected_action_id,
-        client_turn_id=data.client_turn_id,
-        context=data.context,
-    )
+    try:
+        return await process_turn(
+            db, session,
+            message=data.message,
+            project_id=data.project_id,
+            checkpoint_id=data.checkpoint_id,
+            selected_action_id=data.selected_action_id,
+            selected_skill_id=data.selected_skill_id,
+            client_turn_id=data.client_turn_id,
+            context=data.context,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @router.get("/project-proposals/{proposal_id}")
@@ -372,20 +421,25 @@ async def confirm_action(
         action.finished_at = datetime.utcnow()
         await db.commit()
         raise HTTPException(400, str(exc))
+    session = await _owned_session(db, current.learner.id, action.session_id)
+    active_skill = session_learning_skill(session)
     db.add(AgentMessage(
         session_id=action.session_id,
         role="assistant",
         content=message,
         meta_data={
             "action_id": action.id,
+            "learning_skill": active_skill,
             "local_agent_run_id": (
                 ((action.result or {}).get("local_agent_run") or {}).get("id")
             ),
         },
     ))
     await db.commit()
-    session = await _owned_session(db, current.learner.id, action.session_id)
     return {
+        "session_id": session.id,
+        "session_title": session.title,
+        "active_skill": active_skill,
         "message": message,
         "executed_action": action_result(action),
         "state_summary": await get_session_state_summary(db, session),

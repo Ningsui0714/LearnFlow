@@ -61,7 +61,7 @@ interface WorkspaceContextValue {
 const HOME_TAB: WorkspaceTab = {
   id: '/agent',
   path: '/agent',
-  title: '学习工作台',
+  title: '对话',
   kind: 'home',
   pinned: true,
 }
@@ -98,6 +98,16 @@ function pathMeta(path: string): WorkspaceTab {
       path: '/growth',
       title: '我的成长',
       kind: 'growth',
+    }
+  }
+  const chat = pathname.match(/^\/agent\/(\d+)$/)
+  if (chat) {
+    return {
+      id: '/agent',
+      path: normalized,
+      title: '对话',
+      kind: 'home',
+      pinned: true,
     }
   }
   const learningRun = pathname.match(/^\/learn\/(\d+)$/)
@@ -155,7 +165,7 @@ function pathMeta(path: string): WorkspaceTab {
     }
   }
   const staticMeta: Record<string, Pick<WorkspaceTab, 'title' | 'kind' | 'pinned'>> = {
-    '/agent': { title: '学习工作台', kind: 'home', pinned: true },
+    '/agent': { title: '对话', kind: 'home', pinned: true },
     '/projects': { title: '学习项目', kind: 'projects' },
     '/review': { title: '全局复习台', kind: 'review' },
     '/settings': { title: '模型设置', kind: 'settings' },
@@ -242,7 +252,9 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
     const next = pathMeta(path)
     setTabs(previous => {
       const existing = previous.find(tab => tab.id === next.id)
-      return existing ? previous : limitTabs([...previous, next])
+      return existing
+        ? previous.map(tab => tab.id === next.id ? { ...tab, path: next.path, kind: next.kind, pinned: next.pinned ?? tab.pinned } : tab)
+        : limitTabs([...previous, next])
     })
     setActiveTabId(next.id)
   }, [hydrated, location.hash, location.pathname, location.search])

@@ -32,6 +32,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/agent" replace />} />
           <Route path="/agent" element={<AgentPage />} />
+          <Route path="/agent/:sessionId" element={<AgentPage />} />
           <Route path="/learn/:runId" element={<LearningRunPage />} />
           <Route path="/projects" element={<HomePage />} />
           <Route path="/growth" element={<ProfilePage />} />

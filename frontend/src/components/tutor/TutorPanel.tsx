@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ExternalLink, Plus, RefreshCw } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import {
-  createTutorSession, sendTutorTurn, confirmTutorAction, cancelTutorAction,
+  createTutorSession, getTutorSession, listLearningSkills,
+  sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
 } from '../../services/api'
-import type { ProjectProposal, ProjectProposalSource } from '../../services/api'
+import type { LearningSkill, ProjectProposal, ProjectProposalSource } from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
 
@@ -19,6 +20,7 @@ interface Message {
 }
 
 interface Props {
+  requestedSessionId?: number
   projectId?: number
   checkpointId?: number
   turnContext?: Record<string, any>
@@ -38,6 +40,10 @@ interface Props {
   addingCandidateUrl?: string | null
   onRefreshCandidateSources?: () => void | Promise<void>
   onAddCandidateSource?: (candidate: ProjectProposalSource) => void | Promise<void>
+  standalone?: boolean
+  showSkillPicker?: boolean
+  autoOpenLearningRun?: boolean
+  onSessionLoaded?: (session: any) => void
 }
 
 const terminal = new Set(['completed', 'failed', 'canceled'])
@@ -199,12 +205,13 @@ function normalizeTutorContent(content: unknown): string {
 }
 
 export default function TutorPanel({
-  projectId, checkpointId, turnContext = {}, quickPrompts = [], surfaceTitle, surfaceDescription,
+  requestedSessionId, projectId, checkpointId, turnContext = {}, quickPrompts = [], surfaceTitle, surfaceDescription,
   className = '', onProjectChange, onRoadmapUpdate, onCheckpointChange,
   onProposalAccepted, proposalDragEnabled = false, projectProposal,
   onLearningRunCreated,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
-  onRefreshCandidateSources, onAddCandidateSource,
+  onRefreshCandidateSources, onAddCandidateSource, standalone = false,
+  showSkillPicker = false, autoOpenLearningRun = true, onSessionLoaded,
 }: Props) {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -215,8 +222,16 @@ export default function TutorPanel({
   const [proposals, setProposals] = useState<ProjectProposal[]>([])
   const [proposalBusy, setProposalBusy] = useState(false)
   const [milestoneNotice, setMilestoneNotice] = useState<any>(null)
+  const [learningSkills, setLearningSkills] = useState<LearningSkill[]>([])
+  const [activeSkillId, setActiveSkillId] = useState('adaptive')
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!showSkillPicker) return
+    void listLearningSkills().then(setLearningSkills).catch(() => setLearningSkills([]))
+  }, [showSkillPicker])
 
   useEffect(() => {
     let active = true
@@ -224,11 +239,14 @@ export default function TutorPanel({
     setMessages([])
     setAction(null)
     setProposals([])
-    createTutorSession({
-      session_type: checkpointId ? 'checkpoint' : projectId ? 'project' : 'global',
-      project_id: projectId,
-      checkpoint_id: checkpointId,
-    }).then(data => {
+    const request = requestedSessionId
+      ? getTutorSession(requestedSessionId)
+      : createTutorSession({
+        session_type: checkpointId ? 'checkpoint' : projectId ? 'project' : 'global',
+        project_id: projectId,
+        checkpoint_id: checkpointId,
+      })
+    request.then(data => {
       if (!active) return
       setSessionId(data.id)
       setMessages((data.messages || [])
@@ -237,12 +255,14 @@ export default function TutorPanel({
       setAction(data.action_card || null)
       setSummary(data.state_summary || null)
       setProposals(data.project_proposals || [])
+      setActiveSkillId(data.active_skill?.id || 'adaptive')
+      onSessionLoaded?.(data)
     }).catch(() => {})
     return () => {
       active = false
       if (pollRef.current) window.clearTimeout(pollRef.current)
     }
-  }, [projectId, checkpointId])
+  }, [requestedSessionId, projectId, checkpointId, onSessionLoaded])
 
   useEffect(() => {
     const pending = proposals.find(item => ['queued', 'searching'].includes(item.source_status))
@@ -270,15 +290,22 @@ export default function TutorPanel({
 
   const applyResult = (data: any) => {
     if (data.message) {
-      setMessages(prev => [...prev, { role: 'assistant', content: normalizeTutorContent(data.message) }])
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: normalizeTutorContent(data.message),
+        meta_data: { learning_skill: data.active_skill || null },
+      }])
     }
+    setActiveSkillId(data.active_skill?.id || 'adaptive')
+    onSessionLoaded?.({ id: data.session_id || sessionId, title: data.session_title, ...data })
+    window.dispatchEvent(new CustomEvent('learnflow:sessions-changed'))
     setSummary((previous: any) => data.state_summary || previous)
     if (Array.isArray(data.project_proposals)) setProposals(data.project_proposals)
     if (data.awarded_badges?.length) setMilestoneNotice(data.awarded_badges[0])
     const nextAction = data.action_card || data.executed_action || null
     setAction(nextAction)
     const result = data.executed_action?.result || nextAction?.result || {}
-    if (result.learning_run && result.navigate_to_learning_run) onLearningRunCreated?.(result.learning_run)
+    if (autoOpenLearningRun && result.learning_run && result.navigate_to_learning_run) onLearningRunCreated?.(result.learning_run)
     if (result.project && result.navigate_to_project) onProjectChange?.(result.project)
     if (result.updated_roadmap) onRoadmapUpdate?.(result.updated_roadmap)
     if (result.checkpoint) onCheckpointChange?.(result.checkpoint)
@@ -351,7 +378,7 @@ export default function TutorPanel({
         setAction(latest)
         if (terminal.has(latest.status)) {
           const result = latest.result || {}
-          if (result.learning_run && result.navigate_to_learning_run) onLearningRunCreated?.(result.learning_run)
+          if (autoOpenLearningRun && result.learning_run && result.navigate_to_learning_run) onLearningRunCreated?.(result.learning_run)
           if (result.project) onProjectChange?.(result.project)
           if (result.updated_roadmap) onRoadmapUpdate?.(result.updated_roadmap)
           return
@@ -385,6 +412,7 @@ export default function TutorPanel({
         message: content,
         project_id: projectId,
         checkpoint_id: checkpointId,
+        selected_skill_id: activeSkillId,
         client_turn_id: globalThis.crypto?.randomUUID?.() || `sources-done-${projectProposal.id}-${Date.now()}`,
         context,
       })
@@ -404,7 +432,11 @@ export default function TutorPanel({
     const text = (presetText ?? input).trim()
     if (!text && !selectedActionId) return
     if (text) {
-      setMessages(prev => [...prev, { role: 'user', content: text }])
+      const activeSkill = learningSkills.find(skill => skill.id === activeSkillId)
+      setMessages(prev => [...prev, {
+        role: 'user', content: text,
+        meta_data: activeSkill ? { learning_skill: activeSkill } : {},
+      }])
       setInput('')
     }
     setLoading(true)
@@ -414,6 +446,7 @@ export default function TutorPanel({
         project_id: projectId,
         checkpoint_id: checkpointId,
         selected_action_id: selectedActionId,
+        selected_skill_id: activeSkillId,
         client_turn_id: globalThis.crypto?.randomUUID?.() || `turn-${Date.now()}-${Math.random()}`,
         context: turnContext,
       })
@@ -449,6 +482,8 @@ export default function TutorPanel({
     } catch {}
   }
 
+  const activeSkill = learningSkills.find(skill => skill.id === activeSkillId)
+
   return (
     <section className={`flex min-h-0 flex-col overflow-hidden border border-gray-200 bg-white rounded-lg ${className}`}>
       <header className="flex min-h-14 items-center justify-between border-b border-gray-200 px-4 py-3">
@@ -482,7 +517,7 @@ export default function TutorPanel({
         onUpdate={updateProposal}
       />
 
-      <div ref={messagesRef} className="flex-1 space-y-3 overflow-x-hidden overflow-y-auto p-4">
+      <div ref={messagesRef} className={`flex-1 space-y-3 overflow-x-hidden overflow-y-auto p-4 ${standalone ? 'bg-[#fafaf8] sm:px-8 sm:py-6' : ''}`}>
         {milestoneNotice && (
           <div className="flex items-start justify-between gap-3 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 rounded-lg">
             <div><p className="font-semibold">学习路径新增里程碑</p><p className="mt-1">{milestoneNotice.title}</p></div>
@@ -490,8 +525,16 @@ export default function TutorPanel({
           </div>
         )}
         {messages.length === 0 && (
-          <div className="py-8 text-center text-sm text-gray-400">
-            {checkpointId ? '本关讲义和练习共用这段 Tutor 会话。' : projectId ? '正在接入项目上下文...' : '今天想聊哪件学习上的事？'}
+          <div className={`${standalone ? 'mx-auto flex min-h-[52vh] max-w-2xl flex-col items-center justify-center px-6' : 'py-8'} text-center`}>
+            {standalone && <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-800 text-white shadow-sm"><Sparkles size={21} /></span>}
+            <p className={`${standalone ? 'mt-5 text-2xl font-semibold tracking-tight text-slate-950' : 'text-sm text-gray-400'}`}>
+              {checkpointId ? '本关讲义和练习共用这段 Tutor 会话。' : projectId ? '正在接入项目上下文...' : '从一个问题开始'}
+            </p>
+            {standalone && (
+              <p className="mt-3 max-w-lg text-sm leading-6 text-slate-500">
+                可以直接提问，也可以在输入框下方选择苏格拉底追问、费曼复述或清晰讲解。项目和练习会在对话需要时出现。
+              </p>
+            )}
           </div>
         )}
         {messages.map((message, index) => {
@@ -503,8 +546,13 @@ export default function TutorPanel({
             && Number(attachment.proposal_id) === projectProposal.id
           )
           return (
-            <div key={message.id ? `stored-${message.id}` : `local-${index}`} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={message.id ? `stored-${message.id}` : `local-${index}`} className={`flex ${standalone ? 'mx-auto w-full max-w-3xl' : ''} ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`min-w-0 ${message.role === 'user' ? 'max-w-[88%]' : 'w-full max-w-[94%]'}`}>
+                {message.role === 'assistant' && message.meta_data?.learning_skill?.name && (
+                  <p className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-emerald-700">
+                    <Sparkles size={11} />正在使用 {message.meta_data.learning_skill.name}
+                  </p>
+                )}
                 <div className={`px-3 py-2 text-sm leading-6 rounded-lg ${
                   message.role === 'user'
                     ? 'whitespace-pre-wrap bg-gray-900 text-white'
@@ -568,9 +616,18 @@ export default function TutorPanel({
                   </div>
                 )}
                 {action.status === 'completed' && (
-                  <p className="mt-2 text-xs text-emerald-700">
-                    {action.result?.user_message || '已完成'}
-                  </p>
+                  <div className="mt-2">
+                    <p className="text-xs text-emerald-700">{action.result?.user_message || '已完成'}</p>
+                    {action.result?.learning_run && onLearningRunCreated && (
+                      <button
+                        type="button"
+                        onClick={() => onLearningRunCreated(action.result.learning_run)}
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800"
+                      >
+                        <Sparkles size={13} />打开这次学习卡
+                      </button>
+                    )}
+                  </div>
                 )}
                 {action.status === 'failed' && <p className="mt-2 text-xs text-red-700">{action.error?.message || '执行失败'}</p>}
               </div>
@@ -596,7 +653,8 @@ export default function TutorPanel({
         )}
       </div>
 
-      <div className="border-t border-gray-200 p-3">
+      <div className={`border-t border-gray-200 p-3 ${standalone ? 'bg-white sm:px-8 sm:pb-5' : ''}`}>
+        <div className={standalone ? 'mx-auto w-full max-w-3xl' : ''}>
         {quickPrompts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {quickPrompts.map(prompt => (
@@ -612,8 +670,49 @@ export default function TutorPanel({
             ))}
           </div>
         )}
+        {showSkillPicker && (
+          <div className="relative mb-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSkillMenuOpen(value => !value)}
+              aria-expanded={skillMenuOpen}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition ${
+                activeSkill ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Sparkles size={13} />
+              {activeSkill?.name || '自动选择方法'}
+              <ChevronDown size={13} className={skillMenuOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+            </button>
+            <span className="hidden text-[11px] text-slate-400 sm:inline">Skill 只改变这段对话的教学方式</span>
+            {skillMenuOpen && (
+              <div className="absolute bottom-10 left-0 z-30 w-[min(22rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => { setActiveSkillId('adaptive'); setSkillMenuOpen(false) }}
+                  className={`w-full rounded-xl px-3 py-2.5 text-left ${activeSkillId === 'adaptive' ? 'bg-slate-100' : 'hover:bg-slate-50'}`}
+                >
+                  <strong className="block text-xs text-slate-900">自动选择</strong>
+                  <span className="mt-0.5 block text-[11px] leading-5 text-slate-500">让 Tutor 根据当前问题自然决定讲法。</span>
+                </button>
+                {learningSkills.map(skill => (
+                  <button
+                    key={skill.id}
+                    type="button"
+                    onClick={() => { setActiveSkillId(skill.id); setSkillMenuOpen(false) }}
+                    className={`mt-0.5 w-full rounded-xl px-3 py-2.5 text-left ${activeSkillId === skill.id ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
+                  >
+                    <strong className="block text-xs text-slate-900">{skill.name}</strong>
+                    <span className="mt-0.5 block text-[11px] leading-5 text-slate-500">{skill.description}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
+            data-agent-conversation-input
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={event => {
@@ -633,6 +732,7 @@ export default function TutorPanel({
           >
             发送
           </button>
+        </div>
         </div>
       </div>
     </section>
