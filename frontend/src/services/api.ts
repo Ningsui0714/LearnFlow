@@ -343,6 +343,47 @@ export interface LearningSkill {
   description: string
 }
 
+export interface LearningSkillRecommendation {
+  skill: LearningSkill
+  goal?: string
+  reason: string
+  matched_signals: string[]
+  requires_confirmation: boolean
+  policy_version: string
+}
+
+export interface LearningSkillRun {
+  id: number
+  skill: LearningSkill
+  runtime_version: string
+  goal: string
+  status: 'active' | 'paused' | 'verification' | 'completed' | 'canceled'
+  state: string
+  stage_label: string
+  step_index: number
+  total_steps: number
+  turn_count: number
+  turn_budget: number
+  version: number
+  next_prompt: string
+  can_start_verification: boolean
+  can_pause: boolean
+  can_resume: boolean
+  verification_required: boolean
+  evidence_note: string
+  micro_learning_run?: {
+    id: number
+    goal: string
+    status: string
+    state: string
+    version: number
+    summary?: Record<string, any>
+  } | null
+  started_at?: string | null
+  completed_at?: string | null
+  updated_at?: string | null
+}
+
 export interface TutorSessionSummary {
   id: number
   title: string
@@ -360,6 +401,21 @@ export const listTutorSessions = (sessionType?: 'global' | 'project' | 'checkpoi
 
 export const listLearningSkills = () =>
   api.get('/agent/skills').then(r => r.data as LearningSkill[])
+
+export const startLearningSkillRun = (
+  sessionId: number,
+  data: { skill_id: 'socratic_dialogue' | 'feynman_dialogue'; goal: string; client_request_id: string },
+) => api.post(`/agent/sessions/${sessionId}/skill-runs`, data).then(r => r.data)
+
+export const updateLearningSkillRun = (
+  sessionId: number,
+  runId: number,
+  data: {
+    action: 'pause' | 'resume' | 'start_verification'
+    expected_version: number
+    client_action_id: string
+  },
+) => api.post(`/agent/sessions/${sessionId}/skill-runs/${runId}/actions`, data).then(r => r.data)
 
 export const createTutorSession = (data: { session_type?: 'global' | 'project' | 'checkpoint'; project_id?: number; checkpoint_id?: number; create_new?: boolean }) =>
   api.post('/agent/sessions', data).then(r => r.data)

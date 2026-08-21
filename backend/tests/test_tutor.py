@@ -8,8 +8,8 @@ from sqlalchemy import select
 from app.main import app
 from app.db.database import async_session, init_db
 from app.models.learning import (
-    AgentMessage, AgentSession, EvidenceEvent, KernelState, LearningProjectProposal,
-    SchemaMigration,
+    AgentMessage, AgentSession, EvidenceEvent, KernelMutation, KernelState,
+    LearningProjectProposal, LearningSkillRun, MicroLearningRun, SchemaMigration,
 )
 from app.models.project import (
     Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk, Lecture, Exercise,
@@ -96,6 +96,252 @@ def test_independent_global_chats_invoke_registered_session_skills(client: TestC
         "selected_skill_id": "imaginary_skill",
     })
     assert invalid.status_code == 400
+
+
+def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
+    client: TestClient,
+):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    session_id = session["id"]
+
+    opening_id = f"skill-open-{uuid.uuid4().hex}"
+    opening = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "不要直接告诉我，请引导我理解边际成本为什么会变化",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": opening_id,
+    })
+    assert opening.status_code == 200, opening.text
+    run = opening.json()["active_skill_run"]
+    assert run["skill"]["id"] == "socratic_dialogue"
+    assert run["state"] == "eliciting_prior_model"
+    assert run["turn_count"] == 0
+    assert run["verification_required"] is True
+    assert opening.json()["executed_action"] is None
+
+    responses = (
+        "我觉得边际成本是每多生产一个单位时新增的成本，可能会受当前产量影响。",
+        "如果设备已经接近容量上限，继续生产会需要加班或者效率下降，所以成本会变高。",
+        "因为产量增加会改变资源约束，所以新增一单位的成本会变化；只有资源约束不变时才可能保持稳定。",
+    )
+    expected_states = ("testing_assumption", "building_explanation", "verification_ready")
+    for index, (response, expected_state) in enumerate(zip(responses, expected_states)):
+        turn_id = f"skill-step-{index}-{uuid.uuid4().hex}"
+        advanced = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+            "message": response,
+            "selected_skill_id": "socratic_dialogue",
+            "client_turn_id": turn_id,
+        })
+        assert advanced.status_code == 200, advanced.text
+        run = advanced.json()["active_skill_run"]
+        assert run["state"] == expected_state
+        assert run["turn_count"] == index + 1
+        assert run["turn_count"] <= run["turn_budget"]
+        replay = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+            "message": response,
+            "selected_skill_id": "socratic_dialogue",
+            "client_turn_id": turn_id,
+        })
+        assert replay.status_code == 200
+        assert replay.json()["active_skill_run"]["version"] == run["version"]
+
+    assert run["can_start_verification"] is True
+    pause_action_id = f"pause-{uuid.uuid4().hex}"
+    paused = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
+        json={
+            "action": "pause", "expected_version": run["version"],
+            "client_action_id": pause_action_id,
+        },
+    )
+    assert paused.status_code == 200, paused.text
+    paused_run = paused.json()["active_skill_run"]
+    assert paused_run["status"] == "paused"
+    replayed_pause = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
+        json={
+            "action": "pause", "expected_version": run["version"],
+            "client_action_id": pause_action_id,
+        },
+    )
+    assert replayed_pause.status_code == 200, replayed_pause.text
+    assert replayed_pause.json()["active_skill_run"]["version"] == paused_run["version"]
+    stale_pause = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
+        json={
+            "action": "pause", "expected_version": run["version"],
+            "client_action_id": f"stale-{uuid.uuid4().hex}",
+        },
+    )
+    assert stale_pause.status_code == 409
+    restored = client.get(f"/api/agent/sessions/{session_id}")
+    assert restored.status_code == 200
+    assert restored.json()["active_skill_run"]["status"] == "paused"
+
+    resumed = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
+        json={
+            "action": "resume", "expected_version": paused_run["version"],
+            "client_action_id": f"resume-{uuid.uuid4().hex}",
+        },
+    )
+    assert resumed.status_code == 200, resumed.text
+    resumed_run = resumed.json()["active_skill_run"]
+    assert resumed_run["state"] == "verification_ready"
+
+    verification = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
+        json={
+            "action": "start_verification", "expected_version": resumed_run["version"],
+            "client_action_id": f"verify-{uuid.uuid4().hex}",
+        },
+    )
+    assert verification.status_code == 200, verification.text
+    body = verification.json()
+    assert body["active_skill_run"]["state"] == "verification_in_progress"
+    assert body["learning_run"]["goal"] == run["goal"]
+    assert body["learning_run"]["state"] == "learning_card"
+
+    async def complete_verification_projection():
+        async with async_session() as db:
+            micro = await db.get(MicroLearningRun, body["learning_run"]["id"])
+            micro.status = "completed"
+            micro.state = "completed"
+            micro.summary = {
+                "mastery_claim": "not_stable_yet",
+                "review_schedule_ids": [701],
+            }
+            await db.commit()
+
+    asyncio.run(complete_verification_projection())
+    completed_view = client.get(f"/api/agent/sessions/{session_id}")
+    assert completed_view.status_code == 200, completed_view.text
+    assert completed_view.json()["active_skill_run"]["status"] == "completed"
+    assert "稳定掌握仍需" in completed_view.json()["active_skill_run"]["evidence_note"]
+
+    async def skill_event_audit():
+        async with async_session() as db:
+            stored = await db.get(LearningSkillRun, run["id"])
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+                EvidenceEvent.event_type.in_({
+                    "learning_skill_run_started", "learning_skill_run_advanced",
+                    "learning_skill_run_paused", "learning_skill_run_resumed",
+                    "learning_skill_verification_started", "learning_skill_run_completed",
+                }),
+            ))).scalars().all())
+            event_ids = [event.id for event in events]
+            mutation_count = (await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id.in_(event_ids),
+            ))).scalars().all() if event_ids else []
+            return stored, events, mutation_count
+
+    stored, events, mutations = asyncio.run(skill_event_audit())
+    assert stored.micro_learning_run_id == body["learning_run"]["id"]
+    assert {event.event_type for event in events} >= {
+        "learning_skill_run_started", "learning_skill_run_advanced",
+        "learning_skill_run_paused", "learning_skill_run_resumed",
+        "learning_skill_verification_started", "learning_skill_run_completed",
+    }
+    assert mutations == []
+
+
+def test_adaptive_tutor_recommends_but_does_not_silently_activate_skill(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    session_id = session["id"]
+    turn = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "不要直接告诉我答案，引导我自己推导递归为什么会终止",
+        "selected_skill_id": "adaptive",
+        "client_turn_id": f"recommend-{uuid.uuid4().hex}",
+    })
+    assert turn.status_code == 200, turn.text
+    assert turn.json()["active_skill"] is None
+    assert turn.json()["active_skill_run"] is None
+    recommendation = turn.json()["skill_recommendation"]
+    assert recommendation["skill"]["id"] == "socratic_dialogue"
+    assert recommendation["goal"] == "递归为什么会终止"
+    assert recommendation["requires_confirmation"] is True
+
+    acceptance_request = {
+        "skill_id": "socratic_dialogue",
+        "goal": "推导递归为什么会终止",
+        "client_request_id": f"accept-{uuid.uuid4().hex}",
+    }
+    accepted = client.post(f"/api/agent/sessions/{session_id}/skill-runs", json=acceptance_request)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["active_skill"]["id"] == "socratic_dialogue"
+    assert accepted.json()["active_skill_run"]["state"] == "eliciting_prior_model"
+    assert accepted.json()["created"] is True
+    replayed = client.post(f"/api/agent/sessions/{session_id}/skill-runs", json=acceptance_request)
+    assert replayed.status_code == 200, replayed.text
+    assert replayed.json()["active_skill_run"]["id"] == accepted.json()["active_skill_run"]["id"]
+    assert replayed.json()["created"] is False
+
+
+def test_adaptive_tutor_uses_plain_explanation_without_a_runtime_card(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    turn = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "请直接解释什么是哈希表",
+        "selected_skill_id": "adaptive",
+        "client_turn_id": f"guided-{uuid.uuid4().hex}",
+    })
+    assert turn.status_code == 200, turn.text
+    assert turn.json()["active_skill"] is None
+    assert turn.json()["active_skill_run"] is None
+    assert turn.json()["skill_recommendation"] is None
+
+
+def test_feynman_skill_run_uses_a_distinct_bounded_workflow(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    first = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "我想用自己的话讲清楚条件概率",
+        "selected_skill_id": "feynman_dialogue",
+        "client_turn_id": f"feynman-open-{uuid.uuid4().hex}",
+    })
+    assert first.status_code == 200, first.text
+    run = first.json()["active_skill_run"]
+    assert run["state"] == "awaiting_teach_back"
+    assert run["goal"] == "条件概率"
+
+    for index, expected_state in enumerate((
+        "locating_gap", "revising_explanation", "verification_ready",
+    )):
+        next_turn = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+            "message": (
+                "条件概率是在已经知道一件事发生的情况下重新判断另一件事的概率，"
+                f"这是我的第 {index + 1} 次解释，并补充条件、例子和边界。"
+            ),
+            "selected_skill_id": "feynman_dialogue",
+            "client_turn_id": f"feynman-{index}-{uuid.uuid4().hex}",
+        })
+        assert next_turn.status_code == 200, next_turn.text
+        run = next_turn.json()["active_skill_run"]
+        assert run["state"] == expected_state
+    assert run["turn_count"] == run["turn_budget"] == 3
+    assert run["can_start_verification"] is True
+
+
+def test_conversation_skill_runtime_migration_is_idempotent(client: TestClient):
+    del client
+
+    async def scenario():
+        await init_db()
+        await init_db()
+        async with async_session() as db:
+            markers = list((await db.execute(select(SchemaMigration).where(
+                SchemaMigration.version == "v14-conversation-skill-runtime",
+            ))).scalars().all())
+            await db.execute(select(LearningSkillRun.id).limit(1))
+            return len(markers)
+
+    assert asyncio.run(scenario()) == 1
 
 
 def test_checkpoint_tutor_session_and_context_are_isolated(client: TestClient, tmp_path):

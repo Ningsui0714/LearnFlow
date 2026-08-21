@@ -118,13 +118,19 @@ KernelState + Memory Graph
 `learning_skill_selected` 只记录零 Kernel target 的操作事实，不构成偏好巩固或掌握证据。
 Tutor 可以推荐已登记 Skill，但未得到用户选择时不得声称已经切换。
 
+苏格拉底与费曼方法使用 Session 范围的 `LearningSkillRun` 确定性状态机：状态迁移、
+轮次预算、暂停恢复和验证准入不由 LLM 决定。运行事件的 Kernel target 全部为空；
+对话回答、追问和复述只用于教学与诊断。达到 `verification_ready` 后，学习者必须主动
+创建既有 `MicroLearningRun` 附件，随后才由 `LearningAttempt`、纠错和复习链产生能力
+证据。详细状态、API、迁移和初步对比见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
+
 `/learn/:runId` 是对话按需产生的专注工作台附件，由 Tutor 控制 Agent 所有，并通过
 `verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错
 和复习调度。只有明确的“15 分钟/微学习/可验证学习”请求才应启动它；普通“帮我学”
 继续留在当前对话。它不是第四类主 Agent；内部创建的单关卡 Project 只提供
 learner/project/checkpoint/session scope，用户无需先配置项目。
 
-`MicroLearningRun` 只保存可恢复步骤和 answer-free 的 UI 投影。题目结果以 `LearningAttempt` 和 `concept_attempt_evaluated` 为权威，纠错以 `RemediationCase` 为权威，后续计划以 `ReviewSchedule` 为投影。`teach_back_analyzed` 只写诊断缺口并固定 `mastery_unchanged`；`micro_learning_completed` 是零 kernel target 的运行里程碑。微学习题在同一轮的多次正确不能直接形成稳定掌握，跨时间稳定规则仍由 `review-policy-v1` 裁决。详细契约与前端状态机见 `docs/MICRO_LEARNING_MVP.md`。
+`MicroLearningRun` 只保存可恢复步骤和 answer-free 的 UI 投影。题目结果以 `LearningAttempt` 和 `concept_attempt_evaluated` 为权威，纠错以 `RemediationCase` 为权威，后续计划以 `ReviewSchedule` 为投影。`teach_back_analyzed` 只写诊断缺口并固定 `mastery_unchanged`；`micro_learning_completed` 是零 kernel target 的运行里程碑。微学习题在同一轮的多次正确不能直接形成稳定掌握，跨时间稳定规则仍由 `review-policy-v1` 裁决。微学习契约见 `docs/MICRO_LEARNING_MVP.md`，对话 Skill 运行契约见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
 ### 用户成长只读投影
 

@@ -56,6 +56,29 @@ def test_two_cookie_clients_are_strictly_isolated():
                 "/api/agent/sessions", params={"session_type": "global"},
             ).json()
         }
+        skill_session_id = alice.post(
+            "/api/agent/sessions", json={"session_type": "global", "create_new": True},
+        ).json()["id"]
+        skill_run_response = alice.post(f"/api/agent/sessions/{skill_session_id}/skill-runs", json={
+            "skill_id": "socratic_dialogue",
+            "goal": "自己推导二分查找为什么会终止",
+            "client_request_id": "alice-private-skill-run",
+        })
+        assert skill_run_response.status_code == 200, skill_run_response.text
+        private_skill_run = skill_run_response.json()["active_skill_run"]
+        assert bob.post(f"/api/agent/sessions/{skill_session_id}/skill-runs", json={
+            "skill_id": "feynman_dialogue",
+            "goal": "读取 Alice 的学习目标",
+            "client_request_id": "bob-cross-scope-start",
+        }).status_code == 404
+        assert bob.post(
+            f"/api/agent/sessions/{skill_session_id}/skill-runs/{private_skill_run['id']}/actions",
+            json={
+                "action": "pause",
+                "expected_version": private_skill_run["version"],
+                "client_action_id": "bob-cross-scope-pause",
+            },
+        ).status_code == 404
         proposal_response = alice.post(
             f"/api/agent/sessions/{session_id}/turns",
             json={"message": "我想系统学习离散数学并持续完成证明练习"},

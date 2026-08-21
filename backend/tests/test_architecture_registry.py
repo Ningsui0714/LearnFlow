@@ -109,6 +109,28 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
     assert EVENTS["learning_skill_selected"].kernel_targets == ()
     assert WORKBENCHES["global_tutor"].surface == "/agent/:sessionId"
     assert "use_learning_skill" in WORKBENCHES["global_tutor"].capabilities
+    assert {
+        "start_learning_skill_run", "advance_learning_skill_run",
+        "start_skill_verification",
+    } <= set(WORKBENCHES["global_tutor"].capabilities)
+    assert CAPABILITY_OWNERS["start_learning_skill_run"] == (
+        "tutor_agent", "learning_skill_runtime", "global_tutor",
+    )
+    assert {
+        "learning_skill_run_started", "learning_skill_run_advanced",
+        "learning_skill_run_paused", "learning_skill_run_resumed",
+        "learning_skill_verification_started", "learning_skill_run_completed",
+    } <= set(EVENTS)
+    assert all(
+        EVENTS[event_id].kernel_targets == ()
+        for event_id in {
+            "learning_skill_run_started", "learning_skill_run_advanced",
+            "learning_skill_run_paused", "learning_skill_run_resumed",
+            "learning_skill_verification_started", "learning_skill_run_completed",
+        }
+    )
+    assert "learning_skill_runtime" in SKILLS["socratic_dialogue"].tools
+    assert "learning_skill_runtime" in SKILLS["feynman_dialogue"].tools
     assert len(AGENTS) == 3
 
 

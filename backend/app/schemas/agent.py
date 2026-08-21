@@ -1,6 +1,6 @@
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentSessionCreate(BaseModel):
@@ -18,6 +18,28 @@ class TutorTurnRequest(BaseModel):
     selected_skill_id: Optional[str] = Field(default=None, max_length=80)
     client_turn_id: Optional[str] = Field(default=None, min_length=3, max_length=160)
     context: dict[str, Any] = Field(default_factory=dict)
+
+
+class LearningSkillRunCreateRequest(BaseModel):
+    skill_id: Literal["socratic_dialogue", "feynman_dialogue"]
+    goal: str = Field(min_length=2, max_length=300)
+    client_request_id: str = Field(min_length=8, max_length=120)
+
+    @field_validator("goal", "client_request_id", mode="before")
+    @classmethod
+    def normalize_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
+class LearningSkillRunActionRequest(BaseModel):
+    action: Literal["pause", "resume", "start_verification"]
+    expected_version: int = Field(ge=1)
+    client_action_id: str = Field(min_length=8, max_length=120)
+
+    @field_validator("client_action_id", mode="before")
+    @classmethod
+    def normalize_client_action_id(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class LearningEventRequest(BaseModel):

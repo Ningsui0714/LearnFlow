@@ -279,6 +279,17 @@ Tutor 可以推荐注册表中的 learner-selectable Skill，但不能静默切�
 只改变教学行为；讲解、追问或复述反馈都不是掌握证据。需要可评分证据时，必须进入已有
 确定性评估或 `verified_micro_learning` 流程。
 
+`socratic_dialogue` 与 `feynman_dialogue` 由 `LearningSkillRun` 保存 Session 范围的目标、
+当前步骤、轮次预算、暂停点与验证引用。Tutor LLM MUST 服从确定性 runtime 给出的当前步
+指令，MUST NOT 改变状态或自行宣布完成。自适应推荐 MUST 返回待确认卡；接受、拒绝、暂停、
+恢复和独立验证均由显式用户动作触发。运行事件 MUST 保持零 Kernel target。
+
+```text
+Tutor Session -> confirmed SkillRun -> bounded dialogue
+  -> verification_ready -> explicit verification handoff
+  -> MicroLearningRun -> graded attempts / remediation / review
+```
+
 `/learn/:runId` 是 Tutor 所有、由对话按需产生的专注工作台附件，内部依次调用 Learning
 Design 和 Practice 能力，不新增第四个主 Agent。只有明确请求“15 分钟、微学习或可验证
 学习”才自动启动；普通“帮我学”留在当前对话。
@@ -294,7 +305,8 @@ start_micro_learning
 
 `MicroLearningRun` MUST 只作为可恢复流程投影。服务端 MUST 根据已有 `LearningAttempt` 和 `RemediationCase` 重建题目进度，MUST 过滤答案与私有变式契约，并使用 `expected_version` 和客户端幂等 ID。生成模型 MAY 生成学习卡和题目候选，但服务端 MUST 校验题型、答案索引与变式；费曼复述只做确定性覆盖诊断。完成一轮 MUST NOT 宣布稳定掌握，微学习题的同 session 多题正确也不得绕过跨时间复习门槛。
 
-完整产品、API、事件与离线比对契约见 `docs/MICRO_LEARNING_MVP.md`。
+微学习产品契约见 `docs/MICRO_LEARNING_MVP.md`；对话状态机、SkillRun API、事件和冻结
+样例比对见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
 ### 8.3 用户成长工作台
 
@@ -668,6 +680,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 责任 | 主要文件 |
 |---|---|
 | Tutor 角色、上下文装配、回合编排 | `backend/app/services/tutor_service.py` |
+| 对话 Skill 推荐、状态机与验证交接 | `backend/app/services/learning_skill_runtime.py` |
 | Tutor 结构化输入输出 | `backend/app/schemas/agent.py` |
 | Action 能力与确认策略 | `backend/app/services/action_board.py` |
 | 五核归约、Evidence、Attempt、通关 | `backend/app/services/learning_runtime.py` |

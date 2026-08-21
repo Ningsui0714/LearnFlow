@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-21.3"
+REGISTRY_VERSION = "2026-08-21.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -184,6 +184,8 @@ TOOLS = {
                      KERNEL_NAMES),
         ToolContract("micro_learning_orchestrator", "Focused Micro-learning Orchestrator", "tutor_agent", "learnflow", "orchestration",
                      KERNEL_NAMES, (), "EvidenceEvent + existing learning domain records"),
+        ToolContract("learning_skill_runtime", "Conversation Learning Skill Runtime", "tutor_agent", "learnflow", "orchestration",
+                     (), (), "LearningSkillRun + zero-target events + verified workbench handoff"),
         ToolContract("teach_back_analyzer", "Deterministic Teach-back Analyzer", "practice_agent", "learnflow", "assessment",
                      ("knowledge", "practice"), (), "LearningAttempt + EvidenceEvent"),
         ToolContract("process_animation", "Process Animation", "learning_design_agent", "learnflow", "artifact",
@@ -242,9 +244,9 @@ SKILLS = {
         ),
         SkillContract(
             "socratic_dialogue", "苏格拉底追问", "tutor_agent",
-            ("tutor_context", "context_packet_assembler"),
-            "one-question-at-a-time guided reasoning dialogue",
-            "Tutor session instruction; learner may request a direct answer",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime"),
+            "bounded resumable one-question-at-a-time dialogue -> verified workbench handoff",
+            "deterministic SkillRun state machine; learner may request a direct answer",
             learner_selectable=True,
             description="用连续的小问题，引导你自己推到答案。",
             invocation_prompt=(
@@ -256,9 +258,9 @@ SKILLS = {
         ),
         SkillContract(
             "feynman_dialogue", "费曼复述", "tutor_agent",
-            ("tutor_context", "context_packet_assembler"),
-            "conversational teach-back scaffold + bounded gap feedback",
-            "Tutor coaching only; deterministic analyzer is required for evidence",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime"),
+            "bounded resumable teach-back scaffold -> verified workbench handoff",
+            "deterministic SkillRun state machine; graded analyzer is required for evidence",
             learner_selectable=True,
             description="请你用自己的话讲一遍，再一起找出模糊处。",
             invocation_prompt=(
@@ -325,7 +327,9 @@ SKILLS = {
 WORKBENCHES = {
     item.id: item for item in (
         WorkbenchContract("global_tutor", "Global Tutor", "/agent/:sessionId", "tutor_agent",
-                          ("use_learning_skill", "start_micro_learning", "search_projects", "draft_learning_project", "create_project")),
+                          ("use_learning_skill", "start_learning_skill_run", "advance_learning_skill_run",
+                           "start_skill_verification", "start_micro_learning", "search_projects",
+                           "draft_learning_project", "create_project")),
         WorkbenchContract("focused_learning", "Focused Learning", "/learn/:runId", "tutor_agent",
                           ("continue_micro_learning", "analyze_teach_back", "evaluate_attempt",
                            "request_remediation_explanation", "retry_attempt",
@@ -357,6 +361,9 @@ WORKBENCHES = {
 
 CAPABILITY_OWNERS = {
     "use_learning_skill": ("tutor_agent", "tutor_context", "global_tutor"),
+    "start_learning_skill_run": ("tutor_agent", "learning_skill_runtime", "global_tutor"),
+    "advance_learning_skill_run": ("tutor_agent", "learning_skill_runtime", "global_tutor"),
+    "start_skill_verification": ("tutor_agent", "learning_skill_runtime", "global_tutor"),
     "start_micro_learning": ("tutor_agent", "micro_learning_orchestrator", "global_tutor"),
     "continue_micro_learning": ("tutor_agent", "micro_learning_orchestrator", "focused_learning"),
     "analyze_teach_back": ("practice_agent", "teach_back_analyzer", "focused_learning"),
@@ -408,6 +415,12 @@ def _event(event_id: str, capability: str, targets: tuple[str, ...], role: str,
 EVENTS = {
     item.id: item for item in (
         _event("learning_skill_selected", "use_learning_skill", (), "operational"),
+        _event("learning_skill_run_started", "start_learning_skill_run", (), "operational"),
+        _event("learning_skill_run_advanced", "advance_learning_skill_run", (), "operational"),
+        _event("learning_skill_run_paused", "advance_learning_skill_run", (), "operational"),
+        _event("learning_skill_run_resumed", "advance_learning_skill_run", (), "operational"),
+        _event("learning_skill_verification_started", "start_skill_verification", (), "operational_handoff"),
+        _event("learning_skill_run_completed", "advance_learning_skill_run", (), "operational_milestone"),
         _event("micro_learning_started", "start_micro_learning", ("structure", "value"), "confirmed_goal"),
         _event("learning_card_generated", "start_micro_learning", (), "artifact"),
         _event("micro_learning_card_viewed", "continue_micro_learning", ("knowledge",), "exposure"),

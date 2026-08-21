@@ -6,12 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.models.learning import (
-    AgentSession, AgentMessage, AgentAction, LearningProjectProposal,
+    AgentSession, AgentMessage, AgentAction, LearningProjectProposal, LearningSkillRun,
 )
 from app.models.project import Project, Roadmap, Checkpoint, Task
 from app.schemas.agent import (
     AgentSessionCreate, TutorTurnRequest, LearningEventRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
+    LearningSkillRunCreateRequest, LearningSkillRunActionRequest,
 )
 from app.services.learning_runtime import (
     PUBLIC_EVENT_TYPES, record_event, get_state_summary, evaluate_checkpoint_status,
@@ -20,9 +21,16 @@ from app.services.tutor_service import (
     get_or_create_session, get_messages, process_turn, execute_action,
     action_card, action_result, finalize_action_for_task,
     proposal_acceptance_action, finalize_proposal_acceptance,
-    get_session_state_summary, session_learning_skill, _is_confirmation,
+    get_session_state_summary, session_learning_skill,
+    _select_session_learning_skill, _is_confirmation,
 )
 from app.services.architecture_registry import selectable_learning_skill_manifest
+from app.services.learning_skill_runtime import (
+    act_on_learning_skill_run,
+    create_learning_skill_run,
+    latest_learning_skill_run_view,
+    learning_skill_run_view,
+)
 from app.services.project_proposals import (
     list_session_proposals, proposal_view, set_proposal_status,
     start_resource_search, update_project_proposal,
@@ -87,6 +95,13 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
     messages = await get_messages(db, session.id)
     pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
     proposals = await list_session_proposals(db, session.id)
+    skill_run = await latest_learning_skill_run_view(db, session)
+    latest_assistant = next((item for item in reversed(messages) if item.role == "assistant"), None)
+    skill_recommendation = (
+        dict((latest_assistant.meta_data or {}).get("skill_recommendation") or {}) or None
+        if latest_assistant else None
+    )
+    await db.commit()
     return {
         "id": session.id,
         "title": session.title,
@@ -98,6 +113,8 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         "action_card": action_card(pending),
         "project_proposals": [proposal_view(item) for item in proposals],
         "active_skill": session_learning_skill(session),
+        "active_skill_run": skill_run,
+        "skill_recommendation": skill_recommendation,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
     }
@@ -148,6 +165,122 @@ async def list_sessions(
             "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         })
     return result
+
+
+def _skill_run_error(error: RuntimeError) -> HTTPException:
+    message = str(error)
+    if message == "version_conflict":
+        return HTTPException(409, "学习方法状态已更新，请刷新后重试")
+    if message == "invalid_state":
+        return HTTPException(409, "当前步骤不能执行这个操作")
+    if message == "unsupported_scope":
+        return HTTPException(400, "对话内学习方法目前只在独立学习对话中运行")
+    if message == "unsupported_skill":
+        return HTTPException(400, "这个学习方法当前没有可恢复工作流")
+    if message == "missing_goal":
+        return HTTPException(400, "请先给出一个具体学习目标")
+    return HTTPException(400, "无法更新学习方法")
+
+
+@router.post("/sessions/{session_id}/skill-runs")
+async def start_learning_skill_run(
+    session_id: int,
+    request: LearningSkillRunCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    session = await _owned_session(db, current.learner.id, session_id)
+    active_skill, changed = _select_session_learning_skill(
+        session, request.skill_id, request.goal,
+    )
+    try:
+        run, created = await create_learning_skill_run(
+            db,
+            session=session,
+            skill_id=request.skill_id,
+            goal=request.goal,
+            client_request_id=request.client_request_id,
+            source="user",
+        )
+    except RuntimeError as error:
+        raise _skill_run_error(error) from error
+    if changed:
+        await record_event(
+            db,
+            learner_id=session.learner_id,
+            session_id=session.id,
+            event_type="learning_skill_selected",
+            source="user",
+            payload={
+                "skill_id": active_skill["id"] if active_skill else "adaptive",
+                "skill_name": active_skill["name"] if active_skill else "自动选择",
+            },
+            provenance={"skill_run_id": run.id, "interaction": "recommendation_accepted"},
+            client_event_id=f"learning-skill-run:{run.id}:selected",
+        )
+    if session.title in {"学习 Tutor", "新对话"}:
+        session.title = request.goal[:36] + ("…" if len(request.goal) > 36 else "")
+    view = await learning_skill_run_view(db, run)
+    message = str((view or {}).get("next_prompt") or "学习方法已经开始。")
+    if created:
+        stored = AgentMessage(
+            session_id=session.id,
+            role="assistant",
+            content=message,
+            meta_data={"learning_skill": active_skill, "learning_skill_run": view},
+            idempotency_key=f"learning-skill-run:{run.id}:opening-message",
+        )
+        db.add(stored)
+    await db.commit()
+    return {
+        "session_id": session.id,
+        "session_title": session.title,
+        "active_skill": active_skill,
+        "active_skill_run": await learning_skill_run_view(db, run),
+        "message": message,
+        "created": created,
+    }
+
+
+@router.post("/sessions/{session_id}/skill-runs/{run_id}/actions")
+async def update_learning_skill_run(
+    session_id: int,
+    run_id: int,
+    request: LearningSkillRunActionRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    session = await _owned_session(db, current.learner.id, session_id)
+    run = (await db.execute(select(LearningSkillRun).where(
+        LearningSkillRun.id == run_id,
+        LearningSkillRun.learner_id == current.learner.id,
+        LearningSkillRun.session_id == session.id,
+    ))).scalar_one_or_none()
+    if not run:
+        raise HTTPException(404, "学习方法记录不存在")
+    try:
+        run, micro = await act_on_learning_skill_run(
+            db,
+            run=run,
+            action=request.action,
+            expected_version=request.expected_version,
+            client_action_id=request.client_action_id,
+            education_stage=current.profile.education_stage or "",
+            background=current.profile.background or "",
+        )
+    except RuntimeError as error:
+        raise _skill_run_error(error) from error
+    await db.commit()
+    micro_view = None
+    if micro:
+        from app.services.micro_learning import run_view
+        micro_view = await run_view(db, micro)
+    return {
+        "session_id": session.id,
+        "active_skill": session_learning_skill(session),
+        "active_skill_run": await learning_skill_run_view(db, run),
+        "learning_run": micro_view,
+    }
 
 
 @router.post("/sessions")
@@ -440,6 +573,8 @@ async def confirm_action(
         "session_id": session.id,
         "session_title": session.title,
         "active_skill": active_skill,
+        "active_skill_run": await latest_learning_skill_run_view(db, session),
+        "skill_recommendation": None,
         "message": message,
         "executed_action": action_result(action),
         "state_summary": await get_session_state_summary(db, session),

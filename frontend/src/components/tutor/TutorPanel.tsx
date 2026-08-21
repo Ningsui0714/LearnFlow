@@ -7,10 +7,15 @@ import {
   sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
+  startLearningSkillRun, updateLearningSkillRun,
 } from '../../services/api'
-import type { LearningSkill, ProjectProposal, ProjectProposalSource } from '../../services/api'
+import type {
+  LearningSkill, LearningSkillRecommendation, LearningSkillRun,
+  ProjectProposal, ProjectProposalSource,
+} from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
+import LearningSkillRunCard from './LearningSkillRunCard'
 
 interface Message {
   id?: number
@@ -224,6 +229,8 @@ export default function TutorPanel({
   const [milestoneNotice, setMilestoneNotice] = useState<any>(null)
   const [learningSkills, setLearningSkills] = useState<LearningSkill[]>([])
   const [activeSkillId, setActiveSkillId] = useState('adaptive')
+  const [activeSkillRun, setActiveSkillRun] = useState<LearningSkillRun | null>(null)
+  const [skillRecommendation, setSkillRecommendation] = useState<LearningSkillRecommendation | null>(null)
   const [skillMenuOpen, setSkillMenuOpen] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<number | null>(null)
@@ -239,6 +246,8 @@ export default function TutorPanel({
     setMessages([])
     setAction(null)
     setProposals([])
+    setActiveSkillRun(null)
+    setSkillRecommendation(null)
     const request = requestedSessionId
       ? getTutorSession(requestedSessionId)
       : createTutorSession({
@@ -256,6 +265,8 @@ export default function TutorPanel({
       setSummary(data.state_summary || null)
       setProposals(data.project_proposals || [])
       setActiveSkillId(data.active_skill?.id || 'adaptive')
+      setActiveSkillRun(data.active_skill_run || null)
+      setSkillRecommendation(data.skill_recommendation || null)
       onSessionLoaded?.(data)
     }).catch(() => {})
     return () => {
@@ -297,6 +308,8 @@ export default function TutorPanel({
       }])
     }
     setActiveSkillId(data.active_skill?.id || 'adaptive')
+    if ('active_skill_run' in data) setActiveSkillRun(data.active_skill_run || null)
+    if ('skill_recommendation' in data) setSkillRecommendation(data.skill_recommendation || null)
     onSessionLoaded?.({ id: data.session_id || sessionId, title: data.session_title, ...data })
     window.dispatchEvent(new CustomEvent('learnflow:sessions-changed'))
     setSummary((previous: any) => data.state_summary || previous)
@@ -474,6 +487,42 @@ export default function TutorPanel({
     setLoading(false)
   }
 
+  const acceptSkillRecommendation = async (recommendation: LearningSkillRecommendation) => {
+    if (!sessionId || loading) return
+    const goal = recommendation.goal || [...messages].reverse().find(message => message.role === 'user')?.content || ''
+    if (!goal.trim()) return
+    setLoading(true)
+    try {
+      const data = await startLearningSkillRun(sessionId, {
+        skill_id: recommendation.skill.id as 'socratic_dialogue' | 'feynman_dialogue',
+        goal,
+        client_request_id: globalThis.crypto?.randomUUID?.() || `skill-run-${sessionId}-${Date.now()}`,
+      })
+      setSkillRecommendation(null)
+      applyResult({ ...data, skill_recommendation: null })
+    } catch (error: any) {
+      setMessages(previous => [...previous, {
+        role: 'assistant',
+        content: error?.response?.data?.detail || '这个学习方法没有启动成功，请重试。',
+      }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const actOnSkillRun = async (nextAction: 'pause' | 'resume' | 'start_verification') => {
+    if (!sessionId || !activeSkillRun) return
+    const data = await updateLearningSkillRun(sessionId, activeSkillRun.id, {
+      action: nextAction,
+      expected_version: activeSkillRun.version,
+      client_action_id: globalThis.crypto?.randomUUID?.() || `skill-action-${activeSkillRun.id}-${Date.now()}`,
+    })
+    setActiveSkillRun(data.active_skill_run || null)
+    if (data.active_skill?.id) setActiveSkillId(data.active_skill.id)
+    if (autoOpenLearningRun && data.learning_run) onLearningRunCreated?.(data.learning_run)
+    onSessionLoaded?.({ id: sessionId, ...data })
+  }
+
   const cancel = async () => {
     if (!action?.id) return
     try {
@@ -644,6 +693,40 @@ export default function TutorPanel({
           Number(message.meta_data?.local_agent_run_id) === Number(action.result.local_agent_run.id)
         )) && (
           <LocalAgentRunCard runId={Number(action.result.local_agent_run.id)} />
+        )}
+
+        {skillRecommendation && (!activeSkillRun || ['paused', 'completed'].includes(activeSkillRun.status)) && (
+          <section className={`rounded-xl border border-indigo-200 bg-indigo-50 p-3 ${standalone ? 'mx-auto w-full max-w-3xl' : ''}`} data-testid="learning-skill-recommendation">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-900">
+              <Sparkles size={13} />推荐一种学习方法
+            </p>
+            <p className="mt-1.5 text-xs leading-5 text-indigo-800">{skillRecommendation.reason}</p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => acceptSkillRecommendation(skillRecommendation)}
+                disabled={loading}
+                className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50"
+              >
+                使用{skillRecommendation.skill.name}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSkillRecommendation(null)}
+                className="rounded-lg px-2.5 py-2 text-xs text-indigo-700 hover:bg-white/70"
+              >
+                继续普通对话
+              </button>
+            </div>
+          </section>
+        )}
+
+        {activeSkillRun && (
+          <LearningSkillRunCard
+            run={activeSkillRun}
+            onAction={actOnSkillRun}
+            onOpenLearningRun={onLearningRunCreated}
+          />
         )}
 
         {loading && (

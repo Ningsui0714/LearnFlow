@@ -39,6 +39,14 @@ from app.services.architecture_registry import (
     selectable_learning_skill,
     selectable_learning_skill_manifest,
 )
+from app.services.learning_skill_runtime import (
+    RUNTIME_SKILL_IDS,
+    learning_skill_run_view,
+    latest_learning_skill_run_view,
+    pause_active_skill_run_for_selection,
+    prepare_learning_skill_turn,
+    recommend_learning_skill,
+)
 
 
 CONFIRM_WORDS = {
@@ -1716,6 +1724,10 @@ async def _candidate_sources_follow_up(
 async def _generate_tutor_reply(
     db: AsyncSession,
     session: AgentSession,
+    *,
+    workflow_instruction: str = "",
+    workflow_fallback: str = "",
+    active_skill_run_view: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None]:
     latest_messages = await get_messages(db, session.id, limit=1)
     latest_context = dict(latest_messages[-1].meta_data or {}) if latest_messages else {}
@@ -1723,7 +1735,7 @@ async def _generate_tutor_reply(
         latest_context.get("interaction") or ""
     )
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
-        return "未接入模型。", [], None, None, [], None
+        return workflow_fallback or "未接入模型。", [], None, None, [], None
 
     latest_query = latest_messages[-1].content if latest_messages else ""
     prompt_projection: dict[str, Any] = {}
@@ -1897,6 +1909,7 @@ async def _generate_tutor_reply(
             if active_skill else None
         ),
         "available_learning_skills": selectable_learning_skill_manifest(),
+        "active_learning_skill_run": active_skill_run_view,
     }
     scope_prompt = (
         CHECKPOINT_TUTOR_PROMPT if session.session_type == "checkpoint"
@@ -1913,6 +1926,11 @@ async def _generate_tutor_reply(
             if active_skill else
             "\n\n当前会话未固定学习 Skill。按当前问题自然回应；需要时可以推荐一个可选学习方法，"
             "但不要在用户未选择时声称已经切换。"
+        )
+        + (
+            "\n\n当前 SkillRun 的确定性下一步：\n" + workflow_instruction
+            + "\n你只能渲染这一步，不能自行跳步、完成流程或宣布掌握。"
+            if workflow_instruction else ""
         )
         + "\n\n当前内部上下文：\n"
         + rendered_context
@@ -1981,7 +1999,10 @@ async def _generate_tutor_reply(
         except Exception:
             if latest_interaction == "candidate_sources_completed" and session.project_id:
                 return await _candidate_sources_follow_up(db, session), [], None, None, [], None
-            return "这次模型服务没有响应。你仍然可以直接让我创建项目、添加来源或推进当前检查点。", [], None, None, [], None
+            return (
+                workflow_fallback
+                or "这次模型服务没有响应。你仍然可以直接让我创建项目、添加来源或推进当前检查点。"
+            ), [], None, None, [], None
 
 
 async def proposal_acceptance_action(
@@ -2191,6 +2212,13 @@ async def process_turn(
             confidence=1.0,
             provenance={"message_id": user_message.id},
             client_event_id=f"message:{user_message.id}:learning-skill",
+        )
+        await pause_active_skill_run_for_selection(
+            db,
+            session=session,
+            selected_skill_id=(
+                active_learning_skill["id"] if active_learning_skill else None
+            ),
         )
     await db.commit()
 
@@ -2429,6 +2457,7 @@ async def process_turn(
             meta_data={
                 "action_id": action.id,
                 "learning_skill": active_learning_skill,
+                "learning_skill_run": await latest_learning_skill_run_view(db, session),
                 "local_agent_run_id": (
                     ((action.result or {}).get("local_agent_run") or {}).get("id")
                 ),
@@ -2442,6 +2471,8 @@ async def process_turn(
             "session_id": session.id,
             "session_title": session.title,
             "active_skill": active_learning_skill,
+            "active_skill_run": await latest_learning_skill_run_view(db, session),
+            "skill_recommendation": None,
             "message": reply,
             "state_summary": state,
             "executed_action": action_result(action),
@@ -2457,8 +2488,40 @@ async def process_turn(
         await db.commit()
         return response
 
+    skill_run = None
+    skill_turn_plan: dict[str, Any] | None = None
+    if (
+        session.session_type == "global"
+        and active_learning_skill
+        and active_learning_skill["id"] in RUNTIME_SKILL_IDS
+    ):
+        skill_run, skill_turn_plan = await prepare_learning_skill_turn(
+            db,
+            session=session,
+            skill_id=active_learning_skill["id"],
+            message=message,
+            message_id=user_message.id,
+            client_turn_id=client_turn_id,
+        )
+    skill_run_view = await learning_skill_run_view(db, skill_run) if skill_run else None
+    recommendation_candidate = (
+        recommend_learning_skill(message)
+        if session.session_type == "global" and not active_learning_skill and not skill_run
+        else None
+    )
+    skill_recommendation = (
+        recommendation_candidate
+        if str((recommendation_candidate or {}).get("skill", {}).get("id") or "") in RUNTIME_SKILL_IDS
+        else None
+    )
     reply, observations, opportunity, learning_intent, major_event_candidates, local_agent_task = (
-        await _generate_tutor_reply(db, session)
+        await _generate_tutor_reply(
+            db,
+            session,
+            workflow_instruction=str((skill_turn_plan or {}).get("directive") or ""),
+            workflow_fallback=str((skill_turn_plan or {}).get("fallback") or ""),
+            active_skill_run_view=skill_run_view,
+        )
     )
     generated_local_action = None
     if (
@@ -2498,7 +2561,7 @@ async def process_turn(
         candidates=major_event_candidates,
     )
     proposal_update = None
-    if not candidate_sources_completed and session.session_type != "checkpoint":
+    if not candidate_sources_completed and session.session_type != "checkpoint" and not skill_run:
         proposal_update = await evolve_project_proposal(
             db, session,
             message=message,
@@ -2507,11 +2570,14 @@ async def process_turn(
             opportunity=opportunity,
             learning_intent=learning_intent,
         )
+    visible_skill_run_view = skill_run_view or await latest_learning_skill_run_view(db, session)
     assistant = AgentMessage(
         session_id=session.id, role="assistant", content=reply,
         meta_data={
             "proposal_id": proposal_update.id if proposal_update else None,
             "learning_skill": active_learning_skill,
+            "learning_skill_run": visible_skill_run_view,
+            "skill_recommendation": skill_recommendation,
         },
     )
     db.add(assistant)
@@ -2524,6 +2590,8 @@ async def process_turn(
         "session_id": session.id,
         "session_title": session.title,
         "active_skill": active_learning_skill,
+        "active_skill_run": visible_skill_run_view,
+        "skill_recommendation": skill_recommendation,
         "message": reply,
         "state_summary": state,
         "executed_action": None,

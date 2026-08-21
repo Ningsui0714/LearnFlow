@@ -293,6 +293,46 @@ class MicroLearningRun(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class LearningSkillRun(Base):
+    """Recoverable, session-scoped orchestration for conversational Skills.
+
+    This row records workflow position and attachments only.  It is not an
+    assessment or mastery source: verified evidence remains in
+    LearningAttempt, EvidenceEvent, RemediationCase and ReviewSchedule.
+    """
+
+    __tablename__ = "learning_skill_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "learner_id", "client_request_id",
+            name="uq_learning_skill_run_learner_request",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=False, index=True)
+    skill_id = Column(String(80), nullable=False, index=True)
+    skill_version = Column(String(60), nullable=False, default="conversation-skill-runtime-v1")
+    goal = Column(Text, nullable=False)
+    status = Column(String(30), nullable=False, default="active", index=True)
+    state = Column(String(50), nullable=False, index=True)
+    step_index = Column(Integer, nullable=False, default=1)
+    turn_count = Column(Integer, nullable=False, default=0)
+    turn_budget = Column(Integer, nullable=False, default=5)
+    run_data = Column(JSON, default=dict)
+    action_log = Column(JSON, default=list)
+    micro_learning_run_id = Column(
+        Integer, ForeignKey("micro_learning_runs.id"), nullable=True, index=True,
+    )
+    client_request_id = Column(String(160), nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class KernelState(Base):
     __tablename__ = "kernel_states"
     __table_args__ = (

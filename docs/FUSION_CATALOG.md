@@ -28,6 +28,7 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 | 学习专属文件 | `.lflecture/.lfexercise` + 自定义播放器 | 描述符只引用数据库对象；讲义版本化、练习草稿/批注隔离、正式提交才写证据 |
 | 通用文件编辑 | Monaco + Markdown/PDF/image preview | UTF-8 轻量编辑与 Vim 模式；不内置 Python runtime、终端或任意编译 |
 | Tutor 本地构建能力 | `local_agent_broker` + `LocalAgentProfile` | 本地代码 Agent 仅作 Tutor 工具；确定性选择、隔离副本、两次确认、hash 校验与批量回滚 |
+| 对话式学习方法 | `LearningSkillRun` + `learning_skill_runtime` | 苏格拉底/费曼在 Session 内有界运行、可暂停恢复；推荐需确认，独立验证才进入能力证据链 |
 
 ## 统一分类
 

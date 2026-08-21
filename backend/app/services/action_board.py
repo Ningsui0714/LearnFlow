@@ -21,7 +21,22 @@ ACTION_BOARD = {
         ActionDefinition(
             "use_learning_skill", "在当前对话中使用学习方法", "none", "none",
             {},
-            ("start_micro_learning", "draft_learning_project"),
+            ("start_learning_skill_run", "start_micro_learning", "draft_learning_project"),
+        ),
+        ActionDefinition(
+            "start_learning_skill_run", "开始对话内学习方法", "context", "explicit_or_click",
+            {},
+            ("advance_learning_skill_run", "start_skill_verification"),
+        ),
+        ActionDefinition(
+            "advance_learning_skill_run", "推进、暂停或恢复对话内学习方法", "context", "explicit_or_click",
+            {},
+            ("start_skill_verification",),
+        ),
+        ActionDefinition(
+            "start_skill_verification", "为当前学习方法开始独立验证", "write", "explicit_or_click",
+            {"structure": "focused_learning_started", "value": "goal_confirmation"},
+            ("continue_micro_learning", "analyze_teach_back"),
         ),
         ActionDefinition(
             "start_micro_learning", "开始一次可验证微学习", "write", "explicit",
