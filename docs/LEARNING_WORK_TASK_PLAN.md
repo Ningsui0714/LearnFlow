@@ -2,7 +2,7 @@
 
 本模块在远端基础 TaskPlan 之上增加了可审计的深度规划分析层。它真实生成分层任务树、依赖调度、三类候选 Plan、六维 Critic 评审、决策门禁、风险清单和版本化局部重规划；但仍不把规划产物描述为已经执行，也不保存隐藏思维链。
 
-![分层多候选 Agent Plan 系统流程](competition/assets/hierarchical-agent-plan-flow.png)
+![分层多候选 Agent Plan 系统流程](competition/assets/hierarchical-agent-plan-flow-v2.png)
 
 ## 运行链
 
