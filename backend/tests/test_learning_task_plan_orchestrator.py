@@ -59,6 +59,7 @@ def _run() -> dict:
 def test_builds_hierarchy_candidates_critics_and_critical_path():
     analysis = build_planning_analysis(_run())
 
+    assert analysis["schema_version"] == "learning-work-task-planning-analysis-v2"
     assert analysis["planning_status"] == "planned_not_executed"
     assert analysis["decision"]["code"] == "SELECT_CANDIDATE"
     assert len(analysis["candidates"]) == 3
@@ -68,6 +69,18 @@ def test_builds_hierarchy_candidates_critics_and_critical_path():
     ]
     assert analysis["metrics"]["hierarchy_nodes"] >= 20
     assert all(candidate["hard_gate_passed"] for candidate in analysis["candidates"])
+    assert [stage["sequence"] for stage in analysis["stages"]] == [1, 2, 3, 4, 5, 6]
+    assert analysis["stages"][0]["stage_id"] == "task_contract"
+    assert analysis["stages"][4]["status"] == "completed"
+    assert analysis["stages"][5]["status"] == "pending"
+    assert all(
+        item["status"] == "pending"
+        and item["observation_state"] == "not_observed"
+        for item in analysis["execution_checklist"]
+    )
+    assert len(analysis["handoff_artifacts"]) == 5
+    assert all(item["status"] == "planned" for item in analysis["handoff_artifacts"])
+    assert analysis["evidence_semantics"] == "operational_only"
 
 
 def test_blocking_unknown_prevents_candidate_selection():
@@ -85,6 +98,10 @@ def test_blocking_unknown_prevents_candidate_selection():
     assert analysis["decision"]["code"] == "REQUEST_EVIDENCE"
     assert analysis["decision"]["selected_candidate_id"] is None
     assert not any(candidate["hard_gate_passed"] for candidate in analysis["candidates"])
+    assert analysis["stages"][1]["status"] == "blocked"
+    assert analysis["stages"][3]["status"] == "blocked"
+    assert analysis["stages"][4]["status"] == "blocked"
+    assert analysis["stages"][5]["status"] == "pending"
 
 
 def test_local_replan_only_changes_target_and_descendants():
@@ -109,6 +126,16 @@ def test_local_replan_only_changes_target_and_descendants():
     ]
     assert revision["preserved_package_ids"] == ["wp_contract", "wp_evidence"]
     assert revised["decision"]["code"] == "SELECT_CANDIDATE"
+    finalize_stage = next(
+        item for item in revised["stages"]
+        if item["stage_id"] == "critic_finalize"
+    )
+    assert finalize_stage["status"] == "ready"
+    assert finalize_stage["substeps"][-1]["output_ref"] == revision["revision_id"]
+    assert all(
+        item["status"] == "pending"
+        for item in revised["execution_checklist"]
+    )
 
     with pytest.raises(ValueError, match="版本已变化"):
         replan_analysis(

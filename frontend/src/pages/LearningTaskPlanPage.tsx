@@ -25,6 +25,8 @@ import {
   type LearningTaskPlanCandidate,
   type LearningTaskPlanCritic,
   type LearningTaskPlanRun,
+  type LearningTaskPlanStage,
+  type LearningTaskPlanStageStatus,
 } from "../services/api";
 import { useWorkspaceTitle } from "../components/workspace/WorkspaceContext";
 
@@ -84,6 +86,131 @@ const replanLabels = {
   artifact_rejected: "产物未通过",
   mapping_conflict: "知识技能映射冲突",
 } as const;
+
+const stageStatusLabels: Record<LearningTaskPlanStageStatus, string> = {
+  completed: "已完成",
+  ready: "待确认",
+  blocked: "有阻塞",
+  pending: "待执行",
+  not_started: "未开始",
+};
+
+const stageStatusTones: Record<LearningTaskPlanStageStatus, string> = {
+  completed: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  ready: "border-indigo-200 bg-indigo-50 text-indigo-700",
+  blocked: "border-amber-200 bg-amber-50 text-amber-700",
+  pending: "border-slate-200 bg-slate-100 text-slate-600",
+  not_started: "border-slate-200 bg-white text-slate-400",
+};
+
+function StageCard({ stage }: { stage: LearningTaskPlanStage }) {
+  const byId = new Map(stage.substeps.map((item) => [item.substep_id, item]));
+  const depthOf = (substepId: string) => {
+    let depth = 0;
+    let current = byId.get(substepId);
+    const visited = new Set<string>();
+    while (current?.parent_substep_id && depth < 4) {
+      if (visited.has(current.parent_substep_id)) break;
+      visited.add(current.parent_substep_id);
+      depth += 1;
+      current = byId.get(current.parent_substep_id);
+    }
+    return depth;
+  };
+  const stageIcon =
+    stage.stage_id === "task_contract" ? (
+      <FileJson2 size={16} />
+    ) : stage.stage_id === "grounding_clarification" ? (
+      <Activity size={16} />
+    ) : stage.stage_id === "hierarchical_planning" ? (
+      <Layers3 size={16} />
+    ) : stage.stage_id === "evidence_candidate_search" ? (
+      <BrainCircuit size={16} />
+    ) : stage.stage_id === "critic_finalize" ? (
+      <ShieldCheck size={16} />
+    ) : (
+      <Network size={16} />
+    );
+
+  return (
+    <article className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 bg-gradient-to-r from-slate-950 to-slate-800 p-4 text-white">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 font-mono text-sm font-bold">
+              {String(stage.sequence).padStart(2, "0")}
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-indigo-200">
+                {stageIcon}
+                <h2 className="truncate text-sm font-semibold text-white">
+                  {stage.label}
+                </h2>
+              </div>
+              <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-400">
+                {stage.summary}
+              </p>
+            </div>
+          </div>
+          <span
+            className={`shrink-0 rounded-full border px-2 py-1 text-[8px] font-semibold ${stageStatusTones[stage.status]}`}
+          >
+            {stageStatusLabels[stage.status]}
+          </span>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-[340px]">
+        <div className="space-y-1.5">
+          {stage.substeps.map((item) => {
+            const depth = depthOf(item.substep_id);
+            return (
+              <div
+                key={item.substep_id}
+                className={`relative min-w-0 rounded-lg border px-2.5 py-2 ${depth === 0 ? "border-slate-200 bg-slate-50" : "border-slate-100 bg-white"}`}
+                style={{ marginLeft: `${Math.min(depth, 3) * 12}px` }}
+              >
+                {depth > 0 && (
+                  <span className="absolute -left-3 top-0 h-1/2 w-3 rounded-bl border-b border-l border-slate-300" />
+                )}
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <p className="min-w-0 truncate text-[10px] font-semibold text-slate-800">
+                    {item.label}
+                  </p>
+                  <span
+                    className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${item.status === "completed" ? "bg-emerald-500" : item.status === "ready" ? "bg-indigo-500" : item.status === "blocked" ? "bg-amber-500" : "bg-slate-300"}`}
+                    title={stageStatusLabels[item.status]}
+                  />
+                </div>
+                <p className="mt-1 line-clamp-2 text-[9px] leading-3.5 text-slate-500">
+                  {item.detail}
+                </p>
+                {item.output_ref && (
+                  <p className="mt-1 truncate font-mono text-[8px] text-indigo-400">
+                    {item.output_ref}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-px bg-slate-100 text-[8px]">
+        <div className="min-w-0 bg-slate-50 px-3 py-2">
+          <p className="text-slate-400">INPUT</p>
+          <p className="mt-1 truncate font-mono text-slate-600">
+            {stage.input_refs.join(" · ")}
+          </p>
+        </div>
+        <div className="min-w-0 bg-slate-50 px-3 py-2">
+          <p className="text-slate-400">OUTPUT</p>
+          <p className="mt-1 truncate font-mono text-slate-600">
+            {stage.output_refs.join(" · ")}
+          </p>
+        </div>
+      </div>
+    </article>
+  );
+}
 
 function ScoreBar({ name, value }: { name: string; value: number }) {
   return (
@@ -391,6 +518,38 @@ export default function LearningTaskPlanPage() {
             {error}
           </p>
         )}
+
+        <section className="mt-4 min-w-0">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <GitBranch size={17} className="text-indigo-700" />
+                <h2 className="text-sm font-semibold text-slate-950">
+                  六阶段深层时序 Plan
+                </h2>
+              </div>
+              <p className="mt-1 text-[10px] text-slate-500">
+                每个阶段都展开输入、校验、分支、决策与产物；阶段之间按 01 → 06 严格推进。
+              </p>
+            </div>
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-mono text-[9px] text-slate-500">
+              {analysis.schema_version} · {analysis.metrics.stage_substep_count} substeps
+            </span>
+          </div>
+          <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+            {analysis.stages.map((stage) => (
+              <StageCard key={stage.stage_id} stage={stage} />
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[10px] leading-4 text-amber-900">
+            <span>
+              局部失败回路：冻结已通过步骤，只把失败节点及其后继依赖送回第 05 阶段重规划。
+            </span>
+            <span className="font-semibold">
+              规划产物 ≠ 已执行 ≠ 掌握证据
+            </span>
+          </div>
+        </section>
 
         <section className="mt-4 grid min-w-0 gap-4 2xl:grid-cols-[1.05fr_1.95fr]">
           <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -741,7 +900,7 @@ export default function LearningTaskPlanPage() {
               <h2 className="text-sm font-semibold">规划输出与后续接口</h2>
             </div>
             <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[9px] text-indigo-700">
-              planning-analysis-v1 · not executed
+              planning-analysis-v2 · operational only
             </span>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
@@ -783,16 +942,72 @@ export default function LearningTaskPlanPage() {
               </div>
             ))}
           </div>
+          <div className="mt-3 grid min-w-0 gap-3 lg:grid-cols-2">
+            <article className="min-w-0 rounded-xl border border-indigo-100 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold text-slate-900">
+                  待执行运行清单
+                </p>
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-[8px] text-slate-500">
+                  {analysis.execution_checklist.length} pending
+                </span>
+              </div>
+              <div className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">
+                {analysis.execution_checklist.map((item) => (
+                  <div
+                    key={item.package_id}
+                    className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-2 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2"
+                  >
+                    <span className="h-2 w-2 rounded-full bg-slate-300" />
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-[9px] text-slate-700">
+                        {item.package_id}
+                      </p>
+                      <p className="truncate text-[8px] text-slate-400">
+                        {item.expected_artifact} · {item.observation_state}
+                      </p>
+                    </div>
+                    <span className="text-[8px] text-slate-400">{item.status}</span>
+                  </div>
+                ))}
+              </div>
+            </article>
+            <article className="min-w-0 rounded-xl border border-indigo-100 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold text-slate-900">
+                  WF04 / 下游交接契约
+                </p>
+                <span className="rounded-full bg-amber-100 px-2 py-1 text-[8px] text-amber-700">
+                  planned
+                </span>
+              </div>
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {analysis.handoff_artifacts.map((item) => (
+                  <div
+                    key={item.artifact_id}
+                    className="min-w-0 rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-2"
+                  >
+                    <p className="truncate text-[9px] font-semibold text-slate-700">
+                      {item.label}
+                    </p>
+                    <p className="mt-1 truncate font-mono text-[8px] text-indigo-400">
+                      {item.contract_ref}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
-            <span className="font-semibold text-indigo-800">下一阶段接口</span>
+            <span className="font-semibold text-indigo-800">状态边界</span>
             <ArrowRight size={11} />
-            <span>证据探索</span>
+            <span>pending</span>
             <ArrowRight size={11} />
-            <span>作业步骤编译</span>
+            <span>in_progress</span>
             <ArrowRight size={11} />
-            <span>HTML / JSON / 个性化学习交接</span>
+            <span>completed</span>
             <span className="rounded bg-amber-100 px-2 py-1 text-amber-800">
-              尚未执行
+              当前全部尚未执行
             </span>
           </div>
         </section>

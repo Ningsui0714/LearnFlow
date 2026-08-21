@@ -342,8 +342,48 @@ export interface LearningTaskPlanRevision {
   controls_added: string[]
 }
 
+export type LearningTaskPlanStageStatus = 'completed' | 'ready' | 'blocked' | 'pending' | 'not_started'
+
+export interface LearningTaskPlanStageSubstep {
+  substep_id: string
+  label: string
+  status: LearningTaskPlanStageStatus
+  detail: string
+  parent_substep_id: string | null
+  depends_on: string[]
+  output_ref: string | null
+}
+
+export interface LearningTaskPlanStage {
+  stage_id: 'task_contract' | 'grounding_clarification' | 'hierarchical_planning' | 'evidence_candidate_search' | 'critic_finalize' | 'execution_handoff'
+  sequence: number
+  label: string
+  status: LearningTaskPlanStageStatus
+  summary: string
+  input_refs: string[]
+  output_refs: string[]
+  substeps: LearningTaskPlanStageSubstep[]
+}
+
+export interface LearningTaskPlanExecutionItem {
+  package_id: string
+  objective: string
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked'
+  expected_artifact: string
+  observation_state: 'not_observed' | 'observed' | 'accepted' | 'rejected'
+  completion_condition: string
+}
+
+export interface LearningTaskPlanHandoffArtifact {
+  artifact_id: string
+  artifact_type: 'html' | 'pdf' | 'versioned_json' | 'knowledge_learning_entry' | 'feedback_contract'
+  label: string
+  status: 'planned' | 'ready' | 'generated'
+  contract_ref: string
+}
+
 export interface LearningTaskPlanningAnalysis {
-  schema_version: 'learning-work-task-planning-analysis-v1'
+  schema_version: 'learning-work-task-planning-analysis-v2'
   run_id: string
   plan_version: number
   analysis_version: number
@@ -371,6 +411,10 @@ export interface LearningTaskPlanningAnalysis {
     reasons: string[]
     triggered_rules: string[]
   }
+  stages: LearningTaskPlanStage[]
+  execution_checklist: LearningTaskPlanExecutionItem[]
+  handoff_artifacts: LearningTaskPlanHandoffArtifact[]
+  evidence_semantics: 'operational_only'
   revision_history: LearningTaskPlanRevision[]
   repair_budget_remaining: number
   metrics: Record<string, number>

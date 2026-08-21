@@ -110,10 +110,87 @@ class PlanRevision(BaseModel):
     controls_added: list[str]
 
 
+PlanStageStatus = Literal[
+    "completed", "ready", "blocked", "pending", "not_started",
+]
+
+
+class PlanStageSubstep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    substep_id: str
+    label: str
+    status: PlanStageStatus
+    detail: str
+    parent_substep_id: str | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    output_ref: str | None = None
+
+
+class PlanStage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stage_id: Literal[
+        "task_contract",
+        "grounding_clarification",
+        "hierarchical_planning",
+        "evidence_candidate_search",
+        "critic_finalize",
+        "execution_handoff",
+    ]
+    sequence: int = Field(ge=1, le=6)
+    label: str
+    status: PlanStageStatus
+    summary: str
+    input_refs: list[str]
+    output_refs: list[str]
+    substeps: list[PlanStageSubstep]
+
+    @model_validator(mode="after")
+    def validate_substep_tree(self) -> "PlanStage":
+        substep_ids = [item.substep_id for item in self.substeps]
+        if len(substep_ids) != len(set(substep_ids)):
+            raise ValueError("Plan 阶段子步骤 ID 必须唯一")
+        known = set(substep_ids)
+        for item in self.substeps:
+            references = set(item.depends_on)
+            if item.parent_substep_id:
+                references.add(item.parent_substep_id)
+            if not references <= known:
+                raise ValueError("Plan 阶段子步骤引用了不存在的节点")
+        return self
+
+
+class PlanExecutionChecklistItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    package_id: str
+    objective: str
+    status: Literal["pending", "in_progress", "completed", "blocked"]
+    expected_artifact: str
+    observation_state: Literal[
+        "not_observed", "observed", "accepted", "rejected",
+    ]
+    completion_condition: str
+
+
+class PlanHandoffArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str
+    artifact_type: Literal[
+        "html", "pdf", "versioned_json",
+        "knowledge_learning_entry", "feedback_contract",
+    ]
+    label: str
+    status: Literal["planned", "ready", "generated"]
+    contract_ref: str
+
+
 class LearningTaskPlanningAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["learning-work-task-planning-analysis-v1"]
+    schema_version: Literal["learning-work-task-planning-analysis-v2"]
     run_id: str
     plan_version: int = Field(ge=1)
     analysis_version: int = Field(ge=1)
@@ -130,6 +207,12 @@ class LearningTaskPlanningAnalysis(BaseModel):
     critics: list[PlanCriticVerdict] = Field(min_length=6, max_length=6)
     risks: list[PlanRiskItem]
     decision: PlanDecision
+    stages: list[PlanStage] = Field(min_length=6, max_length=6)
+    execution_checklist: list[PlanExecutionChecklistItem]
+    handoff_artifacts: list[PlanHandoffArtifact] = Field(
+        min_length=5, max_length=5,
+    )
+    evidence_semantics: Literal["operational_only"]
     revision_history: list[PlanRevision]
     repair_budget_remaining: int = Field(ge=0, le=2)
     metrics: dict[str, int]
@@ -146,6 +229,11 @@ class LearningTaskPlanningAnalysis(BaseModel):
         selected = self.decision.selected_candidate_id
         if selected and selected not in candidate_ids:
             raise ValueError("Plan 决策引用了不存在的候选")
+        if [item.sequence for item in self.stages] != list(range(1, 7)):
+            raise ValueError("Plan 六阶段必须按 1 到 6 的顺序输出")
+        checklist_ids = {item.package_id for item in self.execution_checklist}
+        if checklist_ids != package_ids:
+            raise ValueError("执行清单必须覆盖且只能覆盖全部工作包")
         return self
 
 
@@ -467,6 +555,366 @@ def _initial_revision(run: dict[str, Any], package_ids: list[str]) -> dict[str, 
     }
 
 
+_TOOL_LABELS = {
+    "task_database": "任务库",
+    "knowledge_base_pro": "知识库 Pro",
+    "official_web": "权威 Web",
+    "evidence_verifier": "证据校验器",
+    "candidate_generator": "候选生成器",
+    "candidate_critic": "候选评审器",
+    "task_compiler": "任务编译器",
+}
+
+
+def _build_stages(
+    run: dict[str, Any],
+    hierarchy: list[dict[str, Any]],
+    waves: list[list[str]],
+    critical_path: list[str],
+    candidates: list[dict[str, Any]],
+    critics: list[dict[str, Any]],
+    decision: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compile the visible six-stage timeline shown in the workspace.
+
+    These are inspectable artifacts and state summaries. They intentionally do
+    not expose hidden model reasoning or claim that planned work was executed.
+    """
+    plan = run["plan"]
+    packages = plan["work_packages"]
+    blocking_unknowns = [
+        item for item in plan.get("unknowns") or [] if item.get("blocking")
+    ]
+    confirmed = run["phase"] not in {"INTAKE", "CONTRACT_READY"}
+
+    contract_steps = [
+        {
+            "substep_id": "contract_input",
+            "label": "上游任务 JSON",
+            "status": "completed",
+            "detail": str(
+                run["task_contract"].get("raw_input")
+                or run["task_contract"].get("normalized_input")
+                or plan["goal"]
+            ),
+            "output_ref": f"run:{run['run_id']}",
+        },
+        {
+            "substep_id": "contract_schema",
+            "label": "Schema 校验",
+            "status": "completed",
+            "detail": "Run、TaskPlan、工作包角色/工具/产物均通过版本化白名单校验。",
+            "parent_substep_id": "contract_input",
+            "output_ref": plan["schema_version"],
+        },
+        {
+            "substep_id": "contract_ids",
+            "label": "稳定 ID 校验",
+            "status": "completed",
+            "detail": f"run_id 与 {len(packages)} 个唯一 package_id 已锁定。",
+            "parent_substep_id": "contract_input",
+            "output_ref": run["run_id"],
+        },
+        {
+            "substep_id": "contract_fingerprint",
+            "label": "语义指纹锁定",
+            "status": "completed",
+            "detail": "任务对象、动作与预期产物在后续修订中保持不变。",
+            "parent_substep_id": "contract_input",
+            "output_ref": plan["task_contract_fingerprint"],
+        },
+        {
+            "substep_id": "contract_artifact",
+            "label": "任务契约产物",
+            "status": "completed",
+            "detail": "形成可审计 task_contract，作为所有后续阶段的共同基线。",
+            "depends_on": ["contract_schema", "contract_ids", "contract_fingerprint"],
+            "output_ref": "task_contract",
+        },
+    ]
+
+    grounding_steps = [
+        {
+            "substep_id": "grounding_context",
+            "label": "环境与现状读取",
+            "status": "completed",
+            "detail": f"读取任务契约、当前 Run 状态及 {len(packages)} 个规划工作包。",
+            "output_ref": "grounding_context",
+        },
+        {
+            "substep_id": "grounding_facts",
+            "label": "可发现事实",
+            "status": "completed",
+            "detail": f"输入层级：{run['task_contract'].get('input_level') or '未声明'}；当前阶段：{run['phase']}。",
+            "parent_substep_id": "grounding_context",
+            "output_ref": "discovered_facts",
+        },
+        {
+            "substep_id": "grounding_preferences",
+            "label": "用户偏好与待确认项",
+            "status": "blocked" if blocking_unknowns else "completed",
+            "detail": (
+                f"仍有 {len(blocking_unknowns)} 个阻塞项，需要补充证据或用户确认。"
+                if blocking_unknowns else "当前没有阻塞性澄清项。"
+            ),
+            "parent_substep_id": "grounding_context",
+            "output_ref": "clarification_register",
+        },
+        {
+            "substep_id": "grounding_spec",
+            "label": "目标、范围与成功标准",
+            "status": "completed",
+            "detail": f"1 项总目标、{len(plan['success_criteria'])} 条成功标准。",
+            "output_ref": "task_specification",
+        },
+        {
+            "substep_id": "grounding_success",
+            "label": "成功标准",
+            "status": "completed",
+            "detail": "；".join(plan["success_criteria"]),
+            "parent_substep_id": "grounding_spec",
+            "output_ref": "success_criteria",
+        },
+        {
+            "substep_id": "grounding_stop",
+            "label": "停止条件与课堂约束",
+            "status": "completed",
+            "detail": "；".join(plan["stop_conditions"]),
+            "parent_substep_id": "grounding_spec",
+            "output_ref": "stop_conditions",
+        },
+    ]
+
+    hierarchy_steps: list[dict[str, Any]] = []
+    for node in hierarchy:
+        hierarchy_steps.append({
+            "substep_id": f"hierarchy_{node['node_id']}",
+            "label": node["label"],
+            "status": "completed",
+            "detail": node["objective"],
+            "parent_substep_id": (
+                f"hierarchy_{node['parent_id']}" if node["parent_id"] else None
+            ),
+            "output_ref": (
+                f"work-package:{node['package_id']}"
+                if node.get("package_id") else node["node_type"]
+            ),
+        })
+    hierarchy_steps.extend([
+        {
+            "substep_id": "hierarchy_dag",
+            "label": "依赖 DAG 与拓扑波次",
+            "status": "completed",
+            "detail": f"形成 {len(waves)} 个可调度波次，只有同波次节点允许并行。",
+            "parent_substep_id": "hierarchy_goal",
+            "output_ref": "topological_schedule.json",
+        },
+        {
+            "substep_id": "hierarchy_critical_path",
+            "label": "关键路径",
+            "status": "completed",
+            "detail": " → ".join(critical_path) or "无关键路径",
+            "parent_substep_id": "hierarchy_dag",
+            "output_ref": "critical_path",
+        },
+    ])
+
+    allowed_tools = sorted({
+        tool for item in packages for tool in item.get("allowed_tools") or []
+    })
+    search_steps: list[dict[str, Any]] = [{
+        "substep_id": "search_route",
+        "label": "证据路由",
+        "status": "blocked" if blocking_unknowns else "completed",
+        "detail": "只使用工作包工具白名单中声明的来源与校验器。",
+        "output_ref": "evidence_route",
+    }]
+    for tool in allowed_tools:
+        search_steps.append({
+            "substep_id": f"search_tool_{tool}",
+            "label": _TOOL_LABELS.get(tool, tool),
+            "status": "ready" if blocking_unknowns else "completed",
+            "detail": "已登记到当前 Plan 的允许工具集合。",
+            "parent_substep_id": "search_route",
+            "output_ref": f"tool:{tool}",
+        })
+    search_steps.extend([
+        {
+            "substep_id": "search_ledger",
+            "label": "证据账本",
+            "status": "blocked" if blocking_unknowns else "completed",
+            "detail": (
+                "等待关闭阻塞性证据缺口。" if blocking_unknowns
+                else "来源、适用范围与可信门禁已进入候选评分。"
+            ),
+            "parent_substep_id": "search_route",
+            "output_ref": "evidence_ledger",
+        },
+        {
+            "substep_id": "candidate_search",
+            "label": "多候选搜索",
+            "status": "blocked" if blocking_unknowns else "completed",
+            "detail": "在共同依赖图上生成不同优先级策略。",
+            "depends_on": ["search_ledger"],
+            "output_ref": "candidate_set",
+        },
+    ])
+    for candidate in candidates:
+        search_steps.append({
+            "substep_id": f"candidate_{candidate['candidate_id']}",
+            "label": candidate["title"],
+            "status": "completed" if candidate["hard_gate_passed"] else "blocked",
+            "detail": f"加权分 {candidate['weighted_score']}；{len(candidate['parallel_waves'])} 个依赖波次。",
+            "parent_substep_id": "candidate_search",
+            "output_ref": candidate["candidate_id"],
+        })
+
+    gate_status: PlanStageStatus = (
+        "blocked" if decision["code"] == "REQUEST_EVIDENCE"
+        else "completed" if confirmed
+        else "ready"
+    )
+    critic_steps: list[dict[str, Any]] = [{
+        "substep_id": "critic_committee",
+        "label": "六维 Critic 委员会",
+        "status": "completed",
+        "detail": "评审结论只作用于 Plan 门禁，不写入学习掌握证据。",
+        "output_ref": "critic_report.json",
+    }]
+    for critic in critics:
+        critic_steps.append({
+            "substep_id": f"critic_{critic['critic_id']}",
+            "label": critic["dimension"],
+            "status": (
+                "blocked" if critic["verdict"] == "fail"
+                else "ready" if critic["verdict"] == "warning"
+                else "completed"
+            ),
+            "detail": f"{critic['verdict']} · {critic['score']} · {critic['findings'][0]}",
+            "parent_substep_id": "critic_committee",
+            "output_ref": critic["critic_id"],
+        })
+    critic_steps.extend([
+        {
+            "substep_id": "decision_controller",
+            "label": "决策控制器",
+            "status": gate_status,
+            "detail": "；".join(decision["reasons"]),
+            "depends_on": ["critic_committee"],
+            "output_ref": decision.get("selected_candidate_id") or decision["code"],
+        },
+        {
+            "substep_id": "decision_evidence",
+            "label": "补充证据",
+            "status": "ready" if decision["code"] == "REQUEST_EVIDENCE" else "completed",
+            "detail": "证据不足时返回上一阶段，只补充受影响事实。",
+            "parent_substep_id": "decision_controller",
+        },
+        {
+            "substep_id": "decision_replan",
+            "label": "局部重规划",
+            "status": "ready" if decision["code"] == "LOCAL_REPLAN" else "completed",
+            "detail": "冻结未受影响工作包，只重算失败节点及其后继子图。",
+            "parent_substep_id": "decision_controller",
+        },
+        {
+            "substep_id": "decision_select",
+            "label": "选定候选",
+            "status": gate_status,
+            "detail": "硬门禁通过后形成 proposed_plan，并等待确认或修订。",
+            "parent_substep_id": "decision_controller",
+            "output_ref": "proposed_plan.json",
+        },
+        {
+            "substep_id": "decision_confirmation",
+            "label": "确认 / 修订",
+            "status": "completed" if confirmed else gate_status,
+            "detail": "确认只推进 Plan 状态，不代表任务已经执行。",
+            "parent_substep_id": "decision_select",
+            "output_ref": "task_plan.json" if confirmed else "awaiting_confirmation",
+        },
+    ])
+
+    execution_checklist = [{
+        "package_id": item["package_id"],
+        "objective": item["objective"],
+        "status": "pending",
+        "expected_artifact": item["expected_artifact"],
+        "observation_state": "not_observed",
+        "completion_condition": item["completion_condition"],
+    } for item in packages]
+    handoff_artifacts = [
+        {"artifact_id": "handoff_html", "artifact_type": "html", "label": "中央任务网页", "status": "planned", "contract_ref": "learning-work-task-page"},
+        {"artifact_id": "handoff_pdf", "artifact_type": "pdf", "label": "可审阅任务文档", "status": "planned", "contract_ref": "learning-work-task-pdf"},
+        {"artifact_id": "handoff_json", "artifact_type": "versioned_json", "label": "版本化任务 JSON", "status": "planned", "contract_ref": "learning-work-task-bundle-v1"},
+        {"artifact_id": "handoff_learning", "artifact_type": "knowledge_learning_entry", "label": "知识点级个性化学习入口", "status": "planned", "contract_ref": "personalized-learning-entry-v1"},
+        {"artifact_id": "handoff_feedback", "artifact_type": "feedback_contract", "label": "批注与下游反馈契约", "status": "planned", "contract_ref": "feedback_contract"},
+    ]
+    execution_steps: list[dict[str, Any]] = [
+        {
+            "substep_id": "execution_checklist",
+            "label": "运行清单",
+            "status": "pending",
+            "detail": f"已形成 {len(packages)} 个待执行工作包；当前没有运行证据。",
+            "output_ref": "execution_checklist",
+        },
+    ]
+    for item in execution_checklist:
+        execution_steps.append({
+            "substep_id": f"execution_{item['package_id']}",
+            "label": item["package_id"],
+            "status": "pending",
+            "detail": item["objective"],
+            "parent_substep_id": "execution_checklist",
+            "output_ref": item["expected_artifact"],
+        })
+    execution_steps.extend([
+        {
+            "substep_id": "execution_observation",
+            "label": "环境观察与产物检查",
+            "status": "not_started",
+            "detail": "执行器接入后记录环境 Observation、产物门禁与失败定位。",
+            "depends_on": ["execution_checklist"],
+            "output_ref": "observation_register",
+        },
+        {
+            "substep_id": "execution_failure",
+            "label": "失败定位与局部回路",
+            "status": "not_started",
+            "detail": "失败时冻结已通过步骤，仅回传受影响子图到局部重规划。",
+            "parent_substep_id": "execution_observation",
+            "output_ref": "failure_report",
+        },
+        {
+            "substep_id": "execution_handoff",
+            "label": "成果交接",
+            "status": "not_started",
+            "detail": "HTML、PDF、版本化 JSON 与知识点级学习入口均等待真实产物生成。",
+            "depends_on": ["execution_observation"],
+            "output_ref": "delivery_bundle",
+        },
+    ])
+    for artifact in handoff_artifacts:
+        execution_steps.append({
+            "substep_id": f"execution_{artifact['artifact_id']}",
+            "label": artifact["label"],
+            "status": "not_started",
+            "detail": f"计划交接契约：{artifact['contract_ref']}。",
+            "parent_substep_id": "execution_handoff",
+            "output_ref": artifact["artifact_id"],
+        })
+
+    stages = [
+        {"stage_id": "task_contract", "sequence": 1, "label": "任务契约", "status": "completed", "summary": "输入、Schema、稳定 ID 与语义指纹形成共同基线。", "input_refs": ["upstream_task.json"], "output_refs": ["task_contract"], "substeps": contract_steps},
+        {"stage_id": "grounding_clarification", "sequence": 2, "label": "环境落地与澄清", "status": "blocked" if blocking_unknowns else "completed", "summary": "读取现状并显式形成目标、范围、成功标准与停止条件。", "input_refs": ["task_contract", "run_state"], "output_refs": ["task_specification", "clarification_register"], "substeps": grounding_steps},
+        {"stage_id": "hierarchical_planning", "sequence": 3, "label": "分层规划", "status": "completed", "summary": "Goal → Phase → Work Package → Atomic Step，并计算 DAG 与关键路径。", "input_refs": ["task_specification"], "output_refs": ["hierarchy.json", "topological_schedule.json"], "substeps": hierarchy_steps},
+        {"stage_id": "evidence_candidate_search", "sequence": 4, "label": "证据与候选搜索", "status": "blocked" if blocking_unknowns else "completed", "summary": "经证据路由与账本生成三类可比较候选。", "input_refs": ["hierarchy.json", "allowed_tools"], "output_refs": ["evidence_ledger", "candidate_set"], "substeps": search_steps},
+        {"stage_id": "critic_finalize", "sequence": 5, "label": "Critic 门禁与定稿", "status": gate_status, "summary": "六维独立评审驱动补证据、局部重规划、选定与确认。", "input_refs": ["candidate_set", "evidence_ledger"], "output_refs": ["critic_report.json", "proposed_plan.json", "task_plan.json" if confirmed else "awaiting_confirmation"], "substeps": critic_steps},
+        {"stage_id": "execution_handoff", "sequence": 6, "label": "执行观察与交接", "status": "pending", "summary": "仅生成待运行清单和交接契约；尚无执行、观察或掌握证据。", "input_refs": ["task_plan.json"], "output_refs": ["execution_checklist", "delivery_bundle", "feedback_contract"], "substeps": execution_steps},
+    ]
+    return stages, execution_checklist, handoff_artifacts
+
+
 def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
     run = LearningTaskPlanRun.model_validate(run_payload).model_dump(mode="json")
     plan = run["plan"]
@@ -507,8 +955,12 @@ def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
             "triggered_rules": ["CRITIC_GATE_REJECT"],
         }
         status = "planned_not_executed"
+    critical_path = _critical_path(packages)
+    stages, execution_checklist, handoff_artifacts = _build_stages(
+        run, hierarchy, waves, critical_path, candidates, critics, decision,
+    )
     analysis = {
-        "schema_version": "learning-work-task-planning-analysis-v1",
+        "schema_version": "learning-work-task-planning-analysis-v2",
         "run_id": run["run_id"],
         "plan_version": plan["plan_version"],
         "analysis_version": 1,
@@ -517,11 +969,15 @@ def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
         "hierarchy": hierarchy,
         "graph_edges": _build_edges(packages, hierarchy),
         "topological_waves": waves,
-        "critical_path": _critical_path(packages),
+        "critical_path": critical_path,
         "candidates": candidates,
         "critics": critics,
         "risks": risks,
         "decision": decision,
+        "stages": stages,
+        "execution_checklist": execution_checklist,
+        "handoff_artifacts": handoff_artifacts,
+        "evidence_semantics": "operational_only",
         "revision_history": [_initial_revision(run, package_ids)],
         "repair_budget_remaining": plan["repair_budget"],
         "metrics": {
@@ -531,6 +987,9 @@ def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
             "candidate_count": len(candidates),
             "critic_count": len(critics),
             "risk_count": len(risks),
+            "stage_count": len(stages),
+            "stage_substep_count": sum(len(item["substeps"]) for item in stages),
+            "execution_pending": len(execution_checklist),
         },
     }
     return LearningTaskPlanningAnalysis.model_validate(analysis).model_dump(mode="json")
@@ -613,5 +1072,36 @@ def replan_analysis(
         "reasons": ["已完成局部子图修订，任务语义指纹保持不变。", "未受影响工作包保持冻结。"],
         "triggered_rules": ["LOCAL_SUBGRAPH_REPLAN", failure_code.upper()],
     }
+    finalize_stage = next(
+        item for item in updated["stages"]
+        if item["stage_id"] == "critic_finalize"
+    )
+    finalize_stage["status"] = "ready"
+    finalize_stage["summary"] = (
+        f"局部子图修订 v{next_version} 已生成；等待确认后再进入执行。"
+    )
+    finalize_stage["substeps"].append({
+        "substep_id": f"decision_revision_{next_version}",
+        "label": f"局部修订 v{next_version}",
+        "status": "completed",
+        "detail": (
+            f"冻结 {len(preserved)} 个未受影响工作包，只重规划 "
+            f"{len(affected_ordered)} 个受影响工作包。"
+        ),
+        "parent_substep_id": "decision_replan",
+        "depends_on": [],
+        "output_ref": revision_id,
+    })
+    execution_stage = next(
+        item for item in updated["stages"]
+        if item["stage_id"] == "execution_handoff"
+    )
+    execution_stage["status"] = "pending"
+    execution_stage["summary"] = (
+        "修订后的运行清单仍为 pending；尚无执行、观察或掌握证据。"
+    )
     updated["metrics"]["revision_count"] = len(updated["revision_history"])
+    updated["metrics"]["stage_substep_count"] = sum(
+        len(item["substeps"]) for item in updated["stages"]
+    )
     return LearningTaskPlanningAnalysis.model_validate(updated).model_dump(mode="json")

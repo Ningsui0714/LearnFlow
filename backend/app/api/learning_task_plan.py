@@ -109,6 +109,7 @@ def _analysis_for(
     stored = (message.meta_data or {}).get("planning_analysis") if message else None
     if (
         isinstance(stored, dict)
+        and stored.get("schema_version") == "learning-work-task-planning-analysis-v2"
         and stored.get("run_id") == run.get("run_id")
         and stored.get("plan_version") == run.get("plan", {}).get("plan_version")
     ):

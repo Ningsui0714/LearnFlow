@@ -119,7 +119,16 @@ def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):
         assert confirmed.json()["phase"] == "PLAN_READY"
         assert confirmed.json()["plan"]["plan_version"] == 2
         assert confirmed.json()["planning_analysis"]["analysis_version"] == 1
+        assert confirmed.json()["planning_analysis"]["schema_version"] == (
+            "learning-work-task-planning-analysis-v2"
+        )
         assert len(confirmed.json()["planning_analysis"]["candidates"]) == 3
+        assert len(confirmed.json()["planning_analysis"]["stages"]) == 6
+        assert confirmed.json()["planning_analysis"]["stages"][-1]["status"] == "pending"
+        assert all(
+            item["observation_state"] == "not_observed"
+            for item in confirmed.json()["planning_analysis"]["execution_checklist"]
+        )
 
         replanned = client.post(
             f"/api/learning-task-conversion/plans/{run_id}/replan",
