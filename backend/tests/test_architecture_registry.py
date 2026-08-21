@@ -78,3 +78,20 @@ def test_review_workbench_is_registered_without_new_kernel_writer():
     assert {
         tool.id for tool in TOOLS.values() if tool.writes_kernels
     } == {"five_kernel_reducer"}
+
+
+def test_focused_micro_learning_reuses_existing_agent_and_evidence_authority():
+    assert "focused_learning" in WORKBENCHES
+    assert {"verified_micro_learning", "feynman_teach_back"} <= set(SKILLS)
+    assert {"micro_learning_orchestrator", "teach_back_analyzer"} <= set(TOOLS)
+    assert {
+        "start_micro_learning", "continue_micro_learning", "analyze_teach_back",
+    } <= set(ACTION_BOARD)
+    assert CAPABILITY_OWNERS["start_micro_learning"][0] == "tutor_agent"
+    assert CAPABILITY_OWNERS["analyze_teach_back"][0] == "practice_agent"
+    assert EVENTS["teach_back_analyzed"].kernel_targets == ("knowledge", "practice")
+    assert EVENTS["micro_learning_completed"].kernel_targets == ()
+    assert len(AGENTS) == 3
+    assert {
+        tool.id for tool in TOOLS.values() if tool.writes_kernels
+    } == {"five_kernel_reducer"}

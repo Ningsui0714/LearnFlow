@@ -89,6 +89,9 @@ CONTEXT_POLICIES = {
 }
 
 CAPABILITY_CONTEXT_POLICIES = {
+    "start_micro_learning": "global_tutor",
+    "continue_micro_learning": "checkpoint_tutor",
+    "analyze_teach_back": "practice_validation",
     "draft_learning_project": "global_tutor",
     "create_project": "global_tutor",
     "plan_learning_path": "learning_design",

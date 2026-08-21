@@ -239,6 +239,27 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             )
         return
 
+    if et == "micro_learning_started":
+        await _apply_patch(
+            db, event, "structure",
+            {
+                "focused_learning_run_id": p.get("run_id"),
+                "active_project_id": event.project_id,
+                "active_checkpoint_id": event.checkpoint_id,
+                "current_task": p.get("goal", "快速学习"),
+            },
+            "学习者显式开始一次可恢复的微学习流程",
+        )
+        await _apply_patch(
+            db, event, "value",
+            {
+                "current_priority": p.get("goal", ""),
+                "current_motivation": "explicit_micro_learning_goal",
+            },
+            "学习者明确提交了本次微学习目标",
+        )
+        return
+
     if et == "registration_profile_completed":
         await _apply_patch(
             db, event, "knowledge",
@@ -462,13 +483,47 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
-    if et in {"lecture_generated", "lecture_viewed"}:
+    if et in {"lecture_generated", "lecture_viewed", "micro_learning_card_viewed"}:
         await _apply_patch(
             db, event, "knowledge",
             {"active_concepts": p.get("concepts", []),
-             "last_explanation": "讲义已生成" if et == "lecture_generated" else "讲义已阅读",
+             "last_explanation": (
+                 "讲义已生成" if et == "lecture_generated"
+                 else "微学习卡已阅读" if et == "micro_learning_card_viewed"
+                 else "讲义已阅读"
+             ),
              "exposure_only": True},
-            "讲义只形成接触证据，不代表掌握",
+            "学习内容只形成接触证据，不代表掌握",
+        )
+        return
+
+    if et == "teach_back_analyzed":
+        missing = list(p.get("missing_points") or [])
+        await _apply_patch(
+            db, event, "knowledge",
+            {
+                "teach_back_diagnostic": {
+                    "run_id": p.get("run_id"),
+                    "attempt_id": p.get("attempt_id"),
+                    "coverage_ratio": p.get("coverage_ratio", 0),
+                    "covered_points": list(p.get("covered_points") or []),
+                    "missing_points": missing,
+                    "evidence_id": event.id,
+                },
+                "pending_question": missing[0] if missing else "",
+                "mastery_unchanged": True,
+            },
+            "费曼复述只提供覆盖缺口诊断，不能替代独立评分或晋级掌握",
+        )
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "current_attempt": p.get("attempt_id"),
+                "assistance_level": "none",
+                "recent_feedback": "teach_back_diagnostic",
+                "diagnostic_only": True,
+            },
+            "记录一次独立复述诊断尝试，后续仍需题目验证",
         )
         return
 
@@ -724,6 +779,9 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
     if et == "concept_attempt_evaluated":
         correct = bool(p.get("correct"))
         independent = bool(p.get("independent", True))
+        allows_same_session_stability = (
+            p.get("assessment_mode") != "verified_micro_learning"
+        )
         knowledge_state = await _kernel(db, event.learner_id, "knowledge")
         concept_understanding = dict(
             (knowledge_state.short_term or {}).get("concept_understanding") or {}
@@ -752,7 +810,7 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         if not correct:
             patch["pending_question"] = p.get("question", "概念题答错")
         long_patch = None
-        if correct and independent:
+        if correct and independent and allows_same_session_stability:
             rows = (await db.execute(select(EvidenceEvent).where(
                 EvidenceEvent.learner_id == event.learner_id,
                 EvidenceEvent.checkpoint_id == event.checkpoint_id,

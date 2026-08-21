@@ -186,6 +186,7 @@ export default function WorkspaceAgentRail({
         surfaceDescription={reviewContext ? '当前题目、错因、调度与证据上下文已安全装配' : undefined}
         className="min-h-0 flex-1 rounded-none border-0"
         onProjectChange={project => project?.id && openPath(`/projects/${project.id}`, { title: project.name || `项目 ${project.id}`, kind: 'project', projectId: project.id })}
+        onLearningRunCreated={run => run?.id && openPath(`/learn/${run.id}`, { title: run.goal || `专注学习 ${run.id}`, kind: 'learning_run', projectId: run.project_id, checkpointId: run.checkpoint_id })}
         onProposalAccepted={project => project?.id && openPath(`/projects/${project.id}`, { title: project.name || `项目 ${project.id}`, kind: 'project', projectId: project.id })}
         onCheckpointChange={checkpoint => state.projectId && openPath(`/projects/${state.projectId}/checkpoints/${checkpoint.id}`, { title: checkpoint.title || `关卡 ${checkpoint.id}`, kind: 'lecture', projectId: state.projectId, checkpointId: checkpoint.id })}
         onRoadmapUpdate={roadmap => {

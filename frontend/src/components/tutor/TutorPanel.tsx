@@ -30,6 +30,7 @@ interface Props {
   onRoadmapUpdate?: (roadmap: any) => void
   onCheckpointChange?: (checkpoint: { id: number; title?: string }) => void
   onProposalAccepted?: (project: any) => void
+  onLearningRunCreated?: (run: any) => void
   proposalDragEnabled?: boolean
   projectProposal?: ProjectProposal | null
   projectSources?: Array<{ url?: string }>
@@ -201,6 +202,7 @@ export default function TutorPanel({
   projectId, checkpointId, turnContext = {}, quickPrompts = [], surfaceTitle, surfaceDescription,
   className = '', onProjectChange, onRoadmapUpdate, onCheckpointChange,
   onProposalAccepted, proposalDragEnabled = false, projectProposal,
+  onLearningRunCreated,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
   onRefreshCandidateSources, onAddCandidateSource,
 }: Props) {
@@ -276,6 +278,7 @@ export default function TutorPanel({
     const nextAction = data.action_card || data.executed_action || null
     setAction(nextAction)
     const result = data.executed_action?.result || nextAction?.result || {}
+    if (result.learning_run && result.navigate_to_learning_run) onLearningRunCreated?.(result.learning_run)
     if (result.project && result.navigate_to_project) onProjectChange?.(result.project)
     if (result.updated_roadmap) onRoadmapUpdate?.(result.updated_roadmap)
     if (result.checkpoint) onCheckpointChange?.(result.checkpoint)
@@ -348,6 +351,7 @@ export default function TutorPanel({
         setAction(latest)
         if (terminal.has(latest.status)) {
           const result = latest.result || {}
+          if (result.learning_run && result.navigate_to_learning_run) onLearningRunCreated?.(result.learning_run)
           if (result.project) onProjectChange?.(result.project)
           if (result.updated_roadmap) onRoadmapUpdate?.(result.updated_roadmap)
           return

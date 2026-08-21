@@ -15,6 +15,7 @@ import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
 import DemoEntryPage from './pages/DemoEntryPage'
 import WorkspaceFilePage from './pages/WorkspaceFilePage'
+import LearningRunPage from './pages/LearningRunPage'
 import { getDesktopRuntime } from './services/desktopRuntime'
 
 function DevSettingsRoute() {
@@ -32,6 +33,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/agent" replace />} />
           <Route path="/agent" element={<AgentPage />} />
+          <Route path="/learn/:runId" element={<LearningRunPage />} />
           <Route path="/projects" element={<HomePage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/memory" element={<MemoryGraphPage />} />

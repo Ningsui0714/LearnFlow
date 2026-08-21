@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.learning import (
-    AgentSession, AgentMessage, AgentAction, EvidenceEvent, LearningProjectProposal,
+    AgentSession, AgentMessage, AgentAction, EvidenceEvent, LearnerProfile,
+    LearningProjectProposal,
 )
 from app.models.project import Project, Source, Roadmap, Checkpoint, Task
 from app.schemas.agent import TutorModelOutput
@@ -46,6 +47,29 @@ CREATE_RE = re.compile(
 )
 URL_RE = re.compile(r"https?://[^\s，。!?！？)\]}>]+", re.I)
 ADD_SOURCE_HINTS = ("添加", "加入", "加到", "加进", "导入", "作为来源", "作为资料")
+MICRO_LEARNING_MARKERS = (
+    "15分钟", "十五分钟", "快速学习", "快速学", "微学习",
+    "带我学", "带我学习", "开始学习", "学一下",
+)
+
+
+def _looks_like_micro_learning_command(message: str) -> bool:
+    normalized = re.sub(r"\s+", "", message)
+    return "项目" not in normalized and any(
+        marker in normalized for marker in MICRO_LEARNING_MARKERS
+    )
+
+
+def _extract_micro_learning_goal(message: str) -> str:
+    text = re.sub(r"\s+", " ", message).strip()
+    text = re.sub(r"^(?:我想要?|请你?|麻烦你?|帮我|带我)\s*", "", text)
+    text = re.sub(r"^(?:用)?(?:15|十五)\s*分钟(?:内)?\s*", "", text)
+    text = re.sub(
+        r"^(?:快速)?(?:学习一下|学习|学一下|学|弄懂|理解|搞懂|开始学习|微学习)\s*",
+        "",
+        text,
+    )
+    return text.strip(" ：:，,。.!！?？「」『』\"'")[:300]
 TUTOR_SYSTEM_PROMPT = """你是 LearnFlow 中常驻的学习 Tutor。你可以处理任何学习相关对话，而不只是规划路线。
 
 你的教学判断同时考虑五类内部信息：当前学习位置与项目结构、知识理解与误解、情绪负荷与偏好、目标价值、独立实践能力。不要向用户提及这些内部分类、Kernel、路由分数、JSON 或工具名。
@@ -65,6 +89,7 @@ TUTOR_SYSTEM_PROMPT = """你是 LearnFlow 中常驻的学习 Tutor。你可以�
 12. 严格区分结构观察与知识观察：结构只记录学习者位于哪条路径、哪个阶段、依赖什么、为何转向以及回来时从哪里继续；知识只记录某个具体知识点的理解程度、待解疑问、明确误解与验证结果。学习目标属于价值，学习负荷属于人因，实践产物属于实践。
 13. 普通疑问或答错只能形成知识缺口，不能自动写成“误解”。只有用户明确表达了可指出其错误之处的具体理解，或评估证据诊断出稳定错误模式时，才记录 misconceptions。两个维度需要联动时，用检查点、概念或证据引用关联，不在两个维度重复同一段判断。
 14. 复习台上下文是服务端装配的只读题目、错因、调度与证据投影。你可以解释、提示和说明安排，但不能替代后端判题、修改间隔、宣布掌握，或从一次失败推断固定误解。
+15. 当用户只有一个边界清楚、希望马上弄懂的短期主题时，可以推荐首页的“15 分钟可验证学习”：学习卡、费曼复述、独立验证和复习安排会形成一个闭环。多周、多来源、明确产物或系统掌握目标才优先推荐项目式学习。不要在普通事实问答中机械推销任一模式。
 
 严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。只有在 checkpoint 会话中，且任务确实需要修改或测试共享项目文件时，才可设置 local_agent_task.should_delegate=true；只描述任务类型、目标、约束与能力，不选择 Agent、不拼接命令，也不要声称已经启动。"""
 
@@ -73,6 +98,7 @@ GLOBAL_MAIN_AGENT_PROMPT = """当前是 global 主 Agent 会话。你的主要�
 - 对简单知识问题做简明概述、类比或最小示例，但不代替某个项目里的系统教学；
 - 关注挫败、焦虑、负荷和节奏，用教师式支持帮助用户恢复可行动状态，不做医学诊断；
 - 识别值得长期推进的目标，维护项目提案，并在用户明确授权时创建或进入项目。
+- 对边界清楚的短期理解目标，推荐或启动一次 15 分钟可验证微学习；对多周、来源或产物目标再推荐项目式学习。
 
 项目列表、最近活跃项目、关卡位置以及结构/知识短期记忆都只是理解学习者的参考，不代表你正在负责那个项目。不要自称某个项目的负责人，不要主动续接某个项目的当前关卡、路线、来源或课前后辅导，也不要把最近活跃项目当作本轮默认主题。涉及正式路线、关卡学习、深入练习或项目推进时，说明应由对应项目 Tutor 或关卡承接。除非用户明确要求操作某个项目，否则保持全局视角。
 
@@ -957,6 +983,44 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
     if session.learner_id != action.learner_id:
         raise ValueError("Tutor 行动归属无效")
 
+    if action.capability == "start_micro_learning":
+        goal = str(target.get("goal") or "").strip()
+        if not goal:
+            action.status = "needs_input"
+            session.pending_action_id = action.id
+            await db.commit()
+            return "这次想用 15 分钟弄懂哪个具体主题？"
+        profile = await db.get(LearnerProfile, action.learner_id)
+        from app.services.micro_learning import create_micro_learning_run
+
+        run = await create_micro_learning_run(
+            db,
+            learner_id=action.learner_id,
+            goal=goal,
+            source_text=str(target.get("source_text") or "")[:20000],
+            client_request_id=f"tutor-action-{action.id}",
+            education_stage=profile.education_stage if profile else "",
+            background=profile.background if profile else "",
+            source="tutor_tool",
+        )
+        action.project_id = run.project_id
+        action.checkpoint_id = run.checkpoint_id
+        action.status = "completed"
+        action.finished_at = datetime.utcnow()
+        action.result = {
+            "learning_run": {
+                "id": run.id,
+                "goal": run.goal,
+                "project_id": run.project_id,
+                "checkpoint_id": run.checkpoint_id,
+            },
+            "navigate_to_learning_run": True,
+            "user_message": f"已准备好「{run.goal}」的学习卡、费曼复述和独立验证，现在进入专注学习。",
+        }
+        session.pending_action_id = None
+        await db.commit()
+        return action.result["user_message"]
+
     if action.capability == "delegate_local_agent_task":
         from app.models.project import LocalAgentProfile
         from app.services.local_agent_broker import LocalAgentError, create_run_for_action
@@ -1461,6 +1525,19 @@ async def _explicit_action(
             )
         return None
     url = _extract_url(message) or await _source_url_from_context(db, session.learner_id, context)
+    if session.session_type == "global" and _looks_like_micro_learning_command(message):
+        goal = _extract_micro_learning_goal(message)
+        selected_text = str((context or {}).get("selected_text") or "").strip()
+        return await _new_action(
+            db, session, "start_micro_learning",
+            {
+                "goal": goal,
+                "source_text": selected_text[:20000],
+                "explicit": True,
+                "expected_result": "进入学习卡、费曼复述、独立验证与复习安排",
+            },
+            "running" if goal else "needs_input",
+        )
     if _looks_like_create_command(message):
         name = _extract_project_name(message)
         capability = "bootstrap_project" if url else "create_project"
@@ -2060,7 +2137,9 @@ async def process_turn(
         action.status = "ready"
     elif pending and pending.status == "needs_input":
         target = dict(pending.target or {})
-        if pending.capability in {"create_project", "bootstrap_project"}:
+        if pending.capability == "start_micro_learning":
+            target["goal"] = message.strip()[:300]
+        elif pending.capability in {"create_project", "bootstrap_project"}:
             target["name"] = message.strip()[:80]
         elif pending.capability == "add_source":
             url = (

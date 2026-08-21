@@ -528,6 +528,91 @@ export const recordLearningEvent = (data: {
   payload?: Record<string, any>
 }) => api.post('/learning-events', data).then(r => r.data)
 
+// ── Focused micro-learning ──
+export interface MicroLearningQuestion {
+  id: number
+  question: string
+  options: string[]
+  q_type: 'single' | 'multi' | 'judge'
+  difficulty: string
+  order: number
+  learning_target: string
+  evidence_claim: string
+}
+
+export interface MicroLearningRun {
+  id: number
+  goal: string
+  source_type: 'topic' | 'provided_text'
+  source_excerpt: string
+  status: 'active' | 'paused' | 'completed'
+  state: 'learning_card' | 'teach_back' | 'teach_back_feedback' | 'verification' | 'remediation' | 'paused' | 'completed'
+  version: number
+  project_id: number
+  checkpoint_id: number
+  session_id?: number
+  skill_plan: Record<string, any>
+  learning_card: {
+    title?: string
+    objective?: string
+    key_points?: string[]
+    target_concepts?: string[]
+    example?: string
+    common_confusion?: string
+    success_criteria?: string
+  }
+  teach_back: Record<string, any>
+  verification: Record<string, any>
+  summary: Record<string, any>
+  questions: MicroLearningQuestion[]
+  current_question: MicroLearningQuestion | null
+  remediation?: any
+  progress: {
+    current: number
+    total: number
+    completed_questions: number
+    total_questions: number
+  }
+  started_at?: string
+  completed_at?: string
+  updated_at?: string
+}
+
+export const createMicroLearningRun = (data: {
+  goal: string
+  source_text?: string
+  client_request_id: string
+}) => api.post('/micro-learning/runs', data).then(r => r.data as MicroLearningRun)
+
+export const listMicroLearningRuns = (limit = 8) =>
+  api.get('/micro-learning/runs', { params: { limit } })
+    .then(r => r.data.items as MicroLearningRun[])
+
+export const getMicroLearningRun = (runId: number) =>
+  api.get(`/micro-learning/runs/${runId}`).then(r => r.data as MicroLearningRun)
+
+export const advanceMicroLearningRun = (
+  runId: number,
+  data: {
+    action: 'complete_card' | 'continue_after_feedback' | 'pause' | 'resume'
+    expected_version: number
+    client_action_id: string
+  },
+) => api.post(`/micro-learning/runs/${runId}/advance`, data)
+  .then(r => r.data as MicroLearningRun)
+
+export const submitMicroLearningTeachBack = (
+  runId: number,
+  data: { response: string; expected_version: number; client_submission_id: string },
+) => api.post(`/micro-learning/runs/${runId}/teach-back`, data)
+  .then(r => r.data as MicroLearningRun)
+
+export const syncMicroLearningRun = (
+  runId: number,
+  data: { expected_version?: number; client_action_id: string },
+) => api.post(`/micro-learning/runs/${runId}/sync`, data)
+  .then(r => r.data as MicroLearningRun)
+
 // ── Lecture (Phase 2) ──
 export const getLecture = (checkpointId: number) =>
   api.get(`/checkpoints/${checkpointId}/lecture`).then(r => r.data)
@@ -900,11 +985,13 @@ export const submitConcept = (
   assistanceLevel: string = 'none',
   remediationCaseId?: number,
   attemptRole: string = 'original',
+  clientSubmissionId?: string,
 ) => api.post(`/checkpoints/${checkpointId}/concepts/${questionId}/submit`, {
   answer_indexes: answerIndexes,
   assistance_level: assistanceLevel,
   remediation_case_id: remediationCaseId,
   attempt_role: attemptRole,
+  client_submission_id: clientSubmissionId,
 }).then(r => r.data)
 
 // ── T8: exercise submit ──

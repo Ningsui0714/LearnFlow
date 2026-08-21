@@ -253,6 +253,46 @@ class ReviewSchedule(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class MicroLearningRun(Base):
+    """Persistent projection for one focused, checkpoint-scoped learning loop.
+
+    The run coordinates presentation and resume behavior.  It is not a second
+    source of mastery truth: graded LearningAttempt and EvidenceEvent rows stay
+    authoritative, and the run summary is rebuilt from those records.
+    """
+
+    __tablename__ = "micro_learning_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "learner_id", "client_request_id",
+            name="uq_micro_learning_run_learner_request",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=True, index=True)
+    goal = Column(Text, nullable=False)
+    source_text = Column(Text, default="")
+    source_type = Column(String(30), default="topic", nullable=False)
+    status = Column(String(30), default="active", nullable=False, index=True)
+    state = Column(String(40), default="learning_card", nullable=False, index=True)
+    skill_plan = Column(JSON, default=dict)
+    learning_card = Column(JSON, default=dict)
+    teach_back = Column(JSON, default=dict)
+    verification = Column(JSON, default=dict)
+    summary = Column(JSON, default=dict)
+    action_log = Column(JSON, default=list)
+    client_request_id = Column(String(160), nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class KernelState(Base):
     __tablename__ = "kernel_states"
     __table_args__ = (

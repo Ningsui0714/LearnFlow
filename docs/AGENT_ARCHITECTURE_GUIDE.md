@@ -2,7 +2,7 @@
 
 > 面向对象：维护、扩展或评审 LearnFlow 的编码智能体、研究智能体与产品智能体  
 > 文档性质：架构约束与协作契约，不是面向用户的产品介绍  
-> 当前状态：常驻 Tutor、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
+> 当前状态：常驻 Tutor、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
 ## 1. 阅读方式
@@ -264,7 +264,24 @@ Tutor: plan_review_queue / 导航 / 过滤
 
 详细规则和接口见 `docs/REVIEW_WORKBENCH.md`。
 
-### 8.2 桌面文件工作台
+### 8.2 可验证微学习工作台
+
+`/agent` 的首要入口是一次具体微学习目标；长期、多来源或产物导向的需求仍可由 Tutor 推荐项目式学习。`/learn/:runId` 是 Tutor 所有的专注工作台，内部依次调用 Learning Design 和 Practice 能力，不新增第四个主 Agent。
+
+```text
+start_micro_learning
+  -> learning_card（接触证据）
+  -> analyze_teach_back（诊断证据，mastery 不变）
+  -> evaluate_attempt
+       -> wrong: remediation_loop
+  -> ReviewSchedule
+```
+
+`MicroLearningRun` MUST 只作为可恢复流程投影。服务端 MUST 根据已有 `LearningAttempt` 和 `RemediationCase` 重建题目进度，MUST 过滤答案与私有变式契约，并使用 `expected_version` 和客户端幂等 ID。生成模型 MAY 生成学习卡和题目候选，但服务端 MUST 校验题型、答案索引与变式；费曼复述只做确定性覆盖诊断。完成一轮 MUST NOT 宣布稳定掌握，微学习题的同 session 多题正确也不得绕过跨时间复习门槛。
+
+完整产品、API、事件与离线比对契约见 `docs/MICRO_LEARNING_MVP.md`。
+
+### 8.3 桌面文件工作台
 
 桌面工作区复用 Tutor 控制平面，不增加主 Agent 类型。文件能力链固定为：
 

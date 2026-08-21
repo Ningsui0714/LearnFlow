@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-17.3"
+REGISTRY_VERSION = "2026-08-21.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -178,6 +178,10 @@ TOOLS = {
                      ("knowledge", "structure")),
         ToolContract("content_generation", "Roadmap/Lecture/Assessment Generation", "learning_design_agent", "learnflow", "artifact",
                      KERNEL_NAMES),
+        ToolContract("micro_learning_orchestrator", "Focused Micro-learning Orchestrator", "tutor_agent", "learnflow", "orchestration",
+                     KERNEL_NAMES, (), "EvidenceEvent + existing learning domain records"),
+        ToolContract("teach_back_analyzer", "Deterministic Teach-back Analyzer", "practice_agent", "learnflow", "assessment",
+                     ("knowledge", "practice"), (), "LearningAttempt + EvidenceEvent"),
         ToolContract("process_animation", "Process Animation", "learning_design_agent", "learnflow", "artifact",
                      ("knowledge", "human")),
         ToolContract("code_executor", "Sandboxed Code Executor", "practice_agent", "learnflow", "assessment"),
@@ -222,6 +226,16 @@ SKILLS = {
                       ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
                       "checkpoint-scoped Tutor reply + internal design/practice handoff",
                       "immutable checkpoint session scope"),
+        SkillContract("verified_micro_learning", "可验证微学习闭环", "tutor_agent",
+                      ("micro_learning_orchestrator", "content_generation", "teach_back_analyzer",
+                       "deterministic_assessment", "deterministic_remediation", "review_scheduler",
+                       "evidence_ledger"),
+                      "resumable card -> teach-back -> verification -> remediation -> review run",
+                      "deterministic workflow and existing assessment contracts"),
+        SkillContract("feynman_teach_back", "费曼复述诊断", "practice_agent",
+                      ("teach_back_analyzer", "deterministic_assessment", "evidence_ledger"),
+                      "diagnostic coverage feedback; never a mastery upgrade",
+                      "deterministic diagnostic threshold"),
         SkillContract("learning_path_planning", "来源约束的学习路线规划", "learning_design_agent",
                       ("source_ingestion", "repository_knowledge_domains", "hierarchical_rag", "content_generation"),
                       "roadmap proposal with checkpoint dependencies and provenance", "confirmed proposal"),
@@ -265,7 +279,11 @@ SKILLS = {
 WORKBENCHES = {
     item.id: item for item in (
         WorkbenchContract("global_tutor", "Global Tutor", "/agent", "tutor_agent",
-                          ("search_projects", "draft_learning_project", "create_project")),
+                          ("start_micro_learning", "search_projects", "draft_learning_project", "create_project")),
+        WorkbenchContract("focused_learning", "Focused Learning", "/learn/:runId", "tutor_agent",
+                          ("continue_micro_learning", "analyze_teach_back", "evaluate_attempt",
+                           "request_remediation_explanation", "retry_attempt",
+                           "evaluate_transfer_variant", "plan_review_queue")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
                           ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
@@ -291,6 +309,9 @@ WORKBENCHES = {
 
 
 CAPABILITY_OWNERS = {
+    "start_micro_learning": ("tutor_agent", "micro_learning_orchestrator", "global_tutor"),
+    "continue_micro_learning": ("tutor_agent", "micro_learning_orchestrator", "focused_learning"),
+    "analyze_teach_back": ("practice_agent", "teach_back_analyzer", "focused_learning"),
     "search_projects": ("tutor_agent", "action_board", "global_tutor"),
     "draft_learning_project": ("tutor_agent", "action_board", "global_tutor"),
     "revise_learning_project_proposal": ("tutor_agent", "action_board", "global_tutor"),
@@ -338,6 +359,13 @@ def _event(event_id: str, capability: str, targets: tuple[str, ...], role: str,
 
 EVENTS = {
     item.id: item for item in (
+        _event("micro_learning_started", "start_micro_learning", ("structure", "value"), "confirmed_goal"),
+        _event("learning_card_generated", "start_micro_learning", (), "artifact"),
+        _event("micro_learning_card_viewed", "continue_micro_learning", ("knowledge",), "exposure"),
+        _event("teach_back_analyzed", "analyze_teach_back", ("knowledge", "practice"), "diagnosis"),
+        _event("micro_learning_paused", "continue_micro_learning", (), "operational"),
+        _event("micro_learning_resumed", "continue_micro_learning", (), "operational"),
+        _event("micro_learning_completed", "continue_micro_learning", (), "operational_milestone"),
         _event("registration_profile_completed", "draft_learning_project", ("human", "value"), "self_report"),
         _event("profile_updated", "draft_learning_project", ("human", "value"), "self_report", workbench="profile"),
         _event("career_goal_confirmed", "draft_learning_project", ("value",), "confirmed_goal", workbench="profile"),

@@ -124,6 +124,7 @@ LOCAL_AGENT_BROKER_MIGRATION = "v9-local-agent-broker"
 REVIEW_WORKBENCH_MIGRATION = "v10-review-workbench"
 FIVE_KERNEL_MEMORY_FABRIC_MIGRATION = "v11-five-kernel-memory-fabric"
 MEMORY_MODULE_VERSIONING_MIGRATION = "v12-memory-module-versioning"
+MICRO_LEARNING_MIGRATION = "v13-focused-micro-learning"
 
 
 def _sqlite_path() -> Path | None:
@@ -1064,6 +1065,21 @@ async def _backfill_memory_module_versioning():
         print(f"[migrate] applied {MEMORY_MODULE_VERSIONING_MIGRATION}: {counts}")
 
 
+async def _mark_micro_learning_migration():
+    """Record the additive run-table migration after create_all created it."""
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == MICRO_LEARNING_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=MICRO_LEARNING_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {MICRO_LEARNING_MIGRATION}")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -1090,3 +1106,4 @@ async def init_db():
     await _backfill_review_workbench()
     await _backfill_five_kernel_memory_fabric()
     await _backfill_memory_module_versioning()
+    await _mark_micro_learning_migration()

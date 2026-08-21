@@ -570,6 +570,7 @@ async def submit_concept(
             "correct": is_correct,
             "independent": assistance_level == "none",
             "assistance_level": assistance_level,
+            "assessment_mode": (q.assessment_meta or {}).get("mode", ""),
         },
         provenance={"grader": "exact_match", "question_type": q.q_type},
         client_event_id=f"attempt:{attempt.id}:evaluated",

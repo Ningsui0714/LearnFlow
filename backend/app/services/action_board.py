@@ -19,6 +19,21 @@ ACTION_BOARD = {
             ("enter_project", "draft_learning_project"),
         ),
         ActionDefinition(
+            "start_micro_learning", "开始一次可验证微学习", "write", "explicit",
+            {"structure": "focused_learning_started", "value": "goal_confirmation"},
+            ("continue_micro_learning", "analyze_teach_back"),
+        ),
+        ActionDefinition(
+            "continue_micro_learning", "继续或暂停微学习", "context", "explicit_or_click",
+            {"structure": "focused_learning_position"},
+            ("analyze_teach_back", "evaluate_attempt", "plan_review_queue"),
+        ),
+        ActionDefinition(
+            "analyze_teach_back", "分析费曼复述", "evidence", "explicit",
+            {"knowledge": "teach_back_diagnosis", "practice": "diagnostic_attempt"},
+            ("evaluate_attempt",),
+        ),
+        ActionDefinition(
             "draft_learning_project", "起草学习项目", "none", "none",
             {"value": "goal_draft", "practice": "artifact_draft"},
             ("create_project",),

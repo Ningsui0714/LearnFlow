@@ -217,6 +217,7 @@ export default function Layout() {
   const { user } = useAuth()
   const location = useLocation()
   const embedded = useMemo(() => new URLSearchParams(location.search).get('embed') === '1', [location.search])
+  const focusedLearning = /^\/learn\/\d+$/.test(location.pathname)
 
   if (embedded) {
     return <main className="h-screen min-h-0 overflow-hidden bg-slate-50"><Outlet /></main>
@@ -224,7 +225,9 @@ export default function Layout() {
 
   return (
     <WorkspaceProvider learnerKey={String(user?.learner_id || user?.id || 'anonymous')}>
-      <WorkspaceFrame />
+      {focusedLearning
+        ? <main className="h-screen min-h-0 overflow-y-auto bg-[#f6f7f4]"><Outlet /></main>
+        : <WorkspaceFrame />}
     </WorkspaceProvider>
   )
 }

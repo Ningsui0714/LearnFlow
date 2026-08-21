@@ -10,6 +10,7 @@ export type WorkspaceTabKind =
   | 'project'
   | 'lecture'
   | 'exercise'
+  | 'learning_run'
   | 'file'
   | 'memory'
   | 'review'
@@ -17,7 +18,7 @@ export type WorkspaceTabKind =
   | 'settings'
 
 const WORKSPACE_TAB_KINDS: WorkspaceTabKind[] = [
-  'home', 'projects', 'project', 'lecture', 'exercise', 'file', 'memory', 'review', 'profile', 'settings',
+  'home', 'projects', 'project', 'lecture', 'exercise', 'learning_run', 'file', 'memory', 'review', 'profile', 'settings',
 ]
 
 export interface WorkspaceTab {
@@ -90,6 +91,15 @@ function normalizePath(path: string) {
 function pathMeta(path: string): WorkspaceTab {
   const normalized = normalizePath(path)
   const pathname = new URL(normalized, window.location.origin).pathname
+  const learningRun = pathname.match(/^\/learn\/(\d+)$/)
+  if (learningRun) {
+    return {
+      id: normalized,
+      path: normalized,
+      title: `专注学习 ${learningRun[1]}`,
+      kind: 'learning_run',
+    }
+  }
   const workspaceFile = pathname.match(/^\/projects\/(\d+)\/workspace$/)
   if (workspaceFile) {
     const url = new URL(normalized, window.location.origin)
