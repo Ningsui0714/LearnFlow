@@ -300,6 +300,82 @@ export interface LearningTaskPlanArtifact {
   stop_conditions: string[]
 }
 
+export interface LearningTaskPlanCandidate {
+  candidate_id: string
+  strategy: 'fidelity_first' | 'evidence_first' | 'balanced_parallel'
+  title: string
+  ordered_package_ids: string[]
+  parallel_waves: string[][]
+  scores: Record<string, number>
+  weighted_score: number
+  hard_gate_passed: boolean
+  tradeoffs: string[]
+}
+
+export interface LearningTaskPlanCritic {
+  critic_id: string
+  dimension: 'task_identity' | 'dependency' | 'evidence' | 'safety' | 'deliverable' | 'teaching_fit'
+  verdict: 'pass' | 'warning' | 'fail'
+  score: number
+  findings: string[]
+  affected_package_ids: string[]
+}
+
+export interface LearningTaskPlanRisk {
+  risk_id: string
+  package_id: string
+  category: 'evidence' | 'dependency' | 'safety' | 'artifact' | 'mapping'
+  likelihood: 'low' | 'medium' | 'high'
+  impact: 'low' | 'medium' | 'high'
+  mitigation: string
+  evidence_required: boolean
+}
+
+export interface LearningTaskPlanRevision {
+  revision_id: string
+  analysis_version: number
+  parent_revision_id: string | null
+  cause: string
+  failure_code: string | null
+  affected_package_ids: string[]
+  preserved_package_ids: string[]
+  controls_added: string[]
+}
+
+export interface LearningTaskPlanningAnalysis {
+  schema_version: 'learning-work-task-planning-analysis-v1'
+  run_id: string
+  plan_version: number
+  analysis_version: number
+  planning_status: 'ready_for_confirmation' | 'planned_not_executed' | 'replanned_not_executed' | 'needs_evidence'
+  active_revision_id: string
+  hierarchy: Array<{
+    node_id: string
+    node_type: 'goal' | 'phase' | 'work_package' | 'atomic_step'
+    parent_id: string | null
+    label: string
+    objective: string
+    package_id: string | null
+    depth: number
+  }>
+  graph_edges: Array<{ source: string; target: string; edge_type: string }>
+  topological_waves: string[][]
+  critical_path: string[]
+  candidates: LearningTaskPlanCandidate[]
+  critics: LearningTaskPlanCritic[]
+  risks: LearningTaskPlanRisk[]
+  decision: {
+    code: 'SELECT_CANDIDATE' | 'REQUEST_EVIDENCE' | 'LOCAL_REPLAN' | 'STOP'
+    selected_candidate_id: string | null
+    confidence: number
+    reasons: string[]
+    triggered_rules: string[]
+  }
+  revision_history: LearningTaskPlanRevision[]
+  repair_budget_remaining: number
+  metrics: Record<string, number>
+}
+
 export interface LearningTaskPlanRun {
   schema_version: 'learning-work-task-agent-state-v1'
   run_id: string
@@ -312,6 +388,7 @@ export interface LearningTaskPlanRun {
   next_actions: string[]
   message: string
   workspace_path: string
+  planning_analysis: LearningTaskPlanningAnalysis
 }
 
 export const createLearningTaskPlan = (
@@ -336,6 +413,24 @@ export const confirmLearningTaskPlan = (
   `/learning-task-conversion/plans/${encodeURIComponent(runId)}/confirm`,
   {
     expected_plan_version: expectedPlanVersion,
+    client_event_id: clientEventId,
+  },
+).then(r => r.data as LearningTaskPlanRun)
+
+export const replanLearningTaskPlan = (
+  runId: string,
+  targetPackageId: string,
+  failureCode: 'evidence_gap' | 'dependency_blocked' | 'safety_conflict' | 'artifact_rejected' | 'mapping_conflict',
+  observation: string,
+  expectedAnalysisVersion: number,
+  clientEventId?: string,
+) => api.post(
+  `/learning-task-conversion/plans/${encodeURIComponent(runId)}/replan`,
+  {
+    target_package_id: targetPackageId,
+    failure_code: failureCode,
+    observation,
+    expected_analysis_version: expectedAnalysisVersion,
     client_event_id: clientEventId,
   },
 ).then(r => r.data as LearningTaskPlanRun)

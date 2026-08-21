@@ -116,7 +116,7 @@
 
 岗位典型工作任务转化功能向个性化学习交付时，必须使用版本化、知识点级的 JSON，保留任务步骤—知识点—技能点关系和回传地址。`personalized_learning_handoff_opened` 只记录跨功能导航，为零 kernel target；不能由“点击进入”推断学习者已学习、已练习或已掌握。
 
-任务转化进入生成前，`plan_learning_work_task` 可以创建并确认版本化 `TaskPlan`。`learning_work_task_plan_created` 与 `learning_work_task_plan_confirmed` 只记录计划产物和明确确认，均为零 kernel target；Plan 内容、确认和后续执行状态都不能作为掌握证据。具体接口与阶段边界见 `docs/LEARNING_WORK_TASK_PLAN.md`。
+任务转化进入生成前，`plan_learning_work_task` 可以创建、确认并局部重规划版本化 `TaskPlan`。`learning_work_task_plan_created`、`learning_work_task_plan_confirmed` 与 `learning_work_task_plan_replanned` 只记录计划产物、明确确认和运营修订，均为零 kernel target；Plan 内容、确认和后续执行状态都不能作为掌握证据。具体接口与阶段边界见 `docs/LEARNING_WORK_TASK_PLAN.md`。
 
 破坏性接口调整必须保留迁移说明。仅增加讲法、模型或供应商 adapter，不应改变 EvidenceEvent 和五核语义。
 

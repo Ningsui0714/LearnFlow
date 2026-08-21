@@ -407,6 +407,7 @@ EVENTS = {
         _event("assessment_generated", "generate_assessment", (), "artifact"),
         _event("learning_work_task_plan_created", "plan_learning_work_task", (), "artifact", origin="companion"),
         _event("learning_work_task_plan_confirmed", "plan_learning_work_task", (), "confirmed_action", origin="companion"),
+        _event("learning_work_task_plan_replanned", "plan_learning_work_task", (), "operational", origin="companion"),
         _event("learning_work_task_generated", "generate_learning_work_task", (), "artifact", origin="companion"),
         _event("learning_work_task_generation_follow_up", "generate_learning_work_task", (), "operational", origin="companion"),
         _event("learning_work_task_review_submitted", "review_learning_work_task", (), "operational", origin="companion"),

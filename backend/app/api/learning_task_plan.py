@@ -1,7 +1,7 @@
 """Learner-scoped API for the first, auditable Agent Plan stage."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path
@@ -17,6 +17,10 @@ from app.services.learning_runtime import record_event
 from app.services.learning_task_plan_gateway import (
     LearningTaskPlanError,
     LearningTaskPlanGateway,
+)
+from app.services.learning_task_plan_orchestrator import (
+    build_planning_analysis,
+    replan_analysis,
 )
 
 
@@ -34,6 +38,17 @@ class LearningTaskPlanCreateRequest(BaseModel):
 
 class LearningTaskPlanConfirmRequest(BaseModel):
     expected_plan_version: int = Field(ge=1, le=1000)
+    client_event_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+
+class LearningTaskPlanReplanRequest(BaseModel):
+    target_package_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    failure_code: Literal[
+        "evidence_gap", "dependency_blocked", "safety_conflict",
+        "artifact_rejected", "mapping_conflict",
+    ]
+    observation: str = Field(min_length=4, max_length=500)
+    expected_analysis_version: int = Field(ge=1, le=1000)
     client_event_id: str | None = Field(default=None, min_length=3, max_length=160)
 
 
@@ -87,11 +102,30 @@ async def _owned_plan_message(
     raise HTTPException(status_code=404, detail="未找到当前学习者的任务 Plan")
 
 
-def _response(run: dict[str, Any], message: str) -> dict[str, Any]:
+def _analysis_for(
+    run: dict[str, Any],
+    message: AgentMessage | None = None,
+) -> dict[str, Any]:
+    stored = (message.meta_data or {}).get("planning_analysis") if message else None
+    if (
+        isinstance(stored, dict)
+        and stored.get("run_id") == run.get("run_id")
+        and stored.get("plan_version") == run.get("plan", {}).get("plan_version")
+    ):
+        return stored
+    return build_planning_analysis(run)
+
+
+def _response(
+    run: dict[str, Any],
+    message: str,
+    analysis: dict[str, Any],
+) -> dict[str, Any]:
     return {
         **run,
         "message": message,
         "workspace_path": f"/learning-task-plans/{run['run_id']}",
+        "planning_analysis": analysis,
     }
 
 
@@ -129,7 +163,7 @@ async def create_learning_task_plan(
             run = await _remote_or_snapshot(existing)
         except LearningTaskPlanError as exc:
             _raise_plan_error(exc)
-        return _response(run, existing.content)
+        return _response(run, existing.content, _analysis_for(run, existing))
 
     try:
         run = await _gateway().create(request.query.strip())
@@ -147,6 +181,7 @@ async def create_learning_task_plan(
             "请检查目标、成功条件、不确定项和工作包依赖，确认后再进入后续阶段。"
         )
 
+    analysis = build_planning_analysis(run)
     request_statement = sqlite_insert(AgentMessage).values(
         session_id=session.id,
         role="user",
@@ -169,6 +204,7 @@ async def create_learning_task_plan(
             "client_turn_id": request.client_turn_id,
             "plan_run_id": run["run_id"],
             "plan_snapshot": run,
+            "planning_analysis": analysis,
         },
         idempotency_key=result_key,
     ).on_conflict_do_nothing(index_elements=["idempotency_key"])
@@ -190,7 +226,7 @@ async def create_learning_task_plan(
             client_event_id=f"learning-task-plan:{request.client_turn_id}",
         )
     await db.commit()
-    return _response(run, message)
+    return _response(run, message, analysis)
 
 
 @router.get("/{run_id}")
@@ -206,7 +242,7 @@ async def get_learning_task_plan(
         run = await _remote_or_snapshot(message)
     except LearningTaskPlanError as exc:
         _raise_plan_error(exc)
-    return _response(run, message.content)
+    return _response(run, message.content, _analysis_for(run, message))
 
 
 @router.post("/{run_id}/confirm")
@@ -236,6 +272,7 @@ async def confirm_learning_task_plan(
         **(message.meta_data or {}),
         "plan_snapshot": run,
         "confirmed_plan_version": run["plan"]["plan_version"],
+        "planning_analysis": build_planning_analysis(run),
     }
     await record_event(
         db,
@@ -257,4 +294,76 @@ async def confirm_learning_task_plan(
         ),
     )
     await db.commit()
-    return _response(run, confirmed_message)
+    return _response(
+        run,
+        confirmed_message,
+        (message.meta_data or {})["planning_analysis"],
+    )
+
+
+@router.post("/{run_id}/replan")
+async def replan_learning_task_plan(
+    request: LearningTaskPlanReplanRequest,
+    run_id: str = Path(pattern=r"^run_[A-Fa-f0-9]{16,96}$"),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    message = await _owned_plan_message(
+        db, learner_id=current.learner.id, run_id=run_id,
+    )
+    try:
+        run = await _remote_or_snapshot(message)
+    except LearningTaskPlanError as exc:
+        _raise_plan_error(exc)
+    current_analysis = _analysis_for(run, message)
+    try:
+        analysis = replan_analysis(
+            run,
+            current_analysis,
+            target_package_id=request.target_package_id,
+            failure_code=request.failure_code,
+            observation=request.observation,
+            expected_analysis_version=request.expected_analysis_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    replan_message = (
+        f"局部重规划 v{analysis['analysis_version']} 已生成："
+        f"仅重算 {len(analysis['revision_history'][-1]['affected_package_ids'])} 个受影响工作包，"
+        "其余工作包保持冻结；该版本尚未执行。"
+    )
+    message.content = replan_message
+    message.meta_data = {
+        **(message.meta_data or {}),
+        "plan_snapshot": run,
+        "planning_analysis": analysis,
+    }
+    await record_event(
+        db,
+        learner_id=current.learner.id,
+        event_type="learning_work_task_plan_replanned",
+        source="learning_task_conversion",
+        session_id=message.session_id,
+        payload={
+            "run_id": run_id,
+            "plan_version": run["plan"]["plan_version"],
+            "analysis_version": analysis["analysis_version"],
+            "target_package_id": request.target_package_id,
+            "failure_code": request.failure_code,
+            "affected_package_count": len(
+                analysis["revision_history"][-1]["affected_package_ids"]
+            ),
+        },
+        artifact_refs=[
+            f"learning-task-plan:{run_id}",
+            f"learning-task-plan-revision:{analysis['active_revision_id']}",
+        ],
+        client_event_id=(
+            request.client_event_id
+            or f"learning-task-plan-replan:{current.learner.id}:{run_id}:"
+            f"{analysis['analysis_version']}"
+        ),
+    )
+    await db.commit()
+    return _response(run, replan_message, analysis)

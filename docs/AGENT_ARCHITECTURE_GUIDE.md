@@ -460,7 +460,7 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |
 | `/projects/:id/checkpoints/:id` | 正式讲义、关卡学习与选中内容追问 |
 | `/projects/:id/checkpoints/:id/exercises` | 概念验证、代码实践与尝试结果 |
-| `/learning-task-plans/:runId` | 学习型工作任务的版本化 Plan、任务契约、阻塞项和工作包依赖 |
+| `/learning-task-plans/:runId` | 学习型工作任务的四层任务树、依赖 DAG、三候选 Plan、六维评审、局部重规划和版本账本 |
 | `/wf03/tasks/:taskCardId` | 已交付学习型工作任务的步骤、产物、验收与关系复核 |
 | `/personalized-learning/tasks/:taskCardId/knowledge/:knowledgeId` | 预览知识点级交接，并在中央工作区嵌入下游个性化学习项目 |
 | `/profile` | 基本画像、五维友好记忆和学习旅程 Badge |
@@ -601,7 +601,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 本地 Agent Broker、Profile、隔离与双确认 | `backend/app/services/local_agent_broker.py`、`backend/app/api/local_agent.py` |
 | 代码解释与审阅 | `backend/app/services/code_agent.py` |
 | 动画与静态图决策 | `backend/app/services/animation_agent.py` |
-| 学习型工作任务 Plan | `backend/app/api/learning_task_plan.py`、`backend/app/services/learning_task_plan_gateway.py`、`frontend/src/pages/LearningTaskPlanPage.tsx` |
+| 学习型工作任务 Plan | `backend/app/api/learning_task_plan.py`、`backend/app/services/learning_task_plan_gateway.py`、`backend/app/services/learning_task_plan_orchestrator.py`、`frontend/src/pages/LearningTaskPlanPage.tsx` |
 | 学习型工作任务与个性化学习交接 | `backend/app/api/learning_task_conversion.py`、`frontend/src/pages/PersonalizedLearningEntryPage.tsx` |
 | 后台任务编排 | `backend/app/services/task_runners.py` |
 | 记忆图谱写入与查询 | `backend/app/services/memory_graph.py` |

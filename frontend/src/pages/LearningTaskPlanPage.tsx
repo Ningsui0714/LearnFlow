@@ -1,270 +1,857 @@
-import { useCallback, useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowRight, Check, CheckCircle2, CircleDot,
-  FileJson2, GitBranch, RefreshCw, ShieldCheck,
-} from 'lucide-react'
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  BrainCircuit,
+  Check,
+  CheckCircle2,
+  CircleDot,
+  FileJson2,
+  GitBranch,
+  Gauge,
+  Layers3,
+  Network,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  ShieldAlert,
+} from "lucide-react";
 import {
-  confirmLearningTaskPlan, getLearningTaskPlan,
-  type LearningTaskPlanRun, type LearningTaskPlanWorkPackage,
-} from '../services/api'
-import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+  confirmLearningTaskPlan,
+  getLearningTaskPlan,
+  replanLearningTaskPlan,
+  type LearningTaskPlanCandidate,
+  type LearningTaskPlanCritic,
+  type LearningTaskPlanRun,
+} from "../services/api";
+import { useWorkspaceTitle } from "../components/workspace/WorkspaceContext";
 
-const phaseLabels: Record<LearningTaskPlanRun['phase'], string> = {
-  INTAKE: '等待任务明确',
-  CONTRACT_READY: '计划待确认',
-  PLAN_READY: '计划已就绪',
-  EVIDENCE_READY: '证据已就绪',
-  STEP_PLAN_READY: '步骤计划已就绪',
-  CANDIDATES_READY: '候选已就绪',
-  REVIEWED: '评审完成',
-  PATCH_REQUIRED: '需要局部修订',
-  COMMIT_READY: '等待交付',
-  COMMITTED: '已交付',
-  FAILED: '运行失败',
-}
+const phaseLabels: Record<LearningTaskPlanRun["phase"], string> = {
+  INTAKE: "等待任务明确",
+  CONTRACT_READY: "计划待确认",
+  PLAN_READY: "计划已就绪",
+  EVIDENCE_READY: "证据已就绪",
+  STEP_PLAN_READY: "步骤计划已就绪",
+  CANDIDATES_READY: "候选已就绪",
+  REVIEWED: "评审完成",
+  PATCH_REQUIRED: "需要局部修订",
+  COMMIT_READY: "等待交付",
+  COMMITTED: "已交付",
+  FAILED: "运行失败",
+};
 
 const roleLabels: Record<string, string> = {
-  task_contract_compiler: '任务契约编译',
-  plan_builder: '计划构建',
-  evidence_explorer: '证据探索',
-  candidate_planner: '候选规划',
-  critic_committee: '独立评审',
-  targeted_patch_agent: '定向修订',
-  artifact_publisher: '交付编译',
-}
+  task_contract_compiler: "任务契约编译",
+  plan_builder: "分层计划构建",
+  evidence_explorer: "证据探索",
+  candidate_planner: "候选规划",
+  critic_committee: "独立评审",
+  targeted_patch_agent: "定向修订",
+  artifact_publisher: "交付编译",
+};
 
-const artifactLabels: Record<string, string> = {
-  task_contract: '任务契约',
-  task_plan: '任务 Plan',
-  evidence_ledger: '证据账本',
-  step_plan: '作业步骤 Plan',
-  candidate_set: '候选任务集',
-  critic_report: '评审报告',
-  patch_plan: '局部修订计划',
-  selected_candidate: '选定候选',
-  delivery_bundle: '最终交付包',
-  failure_report: '失败报告',
-}
+const criticLabels: Record<string, string> = {
+  task_identity: "任务同一性",
+  dependency: "依赖可执行性",
+  evidence: "证据充分性",
+  safety: "安全边界",
+  deliverable: "交付可验收性",
+  teaching_fit: "教学实施适配",
+};
 
-const toolLabels: Record<string, string> = {
-  task_database: '任务数据库',
-  knowledge_base_pro: '知识库 Pro',
-  official_web: '权威 Web',
-  evidence_verifier: '证据校验器',
-  candidate_generator: '候选生成器',
-  candidate_critic: '候选评审器',
-  task_compiler: '任务编译器',
-}
+const scoreLabels: Record<string, string> = {
+  fidelity: "任务保真",
+  executability: "可执行",
+  evidence: "证据",
+  safety: "安全",
+  teaching_fit: "教学适配",
+  efficiency: "效率",
+};
 
-const evidenceLabels: Record<string, string> = {
-  upstream: '上游数据',
-  database: '任务数据库',
-  knowledge_base: '知识库',
-  official_web: '权威网络来源',
-  official_or_upstream: '权威来源或上游确认',
-  user_confirmation: '用户确认',
-}
+const decisionLabels: Record<string, string> = {
+  SELECT_CANDIDATE: "候选已选定",
+  REQUEST_EVIDENCE: "先补充证据",
+  LOCAL_REPLAN: "进入局部重规划",
+  STOP: "停止并人工复核",
+};
 
-function WorkPackageCard({ item, index }: { item: LearningTaskPlanWorkPackage; index: number }) {
+const replanLabels = {
+  evidence_gap: "证据缺口",
+  dependency_blocked: "依赖阻塞",
+  safety_conflict: "安全冲突",
+  artifact_rejected: "产物未通过",
+  mapping_conflict: "知识技能映射冲突",
+} as const;
+
+function ScoreBar({ name, value }: { name: string; value: number }) {
   return (
-    <article className="relative rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start gap-3">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">
-          {index + 1}
-        </span>
-        <div className="min-w-0 flex-1">
+    <div>
+      <div className="mb-1 flex items-center justify-between text-[10px]">
+        <span className="text-slate-500">{scoreLabels[name] || name}</span>
+        <span className="font-mono font-semibold text-slate-700">{value}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500"
+          style={{ width: `${value}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CandidateCard({
+  item,
+  selected,
+}: {
+  item: LearningTaskPlanCandidate;
+  selected: boolean;
+}) {
+  return (
+    <article
+      className={`min-w-0 rounded-2xl border p-4 shadow-sm ${selected ? "border-indigo-400 bg-indigo-50/60 ring-2 ring-indigo-100" : "border-slate-200 bg-white"}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-950">{roleLabels[item.agent_role] || item.agent_role}</h3>
-            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800">
-              输出：{artifactLabels[item.expected_artifact] || item.expected_artifact}
-            </span>
+            <h3 className="text-sm font-semibold text-slate-950">
+              {item.title}
+            </h3>
+            {selected && (
+              <span className="rounded-full bg-indigo-700 px-2 py-0.5 text-[9px] font-semibold text-white">
+                决策选中
+              </span>
+            )}
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-600">{item.objective}</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">依赖</p>
-              <p className="mt-1 text-[11px] text-slate-700">{item.depends_on.length ? item.depends_on.join('、') : '无，可直接开始'}</p>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">允许工具</p>
-              <p className="mt-1 text-[11px] leading-4 text-slate-700">{item.allowed_tools.map(tool => toolLabels[tool] || tool).join('、')}</p>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-3 py-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">完成条件</p>
-              <p className="mt-1 text-[11px] leading-4 text-slate-700">{item.completion_condition}</p>
-            </div>
-          </div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            {item.parallel_waves.length} 个依赖波次 ·{" "}
+            {item.ordered_package_ids.length} 个工作包
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p className="text-2xl font-bold text-slate-950">
+            {item.weighted_score}
+          </p>
+          <p className="text-[9px] text-slate-400">综合分</p>
         </div>
       </div>
-      {index > 0 && <ArrowRight size={14} className="absolute -top-4 left-5 rotate-90 text-slate-300" />}
+      <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2">
+        {Object.entries(item.scores).map(([name, value]) => (
+          <ScoreBar key={name} name={name} value={value} />
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
+        {item.ordered_package_ids.map((id, index) => (
+          <div key={id} className="flex items-center gap-1.5">
+            {index > 0 && <ArrowRight size={10} className="text-slate-300" />}
+            <span
+              className="max-w-28 truncate rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-[9px] text-slate-600"
+              title={id}
+            >
+              {id}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 space-y-1 border-t border-slate-200/70 pt-3">
+        {item.tradeoffs.slice(0, 3).map((text) => (
+          <p key={text} className="text-[10px] leading-4 text-slate-500">
+            · {text}
+          </p>
+        ))}
+      </div>
     </article>
-  )
+  );
+}
+
+function CriticCell({ item }: { item: LearningTaskPlanCritic }) {
+  const tone =
+    item.verdict === "pass"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : item.verdict === "fail"
+        ? "border-red-200 bg-red-50 text-red-800"
+        : "border-amber-200 bg-amber-50 text-amber-800";
+  return (
+    <div className={`min-w-0 rounded-xl border p-3 ${tone}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-semibold">
+          {criticLabels[item.dimension]}
+        </p>
+        <span className="font-mono text-sm font-bold">{item.score}</span>
+      </div>
+      <p className="mt-2 text-[10px] leading-4 opacity-80">
+        {item.findings[0]}
+      </p>
+    </div>
+  );
 }
 
 export default function LearningTaskPlanPage() {
-  const { runId = '' } = useParams()
-  const [run, setRun] = useState<LearningTaskPlanRun | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [confirming, setConfirming] = useState(false)
-  const [error, setError] = useState('')
+  const { runId = "" } = useParams();
+  const [run, setRun] = useState<LearningTaskPlanRun | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState(false);
+  const [error, setError] = useState("");
+  const [targetPackage, setTargetPackage] = useState("");
+  const [failureCode, setFailureCode] =
+    useState<keyof typeof replanLabels>("evidence_gap");
+  const [observation, setObservation] = useState(
+    "当前检查结果未通过，需要只重规划受影响工作包及其后继依赖。",
+  );
 
-  useWorkspaceTitle(run?.plan.goal || '学习型任务 Plan', { kind: 'wf03' })
+  useWorkspaceTitle(run?.plan.goal || "学习型任务 Plan", { kind: "wf03" });
 
   const load = useCallback(async () => {
-    if (!runId) return
-    setLoading(true)
-    setError('')
+    if (!runId) return;
+    setLoading(true);
+    setError("");
     try {
-      setRun(await getLearningTaskPlan(runId))
+      const value = await getLearningTaskPlan(runId);
+      setRun(value);
+      setTargetPackage(
+        (current) =>
+          current ||
+          value.planning_analysis.risks[0]?.package_id ||
+          value.plan.work_packages[0]?.package_id ||
+          "",
+      );
     } catch (failure: any) {
-      setError(failure?.response?.data?.detail || '任务 Plan 加载失败。')
+      setError(failure?.response?.data?.detail || "任务 Plan 加载失败。");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [runId])
+  }, [runId]);
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const confirm = async () => {
-    if (!run || run.phase !== 'CONTRACT_READY' || confirming) return
-    setConfirming(true)
-    setError('')
+    if (!run || run.phase !== "CONTRACT_READY" || acting) return;
+    setActing(true);
+    setError("");
     try {
-      const result = await confirmLearningTaskPlan(
-        run.run_id,
-        run.plan.plan_version,
-        globalThis.crypto?.randomUUID?.() || `plan-confirm-${run.run_id}-${Date.now()}`,
-      )
-      setRun(result)
+      setRun(
+        await confirmLearningTaskPlan(
+          run.run_id,
+          run.plan.plan_version,
+          globalThis.crypto?.randomUUID?.() || `plan-confirm-${Date.now()}`,
+        ),
+      );
     } catch (failure: any) {
-      setError(failure?.response?.data?.detail || '任务 Plan 确认失败。')
+      setError(failure?.response?.data?.detail || "任务 Plan 确认失败。");
     } finally {
-      setConfirming(false)
+      setActing(false);
     }
-  }
+  };
 
-  if (loading) {
-    return <div className="flex h-full items-center justify-center bg-slate-50 text-sm text-slate-500"><RefreshCw size={16} className="mr-2 animate-spin" />正在恢复任务 Plan…</div>
-  }
+  const replan = async () => {
+    if (!run || !targetPackage || acting) return;
+    setActing(true);
+    setError("");
+    try {
+      setRun(
+        await replanLearningTaskPlan(
+          run.run_id,
+          targetPackage,
+          failureCode,
+          observation,
+          run.planning_analysis.analysis_version,
+          globalThis.crypto?.randomUUID?.() || `plan-replan-${Date.now()}`,
+        ),
+      );
+    } catch (failure: any) {
+      setError(failure?.response?.data?.detail || "局部重规划失败。");
+    } finally {
+      setActing(false);
+    }
+  };
 
-  if (!run) {
+  const phases = useMemo(() => {
+    if (!run) return [];
+    const analysis = run.planning_analysis;
+    return analysis.hierarchy
+      .filter((node) => node.node_type === "phase")
+      .map((phase) => ({
+        ...phase,
+        packages: analysis.hierarchy.filter(
+          (node) =>
+            node.node_type === "work_package" &&
+            node.parent_id === phase.node_id,
+        ),
+      }));
+  }, [run]);
+
+  if (loading)
     return (
-      <div className="flex h-full items-center justify-center bg-slate-50 p-8">
-        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
-          <AlertTriangle className="mx-auto text-red-500" size={24} />
-          <p className="mt-3 text-sm text-slate-800">{error || '没有找到任务 Plan。'}</p>
-          <button type="button" onClick={load} className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white">重新加载</button>
+      <div className="flex h-full items-center justify-center bg-slate-50 text-sm text-slate-500">
+        <RefreshCw size={16} className="mr-2 animate-spin" />
+        正在恢复多候选 Plan…
+      </div>
+    );
+  if (!run)
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center">
+          <AlertTriangle className="mx-auto text-red-500" />
+          <p className="mt-3 text-sm">{error || "没有找到任务 Plan。"}</p>
+          <button
+            onClick={load}
+            className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs text-white"
+          >
+            重新加载
+          </button>
         </div>
       </div>
-    )
-  }
+    );
 
-  const contract = run.task_contract || {}
-  const confirmed = run.phase === 'PLAN_READY' || !['INTAKE', 'CONTRACT_READY'].includes(run.phase)
+  const analysis = run.planning_analysis;
+  const selectedCandidate = analysis.candidates.find(
+    (item) => item.candidate_id === analysis.decision.selected_candidate_id,
+  );
+  const contract = run.task_contract || {};
+  const confirmed = run.phase !== "CONTRACT_READY" && run.phase !== "INTAKE";
 
   return (
-    <div className="h-full overflow-y-auto bg-slate-50 px-5 py-6 sm:px-8">
-      <div className="mx-auto max-w-5xl pb-12">
-        <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="h-full overflow-y-auto bg-[#f4f6f8] px-3 py-4 sm:px-5 lg:px-7">
+      <div className="mx-auto min-w-0 max-w-[1380px] pb-12">
+        <header className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-white shadow-xl">
+          <div className="grid min-w-0 gap-5 p-5 2xl:grid-cols-[1fr_auto] 2xl:p-6">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${confirmed ? 'bg-emerald-100 text-emerald-800' : run.phase === 'INTAKE' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}`}>
+                <span className="rounded-full bg-indigo-500/20 px-2.5 py-1 text-[10px] font-semibold text-indigo-200">
                   {phaseLabels[run.phase]}
                 </span>
-                <span className="text-[10px] text-slate-400">Plan v{run.plan.plan_version} · checkpoint {run.checkpoint_version}</span>
+                <span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-slate-300">
+                  Plan v{run.plan.plan_version} · 分析 v
+                  {analysis.analysis_version}
+                </span>
+                <span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-slate-300">
+                  未执行 · 可审计
+                </span>
               </div>
-              <h1 className="mt-3 text-xl font-bold tracking-tight text-slate-950 sm:text-2xl">{run.plan.goal}</h1>
-              <p className="mt-2 text-xs leading-5 text-slate-500">这是可检查的计划产物，不包含隐藏思维链。后续阶段必须沿用同一 Run 和任务语义指纹。</p>
+              <h1 className="mt-3 max-w-4xl text-xl font-bold tracking-tight sm:text-2xl lg:text-3xl">
+                {run.plan.goal}
+              </h1>
+              <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-400">
+                显式规划产物：任务树、依赖图、候选搜索、评审矩阵、决策门禁和局部重规划均可检查；不展示或保存隐藏思维链。
+              </p>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <button type="button" onClick={load} disabled={loading} className="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50">
-                <RefreshCw size={13} />刷新
+            <div className="flex flex-wrap items-start gap-2 2xl:justify-end">
+              <button
+                onClick={load}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-white/15 px-3 text-xs text-slate-200 hover:bg-white/10"
+              >
+                <RefreshCw size={13} />
+                刷新
               </button>
-              {run.phase === 'CONTRACT_READY' && (
-                <button type="button" onClick={confirm} disabled={confirming} className="flex h-9 items-center gap-1.5 rounded-lg bg-indigo-700 px-3.5 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">
-                  {confirming ? <RefreshCw size={13} className="animate-spin" /> : <ShieldCheck size={14} />}
-                  {confirming ? '正在校验' : '确认并提交 Plan'}
+              {run.phase === "CONTRACT_READY" && (
+                <button
+                  onClick={confirm}
+                  disabled={acting}
+                  className="flex h-9 items-center gap-1.5 rounded-lg bg-indigo-500 px-3.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-50"
+                >
+                  <ShieldCheck size={14} />
+                  确认 Plan
                 </button>
               )}
             </div>
           </div>
-          {error && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
-          {confirmed && (
-            <div className="mt-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs leading-5 text-emerald-900">
-              <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
-              <span>Plan 已通过远端语义指纹、依赖图和工具权限校验，当前停在 PLAN_READY。证据探索与执行尚未启动。</span>
-            </div>
-          )}
-        </header>
-
-        <section className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-          <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2"><FileJson2 size={17} className="text-indigo-700" /><h2 className="text-sm font-semibold text-slate-950">任务契约</h2></div>
-            <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-              <div><dt className="text-slate-400">用户原始任务</dt><dd className="mt-1 leading-5 text-slate-800">{String(contract.raw_input || contract.normalized_input || '')}</dd></div>
-              <div><dt className="text-slate-400">输入层级</dt><dd className="mt-1 text-slate-800">{contract.input_level === 'single_work_task' ? '单个可执行工作任务' : '需要进一步明确'}</dd></div>
-              <div><dt className="text-slate-400">动作与对象</dt><dd className="mt-1 text-slate-800">{[contract.action, contract.object].filter(Boolean).join(' · ') || '待补充'}</dd></div>
-              <div><dt className="text-slate-400">预期交付</dt><dd className="mt-1 text-slate-800">{String(contract.expected_deliverable || '待补充')}</dd></div>
-            </dl>
-            <p className="mt-4 break-all rounded-lg bg-slate-50 px-3 py-2 font-mono text-[9px] text-slate-400">语义指纹：{run.plan.task_contract_fingerprint}</p>
-          </article>
-
-          <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center gap-2"><Check size={17} className="text-emerald-700" /><h2 className="text-sm font-semibold text-slate-950">成功条件</h2></div>
-            <ul className="mt-3 space-y-2">
-              {run.plan.success_criteria.map(item => <li key={item} className="flex gap-2 text-xs leading-5 text-slate-700"><Check size={13} className="mt-1 shrink-0 text-emerald-600" />{item}</li>)}
-            </ul>
-          </article>
-        </section>
-
-        <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2"><CircleDot size={17} className="text-amber-600" /><h2 className="text-sm font-semibold text-slate-950">规划前需要解决的不确定项</h2></div>
-            <span className="text-[10px] text-slate-400">{run.plan.unknowns.filter(item => item.blocking).length} 个阻塞项</span>
-          </div>
-          {run.plan.unknowns.length ? (
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {run.plan.unknowns.map(item => (
-                <div key={item.unknown_id} className={`rounded-xl border p-3 ${item.blocking ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
-                  <p className="text-xs font-medium leading-5 text-slate-900">{item.question}</p>
-                  <p className="mt-1 text-[10px] text-slate-500">所需依据：{evidenceLabels[item.required_evidence] || item.required_evidence}</p>
-                </div>
-              ))}
-            </div>
-          ) : <p className="mt-3 text-xs text-slate-500">任务契约没有待补充的不确定项。</p>}
-        </section>
-
-        <section className="mt-5">
-          <div className="mb-3 flex items-center gap-2"><GitBranch size={17} className="text-indigo-700" /><h2 className="text-sm font-semibold text-slate-950">工作包与依赖图</h2></div>
-          <div className="space-y-4">
-            {run.plan.work_packages.map((item, index) => <WorkPackageCard key={item.package_id} item={item} index={index} />)}
-          </div>
-        </section>
-
-        <section className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5">
-          <h2 className="text-sm font-semibold text-slate-950">计划产物链</h2>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {run.plan.work_packages.map((item, index) => (
-              <div key={item.package_id} className="flex items-center gap-2">
-                {index > 0 && <ArrowRight size={13} className="text-indigo-300" />}
-                <span className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-indigo-900">
-                  {artifactLabels[item.expected_artifact] || item.expected_artifact}
-                </span>
+          <div className="grid grid-cols-2 gap-px bg-white/10 sm:grid-cols-3 2xl:grid-cols-6">
+            {[
+              [
+                "层级节点",
+                analysis.metrics.hierarchy_nodes,
+                "目标→阶段→工作包→原子步",
+              ],
+              ["依赖边", analysis.metrics.dependency_edges, "有向无环约束"],
+              ["并行波次", analysis.metrics.parallel_waves, "拓扑调度结果"],
+              ["候选方案", analysis.metrics.candidate_count, "多策略搜索"],
+              ["独立评审", analysis.metrics.critic_count, "六维门禁"],
+              ["修订预算", analysis.repair_budget_remaining, "局部子图重算"],
+            ].map(([label, value, note]) => (
+              <div
+                key={String(label)}
+                className="min-w-0 bg-slate-900 px-4 py-3"
+              >
+                <p className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">
+                  {label}
+                </p>
+                <p className="mt-1 text-lg font-bold">{value}</p>
+                <p className="truncate text-[9px] text-slate-500">{note}</p>
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs leading-5 text-slate-600">当前下一步：{run.next_actions.join('；') || '等待用户确认'}</p>
+        </header>
+
+        {error && (
+          <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+            {error}
+          </p>
+        )}
+
+        <section className="mt-4 grid min-w-0 gap-4 2xl:grid-cols-[1.05fr_1.95fr]">
+          <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2">
+              <FileJson2 size={16} className="text-indigo-700" />
+              <h2 className="text-sm font-semibold">语义锁定与成功契约</h2>
+            </div>
+            <dl className="mt-4 space-y-3 text-xs">
+              <div>
+                <dt className="text-[10px] text-slate-400">用户原始任务</dt>
+                <dd className="mt-1 leading-5 text-slate-800">
+                  {String(
+                    contract.raw_input || contract.normalized_input || "",
+                  )}
+                </dd>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <dt className="text-[10px] text-slate-400">动作 / 对象</dt>
+                  <dd className="mt-1 text-slate-700">
+                    {[contract.action, contract.object]
+                      .filter(Boolean)
+                      .join(" · ") || "由任务语义统一约束"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[10px] text-slate-400">交付结果</dt>
+                  <dd className="mt-1 text-slate-700">
+                    {String(contract.expected_deliverable || "由完成条件约束")}
+                  </dd>
+                </div>
+              </div>
+            </dl>
+            <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
+              {run.plan.success_criteria.map((item) => (
+                <p
+                  key={item}
+                  className="flex gap-2 text-[11px] leading-4 text-slate-600"
+                >
+                  <Check
+                    size={12}
+                    className="mt-0.5 shrink-0 text-emerald-600"
+                  />
+                  {item}
+                </p>
+              ))}
+            </div>
+            <p className="mt-4 break-all rounded-lg bg-slate-50 p-2 font-mono text-[8px] text-slate-400">
+              fingerprint: {run.plan.task_contract_fingerprint}
+            </p>
+          </article>
+          <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Layers3 size={16} className="text-indigo-700" />
+                <h2 className="text-sm font-semibold">四层 HTN 式任务分解</h2>
+              </div>
+              <span className="text-[10px] text-slate-400">
+                Goal → Phase → Work Package → Atomic Step
+              </span>
+            </div>
+            <div className="mt-4 grid min-w-0 gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {phases.map((phase, index) => (
+                <div
+                  key={phase.node_id}
+                  className="min-w-0 rounded-xl border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[9px] font-bold text-white">
+                      {index + 1}
+                    </span>
+                    <h3 className="truncate text-[11px] font-semibold text-slate-900">
+                      {phase.label}
+                    </h3>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {phase.packages.map((item) => (
+                      <div
+                        key={item.node_id}
+                        className="rounded-lg border border-slate-200 bg-white px-2.5 py-2"
+                      >
+                        <p className="truncate text-[10px] font-semibold text-indigo-800">
+                          {roleLabels[
+                            run.plan.work_packages.find(
+                              (pack) => pack.package_id === item.package_id,
+                            )?.agent_role || ""
+                          ] || item.package_id}
+                        </p>
+                        <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-slate-500">
+                          {item.label}
+                        </p>
+                        <p className="mt-1 text-[8px] text-slate-400">
+                          3 个原子步骤
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
         </section>
 
-        <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between"><h2 className="text-sm font-semibold text-slate-950">停止条件与修订预算</h2><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] text-slate-600">最多 {run.plan.repair_budget} 轮局部修订</span></div>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            {run.plan.stop_conditions.map(item => <li key={item} className="flex gap-2 text-xs leading-5 text-slate-600"><AlertTriangle size={13} className="mt-1 shrink-0 text-amber-500" />{item}</li>)}
-          </ul>
+        <section className="mt-4 min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Network size={16} className="text-indigo-700" />
+              <h2 className="text-sm font-semibold">依赖图调度与关键路径</h2>
+            </div>
+            <span className="text-[10px] text-slate-400">
+              只有同一波次可以并行，跨波次必须等待前置产物
+            </span>
+          </div>
+          <div className="mt-4 flex min-w-0 flex-col gap-2 2xl:flex-row 2xl:items-stretch">
+            {analysis.topological_waves.map((wave, waveIndex) => (
+              <div
+                key={waveIndex}
+                className="flex min-w-0 flex-1 items-center gap-2"
+              >
+                {waveIndex > 0 && (
+                  <ArrowRight
+                    size={16}
+                    className="hidden shrink-0 text-indigo-300 2xl:block"
+                  />
+                )}
+                <div className="min-w-0 flex-1 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-indigo-500">
+                    Wave {waveIndex + 1}
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {wave.map((id) => (
+                      <div
+                        key={id}
+                        className={`truncate rounded-md border bg-white px-2 py-1.5 font-mono text-[9px] ${analysis.critical_path.includes(id) ? "border-orange-300 text-orange-700" : "border-indigo-100 text-slate-600"}`}
+                        title={id}
+                      >
+                        {id}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[9px] text-slate-500">
+            <span className="rounded-full bg-orange-100 px-2 py-1 font-semibold text-orange-700">
+              关键路径
+            </span>
+            {analysis.critical_path.map((id, index) => (
+              <span key={id} className="flex items-center gap-2">
+                <span className="font-mono">{id}</span>
+                {index < analysis.critical_path.length - 1 && (
+                  <ArrowRight size={9} />
+                )}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <BrainCircuit size={17} className="text-indigo-700" />
+              <h2 className="text-sm font-semibold">
+                多候选 Plan 搜索与加权选择
+              </h2>
+            </div>
+            <span className="text-[10px] text-slate-500">
+              保真 24% · 执行 20% · 证据 18% · 安全 18% · 教学 12% · 效率 8%
+            </span>
+          </div>
+          <div className="grid min-w-0 gap-3 2xl:grid-cols-3">
+            {analysis.candidates.map((item) => (
+              <CandidateCard
+                key={item.candidate_id}
+                item={item}
+                selected={
+                  item.candidate_id === analysis.decision.selected_candidate_id
+                }
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="mt-4 grid min-w-0 gap-4 2xl:grid-cols-[1.45fr_0.75fr]">
+          <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={16} className="text-indigo-700" />
+              <h2 className="text-sm font-semibold">独立 Critic 委员会</h2>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {analysis.critics.map((item) => (
+                <CriticCell key={item.critic_id} item={item} />
+              ))}
+            </div>
+          </article>
+          <article className="min-w-0 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-white shadow-sm">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Gauge size={16} className="text-emerald-400" />
+                <h2 className="text-sm font-semibold">决策控制器</h2>
+              </div>
+              <span className="text-2xl font-bold text-emerald-400">
+                {analysis.decision.confidence}
+              </span>
+            </div>
+            <p className="mt-4 text-base font-semibold">
+              {decisionLabels[analysis.decision.code]}
+            </p>
+            {selectedCandidate && (
+              <p className="mt-1 text-xs text-indigo-300">
+                {selectedCandidate.title}
+              </p>
+            )}
+            <div className="mt-4 space-y-2">
+              {analysis.decision.reasons.map((item) => (
+                <p
+                  key={item}
+                  className="flex gap-2 text-[10px] leading-4 text-slate-400"
+                >
+                  <CircleDot
+                    size={10}
+                    className="mt-0.5 shrink-0 text-emerald-400"
+                  />
+                  {item}
+                </p>
+              ))}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {analysis.decision.triggered_rules.map((rule) => (
+                <span
+                  key={rule}
+                  className="rounded-md border border-white/10 px-2 py-1 font-mono text-[8px] text-slate-400"
+                >
+                  {rule}
+                </span>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="mt-4 grid min-w-0 gap-4 2xl:grid-cols-2">
+          <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldAlert size={16} className="text-amber-600" />
+                <h2 className="text-sm font-semibold">风险与证据热区</h2>
+              </div>
+              <span className="text-[10px] text-slate-400">
+                {analysis.risks.length} 项
+              </span>
+            </div>
+            <div className="mt-3 space-y-2">
+              {analysis.risks.map((risk) => (
+                <div
+                  key={risk.risk_id}
+                  className="grid min-w-0 grid-cols-[auto_1fr_auto] items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
+                >
+                  <span
+                    className={`mt-0.5 h-2.5 w-2.5 rounded-full ${risk.likelihood === "high" ? "bg-red-500" : risk.likelihood === "medium" ? "bg-amber-500" : "bg-emerald-500"}`}
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-[9px] text-slate-500">
+                      {risk.package_id}
+                    </p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-700">
+                      {risk.mitigation}
+                    </p>
+                  </div>
+                  <span className="rounded bg-white px-2 py-1 text-[8px] text-slate-500">
+                    {risk.category}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </article>
+          <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <RotateCcw size={16} className="text-indigo-700" />
+                <h2 className="text-sm font-semibold">局部子图重规划</h2>
+              </div>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-[9px] text-slate-600">
+                剩余 {analysis.repair_budget_remaining} 轮
+              </span>
+            </div>
+            <p className="mt-2 text-[10px] leading-4 text-slate-500">
+              选择失败点后，只重算该工作包及其后继依赖；语义指纹与未受影响工作包保持冻结。
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <select
+                value={targetPackage}
+                onChange={(event) => setTargetPackage(event.target.value)}
+                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-700"
+              >
+                {run.plan.work_packages.map((item) => (
+                  <option key={item.package_id} value={item.package_id}>
+                    {item.package_id} ·{" "}
+                    {roleLabels[item.agent_role] || item.agent_role}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={failureCode}
+                onChange={(event) =>
+                  setFailureCode(
+                    event.target.value as keyof typeof replanLabels,
+                  )
+                }
+                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-700"
+              >
+                {Object.entries(replanLabels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={observation}
+              onChange={(event) => setObservation(event.target.value)}
+              rows={2}
+              className="mt-2 w-full resize-none rounded-lg border border-slate-200 p-3 text-[10px] leading-4 text-slate-700"
+            />
+            <button
+              onClick={replan}
+              disabled={
+                acting ||
+                analysis.repair_budget_remaining <= 0 ||
+                observation.trim().length < 4
+              }
+              className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40"
+            >
+              {acting ? (
+                <RefreshCw size={13} className="animate-spin" />
+              ) : (
+                <GitBranch size={13} />
+              )}
+              生成局部修订版本
+            </button>
+          </article>
+        </section>
+
+        <section className="mt-4 min-w-0 rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <FileJson2 size={16} className="text-indigo-700" />
+              <h2 className="text-sm font-semibold">规划输出与后续接口</h2>
+            </div>
+            <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[9px] text-indigo-700">
+              planning-analysis-v1 · not executed
+            </span>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
+            {[
+              [
+                '选定候选 Plan',
+                selectedCandidate?.title || '等待证据门禁通过',
+                analysis.decision.selected_candidate_id || 'not_selected',
+              ],
+              [
+                '依赖调度结果',
+                `${analysis.topological_waves.length} 个波次 · ${analysis.critical_path.length} 个关键路径节点`,
+                'topological_schedule.json',
+              ],
+              [
+                '独立评审报告',
+                `${analysis.critics.filter((item) => item.verdict === 'pass').length} 通过 · ${analysis.critics.filter((item) => item.verdict === 'warning').length} 警告`,
+                'critic_report.json',
+              ],
+              [
+                '版本化规划包',
+                `Plan v${run.plan.plan_version} · Analysis v${analysis.analysis_version}`,
+                `${analysis.active_revision_id}.json`,
+              ],
+            ].map(([title, description, artifact]) => (
+              <div
+                key={title}
+                className="min-w-0 rounded-xl border border-indigo-100 bg-white p-3"
+              >
+                <p className="text-[10px] font-semibold text-slate-900">
+                  {title}
+                </p>
+                <p className="mt-2 text-[10px] leading-4 text-slate-600">
+                  {description}
+                </p>
+                <p className="mt-3 truncate font-mono text-[8px] text-indigo-500">
+                  {artifact}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+            <span className="font-semibold text-indigo-800">下一阶段接口</span>
+            <ArrowRight size={11} />
+            <span>证据探索</span>
+            <ArrowRight size={11} />
+            <span>作业步骤编译</span>
+            <ArrowRight size={11} />
+            <span>HTML / JSON / 个性化学习交接</span>
+            <span className="rounded bg-amber-100 px-2 py-1 text-amber-800">
+              尚未执行
+            </span>
+          </div>
+        </section>
+
+        <section className="mt-4 min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Activity size={16} className="text-indigo-700" />
+            <h2 className="text-sm font-semibold">Plan 版本账本</h2>
+          </div>
+          <div className="mt-4 flex min-w-0 flex-col gap-3 2xl:flex-row">
+            {analysis.revision_history.map((revision, index) => (
+              <div
+                key={revision.revision_id}
+                className="flex min-w-0 flex-1 items-stretch gap-3"
+              >
+                {index > 0 && (
+                  <ArrowRight
+                    size={14}
+                    className="hidden shrink-0 self-center text-slate-300 2xl:block"
+                  />
+                )}
+                <div
+                  className={`min-w-0 flex-1 rounded-xl border p-3 ${revision.revision_id === analysis.active_revision_id ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-slate-50"}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-mono text-[9px] font-semibold text-slate-700">
+                      {revision.revision_id}
+                    </p>
+                    <span className="text-[9px] text-slate-400">
+                      分析 v{revision.analysis_version}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-[10px] leading-4 text-slate-600">
+                    {revision.cause}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <span className="rounded bg-white px-2 py-1 text-[8px] text-slate-500">
+                      影响 {revision.affected_package_ids.length}
+                    </span>
+                    <span className="rounded bg-white px-2 py-1 text-[8px] text-slate-500">
+                      冻结 {revision.preserved_package_ids.length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div
+            className={`mt-4 flex items-start gap-2 rounded-xl border px-3 py-3 text-[10px] leading-4 ${confirmed ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
+          >
+            <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+            <span>
+              {confirmed
+                ? "基础 Plan 已确认；当前显示的是可执行前的规划分析与版本记录，尚未写入学习掌握证据。"
+                : "基础 Plan 等待确认。确认只推进到 PLAN_READY，不会把规划结果误记为执行或掌握。"}
+            </span>
+          </div>
         </section>
       </div>
     </div>
-  )
+  );
 }

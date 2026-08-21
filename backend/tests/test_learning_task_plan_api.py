@@ -118,6 +118,22 @@ def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):
         assert confirmed.status_code == 200
         assert confirmed.json()["phase"] == "PLAN_READY"
         assert confirmed.json()["plan"]["plan_version"] == 2
+        assert confirmed.json()["planning_analysis"]["analysis_version"] == 1
+        assert len(confirmed.json()["planning_analysis"]["candidates"]) == 3
+
+        replanned = client.post(
+            f"/api/learning-task-conversion/plans/{run_id}/replan",
+            json={
+                "target_package_id": "wp_evidence",
+                "failure_code": "evidence_gap",
+                "observation": "当前来源不足以支持验收标准，需要刷新证据。",
+                "expected_analysis_version": 1,
+                "client_event_id": "replan-001",
+            },
+        )
+        assert replanned.status_code == 200
+        assert replanned.json()["planning_analysis"]["analysis_version"] == 2
+        assert replanned.json()["planning_analysis"]["repair_budget_remaining"] == 1
 
         loaded_session = client.get(f"/api/agent/sessions/{session['id']}").json()
         plan_messages = [
@@ -126,6 +142,7 @@ def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):
         ]
         assert len(plan_messages) == 1
         assert plan_messages[0]["meta_data"]["confirmed_plan_version"] == 2
+        assert plan_messages[0]["meta_data"]["planning_analysis"]["analysis_version"] == 2
 
 
 def test_plan_api_requires_login_and_learner_ownership(monkeypatch):

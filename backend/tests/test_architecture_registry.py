@@ -57,6 +57,7 @@ def test_learning_work_task_events_are_zero_kernel_adapter_events():
     expected = {
         "learning_work_task_plan_created",
         "learning_work_task_plan_confirmed",
+        "learning_work_task_plan_replanned",
         "learning_work_task_generated",
         "learning_work_task_generation_follow_up",
         "learning_work_task_review_submitted",
