@@ -2834,7 +2834,7 @@
           const improved = item.status === "improved_not_deleted";
           const status = improved ? "已独立改正" : "待复习";
           const errors = Array.isArray(item.last_error_points) ? item.last_error_points : [];
-          const errorText = errors.map((error) => error.diagnosis || error.error_type || error.error_id).filter(Boolean).join("；") || "建议回顾本题涉及的核心规则。";
+          const errorText = errors.map((error) => error.root_cause || error.expected_behavior || error.diagnosis || error.error_type || error.error_id).filter(Boolean).join("；") || "建议回顾本题涉及的核心规则。";
           const when = item.updated_at ? new Date(item.updated_at).toLocaleString("zh-CN") : "—";
           return '<article class="wrongbook-entry"><div class="wrongbook-entry-head"><i data-lucide="' + (improved ? "circle-check" : "circle-alert") + '"></i><div class="wrongbook-entry-copy"><strong>' + escapeHtml(item.knowledge_point_id || "当前知识点") + '</strong><small>已作答 ' + escapeHtml(item.attempt_count || 0) + ' 次 · 最近更新 ' + escapeHtml(when) + '</small></div><span class="wrongbook-status' + (improved ? " improved" : "") + '">' + status + '</span></div><p>' + escapeHtml(errorText) + '</p><div class="wrongbook-actions"><button type="button" data-wrongbook-learn="' + escapeHtml(item.knowledge_point_id || "") + '"><i data-lucide="book-open"></i>学习知识点</button></div></article>';
         }).join("") + '</div></details>'
