@@ -4,6 +4,34 @@
 
 ![证据先行的学习型任务 Agent Plan 深层微流程架构](competition/assets/learning-task-plan-deep-microflow-v7.png)
 
+## 六阶段独立讲解版
+
+总览图用于说明完整闭环；以下六张独立图用于逐阶段汇报，每张都展开该阶段内部的微步骤、分支、汇合门禁和版本化产物。
+
+### 01 任务契约编译
+
+![任务契约编译](competition/assets/learning-task-plan-stage-01-contract-v8.png)
+
+### 02 环境落地与澄清
+
+![环境落地与澄清](competition/assets/learning-task-plan-stage-02-grounding-v8.png)
+
+### 03 证据检索规划
+
+![证据检索规划](competition/assets/learning-task-plan-stage-03-evidence-search-v8.png)
+
+### 04 证据驱动的学习任务规划
+
+![证据驱动的学习任务规划](competition/assets/learning-task-plan-stage-04-planning-v8.png)
+
+### 05 六维 Critic 与定稿
+
+![六维 Critic 与定稿](competition/assets/learning-task-plan-stage-05-critic-v8.png)
+
+### 06 执行观察与交接
+
+![执行观察与交接](competition/assets/learning-task-plan-stage-06-handoff-v8.png)
+
 ## 运行链
 
 ```text
