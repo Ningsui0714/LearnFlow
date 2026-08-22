@@ -2298,6 +2298,18 @@ class XingchenGateway:
             point = as_dict(payload.get("knowledge_point"))
             contract = as_dict(payload.get("task_contract"))
             knowledge_context = as_dict(payload.get("knowledge_context"))
+            learner_context = as_dict(payload.get("learner_context"))
+            wrongbook_focus = as_dict(learner_context.get("wrongbook_focus"))
+            target_error_point_ids = [
+                str(item.get("error_id") or "").strip()
+                for item in as_list(wrongbook_focus.get("target_error_points"))
+                if isinstance(item, dict) and str(item.get("error_id") or "").strip()
+            ]
+            target_concept_ids = [
+                str(value or "").strip()
+                for value in as_list(wrongbook_focus.get("target_concept_ids"))
+                if str(value or "").strip()
+            ]
             point_name = str(point.get("knowledge_point_name") or "当前知识点")
             core_concepts = [
                 str(value).strip()
@@ -2354,6 +2366,12 @@ class XingchenGateway:
                 ],
                 "hard_required_points": as_list(contract.get("hard_required_points")),
                 "validation_rules": as_dict(contract.get("validation_rules")),
+                "assessed_concept_ids": target_concept_ids,
+                "target_error_point_ids": target_error_point_ids,
+                "target_concept_ids": target_concept_ids,
+                "remediation_strategy": "用不同情境重新验证未解决错因" if target_error_point_ids else "",
+                "generation_reason": str(learner_context.get("practice_intent") or "mastery_based"),
+                "variant_changes": ["使用新的任务情境与表述"] if str(payload.get("question_role")) == "variant" else [],
                 "source_refs": as_list(as_dict(payload.get("knowledge_context")).get("source_refs")),
             }
             return {**base, "question_spec": spec, "public_question": {
@@ -2380,9 +2398,11 @@ class XingchenGateway:
                 "evaluation_id": evaluation_id, "correct": correct, "validated_evaluation": evaluation,
                 "adaptive_policy": {"recommended_action": "retry_original" if not correct else "continue_practice", "advisory_only": True},
                 "evidence_event": {"event_id": "EVID-" + event_id[3:], "event_type": "independent_correct" if evaluation["independent_evidence"] else ("assisted_correct" if correct else "incorrect"), "knowledge_point_id": snapshot.get("knowledge_point_id", ""), "score": evaluation["score"], "confidence": 1.0, "question_instance_id": payload.get("question_instance_id", ""), "attempt_id": payload.get("attempt_id", ""), "evaluation_id": evaluation_id},
-                "wrongbook_event": {"event_id": event_id, "projection_instruction": instruction, "student_id": payload.get("student_id", ""), "project_id": payload.get("project_id", ""), "task_instance_id": payload.get("task_instance_id", ""), "knowledge_point_id": snapshot.get("knowledge_point_id", ""), "question_instance_id": payload.get("question_instance_id", ""), "source_question_instance_id": snapshot.get("source_question_instance_id", ""), "root_question_instance_id": snapshot.get("root_question_instance_id", payload.get("question_instance_id", "")), "attempt_id": payload.get("attempt_id", ""), "evaluation_id": evaluation_id, "independent_evidence": evaluation["independent_evidence"]}}
+                "wrongbook_event": {"event_id": event_id, "projection_instruction": instruction, "student_id": payload.get("student_id", ""), "project_id": payload.get("project_id", ""), "task_instance_id": payload.get("task_instance_id", ""), "knowledge_point_id": snapshot.get("knowledge_point_id", ""), "question_instance_id": payload.get("question_instance_id", ""), "source_question_instance_id": snapshot.get("source_question_instance_id", ""), "root_question_instance_id": snapshot.get("root_question_instance_id", payload.get("question_instance_id", "")), "attempt_id": payload.get("attempt_id", ""), "evaluation_id": evaluation_id, "independent_evidence": evaluation["independent_evidence"], "attempt_error_points": evaluation["error_points"], "candidate_resolved_error_point_ids": as_list(snapshot.get("target_error_point_ids")) if evaluation["independent_evidence"] else [], "retain_unmentioned_error_points": True, "wrongbook_delta_semantics": "attempt_delta_only"}}
         if action == "recommend_next_practice":
-            return {**base, "adaptive_policy": {"recommended_action": "continue_practice", "advisory_only": True, "reason": "本地联调建议。"}}
+            summary = as_dict(payload.get("evidence_summary"))
+            has_wrongbook_focus = bool(as_dict(summary.get("wrongbook_focus")))
+            return {**base, "adaptive_policy": {"recommended_action": "generate_variant" if has_wrongbook_focus else "continue_practice", "advisory_only": True, "reason": "存在未解决错因，优先建议针对性变式。" if has_wrongbook_focus else "本地联调建议。"}}
         raise GatewayError("WF04 不支持的 action")
 
     def _require_remote_mode(self) -> None:
@@ -7979,6 +7999,47 @@ class LearningApplication:
         LearningApplication._validate_wf04_candidate_scope(request, spec, public)
         LearningApplication._validate_wf04_knowledge_linkage(request, spec, public)
 
+        learner_context = as_dict(request.get("learner_context"))
+        if str(learner_context.get("practice_intent") or "") == "wrongbook_remediation":
+            focus = as_dict(learner_context.get("wrongbook_focus"))
+            expected_error_ids = {
+                str(item.get("error_id") or "").strip()
+                for item in as_list(focus.get("target_error_points"))
+                if isinstance(item, dict) and str(item.get("error_id") or "").strip()
+            }
+            actual_error_ids = {
+                str(value or "").strip()
+                for value in as_list(spec.get("target_error_point_ids"))
+                if str(value or "").strip()
+            }
+            if not expected_error_ids or not expected_error_ids.intersection(actual_error_ids):
+                raise GatewayError("WF04 错题专项题未命中后端指定的未解决错因")
+            expected_concepts = {
+                str(value or "").strip()
+                for value in as_list(focus.get("target_concept_ids"))
+                if str(value or "").strip()
+            }
+            actual_concepts = {
+                str(value or "").strip()
+                for value in [
+                    *as_list(spec.get("target_concept_ids")),
+                    *as_list(spec.get("assessed_concept_ids")),
+                ]
+                if str(value or "").strip()
+            }
+            if expected_concepts and not expected_concepts.intersection(actual_concepts):
+                raise GatewayError("WF04 错题专项题未覆盖后端指定的细分概念")
+            original_prompt = re.sub(
+                r"\s+", "", str(focus.get("original_question_prompt") or "")
+            ).casefold()
+            if original_prompt and original_prompt == re.sub(r"\s+", "", prompt).casefold():
+                raise GatewayError("WF04 错题专项题复制了原题，未形成迁移性变式")
+            if str(spec.get("question_role") or "") != "variant":
+                raise GatewayError("WF04 错题专项题必须标记为 variant")
+            expected_source = str(focus.get("source_question_instance_id") or "").strip()
+            if expected_source and str(spec.get("source_question_instance_id") or "").strip() != expected_source:
+                raise GatewayError("WF04 错题专项题没有保持原题追溯关系")
+
         options = as_dict(public.get("options"))
         private_options = as_dict(spec.get("options"))
         if private_options and options != private_options:
@@ -8047,6 +8108,8 @@ class LearningApplication:
             "E_ACCEPTED_ANSWERS_MISSING",
             "E_RUBRIC_MISSING",
             "E_VARIANT_NOT_CHANGED",
+            "E_WRONGBOOK_TARGET_MISMATCH",
+            "E_WRONGBOOK_DUPLICATES_SOURCE",
         }
         question_type_invalid_codes = {
             "E_MODEL_QUESTION_TYPE_INVALID",
@@ -12788,6 +12851,29 @@ class LearningApplication:
             raise ApiError(400, "FORMAL_QUESTION_CONTRACT_INCOMPLETE", "正式题必须提供 rubric、校验规则和可信知识来源")
         source_id = str(incoming.get("source_question_instance_id", ""))
         role = str(incoming.get("question_role") or incoming.get("mode") or "recommended")
+        learner_context = dict(as_dict(incoming.get("learner_context")))
+        practice_intent = str(learner_context.get("practice_intent") or "").strip()
+        explicit_student_choice = (
+            practice_intent == "student_selected"
+            or incoming.get("wrongbook_priority") is False
+            or bool(source_id)
+            or role not in {"", "recommended"}
+        )
+        if practice_intent == "wrongbook_remediation":
+            focus = as_dict(learner_context.get("wrongbook_focus"))
+            source_id = str(focus.get("source_question_instance_id") or source_id)
+            role = "variant"
+        elif not explicit_student_choice:
+            focus = self.domain.wrongbook_focus(student_id, project_id, point_id)
+            if focus:
+                learner_context.update({
+                    "practice_intent": "wrongbook_remediation",
+                    "wrongbook_focus": focus,
+                })
+                source_id = str(focus.get("source_question_instance_id") or "")
+                role = "variant"
+            else:
+                learner_context.setdefault("practice_intent", "mastery_based")
         if role == "variant" and not source_id:
             raise ApiError(400, "VARIANT_SOURCE_REQUIRED", "变式题必须指定原题实例")
         request = {
@@ -12800,7 +12886,7 @@ class LearningApplication:
             },
             "requested_question_type": requested_question_type,
             "difficulty": str(incoming.get("difficulty") or "medium"), "question_role": role,
-            "source_question_instance_id": source_id, "learner_context": as_dict(incoming.get("learner_context")),
+            "source_question_instance_id": source_id, "learner_context": learner_context,
             "task_contract": contract, "knowledge_context": knowledge_context,
         }
         candidate, _ = self._generate_wf04_question_with_revisions(request)
@@ -12828,7 +12914,7 @@ class LearningApplication:
             "schema_version": "ZHIXING_WF04_REQUEST.v1", "request_id": str(incoming.get("request_id") or new_id("REQ")), "action": "evaluate_answer",
             "student_id": student_id, "project_id": project_id, "training_cycle_id": context["training_cycle_id"], "learning_task_id": context["learning_task_id"], "task_instance_id": question["task_instance_id"],
             "question_instance_id": question["question_instance_id"], "attempt_id": attempt_id,
-            "question_snapshot": {key: spec.get(key) for key in ("knowledge_point_id", "knowledge_point_name", "difficulty", "question_role", "source_question_instance_id", "prompt", "expected_answer", "reference_answer", "rubric", "hard_required_points", "validation_rules") } | {"root_question_instance_id": question.get("root_question_instance_id") or question["question_instance_id"]},
+            "question_snapshot": {key: spec.get(key) for key in ("knowledge_point_id", "knowledge_point_name", "difficulty", "question_role", "source_question_instance_id", "prompt", "expected_answer", "reference_answer", "rubric", "hard_required_points", "validation_rules", "assessed_concept_ids", "target_error_point_ids", "target_concept_ids", "remediation_strategy", "generation_reason") } | {"root_question_instance_id": question.get("root_question_instance_id") or question["question_instance_id"]},
             "current_attempt": {"student_answer": answer, "hint_used": bool(incoming.get("hint_used")), "solution_revealed": bool(incoming.get("solution_revealed"))},
         }
         result = self.gateway.invoke_wf04_workflow(request)
@@ -12841,12 +12927,18 @@ class LearningApplication:
         task_id = str(incoming.get("task_instance_id", "")).strip()
         context = self._wf04_task_context(student_id, project_id, task_id)
         point_id = str(incoming.get("knowledge_point_id") or context["knowledge_point_id"])
+        evidence_summary = dict(as_dict(incoming.get("evidence_summary")))
+        if incoming.get("wrongbook_priority") is not False:
+            focus = self.domain.wrongbook_focus(student_id, project_id, point_id)
+            if focus:
+                evidence_summary.setdefault("active_wrongbook_count", int(focus.get("active_wrongbook_count") or 1))
+                evidence_summary.setdefault("wrongbook_focus", focus)
         request = {
             "schema_version": "ZHIXING_WF04_REQUEST.v1", "request_id": str(incoming.get("request_id") or new_id("REQ")),
             "action": "recommend_next_practice", "student_id": student_id, "project_id": project_id,
             "training_cycle_id": context["training_cycle_id"], "learning_task_id": context["learning_task_id"], "task_instance_id": task_id,
             "knowledge_point": {"knowledge_point_id": point_id, "knowledge_point_name": str(incoming.get("knowledge_point_name") or context["title"])},
-            "evidence_summary": as_dict(incoming.get("evidence_summary")),
+            "evidence_summary": evidence_summary,
         }
         result = self.gateway.invoke_wf04_workflow(request)
         self._validate_wf04_result(request, result)

@@ -1243,6 +1243,364 @@ class AgentProjectApiTests(unittest.TestCase):
         with self.assertRaisesRegex(ApiError, "请求题型不受支持"):
             application._create_wf04_practice(self.student_id, invalid)
 
+    def test_wf04_wrongbook_quality_gate_requires_target_and_lineage(self):
+        request = {
+            "schema_version": "ZHIXING_WF04_REQUEST.v1",
+            "request_id": "REQ-WRONGBOOK-GATE",
+            "action": "generate_question",
+            "student_id": self.student_id,
+            "project_id": "PROJ-WRONGBOOK-GATE",
+            "task_instance_id": "TASK-WRONGBOOK-GATE",
+            "requested_question_type": "choice",
+            "question_role": "variant",
+            "source_question_instance_id": "QUESTION-SOURCE-001",
+            "knowledge_point": {
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "knowledge_point_name": "HTML 页面结构",
+            },
+            "knowledge_context": {"core_concepts": ["header"]},
+            "learner_context": {
+                "practice_intent": "wrongbook_remediation",
+                "wrongbook_focus": {
+                    "knowledge_point_id": "KP-HTML-STRUCTURE",
+                    "source_question_instance_id": "QUESTION-SOURCE-001",
+                    "original_question_prompt": "原题：header 应该放在哪里？",
+                    "target_error_points": [{"error_id": "ERR-HEADER-NESTING"}],
+                    "target_concept_ids": ["CONCEPT-HEADER-NESTING"],
+                },
+            },
+        }
+        result = {
+            "schema_version": "ZHIXING_WF04_RESULT.v1",
+            "workflow_mode": "wf04_training_evaluation",
+            "status": "ok",
+            "action": "generate_question",
+            "request_id": request["request_id"],
+            "student_id": self.student_id,
+            "project_id": request["project_id"],
+            "task_instance_id": request["task_instance_id"],
+            "host_write_allowed": True,
+            "question_spec": {
+                "question_template_id": "TPL-WRONGBOOK-GATE",
+                "knowledge_point_id": "KP-HTML-STRUCTURE",
+                "question_type": "choice",
+                "question_role": "variant",
+                "source_question_instance_id": "QUESTION-SOURCE-001",
+                "title": "HTML 页面结构变式",
+                "prompt": "在新的 HTML 页面结构中，哪个 header 嵌套方式正确？",
+                "options": {"a": "按语义放入页面或区块", "b": "放入任意标签", "c": "删除 header"},
+                "expected_answer": "a",
+                "reference_answer": "header 应按页面或区块语义正确嵌套。",
+                "target_error_point_ids": ["ERR-HEADER-NESTING"],
+                "target_concept_ids": ["CONCEPT-HEADER-NESTING"],
+                "assessed_concept_ids": ["CONCEPT-HEADER-NESTING"],
+            },
+            "public_question": {
+                "question_type": "choice",
+                "title": "HTML 页面结构变式",
+                "prompt": "在新的 HTML 页面结构中，哪个 header 嵌套方式正确？",
+                "options": {"a": "按语义放入页面或区块", "b": "放入任意标签", "c": "删除 header"},
+                "answer_schema": {"type": "single_choice"},
+            },
+        }
+        question = LearningApplication._wf04_question_candidate(request, result)
+        self.assertEqual(question["question_type"], "choice")
+
+        result["question_spec"]["target_error_point_ids"] = ["ERR-UNRELATED"]
+        with self.assertRaisesRegex(GatewayError, "未解决错因"):
+            LearningApplication._wf04_question_candidate(request, result)
+
+    def test_formal_practice_defaults_to_wrongbook_focus_but_respects_student_choice(self):
+        from unittest.mock import patch
+
+        application = self.server.RequestHandlerClass.application
+        captured_requests = []
+        context = {
+            "training_cycle_id": "CYCLE-WRONGBOOK",
+            "learning_task_id": "TASK-WRONGBOOK",
+            "task_instance_id": "TASKINST-WRONGBOOK",
+            "knowledge_point_id": "KP-WRONGBOOK",
+            "title": "数组边界",
+        }
+        focus = {
+            "focus_source": "wrongbook",
+            "active_wrongbook_count": 1,
+            "knowledge_point_id": "KP-WRONGBOOK",
+            "source_question_instance_id": "QUESTION-ROOT-001",
+            "root_question_instance_id": "QUESTION-ROOT-001",
+            "original_question_prompt": "原题文本",
+            "target_error_points": [{"error_id": "ERR-BOUNDARY", "expected_behavior": "检查边界"}],
+            "target_concept_ids": ["CONCEPT-BOUNDARY"],
+        }
+        spec = {
+            "knowledge_point_id": "KP-WRONGBOOK",
+            "title": "数组边界变式",
+            "prompt": "请在新数组场景中检查边界。",
+            "question_type": "short_answer",
+            "answer_schema": {"type": "text"},
+            "expected_answer": "检查上下界",
+            "reference_answer": "应同时检查数组上下界。",
+            "rubric": [{"criterion_id": "C-1"}],
+            "validation_rules": {"pass_score": 80},
+            "source_refs": ["WF02-GRAPH"],
+            "target_error_point_ids": ["ERR-BOUNDARY"],
+            "target_concept_ids": ["CONCEPT-BOUNDARY"],
+        }
+        candidate = {**spec, "question_instance_id": "WF04-WRONGBOOK", "_wf04_question_spec": spec}
+
+        def generate(request):
+            captured_requests.append(request)
+            return candidate, 1
+
+        incoming = {
+            "project_id": "PROJ-WRONGBOOK",
+            "task_instance_id": "TASKINST-WRONGBOOK",
+            "requested_question_type": "short_answer",
+            "task_contract": {
+                "assessment_mode": "formal",
+                "rubric": [{"criterion_id": "C-1"}],
+                "validation_rules": {"pass_score": 80},
+            },
+        }
+        with (
+            patch.object(application, "_wf04_task_context", return_value=context),
+            patch.object(application, "_require_project", return_value={"goal_id": "", "state": {}}),
+            patch.object(application, "_project_goal_knowledge_points", return_value=[]),
+            patch.object(application, "_wf04_knowledge_context", return_value={"source_refs": ["WF02-GRAPH"]}),
+            patch.object(application.domain, "wrongbook_focus", return_value=focus),
+            patch.object(application, "_generate_wf04_question_with_revisions", side_effect=generate),
+            patch.object(application.domain, "create_wf04_question", return_value={"status": "ok"}),
+        ):
+            application._create_wf04_practice(self.student_id, incoming)
+            application._create_wf04_practice(
+                self.student_id,
+                {**incoming, "learner_context": {"practice_intent": "student_selected"}},
+            )
+
+        focused = captured_requests[0]
+        self.assertEqual(focused["question_role"], "variant")
+        self.assertEqual(focused["source_question_instance_id"], "QUESTION-ROOT-001")
+        self.assertEqual(focused["learner_context"]["practice_intent"], "wrongbook_remediation")
+        self.assertEqual(
+            focused["learner_context"]["wrongbook_focus"]["target_error_points"][0]["error_id"],
+            "ERR-BOUNDARY",
+        )
+        student_selected = captured_requests[1]
+        self.assertEqual(student_selected["question_role"], "recommended")
+        self.assertEqual(student_selected["learner_context"]["practice_intent"], "student_selected")
+
+    def test_recommendation_prioritizes_wrongbook_unless_student_opts_out(self):
+        from unittest.mock import patch
+
+        application = self.server.RequestHandlerClass.application
+        captured_requests = []
+        context = {
+            "training_cycle_id": "CYCLE-WRONGBOOK-POLICY",
+            "learning_task_id": "TASK-WRONGBOOK-POLICY",
+            "task_instance_id": "TASKINST-WRONGBOOK-POLICY",
+            "knowledge_point_id": "KP-WRONGBOOK-POLICY",
+            "title": "数组边界",
+        }
+        focus = {
+            "focus_source": "wrongbook",
+            "active_wrongbook_count": 2,
+            "knowledge_point_id": "KP-WRONGBOOK-POLICY",
+            "source_question_instance_id": "QUESTION-ROOT-POLICY",
+            "target_error_points": [
+                {"error_id": "ERR-BOUNDARY-POLICY", "expected_behavior": "检查数组边界"}
+            ],
+            "target_concept_ids": ["CONCEPT-BOUNDARY"],
+        }
+
+        def invoke(request):
+            captured_requests.append(request)
+            has_focus = bool(request["evidence_summary"].get("wrongbook_focus"))
+            return {
+                "schema_version": "ZHIXING_WF04_RESULT.v1",
+                "workflow_mode": "wf04_training_evaluation",
+                "status": "ok",
+                "action": request["action"],
+                "request_id": request["request_id"],
+                "student_id": request["student_id"],
+                "project_id": request["project_id"],
+                "task_instance_id": request["task_instance_id"],
+                "adaptive_policy": {
+                    "recommended_action": "generate_variant" if has_focus else "continue_practice",
+                    "recommended_difficulty": "same",
+                    "intervention_level": "guided" if has_focus else "normal",
+                    "reason": "存在未解决错因" if has_focus else "按常规掌握度继续",
+                    "advisory_only": True,
+                },
+                "host_write_allowed": True,
+            }
+
+        incoming = {
+            "student_id": self.student_id,
+            "session_id": "SESSION-WRONGBOOK-POLICY",
+            "project_id": "PROJ-WRONGBOOK-POLICY",
+            "task_instance_id": "TASKINST-WRONGBOOK-POLICY",
+            "knowledge_point_id": "KP-WRONGBOOK-POLICY",
+        }
+        with (
+            patch.object(application, "_wf04_task_context", return_value=context),
+            patch.object(application.domain, "wrongbook_focus", return_value=focus),
+            patch.object(application.gateway, "invoke_wf04_workflow", side_effect=invoke),
+        ):
+            focused = application.recommend_wf04_practice(incoming)
+            opted_out = application.recommend_wf04_practice(
+                {**incoming, "wrongbook_priority": False}
+            )
+
+        self.assertEqual(focused["adaptive_policy"]["recommended_action"], "generate_variant")
+        self.assertEqual(
+            captured_requests[0]["evidence_summary"]["wrongbook_focus"]["focus_source"],
+            "wrongbook",
+        )
+        self.assertEqual(captured_requests[0]["evidence_summary"]["active_wrongbook_count"], 2)
+        self.assertEqual(opted_out["adaptive_policy"]["recommended_action"], "continue_practice")
+        self.assertNotIn("wrongbook_focus", captured_requests[1]["evidence_summary"])
+
+    def test_wrongbook_delta_resolves_only_targeted_error(self):
+        application = self.server.RequestHandlerClass.application
+        domain = application.domain
+        project_id = "PROJ-WRONGBOOK-DELTA"
+        created = domain.create_wf04_question(
+            self.student_id,
+            project_id,
+            "TASKINST-WRONGBOOK-DELTA",
+            "REQ-WRONGBOOK-DELTA",
+            {
+                "question_template_id": "TPL-WRONGBOOK-DELTA",
+                "knowledge_point_id": "KP-ARRAY",
+                "title": "数组边界",
+                "prompt": "说明数组边界检查。",
+                "question_type": "short_answer",
+                "answer_schema": {"type": "text"},
+                "expected_answer": "边界",
+            },
+            {
+                "title": "数组边界",
+                "prompt": "说明数组边界检查。",
+                "question_type": "short_answer",
+                "answer_schema": {"type": "text"},
+            },
+            "formal",
+        )["question"]
+        question_id = created["question_instance_id"]
+
+        def result(
+            attempt_id, event_id, instruction, errors, resolved=None,
+            independent=False, correct=None,
+        ):
+            correct = independent if correct is None else bool(correct)
+            return {
+                "attempt_id": attempt_id,
+                "validated_evaluation": {
+                    "evaluation_status": "correct" if correct else "incorrect",
+                    "independent_evidence": independent,
+                    "error_points": errors,
+                },
+                "adaptive_policy": {"advisory_only": True},
+                "wrongbook_event": {
+                    "event_id": event_id,
+                    "projection_instruction": instruction,
+                    "project_id": project_id,
+                    "knowledge_point_id": "KP-ARRAY",
+                    "question_instance_id": question_id,
+                    "root_question_instance_id": question_id,
+                    "attempt_error_points": errors,
+                    "candidate_resolved_error_point_ids": resolved or [],
+                },
+            }
+
+        initial_errors = [
+            {"error_id": "ERR-CAPACITY", "concept_id": "CONCEPT-CAPACITY", "root_cause": "遗漏容量检查"},
+            {"error_id": "ERR-POSITION", "concept_id": "CONCEPT-POSITION", "root_cause": "遗漏位置检查"},
+        ]
+        domain.submit_wf04_attempt(
+            self.student_id,
+            question_id,
+            "错误答案",
+            result("ATTEMPT-WB-1", "EVENT-WB-1", "upsert_needs_review", initial_errors),
+        )
+        focus = domain.wrongbook_focus(self.student_id, project_id, "KP-ARRAY")
+        self.assertEqual(focus["source_question_instance_id"], question_id)
+        self.assertEqual(
+            {item["error_id"] for item in focus["target_error_points"]},
+            {"ERR-CAPACITY", "ERR-POSITION"},
+        )
+
+        domain.submit_wf04_attempt(
+            self.student_id,
+            question_id,
+            "使用提示后答对",
+            result(
+                "ATTEMPT-WB-ASSISTED",
+                "EVENT-WB-ASSISTED",
+                "retain_needs_review_if_prior_wrong",
+                [],
+                [],
+                False,
+                True,
+            ),
+        )
+        after_assisted = domain.wrongbook(
+            self.student_id, project_id, status="needs_review"
+        )["items"][0]
+        self.assertEqual(
+            {item["error_id"] for item in after_assisted["last_error_points"]},
+            {"ERR-CAPACITY", "ERR-POSITION"},
+        )
+
+        domain.submit_wf04_attempt(
+            self.student_id,
+            question_id,
+            "独立答对容量检查",
+            result(
+                "ATTEMPT-WB-2",
+                "EVENT-WB-2",
+                "mark_improved_not_deleted_if_prior_wrong",
+                [],
+                ["ERR-CAPACITY"],
+                True,
+            ),
+        )
+        after_one = domain.wrongbook(
+            self.student_id, project_id, status="needs_review"
+        )["items"][0]
+        self.assertEqual(after_one["status"], "needs_review")
+        self.assertEqual(
+            [item["error_id"] for item in after_one["last_error_points"]],
+            ["ERR-POSITION"],
+        )
+
+        domain.submit_wf04_attempt(
+            self.student_id,
+            question_id,
+            "独立答对位置检查",
+            result(
+                "ATTEMPT-WB-3",
+                "EVENT-WB-3",
+                "mark_improved_not_deleted_if_prior_wrong",
+                [],
+                ["ERR-POSITION"],
+                True,
+            ),
+        )
+        improved = domain.wrongbook(
+            self.student_id, project_id, status="improved_not_deleted"
+        )["items"][0]
+        self.assertEqual(improved["last_error_points"], [])
+
+    def test_wrongbook_normalizes_legacy_string_error_for_targeted_practice(self):
+        domain = self.server.RequestHandlerClass.application.domain
+        normalized = domain._merge_wrongbook_errors([], ["旧版记录：混淆了元素移动方向"])
+
+        self.assertEqual(len(normalized), 1)
+        self.assertTrue(normalized[0]["error_id"].startswith("ERR-"))
+        self.assertEqual(normalized[0]["error_type"], "legacy")
+        self.assertEqual(normalized[0]["root_cause"], "旧版记录：混淆了元素移动方向")
+
     def test_clear_certification_goal_is_not_forced_to_java(self):
         result = self.create_project("三个月内通过大学英语四级考试")
         project = result["project"]

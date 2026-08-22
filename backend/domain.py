@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -2403,6 +2403,65 @@ class LearningDomainStore:
         }
         return {"status": "ok", "question": safe}
 
+    @staticmethod
+    def _normalize_wrongbook_error(error_point: Any) -> dict[str, Any] | None:
+        """兼容旧版字符串错因，并避免把无限长历史文本继续传入出题上下文。"""
+        if isinstance(error_point, dict):
+            return dict(error_point)
+        if isinstance(error_point, str) and error_point.strip():
+            return {
+                "error_type": "legacy",
+                "root_cause": error_point.strip()[:240],
+            }
+        return None
+
+    @staticmethod
+    def _wrongbook_error_key(error_point: dict[str, Any]) -> str:
+        """返回可跨次作答稳定合并的错因键。"""
+        explicit = str(error_point.get("error_id") or "").strip()
+        if explicit:
+            return explicit
+        fingerprint = "|".join(
+            str(error_point.get(key) or "").strip()
+            for key in ("knowledge_point_id", "concept_id", "criterion_id", "error_type", "root_cause")
+        )
+        return "ERR-" + hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:16].upper()
+
+    @classmethod
+    def _merge_wrongbook_errors(
+        cls, prior_errors: list[Any], attempt_errors: list[Any]
+    ) -> list[dict[str, Any]]:
+        """按 error_id 合并本次错因，不覆盖同题下仍未解决的其他错因。"""
+        merged: dict[str, dict[str, Any]] = {}
+        order: list[str] = []
+        for raw in [*prior_errors, *attempt_errors]:
+            item = cls._normalize_wrongbook_error(raw)
+            if not item:
+                continue
+            key = cls._wrongbook_error_key(item)
+            item["error_id"] = key
+            if key not in merged:
+                order.append(key)
+            merged[key] = item
+        return [merged[key] for key in order]
+
+    @classmethod
+    def _remove_wrongbook_errors(
+        cls, prior_errors: list[Any], resolved_error_ids: list[Any]
+    ) -> list[dict[str, Any]]:
+        """只移除本次独立验证实际覆盖的错因，保留未提及错因。"""
+        resolved = {str(value or "").strip() for value in resolved_error_ids if str(value or "").strip()}
+        result: list[dict[str, Any]] = []
+        for raw in prior_errors:
+            item = cls._normalize_wrongbook_error(raw)
+            if not item:
+                continue
+            key = cls._wrongbook_error_key(item)
+            item["error_id"] = key
+            if key not in resolved:
+                result.append(item)
+        return result
+
     def submit_wf04_attempt(
         self, student_id: str, question_instance_id: str, answer: str,
         result: dict[str, Any],
@@ -2431,13 +2490,32 @@ class LearningDomainStore:
                     root_id = str(wrongbook_event.get("root_question_instance_id") or question.get("root_question_instance_id") or question_instance_id)
                     project_id = str(wrongbook_event.get("project_id") or question.get("project_id", ""))
                     connection.execute("INSERT INTO wrongbook_events(event_id, student_id, project_id, root_question_instance_id, event_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", (event_id, student_id, project_id, root_id, json_text(wrongbook_event), now))
-                    prior = connection.execute("SELECT status, attempt_count FROM wrongbook_items WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?", (student_id, project_id, root_id)).fetchone()
+                    prior = connection.execute("SELECT status, attempt_count, last_error_json FROM wrongbook_items WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?", (student_id, project_id, root_id)).fetchone()
                     instruction = str(wrongbook_event.get("projection_instruction", ""))
+                    prior_errors: list[Any] = []
+                    if prior:
+                        try:
+                            decoded = json.loads(str(prior["last_error_json"] or "[]"))
+                            prior_errors = decoded if isinstance(decoded, list) else []
+                        except json.JSONDecodeError:
+                            prior_errors = []
                     if instruction == "upsert_needs_review":
-                        connection.execute("INSERT INTO wrongbook_items(student_id, project_id, root_question_instance_id, knowledge_point_id, status, last_error_json, attempt_count, updated_at) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?) ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET status = 'needs_review', last_error_json = excluded.last_error_json, attempt_count = wrongbook_items.attempt_count + 1, updated_at = excluded.updated_at", (student_id, project_id, root_id, str(wrongbook_event.get("knowledge_point_id", "")), json_text(evaluation.get("error_points", [])), now))
+                        attempt_errors = as_list(wrongbook_event.get("attempt_error_points")) or as_list(evaluation.get("error_points"))
+                        merged_errors = self._merge_wrongbook_errors(prior_errors, attempt_errors)
+                        connection.execute("INSERT INTO wrongbook_items(student_id, project_id, root_question_instance_id, knowledge_point_id, status, last_error_json, attempt_count, updated_at) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?) ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET status = 'needs_review', last_error_json = excluded.last_error_json, attempt_count = wrongbook_items.attempt_count + 1, updated_at = excluded.updated_at", (student_id, project_id, root_id, str(wrongbook_event.get("knowledge_point_id", "")), json_text(merged_errors), now))
                     elif prior:
-                        status = "improved_not_deleted" if instruction == "mark_improved_not_deleted_if_prior_wrong" and bool(evaluation.get("independent_evidence")) else str(prior["status"])
-                        connection.execute("UPDATE wrongbook_items SET status = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?", (status, now, student_id, project_id, root_id))
+                        status = str(prior["status"])
+                        remaining_errors = self._merge_wrongbook_errors([], prior_errors)
+                        if instruction == "mark_improved_not_deleted_if_prior_wrong" and bool(evaluation.get("independent_evidence")):
+                            resolved_ids = as_list(wrongbook_event.get("candidate_resolved_error_point_ids"))
+                            if resolved_ids:
+                                remaining_errors = self._remove_wrongbook_errors(prior_errors, resolved_ids)
+                                status = "improved_not_deleted" if not remaining_errors else "needs_review"
+                            else:
+                                # 兼容非错题专项的原题独立重做：该题全部错因可视为已改善。
+                                remaining_errors = []
+                                status = "improved_not_deleted"
+                        connection.execute("UPDATE wrongbook_items SET status = ?, last_error_json = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?", (status, json_text(remaining_errors), now, student_id, project_id, root_id))
             connection.commit()
         return {"status": "ok", "attempt_id": attempt_id, "question_instance_id": question_instance_id, "correct": str(evaluation.get("evaluation_status")) == "correct", "evaluation": evaluation, "adaptive_policy": as_dict(result.get("adaptive_policy")), "explanation_input": {"question_instance_id": question_instance_id, "task_instance_id": str(question.get("task_instance_id", "")), "attempt_id": attempt_id, "question_snapshot": {"question_id": question_instance_id, "question_text": str(question.get("prompt", ""))}, "current_attempt": {"student_answer": answer}, "validated_evaluation": evaluation}}
 
@@ -2500,9 +2578,11 @@ class LearningDomainStore:
         for row in rows:
             item = dict(row)
             try:
-                item["last_error_points"] = json.loads(str(item.pop("last_error_json")))
+                decoded = json.loads(str(item.pop("last_error_json")))
+                raw_errors = decoded if isinstance(decoded, list) else []
             except json.JSONDecodeError:
-                item["last_error_points"] = []
+                raw_errors = []
+            item["last_error_points"] = self._merge_wrongbook_errors([], raw_errors)
             result.append(item)
         return {
             "items": result,
@@ -2516,6 +2596,79 @@ class LearningDomainStore:
             "limit": limit,
             "offset": offset,
         }
+
+    def wrongbook_focus(
+        self,
+        student_id: str,
+        project_id: str,
+        knowledge_point_id: str = "",
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """从后端错题投影中选出一个可直接传给 WF04 的未解决错因焦点。"""
+        limit = max(1, min(int(limit or 3), 10))
+        clauses = ["wi.student_id = ?", "wi.project_id = ?", "wi.status = 'needs_review'"]
+        values: list[Any] = [student_id, project_id]
+        if knowledge_point_id:
+            clauses.append("wi.knowledge_point_id = ?")
+            values.append(knowledge_point_id)
+        where = " AND ".join(clauses)
+        with self._lock, closing(self._connect()) as connection:
+            active_count = int(connection.execute(
+                f"SELECT COUNT(*) FROM wrongbook_items wi WHERE {where}", values
+            ).fetchone()[0])
+            rows = connection.execute(
+                f"""SELECT wi.*, qi.title AS original_question_title,
+                            qi.prompt AS original_question_prompt
+                     FROM wrongbook_items wi
+                     LEFT JOIN question_instances qi
+                       ON qi.question_instance_id = wi.root_question_instance_id
+                     WHERE {where}
+                     ORDER BY wi.attempt_count DESC, wi.updated_at DESC
+                     LIMIT ?""",
+                [*values, limit],
+            ).fetchall()
+        for row in rows:
+            item = dict(row)
+            try:
+                decoded = json.loads(str(item.get("last_error_json") or "[]"))
+                raw_errors = decoded if isinstance(decoded, list) else []
+            except json.JSONDecodeError:
+                raw_errors = []
+            target_errors = self._merge_wrongbook_errors([], raw_errors)[:3]
+            if not target_errors:
+                continue
+            safe_errors = [
+                {
+                    key: error.get(key)
+                    for key in (
+                        "error_id", "concept_id", "criterion_id", "error_type",
+                        "expected_behavior", "root_cause", "severity", "confidence",
+                    )
+                    if error.get(key) not in (None, "")
+                }
+                for error in target_errors
+            ]
+            target_concepts = list(dict.fromkeys(
+                str(error.get("concept_id") or "").strip()
+                for error in target_errors
+                if str(error.get("concept_id") or "").strip()
+            ))
+            root_id = str(item.get("root_question_instance_id") or "")
+            return {
+                "focus_source": "wrongbook",
+                "active_wrongbook_count": active_count,
+                "wrongbook_entry_id": root_id,
+                "status": "needs_review",
+                "knowledge_point_id": str(item.get("knowledge_point_id") or ""),
+                "source_question_instance_id": root_id,
+                "root_question_instance_id": root_id,
+                "original_question_title": str(item.get("original_question_title") or ""),
+                "original_question_prompt": str(item.get("original_question_prompt") or ""),
+                "target_error_points": safe_errors,
+                "target_concept_ids": target_concepts,
+                "attempt_count": int(item.get("attempt_count") or 0),
+            }
+        return {}
 
     def submit_attempt(
         self, student_id: str, question_instance_id: str, answer: str
