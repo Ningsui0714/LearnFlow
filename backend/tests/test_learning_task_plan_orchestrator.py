@@ -133,6 +133,12 @@ def test_builds_hierarchy_candidates_critics_and_critical_path():
     assert analysis["stages"][3]["status"] == "completed"
     assert analysis["stages"][4]["status"] == "ready"
     assert analysis["stages"][5]["status"] == "pending"
+    assert analysis["metrics"]["stage_substep_count"] >= 180
+    assert all(len(stage["substeps"]) >= 16 for stage in analysis["stages"])
+    assert all(
+        any(item["depends_on"] for item in stage["substeps"])
+        for stage in analysis["stages"]
+    )
     assert all(
         item["status"] == "pending"
         and item["observation_state"] == "not_observed"
@@ -167,6 +173,8 @@ def test_missing_evidence_prevents_learning_task_plan_generation():
     assert analysis["stages"][3]["status"] == "blocked"
     assert analysis["stages"][4]["status"] == "blocked"
     assert analysis["stages"][5]["status"] == "not_started"
+    assert analysis["metrics"]["stage_substep_count"] >= 140
+    assert len(analysis["stages"][3]["substeps"]) >= 30
 
 
 def test_evidence_search_stage_excludes_candidate_and_compiler_tools():

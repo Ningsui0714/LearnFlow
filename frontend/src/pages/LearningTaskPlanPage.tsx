@@ -95,6 +95,21 @@ const stageStatusTones: Record<LearningTaskPlanStageStatus, string> = {
 
 function StageCard({ stage }: { stage: LearningTaskPlanStage }) {
   const byId = new Map(stage.substeps.map((item) => [item.substep_id, item]));
+  const parentIds = new Set(
+    stage.substeps
+      .map((item) => item.parent_substep_id)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const rootCount = stage.substeps.filter(
+    (item) => !item.parent_substep_id,
+  ).length;
+  const leafCount = stage.substeps.filter(
+    (item) => !parentIds.has(item.substep_id),
+  ).length;
+  const dependencyCount = stage.substeps.reduce(
+    (total, item) => total + item.depends_on.length,
+    0,
+  );
   const depthOf = (substepId: string) => {
     let depth = 0;
     let current = byId.get(substepId);
@@ -149,9 +164,24 @@ function StageCard({ stage }: { stage: LearningTaskPlanStage }) {
           </span>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-[340px]">
+      <div className="border-b border-slate-100 bg-slate-50/70 px-3 py-2">
+        <div className="grid grid-cols-4 gap-1 text-center text-[8px]">
+          {[
+            ["微步骤", stage.substeps.length],
+            ["主分支", rootCount],
+            ["叶节点", leafCount],
+            ["依赖", dependencyCount],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="rounded-md bg-white px-1 py-1.5">
+              <p className="font-mono font-bold text-slate-700">{value}</p>
+              <p className="mt-0.5 text-slate-400">{label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 lg:max-h-[460px]">
         <div className="space-y-1.5">
-          {stage.substeps.map((item) => {
+          {stage.substeps.map((item, itemIndex) => {
             const depth = depthOf(item.substep_id);
             return (
               <div
@@ -163,9 +193,15 @@ function StageCard({ stage }: { stage: LearningTaskPlanStage }) {
                   <span className="absolute -left-3 top-0 h-1/2 w-3 rounded-bl border-b border-l border-slate-300" />
                 )}
                 <div className="flex min-w-0 items-start justify-between gap-2">
-                  <p className="min-w-0 truncate text-[10px] font-semibold text-slate-800">
-                    {item.label}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0 font-mono text-[7px] text-indigo-400">
+                      {String(stage.sequence).padStart(2, "0")}.
+                      {String(itemIndex + 1).padStart(2, "0")}
+                    </span>
+                    <p className="min-w-0 truncate text-[10px] font-semibold text-slate-800">
+                      {item.label}
+                    </p>
+                  </div>
                   <span
                     className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${item.status === "completed" ? "bg-emerald-500" : item.status === "ready" ? "bg-indigo-500" : item.status === "blocked" ? "bg-amber-500" : "bg-slate-300"}`}
                     title={stageStatusLabels[item.status]}
@@ -178,6 +214,15 @@ function StageCard({ stage }: { stage: LearningTaskPlanStage }) {
                   <p className="mt-1 truncate font-mono text-[8px] text-indigo-400">
                     {item.output_ref}
                   </p>
+                )}
+                {item.depends_on.length > 0 && (
+                  <div className="mt-1.5 flex min-w-0 items-center gap-1 overflow-hidden text-[7px] text-amber-600">
+                    <GitBranch size={8} className="shrink-0" />
+                    <span className="shrink-0">汇合依赖</span>
+                    <span className="truncate font-mono">
+                      {item.depends_on.join(" + ")}
+                    </span>
+                  </div>
                 )}
               </div>
             );
@@ -432,7 +477,7 @@ export default function LearningTaskPlanPage() {
     run.phase !== "CONTRACT_READY" && run.phase !== "INTAKE";
 
   return (
-    <div className="h-full overflow-y-auto bg-[#f4f6f8] px-3 py-4 sm:px-5 lg:px-7">
+    <div className="h-full overflow-y-auto bg-[#f4f6f8] px-3 py-4 transition-[margin] sm:px-5 lg:px-7 xl:group-data-[agent-rail-expanded=true]/workspace:mr-[390px] 2xl:mr-0">
       <div className="mx-auto min-w-0 max-w-[1380px] pb-12">
         <header className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-white shadow-xl">
           <div className="grid min-w-0 gap-5 p-5 2xl:grid-cols-[1fr_auto] 2xl:p-6">
@@ -519,7 +564,7 @@ export default function LearningTaskPlanPage() {
                 </h2>
               </div>
               <p className="mt-1 text-[10px] text-slate-500">
-                01–03 只锁定任务并规划证据；第 04 阶段才允许生成学习任务步骤与候选。
+                每个阶段继续拆成输入、子问题、并行分支、汇合校验、门禁和版本化产物；第 04 阶段才允许生成真实学习任务步骤。
               </p>
             </div>
             <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-mono text-[9px] text-slate-500">

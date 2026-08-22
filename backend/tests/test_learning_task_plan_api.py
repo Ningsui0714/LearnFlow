@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 import uuid
 
 from fastapi.testclient import TestClient
@@ -85,6 +86,25 @@ class _FakePlanGateway:
             self.run["checkpoint_version"] = 2
             self.run["plan"]["plan_version"] = 2
         return deepcopy(self.run)
+
+
+def test_analysis_for_rebuilds_shallow_v3_cache():
+    run = _run()
+    shallow = {
+        "schema_version": "learning-work-task-planning-analysis-v3",
+        "run_id": run["run_id"],
+        "plan_version": run["plan"]["plan_version"],
+        "metrics": {"stage_substep_count": 24},
+        "stages": [],
+    }
+
+    analysis = learning_task_plan._analysis_for(
+        run,
+        SimpleNamespace(meta_data={"planning_analysis": shallow}),
+    )
+
+    assert analysis is not shallow
+    assert analysis["metrics"]["stage_substep_count"] >= 140
 
 
 def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):

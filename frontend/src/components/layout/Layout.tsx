@@ -190,7 +190,10 @@ function WorkspaceFrame() {
           </div>
         )}
 
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <section
+          data-agent-rail-expanded={agentRailExpanded}
+          className="group/workspace flex min-w-0 flex-1 flex-col overflow-hidden"
+        >
           <WorkspaceTabs />
           <WorkspaceStage />
         </section>

@@ -767,102 +767,52 @@ def _build_stages(
     search_plan_confirmed = run["phase"] not in {"INTAKE", "CONTRACT_READY"}
     task_plan_finalized = run["phase"] == "COMMITTED"
 
+    contract_input_text = str(
+        run["task_contract"].get("raw_input")
+        or run["task_contract"].get("normalized_input")
+        or plan["goal"]
+    )
     contract_steps = [
-        {
-            "substep_id": "contract_input",
-            "label": "上游任务 JSON",
-            "status": "completed",
-            "detail": str(
-                run["task_contract"].get("raw_input")
-                or run["task_contract"].get("normalized_input")
-                or plan["goal"]
-            ),
-            "output_ref": f"run:{run['run_id']}",
-        },
-        {
-            "substep_id": "contract_schema",
-            "label": "Schema 校验",
-            "status": "completed",
-            "detail": "Run、TaskPlan、工作包角色/工具/产物均通过版本化白名单校验。",
-            "parent_substep_id": "contract_input",
-            "output_ref": plan["schema_version"],
-        },
-        {
-            "substep_id": "contract_ids",
-            "label": "稳定 ID 校验",
-            "status": "completed",
-            "detail": f"run_id 与 {len(workflow_packages)} 个检索工作包 ID 已锁定。",
-            "parent_substep_id": "contract_input",
-            "output_ref": run["run_id"],
-        },
-        {
-            "substep_id": "contract_fingerprint",
-            "label": "语义指纹锁定",
-            "status": "completed",
-            "detail": "任务对象、动作与预期产物在后续修订中保持不变。",
-            "parent_substep_id": "contract_input",
-            "output_ref": plan["task_contract_fingerprint"],
-        },
-        {
-            "substep_id": "contract_artifact",
-            "label": "任务契约产物",
-            "status": "completed",
-            "detail": "形成可审计 task_contract，作为所有后续阶段的共同基线。",
-            "depends_on": ["contract_schema", "contract_ids", "contract_fingerprint"],
-            "output_ref": "task_contract",
-        },
+        {"substep_id": "contract_ingestion", "label": "输入接入与封装", "status": "completed", "detail": "接收上游任务 JSON、Run 标识和版本上下文。", "output_ref": "raw_task_envelope"},
+        {"substep_id": "contract_input", "label": "原始任务文本读取", "status": "completed", "detail": contract_input_text, "parent_substep_id": "contract_ingestion", "output_ref": f"run:{run['run_id']}"},
+        {"substep_id": "contract_schema", "label": "结构 Schema 校验", "status": "completed", "detail": "校验 Run、TaskPlan、角色、工具、产物和字段边界。", "parent_substep_id": "contract_ingestion", "output_ref": plan["schema_version"]},
+        {"substep_id": "contract_normalize", "label": "文本与枚举归一化", "status": "completed", "detail": "统一空白、枚举值、标识符和输入层级表达。", "parent_substep_id": "contract_ingestion", "output_ref": "normalized_task_input"},
+        {"substep_id": "contract_semantics", "label": "任务语义五元组解析", "status": "completed", "detail": "把任务拆为对象、动作、情境、产物和边界五类不可混淆语义。", "depends_on": ["contract_input", "contract_normalize"], "output_ref": "task_semantic_tuple"},
+        {"substep_id": "contract_action", "label": "动作谓词识别", "status": "completed", "detail": str(run["task_contract"].get("action") or "由任务语义约束"), "parent_substep_id": "contract_semantics", "output_ref": "semantic.action"},
+        {"substep_id": "contract_object", "label": "作业对象识别", "status": "completed", "detail": str(run["task_contract"].get("object") or "由任务语义约束"), "parent_substep_id": "contract_semantics", "output_ref": "semantic.object"},
+        {"substep_id": "contract_context", "label": "工作情境识别", "status": "completed", "detail": "保留任务发生的环境、角色和课堂适配边界。", "parent_substep_id": "contract_semantics", "output_ref": "semantic.context"},
+        {"substep_id": "contract_deliverable", "label": "预期产物识别", "status": "completed", "detail": str(run["task_contract"].get("expected_deliverable") or "由完成条件约束"), "parent_substep_id": "contract_semantics", "output_ref": "semantic.deliverable"},
+        {"substep_id": "contract_boundary", "label": "范围与禁止项识别", "status": "completed", "detail": "锁定不换岗位、不改任务主体、不越权执行等边界。", "parent_substep_id": "contract_semantics", "output_ref": "semantic.boundary"},
+        {"substep_id": "contract_identity", "label": "稳定身份与关系锁定", "status": "completed", "detail": "建立 Run、任务、知识、技能和关系的稳定引用空间。", "depends_on": ["contract_schema"], "output_ref": "identity_registry"},
+        {"substep_id": "contract_ids", "label": "Run / 工作包 ID 校验", "status": "completed", "detail": f"run_id 与 {len(workflow_packages)} 个检索工作包 ID 已锁定。", "parent_substep_id": "contract_identity", "output_ref": run["run_id"]},
+        {"substep_id": "contract_fingerprint", "label": "语义指纹计算", "status": "completed", "detail": "对象、动作和产物变化会触发同一性门禁。", "parent_substep_id": "contract_identity", "output_ref": plan["task_contract_fingerprint"]},
+        {"substep_id": "contract_invariants", "label": "任务不变量编译", "status": "completed", "detail": "生成后续候选必须共同满足的同一性、产物与安全不变量。", "depends_on": ["contract_action", "contract_object", "contract_deliverable", "contract_boundary", "contract_fingerprint"], "output_ref": "task_invariants"},
+        {"substep_id": "contract_gate", "label": "契约一致性门禁", "status": "completed", "detail": "结构、语义、身份和不变量全部通过后才允许进入环境落地。", "depends_on": ["contract_schema", "contract_invariants", "contract_ids"], "output_ref": "contract_gate:pass"},
+        {"substep_id": "contract_artifact", "label": "版本化任务契约", "status": "completed", "detail": "封存可审计 task_contract，作为后续所有阶段共同基线。", "depends_on": ["contract_gate"], "output_ref": "task_contract"},
     ]
 
     grounding_steps = [
-        {
-            "substep_id": "grounding_context",
-            "label": "环境与现状读取",
-            "status": "completed",
-            "detail": f"读取任务契约、当前 Run 状态及 {len(workflow_packages)} 个检索工作包。",
-            "output_ref": "grounding_context",
-        },
-        {
-            "substep_id": "grounding_facts",
-            "label": "可发现事实",
-            "status": "completed",
-            "detail": f"输入层级：{run['task_contract'].get('input_level') or '未声明'}；当前阶段：{run['phase']}。",
-            "parent_substep_id": "grounding_context",
-            "output_ref": "discovered_facts",
-        },
-        {
-            "substep_id": "grounding_preferences",
-            "label": "用户偏好与待确认项",
-            "status": "blocked" if user_blocking_unknowns else "completed",
-            "detail": (
-                f"仍有 {len(user_blocking_unknowns)} 个问题必须由用户确认。"
-                if user_blocking_unknowns else "当前没有必须由用户补充的阻塞项。"
-            ),
-            "parent_substep_id": "grounding_context",
-            "output_ref": "clarification_register",
-        },
-        {
-            "substep_id": "grounding_spec",
-            "label": "目标、范围与成功标准",
-            "status": "completed",
-            "detail": f"1 项总目标、{len(plan['success_criteria'])} 条成功标准。",
-            "output_ref": "task_specification",
-        },
-        {
-            "substep_id": "grounding_success",
-            "label": "成功标准",
-            "status": "completed",
-            "detail": "；".join(plan["success_criteria"]),
-            "parent_substep_id": "grounding_spec",
-            "output_ref": "success_criteria",
-        },
-        {
-            "substep_id": "grounding_stop",
-            "label": "停止条件与课堂约束",
-            "status": "completed",
-            "detail": "；".join(plan["stop_conditions"]),
-            "parent_substep_id": "grounding_spec",
-            "output_ref": "stop_conditions",
-        },
+        {"substep_id": "grounding_snapshot", "label": "运行环境快照", "status": "completed", "detail": "读取任务契约、Run 状态、上游交接信息和可用规划能力。", "output_ref": "environment_snapshot"},
+        {"substep_id": "grounding_run", "label": "Run 与检查点状态", "status": "completed", "detail": f"当前阶段 {run['phase']}，checkpoint v{run['checkpoint_version']}。", "parent_substep_id": "grounding_snapshot", "output_ref": "run_state"},
+        {"substep_id": "grounding_upstream", "label": "上游对象与关系引用", "status": "completed", "detail": "核对任务、知识、技能和关系 ID 的来源与可解析性。", "parent_substep_id": "grounding_snapshot", "output_ref": "upstream_refs"},
+        {"substep_id": "grounding_capability", "label": "可用工具与权限盘点", "status": "completed", "detail": f"盘点 {len(workflow_packages)} 个规划工作包及其工具白名单。", "parent_substep_id": "grounding_snapshot", "output_ref": "capability_inventory"},
+        {"substep_id": "grounding_fact_model", "label": "已知事实建模", "status": "completed", "detail": "区分任务事实、环境事实、用户确认事实和仍待取证事实。", "depends_on": ["grounding_run", "grounding_upstream"], "output_ref": "discovered_fact_model"},
+        {"substep_id": "grounding_input_level", "label": "输入层级判定", "status": "completed", "detail": f"输入层级：{run['task_contract'].get('input_level') or '未声明'}。", "parent_substep_id": "grounding_fact_model", "output_ref": "input_level"},
+        {"substep_id": "grounding_unknowns", "label": "未知项分类与路由", "status": "completed", "detail": f"登记 {len(plan.get('unknowns') or [])} 个未知项并按责任来源分流。", "depends_on": ["grounding_fact_model"], "output_ref": "unknown_register"},
+        {"substep_id": "grounding_user_unknowns", "label": "必须由用户确认", "status": "blocked" if user_blocking_unknowns else "completed", "detail": f"{len(user_blocking_unknowns)} 个偏好或现场选择不能由检索替代。", "parent_substep_id": "grounding_unknowns", "output_ref": "user_clarification_queue"},
+        {"substep_id": "grounding_evidence_unknowns", "label": "必须通过证据关闭", "status": "completed", "detail": f"{len(blocking_unknowns) - len(user_blocking_unknowns)} 个事实问题进入证据检索规划。", "parent_substep_id": "grounding_unknowns", "output_ref": "evidence_question_queue"},
+        {"substep_id": "grounding_conflicts", "label": "歧义与冲突登记", "status": "completed", "detail": "记录名称冲突、范围歧义和关系不一致，禁止静默覆盖。", "parent_substep_id": "grounding_unknowns", "output_ref": "ambiguity_register"},
+        {"substep_id": "grounding_constraints", "label": "课堂实施约束建模", "status": "completed", "detail": "把资源、时间、安全、权限和学习者前置能力显式化。", "depends_on": ["grounding_capability", "grounding_unknowns"], "output_ref": "constraint_model"},
+        {"substep_id": "grounding_resource", "label": "资源与设备约束", "status": "completed", "detail": "登记环境、设备、软件、资料和不可用资源。", "parent_substep_id": "grounding_constraints", "output_ref": "resource_constraints"},
+        {"substep_id": "grounding_time", "label": "课时与节奏约束", "status": "completed", "detail": "为后续步骤粒度、并行度和检查点密度提供边界。", "parent_substep_id": "grounding_constraints", "output_ref": "time_constraints"},
+        {"substep_id": "grounding_safety", "label": "安全与权限约束", "status": "completed", "detail": "声明危险操作、权限升级、人工确认和立即停止条件。", "parent_substep_id": "grounding_constraints", "output_ref": "safety_constraints"},
+        {"substep_id": "grounding_prerequisite", "label": "学习前置能力约束", "status": "completed", "detail": "登记完成真实作业步骤前必须掌握或能够调用的基础能力。", "parent_substep_id": "grounding_constraints", "output_ref": "prerequisite_constraints"},
+        {"substep_id": "grounding_spec", "label": "任务规格编译", "status": "completed", "detail": "把目标、范围、成功标准和停止条件编译为可检查规格。", "depends_on": ["grounding_fact_model", "grounding_constraints"], "output_ref": "task_specification"},
+        {"substep_id": "grounding_goal", "label": "目标与完成定义", "status": "completed", "detail": plan["goal"], "parent_substep_id": "grounding_spec", "output_ref": "goal_and_done_definition"},
+        {"substep_id": "grounding_success", "label": "成功标准矩阵", "status": "completed", "detail": "；".join(plan["success_criteria"]), "parent_substep_id": "grounding_spec", "output_ref": "success_criteria_matrix"},
+        {"substep_id": "grounding_stop", "label": "停止与升级条件", "status": "completed", "detail": "；".join(plan["stop_conditions"]), "parent_substep_id": "grounding_spec", "output_ref": "stop_conditions"},
+        {"substep_id": "grounding_gate", "label": "规格完整性门禁", "status": "blocked" if user_blocking_unknowns else "completed", "detail": "用户选择、事实问题、课堂约束和完成定义均已获得明确去向。", "depends_on": ["grounding_user_unknowns", "grounding_evidence_unknowns", "grounding_spec"], "output_ref": "grounding_gate"},
+        {"substep_id": "grounding_freeze", "label": "规划基线冻结", "status": "blocked" if user_blocking_unknowns else "completed", "detail": "冻结进入证据检索阶段的任务规格版本，后续变化必须生成 Revision。", "depends_on": ["grounding_gate"], "output_ref": "planning_baseline"},
     ]
 
     evidence_workflows = [
@@ -874,13 +824,14 @@ def _build_stages(
         for item in evidence_workflows
         for tool in item.get("allowed_tools") or []
     })
-    search_steps: list[dict[str, Any]] = [{
-        "substep_id": "search_questions",
-        "label": "证据问题分解",
-        "status": "completed",
-        "detail": f"把 {len(blocking_unknowns)} 个未知项转成可执行检索问题。",
-        "output_ref": "evidence_questions",
-    }]
+    search_steps: list[dict[str, Any]] = [
+        {"substep_id": "search_problem_model", "label": "证据问题空间建模", "status": "completed", "detail": "把事实缺口转换为可检索、可验证、可判定关闭的问题树。", "output_ref": "evidence_problem_model"},
+        {"substep_id": "search_questions", "label": "阻塞未知项分解", "status": "completed", "detail": f"把 {len(blocking_unknowns)} 个未知项转成可执行检索问题。", "parent_substep_id": "search_problem_model", "output_ref": "evidence_questions"},
+        {"substep_id": "search_operation_facts", "label": "真实作业事实问题", "status": "completed", "detail": "检索真实作业顺序、动作对象、前置条件、阶段产物与验收点。", "parent_substep_id": "search_problem_model", "output_ref": "operation_fact_questions"},
+        {"substep_id": "search_mapping_facts", "label": "知识技能关系问题", "status": "completed", "detail": "检索每个作业步骤所需知识、技能及强关系依据。", "parent_substep_id": "search_problem_model", "output_ref": "mapping_fact_questions"},
+        {"substep_id": "search_safety_facts", "label": "安全与边界问题", "status": "completed", "detail": "检索权限边界、危险操作、停止条件与官方安全要求。", "parent_substep_id": "search_problem_model", "output_ref": "safety_fact_questions"},
+        {"substep_id": "search_acceptance_facts", "label": "产物与验收问题", "status": "completed", "detail": "检索可观察产物、合格阈值、检查方式与失败判据。", "parent_substep_id": "search_problem_model", "output_ref": "acceptance_fact_questions"},
+    ]
     for unknown in plan.get("unknowns") or []:
         search_steps.append({
             "substep_id": f"search_question_{unknown['unknown_id']}",
@@ -890,51 +841,90 @@ def _build_stages(
             "parent_substep_id": "search_questions",
             "output_ref": unknown["unknown_id"],
         })
-    search_steps.append({
-        "substep_id": "search_route",
-        "label": "来源路由与可信门槛",
-        "status": "completed",
-        "detail": "先规划去哪里查、用什么校验器、何时停止；此处不生成学习任务步骤。",
-        "depends_on": ["search_questions"],
-        "output_ref": "evidence_route",
-    })
+    search_steps.extend([
+        {"substep_id": "search_source_strategy", "label": "多源检索策略编译", "status": "completed", "detail": "为不同证据问题分配任务库、知识库、权威 Web 与上游来源。", "depends_on": ["search_problem_model"], "output_ref": "source_strategy"},
+        {"substep_id": "search_route", "label": "来源路由矩阵", "status": "completed", "detail": "每类问题至少声明主来源、备选来源和不可接受来源。", "parent_substep_id": "search_source_strategy", "output_ref": "evidence_route_matrix"},
+        {"substep_id": "search_trust_tiers", "label": "来源可信等级", "status": "completed", "detail": "按上游确认、官方标准、权威资料、任务库和辅助来源分级。", "parent_substep_id": "search_source_strategy", "output_ref": "source_trust_tiers"},
+        {"substep_id": "search_freshness", "label": "时效与版本边界", "status": "completed", "detail": "为软件版本、标准版本和适用日期设置新鲜度约束。", "parent_substep_id": "search_source_strategy", "output_ref": "freshness_policy"},
+        {"substep_id": "search_tool_policy", "label": "工具权限白名单", "status": "completed", "detail": "只允许证据工作包调用登记过的只读检索与校验工具。", "parent_substep_id": "search_source_strategy", "output_ref": "evidence_tool_policy"},
+    ])
     for tool in allowed_tools:
         search_steps.append({
             "substep_id": f"search_tool_{tool}",
             "label": _TOOL_LABELS.get(tool, tool),
             "status": "ready",
             "detail": "已登记到证据检索计划的工具白名单。",
-            "parent_substep_id": "search_route",
+            "parent_substep_id": "search_tool_policy",
             "output_ref": f"tool:{tool}",
         })
+    search_steps.extend([
+        {"substep_id": "search_query_design", "label": "查询生成与编排", "status": "completed", "detail": "把问题树编译为可复现的查询组、执行顺序和并行批次。", "depends_on": ["search_route", "search_tool_policy"], "output_ref": "query_program"},
+        {"substep_id": "search_terms", "label": "术语与同义词展开", "status": "completed", "detail": "围绕任务对象、动作、产物和验收建立受控检索词表。", "parent_substep_id": "search_query_design", "output_ref": "query_terms"},
+        {"substep_id": "search_variants", "label": "查询变体生成", "status": "completed", "detail": "为精确查询、关系查询、标准查询和反证查询生成变体。", "parent_substep_id": "search_query_design", "output_ref": "query_variants"},
+        {"substep_id": "search_batches", "label": "并行批次与依赖顺序", "status": "completed", "detail": "独立问题并行，依赖事实按先验结果串行展开。", "parent_substep_id": "search_query_design", "output_ref": "query_batches"},
+        {"substep_id": "search_dedup", "label": "结果去重与聚类计划", "status": "completed", "detail": "按来源、版本、事实声明和适用范围进行去重聚类。", "parent_substep_id": "search_query_design", "output_ref": "dedup_policy"},
+        {"substep_id": "search_verification", "label": "证据验证协议", "status": "completed", "detail": "规定引用抽取、交叉验证、冲突处理和覆盖率计算。", "depends_on": ["search_query_design"], "output_ref": "verification_protocol"},
+        {"substep_id": "search_cross_check", "label": "跨来源交叉验证", "status": "completed", "detail": "关键作业事实需要两个独立来源或一个权威来源支持。", "parent_substep_id": "search_verification", "output_ref": "cross_check_rule"},
+        {"substep_id": "search_conflict", "label": "冲突证据裁决", "status": "completed", "detail": "不覆盖冲突，按权威性、时效、适用边界登记裁决理由。", "parent_substep_id": "search_verification", "output_ref": "conflict_resolution_rule"},
+        {"substep_id": "search_applicability", "label": "适用边界检查", "status": "completed", "detail": "核对证据是否适用于当前对象、版本、课堂环境和安全边界。", "parent_substep_id": "search_verification", "output_ref": "applicability_rule"},
+        {"substep_id": "search_coverage", "label": "证据覆盖矩阵", "status": "completed", "detail": "问题、事实、来源和拟生成步骤之间建立可追溯覆盖关系。", "parent_substep_id": "search_verification", "output_ref": "evidence_coverage_matrix"},
+        {"substep_id": "search_budget_control", "label": "预算与停止控制", "status": "completed", "detail": "对检索轮次、来源数量、冲突修复和低收益查询设置上限。", "depends_on": ["search_verification"], "output_ref": "search_budget_control"},
+        {"substep_id": "search_budget", "label": "检索预算分配", "status": "completed", "detail": "优先分配给阻塞任务同一性、安全和验收的事实缺口。", "parent_substep_id": "search_budget_control", "output_ref": "search_budget"},
+        {"substep_id": "search_stop", "label": "覆盖率停止条件", "status": "completed", "detail": "关键事实达到可信门槛且不存在未裁决冲突时停止。", "parent_substep_id": "search_budget_control", "output_ref": "search_stop_conditions"},
+        {"substep_id": "search_fallback", "label": "检索失败降级策略", "status": "completed", "detail": "无权威证据时转人工确认或终止，不用模型猜测填补。", "parent_substep_id": "search_budget_control", "output_ref": "search_fallback_policy"},
+    ])
     for item in evidence_workflows:
         search_steps.append({
             "substep_id": f"search_package_{item['package_id']}",
             "label": item["objective"],
             "status": "ready" if not evidence_ready else "completed",
             "detail": item["completion_condition"],
-            "parent_substep_id": "search_route",
+            "parent_substep_id": "search_query_design",
             "output_ref": item["expected_artifact"],
         })
     search_steps.append({
         "substep_id": "search_plan_artifact",
-        "label": "证据检索计划",
+        "label": "版本化证据检索计划",
         "status": "completed" if search_plan_confirmed else "ready",
-        "detail": "只规定证据问题、来源、查询顺序、预算与停止条件。",
-        "depends_on": ["search_route"],
+        "detail": "封存问题树、来源路由、查询程序、验证协议、预算与停止条件。",
+        "depends_on": ["search_problem_model", "search_source_strategy", "search_query_design", "search_verification", "search_budget_control"],
         "output_ref": "evidence_search_plan.json",
     })
 
-    task_planning_steps: list[dict[str, Any]] = [{
-        "substep_id": "task_evidence_ledger",
-        "label": "执行检索并形成证据账本",
-        "status": "completed" if evidence_ready else "blocked",
-        "detail": (
-            "证据条目已到位，可以开始生成学习型任务候选。"
-            if evidence_ready else "尚无可验证证据账本，禁止提前生成学习任务步骤。"
-        ),
-        "output_ref": "evidence_ledger" if evidence_ready else "awaiting_evidence_ledger",
-    }]
+    task_build_status: PlanStageStatus = (
+        "completed" if task_packages else "blocked" if evidence_ready else "not_started"
+    )
+    task_planning_steps: list[dict[str, Any]] = [
+        {"substep_id": "task_evidence_pipeline", "label": "证据执行与账本门禁", "status": "completed" if evidence_ready else "blocked", "detail": "执行检索程序，清洗、校验并汇合为可追溯证据账本。", "output_ref": "evidence_pipeline"},
+        {"substep_id": "task_evidence_ledger", "label": "证据账本接入", "status": "completed" if evidence_ready else "blocked", "detail": "证据条目已到位。" if evidence_ready else "尚无可验证证据账本，禁止提前生成学习任务步骤。", "parent_substep_id": "task_evidence_pipeline", "output_ref": "evidence_ledger" if evidence_ready else "awaiting_evidence_ledger"},
+        {"substep_id": "task_ledger_schema", "label": "账本结构与引用校验", "status": "completed" if evidence_ready else "not_started", "detail": "检查 evidence_id、来源、事实声明、可信度和适用边界。", "parent_substep_id": "task_evidence_pipeline", "output_ref": "ledger_schema_report"},
+        {"substep_id": "task_ledger_dedup", "label": "事实去重与声明聚类", "status": "completed" if evidence_ready else "not_started", "detail": "合并同义事实，保留来源差异、版本差异和冲突记录。", "parent_substep_id": "task_evidence_pipeline", "output_ref": "fact_clusters"},
+        {"substep_id": "task_ledger_conflict", "label": "冲突与反证检查", "status": "completed" if evidence_ready else "not_started", "detail": "关键事实存在未裁决冲突时阻断学习任务步骤生成。", "parent_substep_id": "task_evidence_pipeline", "output_ref": "conflict_register"},
+        {"substep_id": "task_ledger_coverage", "label": "任务事实覆盖率计算", "status": "completed" if evidence_ready else "not_started", "detail": "计算动作、顺序、产物、验收、安全和 K/S 关系覆盖率。", "parent_substep_id": "task_evidence_pipeline", "output_ref": "coverage_report"},
+        {"substep_id": "task_ledger_gate", "label": "证据充分性硬门禁", "status": "completed" if evidence_ready else "blocked", "detail": "只有可信、适用、无未裁决冲突的关键事实才能进入任务编译。", "depends_on": ["task_evidence_ledger", "task_ledger_schema", "task_ledger_conflict", "task_ledger_coverage"], "output_ref": "evidence_gate"},
+        {"substep_id": "task_fact_extraction", "label": "真实作业事实抽取", "status": task_build_status, "detail": "从证据账本提取动作、对象、条件、顺序、产物、验收和安全事实。", "depends_on": ["task_ledger_gate"], "output_ref": "operation_fact_graph"},
+        {"substep_id": "task_action_units", "label": "动作—对象单元识别", "status": task_build_status, "detail": "把真实作业拆为最小但可验收的动作对象单元。", "parent_substep_id": "task_fact_extraction", "output_ref": "action_object_units"},
+        {"substep_id": "task_preconditions", "label": "前置条件与输入识别", "status": task_build_status, "detail": "为每个动作单元绑定环境、资源、状态和前置产物。", "parent_substep_id": "task_fact_extraction", "output_ref": "precondition_model"},
+        {"substep_id": "task_outputs", "label": "阶段产物与状态变化识别", "status": task_build_status, "detail": "识别每个操作引起的可观察状态变化和中间产物。", "parent_substep_id": "task_fact_extraction", "output_ref": "output_state_model"},
+        {"substep_id": "task_acceptance_facts", "label": "验收与失败事实识别", "status": task_build_status, "detail": "提取合格条件、检查方法、失败症状和返工边界。", "parent_substep_id": "task_fact_extraction", "output_ref": "acceptance_fact_model"},
+        {"substep_id": "task_decomposition", "label": "学习型任务分层编译", "status": task_build_status, "detail": "把真实工作过程编译为 Goal、作业阶段、任务步骤和原子操作。", "depends_on": ["task_fact_extraction"], "output_ref": "learning_task_hierarchy"},
+        {"substep_id": "task_phase_clustering", "label": "真实作业阶段聚类", "status": task_build_status, "detail": "按作业目的、状态转换和产物汇合点划分阶段，不按教材章节切分。", "parent_substep_id": "task_decomposition", "output_ref": "work_phases"},
+        {"substep_id": "task_step_boundaries", "label": "任务步骤边界判定", "status": task_build_status, "detail": "每一步必须有明确动作、输入、产物和完成定义。", "parent_substep_id": "task_decomposition", "output_ref": "task_step_boundaries"},
+        {"substep_id": "task_atomic_compile", "label": "原子操作编译", "status": task_build_status, "detail": "继续拆解为可执行操作、产物形成和验收检查。", "parent_substep_id": "task_decomposition", "output_ref": "atomic_operations"},
+        {"substep_id": "task_step_enrichment", "label": "步骤实施条件补齐", "status": task_build_status, "detail": "为每个真实任务步骤补齐资源、K/S、安全、产物、验收和失败处理。", "depends_on": ["task_decomposition"], "output_ref": "enriched_task_steps"},
+        {"substep_id": "task_resource_binding", "label": "资源与工具绑定", "status": task_build_status, "detail": "绑定设备、软件、资料、输入文件和可用工具。", "parent_substep_id": "task_step_enrichment", "output_ref": "resource_bindings"},
+        {"substep_id": "task_knowledge_binding", "label": "知识点强关系映射", "status": task_build_status, "detail": "只绑定完成该步骤真正需要的知识点，并保留关系依据。", "parent_substep_id": "task_step_enrichment", "output_ref": "knowledge_bindings"},
+        {"substep_id": "task_skill_binding", "label": "技能点强关系映射", "status": task_build_status, "detail": "把可观察技能表现绑定到具体操作和步骤产物。", "parent_substep_id": "task_step_enrichment", "output_ref": "skill_bindings"},
+        {"substep_id": "task_safety_binding", "label": "安全门禁与禁止项", "status": task_build_status, "detail": "在危险操作前插入权限、备份、确认和停止节点。", "parent_substep_id": "task_step_enrichment", "output_ref": "step_safety_gates"},
+        {"substep_id": "task_artifact_binding", "label": "步骤产物与证据要求", "status": task_build_status, "detail": "规定配置、记录、截图、报告等可检查产物。", "parent_substep_id": "task_step_enrichment", "output_ref": "step_artifact_contracts"},
+        {"substep_id": "task_acceptance_binding", "label": "检查点与验收条件", "status": task_build_status, "detail": "将每个步骤的完成定义编译为可观察检查点。", "parent_substep_id": "task_step_enrichment", "output_ref": "step_acceptance_contracts"},
+        {"substep_id": "task_failure_binding", "label": "失败分支与返工边界", "status": task_build_status, "detail": "声明失败症状、诊断入口、冻结范围和允许重规划的子图。", "parent_substep_id": "task_step_enrichment", "output_ref": "step_failure_branches"},
+        {"substep_id": "task_dependency_model", "label": "步骤依赖与调度建模", "status": task_build_status, "detail": "从前置状态和阶段产物推导依赖，不用文本顺序冒充依赖。", "depends_on": ["task_step_enrichment"], "output_ref": "task_step_dag"},
+        {"substep_id": "task_dependency_inference", "label": "前后继依赖推断", "status": task_build_status, "detail": "建立 produces / requires / precedes 关系。", "parent_substep_id": "task_dependency_model", "output_ref": "dependency_edges"},
+        {"substep_id": "task_cycle_check", "label": "依赖无环校验", "status": task_build_status, "detail": "发现环时返回步骤边界或前置条件重新编译。", "parent_substep_id": "task_dependency_model", "output_ref": "dag_validation"},
+        {"substep_id": "task_parallel_waves", "label": "并行波次计算", "status": task_build_status, "detail": f"当前形成 {len(waves)} 个拓扑波次。", "parent_substep_id": "task_dependency_model", "output_ref": "topological_waves"},
+        {"substep_id": "task_critical_path_model", "label": "关键路径与瓶颈识别", "status": task_build_status, "detail": " → ".join(critical_path) or "等待真实 task_steps", "parent_substep_id": "task_dependency_model", "output_ref": "critical_path"},
+    ]
     for node in hierarchy:
         task_planning_steps.append({
             "substep_id": f"hierarchy_{node['node_id']}",
@@ -942,7 +932,8 @@ def _build_stages(
             "status": "completed",
             "detail": node["objective"],
             "parent_substep_id": (
-                f"hierarchy_{node['parent_id']}" if node["parent_id"] else None
+                f"hierarchy_{node['parent_id']}"
+                if node["parent_id"] else "task_decomposition"
             ),
             "output_ref": (
                 f"work-package:{node['package_id']}"
@@ -950,21 +941,9 @@ def _build_stages(
             ),
         })
     if hierarchy:
-        task_planning_steps.extend([{
-            "substep_id": "hierarchy_dag",
-            "label": "学习任务步骤 DAG 与拓扑波次",
-            "status": "completed",
-            "detail": f"形成 {len(waves)} 个可调度波次，只有同波次节点允许并行。",
-            "parent_substep_id": "hierarchy_goal",
-            "output_ref": "topological_schedule.json",
-        }, {
-            "substep_id": "hierarchy_critical_path",
-            "label": "真实作业关键路径",
-            "status": "completed",
-            "detail": " → ".join(critical_path) or "无关键路径",
-            "parent_substep_id": "hierarchy_dag",
-            "output_ref": "critical_path",
-        }])
+        task_planning_steps.append({"substep_id": "task_graph_gate", "label": "学习任务图完整性门禁", "status": "completed", "detail": "层级、步骤、依赖、映射、产物、验收和来源引用全部可解析。", "depends_on": ["hierarchy_goal", "task_cycle_check", "task_artifact_binding", "task_acceptance_binding"], "output_ref": "task_graph_gate:pass"})
+    else:
+        task_planning_steps.append({"substep_id": "task_graph_gate", "label": "学习任务图完整性门禁", "status": "blocked", "detail": "等待证据账本与真实 task_steps 后才能运行。", "depends_on": ["task_decomposition", "task_dependency_model"], "output_ref": "awaiting_task_graph"})
     task_planning_steps.append({
         "substep_id": "candidate_search",
         "label": "学习型任务多候选生成",
@@ -973,9 +952,15 @@ def _build_stages(
             "基于同一证据账本比较保真、证据与并行策略。"
             if candidates else "必须等待证据账本与真实 task_steps。"
         ),
-        "depends_on": ["task_evidence_ledger"],
+        "depends_on": ["task_graph_gate"],
         "output_ref": "candidate_set" if candidates else "awaiting_task_steps",
     })
+    task_planning_steps.extend([
+        {"substep_id": "candidate_fidelity_strategy", "label": "保真候选编译策略", "status": task_build_status, "detail": "优先保持真实作业对象、动作、顺序和企业产物。", "parent_substep_id": "candidate_search", "output_ref": "fidelity_strategy"},
+        {"substep_id": "candidate_evidence_strategy", "label": "证据候选编译策略", "status": task_build_status, "detail": "优先强化来源覆盖、冲突关闭和事实可追溯性。", "parent_substep_id": "candidate_search", "output_ref": "evidence_strategy"},
+        {"substep_id": "candidate_parallel_strategy", "label": "并行候选编译策略", "status": task_build_status, "detail": "在不破坏依赖和安全门禁的前提下提高并行度。", "parent_substep_id": "candidate_search", "output_ref": "parallel_strategy"},
+        {"substep_id": "candidate_feasibility", "label": "候选可执行性模拟", "status": "completed" if candidates else "blocked", "detail": "模拟前置条件、资源占用、关键路径、产物汇合和失败回路。", "depends_on": ["candidate_fidelity_strategy", "candidate_evidence_strategy", "candidate_parallel_strategy"], "output_ref": "candidate_feasibility_report"},
+    ])
     for candidate in candidates:
         task_planning_steps.append({
             "substep_id": f"candidate_{candidate['candidate_id']}",
@@ -991,36 +976,52 @@ def _build_stages(
         else "completed" if task_plan_finalized
         else "ready"
     )
-    critic_steps: list[dict[str, Any]] = [{
-        "substep_id": "critic_committee",
-        "label": "六维 Critic 委员会",
-        "status": "completed" if critics else "blocked",
-        "detail": (
-            "评审学习任务同一性、依赖、证据、安全、交付与教学适配。"
-            if critics else "学习型任务候选尚未生成，Critic 不提前运行。"
-        ),
-        "output_ref": "critic_report.json" if critics else "awaiting_candidates",
-    }]
+    critic_steps: list[dict[str, Any]] = [
+        {"substep_id": "critic_input_gate", "label": "候选集与证据输入门禁", "status": "completed" if critics else "blocked", "detail": "确认候选共享同一任务契约、证据账本和步骤图基线。", "output_ref": "critic_input_snapshot" if critics else "awaiting_candidates"},
+        {"substep_id": "critic_committee", "label": "六维独立 Critic 编排", "status": "completed" if critics else "blocked", "detail": "六个评审维度独立给出结论、分数、发现和受影响步骤。", "depends_on": ["critic_input_gate"], "output_ref": "critic_report.json" if critics else "awaiting_candidates"},
+    ]
+    critic_checks = {
+        "task_identity": [("fingerprint", "语义指纹一致性"), ("subject", "对象—动作—产物同一性"), ("scope", "范围与禁止项保持")],
+        "dependency": [("acyclic", "依赖无环与引用完整"), ("precondition", "前置条件可满足性"), ("schedule", "波次与关键路径合理性")],
+        "evidence": [("coverage", "关键事实来源覆盖"), ("crosscheck", "跨来源交叉验证"), ("conflict", "冲突与适用边界关闭")],
+        "safety": [("hazard", "危险操作识别"), ("permission", "权限与人工确认门禁"), ("stop", "停止和升级条件")],
+        "deliverable": [("observable", "步骤产物可观察性"), ("acceptance", "验收条件可判定性"), ("trace", "最终交付可追溯性")],
+        "teaching_fit": [("authenticity", "真实工作过程保真"), ("mapping", "知识技能强关系"), ("feasibility", "课堂资源与粒度可实施")],
+    }
     for critic in critics:
+        critic_status: PlanStageStatus = (
+            "blocked" if critic["verdict"] == "fail"
+            else "ready" if critic["verdict"] == "warning"
+            else "completed"
+        )
+        critic_parent = f"critic_{critic['critic_id']}"
         critic_steps.append({
-            "substep_id": f"critic_{critic['critic_id']}",
+            "substep_id": critic_parent,
             "label": critic["dimension"],
-            "status": (
-                "blocked" if critic["verdict"] == "fail"
-                else "ready" if critic["verdict"] == "warning"
-                else "completed"
-            ),
+            "status": critic_status,
             "detail": f"{critic['verdict']} · {critic['score']} · {critic['findings'][0]}",
             "parent_substep_id": "critic_committee",
             "output_ref": critic["critic_id"],
         })
+        for suffix, label in critic_checks[critic["dimension"]]:
+            critic_steps.append({
+                "substep_id": f"{critic_parent}_{suffix}",
+                "label": label,
+                "status": critic_status,
+                "detail": "输出检查结果、证据引用、失败规则和受影响任务步骤。",
+                "parent_substep_id": critic_parent,
+                "output_ref": f"{critic['critic_id']}.{suffix}",
+            })
     critic_steps.extend([
+        {"substep_id": "critic_aggregation", "label": "评审结果归并", "status": gate_status, "detail": "合并六维发现，区分硬门禁失败、可修补警告和通过项。", "depends_on": ["critic_committee"], "output_ref": "critic_aggregation"},
+        {"substep_id": "critic_hard_gate", "label": "硬门禁规则求值", "status": gate_status, "detail": "同一性、依赖、证据、安全、交付任一硬失败均禁止定稿。", "depends_on": ["critic_aggregation"], "output_ref": "hard_gate_result"},
+        {"substep_id": "critic_impact_scope", "label": "失败影响域计算", "status": gate_status, "detail": "计算失败步骤、后继闭包、可冻结步骤和剩余修补预算。", "depends_on": ["critic_aggregation"], "output_ref": "impact_scope"},
         {
             "substep_id": "decision_controller",
             "label": "决策控制器",
             "status": gate_status,
             "detail": "；".join(decision["reasons"]),
-            "depends_on": ["critic_committee"],
+            "depends_on": ["critic_hard_gate", "critic_impact_scope"],
             "output_ref": decision.get("selected_candidate_id") or decision["code"],
         },
         {
@@ -1037,14 +1038,17 @@ def _build_stages(
             "detail": "冻结未受影响工作包，只重算失败节点及其后继子图。",
             "parent_substep_id": "decision_controller",
         },
+        {"substep_id": "decision_stop", "label": "停止并升级人工复核", "status": "ready" if decision["code"] == "STOP" else "completed", "detail": "修补预算耗尽、同一性破坏或高风险无证据时停止。", "parent_substep_id": "decision_controller", "output_ref": "stop_or_continue"},
+        {"substep_id": "decision_score", "label": "候选多目标加权", "status": gate_status, "detail": "按保真、执行、证据、安全、教学与效率六项权重比较候选。", "parent_substep_id": "decision_controller", "output_ref": "candidate_score_matrix"},
         {
             "substep_id": "decision_select",
             "label": "选定候选",
             "status": gate_status,
             "detail": "硬门禁通过后形成 proposed_plan，并等待确认或修订。",
-            "parent_substep_id": "decision_controller",
+            "depends_on": ["decision_score"],
             "output_ref": "proposed_plan.json",
         },
+        {"substep_id": "decision_diff", "label": "候选差异与取舍说明", "status": gate_status, "detail": "输出未选候选的优势、代价和拒绝原因，避免黑箱选中。", "parent_substep_id": "decision_select", "output_ref": "candidate_tradeoff_report"},
         {
             "substep_id": "decision_confirmation",
             "label": "确认 / 修订",
@@ -1053,6 +1057,7 @@ def _build_stages(
             "parent_substep_id": "decision_select",
             "output_ref": "task_plan.json" if task_plan_finalized else "awaiting_confirmation",
         },
+        {"substep_id": "decision_version_freeze", "label": "版本冻结与审计登记", "status": "completed" if task_plan_finalized else gate_status, "detail": "确认后冻结 Plan 版本、指纹、证据引用和修订父版本。", "depends_on": ["decision_confirmation"], "output_ref": "plan_revision_ledger"},
     ])
 
     execution_checklist = [{
@@ -1070,17 +1075,18 @@ def _build_stages(
         {"artifact_id": "handoff_learning", "artifact_type": "knowledge_learning_entry", "label": "知识点级个性化学习入口", "status": "planned", "contract_ref": "personalized-learning-entry-v1"},
         {"artifact_id": "handoff_feedback", "artifact_type": "feedback_contract", "label": "批注与下游反馈契约", "status": "planned", "contract_ref": "feedback_contract"},
     ]
+    execution_pending: PlanStageStatus = "pending" if task_packages else "not_started"
     execution_steps: list[dict[str, Any]] = [
-        {
-            "substep_id": "execution_checklist",
-            "label": "运行清单",
-            "status": "pending" if task_packages else "not_started",
-            "detail": (
-                f"已形成 {len(task_packages)} 个待执行学习任务步骤；当前没有运行证据。"
-                if task_packages else "学习型任务 Plan 尚未形成，暂不生成运行清单。"
-            ),
-            "output_ref": "execution_checklist",
-        },
+        {"substep_id": "execution_compile", "label": "Plan 执行包编译", "status": execution_pending, "detail": "把确认后的任务图编译为运行清单、检查点、观察契约和交接契约。", "output_ref": "execution_package"},
+        {"substep_id": "execution_checklist", "label": "步骤运行清单", "status": execution_pending, "detail": f"已形成 {len(task_packages)} 个待执行学习任务步骤；当前没有运行证据。" if task_packages else "学习型任务 Plan 尚未形成，暂不生成运行清单。", "parent_substep_id": "execution_compile", "output_ref": "execution_checklist"},
+        {"substep_id": "execution_preconditions", "label": "前置条件检查表", "status": execution_pending, "detail": "为每步列出输入状态、依赖产物、资源、权限和人工确认项。", "parent_substep_id": "execution_compile", "output_ref": "precondition_checklist"},
+        {"substep_id": "execution_checkpoints", "label": "检查点与恢复点编译", "status": execution_pending, "detail": "在阶段边界和高风险操作前建立可恢复 Checkpoint。", "parent_substep_id": "execution_compile", "output_ref": "checkpoint_plan"},
+        {"substep_id": "execution_observation_contract", "label": "Observation 采集契约", "status": execution_pending, "detail": "规定环境状态、操作记录、产物、错误和验收结果的采集格式。", "parent_substep_id": "execution_compile", "output_ref": "observation_contract"},
+        {"substep_id": "execution_scheduler", "label": "依赖感知调度器", "status": execution_pending, "detail": "按拓扑波次、资源互斥、安全门禁和人工确认调度步骤。", "depends_on": ["execution_compile"], "output_ref": "execution_schedule"},
+        {"substep_id": "execution_wave_gate", "label": "波次前置产物门禁", "status": "not_started", "detail": "只有上一波次必需产物通过验收，后继波次才能解锁。", "parent_substep_id": "execution_scheduler", "output_ref": "wave_gate"},
+        {"substep_id": "execution_resource_lock", "label": "资源与环境锁定", "status": "not_started", "detail": "检查设备、软件、文件、账号和环境版本，防止并行冲突。", "parent_substep_id": "execution_scheduler", "output_ref": "resource_lock"},
+        {"substep_id": "execution_safety_gate", "label": "安全与权限确认", "status": "not_started", "detail": "危险操作、删除、权限升级和外部写入必须经过对应门禁。", "parent_substep_id": "execution_scheduler", "output_ref": "safety_gate"},
+        {"substep_id": "execution_dispatch", "label": "步骤下发与状态迁移", "status": "not_started", "detail": "只允许 pending → in_progress → completed / blocked 的显式迁移。", "parent_substep_id": "execution_scheduler", "output_ref": "step_dispatch_events"},
     ]
     for item in execution_checklist:
         execution_steps.append({
@@ -1088,32 +1094,41 @@ def _build_stages(
             "label": item["package_id"],
             "status": "pending",
             "detail": item["objective"],
-            "parent_substep_id": "execution_checklist",
+            "parent_substep_id": "execution_dispatch",
             "output_ref": item["expected_artifact"],
         })
     execution_steps.extend([
         {
             "substep_id": "execution_observation",
-            "label": "环境观察与产物检查",
+            "label": "运行观察与状态归约",
             "status": "not_started",
-            "detail": "执行器接入后记录环境 Observation、产物门禁与失败定位。",
-            "depends_on": ["execution_checklist"],
+            "detail": "执行器接入后采集环境 Observation，并将事实归约为步骤状态。",
+            "depends_on": ["execution_dispatch"],
             "output_ref": "observation_register",
         },
+        {"substep_id": "execution_environment_observation", "label": "环境状态 Observation", "status": "not_started", "detail": "采集版本、配置、依赖服务、权限和资源占用状态。", "parent_substep_id": "execution_observation", "output_ref": "environment_observation"},
+        {"substep_id": "execution_action_trace", "label": "操作轨迹记录", "status": "not_started", "detail": "记录已执行动作、参数、时间、操作者和关联步骤 ID。", "parent_substep_id": "execution_observation", "output_ref": "action_trace"},
+        {"substep_id": "execution_artifact_gate", "label": "步骤产物门禁", "status": "not_started", "detail": "验证产物存在性、结构、版本、完整性和与步骤契约的一致性。", "parent_substep_id": "execution_observation", "output_ref": "artifact_gate_result"},
+        {"substep_id": "execution_acceptance_gate", "label": "验收条件求值", "status": "not_started", "detail": "依据显式检查点判定通过、拒绝或需要人工复核。", "parent_substep_id": "execution_observation", "output_ref": "acceptance_result"},
+        {"substep_id": "execution_state_reduce", "label": "步骤状态确定性归约", "status": "not_started", "detail": "只有 Observation 与验收结果共同满足时才迁移为 completed。", "parent_substep_id": "execution_observation", "output_ref": "step_state_event"},
         {
             "substep_id": "execution_failure",
-            "label": "失败定位与局部回路",
+            "label": "失败诊断与影响域定位",
             "status": "not_started",
             "detail": "失败时冻结已通过步骤，仅回传受影响子图到局部重规划。",
             "parent_substep_id": "execution_observation",
             "output_ref": "failure_report",
         },
+        {"substep_id": "execution_failure_classify", "label": "失败类型分类", "status": "not_started", "detail": "区分证据、依赖、安全、产物和映射冲突。", "parent_substep_id": "execution_failure", "output_ref": "failure_code"},
+        {"substep_id": "execution_freeze_passed", "label": "已通过子图冻结", "status": "not_started", "detail": "冻结未受影响步骤的版本、产物和验收结论。", "parent_substep_id": "execution_failure", "output_ref": "frozen_subgraph"},
+        {"substep_id": "execution_affected_closure", "label": "失败后继闭包计算", "status": "not_started", "detail": "从失败节点沿依赖边计算必须重规划的最小影响域。", "parent_substep_id": "execution_failure", "output_ref": "affected_subgraph"},
+        {"substep_id": "execution_replan_request", "label": "局部重规划请求", "status": "not_started", "detail": "携带失败观察、影响步骤、冻结步骤和剩余预算返回第 05 阶段。", "parent_substep_id": "execution_failure", "output_ref": "local_replan_request"},
         {
             "substep_id": "execution_handoff",
-            "label": "成果交接",
+            "label": "多格式成果编译与交接",
             "status": "not_started",
             "detail": "HTML、PDF、版本化 JSON 与知识点级学习入口均等待真实产物生成。",
-            "depends_on": ["execution_observation"],
+            "depends_on": ["execution_acceptance_gate"],
             "output_ref": "delivery_bundle",
         },
     ])
@@ -1126,6 +1141,13 @@ def _build_stages(
             "parent_substep_id": "execution_handoff",
             "output_ref": artifact["artifact_id"],
         })
+    execution_steps.extend([
+        {"substep_id": "execution_feedback", "label": "批注与下游反馈闭环", "status": "not_started", "detail": "把页面批注、步骤问题和知识关系问题按稳定 ID 回传。", "depends_on": ["execution_handoff"], "output_ref": "feedback_pipeline"},
+        {"substep_id": "execution_annotation_feedback", "label": "步骤与文本批注归档", "status": "not_started", "detail": "保留锚点、选区、意见、作者和版本上下文。", "parent_substep_id": "execution_feedback", "output_ref": "annotation_feedback"},
+        {"substep_id": "execution_learning_feedback", "label": "个性化学习反馈接收", "status": "not_started", "detail": "接收下游对知识点、技能点和任务步骤关系的复核意见。", "parent_substep_id": "execution_feedback", "output_ref": "learning_feedback"},
+        {"substep_id": "execution_review_event", "label": "复核事件登记", "status": "not_started", "detail": "登记为导航与运营事件，不伪装成五核掌握证据。", "parent_substep_id": "execution_feedback", "output_ref": "review_event"},
+        {"substep_id": "execution_final_audit", "label": "版本、产物与审计汇合", "status": "not_started", "detail": "汇总 Plan 版本、执行状态、产物引用和反馈链路，形成最终审计索引。", "depends_on": ["execution_handoff", "execution_feedback"], "output_ref": "final_audit_index"},
+    ])
 
     stages = [
         {"stage_id": "task_contract", "sequence": 1, "label": "任务契约", "status": "completed", "summary": "输入、Schema、稳定 ID 与语义指纹形成共同基线。", "input_refs": ["upstream_task.json"], "output_refs": ["task_contract"], "substeps": contract_steps},

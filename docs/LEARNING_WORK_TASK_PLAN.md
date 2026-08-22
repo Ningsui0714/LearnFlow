@@ -2,7 +2,7 @@
 
 本模块在远端基础 TaskPlan 之上增加了可审计的深度规划分析层。它真实生成分层任务树、依赖调度、三类候选 Plan、六维 Critic 评审、决策门禁、风险清单和版本化局部重规划；但仍不把规划产物描述为已经执行，也不保存隐藏思维链。
 
-![证据先行的学习型任务 Agent Plan 架构](competition/assets/learning-task-plan-evidence-first-v6.png)
+![证据先行的学习型任务 Agent Plan 深层微流程架构](competition/assets/learning-task-plan-deep-microflow-v7.png)
 
 ## 运行链
 
@@ -38,6 +38,9 @@
 规划分析层额外输出 `learning-work-task-planning-analysis-v3`：
 
 - 严格有序的六阶段状态，每个阶段带输入、输出、树状子步骤和阻塞状态；
+- 每个大阶段都继续展开“输入读取 → 子问题分解 → 并行分支 → 汇合校验 → 决策门禁 → 版本化产物”，不是用若干评审维度代替真实过程；
+- 证据未到位时仍输出约 146 个诚实标记为 `blocked / not_started` 的微步骤，证据与真实 `task_steps` 到位后扩展到约 195 个微步骤；
+- 每个阶段输出微步骤数、主分支数、叶节点数和跨分支依赖数，便于前端检查规划深度；
 - 证据前只输出 `evidence_search_plan.json`，不生成或伪造学习任务步骤；
 - 证据账本与真实 `task_steps` 到位后，才输出四层学习任务层级：Goal → 作业阶段 → 任务步骤 → 原子操作；
 - 拓扑波次、关键路径与依赖边；
@@ -68,4 +71,4 @@
 
 ## Contract impact
 
-规划分析响应升级为 `learning-work-task-planning-analysis-v3`：明确区分证据检索计划与学习型任务 Plan，并允许在证据未就绪时返回空的学习任务树、候选、Critic 和执行清单。基础 `learning-work-task-plan-v1`、远端 Run 接口和已有确认/重规划请求保持不变；`replan.target_package_id` 在 v3 中必须引用证据后生成的学习任务步骤 ID。该模块继续复用 `plan_learning_work_task` 和中央工作台，所有 Plan 事件仍是零 kernel target；没有修改三类主 Agent、五核键、EvidenceEvent schema、确定性归约或现有任务 Bundle 契约。
+规划分析响应仍为 `learning-work-task-planning-analysis-v3`，本次只扩展阶段内 `substeps` 的深度、父子关系、跨分支依赖和可视化统计，不新增破坏性字段。它继续明确区分证据检索计划与学习型任务 Plan，并允许在证据未就绪时返回空的学习任务树、候选、Critic 和执行清单。基础 `learning-work-task-plan-v1`、远端 Run 接口和已有确认/重规划请求保持不变；`replan.target_package_id` 必须引用证据后生成的学习任务步骤 ID。该模块继续复用 `plan_learning_work_task` 和中央工作台，所有 Plan 事件仍是零 kernel target；没有修改三类主 Agent、五核键、EvidenceEvent schema、确定性归约或现有任务 Bundle 契约。

@@ -112,6 +112,7 @@ def _analysis_for(
         and stored.get("schema_version") == "learning-work-task-planning-analysis-v3"
         and stored.get("run_id") == run.get("run_id")
         and stored.get("plan_version") == run.get("plan", {}).get("plan_version")
+        and int((stored.get("metrics") or {}).get("stage_substep_count") or 0) >= 140
     ):
         return stored
     return build_planning_analysis(run)
