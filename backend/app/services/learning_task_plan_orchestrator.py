@@ -133,8 +133,8 @@ class PlanStage(BaseModel):
     stage_id: Literal[
         "task_contract",
         "grounding_clarification",
-        "hierarchical_planning",
-        "evidence_candidate_search",
+        "evidence_search_planning",
+        "evidence_grounded_task_planning",
         "critic_finalize",
         "execution_handoff",
     ]
@@ -190,7 +190,7 @@ class PlanHandoffArtifact(BaseModel):
 class LearningTaskPlanningAnalysis(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["learning-work-task-planning-analysis-v2"]
+    schema_version: Literal["learning-work-task-planning-analysis-v3"]
     run_id: str
     plan_version: int = Field(ge=1)
     analysis_version: int = Field(ge=1)
@@ -203,8 +203,8 @@ class LearningTaskPlanningAnalysis(BaseModel):
     graph_edges: list[PlanGraphEdge]
     topological_waves: list[list[str]]
     critical_path: list[str]
-    candidates: list[PlanCandidate] = Field(min_length=3, max_length=3)
-    critics: list[PlanCriticVerdict] = Field(min_length=6, max_length=6)
+    candidates: list[PlanCandidate] = Field(default_factory=list, max_length=3)
+    critics: list[PlanCriticVerdict] = Field(default_factory=list, max_length=6)
     risks: list[PlanRiskItem]
     decision: PlanDecision
     stages: list[PlanStage] = Field(min_length=6, max_length=6)
@@ -226,6 +226,10 @@ class LearningTaskPlanningAnalysis(BaseModel):
             if not set(wave) <= package_ids:
                 raise ValueError("Plan 波次引用了不存在的工作包")
         candidate_ids = {item.candidate_id for item in self.candidates}
+        if len(self.candidates) not in {0, 3}:
+            raise ValueError("学习型任务候选必须尚未生成或完整生成三份")
+        if len(self.critics) not in {0, 6}:
+            raise ValueError("Critic 必须尚未运行或完整输出六维结论")
         selected = self.decision.selected_candidate_id
         if selected and selected not in candidate_ids:
             raise ValueError("Plan 决策引用了不存在的候选")
@@ -235,32 +239,6 @@ class LearningTaskPlanningAnalysis(BaseModel):
         if checklist_ids != package_ids:
             raise ValueError("执行清单必须覆盖且只能覆盖全部工作包")
         return self
-
-
-_PHASES = (
-    ("contract", "任务语义锁定", {"task_contract_compiler", "plan_builder"}),
-    ("evidence", "证据探索与事实校验", {"evidence_explorer"}),
-    ("synthesis", "候选步骤图生成", {"candidate_planner"}),
-    ("review", "多维评审与决策", {"critic_committee", "targeted_patch_agent"}),
-    ("delivery", "交付编译与版本封存", {"artifact_publisher"}),
-)
-
-_ROLE_DURATION = {
-    "task_contract_compiler": 2,
-    "plan_builder": 3,
-    "evidence_explorer": 5,
-    "candidate_planner": 4,
-    "critic_committee": 4,
-    "targeted_patch_agent": 3,
-    "artifact_publisher": 2,
-}
-
-
-def _phase_for(role: str) -> tuple[str, str]:
-    for phase_id, label, roles in _PHASES:
-        if role in roles:
-            return phase_id, label
-    return "synthesis", "候选步骤图生成"
 
 
 def _topological_waves(packages: list[dict[str, Any]]) -> list[list[str]]:
@@ -285,7 +263,7 @@ def _topological_waves(packages: list[dict[str, Any]]) -> list[list[str]]:
 
 def _priority_order(
     packages: list[dict[str, Any]],
-    role_priority: dict[str, int],
+    package_priority: dict[str, int],
 ) -> list[str]:
     by_id = {item["package_id"]: item for item in packages}
     remaining = {
@@ -296,7 +274,7 @@ def _priority_order(
     while remaining:
         ready = [key for key, deps in remaining.items() if not deps]
         ready.sort(key=lambda key: (
-            role_priority.get(str(by_id[key].get("agent_role")), 50), key,
+            package_priority.get(key, 50), key,
         ))
         chosen = ready[0]
         ordered.append(chosen)
@@ -314,7 +292,7 @@ def _critical_path(packages: list[dict[str, Any]]) -> list[str]:
     best: dict[str, tuple[int, list[str]]] = {}
     for package_id in [item for wave in waves for item in wave]:
         item = by_id[package_id]
-        duration = _ROLE_DURATION.get(str(item.get("agent_role")), 3)
+        duration = max(1, int(item.get("estimated_minutes") or 3))
         parents = item.get("depends_on") or []
         parent_score, parent_path = max(
             (best[parent] for parent in parents),
@@ -325,50 +303,181 @@ def _critical_path(packages: list[dict[str, Any]]) -> list[str]:
     return max(best.values(), default=(0, []), key=lambda value: value[0])[1]
 
 
-def _build_hierarchy(packages: list[dict[str, Any]], goal: str) -> list[dict[str, Any]]:
+def _nested_mapping_candidates(run: dict[str, Any], key: str) -> list[Any]:
+    state = run.get("state") if isinstance(run.get("state"), dict) else {}
+    artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
+    run_artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    return [
+        run.get(key),
+        state.get(key),
+        artifacts.get(key),
+        run_artifacts.get(key),
+    ]
+
+
+def _extract_evidence_ledger(run: dict[str, Any]) -> dict[str, Any] | None:
+    for candidate in _nested_mapping_candidates(run, "evidence_ledger"):
+        if not isinstance(candidate, dict):
+            continue
+        entries = candidate.get("entries") or candidate.get("items")
+        if isinstance(entries, list) and entries:
+            return candidate
+    return None
+
+
+def _extract_task_steps(run: dict[str, Any]) -> list[dict[str, Any]]:
+    state = run.get("state") if isinstance(run.get("state"), dict) else {}
+    artifacts = state.get("artifacts") if isinstance(state.get("artifacts"), dict) else {}
+    containers: list[Any] = [
+        run.get("learning_task_plan"),
+        state.get("learning_task_plan"),
+        state.get("step_plan"),
+        state.get("selected_candidate"),
+        artifacts.get("learning_task_plan"),
+        artifacts.get("step_plan"),
+        artifacts.get("selected_candidate"),
+    ]
+    for container in containers:
+        if isinstance(container, list):
+            steps = container
+        elif isinstance(container, dict):
+            steps = (
+                container.get("task_steps")
+                or container.get("steps")
+                or container.get("work_steps")
+            )
+        else:
+            continue
+        if isinstance(steps, list) and steps and all(
+            isinstance(item, dict) for item in steps
+        ):
+            return steps
+    return []
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _positive_int(value: Any, default: int = 3) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(1, parsed)
+
+
+def _learning_task_packages(run: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize evidence-grounded learning task steps for planning analysis."""
+    steps = _extract_task_steps(run)
+    packages: list[dict[str, Any]] = []
+    known_ids: list[str] = []
+    for index, step in enumerate(steps):
+        package_id = str(
+            step.get("step_id") or step.get("package_id") or f"step_{index + 1:02d}"
+        ).strip()
+        raw_dependencies = step.get("depends_on") or step.get("dependency_ids")
+        if isinstance(raw_dependencies, list):
+            dependencies = [
+                str(item) for item in raw_dependencies if str(item) in known_ids
+            ]
+        else:
+            dependencies = known_ids[-1:] if known_ids else []
+        title = str(
+            step.get("title") or step.get("name") or step.get("step_name")
+            or f"作业步骤 {index + 1}"
+        ).strip()
+        objective = str(
+            step.get("objective") or step.get("instruction")
+            or step.get("description") or title
+        ).strip()
+        expected_artifact = str(
+            step.get("expected_artifact") or step.get("deliverable")
+            or step.get("output") or "可检查步骤产物"
+        ).strip()
+        completion_condition = str(
+            step.get("completion_condition") or step.get("acceptance_criteria")
+            or step.get("checkpoint") or "步骤产物通过明确的验收检查。"
+        ).strip()
+        knowledge_ids = _string_list(step.get("knowledge_point_ids"))
+        skill_ids = _string_list(step.get("skill_point_ids"))
+        packages.append({
+            "package_id": package_id,
+            "title": title,
+            "phase": str(step.get("phase") or step.get("stage") or "真实作业过程"),
+            "objective": objective,
+            "depends_on": dependencies,
+            "allowed_tools": [],
+            "expected_artifact": expected_artifact,
+            "completion_condition": completion_condition,
+            "knowledge_point_ids": knowledge_ids,
+            "skill_point_ids": skill_ids,
+            "safety_constraints": _string_list(step.get("safety_constraints")),
+            "source_refs": _string_list(
+                step.get("source_refs") or step.get("evidence_refs")
+            ),
+            "estimated_minutes": _positive_int(
+                step.get("estimated_minutes") or step.get("duration_minutes")
+            ),
+        })
+        known_ids.append(package_id)
+    return packages
+
+
+def _build_learning_task_hierarchy(
+    packages: list[dict[str, Any]],
+    goal: str,
+) -> list[dict[str, Any]]:
+    if not packages:
+        return []
     nodes: list[dict[str, Any]] = [{
         "node_id": "goal",
         "node_type": "goal",
         "parent_id": None,
-        "label": "规划总目标",
+        "label": "学习型任务目标",
         "objective": goal,
         "package_id": None,
         "depth": 0,
     }]
-    used_phases: set[str] = set()
+    phases: dict[str, str] = {}
     for item in packages:
-        phase_id, phase_label = _phase_for(str(item.get("agent_role")))
-        if phase_id not in used_phases:
+        phase_label = item["phase"]
+        phase_id = phases.get(phase_label)
+        if not phase_id:
+            phase_id = f"learning_phase_{len(phases) + 1:02d}"
+            phases[phase_label] = phase_id
             nodes.append({
-                "node_id": f"phase_{phase_id}",
+                "node_id": phase_id,
                 "node_type": "phase",
                 "parent_id": "goal",
                 "label": phase_label,
-                "objective": f"完成{phase_label}并产出可检查中间件。",
+                "objective": "按证据确认的真实作业顺序组织学习任务步骤。",
                 "package_id": None,
                 "depth": 1,
             })
-            used_phases.add(phase_id)
         package_id = item["package_id"]
+        package_node_id = f"learning_step_{package_id}"
         nodes.append({
-            "node_id": f"package_{package_id}",
+            "node_id": package_node_id,
             "node_type": "work_package",
-            "parent_id": f"phase_{phase_id}",
-            "label": item["objective"],
-            "objective": item["completion_condition"],
+            "parent_id": phase_id,
+            "label": item["title"],
+            "objective": item["objective"],
             "package_id": package_id,
             "depth": 2,
         })
         atomic_specs = (
-            ("prepare", "输入与约束检查", "核验依赖、权限和输入完整性。"),
-            ("produce", "受控产物生成", str(item["objective"])),
-            ("verify", "产物门禁校验", str(item["completion_condition"])),
+            ("operate", "执行操作", item["objective"]),
+            ("deliver", "形成步骤产物", item["expected_artifact"]),
+            ("accept", "执行验收检查", item["completion_condition"]),
         )
         for suffix, label, objective in atomic_specs:
             nodes.append({
-                "node_id": f"atomic_{package_id}_{suffix}",
+                "node_id": f"learning_atomic_{package_id}_{suffix}",
                 "node_type": "atomic_step",
-                "parent_id": f"package_{package_id}",
+                "parent_id": package_node_id,
                 "label": label,
                 "objective": objective,
                 "package_id": package_id,
@@ -382,22 +491,48 @@ def _build_edges(packages: list[dict[str, Any]], hierarchy: list[dict[str, Any]]
         {"source": node["parent_id"], "target": node["node_id"], "edge_type": "contains"}
         for node in hierarchy if node["parent_id"]
     ]
+    package_nodes = {
+        str(node["package_id"]): str(node["node_id"])
+        for node in hierarchy
+        if node.get("node_type") == "work_package" and node.get("package_id")
+    }
     for item in packages:
         for parent in item.get("depends_on") or []:
             edges.append({
-                "source": f"package_{parent}",
-                "target": f"package_{item['package_id']}",
+                "source": package_nodes.get(parent, f"learning_step_{parent}"),
+                "target": package_nodes.get(
+                    item["package_id"], f"learning_step_{item['package_id']}"
+                ),
                 "edge_type": "precedes",
             })
     return edges
 
 
-def _critics(run: dict[str, Any], packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _critics(
+    run: dict[str, Any],
+    packages: list[dict[str, Any]],
+    *,
+    evidence_ready: bool,
+) -> list[dict[str, Any]]:
+    if not packages:
+        return []
     plan = run["plan"]
     package_ids = [item["package_id"] for item in packages]
-    blocking = [item for item in plan.get("unknowns") or [] if item.get("blocking")]
-    roles = {str(item.get("agent_role")) for item in packages}
-    artifacts = {str(item.get("expected_artifact")) for item in packages}
+    blocking = [] if evidence_ready else [
+        item for item in plan.get("unknowns") or [] if item.get("blocking")
+    ]
+    missing_mappings = [
+        item["package_id"] for item in packages
+        if not item.get("knowledge_point_ids") or not item.get("skill_point_ids")
+    ]
+    missing_sources = [
+        item["package_id"] for item in packages if not item.get("source_refs")
+    ]
+    missing_artifacts = [
+        item["package_id"] for item in packages
+        if not str(item.get("expected_artifact") or "").strip()
+        or not str(item.get("completion_condition") or "").strip()
+    ]
     stop_text = " ".join(plan.get("stop_conditions") or [])
     return [
         {
@@ -419,10 +554,14 @@ def _critics(run: dict[str, Any], packages: list[dict[str, Any]]) -> list[dict[s
         {
             "critic_id": "critic_evidence",
             "dimension": "evidence",
-            "verdict": "warning" if blocking else "pass",
-            "score": 68 if blocking else 92,
-            "findings": ([f"仍有 {len(blocking)} 个阻塞性证据缺口。"] if blocking else ["未发现阻塞性证据缺口。"]),
-            "affected_package_ids": [item["package_id"] for item in packages if item.get("agent_role") == "evidence_explorer"],
+            "verdict": "warning" if blocking or missing_sources else "pass",
+            "score": 68 if blocking else 78 if missing_sources else 94,
+            "findings": (
+                [f"仍有 {len(blocking)} 个阻塞性证据缺口。"] if blocking
+                else [f"{len(missing_sources)} 个学习任务步骤缺少来源引用。"] if missing_sources
+                else ["证据账本已就绪，所有任务步骤均带来源引用。"]
+            ),
+            "affected_package_ids": missing_sources,
         },
         {
             "critic_id": "critic_safety",
@@ -435,18 +574,24 @@ def _critics(run: dict[str, Any], packages: list[dict[str, Any]]) -> list[dict[s
         {
             "critic_id": "critic_delivery",
             "dimension": "deliverable",
-            "verdict": "pass" if artifacts & {"delivery_bundle", "selected_candidate", "candidate_set"} else "warning",
-            "score": 90 if artifacts & {"delivery_bundle", "selected_candidate", "candidate_set"} else 74,
-            "findings": ["每个工作包均声明产物与完成条件。"],
-            "affected_package_ids": [],
+            "verdict": "warning" if missing_artifacts else "pass",
+            "score": 74 if missing_artifacts else 92,
+            "findings": [
+                f"{len(missing_artifacts)} 个步骤缺少产物或验收条件。"
+                if missing_artifacts else "每个学习任务步骤均声明产物与验收条件。"
+            ],
+            "affected_package_ids": missing_artifacts,
         },
         {
             "critic_id": "critic_teaching",
             "dimension": "teaching_fit",
-            "verdict": "pass" if "candidate_planner" in roles else "warning",
-            "score": 90 if "candidate_planner" in roles else 70,
-            "findings": ["候选规划阶段负责保持真实作业顺序并补齐课堂实施条件。"],
-            "affected_package_ids": [item["package_id"] for item in packages if item.get("agent_role") == "candidate_planner"],
+            "verdict": "warning" if missing_mappings else "pass",
+            "score": 70 if missing_mappings else 93,
+            "findings": [
+                f"{len(missing_mappings)} 个步骤缺少知识点或技能点强映射。"
+                if missing_mappings else "每个步骤均具备知识点与技能点映射。"
+            ],
+            "affected_package_ids": missing_mappings,
         },
     ]
 
@@ -498,27 +643,47 @@ def _candidates(
     packages: list[dict[str, Any]],
     waves: list[list[str]],
     critics: list[dict[str, Any]],
+    *,
+    evidence_ready: bool,
 ) -> list[dict[str, Any]]:
-    blocking = sum(1 for item in run["plan"].get("unknowns") or [] if item.get("blocking"))
+    if not packages or not critics:
+        return []
+    blocking = 0 if evidence_ready else sum(
+        1 for item in run["plan"].get("unknowns") or [] if item.get("blocking")
+    )
     critic_floor = min(item["score"] for item in critics)
+    original_priority = {
+        item["package_id"]: index for index, item in enumerate(packages)
+    }
+    evidence_priority = {
+        item["package_id"]: -len(item.get("source_refs") or [])
+        for item in packages
+    }
+    learning_priority = {
+        item["package_id"]: -(
+            len(item.get("knowledge_point_ids") or [])
+            + len(item.get("skill_point_ids") or [])
+        )
+        for item in packages
+    }
     strategies = (
         (
             "candidate_fidelity", "fidelity_first", "任务保真优先",
-            {"task_contract_compiler": 0, "plan_builder": 1, "evidence_explorer": 2, "candidate_planner": 3, "critic_committee": 4, "targeted_patch_agent": 5, "artifact_publisher": 6},
+            original_priority,
             {"fidelity": 98, "executability": 88, "evidence": 90, "safety": 90, "teaching_fit": 84, "efficiency": 76},
             ["最大限度保持企业任务对象、动作与产物。", "串行门禁较多，整体耗时相对更长。"],
         ),
         (
             "candidate_evidence", "evidence_first", "证据充分优先",
-            {"evidence_explorer": 0, "task_contract_compiler": 1, "plan_builder": 2, "critic_committee": 3, "candidate_planner": 4, "targeted_patch_agent": 5, "artifact_publisher": 6},
+            evidence_priority,
             {"fidelity": 92, "executability": 85, "evidence": 98, "safety": 93, "teaching_fit": 82, "efficiency": 72},
-            ["优先关闭来源与事实缺口。", "证据探索可能延后候选步骤生成。"],
+            ["在不违反依赖的前提下，优先安排来源覆盖更充分的步骤。", "证据较弱的步骤会被推迟并要求补证据。"],
         ),
         (
             "candidate_balanced", "balanced_parallel", "并行均衡方案",
-            {"task_contract_compiler": 0, "evidence_explorer": 1, "plan_builder": 2, "candidate_planner": 3, "critic_committee": 4, "artifact_publisher": 5, "targeted_patch_agent": 6},
+            learning_priority,
             {"fidelity": 94, "executability": 94, "evidence": 90, "safety": 91, "teaching_fit": 94, "efficiency": 95},
-            ["在依赖约束内最大化并行波次。", "需要在汇合点执行严格的版本门禁。"],
+            ["在依赖约束内兼顾知识技能覆盖并利用可并行波次。", "需要在汇合点执行严格的步骤产物门禁。"],
         ),
     )
     weights = {"fidelity": 24, "executability": 20, "evidence": 18, "safety": 18, "teaching_fit": 12, "efficiency": 8}
@@ -542,12 +707,21 @@ def _candidates(
     return result
 
 
-def _initial_revision(run: dict[str, Any], package_ids: list[str]) -> dict[str, Any]:
+def _initial_revision(
+    run: dict[str, Any],
+    package_ids: list[str],
+    *,
+    task_plan_ready: bool,
+) -> dict[str, Any]:
     return {
         "revision_id": "revision_1",
         "analysis_version": 1,
         "parent_revision_id": None,
-        "cause": "从已校验任务契约生成分层多候选 Plan。",
+        "cause": (
+            "从证据账本生成学习型任务分层树与三类候选 Plan。"
+            if task_plan_ready
+            else "从已校验任务契约生成证据检索计划；学习型任务 Plan 等待证据。"
+        ),
         "failure_code": None,
         "affected_package_ids": package_ids,
         "preserved_package_ids": [],
@@ -560,14 +734,14 @@ _TOOL_LABELS = {
     "knowledge_base_pro": "知识库 Pro",
     "official_web": "权威 Web",
     "evidence_verifier": "证据校验器",
-    "candidate_generator": "候选生成器",
-    "candidate_critic": "候选评审器",
-    "task_compiler": "任务编译器",
 }
 
 
 def _build_stages(
     run: dict[str, Any],
+    workflow_packages: list[dict[str, Any]],
+    task_packages: list[dict[str, Any]],
+    evidence_ledger: dict[str, Any] | None,
     hierarchy: list[dict[str, Any]],
     waves: list[list[str]],
     critical_path: list[str],
@@ -581,11 +755,17 @@ def _build_stages(
     not expose hidden model reasoning or claim that planned work was executed.
     """
     plan = run["plan"]
-    packages = plan["work_packages"]
     blocking_unknowns = [
         item for item in plan.get("unknowns") or [] if item.get("blocking")
     ]
-    confirmed = run["phase"] not in {"INTAKE", "CONTRACT_READY"}
+    user_blocking_unknowns = [
+        item for item in blocking_unknowns
+        if item.get("required_evidence") == "user_confirmation"
+    ]
+    evidence_ready = evidence_ledger is not None
+    task_plan_ready = bool(task_packages and hierarchy and candidates)
+    search_plan_confirmed = run["phase"] not in {"INTAKE", "CONTRACT_READY"}
+    task_plan_finalized = run["phase"] == "COMMITTED"
 
     contract_steps = [
         {
@@ -611,7 +791,7 @@ def _build_stages(
             "substep_id": "contract_ids",
             "label": "稳定 ID 校验",
             "status": "completed",
-            "detail": f"run_id 与 {len(packages)} 个唯一 package_id 已锁定。",
+            "detail": f"run_id 与 {len(workflow_packages)} 个检索工作包 ID 已锁定。",
             "parent_substep_id": "contract_input",
             "output_ref": run["run_id"],
         },
@@ -638,7 +818,7 @@ def _build_stages(
             "substep_id": "grounding_context",
             "label": "环境与现状读取",
             "status": "completed",
-            "detail": f"读取任务契约、当前 Run 状态及 {len(packages)} 个规划工作包。",
+            "detail": f"读取任务契约、当前 Run 状态及 {len(workflow_packages)} 个检索工作包。",
             "output_ref": "grounding_context",
         },
         {
@@ -652,10 +832,10 @@ def _build_stages(
         {
             "substep_id": "grounding_preferences",
             "label": "用户偏好与待确认项",
-            "status": "blocked" if blocking_unknowns else "completed",
+            "status": "blocked" if user_blocking_unknowns else "completed",
             "detail": (
-                f"仍有 {len(blocking_unknowns)} 个阻塞项，需要补充证据或用户确认。"
-                if blocking_unknowns else "当前没有阻塞性澄清项。"
+                f"仍有 {len(user_blocking_unknowns)} 个问题必须由用户确认。"
+                if user_blocking_unknowns else "当前没有必须由用户补充的阻塞项。"
             ),
             "parent_substep_id": "grounding_context",
             "output_ref": "clarification_register",
@@ -685,9 +865,78 @@ def _build_stages(
         },
     ]
 
-    hierarchy_steps: list[dict[str, Any]] = []
+    evidence_workflows = [
+        item for item in workflow_packages
+        if item.get("agent_role") == "evidence_explorer"
+    ]
+    allowed_tools = sorted({
+        tool
+        for item in evidence_workflows
+        for tool in item.get("allowed_tools") or []
+    })
+    search_steps: list[dict[str, Any]] = [{
+        "substep_id": "search_questions",
+        "label": "证据问题分解",
+        "status": "completed",
+        "detail": f"把 {len(blocking_unknowns)} 个未知项转成可执行检索问题。",
+        "output_ref": "evidence_questions",
+    }]
+    for unknown in plan.get("unknowns") or []:
+        search_steps.append({
+            "substep_id": f"search_question_{unknown['unknown_id']}",
+            "label": unknown["question"],
+            "status": "ready" if unknown.get("blocking") else "completed",
+            "detail": f"所需证据类型：{unknown['required_evidence']}。",
+            "parent_substep_id": "search_questions",
+            "output_ref": unknown["unknown_id"],
+        })
+    search_steps.append({
+        "substep_id": "search_route",
+        "label": "来源路由与可信门槛",
+        "status": "completed",
+        "detail": "先规划去哪里查、用什么校验器、何时停止；此处不生成学习任务步骤。",
+        "depends_on": ["search_questions"],
+        "output_ref": "evidence_route",
+    })
+    for tool in allowed_tools:
+        search_steps.append({
+            "substep_id": f"search_tool_{tool}",
+            "label": _TOOL_LABELS.get(tool, tool),
+            "status": "ready",
+            "detail": "已登记到证据检索计划的工具白名单。",
+            "parent_substep_id": "search_route",
+            "output_ref": f"tool:{tool}",
+        })
+    for item in evidence_workflows:
+        search_steps.append({
+            "substep_id": f"search_package_{item['package_id']}",
+            "label": item["objective"],
+            "status": "ready" if not evidence_ready else "completed",
+            "detail": item["completion_condition"],
+            "parent_substep_id": "search_route",
+            "output_ref": item["expected_artifact"],
+        })
+    search_steps.append({
+        "substep_id": "search_plan_artifact",
+        "label": "证据检索计划",
+        "status": "completed" if search_plan_confirmed else "ready",
+        "detail": "只规定证据问题、来源、查询顺序、预算与停止条件。",
+        "depends_on": ["search_route"],
+        "output_ref": "evidence_search_plan.json",
+    })
+
+    task_planning_steps: list[dict[str, Any]] = [{
+        "substep_id": "task_evidence_ledger",
+        "label": "执行检索并形成证据账本",
+        "status": "completed" if evidence_ready else "blocked",
+        "detail": (
+            "证据条目已到位，可以开始生成学习型任务候选。"
+            if evidence_ready else "尚无可验证证据账本，禁止提前生成学习任务步骤。"
+        ),
+        "output_ref": "evidence_ledger" if evidence_ready else "awaiting_evidence_ledger",
+    }]
     for node in hierarchy:
-        hierarchy_steps.append({
+        task_planning_steps.append({
             "substep_id": f"hierarchy_{node['node_id']}",
             "label": node["label"],
             "status": "completed",
@@ -700,67 +949,35 @@ def _build_stages(
                 if node.get("package_id") else node["node_type"]
             ),
         })
-    hierarchy_steps.extend([
-        {
+    if hierarchy:
+        task_planning_steps.extend([{
             "substep_id": "hierarchy_dag",
-            "label": "依赖 DAG 与拓扑波次",
+            "label": "学习任务步骤 DAG 与拓扑波次",
             "status": "completed",
             "detail": f"形成 {len(waves)} 个可调度波次，只有同波次节点允许并行。",
             "parent_substep_id": "hierarchy_goal",
             "output_ref": "topological_schedule.json",
-        },
-        {
+        }, {
             "substep_id": "hierarchy_critical_path",
-            "label": "关键路径",
+            "label": "真实作业关键路径",
             "status": "completed",
             "detail": " → ".join(critical_path) or "无关键路径",
             "parent_substep_id": "hierarchy_dag",
             "output_ref": "critical_path",
-        },
-    ])
-
-    allowed_tools = sorted({
-        tool for item in packages for tool in item.get("allowed_tools") or []
+        }])
+    task_planning_steps.append({
+        "substep_id": "candidate_search",
+        "label": "学习型任务多候选生成",
+        "status": "completed" if candidates else "blocked",
+        "detail": (
+            "基于同一证据账本比较保真、证据与并行策略。"
+            if candidates else "必须等待证据账本与真实 task_steps。"
+        ),
+        "depends_on": ["task_evidence_ledger"],
+        "output_ref": "candidate_set" if candidates else "awaiting_task_steps",
     })
-    search_steps: list[dict[str, Any]] = [{
-        "substep_id": "search_route",
-        "label": "证据路由",
-        "status": "blocked" if blocking_unknowns else "completed",
-        "detail": "只使用工作包工具白名单中声明的来源与校验器。",
-        "output_ref": "evidence_route",
-    }]
-    for tool in allowed_tools:
-        search_steps.append({
-            "substep_id": f"search_tool_{tool}",
-            "label": _TOOL_LABELS.get(tool, tool),
-            "status": "ready" if blocking_unknowns else "completed",
-            "detail": "已登记到当前 Plan 的允许工具集合。",
-            "parent_substep_id": "search_route",
-            "output_ref": f"tool:{tool}",
-        })
-    search_steps.extend([
-        {
-            "substep_id": "search_ledger",
-            "label": "证据账本",
-            "status": "blocked" if blocking_unknowns else "completed",
-            "detail": (
-                "等待关闭阻塞性证据缺口。" if blocking_unknowns
-                else "来源、适用范围与可信门禁已进入候选评分。"
-            ),
-            "parent_substep_id": "search_route",
-            "output_ref": "evidence_ledger",
-        },
-        {
-            "substep_id": "candidate_search",
-            "label": "多候选搜索",
-            "status": "blocked" if blocking_unknowns else "completed",
-            "detail": "在共同依赖图上生成不同优先级策略。",
-            "depends_on": ["search_ledger"],
-            "output_ref": "candidate_set",
-        },
-    ])
     for candidate in candidates:
-        search_steps.append({
+        task_planning_steps.append({
             "substep_id": f"candidate_{candidate['candidate_id']}",
             "label": candidate["title"],
             "status": "completed" if candidate["hard_gate_passed"] else "blocked",
@@ -770,16 +987,19 @@ def _build_stages(
         })
 
     gate_status: PlanStageStatus = (
-        "blocked" if decision["code"] == "REQUEST_EVIDENCE"
-        else "completed" if confirmed
+        "blocked" if not task_plan_ready
+        else "completed" if task_plan_finalized
         else "ready"
     )
     critic_steps: list[dict[str, Any]] = [{
         "substep_id": "critic_committee",
         "label": "六维 Critic 委员会",
-        "status": "completed",
-        "detail": "评审结论只作用于 Plan 门禁，不写入学习掌握证据。",
-        "output_ref": "critic_report.json",
+        "status": "completed" if critics else "blocked",
+        "detail": (
+            "评审学习任务同一性、依赖、证据、安全、交付与教学适配。"
+            if critics else "学习型任务候选尚未生成，Critic 不提前运行。"
+        ),
+        "output_ref": "critic_report.json" if critics else "awaiting_candidates",
     }]
     for critic in critics:
         critic_steps.append({
@@ -828,10 +1048,10 @@ def _build_stages(
         {
             "substep_id": "decision_confirmation",
             "label": "确认 / 修订",
-            "status": "completed" if confirmed else gate_status,
-            "detail": "确认只推进 Plan 状态，不代表任务已经执行。",
+            "status": "completed" if task_plan_finalized else gate_status,
+            "detail": "确认的是证据支撑的学习型任务 Plan，不代表任务已经执行。",
             "parent_substep_id": "decision_select",
-            "output_ref": "task_plan.json" if confirmed else "awaiting_confirmation",
+            "output_ref": "task_plan.json" if task_plan_finalized else "awaiting_confirmation",
         },
     ])
 
@@ -842,7 +1062,7 @@ def _build_stages(
         "expected_artifact": item["expected_artifact"],
         "observation_state": "not_observed",
         "completion_condition": item["completion_condition"],
-    } for item in packages]
+    } for item in task_packages]
     handoff_artifacts = [
         {"artifact_id": "handoff_html", "artifact_type": "html", "label": "中央任务网页", "status": "planned", "contract_ref": "learning-work-task-page"},
         {"artifact_id": "handoff_pdf", "artifact_type": "pdf", "label": "可审阅任务文档", "status": "planned", "contract_ref": "learning-work-task-pdf"},
@@ -854,8 +1074,11 @@ def _build_stages(
         {
             "substep_id": "execution_checklist",
             "label": "运行清单",
-            "status": "pending",
-            "detail": f"已形成 {len(packages)} 个待执行工作包；当前没有运行证据。",
+            "status": "pending" if task_packages else "not_started",
+            "detail": (
+                f"已形成 {len(task_packages)} 个待执行学习任务步骤；当前没有运行证据。"
+                if task_packages else "学习型任务 Plan 尚未形成，暂不生成运行清单。"
+            ),
             "output_ref": "execution_checklist",
         },
     ]
@@ -906,11 +1129,11 @@ def _build_stages(
 
     stages = [
         {"stage_id": "task_contract", "sequence": 1, "label": "任务契约", "status": "completed", "summary": "输入、Schema、稳定 ID 与语义指纹形成共同基线。", "input_refs": ["upstream_task.json"], "output_refs": ["task_contract"], "substeps": contract_steps},
-        {"stage_id": "grounding_clarification", "sequence": 2, "label": "环境落地与澄清", "status": "blocked" if blocking_unknowns else "completed", "summary": "读取现状并显式形成目标、范围、成功标准与停止条件。", "input_refs": ["task_contract", "run_state"], "output_refs": ["task_specification", "clarification_register"], "substeps": grounding_steps},
-        {"stage_id": "hierarchical_planning", "sequence": 3, "label": "分层规划", "status": "completed", "summary": "Goal → Phase → Work Package → Atomic Step，并计算 DAG 与关键路径。", "input_refs": ["task_specification"], "output_refs": ["hierarchy.json", "topological_schedule.json"], "substeps": hierarchy_steps},
-        {"stage_id": "evidence_candidate_search", "sequence": 4, "label": "证据与候选搜索", "status": "blocked" if blocking_unknowns else "completed", "summary": "经证据路由与账本生成三类可比较候选。", "input_refs": ["hierarchy.json", "allowed_tools"], "output_refs": ["evidence_ledger", "candidate_set"], "substeps": search_steps},
-        {"stage_id": "critic_finalize", "sequence": 5, "label": "Critic 门禁与定稿", "status": gate_status, "summary": "六维独立评审驱动补证据、局部重规划、选定与确认。", "input_refs": ["candidate_set", "evidence_ledger"], "output_refs": ["critic_report.json", "proposed_plan.json", "task_plan.json" if confirmed else "awaiting_confirmation"], "substeps": critic_steps},
-        {"stage_id": "execution_handoff", "sequence": 6, "label": "执行观察与交接", "status": "pending", "summary": "仅生成待运行清单和交接契约；尚无执行、观察或掌握证据。", "input_refs": ["task_plan.json"], "output_refs": ["execution_checklist", "delivery_bundle", "feedback_contract"], "substeps": execution_steps},
+        {"stage_id": "grounding_clarification", "sequence": 2, "label": "环境落地与澄清", "status": "blocked" if user_blocking_unknowns else "completed", "summary": "读取现状并显式形成目标、范围、成功标准与停止条件。", "input_refs": ["task_contract", "run_state"], "output_refs": ["task_specification", "clarification_register"], "substeps": grounding_steps},
+        {"stage_id": "evidence_search_planning", "sequence": 3, "label": "证据检索规划", "status": "completed" if search_plan_confirmed else "ready", "summary": "先规划证据问题、来源、查询顺序与停止条件，不提前生成任务步骤。", "input_refs": ["task_specification", "unknown_register"], "output_refs": ["evidence_search_plan.json"], "substeps": search_steps},
+        {"stage_id": "evidence_grounded_task_planning", "sequence": 4, "label": "证据驱动的学习任务规划", "status": "completed" if task_plan_ready else "ready" if evidence_ready else "blocked", "summary": "先形成证据账本，再生成 Goal、真实作业阶段、任务步骤、原子操作和三类候选。", "input_refs": ["evidence_search_plan.json", "evidence_ledger"], "output_refs": ["learning_task_hierarchy.json", "candidate_set"], "substeps": task_planning_steps},
+        {"stage_id": "critic_finalize", "sequence": 5, "label": "学习任务 Critic 与定稿", "status": gate_status, "summary": "六维独立评审驱动补证据、局部重规划、选定与最终确认。", "input_refs": ["candidate_set", "evidence_ledger"], "output_refs": ["critic_report.json", "proposed_plan.json", "task_plan.json" if task_plan_finalized else "awaiting_confirmation"], "substeps": critic_steps},
+        {"stage_id": "execution_handoff", "sequence": 6, "label": "执行观察与交接", "status": "pending" if task_plan_ready else "not_started", "summary": "正式学习任务 Plan 确认后才生成运行清单；当前不伪造执行或掌握证据。", "input_refs": ["task_plan.json"], "output_refs": ["execution_checklist", "delivery_bundle", "feedback_contract"], "substeps": execution_steps},
     ]
     return stages, execution_checklist, handoff_artifacts
 
@@ -918,23 +1141,42 @@ def _build_stages(
 def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
     run = LearningTaskPlanRun.model_validate(run_payload).model_dump(mode="json")
     plan = run["plan"]
-    packages = plan["work_packages"]
-    package_ids = [item["package_id"] for item in packages]
-    waves = _topological_waves(packages)
-    hierarchy = _build_hierarchy(packages, plan["goal"])
-    critics = _critics(run, packages)
-    risks = _risks(run, packages)
-    candidates = _candidates(run, packages, waves, critics)
-    blocking = sum(1 for item in plan.get("unknowns") or [] if item.get("blocking"))
+    workflow_packages = plan["work_packages"]
+    evidence_ledger = _extract_evidence_ledger(run)
+    evidence_ready = evidence_ledger is not None
+    task_packages = _learning_task_packages(run) if evidence_ready else []
+    package_ids = [item["package_id"] for item in task_packages]
+    waves = _topological_waves(task_packages) if task_packages else []
+    hierarchy = _build_learning_task_hierarchy(task_packages, plan["goal"])
+    critics = _critics(
+        run, task_packages, evidence_ready=evidence_ready,
+    )
+    risks = _risks(run, task_packages or workflow_packages)
+    candidates = _candidates(
+        run,
+        task_packages,
+        waves,
+        critics,
+        evidence_ready=evidence_ready,
+    )
     eligible = [item for item in candidates if item["hard_gate_passed"]]
     selected = max(eligible, key=lambda item: item["weighted_score"], default=None)
-    if blocking:
+    if not evidence_ready:
         decision = {
             "code": "REQUEST_EVIDENCE",
             "selected_candidate_id": None,
             "confidence": 82,
-            "reasons": [f"检测到 {blocking} 个阻塞性证据缺口，候选不能进入执行。"],
-            "triggered_rules": ["EVIDENCE_BLOCKING_UNKNOWN"],
+            "reasons": ["证据检索计划已经形成，但证据账本尚未到位，禁止生成学习型任务步骤。"],
+            "triggered_rules": ["EVIDENCE_LEDGER_REQUIRED"],
+        }
+        status = "needs_evidence"
+    elif not task_packages:
+        decision = {
+            "code": "REQUEST_EVIDENCE",
+            "selected_candidate_id": None,
+            "confidence": 78,
+            "reasons": ["证据账本已就绪，但尚未收到由证据支撑的 task_steps。"],
+            "triggered_rules": ["EVIDENCE_GROUNDED_TASK_STEPS_REQUIRED"],
         }
         status = "needs_evidence"
     elif selected:
@@ -945,7 +1187,11 @@ def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
             "reasons": ["所有硬门禁通过。", f"{selected['title']}获得最高加权分。"],
             "triggered_rules": ["IDENTITY_LOCKED", "DAG_VALID", "CRITIC_GATE_PASS"],
         }
-        status = "ready_for_confirmation" if run["phase"] == "CONTRACT_READY" else "planned_not_executed"
+        status = (
+            "planned_not_executed"
+            if run["phase"] == "COMMITTED"
+            else "ready_for_confirmation"
+        )
     else:
         decision = {
             "code": "LOCAL_REPLAN",
@@ -955,19 +1201,28 @@ def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
             "triggered_rules": ["CRITIC_GATE_REJECT"],
         }
         status = "planned_not_executed"
-    critical_path = _critical_path(packages)
+    critical_path = _critical_path(task_packages) if task_packages else []
     stages, execution_checklist, handoff_artifacts = _build_stages(
-        run, hierarchy, waves, critical_path, candidates, critics, decision,
+        run,
+        workflow_packages,
+        task_packages,
+        evidence_ledger,
+        hierarchy,
+        waves,
+        critical_path,
+        candidates,
+        critics,
+        decision,
     )
     analysis = {
-        "schema_version": "learning-work-task-planning-analysis-v2",
+        "schema_version": "learning-work-task-planning-analysis-v3",
         "run_id": run["run_id"],
         "plan_version": plan["plan_version"],
         "analysis_version": 1,
         "planning_status": status,
         "active_revision_id": "revision_1",
         "hierarchy": hierarchy,
-        "graph_edges": _build_edges(packages, hierarchy),
+        "graph_edges": _build_edges(task_packages, hierarchy),
         "topological_waves": waves,
         "critical_path": critical_path,
         "candidates": candidates,
@@ -978,11 +1233,15 @@ def build_planning_analysis(run_payload: dict[str, Any]) -> dict[str, Any]:
         "execution_checklist": execution_checklist,
         "handoff_artifacts": handoff_artifacts,
         "evidence_semantics": "operational_only",
-        "revision_history": [_initial_revision(run, package_ids)],
+        "revision_history": [_initial_revision(
+            run, package_ids, task_plan_ready=bool(candidates),
+        )],
         "repair_budget_remaining": plan["repair_budget"],
         "metrics": {
             "hierarchy_nodes": len(hierarchy),
-            "dependency_edges": sum(len(item.get("depends_on") or []) for item in packages),
+            "dependency_edges": sum(
+                len(item.get("depends_on") or []) for item in task_packages
+            ),
             "parallel_waves": len(waves),
             "candidate_count": len(candidates),
             "critic_count": len(critics),
@@ -1021,10 +1280,12 @@ def replan_analysis(
         raise ValueError(f"规划分析版本已变化，当前为 v{current.analysis_version}")
     if current.repair_budget_remaining <= 0:
         raise ValueError("局部重规划预算已经用尽")
-    packages = run["plan"]["work_packages"]
+    packages = _learning_task_packages(run)
+    if not _extract_evidence_ledger(run) or not packages or not current.candidates:
+        raise ValueError("证据驱动的学习型任务 Plan 尚未生成，不能局部重规划")
     package_ids = [item["package_id"] for item in packages]
     if target_package_id not in package_ids:
-        raise ValueError("局部重规划目标工作包不存在")
+        raise ValueError("局部重规划目标学习任务步骤不存在")
 
     affected = {target_package_id}
     changed = True

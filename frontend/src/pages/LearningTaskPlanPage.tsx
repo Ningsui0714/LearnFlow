@@ -32,8 +32,8 @@ import { useWorkspaceTitle } from "../components/workspace/WorkspaceContext";
 
 const phaseLabels: Record<LearningTaskPlanRun["phase"], string> = {
   INTAKE: "等待任务明确",
-  CONTRACT_READY: "计划待确认",
-  PLAN_READY: "计划已就绪",
+  CONTRACT_READY: "检索计划待确认",
+  PLAN_READY: "等待证据账本",
   EVIDENCE_READY: "证据已就绪",
   STEP_PLAN_READY: "步骤计划已就绪",
   CANDIDATES_READY: "候选已就绪",
@@ -42,16 +42,6 @@ const phaseLabels: Record<LearningTaskPlanRun["phase"], string> = {
   COMMIT_READY: "等待交付",
   COMMITTED: "已交付",
   FAILED: "运行失败",
-};
-
-const roleLabels: Record<string, string> = {
-  task_contract_compiler: "任务契约编译",
-  plan_builder: "分层计划构建",
-  evidence_explorer: "证据探索",
-  candidate_planner: "候选规划",
-  critic_committee: "独立评审",
-  targeted_patch_agent: "定向修订",
-  artifact_publisher: "交付编译",
 };
 
 const criticLabels: Record<string, string> = {
@@ -122,9 +112,9 @@ function StageCard({ stage }: { stage: LearningTaskPlanStage }) {
       <FileJson2 size={16} />
     ) : stage.stage_id === "grounding_clarification" ? (
       <Activity size={16} />
-    ) : stage.stage_id === "hierarchical_planning" ? (
+    ) : stage.stage_id === "evidence_search_planning" ? (
       <Layers3 size={16} />
-    ) : stage.stage_id === "evidence_candidate_search" ? (
+    ) : stage.stage_id === "evidence_grounded_task_planning" ? (
       <BrainCircuit size={16} />
     ) : stage.stage_id === "critic_finalize" ? (
       <ShieldCheck size={16} />
@@ -254,7 +244,7 @@ function CandidateCard({
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
             {item.parallel_waves.length} 个依赖波次 ·{" "}
-            {item.ordered_package_ids.length} 个工作包
+            {item.ordered_package_ids.length} 个学习任务步骤
           </p>
         </div>
         <div className="shrink-0 text-right">
@@ -325,7 +315,7 @@ export default function LearningTaskPlanPage() {
   const [failureCode, setFailureCode] =
     useState<keyof typeof replanLabels>("evidence_gap");
   const [observation, setObservation] = useState(
-    "当前检查结果未通过，需要只重规划受影响工作包及其后继依赖。",
+    "当前检查结果未通过，需要只重规划受影响学习任务步骤及其后继依赖。",
   );
 
   useWorkspaceTitle(run?.plan.goal || "学习型任务 Plan", { kind: "wf03" });
@@ -340,8 +330,7 @@ export default function LearningTaskPlanPage() {
       setTargetPackage(
         (current) =>
           current ||
-          value.planning_analysis.risks[0]?.package_id ||
-          value.plan.work_packages[0]?.package_id ||
+          value.planning_analysis.execution_checklist[0]?.package_id ||
           "",
       );
     } catch (failure: any) {
@@ -368,7 +357,7 @@ export default function LearningTaskPlanPage() {
         ),
       );
     } catch (failure: any) {
-      setError(failure?.response?.data?.detail || "任务 Plan 确认失败。");
+      setError(failure?.response?.data?.detail || "证据检索计划确认失败。");
     } finally {
       setActing(false);
     }
@@ -439,7 +428,8 @@ export default function LearningTaskPlanPage() {
     (item) => item.candidate_id === analysis.decision.selected_candidate_id,
   );
   const contract = run.task_contract || {};
-  const confirmed = run.phase !== "CONTRACT_READY" && run.phase !== "INTAKE";
+  const searchPlanConfirmed =
+    run.phase !== "CONTRACT_READY" && run.phase !== "INTAKE";
 
   return (
     <div className="h-full overflow-y-auto bg-[#f4f6f8] px-3 py-4 sm:px-5 lg:px-7">
@@ -452,18 +442,18 @@ export default function LearningTaskPlanPage() {
                   {phaseLabels[run.phase]}
                 </span>
                 <span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-slate-300">
-                  Plan v{run.plan.plan_version} · 分析 v
+                  检索计划 v{run.plan.plan_version} · 分析 v
                   {analysis.analysis_version}
                 </span>
                 <span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] text-slate-300">
-                  未执行 · 可审计
+                  学习任务未执行 · 可审计
                 </span>
               </div>
               <h1 className="mt-3 max-w-4xl text-xl font-bold tracking-tight sm:text-2xl lg:text-3xl">
                 {run.plan.goal}
               </h1>
               <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-400">
-                显式规划产物：任务树、依赖图、候选搜索、评审矩阵、决策门禁和局部重规划均可检查；不展示或保存隐藏思维链。
+                证据前只生成检索计划；证据账本到位后，才生成学习任务树、候选方案、评审矩阵与最终 Plan。所有产物均可检查，不保存隐藏思维链。
               </p>
             </div>
             <div className="flex flex-wrap items-start gap-2 2xl:justify-end">
@@ -481,7 +471,7 @@ export default function LearningTaskPlanPage() {
                   className="flex h-9 items-center gap-1.5 rounded-lg bg-indigo-500 px-3.5 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-50"
                 >
                   <ShieldCheck size={14} />
-                  确认 Plan
+                  确认证据检索计划
                 </button>
               )}
             </div>
@@ -491,7 +481,7 @@ export default function LearningTaskPlanPage() {
               [
                 "层级节点",
                 analysis.metrics.hierarchy_nodes,
-                "目标→阶段→工作包→原子步",
+                "目标→作业阶段→任务步骤→原子操作",
               ],
               ["依赖边", analysis.metrics.dependency_edges, "有向无环约束"],
               ["并行波次", analysis.metrics.parallel_waves, "拓扑调度结果"],
@@ -525,11 +515,11 @@ export default function LearningTaskPlanPage() {
               <div className="flex items-center gap-2">
                 <GitBranch size={17} className="text-indigo-700" />
                 <h2 className="text-sm font-semibold text-slate-950">
-                  六阶段深层时序 Plan
+                  证据先行的学习型任务 Plan
                 </h2>
               </div>
               <p className="mt-1 text-[10px] text-slate-500">
-                每个阶段都展开输入、校验、分支、决策与产物；阶段之间按 01 → 06 严格推进。
+                01–03 只锁定任务并规划证据；第 04 阶段才允许生成学习任务步骤与候选。
               </p>
             </div>
             <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 font-mono text-[9px] text-slate-500">
@@ -605,13 +595,23 @@ export default function LearningTaskPlanPage() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Layers3 size={16} className="text-indigo-700" />
-                <h2 className="text-sm font-semibold">四层 HTN 式任务分解</h2>
+                <h2 className="text-sm font-semibold">证据驱动的四层学习任务分解</h2>
               </div>
               <span className="text-[10px] text-slate-400">
                 Goal → Phase → Work Package → Atomic Step
               </span>
             </div>
             <div className="mt-4 grid min-w-0 gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {phases.length === 0 && (
+                <div className="col-span-full rounded-xl border border-dashed border-amber-300 bg-amber-50 p-5 text-center">
+                  <p className="text-xs font-semibold text-amber-900">
+                    学习型任务树尚未生成
+                  </p>
+                  <p className="mt-2 text-[10px] leading-4 text-amber-700">
+                    当前只有证据检索计划。证据账本和真实 task_steps 到位后，才会显示 Goal → 作业阶段 → 任务步骤 → 原子操作。
+                  </p>
+                </div>
+              )}
               {phases.map((phase, index) => (
                 <div
                   key={phase.node_id}
@@ -632,11 +632,7 @@ export default function LearningTaskPlanPage() {
                         className="rounded-lg border border-slate-200 bg-white px-2.5 py-2"
                       >
                         <p className="truncate text-[10px] font-semibold text-indigo-800">
-                          {roleLabels[
-                            run.plan.work_packages.find(
-                              (pack) => pack.package_id === item.package_id,
-                            )?.agent_role || ""
-                          ] || item.package_id}
+                          {item.package_id}
                         </p>
                         <p className="mt-1 line-clamp-2 text-[9px] leading-4 text-slate-500">
                           {item.label}
@@ -657,13 +653,18 @@ export default function LearningTaskPlanPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Network size={16} className="text-indigo-700" />
-              <h2 className="text-sm font-semibold">依赖图调度与关键路径</h2>
+              <h2 className="text-sm font-semibold">学习任务步骤依赖图与关键路径</h2>
             </div>
             <span className="text-[10px] text-slate-400">
               只有同一波次可以并行，跨波次必须等待前置产物
             </span>
           </div>
           <div className="mt-4 flex min-w-0 flex-col gap-2 2xl:flex-row 2xl:items-stretch">
+            {analysis.topological_waves.length === 0 && (
+              <div className="w-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-[10px] text-slate-500">
+                等待证据驱动的学习任务步骤，当前不生成虚假的依赖图或关键路径。
+              </div>
+            )}
             {analysis.topological_waves.map((wave, waveIndex) => (
               <div
                 key={waveIndex}
@@ -714,7 +715,7 @@ export default function LearningTaskPlanPage() {
             <div className="flex items-center gap-2">
               <BrainCircuit size={17} className="text-indigo-700" />
               <h2 className="text-sm font-semibold">
-                多候选 Plan 搜索与加权选择
+                学习型任务多候选搜索与加权选择
               </h2>
             </div>
             <span className="text-[10px] text-slate-500">
@@ -722,6 +723,11 @@ export default function LearningTaskPlanPage() {
             </span>
           </div>
           <div className="grid min-w-0 gap-3 2xl:grid-cols-3">
+            {analysis.candidates.length === 0 && (
+              <div className="2xl:col-span-3 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-5 text-center text-[10px] text-amber-800">
+                证据账本尚未形成，三类学习型任务候选保持阻塞，不使用 Agent 工作包冒充任务步骤。
+              </div>
+            )}
             {analysis.candidates.map((item) => (
               <CandidateCard
                 key={item.candidate_id}
@@ -738,9 +744,14 @@ export default function LearningTaskPlanPage() {
           <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-center gap-2">
               <ShieldCheck size={16} className="text-indigo-700" />
-              <h2 className="text-sm font-semibold">独立 Critic 委员会</h2>
+              <h2 className="text-sm font-semibold">学习任务独立 Critic 委员会</h2>
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {analysis.critics.length === 0 && (
+                <div className="col-span-full rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-[10px] text-slate-500">
+                  学习型任务候选尚未生成，六维 Critic 不提前运行。
+                </div>
+              )}
               {analysis.critics.map((item) => (
                 <CriticCell key={item.critic_id} item={item} />
               ))}
@@ -837,59 +848,66 @@ export default function LearningTaskPlanPage() {
               </span>
             </div>
             <p className="mt-2 text-[10px] leading-4 text-slate-500">
-              选择失败点后，只重算该工作包及其后继依赖；语义指纹与未受影响工作包保持冻结。
+              选择失败的学习任务步骤后，只重算该步骤及其后继依赖；语义指纹与未受影响步骤保持冻结。
             </p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <select
-                value={targetPackage}
-                onChange={(event) => setTargetPackage(event.target.value)}
-                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-700"
-              >
-                {run.plan.work_packages.map((item) => (
-                  <option key={item.package_id} value={item.package_id}>
-                    {item.package_id} ·{" "}
-                    {roleLabels[item.agent_role] || item.agent_role}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={failureCode}
-                onChange={(event) =>
-                  setFailureCode(
-                    event.target.value as keyof typeof replanLabels,
-                  )
-                }
-                className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-700"
-              >
-                {Object.entries(replanLabels).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <textarea
-              value={observation}
-              onChange={(event) => setObservation(event.target.value)}
-              rows={2}
-              className="mt-2 w-full resize-none rounded-lg border border-slate-200 p-3 text-[10px] leading-4 text-slate-700"
-            />
-            <button
-              onClick={replan}
-              disabled={
-                acting ||
-                analysis.repair_budget_remaining <= 0 ||
-                observation.trim().length < 4
-              }
-              className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40"
-            >
-              {acting ? (
-                <RefreshCw size={13} className="animate-spin" />
-              ) : (
-                <GitBranch size={13} />
-              )}
-              生成局部修订版本
-            </button>
+            {analysis.execution_checklist.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-4 text-center text-[10px] leading-4 text-amber-800">
+                证据驱动的学习任务步骤尚未生成，当前不能对 Agent 检索工作包执行“学习任务局部重规划”。
+              </div>
+            ) : (
+              <>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <select
+                    value={targetPackage}
+                    onChange={(event) => setTargetPackage(event.target.value)}
+                    className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-700"
+                  >
+                    {analysis.execution_checklist.map((item) => (
+                      <option key={item.package_id} value={item.package_id}>
+                        {item.package_id} · {item.objective}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={failureCode}
+                    onChange={(event) =>
+                      setFailureCode(
+                        event.target.value as keyof typeof replanLabels,
+                      )
+                    }
+                    className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] text-slate-700"
+                  >
+                    {Object.entries(replanLabels).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <textarea
+                  value={observation}
+                  onChange={(event) => setObservation(event.target.value)}
+                  rows={2}
+                  className="mt-2 w-full resize-none rounded-lg border border-slate-200 p-3 text-[10px] leading-4 text-slate-700"
+                />
+                <button
+                  onClick={replan}
+                  disabled={
+                    acting ||
+                    analysis.repair_budget_remaining <= 0 ||
+                    observation.trim().length < 4
+                  }
+                  className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40"
+                >
+                  {acting ? (
+                    <RefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <GitBranch size={13} />
+                  )}
+                  生成局部修订版本
+                </button>
+              </>
+            )}
           </article>
         </section>
 
@@ -900,7 +918,7 @@ export default function LearningTaskPlanPage() {
               <h2 className="text-sm font-semibold">规划输出与后续接口</h2>
             </div>
             <span className="rounded-full border border-indigo-200 bg-white px-2 py-1 text-[9px] text-indigo-700">
-              planning-analysis-v2 · operational only
+              planning-analysis-v3 · evidence first
             </span>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
@@ -922,7 +940,7 @@ export default function LearningTaskPlanPage() {
               ],
               [
                 '版本化规划包',
-                `Plan v${run.plan.plan_version} · Analysis v${analysis.analysis_version}`,
+                `检索计划 v${run.plan.plan_version} · Analysis v${analysis.analysis_version}`,
                 `${analysis.active_revision_id}.json`,
               ],
             ].map(([title, description, artifact]) => (
@@ -1056,13 +1074,13 @@ export default function LearningTaskPlanPage() {
             ))}
           </div>
           <div
-            className={`mt-4 flex items-start gap-2 rounded-xl border px-3 py-3 text-[10px] leading-4 ${confirmed ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
+            className={`mt-4 flex items-start gap-2 rounded-xl border px-3 py-3 text-[10px] leading-4 ${searchPlanConfirmed ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-indigo-200 bg-indigo-50 text-indigo-900"}`}
           >
             <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
             <span>
-              {confirmed
-                ? "基础 Plan 已确认；当前显示的是可执行前的规划分析与版本记录，尚未写入学习掌握证据。"
-                : "基础 Plan 等待确认。确认只推进到 PLAN_READY，不会把规划结果误记为执行或掌握。"}
+              {searchPlanConfirmed
+                ? "证据检索计划已确认；仍需先形成证据账本，之后才能生成学习型任务 Plan，并进入远端定稿门禁。"
+                : "当前等待确认的是证据检索计划，不是最终学习型任务 Plan；确认后只推进到 PLAN_READY。"}
             </span>
           </div>
         </section>

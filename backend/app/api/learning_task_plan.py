@@ -109,7 +109,7 @@ def _analysis_for(
     stored = (message.meta_data or {}).get("planning_analysis") if message else None
     if (
         isinstance(stored, dict)
-        and stored.get("schema_version") == "learning-work-task-planning-analysis-v2"
+        and stored.get("schema_version") == "learning-work-task-planning-analysis-v3"
         and stored.get("run_id") == run.get("run_id")
         and stored.get("plan_version") == run.get("plan", {}).get("plan_version")
     ):
@@ -265,8 +265,8 @@ async def confirm_learning_task_plan(
         _raise_plan_error(exc)
 
     confirmed_message = (
-        f"任务 Plan v{run['plan']['plan_version']} 已通过远端契约、依赖和工具权限校验。"
-        "当前停在 PLAN_READY；证据探索和步骤执行将在后续阶段接入。"
+        f"证据检索计划 v{run['plan']['plan_version']} 已通过远端契约、依赖和工具权限校验。"
+        "当前停在 PLAN_READY；必须先形成证据账本，之后才能生成学习型任务 Plan。"
     )
     message.content = confirmed_message
     message.meta_data = {

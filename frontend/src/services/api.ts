@@ -355,7 +355,7 @@ export interface LearningTaskPlanStageSubstep {
 }
 
 export interface LearningTaskPlanStage {
-  stage_id: 'task_contract' | 'grounding_clarification' | 'hierarchical_planning' | 'evidence_candidate_search' | 'critic_finalize' | 'execution_handoff'
+  stage_id: 'task_contract' | 'grounding_clarification' | 'evidence_search_planning' | 'evidence_grounded_task_planning' | 'critic_finalize' | 'execution_handoff'
   sequence: number
   label: string
   status: LearningTaskPlanStageStatus
@@ -383,7 +383,7 @@ export interface LearningTaskPlanHandoffArtifact {
 }
 
 export interface LearningTaskPlanningAnalysis {
-  schema_version: 'learning-work-task-planning-analysis-v2'
+  schema_version: 'learning-work-task-planning-analysis-v3'
   run_id: string
   plan_version: number
   analysis_version: number

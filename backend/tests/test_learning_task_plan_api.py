@@ -120,15 +120,16 @@ def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):
         assert confirmed.json()["plan"]["plan_version"] == 2
         assert confirmed.json()["planning_analysis"]["analysis_version"] == 1
         assert confirmed.json()["planning_analysis"]["schema_version"] == (
-            "learning-work-task-planning-analysis-v2"
+            "learning-work-task-planning-analysis-v3"
         )
-        assert len(confirmed.json()["planning_analysis"]["candidates"]) == 3
+        assert confirmed.json()["planning_analysis"]["hierarchy"] == []
+        assert confirmed.json()["planning_analysis"]["candidates"] == []
+        assert confirmed.json()["planning_analysis"]["critics"] == []
         assert len(confirmed.json()["planning_analysis"]["stages"]) == 6
-        assert confirmed.json()["planning_analysis"]["stages"][-1]["status"] == "pending"
-        assert all(
-            item["observation_state"] == "not_observed"
-            for item in confirmed.json()["planning_analysis"]["execution_checklist"]
-        )
+        assert confirmed.json()["planning_analysis"]["stages"][2]["status"] == "completed"
+        assert confirmed.json()["planning_analysis"]["stages"][3]["status"] == "blocked"
+        assert confirmed.json()["planning_analysis"]["stages"][-1]["status"] == "not_started"
+        assert confirmed.json()["planning_analysis"]["execution_checklist"] == []
 
         replanned = client.post(
             f"/api/learning-task-conversion/plans/{run_id}/replan",
@@ -140,9 +141,8 @@ def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):
                 "client_event_id": "replan-001",
             },
         )
-        assert replanned.status_code == 200
-        assert replanned.json()["planning_analysis"]["analysis_version"] == 2
-        assert replanned.json()["planning_analysis"]["repair_budget_remaining"] == 1
+        assert replanned.status_code == 409
+        assert "学习型任务 Plan 尚未生成" in replanned.json()["detail"]
 
         loaded_session = client.get(f"/api/agent/sessions/{session['id']}").json()
         plan_messages = [
@@ -151,7 +151,7 @@ def test_plan_api_creates_recovers_and_confirms_owned_run(monkeypatch):
         ]
         assert len(plan_messages) == 1
         assert plan_messages[0]["meta_data"]["confirmed_plan_version"] == 2
-        assert plan_messages[0]["meta_data"]["planning_analysis"]["analysis_version"] == 2
+        assert plan_messages[0]["meta_data"]["planning_analysis"]["analysis_version"] == 1
 
 
 def test_plan_api_requires_login_and_learner_ownership(monkeypatch):
