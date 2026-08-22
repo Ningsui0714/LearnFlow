@@ -2234,29 +2234,35 @@ class LearningDomainStore:
                 "knowledge_point_id": knowledge_point_id,
                 "source": "assessment_session_backfill",
             }
-            connection.execute(
+            inserted_event = connection.execute(
                 "INSERT OR IGNORE INTO wrongbook_events(event_id, student_id, project_id, root_question_instance_id, event_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (event_id, student_id, project_id, root_id, json_text(event), now),
             )
-            connection.execute(
-                """INSERT INTO wrongbook_items(
-                    student_id, project_id, root_question_instance_id, knowledge_point_id,
-                    status, last_error_json, attempt_count, updated_at
-                ) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?)
-                ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET
-                    status = 'needs_review', last_error_json = excluded.last_error_json,
-                    updated_at = excluded.updated_at""",
-                (
-                    student_id, project_id, root_id, knowledge_point_id,
-                    json_text([{
-                        "error_id": "ASSESSMENT_ANSWER_INCORRECT",
-                        "knowledge_point_id": knowledge_point_id,
-                        "knowledge_point_name": str(question.get("knowledge_point_name") or knowledge_point_id),
-                        "error_type": "assessment",
-                        "diagnosis": "该题在项目测评中答错，建议回顾对应知识点。",
-                    }]), now,
-                ),
-            )
+            existing_item = connection.execute(
+                "SELECT 1 FROM wrongbook_items WHERE student_id = ? AND project_id = ? "
+                "AND root_question_instance_id = ?",
+                (student_id, project_id, root_id),
+            ).fetchone()
+            if inserted_event.rowcount or not existing_item:
+                connection.execute(
+                    """INSERT INTO wrongbook_items(
+                        student_id, project_id, root_question_instance_id, knowledge_point_id,
+                        status, last_error_json, attempt_count, updated_at
+                    ) VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?)
+                    ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET
+                        status = 'needs_review', last_error_json = excluded.last_error_json,
+                        updated_at = excluded.updated_at""",
+                    (
+                        student_id, project_id, root_id, knowledge_point_id,
+                        json_text([{
+                            "error_id": "ASSESSMENT_ANSWER_INCORRECT",
+                            "knowledge_point_id": knowledge_point_id,
+                            "knowledge_point_name": str(question.get("knowledge_point_name") or knowledge_point_id),
+                            "error_type": "assessment",
+                            "diagnosis": "该题在项目测评中答错，建议回顾对应知识点。",
+                        }]), now,
+                    ),
+                )
             connection.commit()
 
     def create_practice(self, student_id: str, incoming: dict[str, Any]) -> dict[str, Any]:
@@ -2267,6 +2273,10 @@ class LearningDomainStore:
         source_question_id = str(incoming.get("source_question_instance_id", ""))
         knowledge_id = str(incoming.get("knowledge_point_id") or "KN_JAVA_ENCAPSULATION")
         source = self.question(source_question_id, student_id) if source_question_id else {}
+        project_id = str(incoming.get("project_id") or source.get("project_id") or "")
+        root_question_id = str(
+            source.get("root_question_instance_id") or source_question_id or ""
+        )
         if not task_instance_id:
             task_instance_id = str(source.get("task_instance_id", ""))
 
@@ -2291,8 +2301,9 @@ class LearningDomainStore:
                 INSERT INTO question_instances(
                     question_instance_id, student_id, task_instance_id, source_question_id,
                     mode, knowledge_point_id, title, prompt, answer_schema_json,
-                    expected_answer, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)
+                    expected_answer, status, created_at, updated_at,
+                    source_question_instance_id, root_question_instance_id, project_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)
                 """,
                 (
                     question_instance_id,
@@ -2307,6 +2318,9 @@ class LearningDomainStore:
                     expected,
                     now,
                     now,
+                    source_question_id,
+                    root_question_id or question_instance_id,
+                    project_id,
                 ),
             )
             connection.commit()
@@ -2583,6 +2597,16 @@ class LearningDomainStore:
             except json.JSONDecodeError:
                 raw_errors = []
             item["last_error_points"] = self._merge_wrongbook_errors([], raw_errors)
+            source = self.question(str(item.get("root_question_instance_id") or ""), student_id)
+            schema = as_dict(source.get("answer_schema"))
+            item["task_instance_id"] = str(source.get("task_instance_id") or "")
+            item["original_question_title"] = str(source.get("title") or "")
+            item["original_question_prompt"] = str(source.get("prompt") or "")
+            item["question_type"] = str(schema.get("type") or "text")
+            item["can_retry_original"] = bool(
+                source and str(source.get("prompt") or "").strip()
+                and str(source.get("expected_answer") or "").strip()
+            )
             result.append(item)
         return {
             "items": result,
@@ -2686,6 +2710,12 @@ class LearningDomainStore:
                 correct = abs(float(answer) - float(expected)) < 1e-9
             except ValueError:
                 correct = False
+        elif schema_type in {"choice", "single_choice", "radio", "judgment"}:
+            correct = bool(expected) and answer.casefold() == expected.casefold()
+        elif schema_type in {"multiple_choice", "multi_choice", "checkbox"}:
+            selected_values = {value.strip().casefold() for value in answer.split(",") if value.strip()}
+            expected_values = {value.strip().casefold() for value in expected.split(",") if value.strip()}
+            correct = bool(expected_values) and selected_values == expected_values
         elif question.get("mode") == "retry_original" and not expected:
             # 无答案标准的 retry 题不得乱判对（历史上曾硬编码 Python 题魔术串）
             correct = False
@@ -2739,6 +2769,76 @@ class LearningDomainStore:
                 "UPDATE question_instances SET status = 'submitted', updated_at = ? WHERE question_instance_id = ?",
                 (now, question_instance_id),
             )
+            project_id = str(question.get("project_id") or "")
+            root_id = str(
+                question.get("root_question_instance_id")
+                or question.get("source_question_instance_id")
+                or question_instance_id
+            )
+            if project_id:
+                prior = connection.execute(
+                    "SELECT status, last_error_json FROM wrongbook_items "
+                    "WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?",
+                    (student_id, project_id, root_id),
+                ).fetchone()
+                event_id = "WB-" + hashlib.sha256(
+                    f"{attempt_id}:{'correct' if correct else 'incorrect'}".encode("utf-8")
+                ).hexdigest()[:16].upper()
+                instruction = (
+                    "mark_improved_not_deleted_if_prior_wrong"
+                    if correct else "upsert_needs_review"
+                )
+                connection.execute(
+                    "INSERT OR IGNORE INTO wrongbook_events(event_id, student_id, project_id, "
+                    "root_question_instance_id, event_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        event_id,
+                        student_id,
+                        project_id,
+                        root_id,
+                        json_text({
+                            "event_id": event_id,
+                            "projection_instruction": instruction,
+                            "attempt_id": attempt_id,
+                            "knowledge_point_id": knowledge_id,
+                        }),
+                        now,
+                    ),
+                )
+                if correct and prior:
+                    connection.execute(
+                        "UPDATE wrongbook_items SET status = 'improved_not_deleted', "
+                        "last_error_json = '[]', attempt_count = attempt_count + 1, updated_at = ? "
+                        "WHERE student_id = ? AND project_id = ? AND root_question_instance_id = ?",
+                        (now, student_id, project_id, root_id),
+                    )
+                elif not correct:
+                    prior_errors: list[Any] = []
+                    if prior:
+                        try:
+                            decoded = json.loads(str(prior["last_error_json"] or "[]"))
+                            prior_errors = decoded if isinstance(decoded, list) else []
+                        except json.JSONDecodeError:
+                            prior_errors = []
+                    merged_errors = self._merge_wrongbook_errors(
+                        prior_errors, evaluation["error_points"]
+                    )
+                    connection.execute(
+                        "INSERT INTO wrongbook_items(student_id, project_id, root_question_instance_id, "
+                        "knowledge_point_id, status, last_error_json, attempt_count, updated_at) "
+                        "VALUES (?, ?, ?, ?, 'needs_review', ?, 1, ?) "
+                        "ON CONFLICT(student_id, project_id, root_question_instance_id) DO UPDATE SET "
+                        "status = 'needs_review', last_error_json = excluded.last_error_json, "
+                        "attempt_count = wrongbook_items.attempt_count + 1, updated_at = excluded.updated_at",
+                        (
+                            student_id,
+                            project_id,
+                            root_id,
+                            knowledge_id,
+                            json_text(merged_errors),
+                            now,
+                        ),
+                    )
             connection.commit()
         return {
             "status": "ok",

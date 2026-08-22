@@ -778,8 +778,25 @@
     .wrongbook-entry p { margin: 10px 0 0 30px; color: var(--muted); font-size: 12px; line-height: 1.6; }
     .wrongbook-actions { display: flex; gap: 8px; margin: 12px 0 0 30px; flex-wrap: wrap; }
     .wrongbook-actions button { border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--green-strong); padding: 6px 10px; font-size: 12px; }
+    .wrongbook-actions button:disabled { cursor: not-allowed; opacity: .5; }
     .wrongbook-empty { padding: 32px 16px; text-align: center; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); }
     .wrongbook-more { display: block; margin: 16px auto 0; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); padding: 8px 14px; color: var(--green-strong); font-size: 12px; }
+    .wrongbook-practice-dialog { width: min(620px, calc(100vw - 32px)); border: 0; border-radius: 12px; padding: 0; color: var(--ink); box-shadow: var(--shadow-lg); }
+    .wrongbook-practice-dialog::backdrop { background: rgba(17,24,39,.42); }
+    .wrongbook-practice-body { padding: 20px; }
+    .wrongbook-practice-head { display: flex; align-items: flex-start; gap: 12px; }
+    .wrongbook-practice-head > div { flex: 1; min-width: 0; }
+    .wrongbook-practice-head h2 { margin: 0; font-size: 17px; }
+    .wrongbook-practice-head p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .wrongbook-practice-prompt { margin: 18px 0 14px; padding: 14px; border-radius: 8px; background: var(--surface-soft); font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+    .wrongbook-practice-options { display: grid; gap: 8px; }
+    .wrongbook-practice-option { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; font-size: 12.5px; line-height: 1.5; }
+    .wrongbook-practice-option input { margin-top: 2px; accent-color: var(--green); }
+    .wrongbook-practice-answer { width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px; color: var(--ink); font: inherit; line-height: 1.6; }
+    .wrongbook-practice-feedback { margin: 12px 0 0; padding: 10px 12px; border-radius: 7px; background: var(--surface-soft); color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .wrongbook-practice-feedback.correct { background: var(--green-soft); color: var(--green-strong); }
+    .wrongbook-practice-feedback.incorrect { background: var(--amber-soft); color: #7b5400; }
+    .wrongbook-practice-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     .evidence-dialog { border: 0; border-radius: 14px; padding: 0; width: min(720px, calc(100vw - 48px)); box-shadow: var(--shadow-lg); }
     .evidence-dialog::backdrop { background: rgba(17,24,39,.36); }
     .evidence-dialog-head { display: flex; align-items: center; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--line); }
@@ -1126,6 +1143,23 @@
       <div class="evidence-dialog-body" id="evidence-dialog-body"></div>
     </dialog>
 
+    <dialog class="wrongbook-practice-dialog" id="wrongbook-practice-dialog">
+      <div class="wrongbook-practice-body">
+        <div class="wrongbook-practice-head">
+          <div><h2 id="wrongbook-practice-title">错题练习</h2><p id="wrongbook-practice-meta"></p></div>
+          <button class="close-btn" id="wrongbook-practice-close" type="button" aria-label="关闭练习"><i data-lucide="x"></i></button>
+        </div>
+        <div class="wrongbook-practice-prompt" id="wrongbook-practice-prompt"></div>
+        <div class="wrongbook-practice-options" id="wrongbook-practice-options"></div>
+        <textarea class="wrongbook-practice-answer" id="wrongbook-practice-answer" placeholder="请输入答案"></textarea>
+        <p class="wrongbook-practice-feedback" id="wrongbook-practice-feedback" hidden></p>
+        <div class="wrongbook-practice-actions">
+          <button class="dialog-secondary" id="wrongbook-practice-cancel" type="button">取消</button>
+          <button class="primary-btn" id="wrongbook-practice-submit" type="button"><i data-lucide="send"></i>提交答案</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog class="profile-goal-dialog" id="profile-goal-dialog">
       <form class="profile-goal-form" id="profile-goal-form">
         <h2><i data-lucide="sliders-horizontal"></i>调整学习目标</h2>
@@ -1188,6 +1222,7 @@
   <script>
     /* ================= 基础 ================= */
     const STUDENT_ID = localStorage.getItem("learning.student_id") || "STU-DEMO-001";
+    const SESSION_ID = localStorage.getItem("learning.session_id") || "AGENT-WEB-SESSION";
     const $ = (id) => document.getElementById(id);
     const messagesEl = $("chat-messages");
     const treeEl = $("project-tree");
@@ -1240,6 +1275,7 @@
       lessonDocumentSaves: new Map(),
       profileDashboard: null,
       wrongbookView: { projectId: "", status: "needs_review", query: "", knowledgePointId: "", offset: 0, items: [] },
+      wrongbookPractice: null,
     };
 
     function icons() { if (window.lucide) lucide.createIcons(); }
@@ -1256,6 +1292,9 @@
     function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
     function escapeHtml(s) {
       return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function escapeAttr(s) {
+      return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
 
     function safeHttpUrl(value) {
@@ -2821,6 +2860,148 @@
       });
     }
 
+    function normalizedPracticeQuestionType(value) {
+      const type = String(value || "text").toLowerCase();
+      if (["choice", "single_choice", "radio"].includes(type)) return "choice";
+      if (["multiple_choice", "multi_choice", "checkbox"].includes(type)) return "multiple_choice";
+      if (["judgment", "boolean", "true_false"].includes(type)) return "judgment";
+      if (["fill_blank", "number"].includes(type)) return "fill_blank";
+      return "short_answer";
+    }
+
+    function closeWrongbookPractice() {
+      const dialog = $("wrongbook-practice-dialog");
+      if (dialog.open) dialog.close();
+      state.wrongbookPractice = null;
+    }
+
+    function renderWrongbookPracticeQuestion(question, mode) {
+      const schema = question.answer_schema || {};
+      const type = normalizedPracticeQuestionType(question.question_type || schema.type);
+      const options = schema.options && typeof schema.options === "object" ? schema.options : {};
+      $("wrongbook-practice-title").textContent = question.title || (mode === "retry_original" ? "重做原题" : "错因变式题");
+      $("wrongbook-practice-meta").textContent = mode === "retry_original"
+        ? "重新独立完成原题；答对后会更新错题状态。"
+        : "由 WF04 围绕未解决错因生成新的迁移性题目。";
+      $("wrongbook-practice-prompt").textContent = question.prompt || "请完成当前题目。";
+      const optionEntries = Object.entries(options);
+      const optionBox = $("wrongbook-practice-options");
+      const answer = $("wrongbook-practice-answer");
+      optionBox.innerHTML = "";
+      answer.value = "";
+      const usesOptions = ["choice", "multiple_choice", "judgment"].includes(type) && optionEntries.length;
+      optionBox.hidden = !usesOptions;
+      answer.hidden = Boolean(usesOptions);
+      if (usesOptions) {
+        const inputType = type === "multiple_choice" ? "checkbox" : "radio";
+        optionBox.innerHTML = optionEntries.map(([key, label]) =>
+          '<label class="wrongbook-practice-option"><input type="' + inputType + '" name="wrongbook-practice-option" value="' + escapeAttr(key) + '"><span><strong>' + escapeHtml(key.toUpperCase()) + '.</strong> ' + escapeHtml(label) + '</span></label>'
+        ).join("");
+      } else {
+        answer.placeholder = schema.placeholder || schema.label || "请输入答案";
+      }
+      const feedback = $("wrongbook-practice-feedback");
+      feedback.hidden = true;
+      feedback.className = "wrongbook-practice-feedback";
+      feedback.textContent = "";
+      $("wrongbook-practice-submit").disabled = false;
+      $("wrongbook-practice-dialog").showModal();
+      icons();
+      if (!usesOptions) answer.focus();
+    }
+
+    async function openWrongbookPractice(projectId, item, mode, control) {
+      if (!item || !item.root_question_instance_id) return;
+      control.disabled = true;
+      const errors = Array.isArray(item.last_error_points) ? item.last_error_points : [];
+      const targetConceptIds = Array.from(new Set(errors.map((error) => error.concept_id).filter(Boolean)));
+      const payload = {
+        student_id: STUDENT_ID,
+        session_id: SESSION_ID,
+        project_id: projectId,
+        mode,
+        source_question_instance_id: item.root_question_instance_id,
+        task_instance_id: mode === "variant" ? "" : (item.task_instance_id || ""),
+        knowledge_point_id: item.knowledge_point_id,
+      };
+      if (mode === "variant") {
+        payload.provider = "wf04";
+        payload.question_role = "variant";
+        payload.requested_question_type = normalizedPracticeQuestionType(item.question_type);
+        payload.task_contract = { assessment_mode: "provisional" };
+        payload.learner_context = {
+          practice_intent: "wrongbook_remediation",
+          wrongbook_focus: {
+            focus_source: "wrongbook",
+            active_wrongbook_count: 1,
+            wrongbook_entry_id: item.root_question_instance_id,
+            status: "needs_review",
+            knowledge_point_id: item.knowledge_point_id,
+            source_question_instance_id: item.root_question_instance_id,
+            root_question_instance_id: item.root_question_instance_id,
+            original_question_title: item.original_question_title || "",
+            original_question_prompt: item.original_question_prompt || "",
+            target_error_points: errors,
+            target_concept_ids: targetConceptIds,
+            attempt_count: item.attempt_count || 1,
+          },
+        };
+      }
+      try {
+        const result = await api("/api/practice/questions", { method: "POST", body: payload, timeoutMs: mode === "variant" ? 180000 : 15000 });
+        if (!result.question) throw new Error("练习题生成结果不完整");
+        state.wrongbookPractice = { projectId, item, mode, question: result.question };
+        renderWrongbookPracticeQuestion(result.question, mode);
+      } catch (error) {
+        window.alert((mode === "variant" ? "变式题生成失败：" : "原题读取失败：") + error.message);
+      } finally {
+        control.disabled = false;
+      }
+    }
+
+    function wrongbookPracticeAnswer() {
+      const practice = state.wrongbookPractice;
+      if (!practice) return "";
+      const schema = practice.question.answer_schema || {};
+      const type = normalizedPracticeQuestionType(practice.question.question_type || schema.type);
+      if (["choice", "multiple_choice", "judgment"].includes(type) && Object.keys(schema.options || {}).length) {
+        return Array.from(document.querySelectorAll('input[name="wrongbook-practice-option"]:checked'))
+          .map((input) => input.value).join(",");
+      }
+      return $("wrongbook-practice-answer").value.trim();
+    }
+
+    async function submitWrongbookPractice() {
+      const practice = state.wrongbookPractice;
+      const feedback = $("wrongbook-practice-feedback");
+      const answer = wrongbookPracticeAnswer();
+      if (!practice || !answer) {
+        feedback.textContent = "请先填写或选择答案。";
+        feedback.className = "wrongbook-practice-feedback incorrect";
+        feedback.hidden = false;
+        return;
+      }
+      const submit = $("wrongbook-practice-submit");
+      submit.disabled = true;
+      try {
+        const result = await api(
+          "/api/question-instances/" + encodeURIComponent(practice.question.question_instance_id) + "/attempts",
+          { method: "POST", body: { student_id: STUDENT_ID, answer }, timeoutMs: practice.mode === "variant" ? 180000 : 30000 },
+        );
+        const evaluation = result.evaluation || {};
+        feedback.textContent = result.feedback || evaluation.explanation || (result.correct ? "回答正确，错题状态已更新。" : "答案尚未满足要求，错因仍保留待复习。提示：" + (evaluation.error_points?.[0]?.expected_behavior || "请回顾关键规则后再试。"));
+        feedback.className = "wrongbook-practice-feedback " + (result.correct ? "correct" : "incorrect");
+        feedback.hidden = false;
+        await loadWrongbook(practice.projectId);
+      } catch (error) {
+        feedback.textContent = "提交失败：" + error.message;
+        feedback.className = "wrongbook-practice-feedback incorrect";
+        feedback.hidden = false;
+      } finally {
+        submit.disabled = false;
+      }
+    }
+
     function renderWrongbookEntries(projectId, items, append = false) {
       const list = $("wrongbook-list");
       const grouped = items.reduce((groups, item) => {
@@ -2836,13 +3017,21 @@
           const errors = Array.isArray(item.last_error_points) ? item.last_error_points : [];
           const errorText = errors.map((error) => error.root_cause || error.expected_behavior || error.diagnosis || error.error_type || error.error_id).filter(Boolean).join("；") || "建议回顾本题涉及的核心规则。";
           const when = item.updated_at ? new Date(item.updated_at).toLocaleString("zh-CN") : "—";
-          return '<article class="wrongbook-entry"><div class="wrongbook-entry-head"><i data-lucide="' + (improved ? "circle-check" : "circle-alert") + '"></i><div class="wrongbook-entry-copy"><strong>' + escapeHtml(item.knowledge_point_id || "当前知识点") + '</strong><small>已作答 ' + escapeHtml(item.attempt_count || 0) + ' 次 · 最近更新 ' + escapeHtml(when) + '</small></div><span class="wrongbook-status' + (improved ? " improved" : "") + '">' + status + '</span></div><p>' + escapeHtml(errorText) + '</p><div class="wrongbook-actions"><button type="button" data-wrongbook-learn="' + escapeHtml(item.knowledge_point_id || "") + '"><i data-lucide="book-open"></i>学习知识点</button></div></article>';
+          const rootId = escapeAttr(item.root_question_instance_id || "");
+          const retryDisabled = item.can_retry_original ? "" : ' disabled title="原题缺少可判定答案，暂不能直接重做"';
+          return '<article class="wrongbook-entry"><div class="wrongbook-entry-head"><i data-lucide="' + (improved ? "circle-check" : "circle-alert") + '"></i><div class="wrongbook-entry-copy"><strong>' + escapeHtml(item.original_question_title || item.knowledge_point_id || "当前知识点") + '</strong><small>已作答 ' + escapeHtml(item.attempt_count || 0) + ' 次 · 最近更新 ' + escapeHtml(when) + '</small></div><span class="wrongbook-status' + (improved ? " improved" : "") + '">' + status + '</span></div><p>' + escapeHtml(errorText) + '</p><div class="wrongbook-actions"><button type="button" data-wrongbook-practice="retry_original" data-wrongbook-root="' + rootId + '"' + retryDisabled + '><i data-lucide="rotate-ccw"></i>重做原题</button><button type="button" data-wrongbook-practice="variant" data-wrongbook-root="' + rootId + '"><i data-lucide="sparkles"></i>生成变式题</button><button type="button" data-wrongbook-learn="' + escapeAttr(item.knowledge_point_id || "") + '"><i data-lucide="book-open"></i>学习知识点</button></div></article>';
         }).join("") + '</div></details>'
       ).join("");
       if (append) list.insertAdjacentHTML("beforeend", html);
       else list.innerHTML = html;
       list.querySelectorAll("[data-wrongbook-learn]").forEach((button) => {
         button.onclick = () => openLesson(projectId, button.dataset.wrongbookLearn, button.dataset.wrongbookLearn);
+      });
+      list.querySelectorAll("[data-wrongbook-practice]").forEach((button) => {
+        button.onclick = () => {
+          const item = state.wrongbookView.items.find((entry) => entry.root_question_instance_id === button.dataset.wrongbookRoot);
+          openWrongbookPractice(projectId, item, button.dataset.wrongbookPractice, button);
+        };
       });
       icons();
     }
@@ -3017,6 +3206,12 @@
       view.items = [];
       if (view.projectId) loadWrongbook(view.projectId);
     };
+    $("wrongbook-practice-close").onclick = closeWrongbookPractice;
+    $("wrongbook-practice-cancel").onclick = closeWrongbookPractice;
+    $("wrongbook-practice-submit").onclick = submitWrongbookPractice;
+    $("wrongbook-practice-dialog").addEventListener("cancel", () => {
+      state.wrongbookPractice = null;
+    });
 
     /* ================= 测评中心与中央能力测评 ================= */
     async function openAssessmentCenter(projectId) {

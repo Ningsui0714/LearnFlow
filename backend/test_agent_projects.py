@@ -1601,6 +1601,72 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(normalized[0]["error_type"], "legacy")
         self.assertEqual(normalized[0]["root_cause"], "旧版记录：混淆了元素移动方向")
 
+    def test_wrongbook_retry_preserves_lineage_and_marks_original_improved(self):
+        domain = self.server.RequestHandlerClass.application.domain
+        project_id = "PROJ-WRONGBOOK-RETRY"
+        original = domain.record_choice_attempt(
+            student_id=self.student_id,
+            source_question_id="SOURCE-WRONGBOOK-RETRY",
+            mode="stage_check",
+            knowledge_point_id="KP-WRONGBOOK-RETRY",
+            knowledge_point_name="边界检查",
+            title="哪个选项表示正确边界检查？",
+            prompt="请选择正确答案。",
+            options={"a": "忽略边界", "b": "先检查上下界"},
+            expected="b",
+            selected="a",
+            explanation="应先检查上下界。",
+            project_id=project_id,
+            correct_override=False,
+        )
+        original_id = original["question_instance_id"]
+        projected_question = {
+            "question_id": "SOURCE-WRONGBOOK-RETRY",
+            "knowledge_point_id": "KP-WRONGBOOK-RETRY",
+            "knowledge_point_name": "边界检查",
+            "title": "哪个选项表示正确边界检查？",
+        }
+        domain.project_wrongbook_result(
+            self.student_id,
+            project_id,
+            "ASSESS-WRONGBOOK-RETRY",
+            projected_question,
+            False,
+        )
+        item = domain.wrongbook(
+            self.student_id, project_id, status="needs_review"
+        )["items"][0]
+        self.assertEqual(item["root_question_instance_id"], original_id)
+        self.assertTrue(item["can_retry_original"])
+        self.assertEqual(item["question_type"], "choice")
+
+        retry = domain.create_practice(
+            self.student_id,
+            {
+                "project_id": project_id,
+                "mode": "retry_original",
+                "source_question_instance_id": original_id,
+                "knowledge_point_id": "KP-WRONGBOOK-RETRY",
+            },
+        )["question"]
+        result = domain.submit_attempt(
+            self.student_id, retry["question_instance_id"], "b"
+        )
+        domain.project_wrongbook_result(
+            self.student_id,
+            project_id,
+            "ASSESS-WRONGBOOK-RETRY",
+            projected_question,
+            False,
+        )
+
+        self.assertTrue(result["correct"])
+        improved = domain.wrongbook(
+            self.student_id, project_id, status="improved_not_deleted"
+        )["items"][0]
+        self.assertEqual(improved["root_question_instance_id"], original_id)
+        self.assertEqual(improved["last_error_points"], [])
+
     def test_clear_certification_goal_is_not_forced_to_java(self):
         result = self.create_project("三个月内通过大学英语四级考试")
         project = result["project"]
