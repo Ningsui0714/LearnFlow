@@ -121,3 +121,41 @@ async def test_gateway_retries_transient_get_without_replaying_post():
             "schema_version": "personalized-learning-to-task-conversion-feedback-v1",
         })
     assert attempts["post"] == 1
+
+
+@pytest.mark.asyncio
+async def test_gateway_generates_reviewed_catalog_match_with_complete_bundle():
+    calls: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/typical-tasks/search"):
+            return httpx.Response(200, json={
+                "status": "ready",
+                "primary_task_id": "tt_windows_01",
+                "candidates": [{
+                    "task_id": "tt_windows_01",
+                    "task_name": "Windows 11系统重装与驱动配置",
+                }],
+            })
+        if request.url.path.endswith("/learning-tasks/generate"):
+            return httpx.Response(200, json={
+                "status": "ready",
+                "task_card_id": "ltc_catalog_windows_01",
+            })
+        if request.url.path.endswith("/tasks/ltc_catalog_windows_01/bundle"):
+            return httpx.Response(200, json=_bundle("ltc_catalog_windows_01"))
+        raise AssertionError(request.url.path)
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://conversion.example",
+        transport=httpx.MockTransport(handler),
+    )
+    task_card_id = await gateway.generate_catalog_match("windows系统的安装")
+
+    assert task_card_id == "ltc_catalog_windows_01"
+    assert calls == [
+        "/api/v1/wf03/typical-tasks/search",
+        "/api/v1/wf03/learning-tasks/generate",
+        "/api/v1/learning-task-conversion/tasks/ltc_catalog_windows_01/bundle",
+    ]

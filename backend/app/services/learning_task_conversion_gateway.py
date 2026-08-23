@@ -112,6 +112,56 @@ class LearningTaskConversionGateway:
             raise LearningTaskConversionError("不支持的岗位任务转化能力契约版本")
         return payload
 
+    async def generate_catalog_match(self, query: str) -> str | None:
+        """Reuse one reviewed enterprise task before invoking the model.
+
+        The task catalogue is the authoritative WF03 cache.  A successful
+        match already contains the reviewed workflow steps and knowledge-skill
+        mappings, so sending the same task through a fresh model repair run can
+        only lose information.  Returning ``None`` keeps unseen tasks on the
+        Xingchen Plan path.
+        """
+
+        normalized_query = query.strip()
+        if not normalized_query:
+            return None
+        search = await self._request(
+            "POST",
+            "/api/v1/wf03/typical-tasks/search",
+            payload={"query": normalized_query, "limit": 5},
+        )
+        if search.get("status") != "ready":
+            return None
+        task_id = str(
+            search.get("primary_task_id") or search.get("best_task_id") or ""
+        ).strip()
+        candidates = search.get("candidates")
+        if not task_id or not isinstance(candidates, list):
+            return None
+        matched = next(
+            (
+                item for item in candidates
+                if isinstance(item, dict)
+                and str(item.get("task_id") or "").strip() == task_id
+            ),
+            None,
+        )
+        if matched is None:
+            return None
+
+        generated = await self._request(
+            "POST",
+            "/api/v1/wf03/learning-tasks/generate",
+            payload={"typical_task_id": task_id},
+        )
+        task_card_id = str(generated.get("task_card_id") or "").strip()
+        if generated.get("status") != "ready" or not task_card_id:
+            return None
+        # Validate the persisted delivery now.  This prevents a stale catalogue
+        # row from bypassing the same integration gate used by model output.
+        await self.task_bundle(task_card_id)
+        return task_card_id
+
     async def submit_upstream_handoff(
         self,
         handoff: dict[str, Any],

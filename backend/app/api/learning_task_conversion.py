@@ -1,6 +1,7 @@
 """LearnFlow-facing API for the岗位典型工作任务转化 adapter."""
 from __future__ import annotations
 
+import asyncio
 import re
 import hmac
 from hashlib import sha256
@@ -39,15 +40,17 @@ router = APIRouter(
     tags=["岗位典型工作任务转化集成"],
 )
 
+_SPECULATIVE_REPAIR_HEAD_START_SECONDS = 5.0
+
 
 class LearningTaskGenerationRequest(BaseModel):
-    query: str = Field(min_length=2, max_length=2000)
+    query: str = Field(min_length=2, max_length=500)
     session_id: int | None = Field(default=None, ge=1)
     client_turn_id: str | None = Field(default=None, min_length=3, max_length=120)
 
 
 class LearningTaskIntegrationRequest(BaseModel):
-    query: str = Field(min_length=2, max_length=2000)
+    query: str = Field(min_length=2, max_length=500)
     student_id: str = Field(default="", max_length=120)
 
 
@@ -343,15 +346,121 @@ def _failure_reason_from_content(content: str) -> str:
     return "当前候选任务尚未通过内容与证据门禁"
 
 
+def _query_requires_clarification(user_input: str) -> bool:
+    """Only ask the learner when the input truly contains no usable direction."""
+
+    normalized = re.sub(r"[\s，。！？、,.!?]", "", user_input).lower()
+    if not normalized:
+        return True
+    uncertainty_patterns = (
+        r"^(我)?(还)?不知道$",
+        r"^(我)?(还)?没想好$",
+        r"^(我)?(还)?没决定$",
+        r"^(随便|都可以|无所谓)$",
+    )
+    if any(re.fullmatch(pattern, normalized) for pattern in uncertainty_patterns):
+        return True
+    remainder = re.sub(
+        r"^(我)?(想|要|希望)?(学习|学|了解|入门|从事|做|成为|当)",
+        "",
+        normalized,
+    )
+    return not remainder
+
+
+def _is_explicit_work_task(user_input: str) -> bool:
+    normalized = re.sub(r"\s+", "", user_input)
+    role_markers = (
+        "工程师", "技术员", "技师", "操作员", "运维员", "岗位", "职业",
+    )
+    if any(marker in normalized for marker in role_markers):
+        return False
+    action_markers = (
+        "安装", "拆装", "装配", "检修", "维修", "维护", "调试", "检测",
+        "校准", "配置", "部署", "开发", "制作", "加工", "焊接", "更换",
+        "诊断", "排查", "修复", "验收", "测试", "巡检", "交付",
+    )
+    return any(marker in normalized for marker in action_markers)
+
+
+def _task_object_anchor(user_input: str) -> str:
+    """Derive a short object phrase that repair candidates can preserve verbatim."""
+
+    normalized = re.sub(r"[\s，。！？、,.!?]", "", user_input).strip()
+    normalized = re.sub(
+        r"^(我)?(想|要|希望)?(学习|学|了解|入门|掌握|做)",
+        "",
+        normalized,
+    )
+    for marker in (
+        "安装", "拆装", "装配", "检修", "维修", "维护", "调试", "检测",
+        "校准", "配置", "部署", "开发", "制作", "加工", "焊接", "更换",
+        "诊断", "排查", "修复", "验收", "测试", "巡检", "交付",
+    ):
+        marker_index = normalized.find(marker)
+        if marker_index > 0:
+            normalized = normalized[:marker_index]
+            break
+    normalized = normalized.strip("的")
+    if "新能源" in normalized and "汽车" in normalized and normalized.endswith("电池"):
+        normalized += "包"
+    elif normalized.endswith("动力电池"):
+        normalized += "包"
+    return normalized[:48]
+
+
+def _auto_revision_prompt(user_input: str, content: str) -> str:
+    """Compile a bounded, auditable repair request accepted by Xingchen tools."""
+
+    hints: list[str] = []
+    if "ACTION_NOT_SPECIFIC" in content:
+        hints.append("动作写明操作对象和实际操作")
+    if "CHECK_NOT_VERIFIABLE" in content:
+        hints.append("检查点改成可观察、可记录或可测量")
+    if "workflow_steps" in content:
+        hints.append("重建完整实际作业步骤")
+    if "OBJECT_NOT_PRESERVED" in content or "没有保留任务对象" in content:
+        hints.append("原样写出对象锚点")
+    hint_text = "；".join(hints[:3])
+    if _is_explicit_work_task(user_input):
+        level_instruction = (
+            "这是明确的单个企业任务，不反问、不换题，也不得拆成多个任务。"
+        )
+    else:
+        level_instruction = (
+            "这是岗位或职业方向，不反问、不换题；自动选择其中一个可执行的典型企业任务。"
+        )
+    object_anchor = _task_object_anchor(user_input) if _is_explicit_work_task(user_input) else ""
+    anchor_instruction = (
+        f"对象锚点为“{object_anchor}”，任务名称、描述和至少一个步骤必须原样写出该对象；"
+        "近义词可并列，不能替代对象锚点。"
+        if object_anchor
+        else ""
+    )
+    prompt = (
+        f"{user_input}\n"
+        f"自动修订要求：{level_instruction}重新生成完整候选，步骤数按实际流程确定；"
+        f"{anchor_instruction}"
+        "每步包含具体动作、可留存产物、可核验检查点及知识点和技能点映射。"
+        "除明显跑题、缺少步骤或安全风险外，其余不足标待复核并继续生成。"
+        "Plan的repair_budget=1（不得超过2）。"
+    )
+    if hint_text:
+        prompt += f"优先修复：{hint_text}。"
+    # AgentRunCreateRequest has a hard 500-character user_query limit.  The
+    # public request schema uses the same limit, so this only removes optional
+    # repair hints and never truncates the immutable original input.
+    if len(prompt) > 500 and hint_text:
+        prompt = prompt[: prompt.rfind("优先修复：")]
+    return prompt
+
+
 def _non_success_result(
     workflow_run: dict[str, Any],
     user_input: str,
 ) -> dict[str, Any]:
     content = str(workflow_run.get("content") or "").strip()
-    clarification_markers = (
-        "请补充", "还无法从这句话确定", "不能唯一确定", "需要确认一个",
-    )
-    if any(marker in content for marker in clarification_markers):
+    if _query_requires_clarification(user_input):
         # Workflow output may contain provider-only URLs or empty Markdown
         # links. Clarification is a fixed public response, never a pass-through
         # of orchestration content.
@@ -360,9 +469,8 @@ def _non_success_result(
     else:
         reason = _failure_reason_from_content(content)
         message = (
-            f"我已经锁定“{user_input}”这个方向，但当前草稿还不能发布：{reason}。"
-            "你可以补充更具体的工作对象或交付结果，我会沿用本轮继续生成；"
-            "如果这是岗位方向，系统也会继续从岗位中选择一个可执行的典型工作任务。"
+            f"系统已经锁定“{user_input}”并完成自动修订，但候选仍未通过发布门禁：{reason}。"
+            "原任务没有被替换；本次结果已保留为待复核草稿，不要求学习者重复补充同一信息。"
         )
         status = "needs_revision"
     return {
@@ -543,6 +651,142 @@ async def _run_isolated_workflow(
         )
 
 
+def _merge_workflow_usage(*runs: dict[str, Any]) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for run in runs:
+        usage = run.get("usage") if isinstance(run, dict) else None
+        if not isinstance(usage, dict):
+            continue
+        for key, value in usage.items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                merged[key] = merged.get(key, 0) + value
+    return merged
+
+
+async def _run_generation_workflow(
+    client: XfyunLearningTaskWorkflowClient,
+    user_input: str,
+    *,
+    learner_id: int,
+) -> dict[str, Any]:
+    """Run Plan once, then repair one clear-but-rejected task automatically."""
+
+    if _query_requires_clarification(user_input):
+        return await _run_isolated_workflow(
+            client,
+            user_input,
+            learner_id=learner_id,
+        )
+
+    # WF03 is database-first: reviewed enterprise tasks already have complete
+    # workflow_steps and must not be degraded by a fresh model repair turn.
+    # Only an unseen task continues to the Xingchen Plan workflow below.
+    catalog_task_card_id: str | None = None
+    if _is_explicit_work_task(user_input):
+        try:
+            catalog_task_card_id = await _gateway().generate_catalog_match(
+                user_input
+            )
+        except LearningTaskConversionError:
+            # Catalogue lookup is an optimization, not a new single point of
+            # failure.  Unavailable or unmatched data continues to the model
+            # Plan path, which is the required standalone operating mode.
+            catalog_task_card_id = None
+    if catalog_task_card_id:
+        return {
+            "schema_version": "learning-task-conversion-catalog-run-v1",
+            "provider": "wf03-reviewed-task-catalog",
+            "run_id": f"catalog:{catalog_task_card_id}",
+            "content": (
+                "/api/v1/learning-task-conversion/tasks/"
+                f"{catalog_task_card_id}/interactive.html"
+            ),
+            "usage": {},
+            "catalog_reuse": True,
+        }
+
+    # Clear tasks receive the proven Plan constraints on the first run.  A
+    # repair branch starts after a short head start, rather than waiting several
+    # minutes for a rejected draft and then paying the same latency again.
+    primary = asyncio.create_task(_run_isolated_workflow(
+        client,
+        _auto_revision_prompt(user_input, ""),
+        learner_id=learner_id,
+    ))
+    done, _ = await asyncio.wait(
+        {primary},
+        timeout=_SPECULATIVE_REPAIR_HEAD_START_SECONDS,
+    )
+    if done:
+        initial = await primary
+        if _task_card_id_from_content(str(initial.get("content") or "")):
+            return initial
+        repaired = await _run_isolated_workflow(
+            client,
+            _auto_revision_prompt(user_input, str(initial.get("content") or "")),
+            learner_id=learner_id,
+        )
+        result = dict(repaired)
+        result["usage"] = _merge_workflow_usage(initial, repaired)
+        result["auto_revision"] = {
+            "attempted": True,
+            "mode": "sequential_fast_failure",
+            "attempts": 1,
+            "initial_run_id": str(initial.get("run_id") or ""),
+            "final_run_id": str(repaired.get("run_id") or ""),
+        }
+        return result
+
+    repair = asyncio.create_task(_run_isolated_workflow(
+        client,
+        _auto_revision_prompt(
+            user_input,
+            "ACTION_NOT_SPECIFIC CHECK_NOT_VERIFIABLE workflow_steps",
+        ),
+        learner_id=learner_id,
+    ))
+    tasks = (primary, repair)
+    completed_runs: list[dict[str, Any]] = []
+    errors: list[Exception] = []
+    try:
+        for finished in asyncio.as_completed(tasks):
+            try:
+                run = await finished
+            except Exception as exc:
+                errors.append(exc)
+                continue
+            completed_runs.append(run)
+            if _task_card_id_from_content(str(run.get("content") or "")):
+                result = dict(run)
+                result["usage"] = _merge_workflow_usage(*completed_runs)
+                result["auto_revision"] = {
+                    "attempted": True,
+                    "mode": "speculative_parallel",
+                    "attempts": 1,
+                    "winner_run_id": str(run.get("run_id") or ""),
+                }
+                return result
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    if completed_runs:
+        result = dict(completed_runs[-1])
+        result["usage"] = _merge_workflow_usage(*completed_runs)
+        result["auto_revision"] = {
+            "attempted": True,
+            "mode": "speculative_parallel",
+            "attempts": 1,
+            "winner_run_id": "",
+        }
+        return result
+    if errors:
+        raise errors[0]
+    raise XfyunWorkflowError("自动修订未返回工作流结果")
+
+
 @router.post("/workflow-runs")
 async def run_learning_task_conversion_workflow(
     payload: dict[str, Any] = Body(...),
@@ -558,8 +802,8 @@ async def run_learning_task_conversion_workflow(
     user_input = str(payload.get("user_input") or "").strip()
     if not user_input:
         raise HTTPException(status_code=422, detail="请提供明确的岗位典型工作任务")
-    if len(user_input) > 2000:
-        raise HTTPException(status_code=422, detail="岗位典型工作任务描述不能超过2000字")
+    if len(user_input) > 500:
+        raise HTTPException(status_code=422, detail="岗位典型工作任务描述不能超过500字")
 
     try:
         return await _run_isolated_workflow(
@@ -594,7 +838,7 @@ async def generate_learning_task_from_conversation(
         return replayed
 
     try:
-        workflow_run = await _run_isolated_workflow(
+        workflow_run = await _run_generation_workflow(
             _xfyun_client(),
             user_input,
             learner_id=current.learner.id,
@@ -667,7 +911,7 @@ async def generate_learning_task_for_integration(
 
     user_input = payload.query.strip()
     try:
-        workflow_run = await _run_isolated_workflow(
+        workflow_run = await _run_generation_workflow(
             _xfyun_client(), user_input, learner_id=learner_id,
         )
         task_card_id = _task_card_id_from_content(workflow_run["content"])

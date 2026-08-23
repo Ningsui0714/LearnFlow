@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from fastapi.testclient import TestClient
@@ -18,6 +19,9 @@ class _FakeGateway:
             "schema_version": "learning-task-conversion-capabilities-v1",
             "service": "learning-task-conversion",
         }
+
+    async def generate_catalog_match(self, _query: str):
+        return None
 
     async def task_bundle(self, task_card_id: str):
         return {
@@ -119,6 +123,12 @@ class _FakeXfyunClient:
         }
 
 
+class _CatalogGateway(_FakeGateway):
+    async def generate_catalog_match(self, query: str):
+        assert query == "windows系统的安装"
+        return "ltc_catalog_windows_01"
+
+
 class _FakePersonalizedLearningClient:
     def __init__(self):
         self.imports = []
@@ -182,6 +192,44 @@ class _ClarificationWithInternalLinkClient(_FakeXfyunClient):
                 "[空入口]()"
             ),
             "usage": {},
+        }
+
+
+class _NeedsRevisionThenSuccessClient(_FakeXfyunClient):
+    async def run(self, user_input: str, *, uid: str):
+        if not self.calls:
+            self.calls.append({"user_input": user_input, "uid": uid})
+            return {
+                "run_id": "run-needs-revision",
+                "content": (
+                    '{"schema_version":"learning-work-task-targeted-patch-v1",'
+                    '"targets":[{"step_id":"step_01",'
+                    '"reason_codes":["CHECK_NOT_VERIFIABLE"]}]}'
+                ),
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+            }
+        return await super().run(user_input, uid=uid)
+
+
+class _SlowRejectedPrimaryFastSuccessfulRepairClient(_FakeXfyunClient):
+    async def run(self, user_input: str, *, uid: str):
+        call_index = len(self.calls)
+        self.calls.append({"user_input": user_input, "uid": uid})
+        if call_index == 0:
+            await asyncio.sleep(0.08)
+            return {
+                "run_id": "run-slow-rejected-primary",
+                "content": '{"hard_errors":["CHECK_NOT_VERIFIABLE"]}',
+                "usage": {"total_tokens": 100},
+            }
+        await asyncio.sleep(0.01)
+        return {
+            "run_id": "run-fast-successful-repair",
+            "content": (
+                "https://example.test/api/v1/learning-task-conversion/"
+                "tasks/ltc_speculative_01/interactive.html"
+            ),
+            "usage": {"total_tokens": 80},
         }
 
 
@@ -269,6 +317,115 @@ def test_learning_task_integration_generates_embeddable_artifact(monkeypatch):
             json={"user_input": "  "},
         )
         assert empty_run.status_code == 422
+
+
+def test_learning_task_integration_auto_repairs_clear_rejected_task(monkeypatch):
+    fake_xfyun = _NeedsRevisionThenSuccessClient()
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    with TestClient(app) as client:
+        username = f"auto_repair_{uuid.uuid4().hex[:10]}"
+        assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
+
+        generated = client.post(
+            "/api/learning-task-conversion/integration-generate",
+            json={
+                "query": "配置交换机VLAN与Trunk并验收跨VLAN连通性",
+                "student_id": "STU-001",
+            },
+        )
+
+        assert generated.status_code == 200
+        payload = generated.json()
+        assert payload["status"] == "success"
+        assert payload["task_card_id"] == "ltc_generated_01"
+        assert len(fake_xfyun.calls) == 2
+        repair_input = fake_xfyun.calls[1]["user_input"]
+        assert repair_input.startswith("配置交换机VLAN与Trunk并验收跨VLAN连通性\n")
+        assert "不反问、不换题" in repair_input
+        assert "Plan的repair_budget=1" in repair_input
+        assert len(repair_input) <= 500
+        assert fake_xfyun.calls[0]["uid"] != fake_xfyun.calls[1]["uid"]
+
+
+def test_learning_task_generation_reuses_reviewed_catalog_before_xingchen(monkeypatch):
+    fake_xfyun = _FakeXfyunClient()
+    monkeypatch.setattr(
+        learning_task_conversion, "_gateway", lambda: _CatalogGateway()
+    )
+    monkeypatch.setattr(
+        learning_task_conversion, "_xfyun_client", lambda: fake_xfyun
+    )
+    with TestClient(app) as client:
+        username = f"catalog_first_{uuid.uuid4().hex[:10]}"
+        assert client.post(
+            "/api/auth/register", json=_registration(username)
+        ).status_code == 200
+
+        generated = client.post(
+            "/api/learning-task-conversion/generate",
+            json={"query": "windows系统的安装"},
+        )
+
+        assert generated.status_code == 200
+        payload = generated.json()
+        assert payload["status"] == "success"
+        assert payload["task_card_id"] == "ltc_catalog_windows_01"
+        assert payload["execute_id"] == "catalog:ltc_catalog_windows_01"
+        assert fake_xfyun.calls == []
+
+
+def test_auto_revision_prompt_distinguishes_role_from_single_work_task():
+    task_prompt = learning_task_conversion._auto_revision_prompt(
+        "新能源汽车电池包安装与验收", "CHECK_NOT_VERIFIABLE",
+    )
+    role_prompt = learning_task_conversion._auto_revision_prompt(
+        "我想当网络工程师", "",
+    )
+
+    assert "明确的单个企业任务" in task_prompt
+    assert "不得拆成多个任务" in task_prompt
+    assert "检查点改成可观察、可记录或可测量" in task_prompt
+    assert "自动选择其中一个可执行的典型企业任务" in role_prompt
+    assert len(task_prompt) <= 500
+    assert len(role_prompt) <= 500
+
+
+def test_auto_revision_prompt_normalizes_learning_intent_and_battery_pack_object():
+    prompt = learning_task_conversion._auto_revision_prompt(
+        "我要学新能源汽车的电池安装",
+        "候选内容没有保留任务对象",
+    )
+
+    assert "对象锚点为“新能源汽车的电池包”" in prompt
+    assert "任务名称、描述和至少一个步骤必须原样写出该对象" in prompt
+    assert "其余不足标待复核并继续生成" in prompt
+    assert len(prompt) <= 500
+
+
+def test_generation_uses_speculative_repair_without_adding_two_latencies(monkeypatch):
+    fake_xfyun = _SlowRejectedPrimaryFastSuccessfulRepairClient()
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    monkeypatch.setattr(
+        learning_task_conversion,
+        "_SPECULATIVE_REPAIR_HEAD_START_SECONDS",
+        0.005,
+    )
+    with TestClient(app) as client:
+        username = f"spec_repair_{uuid.uuid4().hex[:10]}"
+        assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
+
+        generated = client.post(
+            "/api/learning-task-conversion/integration-generate",
+            json={"query": "Windows系统安装与驱动配置", "student_id": "STU-001"},
+        )
+
+        payload = generated.json()
+        assert generated.status_code == 200
+        assert payload["status"] == "success"
+        assert payload["task_card_id"] == "ltc_speculative_01"
+        assert len(fake_xfyun.calls) == 2
 
 
 def test_learning_task_generation_retries_one_stale_xingchen_stage(monkeypatch):
@@ -408,7 +565,7 @@ def test_learning_task_clarification_never_exposes_workflow_content(monkeypatch)
 
         response = client.post(
             "/api/learning-task-conversion/generate",
-            json={"query": "Unity游戏客户端开发"},
+            json={"query": "我还不知道"},
         )
 
         payload = response.json()
