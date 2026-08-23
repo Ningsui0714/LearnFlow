@@ -1110,6 +1110,114 @@ export const submitRemediationVariant = (
   caseId: number, data: { answer_indexes?: number[]; answer_text?: string },
 ) => api.post(`/remediation/${caseId}/variant/submit`, data).then(r => r.data)
 
+// ── Learner-visible learning task runtime ──
+export type LearningTaskStatus = 'proposed' | 'queued' | 'active' | 'paused' | 'completed' | 'canceled'
+
+export interface LearningTaskPhase {
+  id: string
+  kind: 'learn' | 'practice' | 'verify' | 'consolidate'
+  title: string
+  purpose: string
+  methods: string[]
+  required: boolean
+  status: 'pending' | 'completed'
+  completion_rule: string
+  artifact_outputs: string[]
+  completed_at?: string
+}
+
+export interface LearningTask {
+  id: number
+  title: string
+  objective: string
+  status: LearningTaskStatus
+  origin_kind: string
+  created_by: string
+  session_id?: number
+  project_id?: number
+  checkpoint_id?: number
+  micro_learning_run_id?: number
+  priority: number
+  queue_position: number
+  estimated_minutes: number
+  due_at?: string
+  success_criteria: string[]
+  plan: {
+    schema_version: string
+    summary: string
+    estimated_minutes: number
+    phases: LearningTaskPhase[]
+    adaptation_triggers: string[]
+  }
+  current_phase_id: string
+  plan_version: number
+  artifact_refs: Array<{
+    type: string
+    id?: number
+    ids?: number[]
+    logical_filename?: string
+    path?: string
+  }>
+  review_handoff: Record<string, any>
+  navigation: { kind: string; path: string }
+  available_actions: string[]
+  version: number
+  plan_history: Array<{ id: number; version: number; source: string; reason: string; created_at?: string }>
+  evidence_notice: string
+}
+
+export const getLearningTaskSummary = () =>
+  api.get('/learning-tasks/summary').then(r => r.data)
+
+export const listLearningTasks = (params: Record<string, string | number | boolean | undefined> = {}) =>
+  api.get('/learning-tasks', { params }).then(r => r.data as { items: LearningTask[] })
+
+export const createLearningTask = (data: {
+  title: string
+  objective: string
+  session_id?: number
+  project_id?: number
+  checkpoint_id?: number
+  priority?: number
+  estimated_minutes?: number
+  preferred_skills?: string[]
+  success_criteria?: string[]
+  client_request_id: string
+}) => api.post('/learning-tasks', data).then(r => r.data as LearningTask)
+
+export const updateLearningTask = (
+  taskId: number,
+  data: Partial<Pick<LearningTask, 'title' | 'objective' | 'priority' | 'estimated_minutes' | 'due_at' | 'success_criteria'>> & { expected_version: number },
+) => api.patch(`/learning-tasks/${taskId}`, data).then(r => r.data as LearningTask)
+
+export const actOnLearningTask = (taskId: number, data: {
+  action: 'accept' | 'start' | 'pause' | 'resume' | 'cancel' | 'reopen' | 'complete_phase' | 'complete_task'
+  expected_version: number
+  client_action_id: string
+  phase_id?: string
+  evidence_refs?: Array<Record<string, any>>
+}) => api.post(`/learning-tasks/${taskId}/actions`, data).then(r => r.data as LearningTask)
+
+export const replanLearningTask = (taskId: number, data: {
+  reason: string
+  learner_direction?: string
+  preferred_skills?: string[]
+  expected_version: number
+  client_request_id: string
+}) => api.post(`/learning-tasks/${taskId}/replan`, data).then(r => r.data as LearningTask)
+
+export const materializeLearningTask = (taskId: number, data: {
+  source_text?: string
+  expected_version: number
+  client_request_id: string
+}) => api.post(`/learning-tasks/${taskId}/materialize`, data).then(r => r.data as LearningTask)
+
+export const reorderLearningTasks = (taskIds: number[], clientRequestId: string) =>
+  api.post('/learning-tasks/reorder', {
+    task_ids: taskIds,
+    client_request_id: clientRequestId,
+  }).then(r => r.data as { items: LearningTask[] })
+
 // ── Global spaced review workbench ──
 export const getReviewSummary = (params: Record<string, string | number | undefined> = {}) =>
   api.get('/review/summary', { params }).then(r => r.data)

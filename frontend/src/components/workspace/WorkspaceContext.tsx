@@ -15,11 +15,12 @@ export type WorkspaceTabKind =
   | 'growth'
   | 'memory'
   | 'review'
+  | 'tasks'
   | 'profile'
   | 'settings'
 
 const WORKSPACE_TAB_KINDS: WorkspaceTabKind[] = [
-  'home', 'projects', 'project', 'lecture', 'exercise', 'learning_run', 'file', 'growth', 'memory', 'review', 'profile', 'settings',
+  'home', 'projects', 'project', 'lecture', 'exercise', 'learning_run', 'file', 'growth', 'memory', 'review', 'tasks', 'profile', 'settings',
 ]
 
 export interface WorkspaceTab {

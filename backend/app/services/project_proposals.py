@@ -338,7 +338,10 @@ async def _match_existing_project(
     if not normalized:
         return None
     projects = (await db.execute(
-        select(Project).where(Project.learner_id == learner_id)
+        select(Project).where(
+            Project.learner_id == learner_id,
+            Project.visibility == "visible",
+        )
         .order_by(Project.updated_at.desc())
     )).scalars().all()
     for project in projects:

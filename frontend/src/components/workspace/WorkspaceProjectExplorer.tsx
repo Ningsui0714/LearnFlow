@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen, Braces, CalendarClock, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
-  Loader2, MessageSquare, Plus, Route, TrendingUp,
+  ListTodo, Loader2, MessageSquare, Plus, Route, TrendingUp,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import {
   createTutorSession, getCheckpointWorkspaceArtifacts, getRoadmap,
-  listProjects, listTutorSessions,
+  getLearningTaskSummary, listProjects, listTutorSessions,
 } from '../../services/api'
 import type { TutorSessionSummary } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
@@ -41,6 +41,7 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
   const [roadmaps, setRoadmaps] = useState<Record<number, CheckpointSummary[]>>({})
   const [artifacts, setArtifacts] = useState<Record<number, any>>({})
   const [loadingIds, setLoadingIds] = useState<number[]>([])
+  const [queueSummary, setQueueSummary] = useState<any>(null)
 
   const current = useMemo(() => {
     const match = location.pathname.match(/^\/projects\/(\d+)(?:\/checkpoints\/(\d+))?/)
@@ -67,18 +68,26 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
     }
   }
 
+  const refreshQueues = async () => {
+    try { setQueueSummary(await getLearningTaskSummary()) } catch {}
+  }
+
   useEffect(() => {
     refreshProjects()
     refreshSessions()
+    refreshQueues()
     const refresh = () => refreshProjects()
     const refreshChats = () => refreshSessions()
+    const refreshTaskQueue = () => refreshQueues()
     window.addEventListener('learnflow:projects-changed', refresh)
     window.addEventListener('learnflow:roadmap-changed', refresh)
     window.addEventListener('learnflow:sessions-changed', refreshChats)
+    window.addEventListener('learnflow:learning-tasks-changed', refreshTaskQueue)
     return () => {
       window.removeEventListener('learnflow:projects-changed', refresh)
       window.removeEventListener('learnflow:roadmap-changed', refresh)
       window.removeEventListener('learnflow:sessions-changed', refreshChats)
+      window.removeEventListener('learnflow:learning-tasks-changed', refreshTaskQueue)
     }
   }, [])
 
@@ -290,10 +299,21 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
         </div>
         <button
           type="button"
+          onClick={() => open('/tasks', { title: '学习任务', kind: 'tasks' })}
+          className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-slate-600 hover:bg-slate-100"
+        >
+          <ListTodo size={14} className="text-emerald-700" />
+          <span className="min-w-0 flex-1">学习任务队列</span>
+          {queueSummary && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-800">{(queueSummary.learning?.queued || 0) + (queueSummary.learning?.active || 0) + (queueSummary.learning?.paused || 0)}</span>}
+        </button>
+        <button
+          type="button"
           onClick={() => open('/review', { title: '全局复习台', kind: 'review' })}
           className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-slate-600 hover:bg-slate-100"
         >
-          <CalendarClock size={14} className="text-indigo-600" /> 复习与错题
+          <CalendarClock size={14} className="text-indigo-600" />
+          <span className="min-w-0 flex-1">复习与错题</span>
+          {queueSummary?.review?.due > 0 && <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-700">{queueSummary.review.due}</span>}
         </button>
         <button
           type="button"

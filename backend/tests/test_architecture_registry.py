@@ -98,6 +98,33 @@ def test_focused_micro_learning_reuses_existing_agent_and_evidence_authority():
     } == {"five_kernel_reducer"}
 
 
+def test_learning_task_runtime_is_registered_as_zero_evidence_coordination():
+    assert "learning_tasks" in WORKBENCHES
+    assert WORKBENCHES["learning_tasks"].surface == "/tasks"
+    assert "atomic_learning_loop" in SKILLS
+    assert {"learning_task_runtime", "learning_task_planner"} <= set(TOOLS)
+    assert {
+        "manage_learning_tasks", "plan_learning_task", "run_learning_task",
+    } <= set(ACTION_BOARD)
+    assert CAPABILITY_OWNERS["manage_learning_tasks"][0] == "tutor_agent"
+    assert CAPABILITY_OWNERS["plan_learning_task"][0] == "learning_design_agent"
+    assert CAPABILITY_OWNERS["run_learning_task"][0] == "tutor_agent"
+    assert all(
+        EVENTS[event_id].kernel_targets == ()
+        for event_id in {
+            "learning_task_created", "learning_task_accepted",
+            "learning_task_replanned", "learning_task_started",
+            "learning_task_paused", "learning_task_resumed",
+            "learning_task_phase_completed", "learning_task_materialized",
+            "learning_task_completed", "learning_task_canceled",
+        }
+    )
+    assert len(AGENTS) == 3
+    assert {
+        tool.id for tool in TOOLS.values() if tool.writes_kernels
+    } == {"five_kernel_reducer"}
+
+
 def test_conversational_learning_skills_are_registered_without_mastery_side_effects():
     assert {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",

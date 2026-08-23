@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarClock, Check, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
+  CalendarClock, Check, ListTodo, LogOut, PanelLeft, PanelRight, PanelsTopLeft, Settings2,
   Sparkles, TrendingUp, X,
 } from 'lucide-react'
 import { Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
@@ -154,6 +154,9 @@ function WorkspaceFrame() {
         </div>
         <button type="button" onClick={() => openPath('/growth', { title: '我的成长', kind: 'growth' })} title="我的成长" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
           <TrendingUp size={17} />
+        </button>
+        <button type="button" onClick={() => openPath('/tasks', { title: '学习任务', kind: 'tasks' })} title="学习任务队列" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-emerald-700">
+          <ListTodo size={17} />
         </button>
         <button type="button" onClick={() => openPath('/review', { title: '全局复习台', kind: 'review' })} title="复习与错题" className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-indigo-700">
           <CalendarClock size={17} />

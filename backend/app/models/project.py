@@ -12,6 +12,8 @@ class Project(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, default="")
     user_level = Column(String(50), default="beginner")
+    project_kind = Column(String(30), nullable=False, default="apprenticeship", index=True)
+    visibility = Column(String(20), nullable=False, default="visible", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

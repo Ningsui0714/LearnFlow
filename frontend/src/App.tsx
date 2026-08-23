@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage'
 import ReviewPage from './pages/ReviewPage'
 import ProfilePage from './pages/ProfilePage'
 import ProjectPage from './pages/ProjectPage'
+import LearningTasksPage from './pages/LearningTasksPage'
 import RegisterPage from './pages/RegisterPage'
 import SettingsPage from './pages/SettingsPage'
 import DemoEntryPage from './pages/DemoEntryPage'
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/profile" element={<Navigate to="/growth?section=profile" replace />} />
           <Route path="/memory" element={<Navigate to="/growth?section=memories" replace />} />
           <Route path="/review" element={<ReviewPage />} />
+          <Route path="/tasks" element={<LearningTasksPage />} />
           <Route path="/settings" element={<DevSettingsRoute />} />
           <Route path="/projects/:projectId" element={<ProjectPage />} />
           <Route path="/projects/:projectId/checkpoints/:checkpointId" element={<CheckpointPage />} />

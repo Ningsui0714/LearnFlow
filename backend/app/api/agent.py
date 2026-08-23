@@ -96,6 +96,13 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
     pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
     proposals = await list_session_proposals(db, session.id)
     skill_run = await latest_learning_skill_run_view(db, session)
+    from app.services.learning_tasks import learning_task_view
+    from app.models.learning import LearningTask
+    learning_tasks = list((await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == session.learner_id,
+        LearningTask.session_id == session.id,
+        LearningTask.status.in_({"proposed", "queued", "active", "paused"}),
+    ).order_by(LearningTask.queue_position, LearningTask.id))).scalars().all())
     latest_assistant = next((item for item in reversed(messages) if item.role == "assistant"), None)
     skill_recommendation = (
         dict((latest_assistant.meta_data or {}).get("skill_recommendation") or {}) or None
@@ -115,6 +122,7 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         "active_skill": session_learning_skill(session),
         "active_skill_run": skill_run,
         "skill_recommendation": skill_recommendation,
+        "learning_tasks": [await learning_task_view(db, item) for item in learning_tasks],
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
     }

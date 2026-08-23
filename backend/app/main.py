@@ -22,6 +22,7 @@ from app.api.architecture import router as architecture_router
 from app.api.workspace import router as workspace_router
 from app.api.local_agent import router as local_agent_router
 from app.api.micro_learning import router as micro_learning_router
+from app.api.learning_tasks import router as learning_tasks_router
 
 
 @asynccontextmanager
@@ -77,3 +78,4 @@ app.include_router(architecture_router, prefix="/api")
 app.include_router(workspace_router, prefix="/api")
 app.include_router(local_agent_router, prefix="/api")
 app.include_router(micro_learning_router, prefix="/api")
+app.include_router(learning_tasks_router, prefix="/api")

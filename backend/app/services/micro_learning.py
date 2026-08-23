@@ -337,12 +337,16 @@ async def create_micro_learning_run(
     education_stage: str = "",
     background: str = "",
     source: str = "ui",
+    attach_learning_task: bool = True,
 ) -> MicroLearningRun:
     existing = (await db.execute(select(MicroLearningRun).where(
         MicroLearningRun.learner_id == learner_id,
         MicroLearningRun.client_request_id == client_request_id,
     ))).scalar_one_or_none()
     if existing:
+        if attach_learning_task:
+            from app.services.learning_tasks import attach_micro_learning_task
+            await attach_micro_learning_task(db, run=existing)
         return existing
 
     artifact = await generate_micro_learning_artifact(
@@ -355,6 +359,8 @@ async def create_micro_learning_run(
         name=f"快速学习 · {goal[:48]}",
         description="由可验证微学习工作流创建的单关卡学习空间。",
         user_level="beginner",
+        project_kind="task_artifact",
+        visibility="internal",
     )
     db.add(project)
     await db.flush()
@@ -479,6 +485,9 @@ async def create_micro_learning_run(
         payload={"run_id": run.id, "question_ids": question_ids},
         client_event_id=f"micro-learning:{run.id}:card-generated",
     )
+    if attach_learning_task:
+        from app.services.learning_tasks import attach_micro_learning_task
+        await attach_micro_learning_task(db, run=run)
     return run
 
 

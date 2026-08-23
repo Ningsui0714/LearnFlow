@@ -56,7 +56,10 @@ async def list_projects(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Project).where(Project.learner_id == current.learner.id).order_by(Project.created_at.desc())
+        select(Project).where(
+            Project.learner_id == current.learner.id,
+            Project.visibility == "visible",
+        ).order_by(Project.created_at.desc())
     )
     projects_list = result.scalars().all()
     out = []
@@ -308,6 +311,14 @@ async def get_roadmap(
     db: AsyncSession = Depends(get_db),
 ):
     await require_owned_project(db, current.learner.id, project_id)
+    from app.models.learning import LearningTask
+    from app.services.learning_tasks import (
+        ensure_all_checkpoint_learning_tasks,
+        learning_task_view,
+    )
+    await ensure_all_checkpoint_learning_tasks(
+        db, learner_id=current.learner.id, project_id=project_id,
+    )
     result = await db.execute(
         select(Roadmap).where(Roadmap.project_id == project_id)
     )
@@ -321,6 +332,12 @@ async def get_roadmap(
         .order_by(Checkpoint.order)
     )
     checkpoints = cp_result.scalars().all()
+    task_rows = list((await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == current.learner.id,
+        LearningTask.project_id == project_id,
+        LearningTask.checkpoint_id.is_not(None),
+    ))).scalars().all())
+    tasks_by_checkpoint = {item.checkpoint_id: item for item in task_rows}
 
     nodes = []
     for cp in checkpoints:
@@ -342,6 +359,10 @@ async def get_roadmap(
             archived=cp.archived or False, progress=cp.progress or {},
             learning_status=cp.learning_status or "not_started",
             learning_contract=cp.learning_contract or {},
+            learning_task=(
+                await learning_task_view(db, tasks_by_checkpoint[cp.id])
+                if cp.id in tasks_by_checkpoint else None
+            ),
         ))
-
+    await db.commit()
     return RoadmapOut(id=roadmap.id, project_id=project_id, checkpoints=nodes)

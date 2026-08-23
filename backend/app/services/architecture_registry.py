@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-21.4"
+REGISTRY_VERSION = "2026-08-24.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -121,7 +121,7 @@ AGENTS = {
     item.id: item for item in (
         AgentContract(
             "tutor_agent", "Tutor 控制 Agent", "control",
-            ("global_main_agent", "project_tutor", "checkpoint_tutor"),
+            ("global_main_agent", "project_tutor", "checkpoint_tutor", "learning_task_runtime"),
             ("current_learner", "page_context", "five_kernel_context_packet", "recent_evidence"),
             ("structured_intent", "reply", "action_proposal", "handoff_refs"),
             "read projections; emit events through Action Board",
@@ -129,7 +129,7 @@ AGENTS = {
         ),
         AgentContract(
             "learning_design_agent", "学习设计 Agent", "capability",
-            ("roadmap_agent", "lecture_agent", "concept_agent", "animation_agent"),
+            ("roadmap_agent", "learning_task_planner", "lecture_agent", "concept_agent", "animation_agent"),
             ("project_brief", "processed_sources", "learner_projection", "provenance"),
             ("roadmap_proposal", "lecture_artifact", "assessment_spec", "visual_artifact"),
             "read scoped projections; artifacts never mutate mastery",
@@ -186,6 +186,10 @@ TOOLS = {
                      KERNEL_NAMES, (), "EvidenceEvent + existing learning domain records"),
         ToolContract("learning_skill_runtime", "Conversation Learning Skill Runtime", "tutor_agent", "learnflow", "orchestration",
                      (), (), "LearningSkillRun + zero-target events + verified workbench handoff"),
+        ToolContract("learning_task_runtime", "Learner-visible Learning Task Runtime", "tutor_agent", "learnflow", "orchestration",
+                     KERNEL_NAMES, (), "LearningTask + plan revisions + zero-target lifecycle events"),
+        ToolContract("learning_task_planner", "Adaptive Learning Task Planner", "learning_design_agent", "learnflow", "proposal",
+                     KERNEL_NAMES, (), "validated LearningTask plan revision only"),
         ToolContract("teach_back_analyzer", "Deterministic Teach-back Analyzer", "practice_agent", "learnflow", "assessment",
                      ("knowledge", "practice"), (), "LearningAttempt + EvidenceEvent"),
         ToolContract("process_animation", "Process Animation", "learning_design_agent", "learnflow", "artifact",
@@ -274,6 +278,12 @@ SKILLS = {
                       ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
                       "checkpoint-scoped Tutor reply + internal design/practice handoff",
                       "immutable checkpoint session scope"),
+        SkillContract("atomic_learning_loop", "可组合的原子学习任务闭环", "tutor_agent",
+                      ("learning_task_runtime", "learning_task_planner", "learning_skill_runtime",
+                       "managed_artifact_service", "deterministic_assessment",
+                       "deterministic_remediation", "review_scheduler", "evidence_ledger"),
+                      "resumable task -> adaptive plan -> artifacts/practice -> verified evidence -> review handoff",
+                      "task lifecycle is operational; grading and review remain deterministic"),
         SkillContract("verified_micro_learning", "可验证微学习闭环", "tutor_agent",
                       ("micro_learning_orchestrator", "content_generation", "teach_back_analyzer",
                        "deterministic_assessment", "deterministic_remediation", "review_scheduler",
@@ -329,13 +339,17 @@ WORKBENCHES = {
         WorkbenchContract("global_tutor", "Global Tutor", "/agent/:sessionId", "tutor_agent",
                           ("use_learning_skill", "start_learning_skill_run", "advance_learning_skill_run",
                            "start_skill_verification", "start_micro_learning", "search_projects",
-                           "draft_learning_project", "create_project")),
+                           "draft_learning_project", "create_project", "manage_learning_tasks",
+                           "plan_learning_task", "run_learning_task")),
+        WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
+                          ("manage_learning_tasks", "plan_learning_task", "run_learning_task")),
         WorkbenchContract("focused_learning", "Focused Learning", "/learn/:runId", "tutor_agent",
                           ("continue_micro_learning", "analyze_teach_back", "evaluate_attempt",
                            "request_remediation_explanation", "retry_attempt",
                            "evaluate_transfer_variant", "plan_review_queue")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
-                          ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint")),
+                          ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint",
+                           "manage_learning_tasks", "plan_learning_task", "run_learning_task")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
         WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
@@ -360,6 +374,9 @@ WORKBENCHES = {
 
 
 CAPABILITY_OWNERS = {
+    "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
+    "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),
+    "run_learning_task": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "use_learning_skill": ("tutor_agent", "tutor_context", "global_tutor"),
     "start_learning_skill_run": ("tutor_agent", "learning_skill_runtime", "global_tutor"),
     "advance_learning_skill_run": ("tutor_agent", "learning_skill_runtime", "global_tutor"),
@@ -414,6 +431,16 @@ def _event(event_id: str, capability: str, targets: tuple[str, ...], role: str,
 
 EVENTS = {
     item.id: item for item in (
+        _event("learning_task_created", "manage_learning_tasks", (), "operational"),
+        _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
+        _event("learning_task_replanned", "plan_learning_task", (), "plan_revision"),
+        _event("learning_task_started", "run_learning_task", (), "operational"),
+        _event("learning_task_paused", "run_learning_task", (), "operational"),
+        _event("learning_task_resumed", "run_learning_task", (), "operational"),
+        _event("learning_task_phase_completed", "run_learning_task", (), "operational_milestone"),
+        _event("learning_task_materialized", "run_learning_task", (), "artifact_handoff"),
+        _event("learning_task_completed", "run_learning_task", (), "operational_milestone"),
+        _event("learning_task_canceled", "manage_learning_tasks", (), "operational"),
         _event("learning_skill_selected", "use_learning_skill", (), "operational"),
         _event("learning_skill_run_started", "start_learning_skill_run", (), "operational"),
         _event("learning_skill_run_advanced", "advance_learning_skill_run", (), "operational"),

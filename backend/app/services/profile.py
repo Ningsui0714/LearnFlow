@@ -620,6 +620,7 @@ async def growth_projection(db: AsyncSession, learner_id: int) -> dict:
     )
     project_count = int(await db.scalar(select(func.count(Project.id)).where(
         Project.learner_id == learner_id,
+        Project.visibility == "visible",
     )) or 0)
     completed_loops = int(await db.scalar(select(func.count(MicroLearningRun.id)).where(
         MicroLearningRun.learner_id == learner_id,

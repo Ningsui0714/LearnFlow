@@ -17,8 +17,8 @@
 
 | 主契约 | 包含的实现 | 主要输入 | 结构化输出 | 禁止事项 |
 |---|---|---|---|---|
-| Tutor 控制 Agent | Global Main Agent、Project Tutor、Checkpoint Tutor | CurrentLearner、页面上下文、有作用域的五核只读投影、近期证据 | 意图、自然回复、Action、handoff 引用 | 直接写库、宣布掌握、绕过确认策略 |
-| 学习设计 Agent | Roadmap、Lecture、Concept、Animation | 项目 brief、已处理来源、学习者投影、provenance | 路线提案、讲义、评估规格、视觉产物 | 未确认应用路线、伪造来源、写五核 |
+| Tutor 控制 Agent | Global Main Agent、Project Tutor、Checkpoint Tutor、Learning Task Runtime | CurrentLearner、页面上下文、有作用域的五核只读投影、近期证据 | 意图、自然回复、Action、Learning Task 协调与 handoff 引用 | 直接写库、宣布掌握、绕过确认策略 |
+| 学习设计 Agent | Roadmap、Learning Task Planner、Lecture、Concept、Animation | 项目 brief、任务目标、已处理来源、学习者投影、provenance | 路线提案、可修订任务计划、讲义、评估规格、视觉产物 | 未确认应用路线、伪造来源、写五核 |
 | 实践与验证 Agent | Exercise、Code、Remediation renderer | 评估规格、提交、测试结果、错误证据 | 实践任务、反馈、讲解段落 | 选择纠错策略、覆盖确定性评分、写五核 |
 
 纠错讲解中的文字可以由模板或受约束生成器渲染，但教学策略、阶段跳转和通过条件必须来自 `RemediationStrategy` 与确定性评分。
@@ -110,6 +110,34 @@ KernelState + Memory Graph
 
 跳过、延期、暂停和恢复是零 kernel target 的运行事件。`review-policy-v1` 使用固定 `1/3/7/14/30/60 天`阶梯；失败、辅助、独立成功和已校验变式只改变可审计调度，不自行宣布掌握。长期稳定至少需要两次相隔 72 小时的独立复习成功，且至少一次来自已校验变式。稳定后再次失败只增加风险与重新调度，不删除历史证据或长期声明。
 
+### Learning Task 与双队列
+
+`LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者
+准备完成的一个原子学习目标、AI 生成且可修订的阶段计划、暂停点、受管产物引用和验证
+交接，不是第四类主 Agent、不是记忆对象，也不替代后台执行用的旧 `Task`。
+
+```text
+Tutor 识别或用户创建任务
+  -> proposed（Tutor 推荐时必须等待接受）/ queued
+  -> Learning Design 生成 coarse plan
+  -> active <-> paused
+  -> 讲解 / Skill / 受管讲义 / Practice 验证按需组合
+  -> completed（仅流程里程碑）
+  -> ReviewSchedule（若已有合格 Attempt）
+```
+
+任务计划只规定 `learn / practice / verify / consolidate` 等粗阶段，不把一次学习固化成
+大量细碎关卡。每次改计划都写入不可变 `LearningTaskPlanRevision`，已完成阶段必须保留；
+生命周期动作使用乐观版本和幂等动作 ID。Tutor 提议任务必须停留在 `proposed`，只有学习者
+明确接受后才能进入学习任务队列。项目每个 Checkpoint 唯一对应一段 checkpoint Session
+和一个 Learning Task；项目仍是面向真实产物的学徒旅程，任务只是关卡执行单元。
+
+`/tasks` 显示待接受、待完成、进行中和历史任务；`/review` 继续显示由确定性调度生成的
+复习任务。两者是并列队列，不把复习降级为普通待办。`LearningTask` 完成及其计划事件均为
+零 Kernel target；只有 `LearningAttempt`、判题、纠错和复习事件可以形成能力证据。受管
+讲义、练习和题目仍以现有 `Lecture / Exercise / ConceptQuestion` 为权威，任务只保存引用。
+完整对象、状态、API 与迁移见 `docs/LEARNING_TASK_RUNTIME.md`。
+
 ### 可验证微学习与流程投影
 
 `/agent` 与 `/agent/:sessionId` 是独立学习对话空间。学习者可以拥有多段 global Session，
@@ -124,11 +152,12 @@ Tutor 可以推荐已登记 Skill，但未得到用户选择时不得声称已�
 创建既有 `MicroLearningRun` 附件，随后才由 `LearningAttempt`、纠错和复习链产生能力
 证据。详细状态、API、迁移和初步对比见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
-`/learn/:runId` 是对话按需产生的专注工作台附件，由 Tutor 控制 Agent 所有，并通过
+`/learn/:runId` 是 Learning Task 可以按需物化的专注工作台附件，由 Tutor 控制 Agent 所有，并通过
 `verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错
-和复习调度。只有明确的“15 分钟/微学习/可验证学习”请求才应启动它；普通“帮我学”
-继续留在当前对话。它不是第四类主 Agent；内部创建的单关卡 Project 只提供
-learner/project/checkpoint/session scope，用户无需先配置项目。
+和复习调度。明确的“15 分钟/微学习/可验证学习”请求可以直接启动它；普通原子学习则先
+形成 Learning Task，由 Tutor 在对话中自由教学，必要时再物化该附件。它不是第四类主
+Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/session scope，标记为
+`task_artifact/internal`，不出现在真实项目列表中，用户无需先配置项目。
 
 `MicroLearningRun` 只保存可恢复步骤和 answer-free 的 UI 投影。题目结果以 `LearningAttempt` 和 `concept_attempt_evaluated` 为权威，纠错以 `RemediationCase` 为权威，后续计划以 `ReviewSchedule` 为投影。`teach_back_analyzed` 只写诊断缺口并固定 `mastery_unchanged`；`micro_learning_completed` 是零 kernel target 的运行里程碑。微学习题在同一轮的多次正确不能直接形成稳定掌握，跨时间稳定规则仍由 `review-policy-v1` 裁决。微学习契约见 `docs/MICRO_LEARNING_MVP.md`，对话 Skill 运行契约见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
@@ -161,7 +190,7 @@ learner/project/checkpoint/session scope，用户无需先配置项目。
 
 - Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
-- `/agent/:sessionId` 独立对话、`/learn/:runId` 对话附件、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
+- `/agent/:sessionId` 独立对话、`/tasks` 学习任务队列、`/learn/:runId` 对话附件、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
 
 ### 重合区处理

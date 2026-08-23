@@ -41,6 +41,7 @@ async def get_profile(
 ):
     project_count = await db.scalar(select(func.count(Project.id)).where(
         Project.learner_id == current.learner.id,
+        Project.visibility == "visible",
     ))
     badge_count = await db.scalar(select(func.count(LearnerBadge.id)).where(
         LearnerBadge.learner_id == current.learner.id,

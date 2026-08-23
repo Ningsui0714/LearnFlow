@@ -87,6 +87,7 @@ class RoadmapNode(BaseModel):
     progress: dict = {}
     learning_status: str = "not_started"
     learning_contract: dict = {}
+    learning_task: Optional[dict] = None
 
 
 class RoadmapOut(BaseModel):

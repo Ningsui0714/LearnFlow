@@ -91,6 +91,20 @@ class LearningIntent(BaseModel):
     horizon: Literal["short", "long", "unclear"] = "unclear"
 
 
+class LearningTaskOpportunity(BaseModel):
+    """A bounded task suggestion; creation stays proposed until learner accepts."""
+
+    should_propose: bool = False
+    consent_basis: Literal["explicit_user_request", "tutor_recommendation"] = "tutor_recommendation"
+    title: str = Field(default="", max_length=255)
+    objective: str = Field(default="", max_length=2000)
+    reason: str = Field(default="", max_length=500)
+    estimated_minutes: int = Field(default=20, ge=5, le=1440)
+    priority: int = Field(default=0, ge=-10, le=10)
+    suggested_skills: list[str] = Field(default_factory=list, max_length=6)
+    success_criteria: list[str] = Field(default_factory=list, max_length=8)
+
+
 class MajorEventCandidate(BaseModel):
     event_type: Literal["career_goal_confirmed"]
     career_goal: str = Field(min_length=2, max_length=200)
@@ -111,6 +125,7 @@ class TutorModelOutput(BaseModel):
     reply: str
     observations: list[TutorObservation] = Field(default_factory=list)
     project_opportunity: Optional[ProjectOpportunity] = None
+    learning_task_opportunity: Optional[LearningTaskOpportunity] = None
     learning_intent: Optional[LearningIntent] = None
     major_event_candidates: list[MajorEventCandidate] = Field(default_factory=list)
     local_agent_task: Optional[LocalAgentTaskProposal] = None

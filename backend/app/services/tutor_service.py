@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.learning import (
     AgentSession, AgentMessage, AgentAction, EvidenceEvent, LearnerProfile,
-    LearningProjectProposal,
+    LearningProjectProposal, LearningTask,
 )
 from app.models.project import Project, Source, Roadmap, Checkpoint, Task
 from app.schemas.agent import TutorModelOutput
@@ -102,8 +102,10 @@ TUTOR_SYSTEM_PROMPT = """你是 LearnFlow 中常驻的学习 Tutor。你可以�
 13. 普通疑问或答错只能形成知识缺口，不能自动写成“误解”。只有用户明确表达了可指出其错误之处的具体理解，或评估证据诊断出稳定错误模式时，才记录 misconceptions。两个维度需要联动时，用检查点、概念或证据引用关联，不在两个维度重复同一段判断。
 14. 复习台上下文是服务端装配的只读题目、错因、调度与证据投影。你可以解释、提示和说明安排，但不能替代后端判题、修改间隔、宣布掌握，或从一次失败推断固定误解。
 15. 当用户只有一个边界清楚、希望马上弄懂的短期主题时，可以推荐首页的“15 分钟可验证学习”：学习卡、费曼复述、独立验证和复习安排会形成一个闭环。多周、多来源、明确产物或系统掌握目标才优先推荐项目式学习。不要在普通事实问答中机械推销任一模式。
+16. 区分普通对话和原子学习任务：只有当目标边界清楚、适合在一次或数次连续互动中形成“学习—练习—验证—复习转交”闭环时，才设置 learning_task_opportunity.should_propose=true。用户本轮明确要求“带我学会/帮我弄懂/加入学习任务/完成这道题的学习闭环”等立即学习目标时，consent_basis=explicit_user_request；只有 Tutor 在聊天中主动建议时才用 tutor_recommendation。Tutor 主动推荐的任务只生成待确认提案，未经学习者同意不得声称已加入队列或已经开始。事实问答、寒暄和还不清楚目标的探索不要创建任务。
+17. 如果 current_learning_tasks 已有 active 任务，围绕其 objective 和 current_phase 继续当前原子闭环，每回合只推进一个适合的教学动作；不要为同一目标重复提议任务。任务阶段只是协调信息，正式验证、掌握与复习仍以服务端证据链为准。
 
-严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。只有在 checkpoint 会话中，且任务确实需要修改或测试共享项目文件时，才可设置 local_agent_task.should_delegate=true；只描述任务类型、目标、约束与能力，不选择 Agent、不拼接命令，也不要声称已经启动。"""
+严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写；learning_task_opportunity 仅描述一个原子闭环，consent_basis 必须由用户本轮是否明确要求开始该学习目标决定，Tutor 推荐必须等待用户确认。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。只有在 checkpoint 会话中，且任务确实需要修改或测试共享项目文件时，才可设置 local_agent_task.should_delegate=true；只描述任务类型、目标、约束与能力，不选择 Agent、不拼接命令，也不要声称已经启动。"""
 
 GLOBAL_MAIN_AGENT_PROMPT = """当前是 global 主 Agent 会话。你的主要职责是帮助学习者：
 - 梳理学习方向、目标价值与优先级，尤其接住“我不知道学什么、怎么选、是否适合”的迷茫；
@@ -885,6 +887,7 @@ async def _projects_named_in_message(
 ) -> list[Project]:
     projects = (await db.execute(select(Project).where(
         Project.learner_id == learner_id,
+        Project.visibility == "visible",
     ).order_by(Project.id))).scalars().all()
     normalized = message.lower().replace("「", "").replace("」", "")
     return [project for project in projects if project.name.lower() in normalized]
@@ -923,7 +926,10 @@ async def search_learning_projects(
 ) -> list[Project]:
     """Local, read-only project matching used before proposing new work."""
     projects = (await db.execute(
-        select(Project).where(Project.learner_id == learner_id).order_by(Project.updated_at.desc())
+        select(Project).where(
+            Project.learner_id == learner_id,
+            Project.visibility == "visible",
+        ).order_by(Project.updated_at.desc())
     )).scalars().all()
     normalized = re.sub(r"\s+", "", message).lower()
     ranked: list[tuple[int, Project]] = []
@@ -1054,6 +1060,12 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
         )
         action.project_id = run.project_id
         action.checkpoint_id = run.checkpoint_id
+        from app.models.learning import LearningTask
+        from app.services.learning_tasks import learning_task_view
+        learning_task = (await db.execute(select(LearningTask).where(
+            LearningTask.learner_id == action.learner_id,
+            LearningTask.micro_learning_run_id == run.id,
+        ))).scalar_one_or_none()
         action.status = "completed"
         action.finished_at = datetime.utcnow()
         action.result = {
@@ -1064,6 +1076,9 @@ async def execute_action(db: AsyncSession, action: AgentAction) -> str:
                 "checkpoint_id": run.checkpoint_id,
             },
             "navigate_to_learning_run": True,
+            "learning_task": (
+                await learning_task_view(db, learning_task) if learning_task else None
+            ),
             "user_message": f"已准备好「{run.goal}」的学习卡、费曼复述和独立验证，现在进入专注学习。",
         }
         session.pending_action_id = None
@@ -1728,24 +1743,36 @@ async def _generate_tutor_reply(
     workflow_instruction: str = "",
     workflow_fallback: str = "",
     active_skill_run_view: dict[str, Any] | None = None,
-) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None]:
+) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None, dict | None]:
     latest_messages = await get_messages(db, session.id, limit=1)
     latest_context = dict(latest_messages[-1].meta_data or {}) if latest_messages else {}
     latest_interaction = str(
         latest_context.get("interaction") or ""
     )
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
-        return workflow_fallback or "未接入模型。", [], None, None, [], None
+        return workflow_fallback or "未接入模型。", [], None, None, [], None, None
 
     latest_query = latest_messages[-1].content if latest_messages else ""
     prompt_projection: dict[str, Any] = {}
     five_kernel_context: dict[str, Any] = {}
     state = await get_session_state_summary(db, session)
     projects = (await db.execute(
-        select(Project).where(Project.learner_id == session.learner_id)
+        select(Project).where(
+            Project.learner_id == session.learner_id,
+            Project.visibility == "visible",
+        )
         .order_by(Project.updated_at.desc()).limit(20)
     )).scalars().all() if session.session_type != "checkpoint" else []
     proposals = await list_session_proposals(db, session.id)
+    current_learning_tasks = list((await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == session.learner_id,
+        LearningTask.session_id == session.id,
+        LearningTask.status.in_({"proposed", "queued", "active", "paused"}),
+    ).order_by(
+        LearningTask.priority.desc(),
+        LearningTask.queue_position,
+        LearningTask.id,
+    ).limit(8))).scalars().all())
     project_workspace: dict[str, Any] = {}
     checkpoint_workspace: dict[str, Any] = {}
     review_workspace = (
@@ -1910,6 +1937,33 @@ async def _generate_tutor_reply(
         ),
         "available_learning_skills": selectable_learning_skill_manifest(),
         "active_learning_skill_run": active_skill_run_view,
+        "current_learning_tasks": [
+            {
+                "id": task.id,
+                "title": task.title,
+                "objective": task.objective,
+                "status": task.status,
+                "current_phase": next((
+                    {
+                        "id": phase.get("id"),
+                        "kind": phase.get("kind"),
+                        "title": phase.get("title"),
+                        "purpose": phase.get("purpose"),
+                        "methods": list(phase.get("methods") or []),
+                        "completion_rule": phase.get("completion_rule"),
+                    }
+                    for phase in list((task.plan or {}).get("phases") or [])
+                    if phase.get("id") == task.current_phase_id
+                    or (
+                        not task.current_phase_id
+                        and phase.get("status") != "completed"
+                    )
+                ), None),
+                "success_criteria": list(task.success_criteria or []),
+                "evidence_rule": "任务阶段不是掌握证据；正式验证必须交给 Practice runtime",
+            }
+            for task in current_learning_tasks
+        ],
     }
     scope_prompt = (
         CHECKPOINT_TUTOR_PROMPT if session.session_type == "checkpoint"
@@ -1983,6 +2037,10 @@ async def _generate_tutor_reply(
         opportunity = output.project_opportunity.model_dump() if output.project_opportunity else None
         learning_intent = output.learning_intent.model_dump() if output.learning_intent else None
         local_agent_task = output.local_agent_task.model_dump() if output.local_agent_task else None
+        learning_task_opportunity = (
+            output.learning_task_opportunity.model_dump()
+            if output.learning_task_opportunity else None
+        )
         return (
             output.reply,
             [o.model_dump() for o in output.observations],
@@ -1990,19 +2048,20 @@ async def _generate_tutor_reply(
             learning_intent,
             [item.model_dump() for item in output.major_event_candidates],
             local_agent_task,
+            learning_task_opportunity,
         )
     except Exception:
         try:
             response = await llm.ainvoke(messages)
             content = response.content if isinstance(response.content, str) else str(response.content)
-            return _decode_tutor_content(content)
+            return (*_decode_tutor_content(content), None)
         except Exception:
             if latest_interaction == "candidate_sources_completed" and session.project_id:
-                return await _candidate_sources_follow_up(db, session), [], None, None, [], None
+                return await _candidate_sources_follow_up(db, session), [], None, None, [], None, None
             return (
                 workflow_fallback
                 or "这次模型服务没有响应。你仍然可以直接让我创建项目、添加来源或推进当前检查点。"
-            ), [], None, None, [], None
+            ), [], None, None, [], None, None
 
 
 async def proposal_acceptance_action(
@@ -2483,6 +2542,7 @@ async def process_turn(
             ),
             "project_proposals": [proposal_view(item) for item in proposals],
             "proposal_update": proposal_view(proposal_for_action) if proposal_for_action else None,
+            "learning_task_proposal": None,
         }
         user_message.meta_data = {**dict(user_message.meta_data or {}), "turn_response": response}
         await db.commit()
@@ -2514,7 +2574,10 @@ async def process_turn(
         if str((recommendation_candidate or {}).get("skill", {}).get("id") or "") in RUNTIME_SKILL_IDS
         else None
     )
-    reply, observations, opportunity, learning_intent, major_event_candidates, local_agent_task = (
+    (
+        reply, observations, opportunity, learning_intent,
+        major_event_candidates, local_agent_task, learning_task_opportunity,
+    ) = (
         await _generate_tutor_reply(
             db,
             session,
@@ -2570,6 +2633,26 @@ async def process_turn(
             opportunity=opportunity,
             learning_intent=learning_intent,
         )
+    learning_task_proposal = None
+    if (
+        not skill_run
+        and not candidate_sources_completed
+        and not bool((opportunity or {}).get("should_propose"))
+        and isinstance(learning_task_opportunity, dict)
+    ):
+        from app.services.learning_tasks import (
+            create_recommended_learning_task,
+            learning_task_view,
+        )
+        learning_task = await create_recommended_learning_task(
+            db,
+            session=session,
+            opportunity=learning_task_opportunity,
+            user_message_id=user_message.id,
+            user_message=message,
+        )
+        if learning_task:
+            learning_task_proposal = await learning_task_view(db, learning_task)
     visible_skill_run_view = skill_run_view or await latest_learning_skill_run_view(db, session)
     assistant = AgentMessage(
         session_id=session.id, role="assistant", content=reply,
@@ -2578,6 +2661,9 @@ async def process_turn(
             "learning_skill": active_learning_skill,
             "learning_skill_run": visible_skill_run_view,
             "skill_recommendation": skill_recommendation,
+            "learning_task_id": (
+                learning_task_proposal.get("id") if learning_task_proposal else None
+            ),
         },
     )
     db.add(assistant)
@@ -2602,6 +2688,7 @@ async def process_turn(
         ),
         "project_proposals": [proposal_view(item) for item in proposals],
         "proposal_update": proposal_view(proposal_update) if proposal_update else None,
+        "learning_task_proposal": learning_task_proposal,
         "life_events": life_events,
         "awarded_badges": awarded_badges,
     }

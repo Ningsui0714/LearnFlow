@@ -2,7 +2,7 @@
 
 > 面向对象：维护、扩展或评审 LearnFlow 的编码智能体、研究智能体与产品智能体  
 > 文档性质：架构约束与协作契约，不是面向用户的产品介绍  
-> 当前状态：常驻 Tutor、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
+> 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
 ## 1. 阅读方式
@@ -45,8 +45,10 @@ flowchart TD
     T --> INTENT["结构化意图与教学判断"]
     INTENT --> REPLY["短期教学回复"]
     INTENT --> PROPOSAL["长期项目提案"]
+    INTENT --> TASK["原子 Learning Task"]
     INTENT --> ACTION["Action Board"]
 
+    TASK --> ACTION
     ACTION --> PROJECT["Project Tutor"]
     PROJECT --> ROADMAP["Roadmap Agent"]
     PROJECT --> LECTURE["Lecture Agent"]
@@ -267,7 +269,44 @@ Tutor: plan_review_queue / 导航 / 过滤
 
 详细规则和接口见 `docs/REVIEW_WORKBENCH.md`。
 
-### 8.2 对话 Session、学习 Skill 与可验证工作台
+### 8.2 Learning Task、项目关卡与双队列
+
+`LearningTask` 是学习领域中的可恢复执行单元，用来统一对话里形成的原子目标、Tutor
+推荐且经用户接受的目标、项目 Checkpoint 和 `MicroLearningRun`。它不同于负责异步生成
+状态的旧 `Task`，也不同于 Session：Session 保存对话连续性，Learning Task 保存跨对话
+可安排、可暂停、可重规划的学习承诺。
+
+```text
+Dialogue / Checkpoint
+  -> proposed or queued LearningTask
+  -> versioned coarse plan
+  -> skill / explanation / lecture / practice / visualization
+  -> graded evidence handoff
+  -> operational completion
+  -> independent ReviewSchedule queue
+```
+
+Tutor MUST 负责识别、提议、接受、开始、暂停和导航；Learning Design MUST 只生成结构化
+任务计划与内容候选；Practice MUST 继续负责提交、判题、反馈和纠错。推荐任务 MUST 在
+`proposed` 等待明确同意。计划 SHOULD 保持 2–4 个 `learn / practice / verify /
+consolidate` 粗阶段，并按互动情况使用已登记 Skill；不得把每种学习方法建成新 Agent 或
+把一个知识主题拆成大量固定关卡。
+
+Tutor 每回合 MUST 读取同一 Session 中非终态任务的 answer-free 只读投影，包括目标、状态、
+当前阶段、方法和完成规则；已有 active 任务时继续该目标，不得让模型为同一目标重复建任务。
+
+项目中的每个 Checkpoint MUST 唯一对应一个 checkpoint Session 和一个 Learning Task。
+Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件；Learning Task 只负责该关
+如何执行。讲义、练习和题目仍由 `Lecture / Exercise / ConceptQuestion` 权威保存，任务
+只保存受管引用。手工任务需要正式内容和验证时，可以物化为隐藏的
+`task_artifact/internal` 微学习 scope，不污染真实项目组合。
+
+`/tasks` 与 `/review` 是两个并列工作台：前者由学习者自由增删、排序和恢复，后者由
+`ReviewSchedule` 的确定性策略调度。任务完成只说明流程结束，所有 Learning Task 生命周期
+事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
+完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
+
+### 8.3 对话 Session、学习 Skill 与可验证工作台
 
 `/agent/:sessionId` 是 global Tutor 的独立对话主界面。一个学习者可以拥有多段并列对话；
 项目是可由对话创建、进入或挂载的长期上下文，工作台则是 Skill 在需要时生成的结构化
@@ -308,7 +347,7 @@ start_micro_learning
 微学习产品契约见 `docs/MICRO_LEARNING_MVP.md`；对话状态机、SkillRun API、事件和冻结
 样例比对见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
-### 8.3 用户成长工作台
+### 8.4 用户成长工作台
 
 `/growth` 是 Tutor 所有的只读用户投影，把个人资料、五核当前状态、Memory Fact
 依据、复习待办、重大事件和 Badge 组合为一个“我的成长”空间。它不是新的画像权威，
@@ -320,7 +359,7 @@ start_micro_learning
 学习者可以归档或恢复系统当前参考的记忆，但归档不能删除原始 EvidenceEvent、历史
 Attempt、重大事件或 Badge。`/profile` 与 `/memory` 只作为旧地址兼容并跳转到对应页签。
 
-### 8.4 桌面文件工作台
+### 8.5 桌面文件工作台
 
 桌面工作区复用 Tutor 控制平面，不增加主 Agent 类型。文件能力链固定为：
 
@@ -554,6 +593,8 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 |---|---|
 | `/agent` | 打开最近一段独立 global 对话，首次使用时创建 Session |
 | `/agent/:sessionId` | 独立学习对话、会话级 Skill 选择、项目/工作台附件与高层行动 |
+| `/tasks` | 待接受、待完成、进行中和历史 Learning Task；支持排序、暂停、恢复和重规划 |
+| `/review` | 独立复习队列、确定性调度、判题与纠错闭环 |
 | `/projects` | 项目组合、待创建提案和项目管理 |
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |
 | `/projects/:id/checkpoints/:id` | 正式讲义、关卡学习与选中内容追问 |
@@ -684,6 +725,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | Tutor 结构化输入输出 | `backend/app/schemas/agent.py` |
 | Action 能力与确认策略 | `backend/app/services/action_board.py` |
 | 五核归约、Evidence、Attempt、通关 | `backend/app/services/learning_runtime.py` |
+| Learning Task 计划、状态、双队列 API | `backend/app/services/learning_tasks.py`、`backend/app/api/learning_tasks.py` |
 | 全局复习状态、调度与 API | `backend/app/services/review.py`、`backend/app/api/review.py` |
 | 可演化项目提案 | `backend/app/services/project_proposals.py` |
 | 路线规划 | `backend/app/services/roadmap_agent.py` |
@@ -705,6 +747,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 学习者与 Agent 持久化模型 | `backend/app/models/learning.py` |
 | 前端路由与空间划分 | `frontend/src/App.tsx` |
 | Tutor UI 与提案轨道 | `frontend/src/components/tutor/` |
+| 学习任务工作台 | `frontend/src/pages/LearningTasksPage.tsx` |
 | 项目、关卡、练习与复习页面 | `frontend/src/pages/ProjectPage.tsx`、`CheckpointPage.tsx`、`ExercisePage.tsx`、`ReviewPage.tsx` |
 
 ## 23. 最终判断准则

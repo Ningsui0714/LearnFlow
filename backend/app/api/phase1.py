@@ -1399,3 +1399,10 @@ async def _sync_checkpoints(db: AsyncSession, project_id: int, roadmap_data: dic
             cp.brief = brief
 
     await db.commit()
+    project = await db.get(Project, project_id)
+    if project and project.learner_id:
+        from app.services.learning_tasks import ensure_all_checkpoint_learning_tasks
+        await ensure_all_checkpoint_learning_tasks(
+            db, learner_id=project.learner_id, project_id=project_id,
+        )
+        await db.commit()

@@ -28,6 +28,9 @@ Tutor 控制 Agent
       ├─ Practice：确定性判题与纠错
       └─ review_scheduler：间隔复习投影
 
+LearningTask：对话/关卡共用的上层目标、计划与恢复入口
+  └─ MicroLearningRun：需要正式讲义与验证时物化的专注附件
+
 既有学习领域对象
   ├─ Project / Roadmap / Checkpoint：内部 scope 与 ownership
   ├─ Lecture / ConceptQuestion：内容与评估契约
@@ -37,6 +40,8 @@ Tutor 控制 Agent
 ```
 
 `MicroLearningRun` 不保存另一套掌握结论。题目判定、纠错状态和复习计划始终由既有权威对象重建；运行摘要固定声明 `mastery_claim=not_stable_yet`。
+其内部 Project 标记为 `task_artifact/internal`，只提供 scope 和受管内容容器，不进入真实
+项目组合；对应 LearningTask 才是用户任务队列里的统一入口。
 
 ## 3. 用户流程与前端逻辑
 
@@ -143,5 +148,5 @@ venv/bin/python scripts/evaluate_micro_learning.py
 
 - 注册表版本提升为 `2026-08-21.1`，新增已登记 tool、skill、workbench、capability 和 event contract。
 - `concept_attempt_evaluated.payload` 向后兼容地增加可选 `assessment_mode`；只有 `verified_micro_learning` 禁止同一 session 的多题结果直接升级稳定掌握，旧题语义保持不变。
-- 数据库迁移 `v13-focused-micro-learning` 只新增 `micro_learning_runs` 表，不修改或删除旧数据。
-- 回滚前端入口和新 router 不影响既有项目学习、练习、纠错和复习记录；保留的内部项目与 Attempt 仍可从原工作台查看。
+- 数据库迁移 `v13-focused-micro-learning` 只新增 `micro_learning_runs` 表，不修改或删除旧数据；后续 `v15-learning-task-runtime` 为它回填统一 LearningTask 引用。
+- 回滚前端入口和新 router 不影响既有项目学习、练习、纠错和复习记录；内部 Project 仍可由 LearningTask 或旧 `/learn/:runId` 访问，但不再出现在真实项目列表。

@@ -26,6 +26,7 @@ interface CheckpointNode {
   archived?: boolean
   progress?: any
   learning_status?: 'not_started' | 'in_progress' | 'verification_due' | 'blocked' | 'completed'
+  learning_task?: { id: number; status: string }
 }
 
 interface Props {
@@ -34,7 +35,7 @@ interface Props {
 }
 
 function CheckpointNodeComponent({ data }: NodeProps) {
-  const { label, completed, description, progress, learningStatus } = data as any
+  const { label, completed, description, progress, learningStatus, taskStatus } = data as any
   const status = learningStatus || (completed ? 'completed' : 'not_started')
   const statusStyle: Record<string, string> = {
     completed: 'bg-emerald-50 border-emerald-400',
@@ -73,6 +74,7 @@ function CheckpointNodeComponent({ data }: NodeProps) {
       </div>
       <p className={`mt-1 text-[10px] ${status === 'verification_due' ? 'text-amber-700' : 'text-gray-500'}`}>
         {statusLabel[status] || statusLabel.not_started}
+        {taskStatus && <span className="ml-1.5 text-emerald-700">· 学习任务 {taskStatus === 'active' ? '进行中' : taskStatus === 'completed' ? '已完成' : taskStatus === 'paused' ? '已暂停' : '待开始'}</span>}
       </p>
       {hasProgress && (
         <div className="flex gap-1.5 mt-1.5">
@@ -115,6 +117,7 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
       checkpointId: cp.id,
       progress: cp.progress,
       learningStatus: cp.learning_status,
+      taskStatus: cp.learning_task?.status,
     },
     draggable: true,
   }))

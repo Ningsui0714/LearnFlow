@@ -22,6 +22,7 @@ interface CheckpointNode {
   archived?: boolean
   progress?: any
   learning_status?: 'not_started' | 'in_progress' | 'verification_due' | 'blocked' | 'completed'
+  learning_task?: { id: number; status: string; navigation?: { path: string } }
 }
 
 export default function ProjectPage() {

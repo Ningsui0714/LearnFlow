@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ExternalLink, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, ListTodo, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import {
   createTutorSession, getTutorSession, listLearningSkills,
   sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
   startLearningSkillRun, updateLearningSkillRun,
+  actOnLearningTask,
 } from '../../services/api'
 import type {
   LearningSkill, LearningSkillRecommendation, LearningSkillRun,
-  ProjectProposal, ProjectProposalSource,
+  LearningTask, ProjectProposal, ProjectProposalSource,
 } from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
@@ -232,6 +233,7 @@ export default function TutorPanel({
   const [activeSkillRun, setActiveSkillRun] = useState<LearningSkillRun | null>(null)
   const [skillRecommendation, setSkillRecommendation] = useState<LearningSkillRecommendation | null>(null)
   const [skillMenuOpen, setSkillMenuOpen] = useState(false)
+  const [learningTaskProposal, setLearningTaskProposal] = useState<LearningTask | null>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<number | null>(null)
 
@@ -248,6 +250,7 @@ export default function TutorPanel({
     setProposals([])
     setActiveSkillRun(null)
     setSkillRecommendation(null)
+    setLearningTaskProposal(null)
     const request = requestedSessionId
       ? getTutorSession(requestedSessionId)
       : createTutorSession({
@@ -267,6 +270,7 @@ export default function TutorPanel({
       setActiveSkillId(data.active_skill?.id || 'adaptive')
       setActiveSkillRun(data.active_skill_run || null)
       setSkillRecommendation(data.skill_recommendation || null)
+      setLearningTaskProposal((data.learning_tasks || []).find((item: LearningTask) => item.status === 'proposed') || null)
       onSessionLoaded?.(data)
     }).catch(() => {})
     return () => {
@@ -310,6 +314,12 @@ export default function TutorPanel({
     setActiveSkillId(data.active_skill?.id || 'adaptive')
     if ('active_skill_run' in data) setActiveSkillRun(data.active_skill_run || null)
     if ('skill_recommendation' in data) setSkillRecommendation(data.skill_recommendation || null)
+    if (data.learning_task_proposal) {
+      setLearningTaskProposal(data.learning_task_proposal)
+    }
+    if (data.executed_action?.result?.learning_task) {
+      window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
+    }
     onSessionLoaded?.({ id: data.session_id || sessionId, title: data.session_title, ...data })
     window.dispatchEvent(new CustomEvent('learnflow:sessions-changed'))
     setSummary((previous: any) => data.state_summary || previous)
@@ -523,6 +533,27 @@ export default function TutorPanel({
     onSessionLoaded?.({ id: sessionId, ...data })
   }
 
+  const decideLearningTask = async (actionName: 'accept' | 'cancel') => {
+    if (!learningTaskProposal || loading) return
+    setLoading(true)
+    try {
+      await actOnLearningTask(learningTaskProposal.id, {
+        action: actionName,
+        expected_version: learningTaskProposal.version,
+        client_action_id: globalThis.crypto?.randomUUID?.() || `task-${actionName}-${learningTaskProposal.id}-${Date.now()}`,
+      })
+      setLearningTaskProposal(null)
+      window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
+    } catch (error: any) {
+      setMessages(previous => [...previous, {
+        role: 'assistant',
+        content: error?.response?.data?.detail || '学习任务队列没有更新成功。',
+      }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const cancel = async () => {
     if (!action?.id) return
     try {
@@ -693,6 +724,25 @@ export default function TutorPanel({
           Number(message.meta_data?.local_agent_run_id) === Number(action.result.local_agent_run.id)
         )) && (
           <LocalAgentRunCard runId={Number(action.result.local_agent_run.id)} />
+        )}
+
+        {learningTaskProposal && (
+          <section className={`rounded-xl border border-emerald-200 bg-emerald-50 p-3 ${standalone ? 'mx-auto w-full max-w-3xl' : ''}`} data-testid="learning-task-proposal">
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950"><ListTodo size={13} />{learningTaskProposal.status === 'proposed' ? '建议形成一个学习任务' : '已建立学习任务'}</p>
+            <p className="mt-1.5 text-sm font-semibold text-slate-900">{learningTaskProposal.title}</p>
+            <p className="mt-1 text-xs leading-5 text-emerald-900/80">{learningTaskProposal.objective}</p>
+            <p className="mt-2 text-[10px] text-emerald-800">AI 会按互动情况规划学习、练习、验证和复习转交；你之后仍可自由调整或移除。</p>
+            <div className="mt-2.5 flex gap-2">
+              {learningTaskProposal.status === 'proposed' ? (
+                <>
+                  <button type="button" onClick={() => decideLearningTask('accept')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">加入学习任务</button>
+                  <button type="button" onClick={() => decideLearningTask('cancel')} disabled={loading} className="rounded-lg px-2.5 py-2 text-xs text-emerald-800 hover:bg-white/70">暂不加入</button>
+                </>
+              ) : (
+                <a href={`/tasks?task=${learningTaskProposal.id}`} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">查看任务与计划</a>
+              )}
+            </div>
+          </section>
         )}
 
         {skillRecommendation && (!activeSkillRun || ['paused', 'completed'].includes(activeSkillRun.status)) && (

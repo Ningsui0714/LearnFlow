@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -221,7 +221,10 @@ async def list_dev_accounts(db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(
         select(UserAccount, Learner, func.count(Project.id))
         .join(Learner, Learner.user_id == UserAccount.id)
-        .outerjoin(Project, Project.learner_id == Learner.id)
+        .outerjoin(Project, and_(
+            Project.learner_id == Learner.id,
+            Project.visibility == "visible",
+        ))
         .group_by(UserAccount.id, Learner.id)
         .order_by(UserAccount.created_at.asc())
     )).all()

@@ -253,6 +253,86 @@ class ReviewSchedule(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class LearningTask(Base):
+    """Learner-visible, resumable unit of learning work.
+
+    A LearningTask coordinates a goal, queue position and adaptive plan.  It is
+    deliberately separate from the background ``Task`` execution ledger and
+    from mastery state.  Graded attempts and EvidenceEvent remain the only
+    authority for learning evidence.
+    """
+
+    __tablename__ = "learning_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "learner_id", "client_request_id",
+            name="uq_learning_task_learner_request",
+        ),
+        UniqueConstraint(
+            "learner_id", "checkpoint_id",
+            name="uq_learning_task_learner_checkpoint",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    micro_learning_run_id = Column(
+        Integer, ForeignKey("micro_learning_runs.id"), nullable=True, index=True,
+    )
+    origin_kind = Column(String(30), nullable=False, default="manual", index=True)
+    created_by = Column(String(30), nullable=False, default="user")
+    title = Column(String(255), nullable=False)
+    objective = Column(Text, nullable=False)
+    status = Column(String(30), nullable=False, default="queued", index=True)
+    priority = Column(Integer, nullable=False, default=0, index=True)
+    queue_position = Column(Integer, nullable=False, default=1000, index=True)
+    estimated_minutes = Column(Integer, nullable=False, default=20)
+    due_at = Column(DateTime, nullable=True, index=True)
+    source_refs = Column(JSON, default=list)
+    success_criteria = Column(JSON, default=list)
+    plan = Column(JSON, default=dict)
+    current_phase_id = Column(String(80), default="")
+    plan_version = Column(Integer, nullable=False, default=1)
+    execution_state = Column(JSON, default=dict)
+    artifact_refs = Column(JSON, default=list)
+    review_handoff = Column(JSON, default=dict)
+    action_log = Column(JSON, default=list)
+    client_request_id = Column(String(160), nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    accepted_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    canceled_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class LearningTaskPlanRevision(Base):
+    """Immutable history for AI- or learner-directed task plans."""
+
+    __tablename__ = "learning_task_plan_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "learning_task_id", "version",
+            name="uq_learning_task_plan_revision",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learning_task_id = Column(
+        Integer, ForeignKey("learning_tasks.id"), nullable=False, index=True,
+    )
+    version = Column(Integer, nullable=False)
+    source = Column(String(30), nullable=False, default="system")
+    reason = Column(Text, default="")
+    plan = Column(JSON, default=dict)
+    evidence_refs = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class MicroLearningRun(Base):
     """Persistent projection for one focused, checkpoint-scoped learning loop.
 

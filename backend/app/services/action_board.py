@@ -24,6 +24,21 @@ ACTION_BOARD = {
             ("start_learning_skill_run", "start_micro_learning", "draft_learning_project"),
         ),
         ActionDefinition(
+            "manage_learning_tasks", "管理学习任务队列", "write", "explicit_or_click",
+            {},
+            ("plan_learning_task", "run_learning_task"),
+        ),
+        ActionDefinition(
+            "plan_learning_task", "生成或调整学习任务计划", "proposal", "explicit_or_click",
+            {},
+            ("run_learning_task",),
+        ),
+        ActionDefinition(
+            "run_learning_task", "开始、暂停或推进学习任务", "context", "explicit_or_click",
+            {},
+            ("use_learning_skill", "start_micro_learning", "evaluate_attempt", "plan_review_queue"),
+        ),
+        ActionDefinition(
             "start_learning_skill_run", "开始对话内学习方法", "context", "explicit_or_click",
             {},
             ("advance_learning_skill_run", "start_skill_verification"),
