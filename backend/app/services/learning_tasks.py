@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -19,7 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.learning import (
+    AgentMessage,
     AgentSession,
+    EvidenceEvent,
     LearningAttempt,
     LearningTask,
     LearningTaskPlanRevision,
@@ -39,10 +42,16 @@ from app.services.learning_runtime import get_kernel_projection, record_event
 
 
 PLAN_SCHEMA_VERSION = "learning-task-plan.v1"
-RUNTIME_VERSION = "learning-task-runtime-v1"
+RUNTIME_VERSION = "learning-task-runtime-v2"
 ACTIVE_STATUSES = {"proposed", "queued", "active", "paused"}
 QUEUE_STATUSES = {"queued", "active", "paused"}
 ALLOWED_PHASE_KINDS = {"learn", "practice", "verify", "consolidate"}
+
+EXPLICIT_ATOMIC_TASK_PATTERNS = (
+    r"(?:带我|帮我|教我)(?:学会|学懂|弄懂|搞懂|理解|完成|做完)\s*[：:，,]?\s*(.+)",
+    r"(?:我想|我要)(?:学会|弄懂|搞懂|理解)\s*[：:，,]?\s*(.+)",
+    r"(?:陪我|带我)(?:完成|做完)\s*[：:，,]?\s*(.+)",
+)
 
 PLAN_PROMPT = """你是 LearnFlow 的学习设计 Agent。请为一个原子学习任务生成可恢复、可调整的阶段计划。
 
@@ -127,6 +136,46 @@ def _default_lead_skill(objective: str) -> str:
     return "guided_explanation"
 
 
+def deterministic_learning_task_opportunity(message: str) -> dict[str, Any] | None:
+    """Recognize an explicit, bounded learning request without relying on an LLM.
+
+    This intentionally does not match broad exploration such as ``我想学操作系统``.
+    It only covers language that already grants consent to start a concrete atomic
+    learning loop.  The normal Tutor model may still produce a richer proposal.
+    """
+    compact = _clean(message, 2_000)
+    if not compact:
+        return None
+    goal = ""
+    for pattern in EXPLICIT_ATOMIC_TASK_PATTERNS:
+        match = re.search(pattern, compact, flags=re.IGNORECASE)
+        if match:
+            goal = _clean(match.group(1), 500)
+            break
+    if not goal and any(marker in compact for marker in ("这道题", "这个题", "这段代码")):
+        if any(marker in compact for marker in ("带我做", "帮我完成", "教我", "学习闭环")):
+            goal = compact
+    goal = goal.strip("。！？!?；;，,：: ")
+    if len(goal) < 2:
+        return None
+    title = goal[:48] + ("…" if len(goal) > 48 else "")
+    lead_skill = _default_lead_skill(goal)
+    return {
+        "should_propose": True,
+        "consent_basis": "explicit_user_request",
+        "title": f"弄懂：{title}",
+        "objective": f"能够解释“{goal}”的关键关系，并完成一次无提示的正式验证。",
+        "estimated_minutes": 20,
+        "suggested_skills": [lead_skill],
+        "success_criteria": [
+            "能用自己的话说明关键关系",
+            "完成至少一次无提示正式验证",
+            "需要时完成纠错并进入复习队列",
+        ],
+        "detected_by": "deterministic_explicit_atomic_task_v1",
+    }
+
+
 def _compact_planner_context(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Keep only registered, decision-relevant short-term fields for planning."""
     result: dict[str, dict[str, Any]] = {}
@@ -140,6 +189,25 @@ def _compact_planner_context(projection: dict[str, Any]) -> dict[str, dict[str, 
         if values:
             result[kernel_name] = values
     return result
+
+
+def _portable_planner_context(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return only preferences that are safe to carry into another learning task.
+
+    KernelState is a learner-level projection, so its volatile structure,
+    knowledge, value and practice fields may describe a different conversation
+    or task.  A new task gets its content context from its own objective,
+    source_refs and scoped evidence; only explicit delivery/support preferences
+    are portable until the runtime exposes a provenance-aware scoped projection.
+    """
+    compact = _compact_planner_context(projection)
+    portable_human_keys = {"pace_preference", "format_preference", "support_need"}
+    human = {
+        key: value
+        for key, value in dict(compact.get("human") or {}).items()
+        if key in portable_human_keys
+    }
+    return {"human": human} if human else {}
 
 
 def _fallback_plan(
@@ -480,6 +548,7 @@ async def create_learning_task(
     preferred_skills: list[str] | None = None,
     source_refs: list[dict[str, Any]] | None = None,
     success_criteria: list[str] | None = None,
+    use_model_planner: bool = True,
 ) -> tuple[LearningTask, bool]:
     existing = (await db.execute(select(LearningTask).where(
         LearningTask.learner_id == learner_id,
@@ -497,16 +566,27 @@ async def create_learning_task(
     if checkpoint and not project_id:
         roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
         project_id = roadmap.project_id if roadmap else None
-    learner_context = _compact_planner_context(
+    learner_context = _portable_planner_context(
         await get_kernel_projection(db, learner_id)
     )
-    plan = await generate_learning_task_plan(
-        title=_clean(title, 255),
-        objective=_clean(objective, 2_000),
-        origin_kind=origin_kind,
-        estimated_minutes=estimated_minutes,
-        preferred_skills=preferred_skills,
-        learner_context=learner_context,
+    plan = (
+        await generate_learning_task_plan(
+            title=_clean(title, 255),
+            objective=_clean(objective, 2_000),
+            origin_kind=origin_kind,
+            estimated_minutes=estimated_minutes,
+            preferred_skills=preferred_skills,
+            learner_context=learner_context,
+        )
+        if use_model_planner else
+        _fallback_plan(
+            title=_clean(title, 255),
+            objective=_clean(objective, 2_000),
+            origin_kind=origin_kind,
+            estimated_minutes=estimated_minutes,
+            preferred_skills=preferred_skills,
+            learner_context=learner_context,
+        )
     )
     now = _now()
     task = LearningTask(
@@ -546,7 +626,12 @@ async def create_learning_task(
     await _record_task_event(
         db, task, "learning_task_created", source=created_by,
         suffix="created",
-        payload={"origin_kind": origin_kind, "status": status, "plan_version": 1},
+        payload={
+            "origin_kind": origin_kind,
+            "status": status,
+            "plan_version": 1,
+            "source_refs": list(source_refs or [])[:20],
+        },
     )
     if status != "proposed":
         await _record_task_event(
@@ -670,6 +755,10 @@ async def attach_micro_learning_task(
         session_id=run.session_id,
     )
     changed = False
+    skill_plan = dict(run.skill_plan or {})
+    if skill_plan.get("learning_task_id") != task.id:
+        skill_plan["learning_task_id"] = task.id
+        run.skill_plan = skill_plan
     for field, value in (
         ("micro_learning_run_id", run.id),
         ("origin_kind", "micro_learning"),
@@ -705,6 +794,18 @@ async def attach_micro_learning_task(
         )
     if changed:
         task.version += 1
+    return task
+
+
+async def reconcile_task_for_micro_run(
+    db: AsyncSession, run: MicroLearningRun,
+) -> LearningTask | None:
+    task = (await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == run.learner_id,
+        LearningTask.micro_learning_run_id == run.id,
+    ))).scalar_one_or_none()
+    if task:
+        await reconcile_learning_task(db, task)
     return task
 
 
@@ -757,23 +858,96 @@ async def _valid_evidence_refs(
     ]
 
 
-async def _verification_refs(db: AsyncSession, task: LearningTask) -> list[dict[str, Any]]:
-    existing = list((task.execution_state or {}).get("evidence_refs") or [])
-    validated = await _valid_evidence_refs(db, task, existing)
-    if task.checkpoint_id:
-        rows = list((await db.execute(select(LearningAttempt).where(
-            LearningAttempt.learner_id == task.learner_id,
-            LearningAttempt.checkpoint_id == task.checkpoint_id,
-            LearningAttempt.evaluated_at.is_not(None),
-        ).order_by(LearningAttempt.id.desc()).limit(20))).scalars().all())
-        known = {item["id"] for item in validated}
-        validated.extend({
+def _attempt_passed(attempt: LearningAttempt) -> bool:
+    result = dict(attempt.result or {})
+    if attempt.item_type == "concept":
+        return bool(result.get("correct"))
+    if attempt.item_type == "exercise":
+        total = int(result.get("total") or 0)
+        return bool(result.get("passed") is True) or (
+            total > 0 and int(result.get("passed") or 0) == total
+        )
+    return bool(result.get("correct") or result.get("passed"))
+
+
+def _attempt_is_verification_evidence(attempt: LearningAttempt) -> bool:
+    """Only independent, transferable graded work may close verification.
+
+    A diagnostic teach-back, hinted success, review replay or original-question
+    remediation retry remains useful practice evidence but cannot stand in for
+    the task's independent verification gate.  A validated remediation variant
+    is eligible because it is a fresh, deterministic transfer check.
+    """
+    if not _attempt_passed(attempt) or attempt.assistance_level != "none":
+        return False
+    if attempt.item_type not in {
+        "concept", "exercise", "freeform", "remediation_variant",
+    }:
+        return False
+    return attempt.attempt_role not in {"diagnostic", "retry", "review"}
+
+
+async def _scoped_attempts(db: AsyncSession, task: LearningTask) -> list[LearningAttempt]:
+    if not task.checkpoint_id:
+        return []
+    return list((await db.execute(select(LearningAttempt).where(
+        LearningAttempt.learner_id == task.learner_id,
+        LearningAttempt.checkpoint_id == task.checkpoint_id,
+        LearningAttempt.evaluated_at.is_not(None),
+    ).order_by(LearningAttempt.id.desc()).limit(100))).scalars().all())
+
+
+async def _practice_refs(db: AsyncSession, task: LearningTask) -> list[dict[str, Any]]:
+    return [
+        {
             "type": "learning_attempt",
             "id": row.id,
+            "item_type": row.item_type,
             "attempt_role": row.attempt_role,
             "assistance_level": row.assistance_level,
-        } for row in rows if row.id not in known)
+            "passed": _attempt_passed(row),
+        }
+        for row in await _scoped_attempts(db, task)
+    ]
+
+
+async def _verification_refs(db: AsyncSession, task: LearningTask) -> list[dict[str, Any]]:
+    existing = list((task.execution_state or {}).get("evidence_refs") or [])
+    valid_existing = await _valid_evidence_refs(db, task, existing)
+    rows = [
+        row for row in await _scoped_attempts(db, task)
+        if _attempt_is_verification_evidence(row)
+    ]
+    validated = [{
+            "type": "learning_attempt",
+            "id": row.id,
+            "item_type": row.item_type,
+            "attempt_role": row.attempt_role,
+            "assistance_level": row.assistance_level,
+            "passed": True,
+        } for row in rows]
+    known = {item["id"] for item in validated}
+    for item in valid_existing:
+        if item["id"] in known:
+            continue
+        row = await db.get(LearningAttempt, item["id"])
+        if row and _attempt_is_verification_evidence(row):
+            validated.append({**item, "item_type": row.item_type, "passed": True})
     return validated
+
+
+async def _learning_exposure_refs(db: AsyncSession, task: LearningTask) -> list[dict[str, Any]]:
+    if not task.checkpoint_id:
+        return []
+    rows = list((await db.execute(select(EvidenceEvent).where(
+        EvidenceEvent.learner_id == task.learner_id,
+        EvidenceEvent.checkpoint_id == task.checkpoint_id,
+        EvidenceEvent.event_type.in_({"lecture_viewed", "micro_learning_card_viewed"}),
+    ).order_by(EvidenceEvent.id.desc()).limit(20))).scalars().all())
+    return [
+        {"type": "evidence_event", "id": row.id, "event_type": row.event_type}
+        for row in rows
+    ]
 
 
 def _phase_map(task: LearningTask) -> dict[str, dict[str, Any]]:
@@ -817,40 +991,93 @@ async def _review_schedule_refs(db: AsyncSession, task: LearningTask) -> list[di
 
 async def reconcile_learning_task(db: AsyncSession, task: LearningTask) -> bool:
     changed = False
+    run = None
     if task.micro_learning_run_id:
         run = await db.get(MicroLearningRun, task.micro_learning_run_id)
-        if run and run.learner_id == task.learner_id and run.status == "completed":
-            for phase_id in _phase_map(task):
-                if _phase_map(task)[phase_id].get("status") != "completed":
-                    _set_phase_status(task, phase_id, "completed")
-                    changed = True
-            if task.status != "completed":
-                task.status = "completed"
-                task.completed_at = run.completed_at or _now()
-                await _record_task_event(
-                    db, task, "learning_task_completed", source="micro_learning",
-                    suffix="completed", payload={"mastery_unchanged": True},
-                )
-                changed = True
-    if task.checkpoint_id:
-        checkpoint = await db.get(Checkpoint, task.checkpoint_id)
-        if checkpoint and checkpoint.learning_status == "completed" and task.status != "completed":
-            for phase_id in _phase_map(task):
-                _set_phase_status(task, phase_id, "completed")
-            task.status = "completed"
-            task.completed_at = _now()
-            await _record_task_event(
-                db, task, "learning_task_completed", source="checkpoint_runtime",
-                suffix="completed", payload={"mastery_unchanged": True},
-            )
-            changed = True
+        if run and run.learner_id != task.learner_id:
+            run = None
+    state = dict(task.execution_state or {})
+    if run and run.status == "paused" and task.status == "active":
+        task.status = "paused"
+        state["paused_by_micro_run"] = run.id
+        await _record_task_event(
+            db, task, "learning_task_paused", source="micro_learning",
+            suffix=f"paused:micro-run:{run.id}:{run.version}",
+        )
+        changed = True
+    elif (
+        run and run.status == "active" and task.status == "paused"
+        and state.get("paused_by_micro_run") == run.id
+    ):
+        task.status = "active"
+        state.pop("paused_by_micro_run", None)
+        await _record_task_event(
+            db, task, "learning_task_resumed", source="micro_learning",
+            suffix=f"resumed:micro-run:{run.id}:{run.version}",
+        )
+        changed = True
+    task.execution_state = state
+
+    phases = _phase_map(task)
+    skill_refs = list(state.get("skill_run_refs") or [])
+    learning_refs = await _learning_exposure_refs(db, task)
+    practice_refs = await _practice_refs(db, task)
+    verification_refs = await _verification_refs(db, task)
     review_refs = await _review_schedule_refs(db, task)
-    if review_refs:
+
+    if phases.get("learn", {}).get("status") != "completed" and (
+        skill_refs or learning_refs
+    ):
+        _set_phase_status(task, "learn", "completed")
+        changed = True
+    if phases.get("practice", {}).get("status") != "completed" and practice_refs:
+        _set_phase_status(task, "practice", "completed")
+        changed = True
+    if phases.get("verify", {}).get("status") != "completed" and verification_refs:
+        _set_phase_status(task, "verify", "completed")
+        changed = True
+    if review_refs and _phase_map(task).get("verify", {}).get("status") == "completed":
         task.review_handoff = {"status": "scheduled", "items": review_refs}
         phase = _phase_map(task).get("consolidate")
         if phase and phase.get("status") != "completed":
             _set_phase_status(task, "consolidate", "completed")
             changed = True
+
+    state = dict(task.execution_state or {})
+    next_state = {
+        **state,
+        "learning_refs": learning_refs[-20:],
+        "practice_refs": practice_refs[-100:],
+        "evidence_refs": verification_refs[-100:],
+        "review_refs": review_refs[-100:],
+    }
+    if next_state != state:
+        task.execution_state = next_state
+        changed = True
+
+    artifact_refs = await _artifact_refs(db, task)
+    if artifact_refs != list(task.artifact_refs or []):
+        task.artifact_refs = artifact_refs
+        changed = True
+
+    required_phases = [
+        phase for phase in _phase_map(task).values() if phase.get("required", True)
+    ]
+    operationally_complete = bool(required_phases) and all(
+        phase.get("status") == "completed" for phase in required_phases
+    )
+    if (
+        operationally_complete
+        and task.status not in {"completed", "canceled"}
+        and (not run or run.status == "completed")
+    ):
+        task.status = "completed"
+        task.completed_at = (run.completed_at if run else None) or _now()
+        await _record_task_event(
+            db, task, "learning_task_completed", source="learning_task_runtime",
+            suffix="completed:reconciled", payload={"mastery_unchanged": True},
+        )
+        changed = True
     if changed:
         task.version += 1
     return changed
@@ -911,6 +1138,73 @@ def _navigation(task: LearningTask) -> dict[str, Any]:
     return {"kind": "task", "path": f"/tasks?task={task.id}"}
 
 
+def _runtime_projection(task: LearningTask) -> dict[str, Any]:
+    artifacts = list(task.artifact_refs or [])
+    lecture = next((item for item in artifacts if item.get("type") == "managed_lecture"), None)
+    question_set = next((
+        item for item in artifacts if item.get("type") == "concept_question_set"
+    ), None)
+    exercises = [item for item in artifacts if item.get("type") == "managed_exercise"]
+    phases = _phase_map(task)
+    current = next((
+        phase for phase in phases.values() if phase.get("status") != "completed"
+    ), None)
+    state = dict(task.execution_state or {})
+    if task.status == "proposed":
+        next_action = {"id": "accept", "label": "加入学习任务", "path": ""}
+    elif task.status == "queued":
+        next_action = {"id": "start", "label": "开始任务", "path": ""}
+    elif task.status == "paused":
+        next_action = {"id": "resume", "label": "从暂停处继续", "path": ""}
+    elif task.status == "completed":
+        next_action = (
+            {"id": "open_review", "label": "进入复习队列", "path": "/review"}
+            if task.review_handoff else
+            {"id": "view_summary", "label": "查看完成记录", "path": f"/tasks?task={task.id}"}
+        )
+    elif task.micro_learning_run_id:
+        next_action = {
+            "id": "continue_learning",
+            "label": "继续学习与验证",
+            "path": f"/learn/{task.micro_learning_run_id}",
+        }
+    elif task.checkpoint_id:
+        next_action = {
+            "id": "open_checkpoint",
+            "label": "进入关卡学习现场",
+            "path": _navigation(task)["path"],
+        }
+    else:
+        next_action = {
+            "id": "prepare_materials",
+            "label": "生成讲义与验证题",
+            "path": "",
+        }
+    return {
+        "runtime_version": RUNTIME_VERSION,
+        "current_phase": dict(current or {}),
+        "next_action": next_action,
+        "materials": {
+            "status": "ready" if lecture and question_set else "partial" if artifacts else "not_prepared",
+            "lecture": lecture,
+            "question_set": question_set,
+            "exercises": exercises,
+        },
+        "evidence": {
+            "learning_events": len(list(state.get("learning_refs") or [])),
+            "practice_attempts": len(list(state.get("practice_refs") or [])),
+            "successful_verifications": len(list(state.get("evidence_refs") or [])),
+            "review_items": len(list(state.get("review_refs") or [])),
+        },
+        "state_boundary": {
+            "task_lifecycle": "operational_only",
+            "content_use": "exposure_or_diagnostic_only",
+            "ability": "graded_attempts_only",
+            "stability": "spaced_review_only",
+        },
+    }
+
+
 def _available_actions(task: LearningTask) -> list[str]:
     if task.status == "proposed":
         return ["accept", "cancel"]
@@ -951,9 +1245,10 @@ async def learning_task_view(db: AsyncSession, task: LearningTask) -> dict[str, 
         "current_phase_id": task.current_phase_id,
         "plan_version": task.plan_version,
         "execution_state": dict(task.execution_state or {}),
-        "artifact_refs": await _artifact_refs(db, task),
+        "artifact_refs": list(task.artifact_refs or []),
         "review_handoff": dict(task.review_handoff or {}),
         "navigation": _navigation(task),
+        "runtime": _runtime_projection(task),
         "available_actions": _available_actions(task),
         "version": task.version,
         "accepted_at": task.accepted_at.isoformat() if task.accepted_at else None,
@@ -1038,10 +1333,16 @@ async def act_on_learning_task(
         if not phase or phase.get("status") == "completed":
             raise RuntimeError("invalid_state")
         valid_refs = await _valid_evidence_refs(db, task, list(evidence_refs or []))
+        if phase.get("kind") == "practice":
+            practice_refs = await _practice_refs(db, task)
+            if not practice_refs:
+                raise RuntimeError("practice_required")
+            valid_refs = practice_refs
         if phase.get("kind") == "verify":
-            valid_refs = valid_refs or await _verification_refs(db, task)
-            if not valid_refs:
+            verification_refs = await _verification_refs(db, task)
+            if not verification_refs:
                 raise RuntimeError("verification_required")
+            valid_refs = verification_refs
         if phase.get("kind") == "consolidate":
             review_refs = await _review_schedule_refs(db, task)
             if not review_refs:
@@ -1065,11 +1366,32 @@ async def act_on_learning_task(
         if any(phase.get("kind") == "verify" for phase in phases):
             if not await _verification_refs(db, task):
                 raise RuntimeError("verification_required")
+        if task.micro_learning_run_id:
+            run = await db.get(MicroLearningRun, task.micro_learning_run_id)
+            if run and run.learner_id == task.learner_id and run.status != "completed":
+                raise RuntimeError("learning_run_incomplete")
         task.status = "completed"
         task.completed_at = now
         event_type = "learning_task_completed"
     else:
         raise RuntimeError("invalid_state")
+    if action in {"pause", "resume"} and task.micro_learning_run_id:
+        run = await db.get(MicroLearningRun, task.micro_learning_run_id)
+        if run and run.learner_id == task.learner_id:
+            from app.services.micro_learning import advance_run
+            if action == "pause" and run.status == "active":
+                await advance_run(
+                    db, run=run, action="pause", expected_version=run.version,
+                    client_action_id=f"learning-task:{task.id}:pause:{client_action_id}",
+                )
+            elif action == "resume" and run.status == "paused":
+                await advance_run(
+                    db, run=run, action="resume", expected_version=run.version,
+                    client_action_id=f"learning-task:{task.id}:resume:{client_action_id}",
+                )
+        state = dict(task.execution_state or {})
+        state.pop("paused_by_micro_run", None)
+        task.execution_state = state
     _log_action(task, client_action_id, action, phase_id=phase_id)
     task.version += 1
     await _record_task_event(
@@ -1097,7 +1419,7 @@ async def replan_learning_task(
     if task.status in {"completed", "canceled"}:
         raise RuntimeError("invalid_state")
     previous = _phase_map(task)
-    learner_context = _compact_planner_context(
+    learner_context = _portable_planner_context(
         await get_kernel_projection(db, task.learner_id)
     )
     plan = await generate_learning_task_plan(
@@ -1139,6 +1461,34 @@ async def replan_learning_task(
     return task
 
 
+async def _resolved_task_source_text(
+    db: AsyncSession, task: LearningTask, explicit_source_text: str,
+) -> tuple[str, str]:
+    if _clean(explicit_source_text, 20_000):
+        return explicit_source_text.strip()[:20_000], "provided_text"
+    excerpts: list[str] = []
+    for ref in list(task.source_refs or []):
+        if not isinstance(ref, dict) or ref.get("type") != "conversation_message":
+            continue
+        message_id = ref.get("id")
+        if not str(message_id or "").isdigit():
+            continue
+        message = (await db.execute(select(AgentMessage).where(
+            AgentMessage.id == int(message_id),
+            AgentMessage.session_id == task.session_id,
+        ))).scalar_one_or_none()
+        if not message:
+            continue
+        selected = _clean((message.meta_data or {}).get("selected_text"), 12_000)
+        content = _clean(message.content, 8_000)
+        if selected:
+            excerpts.append(f"学习者选中的材料：\n{selected}")
+        if content:
+            excerpts.append(f"学习者的问题或任务：\n{content}")
+    resolved = "\n\n".join(excerpts)[:20_000]
+    return resolved, "conversation_context" if resolved else "topic"
+
+
 async def materialize_learning_task(
     db: AsyncSession,
     *,
@@ -1158,22 +1508,26 @@ async def materialize_learning_task(
     if task.status not in {"queued", "active", "paused"}:
         raise RuntimeError("invalid_state")
     from app.services.micro_learning import create_micro_learning_run
+    resolved_source_text, source_mode = await _resolved_task_source_text(
+        db, task, source_text,
+    )
     run = await create_micro_learning_run(
         db,
         learner_id=task.learner_id,
         goal=task.objective,
-        source_text=source_text,
+        source_text=resolved_source_text,
         client_request_id=client_request_id,
         education_stage=education_stage,
         background=background,
         source="learning_task",
         attach_learning_task=False,
+        learning_task_id=task.id,
     )
     was_active = task.status == "active"
     task.micro_learning_run_id = run.id
     task.project_id = run.project_id
     task.checkpoint_id = run.checkpoint_id
-    task.session_id = run.session_id
+    task.session_id = task.session_id or run.session_id
     task.status = "active"
     task.started_at = task.started_at or _now()
     task.version += 1
@@ -1181,7 +1535,7 @@ async def materialize_learning_task(
     await _record_task_event(
         db, task, "learning_task_materialized", source="learning_task",
         suffix=f"materialized:{client_request_id}",
-        payload={"micro_learning_run_id": run.id},
+        payload={"micro_learning_run_id": run.id, "source_mode": source_mode},
     )
     if not was_active:
         await _record_task_event(
@@ -1311,7 +1665,10 @@ async def create_recommended_learning_task(
     )
     explicitly_requested = (
         opportunity.get("consent_basis") == "explicit_user_request"
-        and any(marker in compact_message for marker in explicit_markers)
+        and (
+            opportunity.get("detected_by") == "deterministic_explicit_atomic_task_v1"
+            or any(marker in compact_message for marker in explicit_markers)
+        )
     )
     existing_query = select(LearningTask).where(
         LearningTask.learner_id == session.learner_id,
@@ -1365,6 +1722,14 @@ async def create_recommended_learning_task(
         priority=int(opportunity.get("priority") or 0),
         estimated_minutes=int(opportunity.get("estimated_minutes") or 20),
         preferred_skills=list(opportunity.get("suggested_skills") or []),
+        source_refs=[{
+            "type": "conversation_message",
+            "id": user_message_id,
+            "excerpt": _clean(user_message, 500),
+        }],
         success_criteria=list(opportunity.get("success_criteria") or []),
+        use_model_planner=(
+            opportunity.get("detected_by") != "deterministic_explicit_atomic_task_v1"
+        ),
     )
     return task

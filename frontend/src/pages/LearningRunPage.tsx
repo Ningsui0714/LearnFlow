@@ -279,10 +279,10 @@ export default function LearningRunPage() {
     <div className="min-h-screen bg-[#f6f7f4] text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
-          <button type="button" onClick={() => navigate('/agent')} className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100" title="返回学习首页"><ArrowLeft size={19} /></button>
+          <button type="button" onClick={() => navigate(run.learning_task?.path || '/agent')} className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100" title="返回学习任务"><ArrowLeft size={19} /></button>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-slate-900">{run.goal}</p>
-            <p className="text-[11px] text-slate-500">15 分钟可验证微学习 · 第 {Math.max(1, run.progress.current)}/{run.progress.total} 步</p>
+            <p className="text-[11px] text-slate-500">原子学习任务 · 第 {Math.max(1, run.progress.current)}/{run.progress.total} 步{run.learning_task ? ` · ${run.learning_task.title}` : ''}</p>
           </div>
           {run.status !== 'completed' && (
             <button
@@ -399,7 +399,7 @@ export default function LearningRunPage() {
               <div className="rounded-2xl bg-amber-50 p-4"><span className="text-xs text-amber-800">经过纠错后通过</span><strong className="mt-1 block text-lg text-amber-950">{run.summary.remediated_question_ids?.length || 0} 题</strong></div>
             </div>
             <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-indigo-950"><CalendarClock size={16} />下一次复习</h2><p className="mt-2 text-sm leading-6 text-indigo-900/80">{run.summary.review_due_at ? new Date(run.summary.review_due_at).toLocaleString('zh-CN') : '复习计划已建立，可前往复习台查看。'}</p><p className="mt-1 text-xs text-indigo-700">{run.summary.next_step}</p></div>
-            <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => navigate('/review')} className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white"><CalendarClock size={16} />查看复习计划</button><button type="button" onClick={() => navigate('/agent')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"><RotateCcw size={16} />再学一个主题</button></div>
+            <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => navigate('/review')} className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white"><CalendarClock size={16} />查看复习计划</button><button type="button" onClick={() => navigate(run.learning_task?.path || '/tasks')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"><RotateCcw size={16} />返回任务与文件</button></div>
           </section>
         )}
 

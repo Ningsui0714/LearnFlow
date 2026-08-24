@@ -109,6 +109,9 @@ def test_learning_task_runtime_is_registered_as_zero_evidence_coordination():
     assert CAPABILITY_OWNERS["manage_learning_tasks"][0] == "tutor_agent"
     assert CAPABILITY_OWNERS["plan_learning_task"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["run_learning_task"][0] == "tutor_agent"
+    assert "deterministic runtime projection" in TOOLS["learning_task_runtime"].write_path
+    assert TOOLS["learning_task_planner"].reads_kernels == ("human",)
+    assert "persisted lecture/questions" in SKILLS["atomic_learning_loop"].output_contract
     assert all(
         EVENTS[event_id].kernel_targets == ()
         for event_id in {

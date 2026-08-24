@@ -294,6 +294,10 @@ consolidate` 粗阶段，并按互动情况使用已登记 Skill；不得把每�
 
 Tutor 每回合 MUST 读取同一 Session 中非终态任务的 answer-free 只读投影，包括目标、状态、
 当前阶段、方法和完成规则；已有 active 任务时继续该目标，不得让模型为同一目标重复建任务。
+服务端 MUST 在 Tutor 模型调用前对边界清楚的显式原子学习措辞进行保守确定性识别并先建立
+任务，使模型超时不能阻塞学习入口；模糊或过大的目标 MUST 留在对话中澄清，不能静默入队。
+对话创建的任务 MUST 保留原 Session 作为
+来源与返回锚点，专注附件使用的 checkpoint Session 不得覆盖它。
 
 项目中的每个 Checkpoint MUST 唯一对应一个 checkpoint Session 和一个 Learning Task。
 Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件；Learning Task 只负责该关
@@ -305,6 +309,17 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 `ReviewSchedule` 的确定性策略调度。任务完成只说明流程结束，所有 Learning Task 生命周期
 事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
 完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
+
+Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：
+`learn` 需要 Skill 完成、材料查看或学习者明确确认互动结束，`practice` 需要真实 Attempt，
+`verify` 需要无辅助成功的原始正式 Attempt 或已校验变式（诊断、提示成功、纠错原题重做和
+复习重放均不够），`consolidate` 需要 ReviewSchedule。Lecture、Exercise、ConceptQuestion 的稳定引用
+MUST 持久挂在任务上；生成材料本身 MUST NOT 完成 learn 或改变五核。`runtime.next_action`
+是确定性导航建议，不是 Agent 决策或新证据。
+
+`user_message.payload.learning_task_id` 只把对话行为关联到当前原子任务。Reducer MAY 根据
+消息中明确表达的目标、缺口、负荷或偏好更新已有五核字段，但 MUST NOT 因“属于某个任务”
+而自动升级任何 Kernel。任务生命周期、材料生成与流程完成事件 MUST 继续保持零 target。
 
 ### 8.3 对话 Session、学习 Skill 与可验证工作台
 

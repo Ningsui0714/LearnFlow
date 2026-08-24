@@ -22,6 +22,7 @@ from app.services.micro_learning import (
     submit_teach_back,
     sync_run,
 )
+from app.services.learning_tasks import reconcile_task_for_micro_run
 
 
 router = APIRouter(prefix="/micro-learning", tags=["Focused Micro Learning"])
@@ -59,6 +60,7 @@ async def create_run(
         education_stage=current.profile.education_stage or "",
         background=current.profile.background or "",
     )
+    await reconcile_task_for_micro_run(db, run)
     await db.commit()
     return await run_view(db, run)
 
@@ -75,11 +77,10 @@ async def list_runs(
         .order_by(MicroLearningRun.updated_at.desc(), MicroLearningRun.id.desc())
         .limit(limit)
     )).scalars().all())
-    versions = {run.id: run.version for run in runs}
     for run in runs:
         await reconcile_run(db, run)
-    if any(run.version != versions[run.id] for run in runs):
-        await db.commit()
+        await reconcile_task_for_micro_run(db, run)
+    await db.commit()
     return {"items": [await run_view(db, run) for run in runs]}
 
 
@@ -90,10 +91,9 @@ async def get_run(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     run = await _owned_run_or_404(db, current.learner.id, run_id)
-    version = run.version
     await reconcile_run(db, run)
-    if run.version != version:
-        await db.commit()
+    await reconcile_task_for_micro_run(db, run)
+    await db.commit()
     return await run_view(db, run)
 
 
@@ -115,6 +115,7 @@ async def advance(
         )
     except RuntimeError as error:
         raise _workflow_error(error) from error
+    await reconcile_task_for_micro_run(db, run)
     await db.commit()
     return await run_view(db, run)
 
@@ -137,6 +138,7 @@ async def teach_back(
         )
     except RuntimeError as error:
         raise _workflow_error(error) from error
+    await reconcile_task_for_micro_run(db, run)
     await db.commit()
     return await run_view(db, run)
 
@@ -158,5 +160,6 @@ async def sync(
         )
     except RuntimeError as error:
         raise _workflow_error(error) from error
+    await reconcile_task_for_micro_run(db, run)
     await db.commit()
     return await run_view(db, run)

@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.learning import LearningAttempt
+from app.models.learning import LearningAttempt, LearningTask
 from app.models.project import (
     Checkpoint, Exercise, ExerciseDraft, ConceptQuestion, Task, Roadmap,
 )
@@ -558,6 +558,10 @@ async def submit_concept(
     )
     cp = await db.get(Checkpoint, checkpoint_id)
     roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
+    learning_task_id = (await db.execute(select(LearningTask.id).where(
+        LearningTask.learner_id == current.learner.id,
+        LearningTask.checkpoint_id == checkpoint_id,
+    ))).scalar_one_or_none()
     evaluation_event = await record_event(
         db, event_type="concept_attempt_evaluated", source="assessment",
         learner_id=current.learner.id,
@@ -565,6 +569,7 @@ async def submit_concept(
         checkpoint_id=checkpoint_id,
         payload={
             "attempt_id": attempt.id,
+            "learning_task_id": learning_task_id,
             "item_id": question_id,
             "question": q.question,
             "correct": is_correct,
@@ -761,6 +766,10 @@ async def submit_exercise(
         )
         cp = await db.get(Checkpoint, exercise.checkpoint_id)
         roadmap = await db.get(Roadmap, cp.roadmap_id) if cp else None
+        learning_task_id = (await db.execute(select(LearningTask.id).where(
+            LearningTask.learner_id == current.learner.id,
+            LearningTask.checkpoint_id == exercise.checkpoint_id,
+        ))).scalar_one_or_none()
         evaluation_event = await record_event(
             db, event_type="exercise_attempt_evaluated", source="assessment",
             learner_id=current.learner.id,
@@ -768,6 +777,7 @@ async def submit_exercise(
             checkpoint_id=exercise.checkpoint_id,
             payload={
                 "attempt_id": attempt.id,
+                "learning_task_id": learning_task_id,
                 "item_id": exercise.id,
                 "passed": passed_ok,
                 "assistance_level": req.assistance_level or "none",

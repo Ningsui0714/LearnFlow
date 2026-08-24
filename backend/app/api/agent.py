@@ -108,6 +108,8 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         dict((latest_assistant.meta_data or {}).get("skill_recommendation") or {}) or None
         if latest_assistant else None
     )
+    learning_task_views = [await learning_task_view(db, item) for item in learning_tasks]
+    state_summary = await get_session_state_summary(db, session)
     await db.commit()
     return {
         "id": session.id,
@@ -116,13 +118,13 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         "project_id": session.project_id,
         "checkpoint_id": session.checkpoint_id,
         "messages": [_message_out(m) for m in messages],
-        "state_summary": await get_session_state_summary(db, session),
+        "state_summary": state_summary,
         "action_card": action_card(pending),
         "project_proposals": [proposal_view(item) for item in proposals],
         "active_skill": session_learning_skill(session),
         "active_skill_run": skill_run,
         "skill_recommendation": skill_recommendation,
-        "learning_tasks": [await learning_task_view(db, item) for item in learning_tasks],
+        "learning_tasks": learning_task_views,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
     }

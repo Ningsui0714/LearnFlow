@@ -2247,11 +2247,24 @@ async def process_turn(
             title = re.sub(r"\s+", " ", message).strip()
             session.title = title[:36] + ("…" if len(title) > 36 else "")
     if not user_event:
+        active_learning_task_id = (await db.execute(select(LearningTask.id).where(
+            LearningTask.learner_id == session.learner_id,
+            LearningTask.session_id == session.id,
+            LearningTask.status.in_({"queued", "active", "paused"}),
+        ).order_by(
+            LearningTask.priority.desc(), LearningTask.queue_position, LearningTask.id,
+        ).limit(1))).scalar_one_or_none()
         user_event = await record_event(
             db, event_type="user_message", source="user",
             learner_id=session.learner_id,
             project_id=session.project_id, checkpoint_id=session.checkpoint_id,
-            session_id=session.id, payload={"text": message},
+            session_id=session.id, payload={
+                "text": message,
+                "learning_task_id": active_learning_task_id,
+                "interaction_scope": (
+                    "learning_task_conversation" if active_learning_task_id else "conversation"
+                ),
+            },
             confidence=0.25 if message.strip().lower() in {
                 "懂了", "明白了", "会了", "got it", "understood",
             } else 1.0,
@@ -2526,6 +2539,17 @@ async def process_turn(
         await db.commit()
         state = await get_session_state_summary(db, session)
         proposals = await list_session_proposals(db, session.id)
+        from app.services.learning_tasks import learning_task_view
+        session_learning_tasks = list((await db.execute(select(LearningTask).where(
+            LearningTask.learner_id == session.learner_id,
+            LearningTask.session_id == session.id,
+            LearningTask.status.in_({"proposed", "queued", "active", "paused"}),
+        ).order_by(
+            LearningTask.priority.desc(), LearningTask.queue_position, LearningTask.id,
+        ))).scalars().all())
+        session_learning_task_views = [
+            await learning_task_view(db, item) for item in session_learning_tasks
+        ]
         response = {
             "session_id": session.id,
             "session_title": session.title,
@@ -2543,6 +2567,7 @@ async def process_turn(
             "project_proposals": [proposal_view(item) for item in proposals],
             "proposal_update": proposal_view(proposal_for_action) if proposal_for_action else None,
             "learning_task_proposal": None,
+            "learning_tasks": session_learning_task_views,
         }
         user_message.meta_data = {**dict(user_message.meta_data or {}), "turn_response": response}
         await db.commit()
@@ -2574,18 +2599,36 @@ async def process_turn(
         if str((recommendation_candidate or {}).get("skill", {}).get("id") or "") in RUNTIME_SKILL_IDS
         else None
     )
-    (
-        reply, observations, opportunity, learning_intent,
-        major_event_candidates, local_agent_task, learning_task_opportunity,
-    ) = (
-        await _generate_tutor_reply(
+    detected_task = None
+    if session.session_type == "global" and not skill_run:
+        from app.services.learning_tasks import deterministic_learning_task_opportunity
+        detected_task = deterministic_learning_task_opportunity(message)
+    if detected_task:
+        # Explicit, bounded atomic requests are a product command, not a model
+        # classification problem.  Establish the durable task immediately so an
+        # invalid or slow provider cannot block the learner's first action.
+        reply = (
+            f"我会围绕“{detected_task['title']}”带你完成一次原子学习闭环。"
+            "任务会保留学习计划、讲义与验证题；讲解和阅读只算学习过程，"
+            "正式作答与纠错完成后才会转交复习。"
+        )
+        observations = []
+        opportunity = None
+        learning_intent = None
+        major_event_candidates = []
+        local_agent_task = None
+        learning_task_opportunity = detected_task
+    else:
+        (
+            reply, observations, opportunity, learning_intent,
+            major_event_candidates, local_agent_task, learning_task_opportunity,
+        ) = await _generate_tutor_reply(
             db,
             session,
             workflow_instruction=str((skill_turn_plan or {}).get("directive") or ""),
             workflow_fallback=str((skill_turn_plan or {}).get("fallback") or ""),
             active_skill_run_view=skill_run_view,
         )
-    )
     generated_local_action = None
     if (
         session.session_type == "checkpoint"
@@ -2672,6 +2715,17 @@ async def process_turn(
         await start_resource_search(db, proposal_update)
     state = await get_session_state_summary(db, session)
     proposals = await list_session_proposals(db, session.id)
+    from app.services.learning_tasks import learning_task_view
+    session_learning_tasks = list((await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == session.learner_id,
+        LearningTask.session_id == session.id,
+        LearningTask.status.in_({"proposed", "queued", "active", "paused"}),
+    ).order_by(
+        LearningTask.priority.desc(), LearningTask.queue_position, LearningTask.id,
+    ))).scalars().all())
+    session_learning_task_views = [
+        await learning_task_view(db, item) for item in session_learning_tasks
+    ]
     response = {
         "session_id": session.id,
         "session_title": session.title,
@@ -2689,6 +2743,7 @@ async def process_turn(
         "project_proposals": [proposal_view(item) for item in proposals],
         "proposal_update": proposal_view(proposal_update) if proposal_update else None,
         "learning_task_proposal": learning_task_proposal,
+        "learning_tasks": session_learning_task_views,
         "life_events": life_events,
         "awarded_badges": awarded_badges,
     }

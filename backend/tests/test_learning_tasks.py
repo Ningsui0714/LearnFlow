@@ -1,11 +1,20 @@
+import asyncio
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.db.database import async_session
 from app.main import app
+from app.models.learning import EvidenceEvent, KernelMutation, LearningAttempt
+from app.models.project import Checkpoint
 from app.services.architecture_registry import EVENTS
-from app.services.learning_tasks import _fallback_plan
+from app.services.learning_tasks import (
+    _attempt_is_verification_evidence,
+    _fallback_plan,
+    _portable_planner_context,
+)
 
 
 @pytest.fixture(scope="module")
@@ -65,6 +74,59 @@ def test_fallback_plan_uses_bounded_five_kernel_content():
     assert {item["kernel"] for item in plan["personalization_basis"]} == {
         "human", "knowledge", "value", "practice",
     }
+
+
+def test_new_task_context_does_not_inherit_volatile_content_from_another_task():
+    projection = {
+        "structure": {"short_term": {"path_position": "Python 闭包纠错"}},
+        "knowledge": {"short_term": {"knowledge_gap": "不理解闭包捕获"}},
+        "human": {"short_term": {
+            "cognitive_load": 0.9,
+            "format_preference": "先图后文",
+            "pace_preference": "分段",
+        }},
+        "value": {"short_term": {"current_priority": "完成闭包任务"}},
+        "practice": {"short_term": {"assistance_level": "guided"}},
+    }
+
+    context = _portable_planner_context(projection)
+    plan = _fallback_plan(
+        title="弄懂 C 指针",
+        objective="能够解释解引用并完成独立验证",
+        origin_kind="conversation",
+        estimated_minutes=20,
+        learner_context=context,
+    )
+
+    assert context == {"human": {
+        "format_preference": "先图后文",
+        "pace_preference": "分段",
+    }}
+    assert "闭包" not in plan["summary"]
+    assert "闭包" not in plan["phases"][0]["purpose"]
+    assert plan["personalization_basis"] == [{
+        "kernel": "human",
+        "keys": ["format_preference", "pace_preference"],
+    }]
+
+
+def test_verification_rejects_hints_diagnostics_retries_and_review_replays():
+    def attempt(*, item_type="concept", role="original", assistance="none"):
+        return LearningAttempt(
+            item_type=item_type,
+            attempt_role=role,
+            assistance_level=assistance,
+            result={"correct": True},
+        )
+
+    assert _attempt_is_verification_evidence(attempt()) is True
+    assert _attempt_is_verification_evidence(attempt(assistance="hint")) is False
+    assert _attempt_is_verification_evidence(attempt(item_type="teach_back", role="diagnostic")) is False
+    assert _attempt_is_verification_evidence(attempt(role="retry")) is False
+    assert _attempt_is_verification_evidence(attempt(role="review")) is False
+    assert _attempt_is_verification_evidence(
+        attempt(item_type="remediation_variant", role="variant")
+    ) is True
 
 
 def test_learning_task_creation_is_idempotent_and_plan_is_registered(client: TestClient):
@@ -137,7 +199,14 @@ def test_tutor_distinguishes_explicit_task_consent_from_recommendation(
 def test_task_is_resumable_but_verification_cannot_be_self_declared(client: TestClient):
     task = _action(client, _create(client), "start")
     task = _action(client, task, "complete_phase", "learn")
-    task = _action(client, task, "complete_phase", "practice")
+    fake_practice = client.post(f"/api/learning-tasks/{task['id']}/actions", json={
+        "action": "complete_phase",
+        "phase_id": "practice",
+        "expected_version": task["version"],
+        "client_action_id": _id("fake-practice"),
+    })
+    assert fake_practice.status_code == 409
+    assert "真实作答" in fake_practice.json()["detail"]
     blocked = client.post(f"/api/learning-tasks/{task['id']}/actions", json={
         "action": "complete_phase",
         "phase_id": "verify",
@@ -151,6 +220,63 @@ def test_task_is_resumable_but_verification_cannot_be_self_declared(client: Test
     assert paused["status"] == "paused"
     resumed = _action(client, paused, "resume")
     assert resumed["status"] == "active"
+
+
+def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
+    client: TestClient, monkeypatch,
+):
+    model_calls = []
+
+    async def model_reply_for_follow_up(*_args, **_kwargs):
+        model_calls.append(True)
+        return "我们继续沿着这个任务讨论。", [], None, None, [], None, None
+
+    async def planner_must_not_block_explicit_task(*_args, **_kwargs):
+        raise AssertionError("explicit atomic task should use the immediate fallback plan")
+
+    monkeypatch.setattr(
+        "app.services.tutor_service._generate_tutor_reply",
+        model_reply_for_follow_up,
+    )
+    monkeypatch.setattr(
+        "app.services.learning_tasks.generate_learning_task_plan",
+        planner_must_not_block_explicit_task,
+    )
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    first = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "带我弄懂 Python 闭包为什么会捕获外层变量",
+        "client_turn_id": _id("offline-atomic-turn"),
+    })
+    assert first.status_code == 200, first.text
+    task = first.json()["learning_task_proposal"]
+    assert task["status"] == "active"
+    assert task["runtime"]["next_action"]["id"] == "prepare_materials"
+    assert first.json()["learning_tasks"][0]["id"] == task["id"]
+    assert model_calls == []
+
+    follow_up = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "我先想知道变量是在定义时还是调用时决定的",
+        "client_turn_id": _id("offline-atomic-follow-up"),
+    })
+    assert follow_up.status_code == 200, follow_up.text
+    assert len(model_calls) == 1
+    assert follow_up.json()["learning_task_proposal"] is None
+    assert follow_up.json()["learning_tasks"][0]["id"] == task["id"]
+    current = follow_up.json()["learning_tasks"][0]
+    prepared = client.post(f"/api/learning-tasks/{task['id']}/materialize", json={
+        "expected_version": current["version"],
+        "client_request_id": _id("conversation-task-materialize"),
+    })
+    assert prepared.status_code == 200, prepared.text
+    learning_run = client.get(
+        f"/api/micro-learning/runs/{prepared.json()['micro_learning_run_id']}"
+    ).json()
+    assert "闭包" in learning_run["source_excerpt"]
+    restored = client.get(f"/api/agent/sessions/{session['id']}")
+    assert restored.status_code == 200
+    assert restored.json()["learning_tasks"][0]["id"] == task["id"]
 
 
 def test_task_can_materialize_saved_lecture_and_questions(client: TestClient):
@@ -170,13 +296,80 @@ def test_task_can_materialize_saved_lecture_and_questions(client: TestClient):
     assert body["navigation"]["kind"] == "focused_learning"
     assert any(item["type"] == "managed_lecture" for item in body["artifact_refs"])
     assert any(item["type"] == "concept_question_set" for item in body["artifact_refs"])
+    assert body["runtime"]["materials"]["status"] == "ready"
+    assert body["runtime"]["next_action"]["id"] == "continue_learning"
     replay = client.post(f"/api/learning-tasks/{task['id']}/materialize", json=payload)
     assert replay.status_code == 200
     assert replay.json()["id"] == body["id"]
     assert replay.json()["version"] == body["version"]
+    run = client.get(f"/api/micro-learning/runs/{body['micro_learning_run_id']}").json()
+    viewed = client.post(f"/api/micro-learning/runs/{run['id']}/advance", json={
+        "action": "complete_card",
+        "expected_version": run["version"],
+        "client_action_id": _id("task-card-viewed"),
+    })
+    assert viewed.status_code == 200, viewed.text
+    assert viewed.json()["learning_task"]["current_phase_id"] == "practice"
+
+    async def event_routes():
+        async with async_session() as db:
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.checkpoint_id == body["checkpoint_id"],
+            ))).scalars().all())
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id.in_([event.id for event in events]),
+            ))).scalars().all())
+            by_event: dict[int, set[str]] = {}
+            for mutation in mutations:
+                by_event.setdefault(mutation.event_id, set()).add(mutation.kernel_name)
+            return {event.event_type: by_event.get(event.id, set()) for event in events}
+
+    routes = asyncio.run(event_routes())
+    assert routes["learning_task_materialized"] == set()
+    assert routes["learning_card_generated"] == set()
+    assert routes["micro_learning_started"] == {"structure", "value"}
+    assert routes["micro_learning_card_viewed"] == {"knowledge"}
+    current_task = client.get(f"/api/learning-tasks/{body['id']}").json()
+    paused_task = _action(client, current_task, "pause")
+    assert paused_task["status"] == "paused"
+    assert client.get(
+        f"/api/micro-learning/runs/{body['micro_learning_run_id']}"
+    ).json()["status"] == "paused"
+    resumed_task = _action(client, paused_task, "resume")
+    assert resumed_task["status"] == "active"
+    assert client.get(
+        f"/api/micro-learning/runs/{body['micro_learning_run_id']}"
+    ).json()["status"] == "active"
     visible_projects = client.get("/api/projects")
     assert visible_projects.status_code == 200
     assert body["project_id"] not in {item["id"] for item in visible_projects.json()}
+
+
+def test_checkpoint_status_cannot_bypass_task_attempt_and_review_gates(client: TestClient):
+    task = _create(client, "验证任务阶段边界")
+    prepared = client.post(f"/api/learning-tasks/{task['id']}/materialize", json={
+        "source_text": "本材料只用于验证任务阶段边界。",
+        "expected_version": task["version"],
+        "client_request_id": _id("checkpoint-status-boundary"),
+    })
+    assert prepared.status_code == 200, prepared.text
+    body = prepared.json()
+
+    async def mark_checkpoint_completed():
+        async with async_session() as db:
+            checkpoint = await db.get(Checkpoint, body["checkpoint_id"])
+            checkpoint.learning_status = "completed"
+            checkpoint.completed = True
+            await db.commit()
+
+    asyncio.run(mark_checkpoint_completed())
+    reconciled = client.get(f"/api/learning-tasks/{task['id']}")
+    assert reconciled.status_code == 200
+    current = reconciled.json()
+    assert current["status"] == "active"
+    assert current["runtime"]["evidence"]["practice_attempts"] == 0
+    assert current["runtime"]["evidence"]["successful_verifications"] == 0
+    assert current["runtime"]["evidence"]["review_items"] == 0
 
 
 def test_queue_reorder_and_remove_are_learner_controlled(client: TestClient):

@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-24.2"
+REGISTRY_VERSION = "2026-08-24.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -190,9 +190,9 @@ TOOLS = {
         ToolContract("learning_skill_runtime", "Conversation Learning Skill Runtime", "tutor_agent", "learnflow", "orchestration",
                      (), (), "LearningSkillRun + zero-target events + verified workbench handoff"),
         ToolContract("learning_task_runtime", "Learner-visible Learning Task Runtime", "tutor_agent", "learnflow", "orchestration",
-                     KERNEL_NAMES, (), "LearningTask + plan revisions + zero-target lifecycle events"),
+                     KERNEL_NAMES, (), "LearningTask + plan revisions + managed artifact refs + deterministic runtime projection + zero-target lifecycle events"),
         ToolContract("learning_task_planner", "Adaptive Learning Task Planner", "learning_design_agent", "learnflow", "proposal",
-                     KERNEL_NAMES, (), "validated LearningTask plan revision only"),
+                     ("human",), (), "validated LearningTask plan revision using task source/scoped evidence plus portable human preferences only"),
         ToolContract("teach_back_analyzer", "Deterministic Teach-back Analyzer", "practice_agent", "learnflow", "assessment",
                      ("knowledge", "practice"), (), "LearningAttempt + EvidenceEvent"),
         ToolContract("process_animation", "Process Animation", "learning_design_agent", "learnflow", "artifact",
@@ -320,8 +320,8 @@ SKILLS = {
                       ("learning_task_runtime", "learning_task_planner", "learning_skill_runtime",
                        "managed_artifact_service", "deterministic_assessment",
                        "deterministic_remediation", "review_scheduler", "evidence_ledger"),
-                      "resumable task -> adaptive plan -> artifacts/practice -> verified evidence -> review handoff",
-                      "task lifecycle is operational; grading and review remain deterministic"),
+                      "resumable task -> adaptive plan -> persisted lecture/questions -> evidence-driven phases -> review handoff",
+                      "task lifecycle is operational; new plans cannot inherit volatile content state from another task; content exposure, grading, mastery and review use distinct deterministic evidence"),
         SkillContract("verified_micro_learning", "可验证微学习闭环", "tutor_agent",
                       ("micro_learning_orchestrator", "content_generation", "teach_back_analyzer",
                        "deterministic_assessment", "deterministic_remediation", "review_scheduler",
@@ -651,6 +651,7 @@ def registry_manifest() -> dict[str, Any]:
             "memory_consolidation": "enabled async worker; startup queue reconciliation; deterministic offline/provider-failure fallback",
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
+            "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "kernels": [asdict(item) for item in KERNELS.values()],

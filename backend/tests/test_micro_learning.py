@@ -12,7 +12,7 @@ from app.models.learning import (
     EvidenceEvent, KernelState, MicroLearningRun, ReviewSchedule,
 )
 from app.models.project import ConceptQuestion
-from app.services.micro_learning import analyze_teach_back
+from app.services.micro_learning import _valid_question, analyze_teach_back
 
 
 @pytest.fixture(scope="module")
@@ -41,6 +41,23 @@ def test_teach_back_does_not_reward_repeating_only_the_topic_name():
     })
     assert analysis["coverage_ratio"] < 0.5
     assert analysis["mastery_unchanged"] is True
+
+
+def test_generated_questions_reject_runtime_specific_or_nonstandard_trivia():
+    assert _valid_question({
+        "q_type": "single",
+        "question": "修改 add5.__closure__[0].cell_contents 后会怎样？",
+        "options": ["改变闭包", "保持不变"],
+        "answer_indexes": [0],
+        "explanation": "这依赖解释器内部 cell_contents。",
+        "variant": {
+            "type": "concept_choice",
+            "validated": True,
+            "prompt": "在 CPython 的另一个版本中会怎样？",
+            "options": ["A", "B"],
+            "answer_indexes": [0],
+        },
+    }) is None
 
 
 def _start(client: TestClient, *, request_id: str | None = None) -> dict:
@@ -80,6 +97,7 @@ def _advance_to_verification(client: TestClient, run: dict) -> dict:
     })
     assert verification.status_code == 200, verification.text
     assert verification.json()["state"] == "verification"
+    assert verification.json()["learning_task"]["current_phase_id"] == "verify"
     return verification.json()
 
 
@@ -108,6 +126,7 @@ def test_create_run_is_idempotent_and_answer_free(client: TestClient):
     })
     assert paused.status_code == 200
     assert paused.json()["state"] == "paused"
+    assert paused.json()["learning_task"]["status"] == "paused"
     resumed = client.post(f"/api/micro-learning/runs/{first['id']}/advance", json={
         "action": "resume",
         "expected_version": paused.json()["version"],
@@ -115,6 +134,7 @@ def test_create_run_is_idempotent_and_answer_free(client: TestClient):
     })
     assert resumed.status_code == 200
     assert resumed.json()["state"] == "learning_card"
+    assert resumed.json()["learning_task"]["status"] == "active"
 
 
 def test_card_teach_back_verification_and_review_close_the_loop(client: TestClient):
@@ -139,11 +159,31 @@ def test_card_teach_back_verification_and_review_close_the_loop(client: TestClie
         })
         assert sync.status_code == 200, sync.text
         run = sync.json()
+        if index == 0 and len(question_ids) > 1:
+            current_task = client.get(
+                f"/api/learning-tasks/{run['learning_task']['id']}"
+            ).json()
+            premature = client.post(
+                f"/api/learning-tasks/{current_task['id']}/actions",
+                json={
+                    "action": "complete_task",
+                    "expected_version": current_task["version"],
+                    "client_action_id": _request_id("premature-task-complete"),
+                },
+            )
+            assert premature.status_code == 409
+            assert "完成整组学习与验证" in premature.json()["detail"]
 
     assert run["status"] == "completed"
     assert run["summary"]["mastery_claim"] == "not_stable_yet"
     assert set(run["summary"]["independently_verified_question_ids"]) == set(question_ids)
     assert run["summary"]["review_schedule_ids"]
+    assert run["learning_task"]["status"] == "completed"
+    assert run["learning_task"]["current_phase_id"] == ""
+    assert any(
+        item.get("type") == "managed_lecture"
+        for item in run["learning_task"]["artifact_refs"]
+    )
 
     async def stored_evidence():
         async with async_session() as db:

@@ -6,7 +6,7 @@ import {
   RotateCcw, Sparkles, Trash2, WandSparkles,
 } from 'lucide-react'
 import {
-  actOnLearningTask, createLearningTask, listLearningTasks, materializeLearningTask,
+  actOnLearningTask, createLearningTask, getLearningTask, listLearningTasks, materializeLearningTask,
   reorderLearningTasks, replanLearningTask, type LearningTask, type LearningTaskPhase,
 } from '../services/api'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
@@ -56,15 +56,22 @@ function PhaseRow({ phase, task, busy, onComplete }: {
               </span>
             ))}
           </div>
-          {!completed && task.status === 'active' && (
+          {!completed && task.status === 'active' && phase.kind === 'learn' && (
             <button
               type="button"
               disabled={busy}
               onClick={() => onComplete(phase.id)}
               className="mt-2 text-[11px] font-medium text-emerald-700 hover:text-emerald-900 disabled:opacity-50"
             >
-              标记本阶段完成
+              我已完成本阶段互动
             </button>
+          )}
+          {!completed && task.status === 'active' && phase.kind !== 'learn' && (
+            <p className="mt-2 text-[11px] leading-4 text-slate-400">
+              {phase.kind === 'practice' && '完成真实作答或复述诊断后自动推进'}
+              {phase.kind === 'verify' && '无提示作答通过或完成纠错后自动推进'}
+              {phase.kind === 'consolidate' && '生成正式复习计划后自动推进'}
+            </p>
           )}
         </div>
       </div>
@@ -87,15 +94,22 @@ export default function LearningTasksPage() {
   const [title, setTitle] = useState('')
   const [objective, setObjective] = useState('')
   const [replanReason, setReplanReason] = useState('')
+  const [sourceText, setSourceText] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await listLearningTasks({ include_terminal: includeCompleted })
-      setTasks(response.items)
-      const target = response.items.find(item => item.id === selectedId)
-        || response.items.find(item => item.status === 'active')
-        || response.items[0]
+      const [response, requested] = await Promise.all([
+        listLearningTasks({ include_terminal: includeCompleted }),
+        selectedId ? getLearningTask(selectedId).catch(() => null) : Promise.resolve(null),
+      ])
+      const items = requested && !response.items.some(item => item.id === requested.id)
+        ? [requested, ...response.items]
+        : response.items
+      setTasks(items)
+      const target = items.find(item => item.id === selectedId)
+        || items.find(item => item.status === 'active')
+        || items[0]
         || null
       setSelected(target)
       if (target && target.id !== selectedId) setSearchParams({ task: String(target.id) }, { replace: true })
@@ -204,10 +218,12 @@ export default function LearningTasksPage() {
     setBusy(true)
     try {
       const next = await materializeLearningTask(selected.id, {
+        source_text: sourceText.trim(),
         expected_version: selected.version,
         client_request_id: requestId('task-materialize'),
       })
       replaceTask(next)
+      setSourceText('')
       navigate(next.navigation.path)
     } catch (error: any) {
       setNotice(error?.response?.data?.detail || '生成讲义与习题失败')
@@ -285,6 +301,12 @@ export default function LearningTasksPage() {
                   <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">{statusLabel[selected.status]}</span><span>计划 v{selected.plan_version}</span><span className="flex items-center gap-1"><Clock3 size={12} />{selected.estimated_minutes} 分钟</span></div>
                   <h2 className="mt-3 text-2xl font-bold text-slate-900">{selected.title}</h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">{selected.objective}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                    <span className="rounded-lg bg-indigo-50 px-2 py-1 text-indigo-700">下一步：{selected.runtime.next_action.label}</span>
+                    <span>练习 {selected.runtime.evidence.practice_attempts}</span>
+                    <span>已通过验证 {selected.runtime.evidence.successful_verifications}</span>
+                    <span>复习项 {selected.runtime.evidence.review_items}</span>
+                  </div>
                 </div>
                 <button type="button" onClick={() => navigate(selected.navigation.path)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Play size={13} />打开学习现场</button>
               </div>
@@ -312,9 +334,14 @@ export default function LearningTasksPage() {
 
               <aside className="space-y-4">
                 {!selected.micro_learning_run_id && !selected.checkpoint_id && ['queued', 'active', 'paused'].includes(selected.status) && (
-                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-indigo-950"><WandSparkles size={15} />生成学习材料</h3><p className="mt-2 text-xs leading-5 text-indigo-800/80">按当前目标保存讲义和验证题，并进入可恢复的学习现场。</p><button type="button" disabled={busy} onClick={materialize} className="mt-3 w-full rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">生成讲义与习题</button></div>
+                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                    <h3 className="flex items-center gap-2 text-sm font-bold text-indigo-950"><WandSparkles size={15} />准备学习包</h3>
+                    <p className="mt-2 text-xs leading-5 text-indigo-800/80">系统会生成并保存一份讲义文件和一组验证题。它们属于当前任务，不会因为生成完成就被视为掌握。</p>
+                    <textarea value={sourceText} onChange={event => setSourceText(event.target.value)} rows={4} placeholder="可选：粘贴题目、教材段落、代码或笔记；留空则使用对话中的原始问题" className="mt-3 w-full resize-y rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs leading-5 outline-none focus:border-indigo-400" />
+                    <button type="button" disabled={busy} onClick={materialize} className="mt-3 w-full rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">生成讲义与验证题并开始</button>
+                  </div>
                 )}
-                <div className="rounded-2xl border border-slate-200 bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><FileText size={15} />学习文件</h3>{selected.artifact_refs.length === 0 ? <p className="mt-2 text-xs leading-5 text-slate-400">当前计划还没有保存的讲义或习题。</p> : <div className="mt-2 space-y-1.5">{selected.artifact_refs.map((artifact, index) => <button key={`${artifact.type}-${artifact.id || index}`} type="button" onClick={() => artifact.path && navigate(artifact.path)} className="flex w-full items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100"><FileText size={12} className="text-emerald-600" /><span className="truncate">{artifact.logical_filename || artifact.type}</span></button>)}</div>}</div>
+                <div className="rounded-2xl border border-slate-200 bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><FileText size={15} />任务学习文件</h3><p className="mt-1 text-[10px] leading-4 text-slate-400">讲义负责学习，题目负责练习与验证；只有正式提交进入五核证据。</p>{selected.artifact_refs.length === 0 ? <p className="mt-2 text-xs leading-5 text-slate-400">当前任务还没有保存的讲义或题目。</p> : <div className="mt-2 space-y-1.5">{selected.artifact_refs.map((artifact, index) => <button key={`${artifact.type}-${artifact.id || index}`} type="button" onClick={() => artifact.path && navigate(artifact.path)} className="flex w-full items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100"><FileText size={12} className="text-emerald-600" /><span className="truncate">{artifact.logical_filename || artifact.type}</span></button>)}</div>}</div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><RefreshCw size={15} />调整计划</h3><textarea value={replanReason} onChange={event => setReplanReason(event.target.value)} rows={3} placeholder="例如：先做一个可视化，再减少讲解、增加代码练习" className="mt-2 w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-emerald-400" /><button type="button" disabled={busy || !replanReason.trim()} onClick={replan} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"><Sparkles size={13} className="mr-1 inline" />让 AI 重组剩余计划</button></div>
                 <p className="rounded-xl bg-slate-100 px-3 py-2 text-[10px] leading-4 text-slate-500">{selected.evidence_notice}</p>
               </aside>

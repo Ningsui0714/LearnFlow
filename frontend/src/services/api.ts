@@ -671,6 +671,14 @@ export interface MicroLearningRun {
     completed_questions: number
     total_questions: number
   }
+  learning_task?: {
+    id: number
+    title: string
+    status: LearningTaskStatus
+    current_phase_id: string
+    path: string
+    artifact_refs: Array<Record<string, any>>
+  } | null
   started_at?: string
   completed_at?: string
   updated_at?: string
@@ -1167,6 +1175,7 @@ export interface LearningTask {
   }
   current_phase_id: string
   plan_version: number
+  execution_state: Record<string, any>
   artifact_refs: Array<{
     type: string
     id?: number
@@ -1176,6 +1185,24 @@ export interface LearningTask {
   }>
   review_handoff: Record<string, any>
   navigation: { kind: string; path: string }
+  runtime: {
+    runtime_version: string
+    current_phase: Partial<LearningTaskPhase>
+    next_action: { id: string; label: string; path?: string }
+    materials: {
+      status: 'not_prepared' | 'partial' | 'ready'
+      lecture?: Record<string, any> | null
+      question_set?: Record<string, any> | null
+      exercises: Array<Record<string, any>>
+    }
+    evidence: {
+      learning_events: number
+      practice_attempts: number
+      successful_verifications: number
+      review_items: number
+    }
+    state_boundary: Record<string, string>
+  }
   available_actions: string[]
   version: number
   plan_history: Array<{ id: number; version: number; source: string; reason: string; created_at?: string }>
@@ -1187,6 +1214,9 @@ export const getLearningTaskSummary = () =>
 
 export const listLearningTasks = (params: Record<string, string | number | boolean | undefined> = {}) =>
   api.get('/learning-tasks', { params }).then(r => r.data as { items: LearningTask[] })
+
+export const getLearningTask = (taskId: number) =>
+  api.get(`/learning-tasks/${taskId}`).then(r => r.data as LearningTask)
 
 export const createLearningTask = (data: {
   title: string

@@ -138,6 +138,17 @@ Tutor 识别或用户创建任务
 讲义、练习和题目仍以现有 `Lecture / Exercise / ConceptQuestion` 为权威，任务只保存引用。
 完整对象、状态、API 与迁移见 `docs/LEARNING_TASK_RUNTIME.md`。
 
+`learning-task-runtime-v2` 在每次读取时从受管产物、同 scope Attempt 和 ReviewSchedule
+确定性重建 `materials / current_phase / next_action / evidence`。讲义或题目生成只建立材料，
+查看材料只形成接触证据，复述形成诊断证据，只有判题成功的独立 Attempt 才能通过 verify，
+只有已有 ReviewSchedule 才能通过 consolidate。浏览器、Tutor LLM 和任务生命周期动作均
+不得手工推进这些证据阶段。
+
+对话中的 `user_message` 可携带 `learning_task_id` 作为 scope 链接，reducer 仍只依据真实
+消息内容处理 goal、缺口、负荷或偏好等语义；任务创建、接受、开始、暂停、物化和完成事件
+保持零 target。Session 负责对话连续性，LearningTask 负责流程位置，五核负责学习者证据，
+三者是相互引用而非相互复制的权威。
+
 ### 可验证微学习与流程投影
 
 `/agent` 与 `/agent/:sessionId` 是独立学习对话空间。学习者可以拥有多段 global Session，

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.learning import (
-    LearningAttempt, MicroLearningRun, RemediationCase, ReviewSchedule,
+    LearningAttempt, LearningTask, MicroLearningRun, RemediationCase, ReviewSchedule,
 )
 from app.models.project import (
     Checkpoint, ConceptQuestion, Lecture, Project, Roadmap,
@@ -51,6 +51,8 @@ GENERATION_PROMPT = """你是 LearnFlow 的学习设计 Agent。请为一次 15 
 4. 每道题先写 learning_target 和 evidence_claim，再选择 single/multi/judge 响应形式。
 5. 题目不能把答案写在题干里；选项 2-5 个，answer_indexes 必须有效。
 6. 每题提供一个经过校验的变式契约，不能只交换选项顺序。
+7. 只考查跨版本稳定、可由讲义直接支持的概念；禁止使用解释器私有属性、运行时魔改、
+   版本特例、未定义/非标准行为或“某些实现可能如此”的争议细节出题。
 
 只输出一个 JSON 对象：
 {{
@@ -214,6 +216,15 @@ def _valid_question(raw: Any) -> dict[str, Any] | None:
         int(item) for item in list(variant.get("answer_indexes") or [])
         if str(item).lstrip("-").isdigit()
     })
+    stability_text = " ".join([
+        question, *options, _clean(raw.get("explanation"), 1_500),
+        _clean(variant.get("prompt"), 1_200), *variant_options,
+    ]).casefold()
+    if any(marker in stability_text for marker in (
+        "__closure__", "cell_contents", "sys.version", "cpython",
+        "python 3.", "大多数python环境", "非标准的python", "未定义行为",
+    )):
+        return None
     valid_variant = (
         variant.get("type") == "concept_choice"
         and bool(variant.get("validated"))
@@ -338,6 +349,7 @@ async def create_micro_learning_run(
     background: str = "",
     source: str = "ui",
     attach_learning_task: bool = True,
+    learning_task_id: int | None = None,
 ) -> MicroLearningRun:
     existing = (await db.execute(select(MicroLearningRun).where(
         MicroLearningRun.learner_id == learner_id,
@@ -447,6 +459,7 @@ async def create_micro_learning_run(
             "version": WORKFLOW_VERSION,
             "estimated_minutes": 15,
             "steps": ["learning_card", "feynman_teach_back", "retrieval_practice", "spaced_review"],
+            "learning_task_id": learning_task_id,
         },
         learning_card={**card, "source_mode": "provided_text" if source_text else "topic"},
         teach_back={},
@@ -468,21 +481,35 @@ async def create_micro_learning_run(
         db, learner_id=learner_id, project_id=project.id,
         checkpoint_id=checkpoint.id, session_id=session.id,
         event_type="micro_learning_started", source=source,
-        payload={"run_id": run.id, "goal": goal, "workflow_version": WORKFLOW_VERSION},
+        payload={
+            "run_id": run.id,
+            "goal": goal,
+            "workflow_version": WORKFLOW_VERSION,
+            "learning_task_id": learning_task_id,
+        },
         client_event_id=f"micro-learning:{run.id}:started",
     )
     await record_event(
         db, learner_id=learner_id, project_id=project.id,
         checkpoint_id=checkpoint.id, session_id=session.id,
         event_type="checkpoint_entered", source="micro_learning",
-        payload={"run_id": run.id, "title": checkpoint.title, "mode": "verified_micro_learning"},
+        payload={
+            "run_id": run.id,
+            "title": checkpoint.title,
+            "mode": "verified_micro_learning",
+            "learning_task_id": learning_task_id,
+        },
         client_event_id=f"micro-learning:{run.id}:checkpoint-entered",
     )
     await record_event(
         db, learner_id=learner_id, project_id=project.id,
         checkpoint_id=checkpoint.id, session_id=session.id,
         event_type="learning_card_generated", source="learning_design",
-        payload={"run_id": run.id, "question_ids": question_ids},
+        payload={
+            "run_id": run.id,
+            "question_ids": question_ids,
+            "learning_task_id": learning_task_id,
+        },
         client_event_id=f"micro-learning:{run.id}:card-generated",
     )
     if attach_learning_task:
@@ -498,6 +525,11 @@ async def load_owned_run(
         MicroLearningRun.id == run_id,
         MicroLearningRun.learner_id == learner_id,
     ))).scalar_one_or_none()
+
+
+def _learning_task_id(run: MicroLearningRun) -> int | None:
+    value = (run.skill_plan or {}).get("learning_task_id")
+    return int(value) if str(value or "").isdigit() else None
 
 
 def _bigrams(value: str) -> set[str]:
@@ -575,6 +607,7 @@ async def submit_teach_back(
         event_type="teach_back_analyzed", source="assessment",
         payload={
             "run_id": run.id,
+            "learning_task_id": _learning_task_id(run),
             "attempt_id": attempt.id,
             "coverage_ratio": analysis["coverage_ratio"],
             "covered_points": analysis["covered_points"],
@@ -642,7 +675,11 @@ async def advance_run(
     run.version += 1
     run.updated_at = datetime.utcnow()
     if event_type:
-        event_payload = {"run_id": run.id, "state": run.state}
+        event_payload = {
+            "run_id": run.id,
+            "learning_task_id": _learning_task_id(run),
+            "state": run.state,
+        }
         if event_type == "micro_learning_card_viewed":
             event_payload["concepts"] = list(
                 (run.learning_card or {}).get("target_concepts") or []
@@ -785,6 +822,7 @@ async def reconcile_run(
             event_type="micro_learning_completed", source="runtime",
             payload={
                 "run_id": run.id,
+                "learning_task_id": _learning_task_id(run),
                 "question_ids": question_ids,
                 "independently_verified_question_ids": summary["independently_verified_question_ids"],
                 "remediated_question_ids": summary["remediated_question_ids"],
@@ -857,6 +895,10 @@ async def run_view(db: AsyncSession, run: MicroLearningRun) -> dict[str, Any]:
         "completed": 5,
         "paused": 0,
     }
+    task = (await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == run.learner_id,
+        LearningTask.micro_learning_run_id == run.id,
+    ))).scalar_one_or_none()
     return {
         "id": run.id,
         "goal": run.goal,
@@ -886,4 +928,12 @@ async def run_view(db: AsyncSession, run: MicroLearningRun) -> dict[str, Any]:
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+        "learning_task": ({
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "current_phase_id": task.current_phase_id,
+            "path": f"/tasks?task={task.id}",
+            "artifact_refs": list(task.artifact_refs or []),
+        } if task else None),
     }

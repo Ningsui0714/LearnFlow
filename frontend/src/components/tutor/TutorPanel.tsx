@@ -8,7 +8,7 @@ import {
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
   startLearningSkillRun, updateLearningSkillRun,
-  actOnLearningTask,
+  actOnLearningTask, materializeLearningTask,
 } from '../../services/api'
 import type {
   LearningSkill, LearningSkillRecommendation, LearningSkillRun,
@@ -270,7 +270,7 @@ export default function TutorPanel({
       setActiveSkillId(data.active_skill?.id || 'adaptive')
       setActiveSkillRun(data.active_skill_run || null)
       setSkillRecommendation(data.skill_recommendation || null)
-      setLearningTaskProposal((data.learning_tasks || []).find((item: LearningTask) => item.status === 'proposed') || null)
+      setLearningTaskProposal((data.learning_tasks || []).find((item: LearningTask) => ['active', 'queued', 'paused', 'proposed'].includes(item.status)) || null)
       onSessionLoaded?.(data)
     }).catch(() => {})
     return () => {
@@ -316,6 +316,8 @@ export default function TutorPanel({
     if ('skill_recommendation' in data) setSkillRecommendation(data.skill_recommendation || null)
     if (data.learning_task_proposal) {
       setLearningTaskProposal(data.learning_task_proposal)
+    } else if (Array.isArray(data.learning_tasks)) {
+      setLearningTaskProposal(data.learning_tasks.find((item: LearningTask) => ['active', 'queued', 'paused', 'proposed'].includes(item.status)) || null)
     }
     if (data.executed_action?.result?.learning_task) {
       window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
@@ -533,16 +535,16 @@ export default function TutorPanel({
     onSessionLoaded?.({ id: sessionId, ...data })
   }
 
-  const decideLearningTask = async (actionName: 'accept' | 'cancel') => {
+  const decideLearningTask = async (actionName: 'accept' | 'cancel' | 'start' | 'resume') => {
     if (!learningTaskProposal || loading) return
     setLoading(true)
     try {
-      await actOnLearningTask(learningTaskProposal.id, {
+      const next = await actOnLearningTask(learningTaskProposal.id, {
         action: actionName,
         expected_version: learningTaskProposal.version,
         client_action_id: globalThis.crypto?.randomUUID?.() || `task-${actionName}-${learningTaskProposal.id}-${Date.now()}`,
       })
-      setLearningTaskProposal(null)
+      setLearningTaskProposal(['canceled', 'completed'].includes(next.status) ? null : next)
       window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
     } catch (error: any) {
       setMessages(previous => [...previous, {
@@ -551,6 +553,36 @@ export default function TutorPanel({
       }])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const prepareLearningTask = async () => {
+    if (!learningTaskProposal || loading) return
+    setLoading(true)
+    let prepared: LearningTask | null = null
+    try {
+      const next = await materializeLearningTask(learningTaskProposal.id, {
+        expected_version: learningTaskProposal.version,
+        client_request_id: globalThis.crypto?.randomUUID?.() || `task-materialize-${learningTaskProposal.id}-${Date.now()}`,
+      })
+      prepared = next
+      setLearningTaskProposal(next)
+      window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
+    } catch (error: any) {
+      setMessages(previous => [...previous, {
+        role: 'assistant',
+        content: error?.response?.data?.detail || '讲义与验证题没有生成成功，请重试。',
+      }])
+    } finally {
+      setLoading(false)
+    }
+    if (prepared?.micro_learning_run_id && onLearningRunCreated) {
+      onLearningRunCreated({
+        id: prepared.micro_learning_run_id,
+        goal: prepared.title,
+        project_id: prepared.project_id,
+        checkpoint_id: prepared.checkpoint_id,
+      })
     }
   }
 
@@ -728,19 +760,31 @@ export default function TutorPanel({
 
         {learningTaskProposal && (
           <section className={`rounded-xl border border-emerald-200 bg-emerald-50 p-3 ${standalone ? 'mx-auto w-full max-w-3xl' : ''}`} data-testid="learning-task-proposal">
-            <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950"><ListTodo size={13} />{learningTaskProposal.status === 'proposed' ? '建议形成一个学习任务' : '已建立学习任务'}</p>
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950"><ListTodo size={13} />{learningTaskProposal.status === 'proposed' ? '建议形成一个学习任务' : '当前原子学习任务'}</p>
             <p className="mt-1.5 text-sm font-semibold text-slate-900">{learningTaskProposal.title}</p>
             <p className="mt-1 text-xs leading-5 text-emerald-900/80">{learningTaskProposal.objective}</p>
-            <p className="mt-2 text-[10px] text-emerald-800">AI 会按互动情况规划学习、练习、验证和复习转交；你之后仍可自由调整或移除。</p>
-            <div className="mt-2.5 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-emerald-800">
+              <span className="rounded-md bg-white/70 px-2 py-1">下一步：{learningTaskProposal.runtime?.next_action?.label || '查看计划'}</span>
+              <span className="rounded-md bg-white/70 px-2 py-1">练习 {learningTaskProposal.runtime?.evidence?.practice_attempts || 0}</span>
+              <span className="rounded-md bg-white/70 px-2 py-1">验证 {learningTaskProposal.runtime?.evidence?.successful_verifications || 0}</span>
+            </div>
+            <p className="mt-2 text-[10px] text-emerald-800">任务负责计划与恢复；讲义阅读不是掌握，正式作答才进入能力证据。</p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
               {learningTaskProposal.status === 'proposed' ? (
                 <>
                   <button type="button" onClick={() => decideLearningTask('accept')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">加入学习任务</button>
                   <button type="button" onClick={() => decideLearningTask('cancel')} disabled={loading} className="rounded-lg px-2.5 py-2 text-xs text-emerald-800 hover:bg-white/70">暂不加入</button>
                 </>
+              ) : learningTaskProposal.status === 'queued' ? (
+                <button type="button" onClick={() => decideLearningTask('start')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">开始任务</button>
+              ) : learningTaskProposal.status === 'paused' ? (
+                <button type="button" onClick={() => decideLearningTask('resume')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">继续任务</button>
+              ) : !learningTaskProposal.micro_learning_run_id && !learningTaskProposal.checkpoint_id ? (
+                <button type="button" onClick={prepareLearningTask} disabled={loading} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">生成讲义与验证题</button>
               ) : (
-                <a href={`/tasks?task=${learningTaskProposal.id}`} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">查看任务与计划</a>
+                <a href={learningTaskProposal.navigation.path} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">继续学习与验证</a>
               )}
+              <a href={`/tasks?task=${learningTaskProposal.id}`} className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-white">查看计划与文件</a>
             </div>
           </section>
         )}

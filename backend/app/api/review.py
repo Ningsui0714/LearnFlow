@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.models.learning import (
-    EvidenceEvent, KernelState, LearningAttempt, RemediationCase, ReviewSchedule,
+    EvidenceEvent, KernelState, LearningAttempt, LearningTask, RemediationCase, ReviewSchedule,
 )
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Project
 from app.schemas.review import ReviewActionRequest, ReviewSubmitRequest
@@ -569,6 +569,10 @@ async def submit_review_item(
         status="abstained" if unknown else "evaluated",
         client_submission_id=submission_key,
     )
+    learning_task_id = (await db.execute(select(LearningTask.id).where(
+        LearningTask.learner_id == current.learner.id,
+        LearningTask.checkpoint_id == schedule.checkpoint_id,
+    ))).scalar_one_or_none()
     event = await record_event(
         db,
         learner_id=current.learner.id,
@@ -579,6 +583,7 @@ async def submit_review_item(
         payload={
             "review_schedule_id": schedule.id,
             "attempt_id": attempt.id,
+            "learning_task_id": learning_task_id,
             "source_item_type": schedule.item_type,
             "item_id": schedule.item_id,
             "prompt": private.get("prompt", ""),

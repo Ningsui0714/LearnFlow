@@ -42,6 +42,9 @@ LearningTask：对话/关卡共用的上层目标、计划与恢复入口
 `MicroLearningRun` 不保存另一套掌握结论。题目判定、纠错状态和复习计划始终由既有权威对象重建；运行摘要固定声明 `mastery_claim=not_stable_yet`。
 其内部 Project 标记为 `task_artifact/internal`，只提供 scope 和受管内容容器，不进入真实
 项目组合；对应 LearningTask 才是用户任务队列里的统一入口。
+运行创建时会持久关联同一 LearningTask；Lecture 和 ConceptQuestion 引用回写任务，学习卡
+查看、复述 Attempt、正式 Attempt 与 ReviewSchedule 再驱动任务阶段投影。运行完成只是附件
+完成，任务只有在 required 阶段的真实依据齐全后才完成。
 
 ## 3. 用户流程与前端逻辑
 
@@ -94,6 +97,8 @@ learning_card
 学习卡必须包含：目标、3–5 个关键点、2–5 个目标概念、具体例子、常见混淆和可观察完成标准。每轮必须有 2–3 道通过结构校验的概念题；每题先声明细粒度目标和证据声明，并带一个后端私有的已校验变式。
 
 在线生成只负责候选内容。服务端会校验字段、题型、选项、答案索引和变式契约；不合格题目由确定性模板补齐。无 API Key、供应商失败或离线 demo 时使用同一输出契约的确定性降级算法。
+题目质量门还会拒绝解释器私有属性、运行时魔改、版本特例、未定义或非标准行为等不适合
+基础学习验证的候选；这类内容即使 JSON 结构正确，也会被稳定的确定性题替换。
 
 费曼复述使用 `deterministic_concept_coverage_v1`：通过目标概念和中文/字母数字二元片段覆盖率定位未讲清的关键点。结果只形成诊断 Attempt 与 `teach_back_analyzed` 事件，显式设置 `mastery_unchanged=true`，随后仍必须独立作答。
 
@@ -150,3 +155,5 @@ venv/bin/python scripts/evaluate_micro_learning.py
 - `concept_attempt_evaluated.payload` 向后兼容地增加可选 `assessment_mode`；只有 `verified_micro_learning` 禁止同一 session 的多题结果直接升级稳定掌握，旧题语义保持不变。
 - 数据库迁移 `v13-focused-micro-learning` 只新增 `micro_learning_runs` 表，不修改或删除旧数据；后续 `v15-learning-task-runtime` 为它回填统一 LearningTask 引用。
 - 回滚前端入口和新 router 不影响既有项目学习、练习、纠错和复习记录；内部 Project 仍可由 LearningTask 或旧 `/learn/:runId` 访问，但不再出现在真实项目列表。
+- 后续 `learning-task-runtime-v2`（注册表 `2026-08-24.4`）只增加任务引用持久化与确定性运行
+  投影，不改变本流程的 Attempt、判题、纠错、复习或五核事件语义，也不需要数据库迁移。

@@ -1,7 +1,7 @@
 # LearnFlow Claw 与 Learning Task Runtime
 
-> 状态：v1 已实现
-> 运行时版本：`learning-task-runtime-v1`
+> 状态：v2 已实现
+> 运行时版本：`learning-task-runtime-v2`
 > 计划 schema：`learning-task-plan.v1`
 
 ## 1. 产品形态
@@ -76,6 +76,12 @@ Tutor 始终保持用户控制权。Learning Design 和 Practice 是 Tutor 背�
 不能只凭模型字段造成入队。明确的 15 分钟/微学习请求继续直接物化 `/learn/:runId`，同时
 自动创建并关联 Learning Task。
 
+服务端会在调用 Tutor 模型前，对“带我弄懂……”“教我理解……”等边界明确的请求执行保守
+的确定性识别，并用同一 schema 的确定性粗计划立即建立任务。因此无效或慢模型配置不会阻塞
+任务卡；模型从后续教学互动和显式“重组计划”开始作为增强能力。识别器只覆盖明确的原子目标；“我想学操作系统”这类范围过大的表达仍留在
+对话中继续澄清。由对话创建的任务始终保留原 Session 作为来源与返回锚点，即使随后物化出
+专注学习 Session，也不会把任务从原对话中移走。
+
 ### 4.2 Tutor 建议
 
 Tutor 在普通聊天中发现一个适合形成闭环的原子目标时，只能返回 `learning_task_opportunity`。服务端创建 `proposed` 任务；学生点击“加入学习任务”后才进入队列。
@@ -102,10 +108,12 @@ Tutor 在普通聊天中发现一个适合形成闭环的原子目标时，只�
 
 计划由 Learning Design 生成候选结构，由服务端校验并保存不可变版本。计划只包含 2–4 个粗粒度阶段，避免把教学拆成机械清单：
 
-规划器会读取五核权威投影中已登记的短期字段，并压缩成有界、answer-free 的教学提示，
-例如当前知识缺口、认知负荷、目标优先级和辅助等级。计划保存
-`personalization_basis` 说明用了哪些 Kernel 字段，但不复制原始记忆、答案或新的画像结论；
-模型不可据此改变评分、掌握、纠错与复习策略。
+规划器把上下文分成两个通道：当前任务的 objective、source_refs、讲义/题目和正式 Attempt
+组成任务内容通道；五核权威投影只提供可跨任务复用的 pace、format、support 明确偏好。
+learner 级 `knowledge_gap`、`current_priority`、`assistance_level`、`path_position` 等易变字段不会
+自动流入新任务，以免把上一个闭环的内容状态误用于当前闭环。重规划同样以当前任务证据为准。
+计划保存 `personalization_basis` 说明实际使用了哪些可移植字段，但不复制原始记忆、答案或
+新的画像结论；模型不可据此改变评分、掌握、纠错与复习策略。
 
 | Phase | 目的 | 可组合能力 |
 |---|---|---|
@@ -123,6 +131,29 @@ Tutor 在普通聊天中发现一个适合形成闭环的原子目标时，只�
 - `artifact_outputs`
 
 模型可以提出阶段和方法，但不能决定正式判题、掌握升级、纠错策略或复习间隔。服务端会拒绝没有正式 Attempt 的 `verify` 完成，也会拒绝没有 ReviewSchedule 的 `consolidate` 完成。
+
+### 5.1 确定性运行投影
+
+`LearningTask` 的计划是意图，运行投影才回答“现在做什么”。每次读取或动作后，服务端按
+同一 learner/project/checkpoint/session scope 重建：
+
+- `materials`：讲义、题目集和练习是否已经生成及其打开路径；
+- `current_phase`：第一个尚未满足证据条件的粗阶段；
+- `next_action`：接受、开始、生成材料、继续学习、进入验证、进入复习或查看总结；
+- `evidence`：接触事件、练习 Attempt、成功验证和 ReviewSchedule 的 answer-free 计数。
+
+阶段推进规则固定为：
+
+| 阶段 | 可以推进的依据 | 不能作为依据 |
+|---|---|---|
+| `learn` | 已完成对话 Skill、查看受管讲义/学习卡，或学习者明确确认本阶段互动结束 | 仅生成了讲义；Tutor 自行说“讲完了” |
+| `practice` | 同任务范围内真实提交的练习或复述诊断 Attempt | 手工勾选；只阅读示例 |
+| `verify` | 同任务范围内独立且判定成功的原始题或已校验变式 Attempt | 错题、缺失输入、有提示成功、诊断复述、原题纠错重做、复习重放或任意引用 ID |
+| `consolidate` | 正式验证已完成且已有 ReviewSchedule | 模型给出的复习建议或任务完成文案 |
+
+因此任务计划可以灵活组合方法，但核心进度不能由 LLM 或浏览器自行声称。任务全部 required
+阶段满足后才写入流程完成；若任务已经物化专注附件，还必须完成该附件中的整组题目与纠错，
+不能在第一道正确题产生 ReviewSchedule 后提前结束其余验证。“任务完成”仍不等于“长期稳定掌握”。
 
 重规划使用乐观版本：
 
@@ -142,6 +173,15 @@ Learning Task 不建立第二套讲义/习题存储。正式学习文件继续�
 - Task 只保存 `artifact_refs` 并提供打开路径。
 
 普通对话任务可以先只在 Session 中学习。需要保存材料和正式验证时，调用 `materialize`：系统创建内部 `task_artifact` 空间、Lecture、ConceptQuestion 和 checkpoint Session，并返回 `/learn/:runId`。该内部空间从真实项目列表隐藏，旧链接仍可恢复。
+
+物化时材料来源按以下顺序确定：本次显式粘贴的来源文本、任务 `source_refs` 指向的原始对话
+消息与选中文本、最后才是纯主题生成。生成成功后，Lecture、ConceptQuestion 和 Exercise 的
+稳定引用会持久写入任务，而不是只在页面打开时临时拼接。讲义负责学习输入，题目负责检索与
+验证；两者共享同一 LearningTask 和 scope，但生成本身均不构成能力证据。
+
+LearningTask 与其专注附件共享暂停语义：从 `/tasks` 暂停或恢复会同步
+`MicroLearningRun`，从 `/learn/:runId` 暂停或恢复也会同步任务队列。同步事件全部是零
+Kernel target；手工暂停任务不会被普通的运行读取误恢复。
 
 ## 7. 两条队列
 
@@ -183,6 +223,25 @@ Learning Task 生命周期事件全部是零 Kernel target。任务中的正式�
 LearningAttempt -> EvidenceEvent -> reducer -> KernelMutation -> Memory Graph
 ```
 
+五核对“任务”和“对话行为”分开处理，但共用一条事件入口：
+
+| 行为 | 事件/对象 | 五核语义 |
+|---|---|---|
+| 创建、接受、开始、暂停、重规划、物化、完成任务 | `learning_task_*` | 全部零 target，只更新运行基础设施 |
+| 在对话中表达目标、困难或偏好 | `user_message`，可附 `learning_task_id` | reducer 只按文本证据更新相应的 value/knowledge/human 等核；任务 ID 只做 scope 链接 |
+| 生成讲义或题目 | `learning_card_generated` / 内容对象 | 零 target，生成内容不是学生证据 |
+| 查看讲义/学习卡 | `micro_learning_card_viewed` | knowledge 的低强度接触证据，不代表掌握 |
+| 费曼复述或诊断练习 | `teach_back_analyzed` + Attempt | knowledge/practice 的诊断证据，固定不升级稳定掌握 |
+| 正式练习与验证 | graded Attempt + `*_attempt_evaluated` | knowledge/practice，区分错误、辅助、独立成功与变式 |
+| 跨时复习提交 | `review_attempt_evaluated` | knowledge/practice 的保持与稳定性证据 |
+
+这样五核保存“学生做了什么且证据说明什么”，LearningTask 保存“闭环进行到哪里”，Session
+保存“对话如何继续”，三者不会互相冒充。
+
+对话产生的知识缺口仍会进入 learner 级五核，供画像、总结和后续检索使用；但跨任务复用前
+必须有 scope/provenance 证明它与当前任务相关。当前 v2 在尚无字段级 provenance 投影时采取
+保守边界：任务内容从当前 source_refs 和本任务 EvidenceEvent 重建，不直接消费易变全局字段。
+
 ## 9. API
 
 主要接口：
@@ -216,7 +275,32 @@ LearningAttempt -> EvidenceEvent -> reducer -> KernelMutation -> Memory Graph
 - 开始验证时在同一任务上物化 MicroLearningRun，不再产生第二个任务身份；
 - 旧 SkillRun 若已经关联 MicroLearningRun，会按 learner ownership 回填现有任务引用。
 
-## 11. 外部架构参考
+`learning-task-runtime-v2` 不新增数据库列，是对已有 JSON 状态和读取投影的向后兼容升级：
+
+- 任务持久保存已有 Lecture/Exercise/ConceptQuestion 引用，并新增 answer-free `runtime` 回包；
+- 对话响应持续返回当前 Session 的非终态任务，不再只返回一次性推荐卡；
+- `practice` 和 `verify` 不再允许手工伪完成，旧客户端收到 `practice_required` 或
+  `verification_required` 后应打开相应学习现场；
+- 生命周期事件 ID、计划 schema、旧 `/learn/:runId` 和全部学习证据保持不变；无需数据迁移。
+
+## 11. 实际对话验收
+
+本次 v2 升级在真实浏览器、真实本地 API 和当前配置模型下重复执行了四组对话，不只依赖单元测试：
+
+| 对话目标 | 实际经过 | 验收结果 |
+|---|---|---|
+| Python 闭包 | 显式请求 → 任务卡 → 生成讲义/3 道题 → 查看卡片 → 费曼复述 → 独立答题 → 一次答错 → 确定性纠错 → 原题重做 → 变式验证 → 复习调度 | 完整闭环完成；任务进入历史，复习项可见 |
+| 事件循环微任务/宏任务 | 显式请求 → 建立任务 → 从任务页暂停、恢复 | 队列状态可恢复，不依赖原聊天回合 |
+| C 指针解引用 | 显式请求 → 生成并保存 `.lflecture` / `.lfexercise` → 进入专注学习 → 从专注页暂停 → 返回任务 | 文件引用持久存在；MicroLearningRun 与 LearningTask 暂停双向同步 |
+| SQL LEFT/INNER JOIN | 在闭包、指针任务之后建立新任务 → 检查任务计划 | 约 1 秒出现任务卡；计划只引用 SQL 当前目标，未混入旧任务知识缺口或优先级 |
+
+闭包对话还暴露过一道依赖 Python 私有运行时细节的低质量变式题。v2 已在生成提示和服务端
+题目校验两层拒绝私有属性、解释器版本特例、未定义或非标准行为；被拒绝题由稳定的概念题补位。
+
+重复验收时至少检查：显式任务不等待模型规划、生成文件不改变掌握、错误进入纠错、带提示
+成功不算独立验证、完成后出现复习项、跨任务计划不携带上一任务易变五核内容。
+
+## 12. 外部架构参考
 
 本设计吸收了以下架构原则，但保持 LearnFlow 自己的教学证据边界：
 

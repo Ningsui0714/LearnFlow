@@ -39,8 +39,10 @@ def _runtime_error(error: RuntimeError) -> HTTPException:
         "invalid_state": (409, "当前任务状态不能执行这个操作"),
         "invalid_scope": (404, "学习任务关联的会话、项目或关卡不存在"),
         "invalid_order": (400, "只能重排你当前学习队列中的任务"),
+        "practice_required": (409, "练习阶段需要至少一次真实作答、复述诊断或可检查产物"),
         "verification_required": (409, "独立验证阶段需要正式评估证据，讲解或自述不能代替"),
         "review_handoff_required": (409, "还没有可转交到复习队列的正式评估项"),
+        "learning_run_incomplete": (409, "当前学习现场还有题目或纠错未完成，请先完成整组学习与验证"),
         "incomplete_plan": (409, "任务计划仍有必做阶段未完成"),
     }
     status, detail = mapping.get(code, (400, "无法更新学习任务"))
@@ -154,8 +156,9 @@ async def create_task(
         )
     except RuntimeError as error:
         raise _runtime_error(error) from error
+    view = await learning_task_view(db, task)
     await db.commit()
-    return await learning_task_view(db, task)
+    return view
 
 
 @router.post("/reorder")
@@ -173,8 +176,9 @@ async def reorder_queue(
         )
     except RuntimeError as error:
         raise _runtime_error(error) from error
+    items = [await learning_task_view(db, task) for task in tasks]
     await db.commit()
-    return {"items": [await learning_task_view(db, task) for task in tasks]}
+    return {"items": items}
 
 
 @router.get("/{task_id}")
@@ -207,8 +211,9 @@ async def update_task(
             value = [str(item).strip()[:500] for item in value if str(item).strip()]
         setattr(task, key, value)
     task.version += 1
+    view = await learning_task_view(db, task)
     await db.commit()
-    return await learning_task_view(db, task)
+    return view
 
 
 @router.post("/{task_id}/actions")
@@ -231,8 +236,9 @@ async def task_action(
         )
     except RuntimeError as error:
         raise _runtime_error(error) from error
+    view = await learning_task_view(db, task)
     await db.commit()
-    return await learning_task_view(db, task)
+    return view
 
 
 @router.post("/{task_id}/replan")
@@ -255,8 +261,9 @@ async def replan_task(
         )
     except RuntimeError as error:
         raise _runtime_error(error) from error
+    view = await learning_task_view(db, task)
     await db.commit()
-    return await learning_task_view(db, task)
+    return view
 
 
 @router.post("/{task_id}/materialize")
@@ -279,5 +286,6 @@ async def materialize_task(
         )
     except RuntimeError as error:
         raise _runtime_error(error) from error
+    view = await learning_task_view(db, task)
     await db.commit()
-    return await learning_task_view(db, task)
+    return view
