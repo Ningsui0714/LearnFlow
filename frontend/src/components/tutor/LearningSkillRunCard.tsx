@@ -1,4 +1,4 @@
-import { ArrowUpRight, CheckCircle2, Pause, Play, ShieldCheck, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Check, CheckCircle2, Lightbulb, Pause, Play, ShieldCheck, Sparkles } from 'lucide-react'
 import { useState } from 'react'
 import type { LearningSkillRun } from '../../services/api'
 
@@ -8,6 +8,12 @@ interface Props {
   run: LearningSkillRun
   onAction: (action: SkillRunAction) => Promise<void>
   onOpenLearningRun?: (run: NonNullable<LearningSkillRun['micro_learning_run']>) => void
+}
+
+const stageClass = {
+  completed: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  current: 'border-indigo-300 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-100',
+  locked: 'border-slate-200 bg-slate-50 text-slate-400',
 }
 
 export default function LearningSkillRunCard({ run, onAction, onOpenLearningRun }: Props) {
@@ -50,7 +56,7 @@ export default function LearningSkillRunCard({ run, onAction, onOpenLearningRun 
           <CheckCircle2 size={20} className="shrink-0 text-emerald-600" aria-label="本轮完成" />
         ) : (
           <span className="shrink-0 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-medium text-emerald-700">
-            {run.turn_count}/{run.turn_budget} 轮引导
+            {run.turn_count}/{run.turn_budget} 轮有效引导
           </span>
         )}
       </div>
@@ -59,7 +65,27 @@ export default function LearningSkillRunCard({ run, onAction, onOpenLearningRun 
         <div className="h-full bg-emerald-600 transition-[width]" style={{ width: `${progress}%` }} />
       </div>
 
+      <div className="grid grid-cols-2 gap-1.5 border-t border-emerald-100 bg-white px-3.5 py-3 sm:grid-cols-4" aria-label="学习方法流程">
+        {(run.stages || []).map((stage, index) => (
+          <div key={stage.id} className={`min-w-0 rounded-lg border px-2 py-2 text-[10px] font-medium ${stageClass[stage.status]}`}>
+            <span className="flex items-center gap-1">
+              {stage.status === 'completed' ? <Check size={11} /> : <span className="tabular-nums">{index + 1}</span>}
+              <span className="truncate" title={stage.label}>{stage.label}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+
       <div className="border-t border-emerald-100 bg-emerald-50/50 px-3.5 py-2.5">
+        <p className="mb-2 flex items-start gap-1.5 rounded-lg bg-white/80 px-2.5 py-2 text-[11px] leading-5 text-slate-700">
+          <Lightbulb size={13} className="mt-0.5 shrink-0 text-amber-600" />
+          <span>{run.flow_note}</span>
+        </p>
+        {run.learning_task && run.status !== 'completed' && (
+          <p className="mb-2 text-[10px] leading-4 text-emerald-800">
+            这张卡就是当前原子任务的教学阶段；完成引导后才会准备独立验证，不需要并行生成另一套流程。
+          </p>
+        )}
         <p className="flex items-start gap-1.5 text-[11px] leading-5 text-slate-600">
           <ShieldCheck size={13} className="mt-0.5 shrink-0 text-emerald-700" />
           <span>{run.evidence_note}</span>
@@ -71,7 +97,7 @@ export default function LearningSkillRunCard({ run, onAction, onOpenLearningRun 
               href={run.learning_task.path}
               className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-2.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
             >
-              查看原子任务<ArrowUpRight size={12} />
+              查看任务与学习包<ArrowUpRight size={12} />
             </a>
           )}
           {run.can_pause && (

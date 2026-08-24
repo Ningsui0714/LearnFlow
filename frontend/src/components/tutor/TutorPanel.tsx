@@ -606,6 +606,10 @@ export default function TutorPanel({
   }
 
   const activeSkill = learningSkills.find(skill => skill.id === activeSkillId)
+  const taskHandledByActiveSkill = Boolean(
+    learningTaskProposal
+    && activeSkillRun?.learning_task?.id === learningTaskProposal.id,
+  )
 
   return (
     <section className={`flex min-h-0 flex-col overflow-hidden border border-gray-200 bg-white rounded-lg ${className}`}>
@@ -769,7 +773,7 @@ export default function TutorPanel({
           <LocalAgentRunCard runId={Number(action.result.local_agent_run.id)} />
         )}
 
-        {learningTaskProposal && (
+        {learningTaskProposal && !taskHandledByActiveSkill && (
           <section className={`rounded-xl border border-emerald-200 bg-emerald-50 p-3 ${standalone ? 'mx-auto w-full max-w-3xl' : ''}`} data-testid="learning-task-proposal">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950"><ListTodo size={13} />{learningTaskProposal.status === 'proposed' ? '建议形成一个学习任务' : '当前原子学习任务'}</p>
             <p className="mt-1.5 text-sm font-semibold text-slate-900">{learningTaskProposal.title}</p>

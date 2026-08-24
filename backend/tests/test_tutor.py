@@ -20,6 +20,7 @@ from app.services.learning_runtime import (
     apply_semantic_observations, create_attempt, evaluate_checkpoint_status,
     get_kernel_projection, record_event,
 )
+from app.services.learning_skill_runtime import learner_response_signal
 from app.services.profile import memory_projection
 from app.services.task_manager import manager
 from app.services.auth import load_current_learner
@@ -261,6 +262,86 @@ def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
         "learning_skill_verification_started", "learning_skill_run_completed",
     }
     assert mutations == []
+
+
+def test_skill_runtime_scaffolds_no_knowledge_without_advancing(client: TestClient):
+    session_id = new_session(client)
+    opening = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "跟我讲讲什么是朴素贝叶斯分类器",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"grounded-open-{uuid.uuid4().hex}",
+    })
+    assert opening.status_code == 200, opening.text
+    opening_body = opening.json()
+    run = opening_body["active_skill_run"]
+    assert run["goal"] == "朴素贝叶斯分类器"
+    assert run["state"] == "eliciting_prior_model"
+    assert run["stage_label"] == "建立起点与当前直觉"
+    assert run["turn_count"] == 0
+    assert run["support_count"] == 0
+    assert run["stages"][0]["status"] == "current"
+    assert "不应该让你凭空猜" in opening_body["message"]
+
+    orientation_choice = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "B，我想先看一个具体例子",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"grounded-choice-{uuid.uuid4().hex}",
+    })
+    assert orientation_choice.status_code == 200, orientation_choice.text
+    oriented = orientation_choice.json()["active_skill_run"]
+    assert oriented["state"] == "eliciting_prior_model"
+    assert oriented["turn_count"] == 0
+    assert oriented["support_count"] == 1
+    assert oriented["last_response_signal"] == "orientation_example_choice"
+    assert "不是作答" in oriented["flow_note"]
+
+    no_knowledge = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "我不知道",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"grounded-help-{uuid.uuid4().hex}",
+    })
+    assert no_knowledge.status_code == 200, no_knowledge.text
+    supported = no_knowledge.json()["active_skill_run"]
+    assert supported["state"] == "eliciting_prior_model"
+    assert supported["step_index"] == 1
+    assert supported["turn_count"] == 0
+    assert supported["support_count"] == 2
+    assert supported["last_response_signal"] == "no_prior_knowledge"
+    assert "没有被当作完成" in supported["flow_note"]
+    assert "不该继续让你猜" in no_knowledge.json()["message"]
+
+    direct_help = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "先直接解释一下，再继续问我",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"grounded-direct-{uuid.uuid4().hex}",
+    })
+    assert direct_help.status_code == 200, direct_help.text
+    directly_supported = direct_help.json()["active_skill_run"]
+    assert directly_supported["state"] == "eliciting_prior_model"
+    assert directly_supported["turn_count"] == 0
+    assert directly_supported["support_count"] == 3
+    assert directly_supported["last_response_signal"] == "direct_explanation_requested"
+    assert "先切到简明说明" in direct_help.json()["message"]
+
+    attempted = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "我猜它会把已有类别比例和观察到的特征一起用于分类。",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"grounded-attempt-{uuid.uuid4().hex}",
+    })
+    assert attempted.status_code == 200, attempted.text
+    advanced = attempted.json()["active_skill_run"]
+    assert advanced["state"] == "testing_assumption"
+    assert advanced["turn_count"] == 1
+    assert advanced["support_count"] == 3
+    assert advanced["last_response_signal"] == "attempt"
+
+
+def test_skill_response_signals_distinguish_help_skip_and_attempt():
+    assert learner_response_signal("我不知道") == "no_prior_knowledge"
+    assert learner_response_signal("请直接解释一下") == "direct_explanation_requested"
+    assert learner_response_signal("先跳过") == "skip"
+    assert learner_response_signal("好的") == "acknowledgement"
+    assert learner_response_signal("我不知道，但我觉得可能和先验概率有关") == "attempt"
 
 
 def test_adaptive_tutor_recommends_but_does_not_silently_activate_skill(client: TestClient):
@@ -999,6 +1080,127 @@ def test_tutor_structured_and_plain_attempts_share_one_model_budget(
     assert time.perf_counter() - started < 1
     assert response.status_code == 200
     assert "模型服务没有响应" in response.json()["message"]
+
+
+def test_empty_model_reply_uses_skill_fallback_instead_of_blank_message(
+    client: TestClient,
+    monkeypatch,
+):
+    class EmptyStructuredResult:
+        reply = ""
+        project_opportunity = None
+        learning_intent = None
+        local_agent_task = None
+        learning_task_opportunity = None
+        observations = []
+        major_event_candidates = []
+
+    class EmptyStructuredInvoker:
+        async def ainvoke(self, _messages):
+            return EmptyStructuredResult()
+
+    class EmptyModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, _schema):
+            return EmptyStructuredInvoker()
+
+        async def ainvoke(self, _messages):
+            return type("EmptyPlainResult", (), {"content": ""})()
+
+    monkeypatch.setattr("app.services.tutor_service.ChatOpenAI", EmptyModel)
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.tutor_service.settings.tutor_model_budget_seconds",
+        0.1,
+    )
+    session_id = new_session(client)
+    topic = f"空白回复概念{uuid.uuid4().hex[:8]}"
+    response = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": f"跟我讲讲什么是{topic}",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"empty-skill-{uuid.uuid4().hex}",
+    })
+    assert response.status_code == 200, response.text
+    assert "不应该让你凭空猜" in response.json()["message"]
+    assert response.json()["message"].strip()
+
+
+def test_active_skill_uses_plain_tutor_call_without_structured_detour(
+    client: TestClient,
+    monkeypatch,
+):
+    class PlainOnlyModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, _schema):
+            raise AssertionError("进行中的 Skill 不应请求结构化 Tutor 输出")
+
+        async def ainvoke(self, _messages):
+            return type("PlainResult", (), {
+                "content": "先给一个最小解释和具体例子，再请你判断一个变化。",
+            })()
+
+    monkeypatch.setattr("app.services.tutor_service.ChatOpenAI", PlainOnlyModel)
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    session_id = new_session(client)
+    response = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "跟我讲讲什么是朴素贝叶斯分类器",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"plain-skill-{uuid.uuid4().hex}",
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["message"] == "先给一个最小解释和具体例子，再请你判断一个变化。"
+
+
+def test_valid_skill_attempt_does_not_repeat_reused_opening_scaffold(
+    client: TestClient,
+    monkeypatch,
+):
+    class EmptyModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, _messages):
+            return type("EmptyPlainResult", (), {"content": ""})()
+
+    async def existing_scaffold(*_args, **_kwargs):
+        return "已有材料中的主题讲义支架"
+
+    monkeypatch.setattr("app.services.tutor_service.ChatOpenAI", EmptyModel)
+    monkeypatch.setattr(
+        "app.services.tutor_service._existing_skill_scaffold",
+        existing_scaffold,
+    )
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.tutor_service.settings.tutor_model_budget_seconds",
+        0.1,
+    )
+    session_id = new_session(client)
+    opening = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "跟我讲讲什么是测试分类器",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"reused-scaffold-open-{uuid.uuid4().hex}",
+    })
+    assert opening.status_code == 200, opening.text
+    assert opening.json()["message"] == "已有材料中的主题讲义支架"
+    assert opening.json()["active_skill_run"]["turn_count"] == 0
+
+    attempted = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "我猜它会结合类别原本的比例和当前观察到的特征。",
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": f"reused-scaffold-attempt-{uuid.uuid4().hex}",
+    })
+    assert attempted.status_code == 200, attempted.text
+    body = attempted.json()
+    assert body["message"] != "已有材料中的主题讲义支架"
+    assert "关键条件" in body["message"]
+    assert body["active_skill_run"]["state"] == "testing_assumption"
+    assert body["active_skill_run"]["turn_count"] == 1
+    assert body["active_skill_run"]["last_response_signal"] == "attempt"
 
 
 def test_project_tutor_routes_formal_learning_into_checkpoints(

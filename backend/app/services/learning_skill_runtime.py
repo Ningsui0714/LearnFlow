@@ -19,7 +19,7 @@ from app.services.architecture_registry import selectable_learning_skill
 from app.services.learning_runtime import record_event
 
 
-SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v2"
+SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v3"
 RUNTIME_SKILL_IDS = (
     "guided_explanation",
     "socratic_dialogue",
@@ -60,9 +60,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "verification_ready",
         ),
         "labels": {
-            "eliciting_prior_model": "说出当前直觉",
-            "testing_assumption": "检验关键条件",
-            "building_explanation": "连成完整推理",
+            "eliciting_prior_model": "建立起点与当前直觉",
+            "testing_assumption": "在具体情境检验判断",
+            "building_explanation": "连接理由与边界",
             "verification_ready": "准备独立验证",
             "verification_in_progress": "独立验证中",
             "completed": "本轮完成",
@@ -128,6 +128,7 @@ def _learning_goal(value: str, skill_id: str) -> str:
         )
     elif skill_id == "socratic_dialogue":
         prefixes = (
+            r"^(?:请)?(?:跟我|给我)?讲讲(?:什么是)?[，,：:\s]*",
             r"^(?:请)?不要直接告诉我(?:答案)?[，,：:\s]*",
             r"^(?:请)?(?:用问题)?引导我[，,：:\s]*",
             r"^(?:我想)?自己推导[，,：:\s]*",
@@ -161,6 +162,37 @@ def _learning_goal(value: str, skill_id: str) -> str:
         ):
             goal = re.sub(pattern, "", goal, count=1).strip()
     return goal[:300] if len(goal) >= 2 else original
+
+
+def _needs_grounded_entry(value: str) -> bool:
+    normalized = "".join(str(value or "").casefold().split())
+    return any(marker in normalized for marker in (
+        "什么是", "跟我讲", "给我讲", "我不了解", "我不懂", "没学过", "第一次学",
+    ))
+
+
+def learner_response_signal(message: str) -> str:
+    """Classify only explicit interaction signals; never grade correctness here."""
+    normalized = re.sub(r"[\s，,。.!！?？、]", "", str(message or "").casefold())
+    if not normalized:
+        return "missing"
+    if any(marker in normalized for marker in (
+        "直接告诉我", "直接解释", "先给我解释", "先讲一下", "别再问了", "不要再问",
+    )):
+        return "direct_explanation_requested"
+    if normalized in {"跳过", "先跳过", "略过", "下一步", "先不答", "不想答"}:
+        return "skip"
+    if normalized in {"嗯", "哦", "好", "好的", "继续", "可以", "明白", "收到"}:
+        return "acknowledgement"
+    no_knowledge_markers = (
+        "我不知道", "不知道", "我不会", "不会", "不清楚", "没概念", "没思路", "想不到",
+        "完全不懂", "不太懂", "没学过", "忘了", "答不上来",
+    )
+    if any(marker in normalized for marker in no_knowledge_markers):
+        attempt_markers = ("但我觉得", "但是我觉得", "我猜", "可能是", "是不是", "因为", "所以")
+        if not any(marker in normalized for marker in attempt_markers):
+            return "no_prior_knowledge"
+    return "attempt"
 
 
 def workflow_blueprint(skill_id: str) -> dict[str, Any] | None:
@@ -231,7 +263,12 @@ def recommend_learning_skill(message: str) -> dict[str, Any] | None:
     return None
 
 
-def _opening_prompt(skill_id: str, goal: str) -> tuple[str, str]:
+def _opening_prompt(
+    skill_id: str,
+    goal: str,
+    *,
+    grounded_entry: bool = False,
+) -> tuple[str, str]:
     if skill_id == "guided_explanation":
         fallback = (
             f"先建立“{goal}”的最小模型：它解决什么问题、核心关系是什么、什么时候不适用。"
@@ -243,16 +280,42 @@ def _opening_prompt(skill_id: str, goal: str) -> tuple[str, str]:
         )
         return directive, fallback
     if skill_id == "socratic_dialogue":
+        if grounded_entry:
+            fallback = (
+                f"“{goal}”看起来是一个新主题，苏格拉底追问不应该让你凭空猜。"
+                "我们先建立一个可回答的起点：依次找出它要解决什么判断、会使用哪些信息、"
+                "这些信息怎样改变判断。你先选一个入口：A 先看它解决的问题；B 先看一个具体例子。"
+                "只回复 A 或 B 即可。"
+            )
+            directive = (
+                f"SkillRun 刚开始，目标是“{goal}”，学习者的提问显示这可能是首次接触。"
+                "先用两三句话给出可靠的最小知识支架：说明它解决的问题、关键对象和一条核心关系，"
+                "但不要一次讲完整章内容；随后给一个具体情境，只问一个二选一或可直接预测的问题。"
+                "明确告诉学习者不需要凭空猜。不要连续列问题，不要宣布掌握。"
+            )
+            return directive, fallback
         fallback = (
-            f"我们先不急着听完整答案。针对“{goal}”，你目前觉得最关键的关系或判断是什么？"
-            "先说直觉即可，我每次只追问一个问题。"
+            f"我们先给“{goal}”一个可回答的起点，而不是让你从空白定义开始。"
+            "请回忆一个最接近的例子、现象或已知条件；只说其中一个即可，我会据此补一层支架。"
         )
         directive = (
-            f"SkillRun 刚开始，目标是“{goal}”。只问一个用于暴露学习者当前直觉的问题；"
-            "不要解释答案，不要连续列问题。"
+            f"SkillRun 刚开始，目标是“{goal}”。先用一句话界定正在讨论的对象或情境，"
+            "再只问一个用于暴露学习者当前直觉的具体问题；不要要求学习者从空白说出关键关系，"
+            "不要给完整答案，不要连续列问题。"
         )
         return directive, fallback
     if skill_id == "feynman_dialogue":
+        if grounded_entry:
+            fallback = (
+                f"“{goal}”像是第一次接触，现在直接要求复述并不合适。"
+                "我会先给一个不超过三点的最小解释和一个具体例子；之后你只需用一句自己的话重说其中一条关系。"
+            )
+            directive = (
+                f"SkillRun 刚开始，目标是“{goal}”，但学习者的提问显示可能尚未接触主题。"
+                "先给一个不超过三点的可靠最小解释和一个具体例子，再只邀请学习者用一句自己的话"
+                "重说其中一条关系。不要要求从空白完成完整复述，不要宣布掌握。"
+            )
+            return directive, fallback
         fallback = (
             f"先不看资料，把“{goal}”讲给一个完全不了解它的人听。"
             "请用 3—5 句话说明它是什么、为什么成立或怎样运作。"
@@ -272,6 +335,112 @@ def _opening_prompt(skill_id: str, goal: str) -> tuple[str, str]:
         "不要把照做或阅读示例当成掌握。"
     )
     return directive, fallback
+
+
+def _support_step(
+    skill_id: str,
+    current_state: str,
+    step_index: int,
+    goal: str,
+    signal: str,
+    support_count: int,
+) -> dict[str, Any]:
+    """Keep the learner at the same step while adding bounded instructional support."""
+    if signal in {"orientation_problem_choice", "orientation_example_choice"}:
+        choice = "它解决的问题" if signal == "orientation_problem_choice" else "具体例子"
+        return {
+            "state": current_state,
+            "step_index": step_index,
+            "directive": (
+                f"学习者已选择先看{choice}。这只是选择支架入口，不是知识作答，不得推进状态。"
+                f"围绕“{goal}”给一个可靠、尽量小的具体例子，先点明问题、输入信息和判断结果，"
+                "然后只问一个能从例子直接观察的二选一问题。"
+            ),
+            "fallback": (
+                f"你选择了先看{choice}；这不会被算成已经理解。我们保留在当前步骤，"
+                f"接下来用一个最小例子说明“{goal}”的问题、信息和判断结果。"
+            ),
+            "flow_note": "已选择知识支架入口；这不是作答，当前步骤和有效引导轮次没有推进。",
+        }
+    if signal == "skip":
+        return {
+            "state": current_state,
+            "step_index": step_index,
+            "directive": (
+                "学习者选择跳过当前回答。不要把这当作完成或正确尝试，也不要推进教学状态。"
+                "简短说明可以暂停或切换方法；如果继续，只给一个更小、可直接选择的动作。"
+            ),
+            "fallback": "这一步先不算完成，也不会自动跳到下一环。你可以暂停或切换方法；如果继续，我们会把问题缩成一个更小的选择。",
+            "flow_note": "已识别为跳过：当前步骤和有效引导轮次都没有推进。",
+        }
+    if signal == "acknowledgement":
+        return {
+            "state": current_state,
+            "step_index": step_index,
+            "directive": (
+                "学习者只做了确认，没有给出可检查的尝试。不要推进状态；把当前要求改写成一个具体、"
+                "一次只需完成的小动作，必要时给两个选项，但不要暗示他已经答过。"
+            ),
+            "fallback": "收到，但这还不是一次可检查的尝试，所以我们留在当前步骤。请只完成一个小动作：选出你更倾向的判断，并补一句理由。",
+            "flow_note": "确认信息不算作答：系统保留当前步骤，等待一个可检查的小动作。",
+        }
+
+    direct = signal == "direct_explanation_requested"
+    if skill_id == "socratic_dialogue":
+        directive = (
+            f"学习者在“{goal}”上明确要求先直接解释。尊重退出通道：先给一个简明、可靠的核心说明，"
+            "包含它解决的问题、一条核心关系和一个具体例子；然后只问一个识别或预测问题，"
+            "不要继续抽象追问，不要宣布掌握。"
+            if direct else
+            f"学习者明确表示对“{goal}”没有可调用的先备知识。先说清这不是失败，也不要推进状态。"
+            "给两三句话的最小知识支架：它解决的问题、关键对象和一条核心关系；随后放入一个具体情境，"
+            "只问一个二选一或可直接观察的问题。不要再让学习者凭空指出关键条件。"
+        )
+        fallback = (
+            f"好，先切到简明说明，不再让你猜。理解“{goal}”时先抓三件事：它解决什么问题、"
+            "根据什么信息作判断、这个判断何时会失效。当前步骤会先补齐这三项和一个例子，再回到一个具体问题。"
+            if direct else
+            f"没关系，这说明现在缺的是知识起点，不该继续让你猜。理解“{goal}”时先抓三件事："
+            "它解决什么问题、使用什么信息、这些信息怎样改变判断。我们保留在当前步骤，先用一个具体例子补起点。"
+        )
+    elif skill_id == "feynman_dialogue":
+        directive = (
+            f"学习者目前无法复述“{goal}”。不要把空白当作复述，也不要定位并不存在的表达漏洞。"
+            "先给一个不超过三点的最小解释和一个例子，再只请学习者用一句自己的话重说其中一条关系。"
+        )
+        fallback = (
+            f"现在还没有足够内容可以复述，所以不会进入“找漏洞”。先为“{goal}”补一个三点以内的"
+            "最小解释和例子，再只需要你用一句自己的话重说其中一条关系。"
+        )
+    elif skill_id == "worked_example_fading":
+        directive = (
+            f"学习者在“{goal}”的当前示例步骤上没有思路。不要撤掉更多支架，也不要推进状态。"
+            "显式展示当前被卡住的一小步及其理由，然后换一个近似输入，只让学习者补相邻的一个动作。"
+        )
+        fallback = (
+            "这说明支架撤得太快了，所以不会进入下一层。我会先恢复当前这一步并说明它为什么存在，"
+            "然后只换一个近似输入，请你补相邻的一个动作。"
+        )
+    else:
+        directive = (
+            f"学习者仍未理解“{goal}”的当前解释。不要推进到新例子。改用更短的句子和一个具体类比，"
+            "只保留一条核心关系，最后问一个可直接观察的检查问题。"
+        )
+        fallback = (
+            "没关系，这表示当前讲法还没有建立起点，所以不会推进。接下来只保留一条核心关系，"
+            "换成一个具体类比，再问一个可以直接从例子观察的问题。"
+        )
+    return {
+        "state": current_state,
+        "step_index": step_index,
+        "directive": directive,
+        "fallback": fallback,
+        "flow_note": (
+            "已按直接解释请求补充支架；当前步骤和有效引导轮次都没有推进。"
+            if direct else
+            f"已补充第 {support_count} 次支架；“不会/不知道”没有被当作完成。"
+        ),
+    }
 
 
 def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
@@ -625,7 +794,12 @@ async def create_learning_skill_run(
         )
 
     workflow = WORKFLOWS[skill_id]
-    directive, fallback = _opening_prompt(skill_id, normalized_goal)
+    grounded_entry = skill_id in {"socratic_dialogue", "feynman_dialogue"} and _needs_grounded_entry(goal)
+    directive, fallback = _opening_prompt(
+        skill_id,
+        normalized_goal,
+        grounded_entry=grounded_entry,
+    )
     run = LearningSkillRun(
         learner_id=session.learner_id,
         session_id=session.id,
@@ -643,6 +817,14 @@ async def create_learning_skill_run(
             "next_prompt": fallback,
             "verification_required": True,
             "mastery_claim": "none",
+            "entry_mode": "grounded" if grounded_entry else "standard",
+            "support_count": 0,
+            "last_response_signal": "opening",
+            "flow_note": (
+                "先建立可回答的知识起点，再进入单步追问。"
+                if grounded_entry else
+                "每次只推进一个可检查的学习动作。"
+            ),
         },
         action_log=[],
         client_request_id=request_key,
@@ -770,18 +952,45 @@ async def prepare_learning_skill_turn(
             "fallback": data.get("next_prompt", "请开始独立验证，完成后再继续讨论。"),
         }
 
-    previous_state = current.state
-    next_step = _next_step(current.skill_id, previous_state, current.goal)
     data = dict(current.run_data or {})
+    previous_state = current.state
+    response_signal = learner_response_signal(message)
+    normalized_choice = re.sub(r"[\s，,。.!！?？、]", "", str(message or "").casefold())
+    if (
+        data.get("entry_mode") == "grounded"
+        and current.state == WORKFLOWS[current.skill_id]["initial_state"]
+        and re.match(r"^[ab](?:我想|先看|选择|$)", normalized_choice)
+    ):
+        response_signal = (
+            "orientation_problem_choice"
+            if normalized_choice.startswith("a") else
+            "orientation_example_choice"
+        )
+    support_only = response_signal != "attempt"
+    support_count = int(data.get("support_count") or 0) + (1 if support_only else 0)
+    next_step = (
+        _support_step(
+            current.skill_id,
+            previous_state,
+            current.step_index,
+            current.goal,
+            response_signal,
+            support_count,
+        )
+        if support_only else
+        _next_step(current.skill_id, previous_state, current.goal)
+    )
     responses = list(data.get("responses") or [])
     responses.append({
         "message_id": message_id,
         "text": str(message or "")[:4000],
         "state": previous_state,
+        "response_signal": response_signal,
         "recorded_at": datetime.utcnow().isoformat(),
     })
-    current.turn_count += 1
-    if current.turn_count >= current.turn_budget and next_step["state"] != "verification_ready":
+    if not support_only:
+        current.turn_count += 1
+    if not support_only and current.turn_count >= current.turn_budget and next_step["state"] != "verification_ready":
         next_step = _next_step(current.skill_id, "budget_exhausted", current.goal)
     current.state = str(next_step["state"])
     current.step_index = int(next_step["step_index"])
@@ -791,6 +1000,12 @@ async def prepare_learning_skill_turn(
         "next_directive": next_step["directive"],
         "next_prompt": next_step["fallback"],
         "mastery_claim": "none",
+        "support_count": support_count,
+        "last_response_signal": response_signal,
+        "flow_note": next_step.get(
+            "flow_note",
+            "已收到一个可检查的尝试，流程只推进了一步。",
+        ),
     }
     current.action_log = [*history, turn_key][-80:]
     current.version += 1
@@ -802,6 +1017,8 @@ async def prepare_learning_skill_turn(
             "to_state": current.state,
             "turn_count": current.turn_count,
             "message_id": message_id,
+            "response_signal": response_signal,
+            "support_only": support_only,
             "mastery_unchanged": True,
         },
         client_event_id=f"learning-skill-run:{current.id}:{turn_key}:advanced",
@@ -859,6 +1076,40 @@ async def reconcile_learning_skill_run(
     return True
 
 
+def _workflow_stage_projection(
+    run: LearningSkillRun,
+    workflow: dict[str, Any],
+    data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    states = list(workflow.get("states") or [])
+    labels = dict(workflow.get("labels") or {})
+    if not states:
+        return []
+    active_state = run.state
+    if run.state == "paused":
+        active_state = str(data.get("resume_state") or states[0])
+    elif run.state == "verification_in_progress":
+        active_state = states[-1]
+    try:
+        active_index = states.index(active_state)
+    except ValueError:
+        active_index = len(states) - 1 if run.state == "completed" else 0
+    result = []
+    for index, state in enumerate(states):
+        if run.state == "completed" or index < active_index:
+            status = "completed"
+        elif index == active_index:
+            status = "current"
+        else:
+            status = "locked"
+        result.append({
+            "id": state,
+            "label": str(labels.get(state) or state),
+            "status": status,
+        })
+    return result
+
+
 async def learning_skill_run_view(
     db: AsyncSession, run: LearningSkillRun | None,
 ) -> dict[str, Any] | None:
@@ -887,6 +1138,10 @@ async def learning_skill_run_view(
         "total_steps": total_steps,
         "turn_count": run.turn_count,
         "turn_budget": run.turn_budget,
+        "support_count": int(data.get("support_count") or 0),
+        "last_response_signal": str(data.get("last_response_signal") or ""),
+        "flow_note": str(data.get("flow_note") or "每次只推进一个可检查的学习动作。"),
+        "stages": _workflow_stage_projection(run, workflow, data),
         "version": run.version,
         "next_prompt": str(data.get("next_prompt") or ""),
         "can_start_verification": run.state == "verification_ready" and not run.micro_learning_run_id,

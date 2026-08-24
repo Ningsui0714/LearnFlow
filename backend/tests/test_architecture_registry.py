@@ -165,6 +165,7 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
         }
     )
     assert "learning_skill_runtime" in SKILLS["socratic_dialogue"].tools
+    assert "不得把它当成有效尝试或推进步骤" in SKILLS["socratic_dialogue"].invocation_prompt
     assert "learning_skill_runtime" in SKILLS["feynman_dialogue"].tools
     assert "learning_task_runtime" in SKILLS["guided_explanation"].tools
     assert "learning_task_runtime" in SKILLS["worked_example_fading"].tools

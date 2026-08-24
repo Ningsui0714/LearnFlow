@@ -169,6 +169,11 @@ LLM 决定。运行事件及任务同步事件的 Kernel target 全部为空；
 在同一任务上创建既有 `MicroLearningRun` 附件，随后才由 `LearningAttempt`、纠错和复习链产生能力
 证据。详细状态、API、迁移和初步对比见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
+运行时必须把“不会/不知道”、请求解释、跳过和仅确认与可检查尝试分开；前几类输入不消耗
+有效引导轮次、不推进 Skill 状态，只触发当前步骤的最小支架。陌生主题中的苏格拉底或费曼
+调用必须先建立知识起点。SkillRun 与其绑定的 LearningTask 是同一闭环的教学状态和任务状态，
+在对话中不得渲染成两套并行下一步。
+
 `/learn/:runId` 是 Learning Task 可以按需物化的专注工作台附件，由 Tutor 控制 Agent 所有，并通过
 `verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错
 和复习调度。明确的“15 分钟/微学习/可验证学习”请求可以直接启动它；普通原子学习则先

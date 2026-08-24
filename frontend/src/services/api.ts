@@ -367,6 +367,14 @@ export interface LearningSkillRun {
   total_steps: number
   turn_count: number
   turn_budget: number
+  support_count: number
+  last_response_signal: string
+  flow_note: string
+  stages: Array<{
+    id: string
+    label: string
+    status: 'completed' | 'current' | 'locked'
+  }>
   version: number
   next_prompt: string
   can_start_verification: boolean

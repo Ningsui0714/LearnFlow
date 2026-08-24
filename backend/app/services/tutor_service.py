@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.learning import (
     AgentSession, AgentMessage, AgentAction, EvidenceEvent, LearnerProfile,
-    LearningProjectProposal, LearningTask,
+    LearningProjectProposal, LearningTask, MicroLearningRun,
 )
 from app.models.project import Project, Source, Roadmap, Checkpoint, Task
 from app.schemas.agent import TutorModelOutput
@@ -1740,6 +1740,61 @@ async def _candidate_sources_follow_up(
     )
 
 
+def _topic_signature(value: str) -> str:
+    text = re.sub(r"\s+", "", str(value or "").casefold())
+    for phrase in (
+        "跟我讲讲什么是", "跟我讲讲什么事", "给我讲讲什么是", "请讲讲什么是",
+        "能够解释", "能解释", "请解释", "学习", "理解", "弄懂", "关键关系",
+        "并完成一次无提示的正式验证", "的关系",
+    ):
+        text = text.replace(phrase, "")
+    return re.sub(r"[^\w\u4e00-\u9fff]+", "", text)
+
+
+async def _existing_skill_scaffold(
+    db: AsyncSession,
+    *,
+    learner_id: int,
+    goal: str,
+) -> str | None:
+    """Reuse an existing learner-owned card when the live model cannot teach the topic."""
+    target = _topic_signature(goal)
+    if len(target) < 2:
+        return None
+    candidates = list((await db.execute(
+        select(MicroLearningRun).where(
+            MicroLearningRun.learner_id == learner_id,
+        ).order_by(MicroLearningRun.id.desc()).limit(40)
+    )).scalars().all())
+    for run in candidates:
+        card = dict(run.learning_card or {})
+        candidate_text = " ".join((
+            str(run.goal or ""),
+            str(card.get("title") or ""),
+            str(card.get("objective") or ""),
+        ))
+        candidate = _topic_signature(candidate_text)
+        if target not in candidate and candidate not in target:
+            continue
+        points = [
+            str(item).strip() for item in list(card.get("key_points") or [])
+            if str(item).strip()
+        ][:2]
+        example = str(card.get("example") or "").strip()
+        if not points and not example:
+            continue
+        point_text = "\n".join(f"- {point}" for point in points)
+        parts = [
+            "先补一个已有学习材料中的可靠起点，不让你继续凭空猜：",
+            point_text,
+        ]
+        if example:
+            parts.append(f"\n具体例子：{example}")
+        parts.append("\n现在只回答一个小问题：这个例子中，哪条信息最直接体现了上面的核心关系？指出一条即可。")
+        return "\n".join(part for part in parts if part)
+    return None
+
+
 async def _generate_tutor_reply(
     db: AsyncSession,
     session: AgentSession,
@@ -2037,11 +2092,47 @@ async def _generate_tutor_reply(
         timeout=max(1.0, model_budget),
         max_retries=0,
     )
+    if workflow_instruction:
+        try:
+            response = await invoke_before_deadline(
+                lambda: llm.ainvoke(messages), deadline,
+            )
+            content = response.content if isinstance(response.content, str) else str(response.content)
+            decoded = _decode_tutor_content(content)
+            if not str(decoded[0] or "").strip():
+                raise ValueError("empty_skill_tutor_reply")
+            return (*decoded, None)
+        except Exception as skill_error:
+            logger.info(
+                "Skill Tutor used deterministic fallback after plain response failed: %s",
+                type(skill_error).__name__,
+            )
+            response_signal = str(
+                (active_skill_run_view or {}).get("last_response_signal") or ""
+            )
+            reused_scaffold = None
+            if response_signal in {
+                "opening", "no_prior_knowledge", "direct_explanation_requested",
+                "orientation_problem_choice", "orientation_example_choice",
+            }:
+                reused_scaffold = await _existing_skill_scaffold(
+                    db,
+                    learner_id=session.learner_id,
+                    goal=str((active_skill_run_view or {}).get("goal") or ""),
+                )
+            return (
+                reused_scaffold
+                or workflow_fallback
+                or "当前教学调用没有返回内容。请保留在这一步，稍后重试或切换学习方法。"
+            ), [], None, None, [], None, None
     try:
         structured = llm.with_structured_output(TutorModelOutput)
         output = await invoke_before_deadline(
             lambda: structured.ainvoke(messages), deadline,
         )
+        reply = str(output.reply or "").strip()
+        if not reply:
+            raise ValueError("empty_structured_tutor_reply")
         opportunity = output.project_opportunity.model_dump() if output.project_opportunity else None
         learning_intent = output.learning_intent.model_dump() if output.learning_intent else None
         local_agent_task = output.local_agent_task.model_dump() if output.local_agent_task else None
@@ -2050,7 +2141,7 @@ async def _generate_tutor_reply(
             if output.learning_task_opportunity else None
         )
         return (
-            output.reply,
+            reply,
             [o.model_dump() for o in output.observations],
             opportunity,
             learning_intent,
@@ -2068,7 +2159,10 @@ async def _generate_tutor_reply(
                 lambda: llm.ainvoke(messages), deadline,
             )
             content = response.content if isinstance(response.content, str) else str(response.content)
-            return (*_decode_tutor_content(content), None)
+            decoded = _decode_tutor_content(content)
+            if not str(decoded[0] or "").strip():
+                raise ValueError("empty_plain_tutor_reply")
+            return (*decoded, None)
         except Exception as fallback_error:
             logger.info(
                 "Tutor used deterministic fallback after model budget: %s",

@@ -344,6 +344,12 @@ Tutor 可以推荐注册表中的 learner-selectable Skill，但不能静默切�
 指令，MUST NOT 改变状态或自行宣布完成。自适应推荐 MUST 返回待确认卡；接受、拒绝、暂停、
 恢复和独立验证均由显式用户动作触发。运行事件 MUST 保持零 Kernel target。
 
+Skill runtime MUST 区分可检查尝试、明确不会、请求直接解释、跳过、仅确认和缺失输入。只有
+可检查尝试可以消耗有效引导轮次并推进步骤；其他信号 MUST 保留当前位置并补支架，且不得被
+描述为学生已经给出判断或完成复述。苏格拉底和费曼用于陌生主题时 MUST 先建立最小知识起点，
+不能让学生从空白猜关键关系。SkillRun 已绑定的 LearningTask 在同一 Session 中 MUST 合并为
+一条流程展示，不能同时给出“继续当前方法”和“另行生成学习包”两个竞争的下一步。
+
 ```text
 Tutor Session -> confirmed SkillRun + LearningTask -> bounded dialogue
   -> verification_ready -> same-task verification handoff

@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-24.5"
+REGISTRY_VERSION = "2026-08-24.6"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -264,9 +264,11 @@ SKILLS = {
             learner_selectable=True,
             description="用连续的小问题，引导你自己推到答案。",
             invocation_prompt=(
-                "当前对话已由学习者选择“苏格拉底追问”技能。不要一开始给出完整答案；"
-                "先判断学习者当前推理位置，每轮只问一个能推动思考的问题，并根据回答继续。"
-                "如果学习者明确要求直接解释，应尊重选择并切换为简明说明。追问结果本身不是掌握证据。"
+                "当前对话已由学习者选择“苏格拉底追问”技能。不要一开始给出完整答案，也不能要求"
+                "完全陌生的学习者从空白猜关键关系；先提供足够回答当前问题的最小知识支架和具体情境。"
+                "每轮只问一个能推动思考的问题。若学习者说不会、不知道、跳过或只做确认，不得把它"
+                "当成有效尝试或推进步骤，应留在当前步骤补支架；如果明确要求直接解释，应尊重选择并"
+                "切换为简明说明。追问结果本身不是掌握证据。"
             ),
             aliases=("苏格拉底", "苏格拉底追问", "启发式提问"),
             best_for=("因果推理", "证明与不变量", "已有部分直觉但需要暴露假设"),
