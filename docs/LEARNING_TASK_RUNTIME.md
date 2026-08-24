@@ -27,7 +27,7 @@ LearnFlow 的主界面只有两类学习空间：
 |---|---|---|
 | `navigation` | 继续学习，进入当前真正执行任务的页面 | 原对话、项目关卡或 `/learn/:runId` |
 | `origin_navigation` | 返回任务被提出的位置 | 原对话或原项目关卡 |
-| `management_navigation` | 管理优先级、暂停、移除、计划与文件 | `/tasks?task=:id` |
+| `management_navigation` | 管理优先级、暂停、移除、计划与学习包 | `/tasks?task=:id` |
 
 由对话建立但已物化学习包的任务，`navigation` 指向专注学习，`origin_navigation` 仍指向原
 对话。由项目关卡建立的任务以关卡本身为学习现场。所有页面共用同一任务位置提示和主操作
@@ -192,6 +192,20 @@ Learning Task 不建立第二套讲义/习题存储。正式学习文件继续�
 - 数据库对象、版本、答案保护和判题规则仍是权威；
 - Task 只保存 `artifact_refs` 并提供打开路径。
 
+前端不再把这些引用表现成与流程脱节的“任务文件夹”，而是投影成一个按顺序使用的学习包：
+
+| 学习包环节 | 使用的对象 | 任务/证据语义 |
+|---|---|---|
+| 讲义学习 | `Lecture` / learning card | 建立理解；查看只形成低强度接触证据 |
+| 引导练习 | 费曼复述、SkillRun 或关卡练习 | 暴露缺口；诊断 Attempt 不直接升级稳定掌握 |
+| 独立验证 | `ConceptQuestion` / `Exercise` | 无提示有效提交才可推进验证阶段 |
+| 错题纠正 | `RemediationCase`、原题重做、已校验变式 | 按错误触发；带提示成功与原题重做不冒充独立验证 |
+| 间隔复习 | `ReviewSchedule` | 验证通过后转交独立复习工作台 |
+
+学习包上的数量、锁定状态和已完成状态全部由现有 `runtime.materials`、计划阶段、Attempt 与
+ReviewSchedule 派生，不保存第二套前端进度。讲义在流程推进后仍可只读回看；回看不回退
+MicroLearningRun 状态，也不重复写接触或掌握证据。
+
 普通对话任务可以先只在 Session 中学习。需要保存材料和正式验证时，调用 `materialize`：系统创建内部 `task_artifact` 空间、Lecture、ConceptQuestion 和 checkpoint Session，并返回 `/learn/:runId`。该内部空间从真实项目列表隐藏，旧链接仍可恢复。
 
 任务中的 `.lflecture`、`.lfexercise` 和概念题引用在已有专注附件时统一打开
@@ -312,6 +326,8 @@ LearningAttempt -> EvidenceEvent -> reducer -> KernelMutation -> Memory Graph
 - `practice` 和 `verify` 不再允许手工伪完成，旧客户端收到 `practice_required` 或
   `verification_required` 后应打开相应学习现场；
 - 生命周期事件 ID、计划 schema、旧 `/learn/:runId` 和全部学习证据保持不变；无需数据迁移。
+- `runtime.learning_flow` 向后兼容地提供专注附件的 `state / active_state` 和 answer-free 题目
+  计数，供学习包准确显示当前环节；它是只读投影，不新增事件、不改变阶段推进或掌握规则。
 
 ## 11. 实际对话验收
 

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ArrowDown, ArrowUp, BookOpenCheck, CalendarClock, Check, ChevronRight,
-  Circle, Clock3, FileText, ListTodo, Loader2, Pause, Play, Plus, RefreshCw,
-  RotateCcw, Sparkles, Trash2, WandSparkles,
+  Circle, Clock3, ListTodo, Loader2, Pause, Play, Plus, RefreshCw,
+  RotateCcw, Sparkles, Trash2,
 } from 'lucide-react'
 import {
   actOnLearningTask, createLearningTask, getLearningTask, listLearningTasks, materializeLearningTask,
@@ -11,6 +11,7 @@ import {
 } from '../services/api'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import LearningTaskSurfaceNotice from '../components/learning-task/LearningTaskSurfaceNotice'
+import LearningPackagePanel from '../components/learning-task/LearningPackagePanel'
 import {
   learningTaskOriginLabel,
   learningTaskPresentation,
@@ -295,7 +296,7 @@ export default function LearningTasksPage() {
             </div>
             <button type="button" onClick={() => setShowCreate(value => !value)} className="flex h-8 items-center gap-1 rounded-lg bg-emerald-700 px-2.5 text-xs font-semibold text-white hover:bg-emerald-800"><Plus size={13} />添加</button>
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-500">这里管理顺序、计划和文件；“继续学习”会返回对话、项目关卡或专注学习。</p>
+          <p className="mt-2 text-xs leading-5 text-slate-500">这里管理顺序、计划和学习包；“继续学习”会返回对话、项目关卡或专注学习。</p>
         </header>
 
         {showCreate && (
@@ -350,6 +351,16 @@ export default function LearningTasksPage() {
               </div>
             </header>
 
+            <LearningPackagePanel
+              task={selected}
+              sourceText={sourceText}
+              preparing={preparingMaterials}
+              disabled={busy}
+              onSourceTextChange={setSourceText}
+              onPrepare={materialize}
+              onNavigate={navigate}
+            />
+
             <section className="mt-5 grid gap-5 lg:grid-cols-[1fr,300px]">
               <div>
                 <div className="mb-2 flex items-center justify-between"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><ListTodo size={16} />AI 任务计划</h3><span className="text-[10px] text-slate-400">可按互动动态重组</span></div>
@@ -362,17 +373,6 @@ export default function LearningTasksPage() {
               </div>
 
               <aside className="space-y-4">
-                {!selected.micro_learning_run_id && !selected.checkpoint_id && ['queued', 'active', 'paused'].includes(selected.status) && (
-                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-                    <h3 className="flex items-center gap-2 text-sm font-bold text-indigo-950"><WandSparkles size={15} />准备学习包</h3>
-                    <p className="mt-2 text-xs leading-5 text-indigo-800/80">系统会生成并保存一份讲义文件和一组验证题。它们属于当前任务，不会因为生成完成就被视为掌握。</p>
-                    <textarea value={sourceText} onChange={event => setSourceText(event.target.value)} rows={4} placeholder="可选：粘贴题目、教材段落、代码或笔记；留空则使用对话中的原始问题" className="mt-3 w-full resize-y rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs leading-5 outline-none focus:border-indigo-400" />
-                    <button type="button" disabled={busy} onClick={materialize} className="mt-3 w-full rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
-                      {preparingMaterials ? '正在准备；模型超时会自动使用稳定模板…' : '生成讲义与验证题并开始'}
-                    </button>
-                  </div>
-                )}
-                <div className="rounded-2xl border border-slate-200 bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><FileText size={15} />任务学习文件</h3><p className="mt-1 text-[10px] leading-4 text-slate-400">讲义负责学习，题目负责练习与验证；只有正式提交进入五核证据。</p>{selected.artifact_refs.length === 0 ? <p className="mt-2 text-xs leading-5 text-slate-400">当前任务还没有保存的讲义或题目。</p> : <div className="mt-2 space-y-1.5">{selected.artifact_refs.map((artifact, index) => <button key={`${artifact.type}-${artifact.id || index}`} type="button" onClick={() => artifact.path && navigate(artifact.path)} className="flex w-full items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100"><FileText size={12} className="text-emerald-600" /><span className="truncate">{artifact.logical_filename || artifact.type}</span></button>)}</div>}</div>
                 <div className="rounded-2xl border border-slate-200 bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><RefreshCw size={15} />调整计划</h3><textarea value={replanReason} onChange={event => setReplanReason(event.target.value)} rows={3} placeholder="例如：先做一个可视化，再减少讲解、增加代码练习" className="mt-2 w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-xs outline-none focus:border-emerald-400" /><button type="button" disabled={busy || !replanReason.trim()} onClick={replan} className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"><Sparkles size={13} className="mr-1 inline" />让 AI 重组剩余计划</button></div>
                 <p className="rounded-xl bg-slate-100 px-3 py-2 text-[10px] leading-4 text-slate-500">{selected.evidence_notice}</p>
               </aside>

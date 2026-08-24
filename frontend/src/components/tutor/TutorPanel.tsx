@@ -780,7 +780,7 @@ export default function TutorPanel({
               <span className="rounded-md bg-white/70 px-2 py-1">练习 {learningTaskProposal.runtime?.evidence?.practice_attempts || 0}</span>
               <span className="rounded-md bg-white/70 px-2 py-1">验证 {learningTaskProposal.runtime?.evidence?.successful_verifications || 0}</span>
             </div>
-            <p className="mt-2 text-[10px] text-emerald-800">任务负责计划与恢复；讲义阅读不是掌握，正式作答才进入能力证据。</p>
+            <p className="mt-2 text-[10px] text-emerald-800">学习包按“讲义 → 引导练习 → 独立验证 → 纠错/复习”使用；讲义阅读本身不代表掌握。</p>
             <div className="mt-2.5 flex flex-wrap gap-2">
               {learningTaskProposal.status === 'proposed' ? (
                 <>
@@ -800,10 +800,10 @@ export default function TutorPanel({
               )}
               {!learningTaskProposal.micro_learning_run_id && !learningTaskProposal.checkpoint_id && ['queued', 'active', 'paused'].includes(learningTaskProposal.status) && (
                 <button type="button" onClick={prepareLearningTask} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-50">
-                  <FileText size={12} />{preparingTaskMaterials ? '正在准备学习包…' : '生成讲义与验证题'}
+                  <FileText size={12} />{preparingTaskMaterials ? '正在准备学习包…' : '准备学习包（讲义 + 练习）'}
                 </button>
               )}
-              <a href={learningTaskProposal.management_navigation.path} className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-white">计划与文件</a>
+              <a href={learningTaskProposal.management_navigation.path} className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-white">任务与学习包</a>
             </div>
           </section>
         )}

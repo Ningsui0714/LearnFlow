@@ -507,7 +507,7 @@ export default function CheckpointPage() {
                 {learningTaskPresentation(checkpointTask, 'checkpoint').primaryActionLabel}
               </button>
             )}
-            <button type="button" onClick={() => navigate(checkpointTask.management_navigation.path)} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-50">计划与文件</button>
+            <button type="button" onClick={() => navigate(checkpointTask.management_navigation.path)} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-50">任务与学习包</button>
           </div>
         </div>
       )}

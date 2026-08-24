@@ -351,6 +351,17 @@ def test_task_can_materialize_saved_lecture_and_questions(client: TestClient):
     assert any(item["type"] == "concept_question_set" for item in body["artifact_refs"])
     assert body["runtime"]["materials"]["status"] == "ready"
     assert body["runtime"]["next_action"]["id"] == "continue_learning"
+    assert body["runtime"]["learning_flow"] == {
+        "kind": "focused_learning",
+        "state": "learning_card",
+        "active_state": "learning_card",
+        "status": "active",
+        "completed_items": 0,
+        "total_items": len(next(
+            item["ids"] for item in body["artifact_refs"]
+            if item["type"] == "concept_question_set"
+        )),
+    }
     replay = client.post(f"/api/learning-tasks/{task['id']}/materialize", json=payload)
     assert replay.status_code == 200
     assert replay.json()["id"] == body["id"]
@@ -363,6 +374,9 @@ def test_task_can_materialize_saved_lecture_and_questions(client: TestClient):
     })
     assert viewed.status_code == 200, viewed.text
     assert viewed.json()["learning_task"]["current_phase_id"] == "practice"
+    after_view = client.get(f"/api/learning-tasks/{body['id']}").json()
+    assert after_view["runtime"]["learning_flow"]["state"] == "teach_back"
+    assert after_view["runtime"]["learning_flow"]["active_state"] == "teach_back"
 
     async def event_routes():
         async with async_session() as db:
@@ -385,6 +399,8 @@ def test_task_can_materialize_saved_lecture_and_questions(client: TestClient):
     current_task = client.get(f"/api/learning-tasks/{body['id']}").json()
     paused_task = _action(client, current_task, "pause")
     assert paused_task["status"] == "paused"
+    assert paused_task["runtime"]["learning_flow"]["state"] == "paused"
+    assert paused_task["runtime"]["learning_flow"]["active_state"] == "teach_back"
     assert client.get(
         f"/api/micro-learning/runs/{body['micro_learning_run_id']}"
     ).json()["status"] == "paused"

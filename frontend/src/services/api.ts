@@ -1223,6 +1223,14 @@ export interface LearningTask {
       review_items: number
     }
     state_boundary: Record<string, string>
+    learning_flow: {
+      kind: LearningTaskSurfaceKind
+      state: string
+      active_state: string
+      status: string
+      completed_items: number
+      total_items: number
+    }
   }
   available_actions: string[]
   version: number

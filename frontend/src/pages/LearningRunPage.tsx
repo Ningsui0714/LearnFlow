@@ -4,7 +4,7 @@ import {
   Lightbulb, ListTodo, Loader2, MessageCircle, Pause, Play, RefreshCw,
   RotateCcw, Send, ShieldCheck, Sparkles, X,
 } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import RemediationPanel from '../components/exercise/RemediationPanel'
 import TutorPanel from '../components/tutor/TutorPanel'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
@@ -19,10 +19,30 @@ import {
 import type { MicroLearningQuestion, MicroLearningRun } from '../services/api'
 
 
-const STEP_LABELS = ['学习卡', '费曼复述', '诊断反馈', '独立验证', '复习安排']
+const STEP_LABELS = ['讲义', '引导练习', '练习反馈', '独立验证', '复习安排']
 
 function actionId(prefix: string) {
   return `${prefix}-${Date.now()}-${crypto.randomUUID()}`
+}
+
+function LearningCardContent({ card }: { card: MicroLearningRun['learning_card'] }) {
+  return (
+    <>
+      <section>
+        <h2 className="text-sm font-semibold text-slate-900">先抓住这几个关键关系</h2>
+        <ol className="mt-3 space-y-3">
+          {(card.key_points || []).map((point, index) => (
+            <li key={`${index}-${point}`} className="flex gap-3 text-sm leading-7 text-slate-700"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{index + 1}</span><span>{point}</span></li>
+          ))}
+        </ol>
+      </section>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <section className="rounded-2xl bg-indigo-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-indigo-950"><Sparkles size={15} />具体例子</h2><p className="mt-2 text-sm leading-6 text-indigo-900/80">{card.example}</p></section>
+        <section className="rounded-2xl bg-amber-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-amber-950"><Lightbulb size={15} />容易混淆</h2><p className="mt-2 text-sm leading-6 text-amber-900/80">{card.common_confusion}</p></section>
+      </div>
+      <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-600"><strong className="text-slate-900">本轮完成标准：</strong>{card.success_criteria}</div>
+    </>
+  )
 }
 
 function QuestionCard({
@@ -114,6 +134,7 @@ function QuestionCard({
 export default function LearningRunPage() {
   const { runId } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const numericRunId = Number(runId)
   const [run, setRun] = useState<MicroLearningRun | null>(null)
   const [loading, setLoading] = useState(true)
@@ -170,6 +191,11 @@ export default function LearningRunPage() {
       setPendingRun(null)
       setRetrying(false)
       setRemediation(next.remediation || null)
+      if (action === 'complete_card' && searchParams.has('view')) {
+        const nextParams = new URLSearchParams(searchParams)
+        nextParams.delete('view')
+        setSearchParams(nextParams, { replace: true })
+      }
     } catch (requestError: any) {
       setError(requestError?.response?.data?.detail || requestError.message)
     } finally {
@@ -279,6 +305,31 @@ export default function LearningRunPage() {
     }
   }
 
+  const lectureReferenceOpen = Boolean(
+    run && run.state !== 'learning_card' && searchParams.get('view') === 'lecture',
+  )
+
+  const openLectureReference = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.set('view', 'lecture')
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
+
+  const closeLectureReference = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('view')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  useEffect(() => {
+    if (!lectureReferenceOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeLectureReference()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [closeLectureReference, lectureReferenceOpen])
+
   if (loading) {
     return <div className="flex h-screen items-center justify-center bg-slate-50 text-slate-500"><Loader2 className="mr-2 animate-spin" />正在恢复学习现场…</div>
   }
@@ -303,7 +354,6 @@ export default function LearningRunPage() {
     && card.generation_mode === 'deterministic_fallback'
     && !String(card.generation_source || '').startsWith('curated.')
   )
-
   return (
     <div className="min-h-screen bg-[#f6f7f4] text-slate-900">
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur">
@@ -324,7 +374,10 @@ export default function LearningRunPage() {
             </button>
           )}
           {managementNavigation && (
-            <button type="button" onClick={() => navigate(managementNavigation.path)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><ListTodo size={14} />计划与文件</button>
+            <button type="button" onClick={() => navigate(managementNavigation.path)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><ListTodo size={14} />任务与学习包</button>
+          )}
+          {run.state !== 'learning_card' && (
+            <button type="button" onClick={openLectureReference} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100"><BookOpen size={14} />回看讲义</button>
           )}
           <button type="button" onClick={() => setTutorOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"><MessageCircle size={14} />问 Tutor</button>
         </div>
@@ -355,6 +408,9 @@ export default function LearningRunPage() {
             </div>
           ))}
         </div>
+        <div className="mb-6 rounded-2xl border border-indigo-100 bg-indigo-50/70 px-4 py-3 text-xs leading-5 text-indigo-950" data-testid="learning-package-usage-note">
+          <strong>这是一份按顺序使用的学习包：</strong>讲义负责建立理解，复述是低风险引导练习；只有独立验证题的正式提交才会形成能力证据，答错后自动进入纠正与变式。
+        </div>
 
         {paused && (
           <section className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm">
@@ -373,19 +429,7 @@ export default function LearningRunPage() {
               <p className="mt-3 text-sm leading-7 text-slate-600">{card.objective}</p>
             </div>
             <div className="space-y-7 p-5 sm:p-8">
-              <section>
-                <h2 className="text-sm font-semibold text-slate-900">先抓住这几个关键关系</h2>
-                <ol className="mt-3 space-y-3">
-                  {(card.key_points || []).map((point, index) => (
-                    <li key={`${index}-${point}`} className="flex gap-3 text-sm leading-7 text-slate-700"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">{index + 1}</span><span>{point}</span></li>
-                  ))}
-                </ol>
-              </section>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <section className="rounded-2xl bg-indigo-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-indigo-950"><Sparkles size={15} />具体例子</h2><p className="mt-2 text-sm leading-6 text-indigo-900/80">{card.example}</p></section>
-                <section className="rounded-2xl bg-amber-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-amber-950"><Lightbulb size={15} />容易混淆</h2><p className="mt-2 text-sm leading-6 text-amber-900/80">{card.common_confusion}</p></section>
-              </div>
-              <div className="rounded-2xl border border-slate-200 p-4 text-sm text-slate-600"><strong className="text-slate-900">本轮完成标准：</strong>{card.success_criteria}</div>
+              <LearningCardContent card={card} />
               <button type="button" disabled={!!busy} onClick={() => updateFlow('complete_card')} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">我读完了，开始复述 <ChevronRight size={16} /></button>
             </div>
           </article>
@@ -442,12 +486,28 @@ export default function LearningRunPage() {
               <div className="rounded-2xl bg-amber-50 p-4"><span className="text-xs text-amber-800">经过纠错后通过</span><strong className="mt-1 block text-lg text-amber-950">{run.summary.remediated_question_ids?.length || 0} 题</strong></div>
             </div>
             <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-indigo-950"><CalendarClock size={16} />下一次复习</h2><p className="mt-2 text-sm leading-6 text-indigo-900/80">{run.summary.review_due_at ? new Date(run.summary.review_due_at).toLocaleString('zh-CN') : '复习计划已建立，可前往复习台查看。'}</p><p className="mt-1 text-xs text-indigo-700">{run.summary.next_step}</p></div>
-            <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => navigate('/review')} className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white"><CalendarClock size={16} />查看复习计划</button><button type="button" onClick={() => navigate(run.learning_task?.path || '/tasks')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"><RotateCcw size={16} />返回任务与文件</button></div>
+            <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => navigate('/review')} className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white"><CalendarClock size={16} />查看复习计划</button><button type="button" onClick={() => navigate(run.learning_task?.path || '/tasks')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"><RotateCcw size={16} />返回任务与学习包</button></div>
           </section>
         )}
 
         {error && <p className="mt-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
       </main>
+
+      {lectureReferenceOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-3 sm:p-6" onClick={closeLectureReference}>
+          <article role="dialog" aria-modal="true" aria-label="讲义回看" className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+            <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-indigo-100 bg-indigo-50/95 px-5 py-4 backdrop-blur sm:px-8">
+              <div>
+                <p className="flex items-center gap-2 text-xs font-semibold text-indigo-800"><BookOpen size={14} />讲义回看 · 不改变当前任务步骤</p>
+                <h1 className="mt-2 text-xl font-bold text-slate-950">{card.title}</h1>
+                <p className="mt-1 text-xs leading-5 text-slate-600">{card.objective}</p>
+              </div>
+              <button type="button" onClick={closeLectureReference} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-slate-500 shadow-sm hover:text-slate-900" aria-label="关闭讲义回看"><X size={17} /></button>
+            </header>
+            <div className="space-y-7 p-5 sm:p-8"><LearningCardContent card={card} /></div>
+          </article>
+        </div>
+      )}
 
       {tutorOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/30" onClick={() => setTutorOpen(false)}>

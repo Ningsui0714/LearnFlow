@@ -1184,7 +1184,11 @@ def task_execution_navigation(task: LearningTask) -> dict[str, Any]:
     return task_management_navigation(task)
 
 
-def _runtime_projection(task: LearningTask) -> dict[str, Any]:
+def _runtime_projection(
+    task: LearningTask,
+    *,
+    learning_flow: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     artifacts = list(task.artifact_refs or [])
     lecture = next((item for item in artifacts if item.get("type") == "managed_lecture"), None)
     question_set = next((
@@ -1248,6 +1252,14 @@ def _runtime_projection(task: LearningTask) -> dict[str, Any]:
             "ability": "graded_attempts_only",
             "stability": "spaced_review_only",
         },
+        "learning_flow": learning_flow or {
+            "kind": task_execution_navigation(task)["kind"],
+            "state": str((current or {}).get("kind") or task.current_phase_id or "pending"),
+            "active_state": str((current or {}).get("kind") or task.current_phase_id or "pending"),
+            "status": task.status,
+            "completed_items": 0,
+            "total_items": 0,
+        },
     }
 
 
@@ -1267,6 +1279,24 @@ def _available_actions(task: LearningTask) -> list[str]:
 
 async def learning_task_view(db: AsyncSession, task: LearningTask) -> dict[str, Any]:
     await reconcile_learning_task(db, task)
+    learning_flow = None
+    if task.micro_learning_run_id:
+        run = await db.get(MicroLearningRun, task.micro_learning_run_id)
+        if run and run.learner_id == task.learner_id:
+            verification = dict(run.verification or {})
+            question_ids = list(verification.get("question_ids") or [])
+            completed_ids = list(verification.get("completed_question_ids") or [])
+            active_state = run.state
+            if run.state == "paused":
+                active_state = str((run.skill_plan or {}).get("resume_state") or "learning_card")
+            learning_flow = {
+                "kind": "focused_learning",
+                "state": run.state,
+                "active_state": active_state,
+                "status": run.status,
+                "completed_items": len(completed_ids),
+                "total_items": len(question_ids),
+            }
     revisions = list((await db.execute(select(LearningTaskPlanRevision).where(
         LearningTaskPlanRevision.learning_task_id == task.id,
     ).order_by(LearningTaskPlanRevision.version.desc()).limit(12))).scalars().all())
@@ -1296,7 +1326,7 @@ async def learning_task_view(db: AsyncSession, task: LearningTask) -> dict[str, 
         "navigation": task_execution_navigation(task),
         "origin_navigation": task_origin_navigation(task),
         "management_navigation": task_management_navigation(task),
-        "runtime": _runtime_projection(task),
+        "runtime": _runtime_projection(task, learning_flow=learning_flow),
         "available_actions": _available_actions(task),
         "version": task.version,
         "accepted_at": task.accepted_at.isoformat() if task.accepted_at else None,
