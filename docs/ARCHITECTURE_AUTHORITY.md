@@ -142,14 +142,15 @@ Tutor 识别或用户创建任务
 
 `/agent` 与 `/agent/:sessionId` 是独立学习对话空间。学习者可以拥有多段 global Session，
 项目则是对话可以创建、进入或挂载的长期上下文，不是开始学习前的必选入口。清晰讲解、
-苏格拉底追问和费曼复述等学习方法由当前 Session 调用；选择结果保存在 Session 上，
+苏格拉底追问、费曼复述和示例渐隐等学习方法由当前 Session 调用；选择结果保存在 Session 上，
 `learning_skill_selected` 只记录零 Kernel target 的操作事实，不构成偏好巩固或掌握证据。
 Tutor 可以推荐已登记 Skill，但未得到用户选择时不得声称已经切换。
 
-苏格拉底与费曼方法使用 Session 范围的 `LearningSkillRun` 确定性状态机：状态迁移、
-轮次预算、暂停恢复和验证准入不由 LLM 决定。运行事件的 Kernel target 全部为空；
+四种首批方法都使用 Session 范围的 `LearningSkillRun` 确定性状态机，并在启动时绑定同一
+learner-visible `LearningTask`：状态迁移、轮次预算、暂停恢复、任务同步和验证准入不由
+LLM 决定。运行事件及任务同步事件的 Kernel target 全部为空；
 对话回答、追问和复述只用于教学与诊断。达到 `verification_ready` 后，学习者必须主动
-创建既有 `MicroLearningRun` 附件，随后才由 `LearningAttempt`、纠错和复习链产生能力
+在同一任务上创建既有 `MicroLearningRun` 附件，随后才由 `LearningAttempt`、纠错和复习链产生能力
 证据。详细状态、API、迁移和初步对比见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
 `/learn/:runId` 是 Learning Task 可以按需物化的专注工作台附件，由 Tutor 控制 Agent 所有，并通过

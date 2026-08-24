@@ -109,7 +109,7 @@ Tutor 在普通聊天中发现一个适合形成闭环的原子目标时，只�
 
 | Phase | 目的 | 可组合能力 |
 |---|---|---|
-| `learn` | 建立可解释理解 | 清晰讲解、苏格拉底追问、费曼复述、来源讲义、可视化 |
+| `learn` | 建立可解释理解 | 清晰讲解、苏格拉底追问、费曼复述、示例渐隐、来源讲义、可视化 |
 | `practice` | 主动尝试并暴露缺口 | 概念题、代码练习、产物任务、纠错闭环 |
 | `verify` | 形成独立正式证据 | 无提示作答、测试、变式迁移 |
 | `consolidate` | 转交复习队列 | `ReviewSchedule` 创建与 `/review` 导航 |
@@ -208,6 +208,13 @@ LearningAttempt -> EvidenceEvent -> reducer -> KernelMutation -> Memory Graph
 - 把微学习产生的单关卡 Project 标记为 `task_artifact/internal`，不再出现在真实项目列表。
 - 保留旧 `/learn/:runId`、项目关卡、Attempt、ReviewSchedule 和所有证据 ID。
 - 旧后台 `tasks` 表和 `/api/tasks/{id}` 保持原语义，不做重命名。
+
+`v16-atomic-learning-skill-runtime` 在此基础上增加 SkillRun 到 LearningTask 的可空引用：
+
+- 四种运行型 Skill 启动时即创建或复用同 Session、同目标的原子任务；
+- Skill 暂停、恢复和完成教学阶段会同步任务的运行投影，但全部保持零 Kernel target；
+- 开始验证时在同一任务上物化 MicroLearningRun，不再产生第二个任务身份；
+- 旧 SkillRun 若已经关联 MicroLearningRun，会按 learner ownership 回填现有任务引用。
 
 ## 11. 外部架构参考
 

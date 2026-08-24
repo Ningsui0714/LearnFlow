@@ -504,7 +504,7 @@ export default function TutorPanel({
     setLoading(true)
     try {
       const data = await startLearningSkillRun(sessionId, {
-        skill_id: recommendation.skill.id as 'socratic_dialogue' | 'feynman_dialogue',
+        skill_id: recommendation.skill.id as 'guided_explanation' | 'socratic_dialogue' | 'feynman_dialogue' | 'worked_example_fading',
         goal,
         client_request_id: globalThis.crypto?.randomUUID?.() || `skill-run-${sessionId}-${Date.now()}`,
       })
@@ -817,7 +817,7 @@ export default function TutorPanel({
               {activeSkill?.name || '自动选择方法'}
               <ChevronDown size={13} className={skillMenuOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
             </button>
-            <span className="hidden text-[11px] text-slate-400 sm:inline">Skill 只改变这段对话的教学方式</span>
+            <span className="hidden text-[11px] text-slate-400 sm:inline">明确目标后，Skill 会建立可恢复的原子学习任务</span>
             {skillMenuOpen && (
               <div className="absolute bottom-10 left-0 z-30 w-[min(22rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-2xl">
                 <button

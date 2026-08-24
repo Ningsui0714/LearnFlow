@@ -128,7 +128,9 @@ def test_learning_task_runtime_is_registered_as_zero_evidence_coordination():
 def test_conversational_learning_skills_are_registered_without_mastery_side_effects():
     assert {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+        "worked_example_fading",
     } == {item["id"] for item in selectable_learning_skill_manifest()}
+    assert all(item["atomic_task_capable"] for item in selectable_learning_skill_manifest())
     assert "use_learning_skill" in ACTION_BOARD
     assert CAPABILITY_OWNERS["use_learning_skill"] == (
         "tutor_agent", "tutor_context", "global_tutor",
@@ -158,6 +160,8 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
     )
     assert "learning_skill_runtime" in SKILLS["socratic_dialogue"].tools
     assert "learning_skill_runtime" in SKILLS["feynman_dialogue"].tools
+    assert "learning_task_runtime" in SKILLS["guided_explanation"].tools
+    assert "learning_task_runtime" in SKILLS["worked_example_fading"].tools
     assert len(AGENTS) == 3
 
 

@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-24.1"
+REGISTRY_VERSION = "2026-08-24.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -90,6 +90,9 @@ class SkillContract:
     description: str = ""
     invocation_prompt: str = ""
     aliases: tuple[str, ...] = ()
+    best_for: tuple[str, ...] = ()
+    avoid_when: tuple[str, ...] = ()
+    atomic_task_capable: bool = False
 
 
 @dataclass(frozen=True)
@@ -234,9 +237,11 @@ SKILLS = {
                       "structured intent + auditable action/handoff", "Action Board"),
         SkillContract(
             "guided_explanation", "清晰讲解", "tutor_agent",
-            ("tutor_context", "context_packet_assembler"),
-            "one focused explanation + one example + one optional check question",
-            "Tutor session instruction; never mastery evidence",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+             "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
+             "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
+            "task-linked explanation -> example -> self-explanation -> verified workbench handoff",
+            "deterministic SkillRun + LearningTask; explanation never counts as mastery",
             learner_selectable=True,
             description="先讲清核心，再用一个例子确认理解。",
             invocation_prompt=(
@@ -245,12 +250,17 @@ SKILLS = {
                 "不要把讲解或用户自述当作掌握证据。"
             ),
             aliases=("清晰讲解", "直接讲解", "讲解模式"),
+            best_for=("陌生概念", "认知负荷较高", "需要先建立最小心智模型"),
+            avoid_when=("学习者明确要求自己推导", "目标主要是程序性步骤练习"),
+            atomic_task_capable=True,
         ),
         SkillContract(
             "socratic_dialogue", "苏格拉底追问", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime"),
-            "bounded resumable one-question-at-a-time dialogue -> verified workbench handoff",
-            "deterministic SkillRun state machine; learner may request a direct answer",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+             "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
+             "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
+            "task-linked bounded one-question-at-a-time dialogue -> verified workbench handoff",
+            "deterministic SkillRun + LearningTask; learner may request a direct answer",
             learner_selectable=True,
             description="用连续的小问题，引导你自己推到答案。",
             invocation_prompt=(
@@ -259,12 +269,18 @@ SKILLS = {
                 "如果学习者明确要求直接解释，应尊重选择并切换为简明说明。追问结果本身不是掌握证据。"
             ),
             aliases=("苏格拉底", "苏格拉底追问", "启发式提问"),
+            best_for=("因果推理", "证明与不变量", "已有部分直觉但需要暴露假设"),
+            avoid_when=("完全陌生且没有可调用的先备知识", "学习者明确要求直接解释"),
+            atomic_task_capable=True,
         ),
         SkillContract(
             "feynman_dialogue", "费曼复述", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime"),
-            "bounded resumable teach-back scaffold -> verified workbench handoff",
-            "deterministic SkillRun state machine; graded analyzer is required for evidence",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+             "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
+             "teach_back_analyzer", "deterministic_assessment", "deterministic_remediation",
+             "review_scheduler"),
+            "task-linked bounded teach-back scaffold -> verified workbench handoff",
+            "deterministic SkillRun + LearningTask; graded analyzer is required for evidence",
             learner_selectable=True,
             description="请你用自己的话讲一遍，再一起找出模糊处。",
             invocation_prompt=(
@@ -273,6 +289,28 @@ SKILLS = {
                 "普通对话反馈不能宣布掌握；需要形成学习证据时，只能建议进入已登记的可验证微学习。"
             ),
             aliases=("费曼", "费曼学习", "费曼复述"),
+            best_for=("查漏补缺", "组织概念关系", "已有接触后检验能否说清"),
+            avoid_when=("尚未接触主题", "程序性任务只需要先看步骤示范"),
+            atomic_task_capable=True,
+        ),
+        SkillContract(
+            "worked_example_fading", "示例渐隐", "tutor_agent",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+             "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
+             "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
+            "task-linked subgoal-labeled example -> faded completion -> independent verification",
+            "deterministic backward-fading SkillRun + LearningTask; final evidence is independently graded",
+            learner_selectable=True,
+            description="先拆解一个完整示例，再逐步撤掉步骤让你独立完成。",
+            invocation_prompt=(
+                "当前对话已由学习者选择“示例渐隐”技能。围绕目标给出一个小而完整、按子目标分段的"
+                "示例；随后优先从最后一步开始撤去答案，让学习者补全，再逐步增加独立部分。"
+                "每轮只要求一个可检查动作；示例模仿或有提示完成不能作为独立掌握证据。"
+            ),
+            aliases=("示例渐隐", "渐隐示例", "带我做一遍", "先示范再让我做"),
+            best_for=("代码与算法步骤", "配置和工具流程", "新手程序性问题求解"),
+            avoid_when=("只需事实解释", "已经能独立完成且只需迁移验证"),
+            atomic_task_capable=True,
         ),
         SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
                       ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
@@ -512,13 +550,16 @@ def capability_manifest() -> list[dict[str, Any]]:
     return result
 
 
-def selectable_learning_skill_manifest() -> list[dict[str, str]]:
+def selectable_learning_skill_manifest() -> list[dict[str, Any]]:
     """Return the learner-facing portion of registered conversational skills."""
     return [
         {
             "id": skill.id,
             "name": skill.name,
             "description": skill.description,
+            "best_for": list(skill.best_for),
+            "avoid_when": list(skill.avoid_when),
+            "atomic_task_capable": skill.atomic_task_capable,
         }
         for skill in SKILLS.values()
         if skill.learner_selectable

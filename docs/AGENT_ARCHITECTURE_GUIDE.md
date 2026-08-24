@@ -313,19 +313,20 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 附件。前端不得以固定学习方法表单替代 Session，也不得让右侧上下文 Tutor 与独立对话
 同时竞争主输入。
 
-学习者可在输入区选择“清晰讲解、苏格拉底追问、费曼复述”，也可用自然语言明确切换。
+学习者可在输入区选择“清晰讲解、苏格拉底追问、费曼复述、示例渐隐”，也可用自然语言明确切换。
 Tutor 可以推荐注册表中的 learner-selectable Skill，但不能静默切换。普通对话中的 Skill
 只改变教学行为；讲解、追问或复述反馈都不是掌握证据。需要可评分证据时，必须进入已有
 确定性评估或 `verified_micro_learning` 流程。
 
-`socratic_dialogue` 与 `feynman_dialogue` 由 `LearningSkillRun` 保存 Session 范围的目标、
-当前步骤、轮次预算、暂停点与验证引用。Tutor LLM MUST 服从确定性 runtime 给出的当前步
+四种首批方法都由 `LearningSkillRun` 保存 Session 范围的目标、当前步骤、轮次预算、暂停
+点、`LearningTask` 与验证引用。SkillRun 启动时 MUST 建立或复用同目标原子任务，并同步
+暂停、恢复和教学阶段完成；这些同步不得写入五核。Tutor LLM MUST 服从确定性 runtime 给出的当前步
 指令，MUST NOT 改变状态或自行宣布完成。自适应推荐 MUST 返回待确认卡；接受、拒绝、暂停、
 恢复和独立验证均由显式用户动作触发。运行事件 MUST 保持零 Kernel target。
 
 ```text
-Tutor Session -> confirmed SkillRun -> bounded dialogue
-  -> verification_ready -> explicit verification handoff
+Tutor Session -> confirmed SkillRun + LearningTask -> bounded dialogue
+  -> verification_ready -> same-task verification handoff
   -> MicroLearningRun -> graded attempts / remediation / review
 ```
 
@@ -345,7 +346,8 @@ start_micro_learning
 `MicroLearningRun` MUST 只作为可恢复流程投影。服务端 MUST 根据已有 `LearningAttempt` 和 `RemediationCase` 重建题目进度，MUST 过滤答案与私有变式契约，并使用 `expected_version` 和客户端幂等 ID。生成模型 MAY 生成学习卡和题目候选，但服务端 MUST 校验题型、答案索引与变式；费曼复述只做确定性覆盖诊断。完成一轮 MUST NOT 宣布稳定掌握，微学习题的同 session 多题正确也不得绕过跨时间复习门槛。
 
 微学习产品契约见 `docs/MICRO_LEARNING_MVP.md`；对话状态机、SkillRun API、事件和冻结
-样例比对见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
+样例比对见 `docs/CONVERSATION_SKILL_RUNTIME.md`；方法选型与研究依据见
+`docs/ATOMIC_LEARNING_SKILLS.md`。
 
 ### 8.4 用户成长工作台
 

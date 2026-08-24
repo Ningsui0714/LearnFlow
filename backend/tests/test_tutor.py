@@ -9,7 +9,7 @@ from app.main import app
 from app.db.database import async_session, init_db
 from app.models.learning import (
     AgentMessage, AgentSession, EvidenceEvent, KernelMutation, KernelState,
-    LearningProjectProposal, LearningSkillRun, MicroLearningRun, SchemaMigration,
+    LearningProjectProposal, LearningSkillRun, LearningTask, MicroLearningRun, SchemaMigration,
 )
 from app.models.project import (
     Project, Source, Chunk, Roadmap, Checkpoint, CheckpointChunk, Lecture, Exercise,
@@ -48,8 +48,11 @@ def no_background_tasks(monkeypatch):
     monkeypatch.setattr(manager, "submit", submit)
 
 
-def new_session(client: TestClient) -> int:
-    response = client.post("/api/agent/sessions", json={"session_type": "global"})
+def new_session(client: TestClient, *, create_new: bool = True) -> int:
+    response = client.post("/api/agent/sessions", json={
+        "session_type": "global",
+        "create_new": create_new,
+    })
     assert response.status_code == 200
     return response.json()["id"]
 
@@ -68,6 +71,7 @@ def test_independent_global_chats_invoke_registered_session_skills(client: TestC
     assert skills.status_code == 200
     assert {item["id"] for item in skills.json()} == {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+        "worked_example_fading",
     }
 
     turn = client.post(f"/api/agent/sessions/{first.json()['id']}/turns", json={
@@ -118,6 +122,8 @@ def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
     assert run["state"] == "eliciting_prior_model"
     assert run["turn_count"] == 0
     assert run["verification_required"] is True
+    assert run["learning_task"]["status"] == "active"
+    assert run["learning_task"]["current_phase_id"] == "learn"
     assert opening.json()["executed_action"] is None
 
     responses = (
@@ -158,6 +164,8 @@ def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
     assert paused.status_code == 200, paused.text
     paused_run = paused.json()["active_skill_run"]
     assert paused_run["status"] == "paused"
+    paused_task = client.get(f"/api/learning-tasks/{paused_run['learning_task']['id']}").json()
+    assert paused_task["status"] == "paused"
     replayed_pause = client.post(
         f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
         json={
@@ -189,6 +197,9 @@ def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
     assert resumed.status_code == 200, resumed.text
     resumed_run = resumed.json()["active_skill_run"]
     assert resumed_run["state"] == "verification_ready"
+    resumed_task = client.get(f"/api/learning-tasks/{resumed_run['learning_task']['id']}").json()
+    assert resumed_task["status"] == "active"
+    assert resumed_task["plan"]["phases"][0]["status"] == "completed"
 
     verification = client.post(
         f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/actions",
@@ -202,6 +213,10 @@ def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
     assert body["active_skill_run"]["state"] == "verification_in_progress"
     assert body["learning_run"]["goal"] == run["goal"]
     assert body["learning_run"]["state"] == "learning_card"
+    materialized_task = client.get(
+        f"/api/learning-tasks/{body['active_skill_run']['learning_task']['id']}"
+    ).json()
+    assert materialized_task["micro_learning_run_id"] == body["learning_run"]["id"]
 
     async def complete_verification_projection():
         async with async_session() as db:
@@ -281,7 +296,7 @@ def test_adaptive_tutor_recommends_but_does_not_silently_activate_skill(client: 
     assert replayed.json()["created"] is False
 
 
-def test_adaptive_tutor_uses_plain_explanation_without_a_runtime_card(client: TestClient):
+def test_adaptive_tutor_recommends_guided_explanation_without_silent_activation(client: TestClient):
     session = client.post("/api/agent/sessions", json={
         "session_type": "global", "create_new": True,
     }).json()
@@ -293,7 +308,20 @@ def test_adaptive_tutor_uses_plain_explanation_without_a_runtime_card(client: Te
     assert turn.status_code == 200, turn.text
     assert turn.json()["active_skill"] is None
     assert turn.json()["active_skill_run"] is None
-    assert turn.json()["skill_recommendation"] is None
+    assert turn.json()["skill_recommendation"]["skill"]["id"] == "guided_explanation"
+    assert turn.json()["skill_recommendation"]["requires_confirmation"] is True
+    accepted = client.post(f"/api/agent/sessions/{session['id']}/skill-runs", json={
+        "skill_id": "guided_explanation",
+        "goal": "哈希表",
+        "client_request_id": f"guided-accept-{uuid.uuid4().hex}",
+    })
+    assert accepted.status_code == 200, accepted.text
+    run = accepted.json()["active_skill_run"]
+    assert run["state"] == "presenting_core_model"
+    assert run["learning_task"]["status"] == "active"
+    assert "guided_explanation" in client.get(
+        f"/api/learning-tasks/{run['learning_task']['id']}"
+    ).json()["plan"]["phases"][0]["methods"]
 
 
 def test_feynman_skill_run_uses_a_distinct_bounded_workflow(client: TestClient):
@@ -326,6 +354,52 @@ def test_feynman_skill_run_uses_a_distinct_bounded_workflow(client: TestClient):
         assert run["state"] == expected_state
     assert run["turn_count"] == run["turn_budget"] == 3
     assert run["can_start_verification"] is True
+    cleared = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "先退出这个方法，后面再继续。",
+        "selected_skill_id": "adaptive",
+        "client_turn_id": f"feynman-clear-{uuid.uuid4().hex}",
+    })
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["active_skill"] is None
+
+
+def test_worked_example_fading_is_task_linked_and_bounded(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    first = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "先示范再让我做：用 Python 写二分查找",
+        "selected_skill_id": "worked_example_fading",
+        "client_turn_id": f"worked-open-{uuid.uuid4().hex}",
+    })
+    assert first.status_code == 200, first.text
+    run = first.json()["active_skill_run"]
+    assert run["state"] == "studying_worked_example"
+    assert run["learning_task"]["status"] == "active"
+    assert "worked_example_fading" in client.get(
+        f"/api/learning-tasks/{run['learning_task']['id']}"
+    ).json()["plan"]["phases"][0]["methods"]
+
+    for index, expected_state in enumerate((
+        "completing_last_step", "solving_faded_example", "verification_ready",
+    )):
+        advanced = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+            "message": f"这是第 {index + 1} 次补全，我按子目标完成对应步骤。",
+            "selected_skill_id": "worked_example_fading",
+            "client_turn_id": f"worked-{index}-{uuid.uuid4().hex}",
+        })
+        assert advanced.status_code == 200, advanced.text
+        run = advanced.json()["active_skill_run"]
+        assert run["state"] == expected_state
+    assert run["turn_count"] == run["turn_budget"] == 3
+    assert run["can_start_verification"] is True
+    cleared = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "先退出这个方法，后面再继续。",
+        "selected_skill_id": "adaptive",
+        "client_turn_id": f"worked-clear-{uuid.uuid4().hex}",
+    })
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["active_skill"] is None
 
 
 def test_conversation_skill_runtime_migration_is_idempotent(client: TestClient):
@@ -336,9 +410,10 @@ def test_conversation_skill_runtime_migration_is_idempotent(client: TestClient):
         await init_db()
         async with async_session() as db:
             markers = list((await db.execute(select(SchemaMigration).where(
-                SchemaMigration.version == "v14-conversation-skill-runtime",
+                SchemaMigration.version == "v16-atomic-learning-skill-runtime",
             ))).scalars().all())
             await db.execute(select(LearningSkillRun.id).limit(1))
+            await db.execute(select(LearningTask.id).limit(1))
             return len(markers)
 
     assert asyncio.run(scenario()) == 1
@@ -728,7 +803,7 @@ def test_global_main_agent_references_active_project_without_becoming_project_tu
     assert created["state_summary"]["active_project"] is None
     assert created["state_summary"]["referenced_project"]["id"] == project_id
 
-    global_session_id = new_session(client)
+    global_session_id = new_session(client, create_new=False)
     assert global_session_id == project_session_id
     resumed = client.get(f"/api/agent/sessions/{global_session_id}").json()
     assert resumed["session_type"] == "global"

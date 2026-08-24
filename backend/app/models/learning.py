@@ -402,6 +402,9 @@ class LearningSkillRun(Base):
     turn_budget = Column(Integer, nullable=False, default=5)
     run_data = Column(JSON, default=dict)
     action_log = Column(JSON, default=list)
+    learning_task_id = Column(
+        Integer, ForeignKey("learning_tasks.id"), nullable=True, index=True,
+    )
     micro_learning_run_id = Column(
         Integer, ForeignKey("micro_learning_runs.id"), nullable=True, index=True,
     )

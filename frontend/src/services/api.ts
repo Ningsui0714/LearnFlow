@@ -341,6 +341,9 @@ export interface LearningSkill {
   id: string
   name: string
   description: string
+  best_for?: string[]
+  avoid_when?: string[]
+  atomic_task_capable?: boolean
 }
 
 export interface LearningSkillRecommendation {
@@ -371,6 +374,15 @@ export interface LearningSkillRun {
   can_resume: boolean
   verification_required: boolean
   evidence_note: string
+  learning_task?: {
+    id: number
+    title: string
+    status: string
+    current_phase_id: string
+    plan_version: number
+    version: number
+    path: string
+  } | null
   micro_learning_run?: {
     id: number
     goal: string
@@ -404,7 +416,11 @@ export const listLearningSkills = () =>
 
 export const startLearningSkillRun = (
   sessionId: number,
-  data: { skill_id: 'socratic_dialogue' | 'feynman_dialogue'; goal: string; client_request_id: string },
+  data: {
+    skill_id: 'guided_explanation' | 'socratic_dialogue' | 'feynman_dialogue' | 'worked_example_fading'
+    goal: string
+    client_request_id: string
+  },
 ) => api.post(`/agent/sessions/${sessionId}/skill-runs`, data).then(r => r.data)
 
 export const updateLearningSkillRun = (

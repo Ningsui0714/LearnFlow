@@ -95,9 +95,36 @@ def _now() -> datetime:
 def _available_plan_skills() -> set[str]:
     return {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+        "worked_example_fading",
         "evidence_grounded_teaching", "verified_micro_learning",
         "practice_verification", "remediation_loop", "spaced_review",
     } & set(SKILLS)
+
+
+def _available_plan_skill_catalog() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": skill_id,
+            "name": SKILLS[skill_id].name,
+            "best_for": list(SKILLS[skill_id].best_for),
+            "avoid_when": list(SKILLS[skill_id].avoid_when),
+            "atomic_task_capable": SKILLS[skill_id].atomic_task_capable,
+        }
+        for skill_id in sorted(_available_plan_skills())
+    ]
+
+
+def _default_lead_skill(objective: str) -> str:
+    normalized = "".join(_clean(objective, 1_000).casefold().split())
+    if any(marker in normalized for marker in (
+        "写代码", "实现", "配置", "调试", "算法步骤", "命令", "操作流程", "解题步骤",
+    )):
+        return "worked_example_fading"
+    if any(marker in normalized for marker in (
+        "为什么", "证明", "推导", "不变量", "因果",
+    )):
+        return "socratic_dialogue"
+    return "guided_explanation"
 
 
 def _compact_planner_context(projection: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -130,7 +157,7 @@ def _fallback_plan(
     learn_methods = preferred[:2]
     if not learn_methods:
         learn_methods = [
-            "evidence_grounded_teaching" if origin_kind == "checkpoint" else "guided_explanation"
+            "evidence_grounded_teaching" if origin_kind == "checkpoint" else _default_lead_skill(objective)
         ]
     human = dict(learner_context.get("human") or {})
     knowledge = dict(learner_context.get("knowledge") or {})
@@ -320,7 +347,7 @@ async def generate_learning_task_plan(
             estimated_minutes=estimated_minutes,
             preferred_skills=preferred_skills or [],
             learner_context=json.dumps(learner_context or {}, ensure_ascii=False),
-            available_skills=sorted(_available_plan_skills()),
+            available_skills=json.dumps(_available_plan_skill_catalog(), ensure_ascii=False),
             reason=reason,
             learner_direction=learner_direction or "未指定",
         ))])
@@ -1161,6 +1188,77 @@ async def materialize_learning_task(
             db, task, "learning_task_started", source="learning_task",
             suffix=f"started:materialized:{client_request_id}",
         )
+    return task
+
+
+async def advance_learning_task_from_skill(
+    db: AsyncSession,
+    *,
+    task: LearningTask,
+    skill_run_id: int,
+    action: str,
+    operation_id: str,
+) -> LearningTask:
+    """Project a deterministic SkillRun milestone into its operational task.
+
+    These transitions never create learning evidence. They only keep the task
+    queue aligned with the bounded conversational workflow.
+    """
+    action_key = f"skill-run:{skill_run_id}:{action}:{operation_id}"
+    if _already_logged(task, action_key):
+        return task
+    event_type = ""
+    phase_id = ""
+    if action == "start" and task.status == "queued":
+        task.status = "active"
+        task.started_at = task.started_at or _now()
+        task.current_phase_id = next(iter(_phase_map(task)), "")
+        event_type = "learning_task_started"
+    elif action == "pause" and task.status == "active":
+        task.status = "paused"
+        event_type = "learning_task_paused"
+    elif action == "resume" and task.status == "paused":
+        task.status = "active"
+        task.started_at = task.started_at or _now()
+        event_type = "learning_task_resumed"
+    elif action == "complete_learn" and task.status == "active":
+        learn_phase = next(
+            (
+                phase for phase in _phase_map(task).values()
+                if phase.get("kind") == "learn" and phase.get("status") != "completed"
+            ),
+            None,
+        )
+        if not learn_phase:
+            return task
+        phase_id = str(learn_phase.get("id") or "learn")
+        _set_phase_status(task, phase_id, "completed")
+        state = dict(task.execution_state or {})
+        state["skill_run_refs"] = list(dict.fromkeys([
+            *list(state.get("skill_run_refs") or []), skill_run_id,
+        ]))[-20:]
+        state["completed_phase_ids"] = list(dict.fromkeys([
+            *list(state.get("completed_phase_ids") or []), phase_id,
+        ]))[-20:]
+        task.execution_state = state
+        event_type = "learning_task_phase_completed"
+    else:
+        return task
+    _log_action(task, action_key, action, phase_id=phase_id, skill_run_id=skill_run_id)
+    task.version += 1
+    await _record_task_event(
+        db,
+        task,
+        event_type,
+        source="skill_runtime",
+        suffix=action_key,
+        payload={
+            "action": action,
+            "phase_id": phase_id,
+            "skill_run_id": skill_run_id,
+            "mastery_unchanged": True,
+        },
+    )
     return task
 
 

@@ -21,7 +21,12 @@ class TutorTurnRequest(BaseModel):
 
 
 class LearningSkillRunCreateRequest(BaseModel):
-    skill_id: Literal["socratic_dialogue", "feynman_dialogue"]
+    skill_id: Literal[
+        "guided_explanation",
+        "socratic_dialogue",
+        "feynman_dialogue",
+        "worked_example_fading",
+    ]
     goal: str = Field(min_length=2, max_length=300)
     client_request_id: str = Field(min_length=8, max_length=120)
 

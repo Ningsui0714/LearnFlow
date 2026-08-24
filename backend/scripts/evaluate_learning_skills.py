@@ -25,7 +25,10 @@ from app.services.learning_skill_runtime import (  # noqa: E402
 )
 
 
-RUNTIME_SKILLS = {"socratic_dialogue", "feynman_dialogue"}
+RUNTIME_SKILLS = {
+    "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+    "worked_example_fading",
+}
 RUNTIME_EVENTS = {
     "learning_skill_run_started",
     "learning_skill_run_advanced",
@@ -108,7 +111,7 @@ def main() -> int:
     report = {
         "evaluation_scope": "engineering_readiness_not_learning_effect",
         "case_count": len(cases),
-        "candidate": "conversation_skill_runtime_v1",
+        "candidate": "atomic_learning_skill_runtime_v2",
         "baseline": "prompt_only_guided_explanation",
         "candidate_metrics": candidate_metrics,
         "baseline_metrics": baseline_metrics,

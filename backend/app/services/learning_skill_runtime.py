@@ -14,16 +14,41 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.learning import AgentSession, LearningSkillRun, MicroLearningRun
+from app.models.learning import AgentSession, LearningSkillRun, LearningTask, MicroLearningRun
 from app.services.architecture_registry import selectable_learning_skill
 from app.services.learning_runtime import record_event
 
 
-SKILL_RUNTIME_VERSION = "conversation-skill-runtime-v1"
-RUNTIME_SKILL_IDS = ("socratic_dialogue", "feynman_dialogue")
+SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v2"
+RUNTIME_SKILL_IDS = (
+    "guided_explanation",
+    "socratic_dialogue",
+    "feynman_dialogue",
+    "worked_example_fading",
+)
 ACTIVE_RUN_STATUSES = ("active", "paused", "verification")
 
 WORKFLOWS: dict[str, dict[str, Any]] = {
+    "guided_explanation": {
+        "turn_budget": 3,
+        "total_steps": 4,
+        "initial_state": "presenting_core_model",
+        "states": (
+            "presenting_core_model",
+            "checking_minimal_example",
+            "repairing_explanation",
+            "verification_ready",
+        ),
+        "labels": {
+            "presenting_core_model": "核心模型与最小例子",
+            "checking_minimal_example": "检查例子中的关键关系",
+            "repairing_explanation": "修补理解并迁移表达",
+            "verification_ready": "准备独立验证",
+            "verification_in_progress": "独立验证中",
+            "completed": "本轮完成",
+            "paused": "已暂停",
+        },
+    },
     "socratic_dialogue": {
         "turn_budget": 3,
         "total_steps": 4,
@@ -64,6 +89,26 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "paused": "已暂停",
         },
     },
+    "worked_example_fading": {
+        "turn_budget": 3,
+        "total_steps": 4,
+        "initial_state": "studying_worked_example",
+        "states": (
+            "studying_worked_example",
+            "completing_last_step",
+            "solving_faded_example",
+            "verification_ready",
+        ),
+        "labels": {
+            "studying_worked_example": "拆解完整示例",
+            "completing_last_step": "补全最后一步",
+            "solving_faded_example": "撤去更多支架",
+            "verification_ready": "准备独立验证",
+            "verification_in_progress": "独立验证中",
+            "completed": "本轮完成",
+            "paused": "已暂停",
+        },
+    },
 }
 
 
@@ -76,7 +121,12 @@ def _learning_goal(value: str, skill_id: str) -> str:
     """Remove method-selection language while preserving the topic request."""
     original = _compact_goal(value)
     goal = original
-    if skill_id == "socratic_dialogue":
+    if skill_id == "guided_explanation":
+        prefixes = (
+            r"^(?:请)?(?:直接)?(?:给我)?(?:解释|讲清楚|讲清|说明)[，,：:\s]*",
+            r"^(?:请)?(?:用一个)?(?:最小)?例子(?:解释|说明)?[，,：:\s]*",
+        )
+    elif skill_id == "socratic_dialogue":
         prefixes = (
             r"^(?:请)?不要直接告诉我(?:答案)?[，,：:\s]*",
             r"^(?:请)?(?:用问题)?引导我[，,：:\s]*",
@@ -93,6 +143,13 @@ def _learning_goal(value: str, skill_id: str) -> str:
             r"^我先回忆[，,：:\s]*",
             r"^我讲给一个新手听[，,：:\s]*",
             r"^想确认我到底懂不懂[，,：:\s]*",
+        )
+    elif skill_id == "worked_example_fading":
+        prefixes = (
+            r"^(?:请)?(?:先)?带我做一遍[，,：:\s]*",
+            r"^(?:请)?先示范(?:一遍)?再让我做[，,：:\s]*",
+            r"^(?:请)?(?:用)?示例渐隐(?:来)?(?:学习|讲解)?[，,：:\s]*",
+            r"^(?:请)?给我一个完整(?:例题|示例|样例代码)[，,：:\s]*",
         )
     else:
         prefixes = ()
@@ -131,6 +188,11 @@ def recommend_learning_skill(message: str) -> dict[str, Any] | None:
     # asks for an explanation even though it contains "为什么".
     rules = (
         (
+            "worked_example_fading",
+            ("带我做一遍", "先示范再", "示例渐隐", "渐隐示例", "完整例题", "完整示例", "样例代码再让我", "照着例子"),
+            "这个目标包含可分步练习的程序或解题过程，适合先看子目标清楚的示例，再逐步撤掉提示。",
+        ),
+        (
             "feynman_dialogue",
             ("复述", "讲给别人", "讲给一个", "查漏", "检验我", "我到底懂", "回忆", "用自己的话"),
             "这个目标更适合先用自己的话讲一遍，再定位模糊处。",
@@ -164,12 +226,22 @@ def recommend_learning_skill(message: str) -> dict[str, Any] | None:
             "reason": reason,
             "matched_signals": matched[:3],
             "requires_confirmation": True,
-            "policy_version": "learning-skill-recommendation-v1",
+            "policy_version": "learning-skill-recommendation-v2",
         }
     return None
 
 
 def _opening_prompt(skill_id: str, goal: str) -> tuple[str, str]:
+    if skill_id == "guided_explanation":
+        fallback = (
+            f"先建立“{goal}”的最小模型：它解决什么问题、核心关系是什么、什么时候不适用。"
+            "我会配一个最小例子；看完后请你只指出例子里哪个变化触发了结果。"
+        )
+        directive = (
+            f"SkillRun 刚开始，目标是“{goal}”。直接给出一个分层但精炼的核心解释和一个最小例子；"
+            "明确一个边界，最后只留一个检查例子关键关系的问题。不要宣布掌握。"
+        )
+        return directive, fallback
     if skill_id == "socratic_dialogue":
         fallback = (
             f"我们先不急着听完整答案。针对“{goal}”，你目前觉得最关键的关系或判断是什么？"
@@ -180,19 +252,60 @@ def _opening_prompt(skill_id: str, goal: str) -> tuple[str, str]:
             "不要解释答案，不要连续列问题。"
         )
         return directive, fallback
+    if skill_id == "feynman_dialogue":
+        fallback = (
+            f"先不看资料，把“{goal}”讲给一个完全不了解它的人听。"
+            "请用 3—5 句话说明它是什么、为什么成立或怎样运作。"
+        )
+        directive = (
+            f"SkillRun 刚开始，目标是“{goal}”。邀请学习者进行第一次自己的话复述；"
+            "不要先讲答案，不要宣布掌握。"
+        )
+        return directive, fallback
     fallback = (
-        f"先不看资料，把“{goal}”讲给一个完全不了解它的人听。"
-        "请用 3—5 句话说明它是什么、为什么成立或怎样运作。"
+        f"我们先把“{goal}”拆成几个有名称的子目标，看一遍完整示例；"
+        "接着我会先拿掉最后一步，让你补全，再逐步撤掉更多提示。"
     )
     directive = (
-        f"SkillRun 刚开始，目标是“{goal}”。邀请学习者进行第一次自己的话复述；"
-        "不要先讲答案，不要宣布掌握。"
+        f"SkillRun 刚开始，目标是“{goal}”。给出一个尽可能小的完整示例，按 2—4 个功能子目标标注步骤；"
+        "解释每个子目标为何存在，最后只问学习者哪一步把输入转成了目标输出。"
+        "不要把照做或阅读示例当成掌握。"
     )
     return directive, fallback
 
 
 def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
-    if skill_id == "socratic_dialogue":
+    if skill_id == "guided_explanation":
+        rows = {
+            "presenting_core_model": {
+                "state": "checking_minimal_example",
+                "step_index": 2,
+                "directive": (
+                    f"学习者刚回应了“{goal}”的核心解释。只修正一个最关键的偏差或确认一个准确关系，"
+                    "随后给一个表面不同但结构相同的最小例子，只问一个预测结果的问题。"
+                ),
+                "fallback": "换一个表面不同的小例子：如果只改变其中一个关键条件，你预测结果会怎样？为什么？",
+            },
+            "checking_minimal_example": {
+                "state": "repairing_explanation",
+                "step_index": 3,
+                "directive": (
+                    "根据学习者对新例子的判断，用两三句话修补核心模型；然后只要求他不用原句，"
+                    "用“条件—机制—结果”重新解释一次。"
+                ),
+                "fallback": "现在不用刚才的原句，请用“条件—机制—结果”三部分把这个概念重新说一遍。",
+            },
+            "repairing_explanation": {
+                "state": "verification_ready",
+                "step_index": 4,
+                "directive": (
+                    "指出学习者重述中一项可检查的进展，并明确讲解和重述仍不是掌握证据；"
+                    "邀请进入一道无提示的独立验证，不再追加讲解问题。"
+                ),
+                "fallback": "核心关系已经可以独立表述。下一步用一道不复用当前例子的题做无提示验证。",
+            },
+        }
+    elif skill_id == "socratic_dialogue":
         rows = {
             "eliciting_prior_model": {
                 "state": "testing_assumption",
@@ -228,7 +341,7 @@ def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
                 ),
             },
         }
-    else:
+    elif skill_id == "feynman_dialogue":
         rows = {
             "awaiting_teach_back": {
                 "state": "locating_gap",
@@ -265,6 +378,37 @@ def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
                 ),
             },
         }
+    else:
+        rows = {
+            "studying_worked_example": {
+                "state": "completing_last_step",
+                "step_index": 2,
+                "directive": (
+                    f"学习者已看过“{goal}”的完整示例。换一个近似情境，保留前面子目标，"
+                    "只隐藏最后一个解题或代码步骤，让学习者补全并说明该步满足哪个子目标。"
+                    "不要同时挖掉多个步骤。"
+                ),
+                "fallback": "现在换一个近似输入，我保留前面的步骤；请只补全最后一步，并说明它完成了哪个子目标。",
+            },
+            "completing_last_step": {
+                "state": "solving_faded_example",
+                "step_index": 3,
+                "directive": (
+                    "先对刚补的步骤给出具体反馈。再提供一个同结构的新情境，只保留子目标标签和起始条件，"
+                    "让学习者完成其余关键步骤；每次只要求一个可检查产物。"
+                ),
+                "fallback": "再来一个同结构的新情境：这次只保留子目标标签和起始条件，请写出其余关键步骤。",
+            },
+            "solving_faded_example": {
+                "state": "verification_ready",
+                "step_index": 4,
+                "directive": (
+                    "总结学习者在撤去支架后实际完成的步骤，并明确这仍属于训练；"
+                    "邀请进入一个不显示子目标标签和示例的独立变式验证。"
+                ),
+                "fallback": "支架已经撤到只剩目标。下一步请进入无示例、无子目标提示的独立变式验证。",
+            },
+        }
     return rows.get(current_state, {
         "state": "verification_ready",
         "step_index": 4,
@@ -297,6 +441,98 @@ async def latest_skill_run(
     )).scalar_one_or_none()
 
 
+async def _linked_learning_task(
+    db: AsyncSession, run: LearningSkillRun,
+) -> LearningTask | None:
+    if not run.learning_task_id:
+        return None
+    return (await db.execute(select(LearningTask).where(
+        LearningTask.id == run.learning_task_id,
+        LearningTask.learner_id == run.learner_id,
+    ))).scalar_one_or_none()
+
+
+async def _advance_linked_task(
+    db: AsyncSession,
+    run: LearningSkillRun,
+    *,
+    action: str,
+    operation_id: str,
+) -> LearningTask | None:
+    task = await _linked_learning_task(db, run)
+    if not task:
+        return None
+    from app.services.learning_tasks import advance_learning_task_from_skill
+
+    return await advance_learning_task_from_skill(
+        db,
+        task=task,
+        skill_run_id=run.id,
+        action=action,
+        operation_id=operation_id,
+    )
+
+
+async def _ensure_atomic_learning_task(
+    db: AsyncSession,
+    *,
+    session: AgentSession,
+    run: LearningSkillRun,
+    source: str,
+) -> LearningTask:
+    """Attach one learner-visible atomic task to the SkillRun."""
+    linked = await _linked_learning_task(db, run)
+    if linked:
+        return linked
+    existing = (await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == run.learner_id,
+        LearningTask.session_id == session.id,
+        LearningTask.objective == run.goal,
+        LearningTask.status.in_({"queued", "active", "paused"}),
+    ).order_by(LearningTask.id.desc()).limit(1))).scalar_one_or_none()
+    if existing:
+        run.learning_task_id = existing.id
+        task = existing
+    else:
+        from app.services.learning_tasks import create_learning_task
+
+        skill = selectable_learning_skill(run.skill_id)
+        task, _ = await create_learning_task(
+            db,
+            learner_id=run.learner_id,
+            session_id=session.id,
+            title=f"{skill.name if skill else '学习方法'}：{run.goal}"[:255],
+            objective=run.goal,
+            client_request_id=f"skill-task:{run.id}",
+            origin_kind="skill",
+            created_by=source,
+            status="active",
+            estimated_minutes=20,
+            preferred_skills=[run.skill_id],
+            success_criteria=[
+                "完成本方法的有界引导",
+                "完成至少一次无提示独立验证",
+                "把合格评估转交复习队列",
+            ],
+            source_refs=[{"type": "learning_skill_run", "id": run.id}],
+        )
+        run.learning_task_id = task.id
+    if task.status == "queued":
+        await _advance_linked_task(
+            db, run, action="start", operation_id=f"attach-{run.id}",
+        )
+    elif task.status == "paused":
+        await _advance_linked_task(
+            db, run, action="resume", operation_id=f"attach-{run.id}",
+        )
+    run.run_data = {
+        **dict(run.run_data or {}),
+        "learning_task_id": task.id,
+        "task_contract": "learn -> practice -> verify -> consolidate",
+    }
+    return task
+
+
 async def _record_run_event(
     db: AsyncSession,
     run: LearningSkillRun,
@@ -314,6 +550,7 @@ async def _record_run_event(
         source=source,
         payload={
             "skill_run_id": run.id,
+            "learning_task_id": run.learning_task_id,
             "skill_id": run.skill_id,
             "goal": run.goal,
             "state": run.state,
@@ -351,10 +588,18 @@ async def create_learning_skill_run(
         LearningSkillRun.client_request_id == request_key,
     ))).scalar_one_or_none()
     if existing:
+        if not existing.learning_task_id:
+            await _ensure_atomic_learning_task(
+                db, session=session, run=existing, source=source,
+            )
         return existing, False
 
     current = await active_skill_run(db, session)
     if current and current.skill_id == skill_id and current.goal == normalized_goal:
+        if not current.learning_task_id:
+            await _ensure_atomic_learning_task(
+                db, session=session, run=current, source=source,
+            )
         return current, False
     if current:
         previous_state = current.state
@@ -371,6 +616,12 @@ async def create_learning_skill_run(
             db, current, "learning_skill_run_paused",
             payload={"resume_state": previous_state, "reason": "skill_switched"},
             client_event_id=f"learning-skill-run:{current.id}:switched:{current.version}",
+        )
+        await _advance_linked_task(
+            db,
+            current,
+            action="pause",
+            operation_id=f"skill-switched-{current.version}",
         )
 
     workflow = WORKFLOWS[skill_id]
@@ -399,6 +650,9 @@ async def create_learning_skill_run(
     )
     db.add(run)
     await db.flush()
+    await _ensure_atomic_learning_task(
+        db, session=session, run=run, source=source,
+    )
     await _record_run_event(
         db, run, "learning_skill_run_started",
         payload={"source": source, "turn_budget": run.turn_budget},
@@ -431,6 +685,12 @@ async def pause_active_skill_run_for_selection(
         db, current, "learning_skill_run_paused",
         payload={"resume_state": previous_state, "reason": "skill_selection_changed"},
         client_event_id=f"learning-skill-run:{current.id}:selection-paused:{current.version}",
+    )
+    await _advance_linked_task(
+        db,
+        current,
+        action="pause",
+        operation_id=f"selection-paused-{current.version}",
     )
     return current
 
@@ -479,6 +739,12 @@ async def prepare_learning_skill_turn(
             payload={"resume_state": resume_state, "reason": "learner_returned"},
             client_event_id=f"learning-skill-run:{current.id}:auto-resumed:{current.version}",
         )
+        await _advance_linked_task(
+            db,
+            current,
+            action="resume",
+            operation_id=f"auto-resumed-{current.version}",
+        )
 
     turn_key = f"turn:{session.id}:{client_turn_id or message_id}"
     history = list(current.action_log or [])
@@ -490,6 +756,13 @@ async def prepare_learning_skill_turn(
             "fallback": data.get("next_prompt", ""),
         }
     if current.state in {"verification_ready", "verification_in_progress", "completed"}:
+        if current.state == "verification_ready":
+            await _advance_linked_task(
+                db,
+                current,
+                action="complete_learn",
+                operation_id="verification-ready",
+            )
         data = dict(current.run_data or {})
         return current, {
             "started": False,
@@ -534,6 +807,13 @@ async def prepare_learning_skill_turn(
         client_event_id=f"learning-skill-run:{current.id}:{turn_key}:advanced",
         source="user",
     )
+    if current.state == "verification_ready":
+        await _advance_linked_task(
+            db,
+            current,
+            action="complete_learn",
+            operation_id=f"turn-{current.turn_count}",
+        )
     return current, {
         "started": False,
         "directive": next_step["directive"],
@@ -571,6 +851,11 @@ async def reconcile_learning_skill_run(
         client_event_id=f"learning-skill-run:{run.id}:completed",
         source="runtime",
     )
+    task = await _linked_learning_task(db, run)
+    if task:
+        from app.services.learning_tasks import reconcile_learning_task
+
+        await reconcile_learning_task(db, task)
     return True
 
 
@@ -584,6 +869,7 @@ async def learning_skill_run_view(
     workflow = WORKFLOWS.get(run.skill_id, {})
     data = dict(run.run_data or {})
     micro = await db.get(MicroLearningRun, run.micro_learning_run_id) if run.micro_learning_run_id else None
+    task = await _linked_learning_task(db, run)
     total_steps = int(workflow.get("total_steps") or 4)
     return {
         "id": run.id,
@@ -612,6 +898,15 @@ async def learning_skill_run_view(
             if run.status == "completed"
             else "对话只用于引导；只有独立题、纠错和复习会形成能力证据。"
         ),
+        "learning_task": ({
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "current_phase_id": task.current_phase_id,
+            "plan_version": task.plan_version,
+            "version": task.version,
+            "path": f"/tasks?task={task.id}",
+        } if task else None),
         "micro_learning_run": ({
             "id": micro.id,
             "goal": micro.goal,
@@ -664,18 +959,33 @@ async def act_on_learning_skill_run(
         event_type = "learning_skill_run_resumed"
         event_payload = {"resume_state": run.state, "reason": "learner"}
     elif action == "start_verification" and run.status == "active" and run.state == "verification_ready":
-        from app.services.micro_learning import create_micro_learning_run
+        session = await db.get(AgentSession, run.session_id)
+        if not session or session.learner_id != run.learner_id:
+            raise RuntimeError("unsupported_scope")
+        task = await _ensure_atomic_learning_task(
+            db, session=session, run=run, source="user",
+        )
+        if task.status == "paused":
+            await _advance_linked_task(
+                db, run, action="resume", operation_id=f"verify-{client_action_id}",
+            )
+        await _advance_linked_task(
+            db, run, action="complete_learn", operation_id="verification-handoff",
+        )
+        from app.services.learning_tasks import materialize_learning_task
 
-        micro = await create_micro_learning_run(
+        task = await materialize_learning_task(
             db,
-            learner_id=run.learner_id,
-            goal=run.goal,
+            task=task,
             source_text="",
+            expected_version=task.version,
             client_request_id=f"skill-run-{run.id}-{client_action_id}",
             education_stage=education_stage,
             background=background,
-            source="skill_runtime",
         )
+        micro = await db.get(MicroLearningRun, task.micro_learning_run_id)
+        if not micro:
+            raise RuntimeError("invalid_state")
         run.micro_learning_run_id = micro.id
         run.status = "verification"
         run.state = "verification_in_progress"
@@ -696,4 +1006,12 @@ async def act_on_learning_skill_run(
         client_event_id=f"learning-skill-run:{run.id}:{action_key}",
         source="user",
     )
+    if action == "pause":
+        await _advance_linked_task(
+            db, run, action="pause", operation_id=client_action_id,
+        )
+    elif action == "resume":
+        await _advance_linked_task(
+            db, run, action="resume", operation_id=client_action_id,
+        )
     return run, micro

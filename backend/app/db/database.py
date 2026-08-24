@@ -113,6 +113,9 @@ EXTRA_COLUMNS = {
         ("source_version", "INTEGER DEFAULT 1"),
         ("idempotency_key", "TEXT"),
     ],
+    "learning_skill_runs": [
+        ("learning_task_id", "INTEGER"),
+    ],
 }
 
 FIVE_KERNEL_MIGRATION = "v2-five-kernel-tutor"
@@ -129,6 +132,7 @@ MEMORY_MODULE_VERSIONING_MIGRATION = "v12-memory-module-versioning"
 MICRO_LEARNING_MIGRATION = "v13-focused-micro-learning"
 CONVERSATION_SKILL_RUNTIME_MIGRATION = "v14-conversation-skill-runtime"
 LEARNING_TASK_RUNTIME_MIGRATION = "v15-learning-task-runtime"
+ATOMIC_LEARNING_SKILL_MIGRATION = "v16-atomic-learning-skill-runtime"
 
 
 def _sqlite_path() -> Path | None:
@@ -1118,6 +1122,34 @@ async def _backfill_learning_task_runtime():
         print(f"[migrate] applied {LEARNING_TASK_RUNTIME_MIGRATION}: {counts}")
 
 
+async def _backfill_atomic_learning_skill_runtime():
+    """Link legacy SkillRuns to the LearningTask already owned by their micro run."""
+    from app.models.learning import LearningSkillRun, LearningTask, SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == ATOMIC_LEARNING_SKILL_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        linked = 0
+        runs = list((await db.execute(select(LearningSkillRun).where(
+            LearningSkillRun.learning_task_id.is_(None),
+            LearningSkillRun.micro_learning_run_id.is_not(None),
+        ))).scalars().all())
+        for run in runs:
+            task = (await db.execute(select(LearningTask).where(
+                LearningTask.learner_id == run.learner_id,
+                LearningTask.micro_learning_run_id == run.micro_learning_run_id,
+            ).limit(1))).scalar_one_or_none()
+            if task:
+                run.learning_task_id = task.id
+                linked += 1
+        db.add(SchemaMigration(version=ATOMIC_LEARNING_SKILL_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {ATOMIC_LEARNING_SKILL_MIGRATION}: {linked} SkillRuns linked")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -1147,3 +1179,4 @@ async def init_db():
     await _mark_micro_learning_migration()
     await _mark_conversation_skill_runtime_migration()
     await _backfill_learning_task_runtime()
+    await _backfill_atomic_learning_skill_runtime()

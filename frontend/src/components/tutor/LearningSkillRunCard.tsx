@@ -66,6 +66,14 @@ export default function LearningSkillRunCard({ run, onAction, onOpenLearningRun 
         </p>
         {error && <p role="alert" className="mt-2 text-[11px] text-red-700">{error}</p>}
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          {run.learning_task && (
+            <a
+              href={run.learning_task.path}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-2.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
+            >
+              查看原子任务<ArrowUpRight size={12} />
+            </a>
+          )}
           {run.can_pause && (
             <button
               type="button"
