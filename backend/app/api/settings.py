@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
-from app.core.config import settings
+from app.core.config import normalize_openai_base_url, settings
 from app.services.auth import CurrentLearner, get_current_learner, valid_desktop_request
 
 router = APIRouter()
@@ -82,15 +82,7 @@ def _read_env() -> dict:
 
 
 def _normalize_base_url(value: str) -> str:
-    value = (value or "").strip()
-    # DeepSeek's current OpenAI-compatible endpoint is the host itself. The
-    # old /v1 preset is accepted by some proxies but is not the official V4 URL.
-    if value.rstrip("/") in {
-        "https://api.deepseek.com",
-        "https://api.deepseek.com/v1",
-    }:
-        return "https://api.deepseek.com"
-    return value
+    return normalize_openai_base_url(value)
 
 
 def _sync_runtime_from_env(raw: dict) -> None:
@@ -99,7 +91,7 @@ def _sync_runtime_from_env(raw: dict) -> None:
         if env_key not in raw:
             continue
         value = raw[env_key]
-        if env_key in {"LLM_BASE_URL", "EMBEDDING_BASE_URL", "VISION_BASE_URL"}:
+        if env_key == "LLM_BASE_URL":
             value = _normalize_base_url(value)
         if env_key == "VISION_API_ENHANCE":
             value = value.lower() in ("1", "true", "yes")
@@ -311,7 +303,7 @@ async def save_settings(
                     continue
             elif isinstance(val, str):
                 val = val.strip()
-            if env_key in {"LLM_BASE_URL", "EMBEDDING_BASE_URL", "VISION_BASE_URL"}:
+            if env_key == "LLM_BASE_URL":
                 val = _normalize_base_url(val)
             updates[env_key] = "true" if val is True else ("false" if val is False else val)
 

@@ -27,6 +27,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     )
     assert "one active version" in manifest["authority"]["module_versioning"]
     assert "startup queue reconciliation" in manifest["authority"]["memory_consolidation"]
+    assert "shared Tutor deadline" in manifest["authority"]["interactive_model_latency"]
 
 
 def test_remediation_events_have_standard_authority_provenance():
@@ -111,6 +112,8 @@ def test_learning_task_runtime_is_registered_as_zero_evidence_coordination():
     assert CAPABILITY_OWNERS["run_learning_task"][0] == "tutor_agent"
     assert "deterministic runtime projection" in TOOLS["learning_task_runtime"].write_path
     assert TOOLS["learning_task_planner"].reads_kernels == ("human",)
+    assert "bounded model enhancement" in TOOLS["learning_task_planner"].write_path
+    assert "deterministic fallback" in TOOLS["micro_learning_orchestrator"].write_path
     assert "persisted lecture/questions" in SKILLS["atomic_learning_loop"].output_contract
     assert all(
         EVENTS[event_id].kernel_targets == ()

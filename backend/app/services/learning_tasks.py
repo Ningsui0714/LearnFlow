@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import logging
 import re
 from typing import Any
 
@@ -39,6 +40,7 @@ from app.models.project import (
 )
 from app.services.architecture_registry import SEMANTIC_MEMORY_KEYS, SKILLS
 from app.services.learning_runtime import get_kernel_projection, record_event
+from app.services.model_latency import invoke_with_budget
 
 
 PLAN_SCHEMA_VERSION = "learning-task-plan.v1"
@@ -46,6 +48,8 @@ RUNTIME_VERSION = "learning-task-runtime-v2"
 ACTIVE_STATUSES = {"proposed", "queued", "active", "paused"}
 QUEUE_STATUSES = {"queued", "active", "paused"}
 ALLOWED_PHASE_KINDS = {"learn", "practice", "verify", "consolidate"}
+
+logger = logging.getLogger(__name__)
 
 EXPLICIT_ATOMIC_TASK_PATTERNS = (
     r"(?:带我|帮我|教我)(?:学会|学懂|弄懂|搞懂|理解|完成|做完)\s*[：:，,]?\s*(.+)",
@@ -402,13 +406,13 @@ async def generate_learning_task_plan(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.25,
-        timeout=60,
+        timeout=max(1.0, settings.learning_task_plan_model_budget_seconds),
         max_retries=0,
         max_tokens=3_500,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
     try:
-        response = await llm.ainvoke([HumanMessage(content=PLAN_PROMPT.format(
+        messages = [HumanMessage(content=PLAN_PROMPT.format(
             title=title,
             objective=objective,
             origin_kind=origin_kind,
@@ -418,9 +422,17 @@ async def generate_learning_task_plan(
             available_skills=json.dumps(_available_plan_skill_catalog(), ensure_ascii=False),
             reason=reason,
             learner_direction=learner_direction or "未指定",
-        ))])
+        ))]
+        response = await invoke_with_budget(
+            lambda: llm.ainvoke(messages),
+            settings.learning_task_plan_model_budget_seconds,
+        )
         return _validated_plan(_extract_json(str(response.content)), fallback)
-    except Exception:
+    except Exception as error:
+        logger.info(
+            "learning task planner used deterministic fallback: %s",
+            type(error).__name__,
+        )
         return fallback
 
 

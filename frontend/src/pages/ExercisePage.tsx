@@ -13,6 +13,9 @@ import ConceptQuestions from '../components/exercise/ConceptQuestions'
 import RemediationPanel from '../components/exercise/RemediationPanel'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
+import { configureMonacoRuntime } from '../services/monacoRuntime'
+
+configureMonacoRuntime()
 
 interface CodeMsg {
   role: 'user' | 'assistant'

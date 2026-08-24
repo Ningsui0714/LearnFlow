@@ -95,6 +95,7 @@ export default function LearningTasksPage() {
   const [objective, setObjective] = useState('')
   const [replanReason, setReplanReason] = useState('')
   const [sourceText, setSourceText] = useState('')
+  const [preparingMaterials, setPreparingMaterials] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -216,6 +217,7 @@ export default function LearningTasksPage() {
   const materialize = async () => {
     if (!selected || busy) return
     setBusy(true)
+    setPreparingMaterials(true)
     try {
       const next = await materializeLearningTask(selected.id, {
         source_text: sourceText.trim(),
@@ -229,6 +231,7 @@ export default function LearningTasksPage() {
       setNotice(error?.response?.data?.detail || '生成讲义与习题失败')
     } finally {
       setBusy(false)
+      setPreparingMaterials(false)
     }
   }
 
@@ -338,7 +341,9 @@ export default function LearningTasksPage() {
                     <h3 className="flex items-center gap-2 text-sm font-bold text-indigo-950"><WandSparkles size={15} />准备学习包</h3>
                     <p className="mt-2 text-xs leading-5 text-indigo-800/80">系统会生成并保存一份讲义文件和一组验证题。它们属于当前任务，不会因为生成完成就被视为掌握。</p>
                     <textarea value={sourceText} onChange={event => setSourceText(event.target.value)} rows={4} placeholder="可选：粘贴题目、教材段落、代码或笔记；留空则使用对话中的原始问题" className="mt-3 w-full resize-y rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs leading-5 outline-none focus:border-indigo-400" />
-                    <button type="button" disabled={busy} onClick={materialize} className="mt-3 w-full rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">生成讲义与验证题并开始</button>
+                    <button type="button" disabled={busy} onClick={materialize} className="mt-3 w-full rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                      {preparingMaterials ? '正在准备；模型超时会自动使用稳定模板…' : '生成讲义与验证题并开始'}
+                    </button>
                   </div>
                 )}
                 <div className="rounded-2xl border border-slate-200 bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-slate-800"><FileText size={15} />任务学习文件</h3><p className="mt-1 text-[10px] leading-4 text-slate-400">讲义负责学习，题目负责练习与验证；只有正式提交进入五核证据。</p>{selected.artifact_refs.length === 0 ? <p className="mt-2 text-xs leading-5 text-slate-400">当前任务还没有保存的讲义或题目。</p> : <div className="mt-2 space-y-1.5">{selected.artifact_refs.map((artifact, index) => <button key={`${artifact.type}-${artifact.id || index}`} type="button" onClick={() => artifact.path && navigate(artifact.path)} className="flex w-full items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-2 text-left text-[11px] text-slate-600 hover:bg-slate-100"><FileText size={12} className="text-emerald-600" /><span className="truncate">{artifact.logical_filename || artifact.type}</span></button>)}</div>}</div>

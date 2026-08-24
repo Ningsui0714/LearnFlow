@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import logging
 import re
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -47,6 +48,7 @@ from app.services.learning_skill_runtime import (
     prepare_learning_skill_turn,
     recommend_learning_skill,
 )
+from app.services.model_latency import invoke_before_deadline, model_deadline
 
 
 CONFIRM_WORDS = {
@@ -63,6 +65,8 @@ ADD_SOURCE_HINTS = ("添加", "加入", "加到", "加进", "导入", "作为来
 MICRO_LEARNING_MARKERS = (
     "15分钟", "十五分钟", "快速学习", "快速学", "微学习", "可验证学习",
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _looks_like_micro_learning_command(message: str) -> bool:
@@ -2023,17 +2027,21 @@ async def _generate_tutor_reply(
         elif item.role == "assistant":
             messages.append(AIMessage(content=_decode_tutor_content(item.content)[0]))
 
+    model_budget = max(0.01, settings.tutor_model_budget_seconds)
+    deadline = model_deadline(model_budget)
     llm = ChatOpenAI(
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.45,
-        timeout=60,
+        timeout=max(1.0, model_budget),
         max_retries=0,
     )
     try:
         structured = llm.with_structured_output(TutorModelOutput)
-        output = await structured.ainvoke(messages)
+        output = await invoke_before_deadline(
+            lambda: structured.ainvoke(messages), deadline,
+        )
         opportunity = output.project_opportunity.model_dump() if output.project_opportunity else None
         learning_intent = output.learning_intent.model_dump() if output.learning_intent else None
         local_agent_task = output.local_agent_task.model_dump() if output.local_agent_task else None
@@ -2050,12 +2058,22 @@ async def _generate_tutor_reply(
             local_agent_task,
             learning_task_opportunity,
         )
-    except Exception:
+    except Exception as structured_error:
+        logger.info(
+            "structured Tutor response failed within shared budget: %s",
+            type(structured_error).__name__,
+        )
         try:
-            response = await llm.ainvoke(messages)
+            response = await invoke_before_deadline(
+                lambda: llm.ainvoke(messages), deadline,
+            )
             content = response.content if isinstance(response.content, str) else str(response.content)
             return (*_decode_tutor_content(content), None)
-        except Exception:
+        except Exception as fallback_error:
+            logger.info(
+                "Tutor used deterministic fallback after model budget: %s",
+                type(fallback_error).__name__,
+            )
             if latest_interaction == "candidate_sources_completed" and session.project_id:
                 return await _candidate_sources_follow_up(db, session), [], None, None, [], None, None
             return (

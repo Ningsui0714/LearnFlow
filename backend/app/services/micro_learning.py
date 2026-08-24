@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import logging
 import re
 from typing import Any
 
@@ -25,11 +26,16 @@ from app.models.project import (
     Checkpoint, ConceptQuestion, Lecture, Project, Roadmap,
 )
 from app.services.learning_runtime import create_attempt, record_event
+from app.services.model_latency import (
+    InteractiveModelBudgetExceeded,
+    invoke_with_budget,
+)
 from app.services.remediation import serialize_case
 from app.services.tutor_service import get_or_create_session
 
 
 WORKFLOW_VERSION = "verified-micro-learning-v1"
+logger = logging.getLogger(__name__)
 ACTIVE_STATES = {
     "learning_card", "teach_back", "teach_back_feedback",
     "verification", "remediation",
@@ -294,28 +300,55 @@ async def generate_micro_learning_artifact(
     *, goal: str, source_text: str, education_stage: str, background: str,
 ) -> dict[str, Any]:
     fallback = _fallback_artifact(goal, source_text)
-    if not settings.llm_api_key or settings.llm_api_key == "***":
+    fallback["generation"] = {
+        "mode": "deterministic_fallback",
+        "reason": "model_not_configured",
+    }
+    if not settings.llm_api_key or settings.llm_api_key in {
+        "", "***", "sk-your-key-here",
+    }:
         return fallback
     llm = ChatOpenAI(
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.35,
-        timeout=90,
+        timeout=max(1.0, settings.micro_learning_artifact_model_budget_seconds),
         max_retries=0,
         max_tokens=6_000,
         model_kwargs={"response_format": {"type": "json_object"}},
     )
     try:
-        response = await llm.ainvoke([HumanMessage(content=GENERATION_PROMPT.format(
+        messages = [HumanMessage(content=GENERATION_PROMPT.format(
             goal=goal,
             education_stage=education_stage or "未说明",
             background=background or "未说明",
             source_mode="用户材料" if source_text else "主题生成",
             source_text=source_text[:14_000] if source_text else "（没有外部材料）",
-        ))])
-        return _validated_artifact(_extract_json(str(response.content)), goal, source_text)
-    except Exception:
+        ))]
+        response = await invoke_with_budget(
+            lambda: llm.ainvoke(messages),
+            settings.micro_learning_artifact_model_budget_seconds,
+        )
+        artifact = _validated_artifact(
+            _extract_json(str(response.content)), goal, source_text,
+        )
+        artifact["generation"] = {"mode": "model_enhanced", "reason": ""}
+        return artifact
+    except Exception as error:
+        reason = (
+            "budget_exceeded"
+            if isinstance(error, InteractiveModelBudgetExceeded)
+            else "provider_or_validation_failure"
+        )
+        fallback["generation"] = {
+            "mode": "deterministic_fallback",
+            "reason": reason,
+        }
+        logger.info(
+            "micro-learning artifact used deterministic fallback: %s",
+            type(error).__name__,
+        )
         return fallback
 
 
@@ -461,7 +494,12 @@ async def create_micro_learning_run(
             "steps": ["learning_card", "feynman_teach_back", "retrieval_practice", "spaced_review"],
             "learning_task_id": learning_task_id,
         },
-        learning_card={**card, "source_mode": "provided_text" if source_text else "topic"},
+        learning_card={
+            **card,
+            "source_mode": "provided_text" if source_text else "topic",
+            "generation_mode": (artifact.get("generation") or {}).get("mode", "unknown"),
+            "generation_reason": (artifact.get("generation") or {}).get("reason", ""),
+        },
         teach_back={},
         verification={
             "question_ids": question_ids,

@@ -132,6 +132,11 @@ learner 级 `knowledge_gap`、`current_priority`、`assistance_level`、`path_po
 
 模型可以提出阶段和方法，但不能决定正式判题、掌握升级、纠错策略或复习间隔。服务端会拒绝没有正式 Attempt 的 `verify` 完成，也会拒绝没有 ReviewSchedule 的 `consolidate` 完成。
 
+在线规划是限时增强，而不是任务创建的可用性前提。默认 wall-clock budget 为 12 秒，部署方
+可通过 `LEARNING_TASK_PLAN_MODEL_BUDGET_SECONDS` 调整；超时、供应商错误或输出校验失败时
+立即使用同一 `learning-task-plan.v1` 契约的确定性计划。Tutor 结构化调用与纯文本兼容调用
+则共享一个总预算，避免一次回合因两次串行尝试而成倍等待。
+
 ### 5.1 确定性运行投影
 
 `LearningTask` 的计划是意图，运行投影才回答“现在做什么”。每次读取或动作后，服务端按
@@ -178,6 +183,10 @@ Learning Task 不建立第二套讲义/习题存储。正式学习文件继续�
 消息与选中文本、最后才是纯主题生成。生成成功后，Lecture、ConceptQuestion 和 Exercise 的
 稳定引用会持久写入任务，而不是只在页面打开时临时拼接。讲义负责学习输入，题目负责检索与
 验证；两者共享同一 LearningTask 和 scope，但生成本身均不构成能力证据。
+
+学习包的在线增强默认最多等待 18 秒，可通过
+`MICRO_LEARNING_ARTIFACT_MODEL_BUDGET_SECONDS` 调整。超时后会保存确定性讲义与验证题，
+并在学习卡中记录 `generation_mode / generation_reason` 以供诊断；该标记不进入五核证据。
 
 LearningTask 与其专注附件共享暂停语义：从 `/tasks` 暂停或恢复会同步
 `MicroLearningRun`，从 `/learn/:runId` 暂停或恢复也会同步任务队列。同步事件全部是零

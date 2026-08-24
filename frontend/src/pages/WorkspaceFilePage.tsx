@@ -15,7 +15,10 @@ import {
   saveWorkspaceFile, type WorkspaceFile,
 } from '../services/api'
 import { getDesktopRuntime } from '../services/desktopRuntime'
+import { configureMonacoRuntime } from '../services/monacoRuntime'
 import 'katex/dist/katex.min.css'
+
+configureMonacoRuntime()
 
 const languageByExtension: Record<string, string> = {
   py: 'python', ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   competitionDemoLogin, devLogin, getCurrentUser, loginUser, logoutUser, registerUser,
@@ -17,12 +17,20 @@ interface AuthContextValue {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
+let initialAuthRequest: Promise<AuthUser | null> | null = null
+
+function loadInitialUser() {
+  if (!initialAuthRequest) {
+    initialAuthRequest = getCurrentUser().catch(() => null)
+  }
+  return initialAuthRequest
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     try {
       setUser(await getCurrentUser())
     } catch {
@@ -30,13 +38,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
-    refresh()
+    let active = true
+    void loadInitialUser().then(next => {
+      if (!active) return
+      setUser(next)
+      setLoading(false)
+    })
     const handleUnauthorized = () => setUser(null)
     window.addEventListener('learnflow:unauthorized', handleUnauthorized)
-    return () => window.removeEventListener('learnflow:unauthorized', handleUnauthorized)
+    return () => {
+      active = false
+      window.removeEventListener('learnflow:unauthorized', handleUnauthorized)
+    }
   }, [])
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -67,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null)
     },
     refresh,
-  }), [user, loading])
+  }), [user, loading, refresh])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

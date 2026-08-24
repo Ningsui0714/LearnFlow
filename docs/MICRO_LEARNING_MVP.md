@@ -100,6 +100,10 @@ learning_card
 题目质量门还会拒绝解释器私有属性、运行时魔改、版本特例、未定义或非标准行为等不适合
 基础学习验证的候选；这类内容即使 JSON 结构正确，也会被稳定的确定性题替换。
 
+在线候选生成有独立的 wall-clock budget（默认 18 秒）；超时不会继续占用请求，而是立即
+保存确定性学习卡和验证题。运行投影以 `generation_mode / generation_reason` 区分模型增强、
+未配置模型、超时和供应商/校验失败，便于诊断且不把生成来源当成学习证据。
+
 费曼复述使用 `deterministic_concept_coverage_v1`：通过目标概念和中文/字母数字二元片段覆盖率定位未讲清的关键点。结果只形成诊断 Attempt 与 `teach_back_analyzed` 事件，显式设置 `mastery_unchanged=true`，随后仍必须独立作答。
 
 ### 对比试验
@@ -157,3 +161,5 @@ venv/bin/python scripts/evaluate_micro_learning.py
 - 回滚前端入口和新 router 不影响既有项目学习、练习、纠错和复习记录；内部 Project 仍可由 LearningTask 或旧 `/learn/:runId` 访问，但不再出现在真实项目列表。
 - 后续 `learning-task-runtime-v2`（注册表 `2026-08-24.4`）只增加任务引用持久化与确定性运行
   投影，不改变本流程的 Attempt、判题、纠错、复习或五核事件语义，也不需要数据库迁移。
+- 注册表 `2026-08-24.5` 为 Tutor、任务规划和学习包生成登记交互时延预算与确定性降级；
+  新增配置和生成来源字段均向后兼容，不修改 Event schema、数据库表或五核 reducer。

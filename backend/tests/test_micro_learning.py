@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import uuid
 
 import pytest
@@ -12,7 +13,11 @@ from app.models.learning import (
     EvidenceEvent, KernelState, MicroLearningRun, ReviewSchedule,
 )
 from app.models.project import ConceptQuestion
-from app.services.micro_learning import _valid_question, analyze_teach_back
+from app.services.micro_learning import (
+    _valid_question,
+    analyze_teach_back,
+    generate_micro_learning_artifact,
+)
 
 
 @pytest.fixture(scope="module")
@@ -58,6 +63,38 @@ def test_generated_questions_reject_runtime_specific_or_nonstandard_trivia():
             "answer_indexes": [0],
         },
     }) is None
+
+
+def test_micro_learning_generation_falls_back_within_interactive_budget(monkeypatch):
+    class SlowModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, _messages):
+            await asyncio.sleep(1)
+
+    monkeypatch.setattr("app.services.micro_learning.ChatOpenAI", SlowModel)
+    monkeypatch.setattr("app.services.micro_learning.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.micro_learning.settings.micro_learning_artifact_model_budget_seconds",
+        0.01,
+    )
+
+    started = time.perf_counter()
+    artifact = asyncio.run(generate_micro_learning_artifact(
+        goal="理解条件概率",
+        source_text="",
+        education_stage="本科",
+        background="计算机专业",
+    ))
+
+    assert time.perf_counter() - started < 0.5
+    assert artifact["generation"] == {
+        "mode": "deterministic_fallback",
+        "reason": "budget_exceeded",
+    }
+    assert "理解条件概率" in artifact["card"]["objective"]
+    assert len(artifact["questions"]) >= 2
 
 
 def _start(client: TestClient, *, request_id: str | None = None) -> dict:

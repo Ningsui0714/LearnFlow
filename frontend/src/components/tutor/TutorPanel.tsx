@@ -234,6 +234,7 @@ export default function TutorPanel({
   const [skillRecommendation, setSkillRecommendation] = useState<LearningSkillRecommendation | null>(null)
   const [skillMenuOpen, setSkillMenuOpen] = useState(false)
   const [learningTaskProposal, setLearningTaskProposal] = useState<LearningTask | null>(null)
+  const [preparingTaskMaterials, setPreparingTaskMaterials] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<number | null>(null)
 
@@ -559,6 +560,7 @@ export default function TutorPanel({
   const prepareLearningTask = async () => {
     if (!learningTaskProposal || loading) return
     setLoading(true)
+    setPreparingTaskMaterials(true)
     let prepared: LearningTask | null = null
     try {
       const next = await materializeLearningTask(learningTaskProposal.id, {
@@ -575,6 +577,7 @@ export default function TutorPanel({
       }])
     } finally {
       setLoading(false)
+      setPreparingTaskMaterials(false)
     }
     if (prepared?.micro_learning_run_id && onLearningRunCreated) {
       onLearningRunCreated({
@@ -780,7 +783,9 @@ export default function TutorPanel({
               ) : learningTaskProposal.status === 'paused' ? (
                 <button type="button" onClick={() => decideLearningTask('resume')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">继续任务</button>
               ) : !learningTaskProposal.micro_learning_run_id && !learningTaskProposal.checkpoint_id ? (
-                <button type="button" onClick={prepareLearningTask} disabled={loading} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">生成讲义与验证题</button>
+                <button type="button" onClick={prepareLearningTask} disabled={loading} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">
+                  {preparingTaskMaterials ? '正在准备；模型超时会自动使用稳定模板…' : '生成讲义与验证题'}
+                </button>
               ) : (
                 <a href={learningTaskProposal.navigation.path} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">继续学习与验证</a>
               )}

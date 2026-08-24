@@ -257,6 +257,9 @@ export default function SettingsPage() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm
                            focus:outline-none focus:ring-2 focus:ring-primary-400"
               />
+              <p className="mt-1 text-[11px] text-gray-400">
+                填写服务根地址即可；粘贴以 /responses 或 /chat/completions 结尾的完整接口时会自动纠正。
+              </p>
               <div className="flex gap-2 mt-1.5">
                 <button onClick={() => setEditUrl('https://api.deepseek.com')}
                   className="text-[11px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200">

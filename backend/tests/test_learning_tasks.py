@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -14,6 +15,7 @@ from app.services.learning_tasks import (
     _attempt_is_verification_evidence,
     _fallback_plan,
     _portable_planner_context,
+    generate_learning_task_plan,
 )
 
 
@@ -108,6 +110,34 @@ def test_new_task_context_does_not_inherit_volatile_content_from_another_task():
         "kernel": "human",
         "keys": ["format_preference", "pace_preference"],
     }]
+
+
+def test_learning_task_planner_falls_back_within_interactive_budget(monkeypatch):
+    class SlowModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def ainvoke(self, _messages):
+            await asyncio.sleep(1)
+
+    monkeypatch.setattr("app.services.learning_tasks.ChatOpenAI", SlowModel)
+    monkeypatch.setattr("app.services.learning_tasks.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.learning_tasks.settings.learning_task_plan_model_budget_seconds",
+        0.01,
+    )
+
+    started = time.perf_counter()
+    plan = asyncio.run(generate_learning_task_plan(
+        title="理解事件循环",
+        objective="能够解释事件循环并完成独立验证",
+        origin_kind="conversation",
+        estimated_minutes=20,
+    ))
+
+    assert time.perf_counter() - started < 0.5
+    assert plan["schema_version"] == "learning-task-plan.v1"
+    assert {phase["kind"] for phase in plan["phases"]} >= {"learn", "verify"}
 
 
 def test_verification_rejects_hints_diagnostics_retries_and_review_replays():

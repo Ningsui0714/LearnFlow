@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -962,6 +963,42 @@ def test_tutor_reports_missing_model_without_fallback_copy(client: TestClient, m
     )
     assert response.status_code == 200
     assert response.json()["message"] == "未接入模型。"
+
+
+def test_tutor_structured_and_plain_attempts_share_one_model_budget(
+    client: TestClient,
+    monkeypatch,
+):
+    class SlowModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, _schema):
+            return self
+
+        async def ainvoke(self, _messages):
+            await asyncio.sleep(1)
+
+    monkeypatch.setattr("app.services.tutor_service.ChatOpenAI", SlowModel)
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.tutor_service.settings.tutor_model_budget_seconds",
+        0.01,
+    )
+    session_id = new_session(client)
+
+    started = time.perf_counter()
+    response = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json={
+            "message": "请简单聊聊今天的学习安排",
+            "client_turn_id": f"slow-model-{uuid.uuid4().hex}",
+        },
+    )
+
+    assert time.perf_counter() - started < 1
+    assert response.status_code == 200
+    assert "模型服务没有响应" in response.json()["message"]
 
 
 def test_project_tutor_routes_formal_learning_into_checkpoints(

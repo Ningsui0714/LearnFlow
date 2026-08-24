@@ -299,6 +299,11 @@ Tutor 每回合 MUST 读取同一 Session 中非终态任务的 answer-free 只�
 对话创建的任务 MUST 保留原 Session 作为
 来源与返回锚点，专注附件使用的 checkpoint Session 不得覆盖它。
 
+所有用户等待中的模型增强 MUST 使用可配置的 wall-clock budget。Tutor 的结构化调用和
+纯文本兼容调用 MUST 共享一个 deadline，不能按重试次数重复消耗完整预算；Learning Task
+计划与学习包生成超时后 MUST 返回经过同一 schema 校验的确定性结果。模型成功、超时或
+供应商/校验失败只影响内容来源标记，不得影响 EvidenceEvent、阶段门槛和掌握状态。
+
 项目中的每个 Checkpoint MUST 唯一对应一个 checkpoint Session 和一个 Learning Task。
 Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件；Learning Task 只负责该关
 如何执行。讲义、练习和题目仍由 `Lecture / Exercise / ConceptQuestion` 权威保存，任务
@@ -627,6 +632,7 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 
 - Tutor LLM 失败：保留消息与事件，跳过语义观察，允许确定性 action 继续。
 - 结构化输出不可解析：使用受限 fallback，不应用越权状态。
+- 交互模型超时：Tutor 在共享总预算后停止重试；任务计划和学习包使用确定性同契约降级。
 - 来源搜索失败：保留项目提案，来源区域显示失败并允许重试。
 - 后台任务失败：Action 返回真实错误与修复建议，不写完成事件。
 - 记忆合成失败：原子事实与 KernelState 仍然可用，运行可重新排队。

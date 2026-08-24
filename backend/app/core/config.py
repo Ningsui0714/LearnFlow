@@ -1,6 +1,6 @@
 import os
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -16,6 +16,23 @@ ENV_FILES = (
 )
 
 
+def normalize_openai_base_url(value: str) -> str:
+    """Accept provider roots as well as commonly pasted full endpoint URLs."""
+    normalized = str(value or "").strip().rstrip("/")
+    lowered = normalized.casefold()
+    for suffix in ("/chat/completions", "/responses"):
+        if lowered.endswith(suffix):
+            normalized = normalized[: -len(suffix)].rstrip("/")
+            lowered = normalized.casefold()
+            break
+    if lowered in {
+        "https://api.deepseek.com",
+        "https://api.deepseek.com/v1",
+    }:
+        return "https://api.deepseek.com"
+    return normalized
+
+
 class Settings(BaseSettings):
     app_name: str = "LearnFlow"
     app_version: str = "0.1.0"
@@ -24,6 +41,11 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
+    # Optional online enhancement must not hold an interactive request for the
+    # provider's full transport timeout. Deterministic fallbacks remain usable.
+    tutor_model_budget_seconds: float = 25.0
+    learning_task_plan_model_budget_seconds: float = 12.0
+    micro_learning_artifact_model_budget_seconds: float = 18.0
 
     # Vision (image understanding) — Moonshot
     vision_api_key: str = ""
@@ -86,6 +108,11 @@ class Settings(BaseSettings):
         # after upgrading from older desktop builds that did not persist a
         # separate settings.env yet.
         env_file = ENV_FILES
+
+    @field_validator("llm_base_url", mode="before")
+    @classmethod
+    def normalize_llm_base_url(cls, value: str) -> str:
+        return normalize_openai_base_url(value)
 
     @property
     def cors_origins_list(self) -> List[str]:
