@@ -53,6 +53,36 @@
           "围绕初次测评暴露的薄弱点解释根因、边界和常见误区。"
         ]
       },
+      "teaching_contract": {
+        "teaching_contract_id": "TC-KN_JAVA_ENCAPSULATION-V1",
+        "contract_version": "teaching-contract-v1",
+        "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+        "required_scope": ["访问控制", "受控接口", "可变状态保护"],
+        "excluded_scope": ["继承重写的完整规则", "多态分派机制"],
+        "outcomes": [
+          {
+            "outcome_id": "OUT-KN_JAVA_ENCAPSULATION-01",
+            "statement": "说明封装为何要隐藏内部状态。",
+            "accepted_block_types": ["concept"]
+          },
+          {
+            "outcome_id": "OUT-KN_JAVA_ENCAPSULATION-02",
+            "statement": "为一个字段设计受控访问方法。",
+            "accepted_block_types": ["steps", "example", "workplace"]
+          },
+          {
+            "outcome_id": "OUT-KN_JAVA_ENCAPSULATION-03",
+            "statement": "识别 getter 直接泄露可变内部引用的问题。",
+            "accepted_block_types": ["warning", "pitfall", "check", "standard", "safety"]
+          }
+        ],
+        "immutable_facts": ["private 字段不能被类外代码直接访问。"]
+      },
+      "explanation_policy": {
+        "capability_pool": ["concept", "example", "steps", "warning", "check"],
+        "allowed_block_types": ["concept", "example", "steps", "warning", "check"],
+        "selection_rule": "优先覆盖必讲 outcome，再选择能补足当前缺失目标的区块。"
+      },
       "web_evidence_pack": {
         "status": "ready",
         "evidence": [

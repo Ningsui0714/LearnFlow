@@ -499,6 +499,25 @@ flowData:
           10. 如果所有检索结果、论文资料、联网证据和知识库资料合在一起仍不足以形成完整讲解，必须输出 status=knowledge_insufficient。
           11. 只有个别区块资料不足时，可以保留资料充分的区块，但不得生成资料不足的区块，并在缺失区块位置输出 type=notice 的说明。
 
+          一点五、教学契约约束
+
+          1. context.teaching_contract 存在时，它是本节讲解的范围和学习目标契约：
+             - 只讲 required_scope 与 concepts 中列出的原子知识单元；
+             - 不得展开 excluded_scope 中明确排除的后续主题；
+             - definitions、公式、事实、推导逻辑、题目答案和评分标准不得改写或个性化；
+             - 只允许调整例子、语气、难度、顺序和讲解速度。
+          2. context.teaching_contract.outcomes 中每个目标都必须至少由一个 content_blocks 区块覆盖：
+             - accepted_block_types 中的 concept、steps/example/workplace、warning/check 分别承担概念、应用和误区/验证目标；
+             - 若无法用可核验资料覆盖某个目标，输出 status=knowledge_insufficient，不得用主题相关的扩展内容填充。
+          3. teaching_contract 仅用于限定范围和目标，不能填写到 content_blocks.source；专业事实的 source 仍必须来自可核验资料。
+
+          一点六、知识类型能力池
+
+          1. context.explanation_policy.capability_pool 是当前知识类型允许选择的教学区块能力池。
+          2. 先覆盖 teaching_contract.required_outcome_ids 对应的目标，再从能力池选择能补足目标的区块；不要为了凑齐模板强行生成所有类型。
+          3. code 知识优先考虑 code、execution_trace、example 和 steps；定量知识优先考虑 formula、example、diagram 和 steps；流程知识优先考虑 steps、diagram、check；对比知识优先考虑 comparison、concept、example 和 warning。
+          4. 能力池中的区块仍必须满足来源、范围和个性化边界校验；没有可靠资料支持时输出 notice 或 knowledge_insufficient。
+
           二、初次测评约束
 
           1. 必须严格依据 context.initial_assessment_context 生成个性化讲解。
@@ -534,15 +553,8 @@ flowData:
 
           四、讲解结构
 
-          正常生成时，按照以下结构组织 content_blocks：
-
-          1. connection：为什么先学这一点
-          2. concept：核心概念
-          3. steps：操作步骤
-          4. example：岗位示例
-          5. pitfall：常见易错
-          6. workplace：岗位应用
-          7. check：自查要点
+          正常生成时，按照 context.explanation_policy.capability_pool 动态组织 content_blocks。
+          connection/route 类内容由学习地图和计划简报负责，不写入正式讲解正文；正式正文至少应有一个 concept 或等价的核心解释区块，并优先补足当前缺失的学习目标。
 
           每个区块必须包含：
 
@@ -770,8 +782,15 @@ flowData:
               "concept",
               "steps",
               "example",
+              "code",
+              "formula",
+              "diagram",
+              "comparison",
               "pitfall",
+              "warning",
               "workplace",
+              "standard",
+              "safety",
               "check",
               "notice",
           }

@@ -3,14 +3,19 @@
   "local_audit": {
     "status": "passed",
     "missing_sections": [],
-    "untraced_block_types": []
+    "untraced_block_types": [],
+    "teaching_contract_audit": {
+      "status": "passed",
+      "missing_outcome_ids": [],
+      "unmapped_blocks": []
+    }
   },
   "evidence": [
     {
       "title": "Java Platform SE Documentation",
       "source": "Oracle 官方文档",
       "url": "https://docs.oracle.com/javase/",
-      "quote": "Encapsulation controls access to an object's state through its public operations."
+      "quote": "Encapsulation controls access to an object's state through private fields and public operations; mutable internal arrays should not be exposed directly."
     }
   ],
   "content_blocks": [
@@ -18,6 +23,27 @@
       "type": "concept",
       "content": "封装通过公开操作控制对象状态访问。",
       "source": "Java Platform SE Documentation · https://docs.oracle.com/javase/"
+    },
+    {
+      "type": "steps",
+      "content": "将字段设为 private，再通过受控方法访问。",
+      "source": "Java Platform SE Documentation · https://docs.oracle.com/javase/"
+    },
+    {
+      "type": "pitfall",
+      "content": "不能直接暴露可变内部数组。",
+      "source": "Java Platform SE Documentation · https://docs.oracle.com/javase/"
     }
-  ]
+  ],
+  "teaching_contract": {
+    "teaching_contract_id": "TC-KN_JAVA_ENCAPSULATION-V1",
+    "required_scope": ["访问控制", "受控接口", "可变状态保护"],
+    "excluded_scope": ["继承重写的完整规则"],
+    "immutable_facts": ["private 字段不能被类外代码直接访问。"],
+    "outcomes": [
+      {"outcome_id": "OUT-KN_JAVA_ENCAPSULATION-01", "statement": "说明封装为何要隐藏内部状态。"},
+      {"outcome_id": "OUT-KN_JAVA_ENCAPSULATION-02", "statement": "为一个字段设计受控访问方法。"},
+      {"outcome_id": "OUT-KN_JAVA_ENCAPSULATION-03", "statement": "识别 getter 直接泄露可变内部引用的问题。"}
+    ]
+  }
 }

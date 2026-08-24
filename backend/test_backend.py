@@ -752,9 +752,9 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertEqual(ok["check_feedback"]["passed"], True)
 
         # 注入失败的工作流返回
-        original = application.gateway.invoke_learning_workflow
+        original = application.local_engine.generate_learning_lesson
 
-        def failing_gateway(payload):
+        def failing_engine(workflow_payload, context):
             return {
                 "status": "system_retryable",
                 "workflow_mode": "learning",
@@ -764,7 +764,7 @@ class BackendIntegrationTests(unittest.TestCase):
         before_events = len(
             application.store.get_student_state(student_id)["teaching_history"]["events"]
         )
-        application.gateway.invoke_learning_workflow = failing_gateway
+        application.local_engine.generate_learning_lesson = failing_engine
         try:
             failed = self.request_json(
                 "POST",
@@ -777,7 +777,7 @@ class BackendIntegrationTests(unittest.TestCase):
                 },
             )
         finally:
-            application.gateway.invoke_learning_workflow = original
+            application.local_engine.generate_learning_lesson = original
 
         self.assertEqual(failed["status"], "system_retryable")
         state = application.store.get_student_state(student_id)
@@ -1380,7 +1380,9 @@ class BackendIntegrationTests(unittest.TestCase):
             json.loads(calls[0]["parameters"]["AGENT_USER_INPUT"]), workflow_input
         )
 
-    def test_wf04_reports_21600_after_bounded_retries(self):
+    def test_wf04_falls_back_to_local_template_after_21600_retries_exhausted(self):
+        # 21600 代码执行失败会重试（最多 3 次请求），重试耗尽后不再上抛，
+        # 而是降级为本地确定性模板，保证测评仍可出题。
         settings = Settings(
             host="127.0.0.1", port=0,
             database_path=Path(self.temporary_directory.name) / "wf04-retry-exhausted.db",
@@ -1408,17 +1410,22 @@ class BackendIntegrationTests(unittest.TestCase):
             return FakeResponse()
 
         with patch("backend.server.urllib.request.urlopen", fake_urlopen):
-            with self.assertRaisesRegex(GatewayError, "21600.*已自动重试 2 次"):
-                XingchenGateway(settings).invoke_wf04_workflow({
-                    "student_id": "STU-WF04-RETRY", "request_id": "REQ-WF04-RETRY",
-                    "action": "generate_question",
-                })
+            result = XingchenGateway(settings).invoke_wf04_workflow({
+                "student_id": "STU-WF04-RETRY", "request_id": "REQ-WF04-RETRY",
+                "action": "generate_question",
+            })
 
         self.assertEqual(len(calls), 3)
         self.assertEqual(calls[0], calls[1])
         self.assertEqual(calls[1], calls[2])
+        self.assertEqual(result["workflow_mode"], "wf04_training_evaluation")
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("question_spec", result)
+        self.assertIn("public_question", result)
 
-    def test_wf04_does_not_retry_other_platform_errors(self):
+    def test_wf04_falls_back_to_local_without_retrying_other_platform_errors(self):
+        # 非 21600 的平台错误（如鉴权/授权 20373）不重试，直接降级为本地确定性模板，
+        # 而不是让测评预生成题单长期停留在"题单充实中"。
         settings = Settings(
             host="127.0.0.1", port=0,
             database_path=Path(self.temporary_directory.name) / "wf04-non-retry.db",
@@ -1446,12 +1453,15 @@ class BackendIntegrationTests(unittest.TestCase):
             return FakeResponse()
 
         with patch("backend.server.urllib.request.urlopen", fake_urlopen):
-            with self.assertRaisesRegex(GatewayError, "21601"):
-                XingchenGateway(settings).invoke_wf04_workflow({
-                    "student_id": "STU-WF04-NON-RETRY", "action": "generate_question",
-                })
+            result = XingchenGateway(settings).invoke_wf04_workflow({
+                "student_id": "STU-WF04-NON-RETRY", "action": "generate_question",
+            })
 
         self.assertEqual(len(calls), 1)
+        self.assertEqual(result["workflow_mode"], "wf04_training_evaluation")
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("question_spec", result)
+        self.assertIn("public_question", result)
 
     def test_remote_gateway_recovers_fragmented_result_package(self):
         settings = Settings(
@@ -1964,8 +1974,8 @@ class BackendIntegrationTests(unittest.TestCase):
             "learning_goal": {"goal_id": "GOAL-GAP-001", "goal_name": "完成实训目标"},
         }
         with patch.object(
-            application.gateway,
-            "invoke_learning_workflow",
+            application.local_engine,
+            "generate_learning_lesson",
             return_value={
                 "status": "knowledge_unavailable",
                 "workflow_mode": "learning",
@@ -1992,8 +2002,8 @@ class BackendIntegrationTests(unittest.TestCase):
             "learning_goal": {"goal_id": "GOAL-WEB-SRC-001", "goal_name": "完成 Python 实训"},
         }
         with patch.object(
-            application.gateway,
-            "invoke_learning_workflow",
+            application.local_engine,
+            "generate_learning_lesson",
             return_value={
                 "status": "ok",
                 "workflow_mode": "learning",

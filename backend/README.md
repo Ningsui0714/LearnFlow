@@ -7,7 +7,9 @@ WF04 的错题优先个性化出题、错因级合并规则和联调验收方式
 
 - `frontend/` 静态页面；
 - 上游测验/诊断结果入口；
-- 学生画像、学习讲解和纠错讲解三个星辰工作流的代理；
+- 学生画像、推荐、目标与路径规划、对话、出题与 WF04 等星辰工作流的代理；
+- **讲解模块已本地化**（`backend/local_explanation_engine.py`）：正式章节讲解、
+  候选讲解与纠错讲解由本地课程知识库 + 联网检索 + 星火直连生成，不再调用星辰工作流；
 - 本地学生画像缓存、策略引擎和知识依据缓存；
 - SQLite 学习状态和调用记录；
 - 学习周期、任务实例、题目、作答、讲解会话和结构化来源持久化；
@@ -37,19 +39,27 @@ APP_API_TOKEN=
 
 ## 本地知识库（FTS5）
 
-- 种子数据：`backend/data/knowledge_seed.py`，**21 条**，覆盖 KN_JAVA_* 全部 7 个学习节点（类/封装/继承/多态/集合/异常/IO；扩充至 ≥50 条的目标见《专业群定位与场景说明_计算机信息技术.md》第 5 节）。
+- 种子数据：`backend/data/knowledge_seed.py`，**56 条**，覆盖 KN_JAVA_* 全部 7 个学习节点（类/封装/继承/多态/集合/异常/IO，每节点 8 条）。
 - 每条字段：`entry_id`（KN-JAVA-{序号}）、`title/category/content/source/safety/job_role/knowledge_point_id`，另有 `source_type/document_id/locator/action/keywords`。
 - 来源类型：《Java 核心技术·卷I》（原书第11版）、Oracle Java 教程、实训指导书（页码待访谈后回填）。
 - 存储：`knowledge_entries` 普通表 + `knowledge_fts` 外部内容 FTS5（trigram tokenizer）；启动时幂等 `INSERT OR IGNORE` 灌入并重建索引，不重复入库。
-- 检索增强：讲解（learning/remediation）与选中追问都先按 `knowledge_point_id` + 讲解动作召回 top-k，拼成 `kb_text` 传给工作流，并把命中条目以 `sources[]` 结构注入教学包来源（前端来源弹窗可见标准号/章节）。
+- 检索增强：讲解（learning/remediation）与选中追问都先按 `knowledge_point_id` + 讲解动作召回 top-k，拼成 `kb_text` 交给本地讲解引擎/对话生成，并把命中条目以 `sources[]` 结构注入教学包来源（前端来源弹窗可见标准号/章节）。
 - 无匹配时回退到原有 web_search/知识名证据链路，不影响无本地条目时的原行为。
+
+## 本地讲解引擎（星火直连）
+
+讲解正文不再依赖星辰画布工作流，改由 `backend/local_explanation_engine.py` 在本地生成：
+
+1. **来源门禁**：仅使用本地课程知识库（FTS5）与白名单联网检索证据；两者都没有时返回 `knowledge_unavailable`，绝不用无来源 AI 内容替代。
+2. **LLM**：配置 `SPARK_API_KEY` 后直连讯飞星火 OpenAI 兼容端点（`SPARK_API_BASE`）生成讲解，失败/未配置自动回退确定性模板（等价历史 mock 行为）。
+3. 相关星辰配置项 `XINGCHEN_LEARNING_FLOW_ID`、`XINGCHEN_REMEDIATION_FLOW_ID`、`XINGCHEN_KNOWLEDGE_PLANNING_FLOW_ID`、`XINGCHEN_KNOWLEDGE_AUDIT_FLOW_ID` 已停用，保留仅为兼容历史配置。
 
 ## 接入讯飞星辰
 
-1. 在星辰平台导入并发布 `学生画像分析工作流.yml`、`学习阶段个性化讲解工作流_v5.yml` 和 `测验后个性化纠错讲解工作流_v5.yml`。
-2. 从发布页取得 `API_KEY`、`API_SECRET` 和三个工作流 ID。
+1. 在星辰平台导入并发布 `学生画像分析工作流.yml` 与 `测验后个性化纠错讲解工作流_v5.yml`（纠错讲解已本地化，非必需；对话/出题/WF04 等按需发布对应工作流）。
+2. 从发布页取得 `API_KEY`、`API_SECRET` 和对应工作流 ID。
 3. 复制 `backend/.env.example` 为 `backend/.env`，填写密钥和工作流 ID，并将 `XINGCHEN_MODE` 改为 `remote`。
-4. 确认工作流开始节点仍使用 `AGENT_USER_INPUT` 接收完整 JSON 字符串。
+4. 可选：填写 `SPARK_API_KEY`（星火大模型 APIPassword，与 `XINGCHEN_API_KEY` 是两套独立凭据）启用 AI 讲解生成；留空则讲解走本地模板。
 
 ```powershell
 Copy-Item backend\.env.example backend\.env

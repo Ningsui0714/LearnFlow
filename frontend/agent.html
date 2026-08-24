@@ -42,21 +42,6 @@
 
     .app { display: flex; flex-direction: column; height: 100vh; }
 
-    .topbar {
-      height: 54px; flex: none; display: flex; align-items: center; gap: 12px;
-      padding: 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); z-index: 30;
-    }
-    .brand { display: flex; align-items: center; gap: 10px; }
-    .brand-mark {
-      width: 30px; height: 30px; border-radius: 9px; background: var(--green); color: #fff;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .brand-copy strong { font-size: 15px; display: block; line-height: 1.2; }
-    .brand-copy small { color: var(--muted-soft); font-size: 11px; }
-    .topbar-spacer { flex: 1; }
-    .conn-state { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
-    .conn-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
-    .topbar-user { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
     .mobile-view-switcher { display: none; align-items: center; gap: 3px; }
     .mobile-view-button {
       width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
@@ -138,6 +123,12 @@
     .path-copy strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
     .path-mastery { font-size: 10.5px; color: var(--muted-soft); flex: none; min-width: 34px; text-align: right; }
     .path-item.current .path-mastery { color: var(--amber); font-weight: 600; }
+    .chapter-name-tooltip {
+      position: fixed; z-index: 80; max-width: min(360px, calc(100vw - 24px)); padding: 10px 13px;
+      border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface);
+      box-shadow: var(--shadow-lg); color: var(--ink); font-size: 13px; font-weight: 600;
+      line-height: 1.55; overflow-wrap: anywhere; pointer-events: none;
+    }
 
     .sidebar-foot {
       padding: 10px 14px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 9px;
@@ -577,6 +568,19 @@
     .suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
     .suggestion-chip { font-size: 11.5px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 11px; color: var(--muted); }
     .suggestion-chip:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
+    .capability-catalog { display: grid; gap: 8px; margin-top: 10px; }
+    .capability-catalog > p { color: var(--muted); font-size: 12px; }
+    .capability-program { border: 1px solid var(--line); border-radius: 9px; background: var(--surface); overflow: hidden; }
+    .capability-program summary { cursor: pointer; padding: 8px 10px; color: var(--ink); font-weight: 700; }
+    .capability-program summary small { margin-left: 6px; color: var(--muted); font-weight: 500; }
+    .capability-pack { padding: 0 10px 10px; border-top: 1px solid var(--line); }
+    .capability-pack + .capability-pack { margin-top: 8px; }
+    .capability-pack-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; }
+    .capability-pack-head strong { font-size: 12px; }
+    .capability-support { flex: none; color: var(--green-strong); background: var(--green-soft); border-radius: 999px; padding: 2px 7px; font-size: 10px; }
+    .capability-pack p { margin: 4px 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .capability-modules { color: var(--ink-soft); }
+    .capability-pack .suggestion-chip { margin-top: 5px; }
 
     .chat-input-box { padding: 9px 14px 12px; border-top: 1px solid var(--line); }
     .chat-tools { display: flex; align-items: center; gap: 5px; margin-bottom: 7px; }
@@ -602,6 +606,8 @@
     .chat-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-top: 1px dashed var(--line); padding-top: 10px; }
     .chat-sources small { color: var(--muted-soft); font-size: 11px; }
     .source-chip { font-size: 11px; background: var(--green-soft); color: var(--green-strong); border-radius: 999px; padding: 3px 9px; }
+    .turn-understanding { margin-top: 10px; padding: 8px 10px; border-left: 3px solid var(--green); border-radius: 6px; background: var(--green-soft); color: var(--ink-soft); font-size: 11.5px; line-height: 1.65; }
+    .turn-understanding strong { color: var(--green-strong); }
     .quiz-card .qc-head { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
     .quiz-card .qc-head svg { color: var(--blue); }
     .quiz-card p { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
@@ -742,6 +748,75 @@
     .plan-step-actions .plan-question { gap: 4px; color: var(--blue); }
     .plan-step-actions .plan-question svg { width: 14px; height: 14px; }
     .plan-empty { margin-left: 40px; padding: 11px 0; color: var(--muted-soft); font-size: 12px; }
+    .plan-daily-schedule { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 16px; }
+    .plan-daily-schedule summary { cursor: pointer; display: flex; align-items: center; gap: 7px; color: var(--ink); font-size: 13px; font-weight: 650; }
+    .plan-daily-schedule summary small { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; }
+    .plan-daily-list { display: grid; gap: 8px; margin-top: 12px; }
+    .plan-day { border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; background: var(--surface); }
+    .plan-day-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+    .plan-day-head strong { font-size: 12px; }
+    .plan-day-head small { color: var(--muted); font-size: 11px; }
+    .plan-day-head em { margin-left: auto; color: var(--muted-soft); font-size: 10.5px; font-style: normal; }
+    .plan-day ul { display: grid; gap: 6px; margin: 0; padding-left: 18px; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+    .plan-day li strong { color: var(--ink); }
+    .learning-plan-actions, .learning-map-actions { display: flex; gap: 8px; flex: none; }
+    .ghost-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); background: var(--surface); border-radius: 7px; padding: 8px 12px; color: var(--green-strong); font-size: 12px; cursor: pointer; }
+    .ghost-btn:hover { border-color: var(--green); background: var(--green-soft); }
+    .learning-map { padding: 28px 32px 48px; }
+    .learning-map-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+    .learning-map-head h1 { margin: 0 0 6px; font-size: 24px; }
+    .learning-map-head p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+    .lm-brief-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 18px 20px; margin-bottom: 20px; }
+    .lm-brief-card > h2 { margin: 0 0 8px; font-size: 17px; }
+    .lm-brief-outcome, .lm-brief-time { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+    .lm-brief-time { display: flex; align-items: center; gap: 6px; }
+    .lm-brief-why ul { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .lm-brief-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 14px; }
+    .lm-chip-group label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+    .lm-chip-group div { display: flex; flex-wrap: wrap; gap: 5px; }
+    .lm-chip { border-radius: 99px; padding: 3px 9px; font-size: 11px; background: var(--surface-soft); color: var(--muted); }
+    .lm-chip.known { background: var(--green-soft); color: var(--green-strong); }
+    .lm-chip.gap { background: var(--red-soft); color: var(--red); }
+    .lm-chip.pending { background: var(--blue-soft); color: var(--blue); }
+    .lm-chip.hot { background: #fff3e0; color: #b45309; }
+    .lm-chip.locked { background: var(--surface-soft); color: var(--muted); text-decoration: line-through; }
+    .lm-chip.muted { color: var(--muted-soft); }
+    .lm-brief-block { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+    .lm-brief-block h3 { margin: 0 0 8px; font-size: 13px; color: var(--ink); }
+    .lm-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+    .lm-path-node { border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-soft); padding: 4px 9px; font-size: 12px; color: var(--ink); }
+    .lm-path-arrow { width: 14px; height: 14px; color: var(--muted-soft); flex: none; }
+    .lm-stages { display: grid; gap: 8px; }
+    .lm-stage-row { display: flex; align-items: center; gap: 10px; }
+    .lm-stage-order { width: 24px; height: 24px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--green-soft); color: var(--green-strong); font-size: 11px; font-weight: 700; }
+    .lm-stage-row div { flex: 1; min-width: 0; }
+    .lm-stage-row strong { display: block; font-size: 12.5px; }
+    .lm-stage-row small { display: block; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .lm-stage-count { flex: none; color: var(--muted-soft); font-size: 11px; }
+    .lm-rules { margin: 0; padding-left: 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .lm-block { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 16px 18px; margin-bottom: 14px; }
+    .lm-block > h2 { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; font-size: 14px; }
+    .lm-block > h2 i { width: 16px; color: var(--green); }
+    .lm-node { border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; margin-bottom: 8px; }
+    .lm-node.recommended, .lm-node.learning { border-color: #b9d8c8; background: #fbfefd; }
+    .lm-node.weak { border-color: #f2d5c8; background: #fffbfa; }
+    .lm-node.mastered { border-color: var(--line); background: var(--surface-soft); }
+    .lm-node.locked { opacity: .62; }
+    .lm-node-head { display: flex; align-items: center; gap: 10px; }
+    .lm-node-state { width: 26px; height: 26px; flex: none; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--surface-soft); color: var(--muted); }
+    .lm-node.learning .lm-node-state { background: var(--blue-soft); color: var(--blue); }
+    .lm-node.weak .lm-node-state { background: var(--amber-soft); color: var(--amber); }
+    .lm-node.mastered .lm-node-state { background: var(--green); color: #fff; }
+    .lm-node-copy { flex: 1; min-width: 0; }
+    .lm-node-copy strong { display: block; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+    .lm-node-copy small { display: block; margin-top: 2px; color: var(--muted-soft); font-size: 10.5px; }
+    .lm-node-actions { flex: none; }
+    .lm-node-actions .primary-btn { padding: 6px 11px; font-size: 12px; }
+    .lm-node-prereqs { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--muted); font-size: 11px; }
+    .lm-prereq { display: inline-block; border: 1px solid var(--line); border-radius: 99px; padding: 2px 7px; margin: 2px 4px 2px 0; background: var(--surface-soft); }
+    .lm-candidate-list { display: grid; gap: 6px; }
+    .lm-hint { margin: 10px 0 0; color: var(--muted-soft); font-size: 11.5px; line-height: 1.6; }
+    .lm-disclaimer { margin: 18px 0 0; color: var(--muted-soft); font-size: 11px; line-height: 1.6; }
 
     @media (max-width: 620px) {
       .assessment-levels, .assessment-knowledge-list, .assessment-catalog, .practice-sheet-list { grid-template-columns: 1fr; }
@@ -810,11 +885,11 @@
       .assessment-catalog { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) {
-      .topbar { padding: 0 10px; gap: 8px; }
-      .brand-copy small, .conn-state, .topbar-user #user-name, .topbar-spacer { display: none; }
-      .brand-copy strong { font-size: 14px; }
-      .mobile-view-switcher { display: flex; margin-left: auto; }
-      .topbar-user { gap: 0; }
+      .app { padding-bottom: 54px; }
+      .mobile-view-switcher {
+        position: fixed; left: 50%; bottom: 8px; z-index: 70; display: flex; transform: translateX(-50%);
+        padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow);
+      }
       .layout { display: block; min-width: 0; overflow: hidden; }
       .layout > .sidebar, .layout > .stage, .layout > .chat { display: none; width: 100%; height: 100%; min-width: 0; }
       .layout[data-mobile-panel="projects"] > .sidebar { display: flex; }
@@ -883,20 +958,11 @@
 </head>
 <body>
   <div class="app">
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark"><i data-lucide="route"></i></span>
-        <span class="brand-copy"><strong>知行课径 Agent</strong><small>个性化自适应学习助手</small></span>
-      </div>
-      <nav class="mobile-view-switcher" aria-label="移动端视图">
-        <button class="mobile-view-button" type="button" data-mobile-panel-target="projects" aria-label="项目" title="项目" aria-pressed="false"><i data-lucide="folders"></i></button>
-        <button class="mobile-view-button" type="button" data-mobile-panel-target="workspace" aria-label="学习画布" title="学习画布" aria-pressed="true"><i data-lucide="panel-top"></i></button>
-        <button class="mobile-view-button" type="button" data-mobile-panel-target="chat" aria-label="对话" title="对话" aria-pressed="false"><i data-lucide="message-square"></i></button>
-      </nav>
-      <div class="topbar-spacer"></div>
-      <span class="conn-state" id="conn-state">连接服务中</span>
-      <div class="topbar-user"><span class="avatar" id="user-avatar">学</span><span id="user-name">学习者</span></div>
-    </header>
+    <nav class="mobile-view-switcher" aria-label="移动端视图">
+      <button class="mobile-view-button" type="button" data-mobile-panel-target="projects" aria-label="项目" title="项目" aria-pressed="false"><i data-lucide="folders"></i></button>
+      <button class="mobile-view-button" type="button" data-mobile-panel-target="workspace" aria-label="学习画布" title="学习画布" aria-pressed="true"><i data-lucide="panel-top"></i></button>
+      <button class="mobile-view-button" type="button" data-mobile-panel-target="chat" aria-label="对话" title="对话" aria-pressed="false"><i data-lucide="message-square"></i></button>
+    </nav>
 
     <div class="layout" id="app-layout" data-mobile-panel="workspace">
       <aside class="sidebar">
@@ -956,10 +1022,29 @@
                   <h1>学习计划</h1>
                   <p id="learning-plan-subtitle">正在加载计划…</p>
                 </div>
-                <button class="primary-btn" id="learning-plan-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+                <div class="learning-plan-actions">
+                  <button type="button" class="ghost-btn" id="learning-plan-to-map"><i data-lucide="map"></i> 学习地图</button>
+                  <button type="button" class="ghost-btn" id="learning-plan-regenerate"><i data-lucide="wand-sparkles"></i> 重新生成</button>
+                  <button type="button" class="primary-btn" id="learning-plan-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+                </div>
               </div>
               <div class="plan-context" id="learning-plan-context"></div>
               <div id="learning-plan-stages"></div>
+              <div id="learning-plan-schedule"></div>
+            </section>
+            <section class="learning-map" id="learning-map-view" hidden aria-label="学习地图">
+              <div class="learning-map-head">
+                <div>
+                  <h1>学习地图</h1>
+                  <p id="learning-map-subtitle">正在加载地图与计划说明…</p>
+                </div>
+                <div class="learning-map-actions">
+                  <button type="button" class="primary-btn" id="learning-map-refresh"><i data-lucide="refresh-cw"></i> 刷新</button>
+                  <button type="button" class="ghost-btn" id="learning-map-to-plan"><i data-lucide="route"></i> 学习计划</button>
+                </div>
+              </div>
+              <div id="learning-map-brief"></div>
+              <div id="learning-map-graph"></div>
             </section>
             <section class="assessment-center" id="assessment-center" hidden aria-label="测评中心">
               <div class="assessment-center-head">
@@ -1198,6 +1283,8 @@
       <span class="selection-note-hint"><i data-lucide="text-cursor-input"></i>直接输入即可在此记笔记</span>
     </div>
 
+    <div class="chapter-name-tooltip" id="chapter-name-tooltip" role="tooltip" hidden></div>
+
     <dialog class="note-dialog" id="notes-list-dialog">
       <form method="dialog">
         <div class="note-dialog-head"><strong id="notes-list-title">本章笔记</strong><button value="cancel" title="关闭"><i data-lucide="x"></i></button></div>
@@ -1262,9 +1349,11 @@
       expandedProjectsInitialized: false,
       projectDetails: new Map(),
       projectDetailRequests: new Map(),
+      pathItemsCache: new Map(), // 各项目学习路径条目缓存（renderProjectTree 同步渲染用，避免重建时路径列表被清空导致树塌缩）
       conversations: new Map(),
       activeConversationKey: "",
       chatTools: { knowledge: true, web: true, materials: false },
+      capabilityCatalog: null,
       materialKnowledgeAvailable: false,
       materialKnowledgeStatus: "disabled",
       notesByLesson: new Map(),
@@ -1296,6 +1385,55 @@
     function escapeAttr(s) {
       return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
+
+    const chapterNameTooltipEl = $("chapter-name-tooltip");
+    let chapterNameTooltipTarget = null;
+
+    function hideChapterNameTooltip() {
+      if (chapterNameTooltipTarget) chapterNameTooltipTarget.removeAttribute("aria-describedby");
+      chapterNameTooltipTarget = null;
+      chapterNameTooltipEl.hidden = true;
+    }
+
+    function showChapterNameTooltip(target) {
+      const button = target && target.closest ? target.closest("[data-chapter-name]") : null;
+      if (!button || !treeEl.contains(button)) return;
+      const label = button.querySelector(".path-copy strong");
+      if (!label || label.scrollWidth <= label.clientWidth) {
+        hideChapterNameTooltip();
+        return;
+      }
+      chapterNameTooltipTarget = button;
+      chapterNameTooltipEl.textContent = button.dataset.chapterName || label.textContent;
+      chapterNameTooltipEl.hidden = false;
+      button.setAttribute("aria-describedby", chapterNameTooltipEl.id);
+      const anchorRect = button.getBoundingClientRect();
+      const tooltipRect = chapterNameTooltipEl.getBoundingClientRect();
+      const viewportGap = 12;
+      let left = anchorRect.right + 10;
+      let top = anchorRect.top - 6;
+      if (left + tooltipRect.width > window.innerWidth - viewportGap) {
+        left = Math.max(viewportGap, anchorRect.left - tooltipRect.width - 10);
+      }
+      if (window.innerWidth <= 720) {
+        left = Math.min(Math.max(viewportGap, anchorRect.left), window.innerWidth - tooltipRect.width - viewportGap);
+        top = anchorRect.bottom + 8;
+      }
+      top = Math.min(Math.max(viewportGap, top), window.innerHeight - tooltipRect.height - viewportGap);
+      chapterNameTooltipEl.style.left = left + "px";
+      chapterNameTooltipEl.style.top = top + "px";
+    }
+
+    treeEl.addEventListener("pointerover", (event) => showChapterNameTooltip(event.target));
+    treeEl.addEventListener("pointerout", (event) => {
+      const button = event.target.closest && event.target.closest("[data-chapter-name]");
+      if (!button || button.contains(event.relatedTarget)) return;
+      hideChapterNameTooltip();
+    });
+    treeEl.addEventListener("focusin", (event) => showChapterNameTooltip(event.target));
+    treeEl.addEventListener("focusout", hideChapterNameTooltip);
+    treeEl.addEventListener("scroll", hideChapterNameTooltip, { passive: true });
+    window.addEventListener("resize", hideChapterNameTooltip);
 
     function safeHttpUrl(value) {
       try {
@@ -1952,6 +2090,7 @@
       lessonEl.hidden = view !== "lesson";
       drawerEl.hidden = view !== "quiz";
       learningPlanEl.hidden = view !== "learning_plan";
+      $("learning-map-view").hidden = view !== "learning_map";
       assessmentCenterEl.hidden = view !== "assessment_center";
       $("wrongbook-view").hidden = view !== "wrongbook";
       profileEl.hidden = view !== "profile";
@@ -1969,7 +2108,7 @@
         const tabEl = document.createElement("div");
         tabEl.className = "editor-tab" +
           (state.activeTabId === tab.id ? " active" : "") +
-          (["quiz", "assessment_center", "learning_plan", "wrongbook"].includes(tab.view) ? " assessment-tab" : "");
+          (["quiz", "assessment_center", "learning_plan", "learning_map", "wrongbook"].includes(tab.view) ? " assessment-tab" : "");
         tabEl.dataset.workspaceTab = tab.id;
         tabEl.setAttribute("role", "tab");
         tabEl.setAttribute("tabindex", "0");
@@ -1981,6 +2120,7 @@
           quiz: "clipboard-list",
           assessment_center: "clipboard-list",
           learning_plan: "route",
+          learning_map: "map",
           wrongbook: "book-marked",
           lesson: "file-text",
           profile: "user",
@@ -2047,6 +2187,7 @@
       if (tab.view === "lesson") renderLessonTab(tab);
       if (tab.view === "quiz") renderQuiz();
       if (tab.view === "learning_plan") loadLearningPlan(tab.projectId);
+      if (tab.view === "learning_map") loadLearningMap(tab.projectId);
       if (tab.view === "assessment_center") loadAssessmentCenter(tab.projectId);
       if (tab.view === "wrongbook") loadWrongbook(tab.projectId);
       if (tab.view === "profile") loadProfilePage();
@@ -2075,7 +2216,9 @@
           ? "assessment-center:" + (options.projectId || "current")
           : view === "learning_plan"
             ? "learning-plan:" + (options.projectId || "current")
-            : view === "wrongbook"
+            : view === "learning_map"
+              ? "learning-map:" + (options.projectId || "current")
+              : view === "wrongbook"
               ? "wrongbook:" + (options.projectId || "current")
           : ["profile", "capability_detail", "settings"].includes(view)
             ? view
@@ -2088,6 +2231,7 @@
           quiz: "能力测评",
           assessment_center: "测评中心",
           learning_plan: "学习计划",
+          learning_map: "学习地图",
           wrongbook: "错题本",
           profile: "个人中心",
           capability_detail: "能力详情",
@@ -2259,6 +2403,9 @@
         addMsg("bot",
           "<p><strong>你好，我是知行课径助手。</strong> 我具备通用问答、联网检索、翻译、总结和写作能力，并专项支持学习目标分析、测评、路径规划与知识讲解。告诉我你现在想完成什么。</p>",
           conversation.key);
+        if (state.capabilityCatalog) {
+          addCapabilityCatalogMessage(state.capabilityCatalog, conversation.key, false);
+        }
       }
     }
 
@@ -2362,9 +2509,55 @@
 
     const DEFAULT_CHIPS = [
       "我想系统掌握 Java 面向对象编程",
+      "查看专业群方向目录",
       "帮我上网搜索 Python 官方入门教程",
       "请把今天的学习计划整理成三点",
     ];
+
+    function capabilityCatalogHtml(catalog) {
+      const group = (catalog || {}).professional_group || {};
+      const programs = Array.isArray((catalog || {}).programs) ? catalog.programs : [];
+      const programsHtml = programs.map((program, programIndex) => {
+        const packs = Array.isArray(program.capability_packs) ? program.capability_packs : [];
+        const packsHtml = packs.map((pack) => {
+          const courses = Array.isArray(pack.courses) ? pack.courses.join("、") : "";
+          const modules = Array.isArray(pack.modules)
+            ? pack.modules.map((module) => module.knowledge_point_name).filter(Boolean).join(" → ")
+            : "";
+          const examples = Array.isArray(pack.input_examples) ? pack.input_examples : [];
+          const prompt = examples[0] || ("我想学习" + (pack.title || program.professional_name || "这个方向"));
+          return '<section class="capability-pack">' +
+            '<div class="capability-pack-head"><strong>' + escapeHtml(pack.title || "能力方向") + '</strong>' +
+              '<span class="capability-support">' + escapeHtml(pack.support_label || "参考学习目录") + '</span></div>' +
+            '<p>' + escapeHtml(pack.content_notice || "") + '</p>' +
+            '<p><b>课程：</b>' + escapeHtml(courses) + '</p>' +
+            '<p class="capability-modules"><b>学习主线：</b>' + escapeHtml(modules) + '</p>' +
+            '<button class="suggestion-chip" type="button" data-capability-prompt="' + escapeAttr(prompt) + '">按此方向创建学习目标</button>' +
+          '</section>';
+        }).join("");
+        return '<details class="capability-program"' + (programIndex === 0 ? " open" : "") + '>' +
+          '<summary>' + escapeHtml(program.professional_name || "专业方向") +
+            '<small>' + escapeHtml(program.professional_code || "") + '</small></summary>' +
+          '<div class="capability-pack"><p>' + escapeHtml(program.overview || "") + '</p></div>' + packsHtml +
+        '</details>';
+      }).join("");
+      return '<div class="capability-catalog">' +
+        '<p><strong>' + escapeHtml(group.group_name || "计算机信息技术专业群") + '</strong>：' +
+          escapeHtml(group.catalog_notice || "") + '</p>' + programsHtml +
+      '</div>';
+    }
+
+    function addCapabilityCatalogMessage(catalog, conversationKey, includeIntro = true) {
+      const html = (includeIntro
+        ? '<p>' + escapeHtml("已展开专业群课程与能力方向。选择一个方向后，系统会先收集你的基础，再生成对应学习路径。") + '</p>'
+        : "") + capabilityCatalogHtml(catalog);
+      const messageEl = addMsg("bot", html, conversationKey);
+      messageEl.querySelectorAll("[data-capability-prompt]").forEach((button) => {
+        button.onclick = () => sendGoal(button.dataset.capabilityPrompt || "");
+      });
+      icons();
+      return messageEl;
+    }
 
     /* ================= Tutor Agent 统一对话 ================= */
 
@@ -2391,12 +2584,35 @@
               : '<span class="source-chip">' + escapeHtml(s.title || s.quote_text || "知识库") + "</span>"
           ).join("") + "</div>"
         : "";
-      addMsg("bot",
+      const messageEl = addMsg("bot",
         '<div class="chat-answer">' +
           '<div class="ca-badge"><i data-lucide="sparkles"></i> ' + escapeHtml(answerBadge) + '</div>' +
           '<p class="ca-text">' + escapeHtml(result.answer).replace(/\n/g, "<br/>") + "</p>" +
           sourceHtml +
         "</div>", conversationKey);
+      renderTurnUnderstanding(messageEl, result.turn_understanding || {});
+      return messageEl;
+    }
+
+    function renderTurnUnderstanding(messageEl, understanding) {
+      const topic = (understanding || {}).topic || {};
+      const secondary = (understanding || {}).secondary_intents || [];
+      const claims = (understanding || {}).learner_claims || [];
+      const preference = (understanding || {}).response_preferences || {};
+      if (!topic.subject && !topic.learning_scope && !secondary.length && !claims.length && !preference.style) return;
+      const subjectLabels = { python: "Python", java: "Java", javascript: "JavaScript", c_language: "C 语言", c_plus_plus: "C++", english: "英语", project_management: "项目管理" };
+      const scopeLabels = { foundation: "基础入门", data_analysis: "数据分析", web_development: "Web 开发", automation: "自动化" };
+      const styleLabels = { concise: "简洁说明", step_by_step: "分步讲解", case_based: "案例讲解" };
+      const labels = [];
+      if (topic.subject) labels.push("主题：" + (subjectLabels[topic.subject] || topic.subject));
+      if (topic.learning_scope) labels.push("范围：" + (scopeLabels[topic.learning_scope] || topic.learning_scope));
+      if (claims.length) labels.push("已记录学习情况（待测评验证）");
+      if (preference.style) labels.push("本轮讲解偏好：" + (styleLabels[preference.style] || preference.style));
+      if (secondary.includes("goal_discovery")) labels.push("同时识别到学习目标");
+      const card = document.createElement("div");
+      card.className = "turn-understanding";
+      card.innerHTML = "<strong>本轮理解</strong> · " + escapeHtml(labels.join("；"));
+      messageEl.querySelector(".bubble").appendChild(card);
     }
 
     function renderAgentChoices(messageEl, options) {
@@ -2428,6 +2644,9 @@
           '<span>' + escapeHtml(item.knowledge_point_name) + "</span>" +
         "</label>"
       ).join("");
+      const pathActionHtml = project.planning_state === "ready"
+        ? '<button class="ghost-link show-created-path" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">查看现有学习路径</button>'
+        : '<span class="assessment-intake-note"><i data-lucide="route"></i><span>提交后生成首版学习路径</span></span>';
       return '<div class="quiz-card assessment-intake-card" data-assessment-intake data-assessment-intake-project="' + escapeHtml(project.project_id || "") + '">' +
         '<div class="qc-head"><i data-lucide="scan-search"></i> 初始能力了解</div>' +
         '<p>你目前对这个目标的掌握情况如何？这一步只记录自述，不直接作为掌握度。</p>' +
@@ -2450,7 +2669,7 @@
         "</span></div>" +
         '<div class="quiz-actions">' +
           '<button class="primary-btn blue submit-assessment-intake" disabled><i data-lucide="arrow-right"></i> 继续</button>' +
-          '<button class="ghost-link show-created-path" style="background:none;border:none;font-size:12px;color:var(--muted-soft);text-decoration:underline;">先看学习路径</button>' +
+          pathActionHtml +
         "</div>" +
         '<p class="assessment-intake-error" hidden style="color:var(--red);margin-top:8px"></p>' +
       "</div>";
@@ -2534,7 +2753,17 @@
           submitButton.innerHTML = '<i data-lucide="check"></i> 基础情况已保存';
           await refreshProjects();
           renderProjectTree();
-          if (intake.should_start_initial_assessment) {
+          const updatedProject = state.projects.find((item) => item.project_id === project.project_id);
+          if (updatedProject && updatedProject.planning_state === "ready") {
+            monitorProjectContentGeneration(updatedProject, conversation.key);
+          }
+          if (selectedLevel.value === "zero_foundation") {
+            addMsg(
+              "bot",
+              "<p>你可以直接从基础章节开始学习；学习过程中会安排必要的练习和阶段检查。</p>",
+              conversation.key,
+            );
+          } else if (intake.should_start_initial_assessment) {
             await startProjectAssessment(
               project.project_id,
               intake.suggested_assessment_type || "initial_diagnostic",
@@ -2565,6 +2794,12 @@
       try {
         const detailResult = await api("/api/projects/" + encodeURIComponent(project.project_id) + "?student_id=" + encodeURIComponent(STUDENT_ID));
         const detail = detailResult.project || project;
+        if (
+          String((detail.initial_knowledge_self_report || {}).self_reported_level || "") ===
+          "zero_foundation"
+        ) {
+          return;
+        }
         const activeAssessment = detail.active_assessment || {};
         const hasSelfReport = Boolean((detail.initial_knowledge_self_report || {}).self_report_id);
         const suggestedAssessmentType = activeAssessment.assessment_type || (
@@ -2611,6 +2846,7 @@
     async function renderProjectCreated(result, sourceConversationKey) {
       const project = result.project;
       const planningReady = project.planning_state === "ready";
+      const awaitingLearnerProfile = project.planning_state === "awaiting_learner_profile";
       const assessmentReady = project.assessment_state === "ready";
       const conversation = migrateConversation(sourceConversationKey, project);
       if (state.activeConversationKey === conversation.key) state.current = project;
@@ -2625,35 +2861,38 @@
       }
       const constraintParts = [];
       const constraints = project.goal_constraints || {};
+      const capabilityPack = project.capability_pack || {};
       if (constraints.duration_text) constraintParts.push("期限：" + constraints.duration_text);
       if (constraints.target_outcome) constraintParts.push("成果：" + constraints.target_outcome);
+      if (capabilityPack.title) {
+        constraintParts.push((capabilityPack.support_label || "参考学习目录") + "：" + capabilityPack.title);
+      }
       const constraintHtml = constraintParts.length
         ? '<p style="color:var(--muted)">' + escapeHtml(constraintParts.join(" · ")) + "</p>"
         : "";
-      const nextCard = planningReady
+      const nextCard = (planningReady || awaitingLearnerProfile)
         ? assessmentIntakeCardHtml(project, projectDetail, assessmentReady)
           : '<div class="quiz-card">' +
             '<div class="qc-head"><i data-lucide="search-check"></i> 知识结构校验中</div>' +
             "<p>该目标尚未绑定已审核的知识图谱。系统会先检索课程标准、岗位要求或权威资料，再生成可追溯路径与测评。</p>" +
             '<div class="assessment-policy" style="margin:10px 0 0"><i data-lucide="shield-check"></i><span>校验完成前不会套用其他领域的课程或试题。</span></div>' +
           "</div>";
-      addMsg("bot",
+      const projectCreatedMessage = addMsg("bot",
         "<p><strong>目标已创建为项目：</strong>" + escapeHtml(project.goal_name) + "</p>" +
         constraintHtml + nextCard, conversation.key);
       addMsg(
         "bot",
-        "<p>当前正在生成适合你的学习路径、知识点讲解和题目。生成过程会在后台继续，你可以先查看其他内容。</p>",
+        awaitingLearnerProfile
+          ? "<p>请先完成当前基础和熟悉知识点的选择。提交后系统才会生成首版学习路径、学习计划和后续测评。</p>"
+          : "<p>当前正在生成适合你的学习路径、知识点讲解和题目。生成过程会在后台继续，你可以先查看其他内容。</p>",
         conversation.key,
       );
-      const last = conversation.key === state.activeConversationKey
-        ? messagesEl.lastElementChild
-        : conversation.messages.lastElementChild;
-      const intakeCard = last.querySelector("[data-assessment-intake]");
-      const pathButton = last.querySelector(".show-created-path");
+      const intakeCard = projectCreatedMessage.querySelector("[data-assessment-intake]");
+      const pathButton = projectCreatedMessage.querySelector(".show-created-path");
       if (pathButton) pathButton.onclick = () => sendGoal("查看学习路径");
       bindAssessmentIntakeCard(intakeCard, project, projectDetail, conversation);
       icons();
-      monitorProjectContentGeneration(project, conversation.key);
+      if (!awaitingLearnerProfile) monitorProjectContentGeneration(project, conversation.key);
     }
 
     function monitorProjectContentGeneration(project, conversationKey) {
@@ -2693,6 +2932,7 @@
     async function handleAgentResult(result, conversationKey) {
       if (result.status === "needs_clarification" || result.action === "ask_clarification") {
         const messageEl = addMsg("bot", "<p>" + escapeHtml(result.message || "请再补充一点信息。") + "</p>", conversationKey);
+        renderTurnUnderstanding(messageEl, result.turn_understanding || {});
         renderAgentChoices(messageEl, result.clarify_options || []);
         return;
       }
@@ -2708,10 +2948,30 @@
 
       if (result.action === "reply") {
         if (result.answer && (result.ai_generated || result.answer_mode || (result.sources || []).length)) {
-          await renderChatAnswer(result, conversationKey);
+          const messageEl = await renderChatAnswer(result, conversationKey);
+          const followUp = result.goal_follow_up || {};
+          if (followUp.message) {
+            const note = document.createElement("p");
+            note.textContent = followUp.message;
+            messageEl.querySelector(".bubble").appendChild(note);
+          }
+          renderAgentChoices(messageEl, followUp.clarify_options || []);
         } else {
-          addMsg("bot", "<p>" + escapeHtml(result.answer || result.message) + "</p>", conversationKey);
+          const messageEl = addMsg("bot", "<p>" + escapeHtml(result.answer || result.message) + "</p>", conversationKey);
+          renderTurnUnderstanding(messageEl, result.turn_understanding || {});
+          const followUp = result.goal_follow_up || {};
+          if (followUp.message) {
+            const note = document.createElement("p");
+            note.textContent = followUp.message;
+            messageEl.querySelector(".bubble").appendChild(note);
+          }
+          renderAgentChoices(messageEl, followUp.clarify_options || []);
         }
+        return;
+      }
+      if (result.action === "show_capability_catalog") {
+        state.capabilityCatalog = ((result.artifact || {}).data) || state.capabilityCatalog;
+        addCapabilityCatalogMessage(state.capabilityCatalog || {}, conversationKey, true);
         return;
       }
       if (result.action === "project_created") {
@@ -2825,6 +3085,18 @@
         renderProjectTree();
       }
       showWorkspaceView("learning_plan", { title: "学习计划", projectId });
+    }
+
+    async function openLearningMap(projectId) {
+      if (!projectId) return;
+      const project = state.projects.find((item) => item.project_id === projectId);
+      if (project) {
+        const conversation = switchConversation(projectConversationKey(projectId), project);
+        await loadConversationHistory(conversation, project);
+        state.current = project;
+        renderProjectTree();
+      }
+      showWorkspaceView("learning_map", { title: "学习地图", projectId });
     }
 
     async function openWrongbook(projectId) {
@@ -3084,6 +3356,7 @@
       $("learning-plan-subtitle").textContent = "正在加载计划…";
       $("learning-plan-context").innerHTML = "";
       $("learning-plan-stages").innerHTML = '<div class="assessment-empty">正在加载学习计划…</div>';
+      $("learning-plan-schedule").innerHTML = "";
       try {
         const result = await api(
           "/api/projects/" + encodeURIComponent(projectId) +
@@ -3097,12 +3370,20 @@
           (next.knowledge_point_name ? " · 下一步：" + next.knowledge_point_name : "");
         $("learning-plan-context").innerHTML =
           '<span><i data-lucide="badge-check"></i><strong>' + escapeHtml((context.known || []).length) + '</strong> 已验证</span>' +
-          '<span><i data-lucide="circle-help"></i><strong>' + escapeHtml((context.unknown || []).length) + '</strong> 待验证</span>' +
+          '<span><i data-lucide="circle-help"></i><strong>' + escapeHtml((context.candidate || []).length) + '</strong> 待验证</span>' +
+          '<span><i data-lucide="circle"></i><strong>' + escapeHtml((context.unknown || []).length) + '</strong> 未评估</span>' +
           '<span class="review"><i data-lucide="rotate-ccw"></i><strong>' + escapeHtml((context.review || []).length) + '</strong> 待补强</span>';
         $("learning-plan-stages").innerHTML = (plan.stages || []).map((stage) => {
           const steps = stage.steps || [];
+          const stageMinutes = steps.reduce((sum, step) => sum + Number(step.estimated_minutes || 0), 0);
           const stepHtml = steps.length ? steps.map((step) => {
             const status = step.status || "not_started";
+            const adaptationLabel = {
+              verified_fast_track: "已验证 · 快速确认",
+              evidence_repair: "待补强 · 优先复习",
+              candidate_confirmation: "待验证 · 确认学习",
+              new_learning: "新内容",
+            }[step.adaptation_mode] || "";
             const stateIcon = status === "completed" ? "check" : status === "in_progress" ? "play" : "circle";
             const stateLabel = {
               not_started: "未开始",
@@ -3111,18 +3392,37 @@
             }[status] || "未开始";
             return '<div class="plan-step ' + escapeHtml(status) + (step.recommended ? " recommended" : "") + '">' +
               '<span class="plan-step-state"><i data-lucide="' + stateIcon + '"></i></span>' +
-              '<span class="plan-step-copy"><strong>' + escapeHtml(step.knowledge_point_name) + '</strong><small>' + escapeHtml(stateLabel) + '</small></span>' +
+              '<span class="plan-step-copy"><strong>' + escapeHtml(step.knowledge_point_name) + '</strong><small>' + escapeHtml(stateLabel) + (adaptationLabel ? " · " + escapeHtml(adaptationLabel) : "") + (Number(step.estimated_minutes) ? " · 约 " + Number(step.estimated_minutes) + " 分钟" : "") + '</small></span>' +
               '<span class="plan-step-actions">' +
-                '<button type="button" data-plan-start="' + escapeHtml(step.step_id) + '" data-plan-kp="' + escapeHtml(step.knowledge_point_id) + '" data-plan-name="' + escapeHtml(step.knowledge_point_name) + '" title="开始学习" aria-label="开始学习 ' + escapeHtml(step.knowledge_point_name) + '"><i data-lucide="play"></i></button>' +
+                '<button type="button" data-plan-start="' + escapeHtml(step.step_id) + '" data-plan-kp="' + escapeHtml(step.knowledge_point_id) + '" data-plan-name="' + escapeHtml(step.knowledge_point_name) + '" data-plan-objective="' + escapeHtml(step.learning_objective || "") + '" title="开始学习" aria-label="开始学习 ' + escapeHtml(step.knowledge_point_name) + '"><i data-lucide="play"></i></button>' +
                 '<button class="plan-question" type="button" data-plan-question="' + escapeHtml(step.step_id) + '" data-plan-stage="' + escapeHtml(stage.stage_id) + '" data-plan-kp="' + escapeHtml(step.knowledge_point_id) + '" data-plan-name="' + escapeHtml(step.knowledge_point_name) + '" title="就此提问"><i data-lucide="message-circle-question"></i><span>就此提问</span></button>' +
                 '<button type="button" data-plan-complete="' + escapeHtml(step.step_id) + '" title="标记为已完成" aria-label="标记 ' + escapeHtml(step.knowledge_point_name) + ' 为已完成"><i data-lucide="check"></i></button>' +
               '</span></div>';
           }).join("") : '<div class="plan-empty">本阶段暂未安排知识点。</div>';
           return '<section class="plan-stage"><div class="plan-stage-head"><span class="plan-stage-index">' +
             escapeHtml(stage.stage_order || "") + '</span><div><h2>' + escapeHtml(stage.title) +
-            '</h2><p>' + escapeHtml(stage.description || "") + '</p></div></div><div class="plan-step-list">' +
+            '</h2><p>' + escapeHtml(stage.description || "") + (stageMinutes ? ' · 约 ' + stageMinutes + ' 分钟' : "") +
+            '</p></div></div><div class="plan-step-list">' +
             stepHtml + '</div></section>';
         }).join("") || '<div class="assessment-empty">当前还没有可用的学习计划。</div>';
+        const schedule = plan.daily_schedule || [];
+        $("learning-plan-schedule").innerHTML = schedule.length ?
+          '<details class="plan-daily-schedule"><summary><i data-lucide="calendar-days"></i>每日执行安排<small>' +
+            escapeHtml(String(schedule.length)) + ' 天 · 按时间预算自动编排</small></summary><div class="plan-daily-list">' +
+            schedule.map((day) => {
+              const tasks = day.tasks || [];
+              const taskHtml = tasks.length ? '<ul>' + tasks.map((task) =>
+                '<li><strong>' + escapeHtml(task.knowledge_point_name || "当前知识点") +
+                '</strong> · 约 ' + escapeHtml(String(task.minutes || 0)) + ' 分钟<br>' +
+                '学习：' + escapeHtml(task.learning_task || "") + '<br>' +
+                '实践：' + escapeHtml(task.practice_task || "") + '<br>' +
+                '检查：' + escapeHtml(task.check || "") + '</li>'
+              ).join("") + '</ul>' : '<p class="lm-hint">' + escapeHtml(day.focus || "预留复盘时间。") + '</p>';
+              return '<article class="plan-day"><div class="plan-day-head"><strong>第 ' +
+                escapeHtml(String(day.day || "")) + ' 天</strong><small>计划 ' +
+                escapeHtml(String(day.planned_minutes || 0)) + ' 分钟</small><em>' +
+                escapeHtml(day.focus || "") + '</em></div>' + taskHtml + '</article>';
+            }).join("") + '</div></details>' : "";
         bindLearningPlanActions(projectId);
         icons();
       } catch (error) {
@@ -3135,7 +3435,10 @@
       $("learning-plan-stages").querySelectorAll("[data-plan-start]").forEach((button) => {
         button.onclick = async () => {
           await updateLearningPlanStep(projectId, button.dataset.planStart, "in_progress");
-          await openLesson(projectId, button.dataset.planKp, button.dataset.planName);
+          await openLesson(projectId, button.dataset.planKp, button.dataset.planName, null, {
+            step_id: button.dataset.planStart,
+            learning_objective: button.dataset.planObjective || "",
+          });
         };
       });
       $("learning-plan-stages").querySelectorAll("[data-plan-complete]").forEach((button) => {
@@ -3176,9 +3479,162 @@
       }
     }
 
+    /* ================= 学习地图 ================= */
+    function learningMapStatusLabel(status) {
+      return { mastered: "已掌握", weak: "需补强", candidate: "待验证", learning: "进行中", unknown: "未评估" }[status] || "未评估";
+    }
+
+    async function loadLearningMap(projectId) {
+      if (!projectId) return;
+      $("learning-map-subtitle").textContent = "正在加载地图与计划说明…";
+      $("learning-map-brief").innerHTML = "";
+      $("learning-map-graph").innerHTML = '<div class="assessment-empty">正在加载学习地图…</div>';
+      try {
+        const [mapResult, briefResult, planResult] = await Promise.all([
+          api("/api/projects/" + encodeURIComponent(projectId) + "/learning-map?student_id=" + encodeURIComponent(STUDENT_ID)),
+          api("/api/projects/" + encodeURIComponent(projectId) + "/plan-brief?student_id=" + encodeURIComponent(STUDENT_ID)),
+          api("/api/projects/" + encodeURIComponent(projectId) + "/plan?student_id=" + encodeURIComponent(STUDENT_ID)),
+        ]);
+        const stepById = {};
+        (planResult.learning_plan || {}).stages && (planResult.learning_plan.stages || []).forEach((stage) => {
+          (stage.steps || []).forEach((step) => { stepById[step.knowledge_point_id] = step; });
+        });
+        $("learning-map-subtitle").textContent = (briefResult.goal || "当前项目") + " · 学习地图";
+        renderLearningMapBrief($("learning-map-brief"), briefResult || {});
+        renderLearningMapGraph($("learning-map-graph"), projectId, mapResult || {}, stepById);
+        icons();
+      } catch (error) {
+        $("learning-map-subtitle").textContent = "加载失败";
+        $("learning-map-graph").innerHTML = '<div class="assessment-empty">加载失败：' + escapeHtml(error.message) + '</div>';
+      }
+    }
+
+    function renderLearningMapBrief(container, brief) {
+      const known = (brief.known_skills || []).map((name) => '<span class="lm-chip known">' + escapeHtml(name) + "</span>").join("") || '<span class="lm-chip muted">暂无</span>';
+      const gaps = (brief.skill_gaps || []).map((name) => '<span class="lm-chip gap">' + escapeHtml(name) + "</span>").join("") || '<span class="lm-chip muted">暂无</span>';
+      const candidates = (brief.candidate_skills || []).map((name) => '<span class="lm-chip pending">' + escapeHtml(name) + "</span>").join("") || '<span class="lm-chip muted">暂无</span>';
+      const unassessed = (brief.unassessed_skills || []).map((name) => '<span class="lm-chip pending">' + escapeHtml(name) + "</span>").join("") || '<span class="lm-chip muted">暂无</span>';
+      const criticalPath = (brief.critical_path || []).map((name) => '<span class="lm-path-node">' + escapeHtml(name) + "</span>").join('<i class="lm-path-arrow" data-lucide="arrow-right"></i>') || "暂无";
+      const stages = (brief.stage_overview || []).map((stage) =>
+        '<div class="lm-stage-row"><span class="lm-stage-order">' + escapeHtml(String(stage.order || "")) + '</span><div><strong>' + escapeHtml(stage.title || "") + '</strong><small>' + escapeHtml(stage.objective || "") + '</small></div><span class="lm-stage-count">' + escapeHtml(String(stage.kc_count || 0)) + ' 个知识点</span></div>'
+      ).join("");
+      const hotspots = (brief.difficulty_hotspots || []).map((name) => '<span class="lm-chip hot">' + escapeHtml(name) + "</span>").join("") || '<span class="lm-chip muted">暂无</span>';
+      const rules = (brief.adaptation_rules || []).map((rule) => "<li>" + escapeHtml(rule) + "</li>").join("");
+      const whyHtml = (brief.why_this_plan || []).length
+        ? '<div class="lm-brief-why"><ul>' + (brief.why_this_plan || []).map((item) => "<li>" + escapeHtml(item) + "</li>").join("") + "</ul></div>"
+        : "";
+      container.innerHTML =
+        '<div class="lm-brief-card">' +
+          '<h2>' + escapeHtml(brief.goal || "学习目标") + '</h2>' +
+          (brief.target_outcome ? '<p class="lm-brief-outcome">目标产出：' + escapeHtml(brief.target_outcome) + "</p>" : "") +
+          (brief.time_budget ? '<p class="lm-brief-time"><i data-lucide="clock"></i>时间预算：' + escapeHtml(brief.time_budget) + "</p>" : "") +
+          whyHtml +
+          '<div class="lm-brief-chips"><div class="lm-chip-group"><label>已掌握</label><div>' + known + '</div></div>' +
+            '<div class="lm-chip-group"><label>需补强</label><div>' + gaps + '</div></div>' +
+            '<div class="lm-chip-group"><label>待验证</label><div>' + candidates + '</div></div>' +
+            '<div class="lm-chip-group"><label>未评估</label><div>' + unassessed + '</div></div></div>' +
+          '<div class="lm-brief-block"><h3>关键路径（依据真实依赖链）</h3><div class="lm-path">' + criticalPath + '</div></div>' +
+          '<div class="lm-brief-block"><h3>阶段安排</h3><div class="lm-stages">' + stages + '</div></div>' +
+          '<div class="lm-brief-block"><h3>难度热点</h3><div class="lm-chip-group"><div>' + hotspots + '</div></div></div>' +
+          '<div class="lm-brief-block"><h3>自适应调整规则</h3><ul class="lm-rules">' + rules + '</ul></div>' +
+        "</div>";
+    }
+
+    function renderLearningMapGraph(container, projectId, map, stepById) {
+      const nodes = (map.nodes || []).reduce((acc, node) => { acc[node.id] = node; return acc; }, {});
+      const statusLabel = learningMapStatusLabel;
+      const stateIcon = (status) => status === "mastered" ? "check" : status === "weak" ? "rotate-ccw" : status === "candidate" ? "circle-help" : status === "learning" ? "play" : "circle";
+      const nodeCard = (node) => {
+        const step = stepById[node.id] || {};
+        const locked = (map.locked_nodes || []).includes(node.id);
+        const prereqs = (node.prerequisites || []).map((id) => {
+          const prereq = nodes[id] || {};
+          return '<span class="lm-prereq">' + escapeHtml(prereq.name || id) + (learningMapStatusLabel(prereq.status) !== "已掌握" ? "（未稳定）" : "") + "</span>";
+        }).join(" ");
+        const startBtn = locked || node.status === "mastered"
+          ? ""
+          : '<button type="button" class="primary-btn" data-map-start="' + escapeHtml(node.id) + '" data-map-name="' + escapeHtml(node.name) + '" title="开始讲解"><i data-lucide="play"></i>开始讲解</button>';
+        return '<div class="lm-node ' + escapeHtml(node.status) + (locked ? " locked" : "") + '">' +
+          '<div class="lm-node-head"><span class="lm-node-state"><i data-lucide="' + stateIcon(node.status) + '"></i></span>' +
+            '<div class="lm-node-copy"><strong>' + escapeHtml(node.name) + '</strong><small>' + escapeHtml(statusLabel(node.status)) +
+              (node.mastery === null || node.mastery === undefined ? " · 未评估" : " · 掌握度 " + node.mastery + "%") +
+            '</small></div>' +
+            (startBtn ? '<div class="lm-node-actions">' + startBtn + '</div>' : "") +
+          '</div>' +
+          (prereqs ? '<div class="lm-node-prereqs">前置：' + prereqs + '</div>' : "") +
+        "</div>";
+      };
+      const ordered = (map.nodes || []).slice();
+      const recommended = map.current_recommended_kc && nodes[map.current_recommended_kc];
+      const recommendedHtml = recommended
+        ? '<section class="lm-block lm-recommend"><h2><i data-lucide="target"></i>当前推荐</h2>' + nodeCard(recommended) + "</section>"
+        : "";
+      const candidatesHtml = (map.recommended_candidates || []).length
+        ? '<section class="lm-block lm-candidates"><h2><i data-lucide="list-ordered"></i>备选推荐</h2><div class="lm-candidate-list">' +
+          map.recommended_candidates.map((id) => nodeCard(nodes[id] || { id })).join("") + "</div></section>"
+        : "";
+      const activeHtml = (map.active_path || []).length
+        ? '<section class="lm-block lm-active-path"><h2><i data-lucide="signpost"></i>建议推进路径</h2><div class="lm-path">' +
+          map.active_path.map((id) => '<span class="lm-path-node">' + escapeHtml((nodes[id] || {}).name || id) + "</span>").join('<i class="lm-path-arrow" data-lucide="arrow-right"></i>') +
+          "</div></section>"
+        : "";
+      const lockedHtml = (map.locked_nodes || []).length
+        ? '<section class="lm-block lm-locked"><h2><i data-lucide="lock"></i>前置未稳定的知识点</h2><div class="lm-chip-group"><div>' +
+          map.locked_nodes.map((id) => '<span class="lm-chip locked">' + escapeHtml((nodes[id] || {}).name || id) + "</span>").join("") +
+          '</div></div><p class="lm-hint">这些知识点依赖的前置内容尚未达到已掌握，先完成前置节点再开始。</p></section>'
+        : "";
+      const nodeListHtml = '<section class="lm-block lm-nodes"><h2><i data-lucide="network"></i>全部知识点</h2>' +
+        ordered.map(nodeCard).join("") + "</section>";
+      container.innerHTML = recommendedHtml + candidatesHtml + activeHtml + lockedHtml + nodeListHtml +
+        '<p class="lm-disclaimer">掌握度仅来自正式测评证据；未评估知识点显示为“未评估”，不等于 0 分。</p>';
+      container.querySelectorAll("[data-map-start]").forEach((button) => {
+        button.onclick = () => {
+          const step = stepById[button.dataset.mapStart] || {};
+          if (step.step_id) updateLearningPlanStep(projectId, step.step_id, "in_progress");
+          openLesson(projectId, button.dataset.mapStart, button.dataset.mapName, null, {
+            step_id: step.step_id || "",
+            learning_objective: step.learning_objective || "",
+          });
+        };
+      });
+    }
+
     $("learning-plan-refresh").onclick = () => {
       const tab = workspaceTab(state.activeTabId);
       if (tab && tab.view === "learning_plan") loadLearningPlan(tab.projectId);
+    };
+    $("learning-plan-regenerate").onclick = async () => {
+      const tab = workspaceTab(state.activeTabId);
+      if (!tab || tab.view !== "learning_plan") return;
+      if (!window.confirm("将生成新的学习计划版本，并按新计划重新准备章节讲解。已有测评证据、笔记和作答记录不会删除。是否继续？")) return;
+      const button = $("learning-plan-regenerate");
+      button.disabled = true;
+      try {
+        const result = await api(
+          "/api/projects/" + encodeURIComponent(tab.projectId) + "/plan/regenerate",
+          { method: "POST", body: { student_id: STUDENT_ID } },
+        );
+        showToast(result.message || "已生成新的学习计划版本。");
+        await loadLearningPlan(tab.projectId);
+        await refreshProjects();
+        renderProjectTree();
+      } catch (error) {
+        window.alert("重新生成学习计划失败：" + error.message);
+      } finally {
+        button.disabled = false;
+      }
+    };
+    $("learning-plan-to-map").onclick = () => {
+      const tab = workspaceTab(state.activeTabId);
+      if (tab && tab.view === "learning_plan") openLearningMap(tab.projectId);
+    };
+    $("learning-map-refresh").onclick = () => {
+      const tab = workspaceTab(state.activeTabId);
+      if (tab && tab.view === "learning_map") loadLearningMap(tab.projectId);
+    };
+    $("learning-map-to-plan").onclick = () => {
+      const tab = workspaceTab(state.activeTabId);
+      if (tab && tab.view === "learning_map") openLearningPlan(tab.projectId);
     };
     $("wrongbook-refresh").onclick = () => {
       const tab = workspaceTab(state.activeTabId);
@@ -3665,20 +4121,29 @@
     }
 
     function renderProjectTree() {
+      // 重建侧栏前保留滚动位置，避免点击章节/切换项目时会话栏回到置顶。
+      const preservedScrollTop = treeEl.scrollTop;
       if (!state.projects.length) {
         treeEl.innerHTML =
           '<div class="tree-empty"><i data-lucide="folder-open"></i>' +
           "<div>还没有项目<br/>在右侧对话框输入学习目标，<br/>即可创建项目并生成学习路径</div></div>";
         icons();
+        treeEl.scrollTop = preservedScrollTop;
         return;
       }
       treeEl.innerHTML = state.projects.map((project) => {
         const isCurrent = state.current && state.current.project_id === project.project_id;
         const expanded = state.expandedProjects.has(project.project_id);
         const initialAssessmentState = project.initial_assessment_state || "awaiting_intake";
-        const progressLabel = initialAssessmentState === "completed"
+        const isZeroFoundation = project.self_reported_level === "zero_foundation";
+        const progressLabel = isZeroFoundation
+          ? "基础学习"
+          : initialAssessmentState === "completed"
           ? String(project.progress ?? 0) + "%"
           : "待测评";
+        const planningReady = project.planning_state === "ready";
+        const planningDisabled = planningReady ? "" : " disabled";
+        const planningLabel = planningReady ? "" : "待完成基础了解";
         return '<div class="project-node' + (expanded ? " open" : "") + '" data-project="' + project.project_id + '">' +
           '<div class="project-row">' +
             '<button class="project-header" data-project="' + project.project_id + '">' +
@@ -3695,9 +4160,14 @@
               '<i data-lucide="message-circle"></i><span>目标规划与学习助手</span><small>持续</small>' +
             "</button>" +
             '<div class="tree-section-label"><i data-lucide="route"></i>学习计划</div>' +
-            '<button class="tree-assessment-row" data-open-learning-plan="' + project.project_id + '"><i data-lucide="route"></i><span>三阶段学习计划</span><small>' + escapeHtml(String(project.plan_progress ?? 0)) + '%</small></button>' +
+            '<button class="tree-assessment-row" data-open-learning-plan="' + project.project_id + '"' + planningDisabled + '><i data-lucide="route"></i><span>三阶段学习计划</span><small>' + (planningReady ? escapeHtml(String(project.plan_progress ?? 0)) + '%' : planningLabel) + '</small></button>' +
+            '<button class="tree-assessment-row" data-open-learning-map="' + project.project_id + '"' + planningDisabled + '><i data-lucide="map"></i><span>学习地图</span><small>' + (planningReady ? "推荐与关键路径" : planningLabel) + '</small></button>' +
             '<div class="tree-section-label"><i data-lucide="book-open"></i>个性化学习路径</div>' +
-            '<ul class="path-list" data-path="' + project.project_id + '"></ul>' +
+            '<ul class="path-list" data-path="' + project.project_id + '">' +
+              (state.pathItemsCache.has(project.project_id)
+                ? buildPathItemsHtml(project.project_id, project, state.pathItemsCache.get(project.project_id))
+                : "") +
+            '</ul>' +
             '<div class="tree-section-label"><i data-lucide="clipboard-check"></i>测评与检查</div>' +
             '<div class="tree-assessment-list">' +
               '<button class="tree-assessment-row" data-open-assessment-center="' + project.project_id + '"><i data-lucide="layout-list"></i><span>测评中心</span><small>题单与记录</small></button>' +
@@ -3736,16 +4206,36 @@
           openLearningPlan(button.dataset.openLearningPlan);
         };
       });
+      treeEl.querySelectorAll("[data-open-learning-map]").forEach((button) => {
+        button.onclick = () => {
+          setMobilePanel("workspace");
+          openLearningMap(button.dataset.openLearningMap);
+        };
+      });
       treeEl.querySelectorAll("[data-open-wrongbook]").forEach((button) => {
         button.onclick = () => {
           setMobilePanel("workspace");
           openWrongbook(button.dataset.openWrongbook);
         };
       });
-      // 异步加载各项目路径
+      // 缓存渲染的路径按钮补齐点击绑定（异步 loadProjectPath 会再次绑定，此步消除绑定空窗）
       state.projects
+        .filter((project) => state.expandedProjects.has(project.project_id) && state.pathItemsCache.has(project.project_id))
+        .forEach((project) => {
+          const cachedListEl = treeEl.querySelector('[data-path="' + project.project_id + '"]');
+          if (cachedListEl) bindPathButtons(cachedListEl, project.project_id, state.pathItemsCache.get(project.project_id));
+        });
+      // 异步加载各项目路径（返回 promise 供滚动兜底恢复等待）
+      const pendingPathLoads = state.projects
         .filter((project) => state.expandedProjects.has(project.project_id))
-        .forEach((project) => loadProjectPath(project.project_id));
+        .map((project) => loadProjectPath(project.project_id));
+      // 恢复重建前的滚动位置（innerHTML 替换会清零 scrollTop）。
+      // 缓存同步渲染已让树重建后即为满高，此处恢复直接生效；若路径尚未缓存（首次加载），
+      // 树会先塌缩、同步恢复被浏览器夹紧为 0，需等路径异步填回后再恢复一次。
+      treeEl.scrollTop = preservedScrollTop;
+      Promise.all(pendingPathLoads).then(() => {
+        if (preservedScrollTop > 0) treeEl.scrollTop = preservedScrollTop;
+      });
     }
 
     function openDeleteProjectDialog(projectId) {
@@ -3812,6 +4302,41 @@
       }
     }
 
+    function buildPathItemsHtml(projectId, project, pathItems) {
+      const items = pathItems || [];
+      const listHtml = items.map((item) => {
+        const status = item.status || "pending";
+        const lessonStatus = item.lesson_generation_status || "not_generated";
+        const isActive = state.activeTabId === lessonTabId(projectId, item.knowledge_point_id);
+        const stateIcon = lessonStatus === "generating" || lessonStatus === "queued"
+          ? '<i data-lucide="loader-circle"></i>'
+          : lessonStatus === "failed" ? '<i data-lucide="triangle-alert"></i>'
+          : status === "completed" ? '<i data-lucide="check"></i>'
+          : status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
+          : status === "learning" ? '<i data-lucide="book-open"></i>'
+          : '<i data-lucide="lock-keyhole"></i>';
+        return '<li class="path-item ' + status + (isActive ? " active" : "") + '">' +
+          '<button data-project="' + projectId + '" data-kp="' + escapeAttr(item.knowledge_point_id) + '" data-chapter-name="' + escapeAttr(item.knowledge_point_name) + '">' +
+            '<span class="path-state">' + stateIcon + "</span>" +
+            '<span class="path-copy"><strong>' + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
+            '<span class="path-mastery">' +
+              (item.mastery === null || item.mastery === undefined ? "未测" : item.mastery + "%") +
+            "</span>" +
+          "</button></li>";
+      }).join("");
+      return listHtml || '<li class="path-item pending"><button disabled><span class="path-state"><i data-lucide="lock-keyhole"></i></span><span class="path-copy"><strong>' + escapeHtml(project.planning_state === "awaiting_learner_profile" ? "完成基础了解后生成路径" : "路径生成中…") + '</strong></span></button></li>';
+    }
+
+    function bindPathButtons(listEl, projectId, pathItems) {
+      listEl.querySelectorAll("button[data-kp]").forEach((button, index) => {
+        const item = (pathItems || [])[index];
+        button.onclick = () => {
+          setMobilePanel("workspace");
+          openLesson(projectId, button.dataset.kp, item && item.knowledge_point_name);
+        };
+      });
+    }
+
     async function loadProjectPath(projectId, force = false) {
       if (!treeEl.querySelector('[data-path="' + projectId + '"]')) return;
       try {
@@ -3820,34 +4345,10 @@
         if (!listEl) return;
         const path = project.learning_path || { items: [] };
         const pathItems = path.items || [];
-        listEl.innerHTML = pathItems.map((item) => {
-          const status = item.status || "pending";
-          const lessonStatus = item.lesson_generation_status || "not_generated";
-          const isActive = state.activeTabId === lessonTabId(projectId, item.knowledge_point_id);
-          const stateIcon = lessonStatus === "generating" || lessonStatus === "queued"
-            ? '<i data-lucide="loader-circle"></i>'
-            : lessonStatus === "failed" ? '<i data-lucide="triangle-alert"></i>'
-            : status === "completed" ? '<i data-lucide="check"></i>'
-            : status === "current" ? (item.mastery > 0 ? item.mastery : "▶")
-            : status === "learning" ? '<i data-lucide="book-open"></i>'
-            : '<i data-lucide="lock-keyhole"></i>';
-          return '<li class="path-item ' + status + (isActive ? " active" : "") + '">' +
-            '<button data-project="' + projectId + '" data-kp="' + escapeHtml(item.knowledge_point_id) + '">' +
-              '<span class="path-state">' + stateIcon + "</span>" +
-              '<span class="path-copy"><strong>' + escapeHtml(item.knowledge_point_name) + "</strong></span>" +
-              '<span class="path-mastery">' +
-                (item.mastery === null || item.mastery === undefined ? "未测" : item.mastery + "%") +
-              "</span>" +
-            "</button></li>";
-        }).join("") || '<li class="path-item pending"><button><span class="path-state"><i data-lucide="lock-keyhole"></i></span><span class="path-copy"><strong>路径生成中…</strong></span></button></li>';
+        state.pathItemsCache.set(projectId, pathItems);
+        listEl.innerHTML = buildPathItemsHtml(projectId, project, pathItems);
         icons();
-        listEl.querySelectorAll("button[data-kp]").forEach((button, index) => {
-          const item = pathItems[index];
-          button.onclick = () => {
-            setMobilePanel("workspace");
-            openLesson(projectId, button.dataset.kp, item && item.knowledge_point_name);
-          };
-        });
+        bindPathButtons(listEl, projectId, pathItems);
       } catch (_) {
         renderProjectPathError(projectId);
       }
@@ -3856,6 +4357,15 @@
     /* ================= 中央讲解页 ================= */
     function lessonTabId(projectId, knowledgePointId) {
       return "lesson:" + projectId + ":" + knowledgePointId;
+    }
+
+    function waitForLessonRetry(delayMs) {
+      return new Promise((resolve) => window.setTimeout(resolve, Math.max(800, Number(delayMs) || 2000)));
+    }
+
+    function shouldPollLessonResult(result) {
+      return Boolean(result && result.status === "preparing" &&
+        ["queued", "generating"].includes(String(result.generation_status || "")));
     }
 
     function lessonRole(surface, name) {
@@ -4207,7 +4717,7 @@
           : isFallback ? "课程知识库讲解 · 本地降级" : "知识点讲解 · 来源可核验";
       tag.classList.toggle("is-warning", isCandidate || knowledgeGap);
       tag.hidden = false;
-      objective.textContent = result.lesson_objective || "";
+      objective.textContent = result.lesson_objective || result.learning_objective || "";
       objective.hidden = !objective.textContent;
       meta.innerHTML = isCandidate
         ? '<span><i data-lucide="triangle-alert"></i>AI 候选内容，尚未完成来源审核</span>'
@@ -4218,9 +4728,43 @@
           : '<span><i data-lucide="shield-check"></i>内容带来源标注</span>';
       meta.hidden = false;
       renderLessonProvenance(body, result);
+      renderLessonContract(body, result);
       renderLessonEditor(body, tab, result);
+      renderLessonVisuals(body, result.resources || [], result);
       renderLessonVideos(body, result.resources || []);
       icons();
+    }
+
+    function renderLessonContract(container, result) {
+      const contract = result.teaching_contract || {};
+      const outcomes = Array.isArray(contract.outcomes) ? contract.outcomes : [];
+      if (!outcomes.length) return;
+      const audit = result.lesson_contract_audit || {};
+      const card = document.createElement("section");
+      card.className = "lesson-card";
+      card.dataset.blockId = "BLOCK-LEARNING-OUTCOMES";
+      card.dataset.blockTitle = "本节学习目标";
+      const heading = document.createElement("div");
+      heading.className = "markdown-body";
+      heading.innerHTML = "<h2>本节学习目标与完成标准</h2>";
+      card.appendChild(heading);
+      const list = document.createElement("ol");
+      outcomes.forEach((outcome) => {
+        const item = document.createElement("li");
+        const statement = String(outcome.statement || "").trim();
+        const criteria = String(outcome.completion_criteria || "").trim();
+        item.textContent = statement + (criteria ? " 完成标准：" + criteria : "");
+        list.appendChild(item);
+      });
+      card.appendChild(list);
+      const metadata = document.createElement("small");
+      const review = contract.review || {};
+      const status = String(audit.status || "not_run");
+      metadata.textContent = "教学契约 " + (contract.contract_version || "v1") +
+        " · 覆盖校验：" + (status === "passed" ? "通过" : status === "not_run" ? "未执行" : "未通过") +
+        " · 内容审核：" + (review.verified ? "已验证" : "待具名专家审核");
+      card.appendChild(metadata);
+      container.appendChild(card);
     }
 
     function renderLessonEditor(container, tab, result) {
@@ -4288,7 +4832,45 @@
       container.appendChild(card);
     }
 
-    async function openLesson(projectId, knowledgePointId, knowledgePointName, prefetchedResult = null) {
+    function renderLessonVisuals(container, resources, result) {
+      const visuals = resources.filter((resource) =>
+        resource && resource.type === "image" && resource.renderer === "deterministic_svg" &&
+        /^data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+$/.test(String(resource.url || ""))
+      );
+      if (!visuals.length) return;
+      const card = document.createElement("section");
+      card.className = "lesson-card";
+      card.dataset.blockId = "BLOCK-VISUALS";
+      card.dataset.blockTitle = "教学结构图";
+      const heading = document.createElement("div");
+      heading.className = "markdown-body";
+      heading.innerHTML = "<h2>教学结构图</h2>";
+      card.appendChild(heading);
+      visuals.forEach((visual) => {
+        const figure = document.createElement("figure");
+        const image = document.createElement("img");
+        image.src = String(visual.url);
+        image.alt = String(visual.alt || visual.title || "知识结构图");
+        image.loading = "lazy";
+        image.style.maxWidth = "100%";
+        image.style.height = "auto";
+        figure.appendChild(image);
+        const caption = document.createElement("figcaption");
+        const outcomeIds = Array.isArray(visual.coverage_outcome_ids) ? visual.coverage_outcome_ids : [];
+        const outcomes = result && result.teaching_contract && Array.isArray(result.teaching_contract.outcomes)
+          ? result.teaching_contract.outcomes : [];
+        const outcomeText = outcomeIds.length
+          ? " · 覆盖 " + outcomeIds.length + " 个学习目标"
+          : "";
+        const kindText = { flowchart: "流程图", state_transition: "状态变化图", comparison: "对比图", concept_map: "概念图" }[visual.visual_kind] || "教学图";
+        caption.textContent = String(visual.title || "确定性生成的教学结构图") + " · " + kindText + outcomeText + " · 由已生成讲解区块确定性渲染";
+        figure.appendChild(caption);
+        card.appendChild(figure);
+      });
+      container.appendChild(card);
+    }
+
+    async function openLesson(projectId, knowledgePointId, knowledgePointName, prefetchedResult = null, stepContext = null, pollAttempt = 0) {
       const project = state.projects.find((item) => item.project_id === projectId);
       if (project) {
         const conversation = switchConversation(projectConversationKey(projectId), project);
@@ -4298,7 +4880,7 @@
       }
       const initialTitle = knowledgePointName || knowledgePointId;
       const tabId = lessonTabId(projectId, knowledgePointId);
-      const prefetchedPreparing = prefetchedResult && prefetchedResult.status === "preparing";
+      const prefetchedPreparing = shouldPollLessonResult(prefetchedResult);
       let tab = workspaceTab(tabId);
       if (tab && !prefetchedResult && tab.result) {
         activateWorkspaceTab(tabId);
@@ -4313,7 +4895,7 @@
         knowledgePointId,
         projectName: (state.projects.find((project) => project.project_id === projectId) || {}).goal_name || "项目",
         loading: !prefetchedResult,
-        error: prefetchedPreparing ? (prefetchedResult.message || "章节内容仍在预生成，请稍后再打开。") : "",
+        error: "",
         result: prefetchedPreparing ? null : (prefetchedResult || null),
       });
       loadLessonNotes(tab).then(() => {
@@ -4325,10 +4907,18 @@
 
       if (prefetchedResult) {
         if (prefetchedPreparing) {
-          tab.loading = false;
+          if (pollAttempt >= 30) {
+            tab.loading = false;
+            tab.error = "章节生成等待时间过长，请稍后重新打开。";
+            renderEditorTabs();
+            renderLessonTab(tab);
+            return;
+          }
+          tab.loading = true;
           renderEditorTabs();
           renderLessonTab(tab);
-          return;
+          await waitForLessonRetry(prefetchedResult.retry_after_ms);
+          return openLesson(projectId, knowledgePointId, knowledgePointName, null, stepContext, pollAttempt + 1);
         }
         tab.title = prefetchedResult.lesson_title || initialTitle;
         tab.loading = false;
@@ -4341,14 +4931,32 @@
 
       setInputEnabled(false);
       try {
+        const explainBody = { student_id: STUDENT_ID, knowledge_point_id: knowledgePointId };
+        if (stepContext && stepContext.step_id) explainBody.step_id = stepContext.step_id;
+        if (stepContext && stepContext.learning_objective) explainBody.learning_objective = stepContext.learning_objective;
         const result = await api("/api/projects/" + encodeURIComponent(projectId) + "/explain", {
           method: "POST",
-          body: { student_id: STUDENT_ID, knowledge_point_id: knowledgePointId },
+          body: explainBody,
           timeoutMs: 30_000,
         });
+        if (shouldPollLessonResult(result)) {
+          if (pollAttempt >= 30) {
+            tab.loading = false;
+            tab.error = "章节生成等待时间过长，请稍后重新打开。";
+            if (state.activeTabId === tabId) renderLessonTab(tab);
+            renderEditorTabs();
+            return;
+          }
+          tab.loading = true;
+          tab.error = "";
+          if (state.activeTabId === tabId) renderLessonTab(tab);
+          renderEditorTabs();
+          await waitForLessonRetry(result.retry_after_ms);
+          return openLesson(projectId, knowledgePointId, knowledgePointName, null, stepContext, pollAttempt + 1);
+        }
         if (result.status === "preparing") {
           tab.loading = false;
-          tab.error = result.message || "章节内容仍在预生成，请稍后再打开。";
+          tab.error = result.message || "章节尚未满足生成条件，请先完成前置步骤。";
           if (state.activeTabId === tabId) renderLessonTab(tab);
           renderEditorTabs();
           return;
@@ -5192,11 +5800,15 @@
       renderEditorTabs();
       try {
         await refreshProjects();
-        const [profile, health] = await Promise.all([
+        const [profile, health, capabilityCatalog] = await Promise.all([
           api("/api/students/" + encodeURIComponent(STUDENT_ID) + "/profile").catch(() => null),
           api("/api/health").catch(() => null),
+          api("/api/capability-catalog").catch(() => null),
         ]);
         const p = profile && profile.profile;
+        state.capabilityCatalog = capabilityCatalog && capabilityCatalog.programs
+          ? capabilityCatalog
+          : null;
         state.materialKnowledgeAvailable = Boolean(health && health.material_knowledge_enabled);
         state.materialKnowledgeStatus = health && health.material_knowledge_status || "disabled";
         const materialsButton = document.querySelector('[data-tool="materials"]');
@@ -5206,17 +5818,12 @@
             : "学习资料插件尚未配置";
           materialsButton.classList.toggle("unavailable", !state.materialKnowledgeAvailable);
         }
-        $("conn-state").textContent = "服务已连接";
         if (p) {
           const name = p.display_name || "学习者";
-          $("user-name").textContent = name;
           $("foot-student-name").textContent = name;
-          $("user-avatar").textContent = name.slice(0, 1);
           $("foot-avatar").textContent = name.slice(0, 1);
         }
-      } catch (_) {
-        $("conn-state").textContent = "服务未连接（请通过后端启动页面）";
-      }
+      } catch (_) {}
       const conversation = switchConversation(createDraftConversationKey());
       initializeConversation(conversation);
     }

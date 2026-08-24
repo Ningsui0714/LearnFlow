@@ -162,19 +162,22 @@ flowData:
               evidence = data.get("evidence")
               blocks = data.get("content_blocks")
               local_audit = data.get("local_audit")
+              teaching_contract = data.get("teaching_contract")
               if not isinstance(evidence, list) or not evidence:
                   raise ValueError("evidence 必须是非空数组")
               if not isinstance(blocks, list) or not blocks:
                   raise ValueError("content_blocks 必须是非空数组")
               if not isinstance(local_audit, dict):
                   raise ValueError("local_audit 必须是对象")
+              if teaching_contract is not None and not isinstance(teaching_contract, dict):
+                  raise ValueError("teaching_contract 必须是对象")
               for item in evidence:
                   if not isinstance(item, dict) or not all(str(item.get(key) or "").strip() for key in ("title", "url", "quote")):
                       raise ValueError("每条 evidence 必须包含 title、url 和 quote")
               for block in blocks:
                   if not isinstance(block, dict) or not str(block.get("type") or "").strip() or not str(block.get("source") or "").strip():
                       raise ValueError("每个 content_block 必须包含 type 和 source")
-              context = {"evidence": evidence, "content_blocks": blocks, "local_audit": local_audit}
+              context = {"evidence": evidence, "content_blocks": blocks, "local_audit": local_audit, "teaching_contract": teaching_contract or {}}
               return {"audit_context": json.dumps(context, ensure_ascii=False, separators=(",", ":"))}
         appId: ''
         codeErrMsg: ''
@@ -252,6 +255,7 @@ flowData:
           - evidence：可核验证据数组；
           - content_blocks：待审核讲解区块；
           - local_audit：本地确定性审核结果。
+          - teaching_contract：当前知识点的原子范围、学习目标、排除范围和不可变事实；可能为空对象。
 
           只审核，不生成专业知识，不改写输入内容。
           只能依据 evidence 的 title、source、url、quote，判断每个非 notice 区块的 source 是否能追溯到证据，及讲解内容是否与引用证据相关。
@@ -261,7 +265,9 @@ flowData:
           2. 任一非 notice 区块没有 source，必须 rejected。
           3. 任一非 notice 区块的 source 无法匹配 evidence 的 title、source 或 url，必须 rejected。
           4. 任一区块的专业表述无法由对应 evidence.quote 支撑，必须 rejected。
-          5. 全部区块均可追溯且 local_audit.status=passed，才可以 approved。
+          5. teaching_contract 不为空时，任一区块偏离 required_scope、展开 excluded_scope，或缺少 outcomes 中的学习目标覆盖，必须 rejected。
+          6. teaching_contract 中的 immutable_facts 不能被替换、反转或添加无依据的限定条件；发现冲突必须 rejected。
+          7. 全部区块均可追溯且 local_audit.status=passed，才可以 approved。
 
           你的回答必须且只能是以下 JSON 格式：
           {"status":"ok","workflow_mode":"knowledge_audit","decision":"approved","reasons":["原因1"]}

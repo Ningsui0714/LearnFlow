@@ -3,8 +3,9 @@
 来源说明：
 - 以《Java 核心技术·卷I》（原书第11版）与 Oracle Java 教程为主要教材来源，
   条目逐条标注 source / document_id / locator，便于追溯。
-- 当前条目覆盖 KN_JAVA_* 学习路径节点；知识库 ≥50 条目标由后续扩充完成
-  （当前 21 条，见《专业群定位与场景说明_计算机信息技术.md》第 5 节）。
+- 当前条目覆盖 KN_JAVA_* 学习路径全部 7 个节点，每节点 8 条
+  （concept/steps/warning/example/workplace/standard/safety 等分类），共 56 条
+  （≥50 达标，见《专业群定位与场景说明_计算机信息技术.md》第 5 节）。
 
 字段说明：entry_id / knowledge_point_id / title / category / content / source / source_type /
 document_id / locator / safety / job_role / action / keywords。

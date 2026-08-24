@@ -104,6 +104,11 @@ def build_learning_path(goal_id: str) -> dict[str, Any]:
                 "knowledge_point_id": point_id,
                 "knowledge_point_name": point["knowledge_point_name"],
                 "knowledge_type": point.get("knowledge_type", "conceptual"),
+                "prerequisites": [
+                    prerequisite
+                    for prerequisite in DEPENDENCIES.get(point_id, [])
+                    if prerequisite in GOALS[goal_id]["knowledge_points"]
+                ],
                 "mastery": 0,
                 "status": "current" if index == 1 else "pending",
                 "recommended_order": index,
