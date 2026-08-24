@@ -24,7 +24,11 @@ from app.services.tutor_service import (
     get_session_state_summary, session_learning_skill,
     _select_session_learning_skill, _is_confirmation,
 )
-from app.services.architecture_registry import selectable_learning_skill_manifest
+from app.services.architecture_registry import (
+    chat_mode_manifest,
+    selectable_learning_skill_manifest,
+)
+from app.services.chat_modes import chat_mode_view, enter_chat_mode
 from app.services.learning_skill_runtime import (
     act_on_learning_skill_run,
     create_learning_skill_run,
@@ -109,6 +113,43 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         if latest_assistant else None
     )
     learning_task_views = [await learning_task_view(db, item) for item in learning_tasks]
+    current_mode = chat_mode_view(session)
+    running_skill = str((skill_run or {}).get("status") or "completed") in {"active", "verification"}
+    running_task = any(item.status == "active" for item in learning_tasks)
+    if (
+        current_mode["id"] == "free"
+        and current_mode["status"] == "active"
+        and (running_skill or running_task)
+    ):
+        current_mode = await enter_chat_mode(
+            db,
+            session,
+            mode_id="learn",
+            goal=str((skill_run or {}).get("goal") or next(
+                (item.objective for item in learning_tasks if item.status == "active"),
+                "继续当前原子学习任务",
+            )),
+            reason="恢复仍在进行的原子学习任务",
+            entry_message_id=latest_assistant.id if latest_assistant else session.id,
+            learning_task_id=next(
+                (item.id for item in learning_tasks if item.status == "active"),
+                None,
+            ),
+        )
+    elif (
+        current_mode["id"] == "learn"
+        and current_mode["status"] == "active"
+        and not running_task
+        and not running_skill
+    ):
+        current_mode = await enter_chat_mode(
+            db,
+            session,
+            mode_id="free",
+            goal="",
+            reason="原子学习任务与学习方法运行均已结束",
+            entry_message_id=latest_assistant.id if latest_assistant else session.id,
+        )
     state_summary = await get_session_state_summary(db, session)
     await db.commit()
     return {
@@ -121,6 +162,7 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         "state_summary": state_summary,
         "action_card": action_card(pending),
         "project_proposals": [proposal_view(item) for item in proposals],
+        "chat_mode": current_mode,
         "active_skill": session_learning_skill(session),
         "active_skill_run": skill_run,
         "skill_recommendation": skill_recommendation,
@@ -136,6 +178,14 @@ async def list_learning_skills(
 ):
     del current
     return selectable_learning_skill_manifest()
+
+
+@router.get("/modes")
+async def list_chat_modes(
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    del current
+    return chat_mode_manifest()
 
 
 @router.get("/sessions")
@@ -169,6 +219,7 @@ async def list_sessions(
             "session_type": session.session_type,
             "project_id": session.project_id,
             "checkpoint_id": session.checkpoint_id,
+            "chat_mode": chat_mode_view(session),
             "active_skill": session_learning_skill(session),
             "last_message": last_message.content[:120] if last_message else "",
             "created_at": session.created_at.isoformat() if session.created_at else None,
@@ -228,6 +279,15 @@ async def start_learning_skill_run(
             provenance={"skill_run_id": run.id, "interaction": "recommendation_accepted"},
             client_event_id=f"learning-skill-run:{run.id}:selected",
         )
+    await enter_chat_mode(
+        db,
+        session,
+        mode_id="learn",
+        goal=request.goal,
+        reason="学习者显式启动了运行型学习方法",
+        entry_message_id=run.id,
+        learning_task_id=run.learning_task_id,
+    )
     if session.title in {"学习 Tutor", "新对话"}:
         session.title = request.goal[:36] + ("…" if len(request.goal) > 36 else "")
     view = await learning_skill_run_view(db, run)
@@ -245,8 +305,10 @@ async def start_learning_skill_run(
     return {
         "session_id": session.id,
         "session_title": session.title,
+        "chat_mode": chat_mode_view(session),
         "active_skill": active_skill,
         "active_skill_run": await learning_skill_run_view(db, run),
+        "chat_mode": chat_mode_view(session),
         "message": message,
         "created": created,
     }
@@ -287,6 +349,7 @@ async def update_learning_skill_run(
         micro_view = await run_view(db, micro)
     return {
         "session_id": session.id,
+        "chat_mode": chat_mode_view(session),
         "active_skill": session_learning_skill(session),
         "active_skill_run": await learning_skill_run_view(db, run),
         "learning_run": micro_view,
@@ -461,9 +524,20 @@ async def accept_project_proposal(
         ))
     await db.commit()
     session = await _owned_session(db, current.learner.id, proposal.session_id)
+    await enter_chat_mode(
+        db,
+        session,
+        mode_id="free",
+        goal="",
+        reason="项目提案已经接受并完成规划交接",
+        entry_message_id=action.id,
+        project_proposal_id=proposal.id,
+    )
     proposals = await list_session_proposals(db, proposal.session_id)
+    await db.commit()
     return {
         "session_id": proposal.session_id,
+        "chat_mode": chat_mode_view(session),
         "message": message,
         "executed_action": action_result(action),
         "action_card": None,
@@ -484,6 +558,16 @@ async def dismiss_project_proposal(
         await set_proposal_status(db, proposal, "dismissed")
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    session = await _owned_session(db, current.learner.id, proposal.session_id)
+    await enter_chat_mode(
+        db,
+        session,
+        mode_id="free",
+        goal="",
+        reason="学习者暂不继续当前项目提案",
+        entry_message_id=proposal.id,
+        project_proposal_id=proposal.id,
+    )
     await db.commit()
     return proposal_view(proposal)
 

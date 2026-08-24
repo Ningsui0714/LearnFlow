@@ -1160,7 +1160,17 @@ async def learning_skill_run_view(
             "current_phase_id": task.current_phase_id,
             "plan_version": task.plan_version,
             "version": task.version,
-            "path": f"/tasks?task={task.id}",
+            "path": (
+                f"/projects/{task.project_id}/checkpoints/{task.checkpoint_id}"
+                if task.project_id and task.checkpoint_id else
+                f"/agent/{task.session_id}" if task.session_id else
+                f"/tasks?task={task.id}"
+            ),
+            "management_path": f"/tasks?task={task.id}",
+            "artifact_path": (
+                f"/learn/{task.micro_learning_run_id}"
+                if task.micro_learning_run_id else None
+            ),
         } if task else None),
         "micro_learning_run": ({
             "id": micro.id,

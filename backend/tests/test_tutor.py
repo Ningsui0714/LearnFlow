@@ -59,6 +59,106 @@ def new_session(client: TestClient, *, create_new: bool = True) -> int:
     return response.json()["id"]
 
 
+def test_chat_modes_drive_definition_atomic_task_and_long_plan(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "")
+
+    explanation_session = new_session(client)
+    explanation = client.post(
+        f"/api/agent/sessions/{explanation_session}/turns",
+        json={"message": "跟我讲讲什么是朴素贝叶斯分类器"},
+    )
+    assert explanation.status_code == 200
+    explanation_body = explanation.json()
+    assert explanation_body["chat_mode"]["id"] == "explain"
+    assert explanation_body["chat_mode"]["status"] == "completed"
+    assert explanation_body["learning_tasks"] == []
+
+    learning_session = new_session(client)
+    learning = client.post(
+        f"/api/agent/sessions/{learning_session}/turns",
+        json={"message": "带我弄懂朴素贝叶斯分类器"},
+    )
+    assert learning.status_code == 200
+    learning_body = learning.json()
+    assert learning_body["chat_mode"]["id"] == "learn"
+    assert learning_body["learning_task_proposal"]["status"] == "active"
+    assert learning_body["learning_task_proposal"]["navigation"] == {
+        "kind": "conversation",
+        "path": f"/agent/{learning_session}",
+    }
+
+    async def clear_legacy_mode_state():
+        async with async_session() as db:
+            session = await db.get(AgentSession, learning_session)
+            session.context_summary = {}
+            await db.commit()
+
+    asyncio.run(clear_legacy_mode_state())
+    restored_learning = client.get(f"/api/agent/sessions/{learning_session}")
+    assert restored_learning.status_code == 200
+    assert restored_learning.json()["chat_mode"]["id"] == "learn"
+    assert restored_learning.json()["chat_mode"]["reason"] == "恢复仍在进行的原子学习任务"
+
+    selected_text_session = new_session(client)
+    selected_text_learning = client.post(
+        f"/api/agent/sessions/{selected_text_session}/turns",
+        json={
+            "message": "带我深入理解我选中的这段内容，并安排一次练习与验证。",
+            "context": {
+                "selected_text": "装饰器会接收函数并返回一个包装后的可调用对象。",
+                "interaction": "selected_text_question",
+            },
+        },
+    )
+    assert selected_text_learning.status_code == 200
+    selected_body = selected_text_learning.json()
+    assert selected_body["chat_mode"]["id"] == "learn"
+    assert selected_body["learning_task_proposal"]["status"] == "active"
+    assert "装饰器会接收函数" in selected_body["learning_task_proposal"]["objective"]
+    assert selected_body["learning_task_proposal"]["navigation"] == {
+        "kind": "conversation",
+        "path": f"/agent/{selected_text_session}",
+    }
+
+    planning_session = new_session(client)
+    planning = client.post(
+        f"/api/agent/sessions/{planning_session}/turns",
+        json={"message": "帮我规划从零开始系统学习操作系统的长期路线"},
+    )
+    assert planning.status_code == 200
+    assert planning.json()["chat_mode"]["id"] == "plan"
+    restored_plan = client.get(f"/api/agent/sessions/{planning_session}")
+    assert restored_plan.status_code == 200
+    assert restored_plan.json()["chat_mode"]["id"] == "plan"
+
+    modes = client.get("/api/agent/modes")
+    assert modes.status_code == 200
+    assert [item["id"] for item in modes.json()] == [
+        "free", "explain", "learn", "plan",
+    ]
+
+    async def projected_action():
+        async with async_session() as db:
+            event = (await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == explanation_session,
+                EvidenceEvent.event_type == "learning_action_segment_completed",
+            ))).scalar_one()
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id == event.id,
+            ))).scalars().all())
+            return event, mutations
+
+    event, mutations = asyncio.run(projected_action())
+    assert event.payload["mode"] == "explain"
+    assert event.payload["content_exposure"] is True
+    assert {item.kernel_name for item in mutations} == {"structure", "knowledge"}
+    knowledge = next(item for item in mutations if item.kernel_name == "knowledge")
+    assert knowledge.patch["short_term"]["mastery_unchanged"] is True
+
+
 def test_independent_global_chats_invoke_registered_session_skills(client: TestClient):
     first = client.post("/api/agent/sessions", json={
         "session_type": "global", "create_new": True,

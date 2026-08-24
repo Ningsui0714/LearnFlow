@@ -257,7 +257,7 @@ def test_task_is_resumable_but_verification_cannot_be_self_declared(client: Test
     assert resumed["status"] == "active"
 
 
-def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
+def test_explicit_atomic_request_persists_and_teaches_in_dialogue(
     client: TestClient, monkeypatch,
 ):
     model_calls = []
@@ -296,14 +296,14 @@ def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
     }
     assert task["runtime"]["next_action"]["id"] == "prepare_materials"
     assert first.json()["learning_tasks"][0]["id"] == task["id"]
-    assert model_calls == []
+    assert len(model_calls) == 1
 
     follow_up = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
         "message": "我先想知道变量是在定义时还是调用时决定的",
         "client_turn_id": _id("offline-atomic-follow-up"),
     })
     assert follow_up.status_code == 200, follow_up.text
-    assert len(model_calls) == 1
+    assert len(model_calls) == 2
     assert follow_up.json()["learning_task_proposal"] is None
     assert follow_up.json()["learning_tasks"][0]["id"] == task["id"]
     current = follow_up.json()["learning_tasks"][0]
@@ -312,7 +312,9 @@ def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
         "client_request_id": _id("conversation-task-materialize"),
     })
     assert prepared.status_code == 200, prepared.text
-    assert prepared.json()["navigation"]["kind"] == "focused_learning"
+    assert prepared.json()["navigation"] == {
+        "kind": "conversation", "path": f"/agent/{session['id']}",
+    }
     assert prepared.json()["origin_navigation"] == {
         "kind": "conversation", "path": f"/agent/{session['id']}",
     }
@@ -320,7 +322,9 @@ def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
         f"/api/micro-learning/runs/{prepared.json()['micro_learning_run_id']}"
     ).json()
     assert "闭包" in learning_run["source_excerpt"]
-    assert learning_run["learning_task"]["navigation"]["kind"] == "focused_learning"
+    assert learning_run["learning_task"]["navigation"] == {
+        "kind": "conversation", "path": f"/agent/{session['id']}",
+    }
     assert learning_run["learning_task"]["origin_navigation"] == {
         "kind": "conversation", "path": f"/agent/{session['id']}",
     }

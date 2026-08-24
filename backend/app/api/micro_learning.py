@@ -44,6 +44,8 @@ def _workflow_error(error: RuntimeError) -> HTTPException:
         return HTTPException(409, "学习状态已更新，请刷新后重试")
     if str(error) == "invalid_state":
         return HTTPException(409, "当前步骤不能执行这个操作")
+    if str(error) == "quality_gate":
+        return HTTPException(409, "讲义未通过内容质量门槛，请重建讲义或返回原对话")
     return HTTPException(400, "无法更新学习流程")
 
 

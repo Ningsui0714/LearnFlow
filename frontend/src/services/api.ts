@@ -355,6 +355,32 @@ export interface LearningSkillRecommendation {
   policy_version: string
 }
 
+export type ChatModeId = 'free' | 'explain' | 'learn' | 'plan'
+
+export interface ChatMode {
+  id: ChatModeId
+  name: string
+  status: 'active' | 'completed'
+  goal?: string
+  reason?: string
+  skills: string[]
+  returns_to?: ChatModeId | null
+  segment_id?: string
+  learning_task_id?: number | null
+  project_proposal_id?: number | null
+  completed_at?: string | null
+  last_segment?: Record<string, any>
+}
+
+export interface ChatModeContract {
+  id: ChatModeId
+  name: string
+  owner_agent: string
+  skills: string[]
+  boundary: string
+  completion: string
+}
+
 export interface LearningSkillRun {
   id: number
   skill: LearningSkill
@@ -390,6 +416,8 @@ export interface LearningSkillRun {
     plan_version: number
     version: number
     path: string
+    management_path?: string
+    artifact_path?: string | null
   } | null
   micro_learning_run?: {
     id: number
@@ -410,6 +438,7 @@ export interface TutorSessionSummary {
   session_type: 'global' | 'project' | 'checkpoint'
   project_id?: number | null
   checkpoint_id?: number | null
+  chat_mode?: ChatMode
   active_skill?: LearningSkill | null
   last_message?: string
   created_at?: string | null
@@ -421,6 +450,9 @@ export const listTutorSessions = (sessionType?: 'global' | 'project' | 'checkpoi
 
 export const listLearningSkills = () =>
   api.get('/agent/skills').then(r => r.data as LearningSkill[])
+
+export const listChatModes = () =>
+  api.get('/agent/modes').then(r => r.data as ChatModeContract[])
 
 export const startLearningSkillRun = (
   sessionId: number,
@@ -676,6 +708,7 @@ export interface MicroLearningRun {
     generation_mode?: 'model_enhanced' | 'deterministic_fallback' | 'unknown'
     generation_reason?: string
     generation_source?: string
+    quality_status?: 'ready' | 'blocked'
   }
   teach_back: Record<string, any>
   verification: Record<string, any>

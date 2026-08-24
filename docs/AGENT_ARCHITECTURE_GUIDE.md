@@ -269,7 +269,18 @@ Tutor: plan_review_queue / 导航 / 过滤
 
 详细规则和接口见 `docs/REVIEW_WORKBENCH.md`。
 
-### 8.2 Learning Task、项目关卡与双队列
+### 8.2 Chat Mode、Learning Task、项目关卡与双队列
+
+每段 Chat MUST 暴露并持久化四个粗粒度模式：`free`、`explain`、`learn`、`plan`。模式是
+Tutor 的交互姿态，不是新的 Agent 或掌握状态。简单定义、区别和最小示例进入 `explain`，
+不得自动建任务；明确的深度理解、选择运行型 Skill 或已有非终态任务进入 `learn`；跨多个
+任务、来源、阶段或真实产物的目标进入 `plan` 并优先形成项目；其余保持 `free`。关卡 Session
+初始就是 `learn`，项目 Session 仍可在四种模式间切换。
+
+模式迁移 MUST 由确定性 runtime 裁决。简单讲解交付后标记完成，下一轮从 `free` 重新判断；
+`learn` 中可把清晰讲解当作子 Skill，不得因为计划存在而拒绝必要解释。非自由段结束时 MUST
+以 `learning_action_segment_completed` 记录消息边界、目标和领域引用，再经统一 reducer 投影；
+该事件不得绕过正式判题升级掌握。
 
 `LearningTask` 是学习领域中的可恢复执行单元，用来统一对话里形成的原子目标、Tutor
 推荐且经用户接受的目标、项目 Checkpoint 和 `MicroLearningRun`。它不同于负责异步生成
@@ -310,7 +321,8 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 只保存受管引用。手工任务需要正式内容和验证时，可以物化为隐藏的
 `task_artifact/internal` 微学习 scope，不污染真实项目组合。
 
-`/tasks` 与 `/review` 是两个并列工作台：前者由学习者自由增删、排序和恢复，后者由
+`/tasks` 与 `/review` 是两个并列工作台：前者只负责排序、暂停、恢复、移除和返回来源，
+不得成为任务教学、计划编辑或材料生成的第二主现场；后者由
 `ReviewSchedule` 的确定性策略调度。任务完成只说明流程结束，所有 Learning Task 生命周期
 事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
 完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
@@ -328,7 +340,8 @@ MUST 持久挂在任务上；生成材料本身 MUST NOT 完成 learn 或改变�
 
 ### 8.3 对话 Session、学习 Skill 与可验证工作台
 
-`/agent/:sessionId` 是 global Tutor 的独立对话主界面。一个学习者可以拥有多段并列对话；
+`/agent/:sessionId` 是 global Tutor 的独立对话主界面，并包含模式条、当前任务计划、文件入口
+和选中文字追问等轻量工作台能力。一个学习者可以拥有多段并列对话；
 项目是可由对话创建、进入或挂载的长期上下文，工作台则是 Skill 在需要时生成的结构化
 附件。前端不得以固定学习方法表单替代 Session，也不得让右侧上下文 Tutor 与独立对话
 同时竞争主输入。
@@ -356,9 +369,10 @@ Tutor Session -> confirmed SkillRun + LearningTask -> bounded dialogue
   -> MicroLearningRun -> graded attempts / remediation / review
 ```
 
-`/learn/:runId` 是 Tutor 所有、由对话按需产生的专注工作台附件，内部依次调用 Learning
+`/learn/:runId` 是 Tutor 所有、由对话按需产生的学习文件工作台附件，内部依次调用 Learning
 Design 和 Practice 能力，不新增第四个主 Agent。只有明确请求“15 分钟、微学习或可验证
-学习”才自动启动；普通“帮我学”留在当前对话。
+学习”才自动启动；普通“帮我学”留在当前对话。文件页 MUST 使用 LearningTask 的
+`origin_navigation` 返回原 Chat/关卡，并以原 `session_id` 打开同一 Tutor 历史。
 
 ```text
 start_micro_learning
@@ -620,8 +634,9 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 | 页面 | 主要责任 |
 |---|---|
 | `/agent` | 打开最近一段独立 global 对话，首次使用时创建 Session |
-| `/agent/:sessionId` | 独立学习对话、会话级 Skill 选择、项目/工作台附件与高层行动 |
-| `/tasks` | 待接受、待完成、进行中和历史 Learning Task；支持排序、暂停、恢复和重规划 |
+| `/agent/:sessionId` | 四模式独立学习对话、轻量工作台、会话级 Skill、原子任务与文件入口 |
+| `/tasks` | Learning Task 纯管理队列；支持排序、暂停、恢复、移除和返回原 Chat/关卡 |
+| `/learn/:runId` | 讲义、引导练习和独立验证的文件工作台；复用原 Session Tutor 并返回来源 |
 | `/review` | 独立复习队列、确定性调度、判题与纠错闭环 |
 | `/projects` | 项目组合、待创建提案和项目管理 |
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |

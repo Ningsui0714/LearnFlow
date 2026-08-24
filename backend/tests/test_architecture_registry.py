@@ -1,6 +1,7 @@
 from app.services.action_board import ACTION_BOARD
 from app.services.architecture_registry import (
     AGENTS,
+    CHAT_MODES,
     CAPABILITY_OWNERS,
     EVENTS,
     KERNEL_NAMES,
@@ -9,6 +10,7 @@ from app.services.architecture_registry import (
     WORKBENCHES,
     normalize_event_provenance,
     registry_manifest,
+    chat_mode_manifest,
     selectable_learning_skill_manifest,
     validate_registry,
 )
@@ -28,6 +30,25 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert "one active version" in manifest["authority"]["module_versioning"]
     assert "startup queue reconciliation" in manifest["authority"]["memory_consolidation"]
     assert "shared Tutor deadline" in manifest["authority"]["interactive_model_latency"]
+    assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
+    assert [item["id"] for item in chat_mode_manifest()] == [
+        "free", "explain", "learn", "plan",
+    ]
+    assert len(manifest["chat_modes"]) == 4
+
+
+def test_chat_modes_are_tutor_postures_with_registered_action_projection():
+    assert all(item.owner_agent == "tutor_agent" for item in CHAT_MODES.values())
+    assert "coordinate_chat_mode" in ACTION_BOARD
+    assert CAPABILITY_OWNERS["coordinate_chat_mode"] == (
+        "tutor_agent", "chat_mode_runtime", "global_tutor",
+    )
+    assert EVENTS["chat_mode_entered"].kernel_targets == ()
+    assert EVENTS["learning_action_segment_completed"].kernel_targets == (
+        "structure", "knowledge", "value",
+    )
+    assert WORKBENCHES["learning_tasks"].capabilities == ("manage_learning_tasks",)
+    assert WORKBENCHES["focused_learning"].name == "Learning Artifact Workbench"
 
 
 def test_remediation_events_have_standard_authority_provenance():

@@ -113,6 +113,26 @@ def test_naive_bayes_offline_primer_contains_teachable_content(monkeypatch):
     assert all("只要读过材料" not in question["question"] for question in artifact["questions"])
 
 
+def test_generic_fallback_cannot_enter_evidence_workflow(monkeypatch, client: TestClient):
+    monkeypatch.setattr("app.services.micro_learning.settings.llm_api_key", "")
+    created = client.post("/api/micro-learning/runs", json={
+        "goal": "理解 Python 装饰器如何包装函数",
+        "source_text": "",
+        "client_request_id": _request_id("generic-quality-gate"),
+    })
+    assert created.status_code == 200, created.text
+    run = created.json()
+    assert run["learning_card"]["quality_status"] == "blocked"
+
+    advanced = client.post(f"/api/micro-learning/runs/{run['id']}/advance", json={
+        "action": "complete_card",
+        "expected_version": run["version"],
+        "client_action_id": _request_id("blocked-card-viewed"),
+    })
+    assert advanced.status_code == 409
+    assert "内容质量门槛" in advanced.json()["detail"]
+
+
 def test_learning_card_can_be_regenerated_before_evidence(monkeypatch, client: TestClient):
     monkeypatch.setattr("app.services.micro_learning.settings.llm_api_key", "")
     created = client.post("/api/micro-learning/runs", json={

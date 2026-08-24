@@ -239,6 +239,57 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             )
         return
 
+    if et == "learning_action_segment_completed":
+        action = {
+            "segment_id": p.get("segment_id"),
+            "mode": p.get("mode"),
+            "goal": p.get("goal", ""),
+            "outcome": p.get("outcome", ""),
+            "learning_task_id": p.get("learning_task_id"),
+            "project_proposal_id": p.get("project_proposal_id"),
+            "entry_message_id": p.get("entry_message_id"),
+            "exit_message_id": p.get("exit_message_id"),
+            "skills": list(p.get("skills") or []),
+            "evidence_id": event.id,
+        }
+        structure_patch: dict[str, Any] = {
+            "last_learning_action": action,
+            "current_task": p.get("goal", "")[:500],
+        }
+        if p.get("learning_task_id") or event.checkpoint_id:
+            structure_patch["resume_anchor"] = {
+                "session_id": event.session_id,
+                "project_id": event.project_id,
+                "checkpoint_id": event.checkpoint_id,
+                "learning_task_id": p.get("learning_task_id"),
+                "note": "返回原对话或关卡继续同一个学习任务",
+            }
+        await _apply_patch(
+            db, event, "structure", structure_patch,
+            "把一次自由态到学习形态再返回的过程投影为可恢复学习动作",
+        )
+        if p.get("content_exposure"):
+            await _apply_patch(
+                db, event, "knowledge",
+                {
+                    "last_explanation": p.get("goal", "")[:500],
+                    "exposure_only": True,
+                    "last_learning_action_id": p.get("segment_id"),
+                    "mastery_unchanged": True,
+                },
+                "对话讲解或任务引导只形成内容接触证据，不代表掌握",
+            )
+        if p.get("goal") and p.get("mode") in {"learn", "plan"}:
+            await _apply_patch(
+                db, event, "value",
+                {
+                    "current_priority": p.get("goal", "")[:500],
+                    "current_motivation": "explicit_learning_action",
+                },
+                "学习动作保留本轮明确目标，不自动巩固为长期价值声明",
+            )
+        return
+
     if et == "micro_learning_started":
         await _apply_patch(
             db, event, "structure",

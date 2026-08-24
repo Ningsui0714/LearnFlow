@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.learning import (
     AgentSession, AgentMessage, AgentAction, EvidenceEvent, LearnerProfile,
-    LearningProjectProposal, LearningTask, MicroLearningRun,
+    LearningProjectProposal, LearningSkillRun, LearningTask, MicroLearningRun,
 )
 from app.models.project import Project, Source, Roadmap, Checkpoint, Task
 from app.schemas.agent import TutorModelOutput
@@ -49,6 +49,14 @@ from app.services.learning_skill_runtime import (
     recommend_learning_skill,
 )
 from app.services.model_latency import invoke_before_deadline, model_deadline
+from app.services.chat_modes import (
+    attach_mode_domain_refs,
+    chat_mode_prompt,
+    chat_mode_view,
+    classify_chat_mode,
+    complete_explanation_mode,
+    enter_chat_mode,
+)
 
 
 CONFIRM_WORDS = {
@@ -108,6 +116,8 @@ TUTOR_SYSTEM_PROMPT = """你是 LearnFlow 中常驻的学习 Tutor。你可以�
 15. 当用户只有一个边界清楚、希望马上弄懂的短期主题时，可以推荐首页的“15 分钟可验证学习”：学习卡、费曼复述、独立验证和复习安排会形成一个闭环。多周、多来源、明确产物或系统掌握目标才优先推荐项目式学习。不要在普通事实问答中机械推销任一模式。
 16. 区分普通对话和原子学习任务：只有当目标边界清楚、适合在一次或数次连续互动中形成“学习—练习—验证—复习转交”闭环时，才设置 learning_task_opportunity.should_propose=true。用户本轮明确要求“带我学会/帮我弄懂/加入学习任务/完成这道题的学习闭环”等立即学习目标时，consent_basis=explicit_user_request；只有 Tutor 在聊天中主动建议时才用 tutor_recommendation。Tutor 主动推荐的任务只生成待确认提案，未经学习者同意不得声称已加入队列或已经开始。事实问答、寒暄和还不清楚目标的探索不要创建任务。
 17. 如果 current_learning_tasks 已有 active 任务，围绕其 objective 和 current_phase 继续当前原子闭环，每回合只推进一个适合的教学动作；不要为同一目标重复提议任务。任务阶段只是协调信息，正式验证、掌握与复习仍以服务端证据链为准。
+18. Chat 只有四种显式模式：free 负责开放探索和意图收敛；explain 负责一次边界清楚的直接讲解且不自动建任务；learn 围绕当前 LearningTask 灵活组合讲解、Skill、练习和验证；plan 处理跨多个任务、来源、阶段或真实产物的目标并优先形成项目。项目与关卡是会话空间，不是新的 Chat 模式。
+19. learn 模式中的讲解是一个可随时调用的子 Skill，不要为了保持流程而拒绝必要解释；但讲解后仍应回到同一任务的下一步。对话来源的 LearningTask 始终在原对话推进，任务队列只管理顺序；文件或独立验证可以打开附件工作台，完成后回到原对话。
 
 严格返回结构化结果。reply 是给用户看的自然中文；observations 只记录本轮可由用户输入支持的短期观察，不能写长期掌握。结构观察只可使用 path_position、path_dependencies、resume_anchor、focus_transition、deferred_threads、navigation_blocker；知识观察只可使用 concept_understanding、knowledge_gap、pending_question、misconceptions、active_concepts、recent_errors。learning_intent 要分开 immediate_need、long_term_goal 和 artifact_intent；project_opportunity 仅在确实值得持续跟踪时填写；learning_task_opportunity 仅描述一个原子闭环，consent_basis 必须由用户本轮是否明确要求开始该学习目标决定，Tutor 推荐必须等待用户确认。已有项目提案时，relevant_proposal_key 应指向本轮信息真正影响的提案。major_event_candidates 只允许记录用户用第一人称明确确定的职业理想；探索、疑问、假设或替别人描述时必须为空，置信度必须至少 0.90。只有在 checkpoint 会话中，且任务确实需要修改或测试共享项目文件时，才可设置 local_agent_task.should_delegate=true；只描述任务类型、目标、约束与能力，不选择 Agent、不拼接命令，也不要声称已经启动。"""
 
@@ -1967,6 +1977,7 @@ async def _generate_tutor_reply(
             ),
         },
         "active_surface_context": review_workspace,
+        "chat_mode": chat_mode_view(session),
         "current_state": state,
         "available_projects": [{"id": p.id, "name": p.name, "description": p.description} for p in projects],
         "learning_projection": prompt_projection,
@@ -2034,6 +2045,8 @@ async def _generate_tutor_reply(
         TUTOR_SYSTEM_PROMPT
         + "\n\n"
         + scope_prompt
+        + "\n\n"
+        + chat_mode_prompt(chat_mode_view(session))
         + (
             "\n\n当前会话调用的学习 Skill：\n" + active_skill.invocation_prompt
             if active_skill else
@@ -2172,7 +2185,7 @@ async def _generate_tutor_reply(
                 return await _candidate_sources_follow_up(db, session), [], None, None, [], None, None
             return (
                 workflow_fallback
-                or "这次模型服务没有响应。你仍然可以直接让我创建项目、添加来源或推进当前检查点。"
+                or "模型服务没有响应或没有返回可靠内容，本轮不会用通用占位答案冒充讲解。请先在设置中测试模型连接，或补充一份可靠来源后重试。"
             ), [], None, None, [], None, None
 
 
@@ -2358,14 +2371,15 @@ async def process_turn(
         if session.session_type == "global" and session.title in {"学习 Tutor", "新对话"}:
             title = re.sub(r"\s+", " ", message).strip()
             session.title = title[:36] + ("…" if len(title) > 36 else "")
+    active_learning_task = (await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == session.learner_id,
+        LearningTask.session_id == session.id,
+        LearningTask.status.in_({"queued", "active", "paused"}),
+    ).order_by(
+        LearningTask.priority.desc(), LearningTask.queue_position, LearningTask.id,
+    ).limit(1))).scalar_one_or_none()
     if not user_event:
-        active_learning_task_id = (await db.execute(select(LearningTask.id).where(
-            LearningTask.learner_id == session.learner_id,
-            LearningTask.session_id == session.id,
-            LearningTask.status.in_({"queued", "active", "paused"}),
-        ).order_by(
-            LearningTask.priority.desc(), LearningTask.queue_position, LearningTask.id,
-        ).limit(1))).scalar_one_or_none()
+        active_learning_task_id = active_learning_task.id if active_learning_task else None
         user_event = await record_event(
             db, event_type="user_message", source="user",
             learner_id=session.learner_id,
@@ -2383,6 +2397,61 @@ async def process_turn(
             provenance={"message_id": user_message.id},
             client_event_id=f"message:{user_message.id}:user",
         )
+    latest_skill_run = (await db.execute(select(LearningSkillRun).where(
+        LearningSkillRun.learner_id == session.learner_id,
+        LearningSkillRun.session_id == session.id,
+        LearningSkillRun.status.in_({"active", "paused"}),
+    ).order_by(LearningSkillRun.updated_at.desc(), LearningSkillRun.id.desc()).limit(1))).scalar_one_or_none()
+    active_plan = await get_latest_active_proposal(db, session.id)
+    persisted_mode = chat_mode_view(session)
+    from app.services.learning_tasks import deterministic_learning_task_opportunity
+    selected_text = str(incoming_context.get("selected_text") or "")
+    deterministic_task_opportunity = deterministic_learning_task_opportunity(
+        message,
+        selected_text=selected_text,
+    )
+    mode_id, mode_reason = classify_chat_mode(
+        message,
+        session_type=session.session_type,
+        selected_skill_id=(
+            (active_learning_skill or {}).get("id")
+            if learning_skill_changed else None
+        ),
+        has_active_task=active_learning_task is not None,
+        has_active_skill_run=latest_skill_run is not None,
+        has_active_plan=(
+            active_plan is not None
+            or (
+                persisted_mode.get("id") == "plan"
+                and persisted_mode.get("status") == "active"
+            )
+        ),
+    )
+    if deterministic_task_opportunity and mode_id == "free":
+        mode_id = "learn"
+        mode_reason = "学习者显式要求完成一个可验证的原子学习闭环"
+    if (
+        mode_id == "learn"
+        and not active_learning_task
+        and not latest_skill_run
+        and not active_learning_skill
+        and not deterministic_task_opportunity
+    ):
+        deterministic_task_opportunity = deterministic_learning_task_opportunity(
+            message,
+            selected_text=selected_text,
+            force=True,
+        )
+    current_chat_mode = await enter_chat_mode(
+        db,
+        session,
+        mode_id=mode_id,
+        goal=(active_learning_task.objective if active_learning_task else message),
+        reason=mode_reason,
+        entry_message_id=user_message.id,
+        learning_task_id=active_learning_task.id if active_learning_task else None,
+        project_proposal_id=active_plan.id if mode_id == "plan" and active_plan else None,
+    )
     if learning_skill_changed:
         await record_event(
             db, event_type="learning_skill_selected", source="user",
@@ -2665,6 +2734,7 @@ async def process_turn(
         response = {
             "session_id": session.id,
             "session_title": session.title,
+            "chat_mode": chat_mode_view(session),
             "active_skill": active_learning_skill,
             "active_skill_run": await latest_learning_skill_run_view(db, session),
             "skill_recommendation": None,
@@ -2713,22 +2783,22 @@ async def process_turn(
     )
     detected_task = None
     if session.session_type == "global" and not skill_run:
-        from app.services.learning_tasks import deterministic_learning_task_opportunity
-        detected_task = deterministic_learning_task_opportunity(message)
+        detected_task = deterministic_task_opportunity
     if detected_task:
-        # Explicit, bounded atomic requests are a product command, not a model
-        # classification problem.  Establish the durable task immediately so an
-        # invalid or slow provider cannot block the learner's first action.
-        reply = (
-            f"我会围绕“{detected_task['title']}”带你完成一次原子学习闭环。"
-            "任务会保留学习计划、讲义与验证题；讲解和阅读只算学习过程，"
-            "正式作答与纠错完成后才会转交复习。"
+        # The task identity is deterministic, while the Tutor still gives a
+        # useful first teaching move instead of replying with a workflow notice.
+        (
+            reply, observations, _ignored_project_opportunity, learning_intent,
+            major_event_candidates, local_agent_task, _ignored_task_opportunity,
+        ) = await _generate_tutor_reply(
+            db,
+            session,
+            workflow_fallback=(
+                f"我们先为“{detected_task['title']}”建立一个最小理解起点。"
+                "你可以先告诉我目前最卡住的关系；如果完全陌生，我会先直接讲清核心再进入练习。"
+            ),
         )
-        observations = []
         opportunity = None
-        learning_intent = None
-        major_event_candidates = []
-        local_agent_task = None
         learning_task_opportunity = detected_task
     else:
         (
@@ -2741,6 +2811,13 @@ async def process_turn(
             workflow_fallback=str((skill_turn_plan or {}).get("fallback") or ""),
             active_skill_run_view=skill_run_view,
         )
+    if current_chat_mode["id"] == "explain":
+        opportunity = None
+        learning_task_opportunity = None
+    elif current_chat_mode["id"] == "learn":
+        opportunity = None
+    elif current_chat_mode["id"] == "plan":
+        learning_task_opportunity = None
     generated_local_action = None
     if (
         session.session_type == "checkpoint"
@@ -2808,6 +2885,9 @@ async def process_turn(
         )
         if learning_task:
             learning_task_proposal = await learning_task_view(db, learning_task)
+            current_chat_mode = attach_mode_domain_refs(
+                session, learning_task_id=learning_task.id,
+            )
     visible_skill_run_view = skill_run_view or await latest_learning_skill_run_view(db, session)
     assistant = AgentMessage(
         session_id=session.id, role="assistant", content=reply,
@@ -2822,9 +2902,18 @@ async def process_turn(
         },
     )
     db.add(assistant)
+    await db.flush()
+    if current_chat_mode["id"] == "explain":
+        current_chat_mode = await complete_explanation_mode(
+            db, session, assistant_message=assistant,
+        )
     await db.commit()
     if proposal_update and proposal_update.action_type == "create":
         await start_resource_search(db, proposal_update)
+    if proposal_update:
+        current_chat_mode = attach_mode_domain_refs(
+            session, project_proposal_id=proposal_update.id,
+        )
     state = await get_session_state_summary(db, session)
     proposals = await list_session_proposals(db, session.id)
     from app.services.learning_tasks import learning_task_view
@@ -2841,6 +2930,7 @@ async def process_turn(
     response = {
         "session_id": session.id,
         "session_title": session.title,
+        "chat_mode": current_chat_mode,
         "active_skill": active_learning_skill,
         "active_skill_run": visible_skill_run_view,
         "skill_recommendation": skill_recommendation,

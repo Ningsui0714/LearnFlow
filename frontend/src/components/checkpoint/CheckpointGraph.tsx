@@ -172,6 +172,8 @@ export default function CheckpointGraph({ checkpoints, onCheckpointClick }: Prop
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
         fitView
+        minZoom={0.2}
+        fitViewOptions={{ padding: 0.16, minZoom: 0.2, maxZoom: 1 }}
         attributionPosition="bottom-left"
       >
         <Background color="#e5e7eb" gap={20} />

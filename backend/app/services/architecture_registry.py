@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-24.6"
+REGISTRY_VERSION = "2026-08-24.7"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -54,6 +54,16 @@ class AgentContract:
     output_contract: tuple[str, ...]
     kernel_access: str
     must_not: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ChatModeContract:
+    id: str
+    name: str
+    owner_agent: str
+    skills: tuple[str, ...]
+    boundary: str
+    completion: str
 
 
 @dataclass(frozen=True)
@@ -150,6 +160,37 @@ AGENTS = {
 }
 
 
+# These are Tutor postures, not additional Agents. Project and checkpoint are
+# product scopes; LearningTask and SkillRun remain the durable runtimes.
+CHAT_MODES = {
+    item.id: item for item in (
+        ChatModeContract(
+            "free", "自由探索", "tutor_agent", ("intent_and_handoff",),
+            "直接回应开放问题，并把清楚的短期、深度或长期意图收敛到其他模式",
+            "检测到明确意图时塌陷；否则保持自由",
+        ),
+        ChatModeContract(
+            "explain", "简单讲解", "tutor_agent", ("guided_explanation",),
+            "完成一个边界清楚的定义、区别或最小示例，不自动创建 LearningTask",
+            "讲解交付后标记完成，下一轮从自由模式重新判断",
+        ),
+        ChatModeContract(
+            "learn", "学习任务引导", "tutor_agent",
+            ("atomic_learning_loop", "guided_explanation", "socratic_dialogue",
+             "feynman_dialogue", "worked_example_fading"),
+            "围绕一个 LearningTask 组合讲解、练习、验证、纠错与复习转交",
+            "任务或 SkillRun 结束、退出或明确转向后返回自由",
+        ),
+        ChatModeContract(
+            "plan", "学习规划", "tutor_agent",
+            ("intent_and_handoff", "learning_path_planning"),
+            "澄清跨多个任务、来源、阶段或真实产物的目标，并优先形成项目提案",
+            "提案完成、接受、放弃或明确转向后返回自由",
+        ),
+    )
+}
+
+
 KERNELS = {
     item.id: item for item in (
         KernelContract("structure", "学习者走到哪里，怎样离开与返回",
@@ -177,6 +218,8 @@ TOOLS = {
                      KERNEL_NAMES, (), "EvidenceEvent"),
         ToolContract("tutor_context", "Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
+        ToolContract("chat_mode_runtime", "Deterministic Chat Mode Runtime", "tutor_agent", "learnflow", "orchestration",
+                     KERNEL_NAMES, (), "AgentSession context + registered EvidenceEvent only"),
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
         ToolContract("source_ingestion", "Source Ingestion + Chunking", "learning_design_agent", "learnflow", "artifact"),
@@ -376,14 +419,14 @@ SKILLS = {
 
 WORKBENCHES = {
     item.id: item for item in (
-        WorkbenchContract("global_tutor", "Global Tutor", "/agent/:sessionId", "tutor_agent",
-                          ("use_learning_skill", "start_learning_skill_run", "advance_learning_skill_run",
+        WorkbenchContract("global_tutor", "Chat Tutor + Lightweight Workbench", "/agent/:sessionId", "tutor_agent",
+                          ("coordinate_chat_mode", "use_learning_skill", "start_learning_skill_run", "advance_learning_skill_run",
                            "start_skill_verification", "start_micro_learning", "search_projects",
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task")),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
-                          ("manage_learning_tasks", "plan_learning_task", "run_learning_task")),
-        WorkbenchContract("focused_learning", "Focused Learning", "/learn/:runId", "tutor_agent",
+                          ("manage_learning_tasks",)),
+        WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
                           ("continue_micro_learning", "analyze_teach_back", "evaluate_attempt",
                            "request_remediation_explanation", "retry_attempt",
                            "evaluate_transfer_variant", "plan_review_queue")),
@@ -414,6 +457,7 @@ WORKBENCHES = {
 
 
 CAPABILITY_OWNERS = {
+    "coordinate_chat_mode": ("tutor_agent", "chat_mode_runtime", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),
     "run_learning_task": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
@@ -471,6 +515,8 @@ def _event(event_id: str, capability: str, targets: tuple[str, ...], role: str,
 
 EVENTS = {
     item.id: item for item in (
+        _event("chat_mode_entered", "coordinate_chat_mode", (), "operational_context"),
+        _event("learning_action_segment_completed", "coordinate_chat_mode", ("structure", "knowledge", "value"), "learning_action_projection"),
         _event("learning_task_created", "manage_learning_tasks", (), "operational"),
         _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
         _event("learning_task_replanned", "plan_learning_task", (), "plan_revision"),
@@ -568,6 +614,11 @@ def selectable_learning_skill_manifest() -> list[dict[str, Any]]:
     ]
 
 
+def chat_mode_manifest() -> list[dict[str, Any]]:
+    """Return the four coarse Tutor postures shown by Chat workbenches."""
+    return [asdict(item) for item in CHAT_MODES.values()]
+
+
 def selectable_learning_skill(skill_id: str | None) -> SkillContract | None:
     skill = SKILLS.get(str(skill_id or "").strip())
     return skill if skill and skill.learner_selectable else None
@@ -590,6 +641,11 @@ def validate_registry() -> list[str]:
     errors: list[str] = []
     if len(AGENTS) != 3:
         errors.append("exactly three primary agent contracts are required")
+    if tuple(CHAT_MODES) != ("free", "explain", "learn", "plan"):
+        errors.append("chat mode registry must preserve the four coarse Tutor modes")
+    for mode in CHAT_MODES.values():
+        if mode.owner_agent not in AGENTS or set(mode.skills) - set(SKILLS):
+            errors.append(f"invalid chat mode contract: {mode.id}")
     if tuple(KERNELS) != KERNEL_NAMES:
         errors.append("kernel registry must preserve the canonical five-kernel order")
     for capability in ACTION_BOARD:
@@ -654,9 +710,12 @@ def registry_manifest() -> dict[str, Any]:
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
             "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
+            "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
+            "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
+        "chat_modes": [asdict(item) for item in CHAT_MODES.values()],
         "kernels": [asdict(item) for item in KERNELS.values()],
         "capabilities": capability_manifest(),
         "tools": [asdict(item) for item in TOOLS.values()],

@@ -24,6 +24,11 @@ ACTION_BOARD = {
             ("start_learning_skill_run", "start_micro_learning", "draft_learning_project"),
         ),
         ActionDefinition(
+            "coordinate_chat_mode", "协调当前 Chat 学习形态", "context", "none",
+            {},
+            ("use_learning_skill", "run_learning_task", "draft_learning_project"),
+        ),
+        ActionDefinition(
             "manage_learning_tasks", "管理学习任务队列", "write", "explicit_or_click",
             {},
             ("plan_learning_task", "run_learning_task"),

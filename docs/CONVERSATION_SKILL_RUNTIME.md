@@ -81,14 +81,15 @@ Tutor 交互模型默认共享 10 秒总预算；结构化或纯文本返回空�
 ## 4. 前端与 API
 
 独立对话 `/agent/:sessionId` 仍是唯一主输入。Skill 卡显示四步流程、当前方法、目标、有效
-引导轮次、支架说明、暂停/继续/验证动作，以及“查看任务与学习包”入口。SkillRun 已绑定的
-LearningTask 不再在同一对话中重复渲染第二张“生成学习包”卡；完成教学引导后由“开始独立
-验证”在同一任务上自动物化学习包。刷新后从服务端恢复；正式验证仍打开
-`/learn/:runId` 专注附件。
+引导轮次、支架说明、暂停/继续/验证动作，并明确“当前任务就在这段对话中”。SkillRun 已绑定的
+LearningTask 不再产生指向任务详情页的竞争入口；完成教学引导后由“开始独立验证”在同一
+任务上物化 `/learn/:runId` 文件附件，完成后回到原 Session。Chat 模式条显示此时为 `learn`，
+其中仍可按需调用 `guided_explanation`，不要求学习者在讲解与任务之间切换页面。
 
 | API | 用途 |
 |---|---|
 | `GET /api/agent/skills` | 返回四种可选方法及适用/避用元数据 |
+| `GET /api/agent/modes` | 返回 free / explain / learn / plan 四种粗粒度 Chat 契约 |
 | `POST /api/agent/sessions/{sessionId}/skill-runs` | 幂等启动任一运行型 Skill，并绑定任务 |
 | `POST /api/agent/sessions/{sessionId}/skill-runs/{runId}/actions` | 暂停、恢复或在同一任务上开始验证 |
 | `GET /api/agent/sessions/{sessionId}` | 恢复 Session、最近 SkillRun、任务引用和推荐 |

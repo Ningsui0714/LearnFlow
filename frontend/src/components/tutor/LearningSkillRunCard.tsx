@@ -93,12 +93,9 @@ export default function LearningSkillRunCard({ run, onAction, onOpenLearningRun 
         {error && <p role="alert" className="mt-2 text-[11px] text-red-700">{error}</p>}
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           {run.learning_task && (
-            <a
-              href={run.learning_task.path}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-2.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-50"
-            >
-              查看任务与学习包<ArrowUpRight size={12} />
-            </a>
+            <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-2.5 text-[11px] font-medium text-emerald-800">
+              当前任务就在这段对话中
+            </span>
           )}
           {run.can_pause && (
             <button

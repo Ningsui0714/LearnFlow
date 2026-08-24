@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowLeft, BookOpen, CalendarClock, CheckCircle2, ChevronRight,
-  Lightbulb, ListTodo, Loader2, MessageCircle, Pause, Play, RefreshCw,
+  Lightbulb, Loader2, MessageCircle, Pause, Play, RefreshCw,
   RotateCcw, Send, ShieldCheck, Sparkles, X,
 } from 'lucide-react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -348,11 +348,15 @@ export default function LearningRunPage() {
   const paused = run.state === 'paused'
   const displayQuestion = run.current_question && (run.state === 'verification' || retrying)
   const originNavigation = run.learning_task?.origin_navigation
-  const managementNavigation = run.learning_task?.management_navigation
   const needsQualityRefresh = (
     run.state === 'learning_card'
-    && card.generation_mode === 'deterministic_fallback'
-    && !String(card.generation_source || '').startsWith('curated.')
+    && (
+      card.quality_status === 'blocked'
+      || (
+        card.generation_mode === 'deterministic_fallback'
+        && card.generation_source === 'generic_goal_scaffold'
+      )
+    )
   )
   return (
     <div className="min-h-screen bg-[#f6f7f4] text-slate-900">
@@ -361,7 +365,7 @@ export default function LearningRunPage() {
           <button type="button" onClick={() => navigate(originNavigation?.path || run.learning_task?.path || '/agent')} className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100" title={originNavigation?.kind === 'conversation' ? '返回原对话' : originNavigation?.kind === 'checkpoint' ? '返回项目关卡' : '返回任务控制台'}><ArrowLeft size={19} /></button>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-slate-900">{run.goal}</p>
-            <p className="text-[11px] text-slate-500">专注学习 · 当前任务执行现场 · 第 {Math.max(1, run.progress.current)}/{run.progress.total} 步</p>
+            <p className="text-[11px] text-slate-500">学习文件工作台 · 讲义与独立验证附件 · 第 {Math.max(1, run.progress.current)}/{run.progress.total} 步</p>
           </div>
           {run.status !== 'completed' && (
             <button
@@ -372,9 +376,6 @@ export default function LearningRunPage() {
             >
               {paused ? <Play size={14} /> : <Pause size={14} />}{paused ? '继续' : '稍后继续'}
             </button>
-          )}
-          {managementNavigation && (
-            <button type="button" onClick={() => navigate(managementNavigation.path)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><ListTodo size={14} />任务与学习包</button>
           )}
           {run.state !== 'learning_card' && (
             <button type="button" onClick={openLectureReference} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-100"><BookOpen size={14} />回看讲义</button>
@@ -390,12 +391,15 @@ export default function LearningRunPage() {
         {needsQualityRefresh && (
           <section className="mb-5 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between" data-testid="learning-package-quality-warning">
             <div>
-              <p className="text-sm font-semibold">这份学习卡由旧版通用降级模板生成，知识内容不足</p>
-              <p className="mt-1 text-xs leading-5 text-amber-800">可以在开始复述前原位重建；任务、对话来源和进度入口不会改变。</p>
+              <p className="text-sm font-semibold">讲义未通过内容质量门槛</p>
+              <p className="mt-1 text-xs leading-5 text-amber-800">当前没有可靠模型结果或受审核主题模板，因此不会让通用占位内容进入复述、练习和证据流程。检查模型设置后可原位重建，任务与对话入口不会改变。</p>
             </div>
-            <button type="button" disabled={busy === 'regenerate'} onClick={regenerateLearningPackage} className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-amber-900 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">
-              {busy === 'regenerate' ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}重新生成可靠讲义
-            </button>
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <button type="button" onClick={() => navigate('/settings')} className="inline-flex items-center justify-center rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-semibold text-amber-950">检查模型设置</button>
+              <button type="button" disabled={busy === 'regenerate'} onClick={regenerateLearningPackage} className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-900 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">
+                {busy === 'regenerate' ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}重试生成讲义
+              </button>
+            </div>
           </section>
         )}
         <div className="mb-7 grid grid-cols-5 gap-1 sm:gap-2" aria-label="学习步骤">
@@ -421,7 +425,7 @@ export default function LearningRunPage() {
           </section>
         )}
 
-        {run.state === 'learning_card' && (
+        {run.state === 'learning_card' && !needsQualityRefresh && (
           <article className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-emerald-100 bg-emerald-50 px-5 py-5 sm:px-8">
               <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-emerald-800"><BookOpen size={15} />学习卡</div>
@@ -486,7 +490,7 @@ export default function LearningRunPage() {
               <div className="rounded-2xl bg-amber-50 p-4"><span className="text-xs text-amber-800">经过纠错后通过</span><strong className="mt-1 block text-lg text-amber-950">{run.summary.remediated_question_ids?.length || 0} 题</strong></div>
             </div>
             <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 p-4"><h2 className="flex items-center gap-2 text-sm font-semibold text-indigo-950"><CalendarClock size={16} />下一次复习</h2><p className="mt-2 text-sm leading-6 text-indigo-900/80">{run.summary.review_due_at ? new Date(run.summary.review_due_at).toLocaleString('zh-CN') : '复习计划已建立，可前往复习台查看。'}</p><p className="mt-1 text-xs text-indigo-700">{run.summary.next_step}</p></div>
-            <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => navigate('/review')} className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white"><CalendarClock size={16} />查看复习计划</button><button type="button" onClick={() => navigate(run.learning_task?.path || '/tasks')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"><RotateCcw size={16} />返回任务与学习包</button></div>
+            <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => navigate('/review')} className="inline-flex items-center gap-2 rounded-xl bg-indigo-700 px-5 py-3 text-sm font-semibold text-white"><CalendarClock size={16} />查看复习计划</button><button type="button" onClick={() => navigate(originNavigation?.path || run.learning_task?.path || '/agent')} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700"><RotateCcw size={16} />返回原对话继续</button></div>
           </section>
         )}
 
@@ -514,8 +518,9 @@ export default function LearningRunPage() {
           <aside className="flex h-full w-[min(94vw,430px)] flex-col bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
             <div className="flex h-14 items-center justify-between border-b border-slate-200 px-4"><div><strong className="text-sm">当前步骤 Tutor</strong><p className="text-[10px] text-slate-500">能看当前目标与证据，不会直接宣布掌握</p></div><button type="button" onClick={() => setTutorOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X size={17} /></button></div>
             <TutorPanel
-              projectId={run.project_id}
-              checkpointId={run.checkpoint_id}
+              requestedSessionId={run.session_id}
+              projectId={originNavigation?.kind === 'checkpoint' ? run.project_id : undefined}
+              checkpointId={originNavigation?.kind === 'checkpoint' ? run.checkpoint_id : undefined}
               surfaceKind="focused_learning"
               surfaceTitle="专注学习 Tutor"
               surfaceDescription="围绕当前微学习步骤答疑"

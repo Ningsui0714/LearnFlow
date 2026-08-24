@@ -110,6 +110,20 @@ KernelState + Memory Graph
 
 跳过、延期、暂停和恢复是零 kernel target 的运行事件。`review-policy-v1` 使用固定 `1/3/7/14/30/60 天`阶梯；失败、辅助、独立成功和已校验变式只改变可审计调度，不自行宣布掌握。长期稳定至少需要两次相隔 72 小时的独立复习成功，且至少一次来自已校验变式。稳定后再次失败只增加风险与重新调度，不删除历史证据或长期声明。
 
+### Chat Mode 与学习动作
+
+Tutor 在每段 Chat 中使用四个显式但粗粒度的运行形态：`free / explain / learn / plan`。
+它们都是 `tutor_agent` 的可恢复交互姿态，不是新的 Agent。`free` 负责开放探索与意图收敛；
+`explain` 负责一次边界清楚的直接讲解且不自动创建任务；`learn` 负责围绕同一
+`LearningTask` 灵活组合讲解与其他 Skill；`plan` 负责跨多个任务、来源、阶段或真实产物的
+目标并优先形成项目。项目和关卡是 Session scope，不是第五种模式。
+
+模式选择由 `chat_mode_runtime` 的确定性规则完成并保存在 `AgentSession.context_summary`，
+LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的运行事件；一次非自由模式
+结束或转向时追加 `learning_action_segment_completed`，把该段的目标、消息边界、Skill、任务、
+项目提案和产物引用经 reducer 投影为可恢复学习动作。讲解段只形成 Knowledge exposure 并固定
+`mastery_unchanged`；只有明确的 learn/plan 目标才形成短期 Value 投影，不能自动巩固长期目标。
+
 ### Learning Task 与双队列
 
 `LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者
@@ -132,7 +146,8 @@ Tutor 识别或用户创建任务
 明确接受后才能进入学习任务队列。项目每个 Checkpoint 唯一对应一段 checkpoint Session
 和一个 Learning Task；项目仍是面向真实产物的学徒旅程，任务只是关卡执行单元。
 
-`/tasks` 显示待接受、待完成、进行中和历史任务；`/review` 继续显示由确定性调度生成的
+`/tasks` 只管理待接受、待完成、进行中和历史任务的顺序、暂停、恢复和返回锚点，不执行
+教学、重规划或材料生成；对话任务回原 Chat，项目任务回原关卡。`/review` 继续显示由确定性调度生成的
 复习任务。两者是并列队列，不把复习降级为普通待办。`LearningTask` 完成及其计划事件均为
 零 Kernel target；只有 `LearningAttempt`、判题、纠错和复习事件可以形成能力证据。受管
 讲义、练习和题目仍以现有 `Lecture / Exercise / ConceptQuestion` 为权威，任务只保存引用。
@@ -174,10 +189,11 @@ LLM 决定。运行事件及任务同步事件的 Kernel target 全部为空；
 调用必须先建立知识起点。SkillRun 与其绑定的 LearningTask 是同一闭环的教学状态和任务状态，
 在对话中不得渲染成两套并行下一步。
 
-`/learn/:runId` 是 Learning Task 可以按需物化的专注工作台附件，由 Tutor 控制 Agent 所有，并通过
+`/learn/:runId` 是 Learning Task 可以按需物化的学习文件工作台附件，由 Tutor 控制 Agent 所有，并通过
 `verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错
 和复习调度。明确的“15 分钟/微学习/可验证学习”请求可以直接启动它；普通原子学习则先
-形成 Learning Task，由 Tutor 在对话中自由教学，必要时再物化该附件。它不是第四类主
+形成 Learning Task，由 Tutor 在原对话中自由教学，必要时再物化该附件。附件中的 Tutor
+必须复用原 `session_id`；使用后主返回锚点也是原对话或原关卡。它不是第四类主
 Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/session scope，标记为
 `task_artifact/internal`，不出现在真实项目列表中，用户无需先配置项目。
 
@@ -212,7 +228,7 @@ Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/se
 
 - Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
-- `/agent/:sessionId` 独立对话、`/tasks` 学习任务队列、`/learn/:runId` 对话附件、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
+- `/agent/:sessionId` 带轻量工作台的独立对话、`/tasks` 纯管理任务队列、`/learn/:runId` 学习文件附件、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
 
 ### 重合区处理

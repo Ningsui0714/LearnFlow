@@ -1,6 +1,6 @@
 # LearnFlow Claw 与 Learning Task Runtime
 
-> 状态：v2 已实现
+> 状态：v3 已实现（Chat Mode + 原对话主现场）
 > 运行时版本：`learning-task-runtime-v2`
 > 计划 schema：`learning-task-plan.v1`
 
@@ -16,7 +16,9 @@ LearnFlow 的主界面只有两类学习空间：
 - `/tasks`：待确认、待开始、进行中和暂停的学习任务。
 - `/review`：由正式评估证据产生的复习任务。
 
-`/learn/:runId` 继续存在，但语义从独立产品模式收敛为 **Learning Task 的专注附件**：当任务需要保存讲义、题目和正式验证时，Tutor 可以按需物化该附件。
+`/learn/:runId` 继续存在，但语义收敛为 **Learning Task 的学习文件工作台**：当任务需要保存讲义、题目和正式验证时，Tutor 可以按需物化该附件；它不是任务主页面。
+
+讲义还有独立的内容质量门槛：模型结果或受审核离线模板可以进入复述与验证；未知主题在模型失败时产生的通用占位内容只能用于诊断生成失败，不能推进学习流程或写入能力证据。学习者应重试生成、检查模型设置，或回到原 Chat 补充可靠来源。
 
 ### 1.1 页面与导航契约
 
@@ -25,13 +27,13 @@ LearnFlow 的主界面只有两类学习空间：
 
 | 字段 | 语义 | 典型路径 |
 |---|---|---|
-| `navigation` | 继续学习，进入当前真正执行任务的页面 | 原对话、项目关卡或 `/learn/:runId` |
+| `navigation` | 继续任务，返回唯一主学习现场 | 原对话或项目关卡；仅无来源的旧任务回退到 `/learn/:runId` |
 | `origin_navigation` | 返回任务被提出的位置 | 原对话或原项目关卡 |
-| `management_navigation` | 管理优先级、暂停、移除、计划与学习包 | `/tasks?task=:id` |
+| `management_navigation` | 管理优先级、暂停、恢复和移除 | `/tasks?task=:id` |
 
-由对话建立但已物化学习包的任务，`navigation` 指向专注学习，`origin_navigation` 仍指向原
-对话。由项目关卡建立的任务以关卡本身为学习现场。所有页面共用同一任务位置提示和主操作
-文案；`/tasks` 明确标为控制台，不再表现成第三种学习模式。
+由对话建立且已物化文件的任务，`navigation` 和 `origin_navigation` 都仍指向原对话；文件
+路径只存在于 `artifact_refs` 与 `runtime.next_action.path`。由项目关卡建立的任务以关卡本身为
+学习现场。`/tasks` 明确为纯管理队列，不再展示计划编辑器、材料生成器或教学流程。
 
 ## 2. 为什么要有 Learning Task
 
@@ -53,10 +55,12 @@ Session、项目、后台作业和复习解决的是不同问题：
 ```mermaid
 flowchart TD
     U[学生输入或点击] --> S[对话 Session]
-    S --> T[Tutor 识别意图]
-    T --> Q{是否形成原子学习任务}
-    Q -->|普通问答| R[自由对话回复]
-    Q -->|学生明确要求| LT[Learning Task queued/active]
+    S --> T[确定性 Chat Mode 协调]
+    T -->|free| R[自由探索]
+    T -->|explain| X[简单讲解后返回 free]
+    T -->|learn| LT[Learning Task queued/active]
+    T -->|plan| PJ[项目规划与提案]
+    T --> Q{任务是否由 Tutor 推荐}
     Q -->|Tutor 主动建议| P[Learning Task proposed]
     P -->|学生接受| LT
     P -->|学生拒绝| C[canceled]
@@ -92,10 +96,10 @@ Tutor 始终保持用户控制权。Learning Design 和 Practice 是 Tutor 背�
 自动创建并关联 Learning Task。
 
 服务端会在调用 Tutor 模型前，对“带我弄懂……”“教我理解……”等边界明确的请求执行保守
-的确定性识别，并用同一 schema 的确定性粗计划立即建立任务。因此无效或慢模型配置不会阻塞
-任务卡；模型从后续教学互动和显式“重组计划”开始作为增强能力。识别器只覆盖明确的原子目标；“我想学操作系统”这类范围过大的表达仍留在
-对话中继续澄清。由对话创建的任务始终保留原 Session 作为来源与返回锚点，即使随后物化出
-专注学习 Session，也不会把任务从原对话中移走。
+的确定性识别并进入 `learn`；任务身份和粗计划不依赖模型，但首轮 Tutor 仍必须给出有教学
+价值的起步动作，不能只回复流程公告。识别器只覆盖明确的原子目标；简单的“什么是 X”进入
+`explain` 且不建任务，“系统学习 X/规划路线”进入 `plan`。由对话创建的任务始终保留原
+Session 作为来源、执行现场与返回锚点，即使随后物化出文件工作台也不会把任务移走。
 
 ### 4.2 Tutor 建议
 
@@ -206,7 +210,7 @@ Learning Task 不建立第二套讲义/习题存储。正式学习文件继续�
 ReviewSchedule 派生，不保存第二套前端进度。讲义在流程推进后仍可只读回看；回看不回退
 MicroLearningRun 状态，也不重复写接触或掌握证据。
 
-普通对话任务可以先只在 Session 中学习。需要保存材料和正式验证时，调用 `materialize`：系统创建内部 `task_artifact` 空间、Lecture、ConceptQuestion 和 checkpoint Session，并返回 `/learn/:runId`。该内部空间从真实项目列表隐藏，旧链接仍可恢复。
+普通对话任务始终在原 Session 中学习。需要保存材料和正式验证时，调用 `materialize`：系统创建内部 `task_artifact` 空间、Lecture、ConceptQuestion 和 checkpoint scope，并返回 `/learn/:runId` 文件工作台。该内部空间从真实项目列表隐藏，旧链接仍可恢复，文件页 Tutor 则复用原 Session。
 
 任务中的 `.lflecture`、`.lfexercise` 和概念题引用在已有专注附件时统一打开
 `/learn/:runId`，不会暴露内部 `task_artifact` 项目或把学生带到没有来源说明的隐藏关卡。
@@ -222,7 +226,7 @@ MicroLearningRun 状态，也不重复写接触或掌握证据。
 `MICRO_LEARNING_ARTIFACT_MODEL_BUDGET_SECONDS` 调整。超时后会保存确定性讲义与验证题，
 并在学习卡中记录 `generation_mode / generation_reason` 以供诊断；该标记不进入五核证据。
 
-LearningTask 与其专注附件共享暂停语义：从 `/tasks` 暂停或恢复会同步
+LearningTask 与其文件附件共享暂停语义：从 `/tasks` 暂停或恢复会同步
 `MicroLearningRun`，从 `/learn/:runId` 暂停或恢复也会同步任务队列。同步事件全部是零
 Kernel target；手工暂停任务不会被普通的运行读取误恢复。
 

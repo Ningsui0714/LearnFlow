@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ExternalLink, FileText, ListTodo, Play, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, FileText, ListTodo, MessageSquareQuote, Play, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import {
-  createTutorSession, getTutorSession, listLearningSkills,
+  createTutorSession, getTutorSession, listChatModes, listLearningSkills,
   sendTutorTurn, confirmTutorAction, cancelTutorAction,
   getTutorAction, acceptProjectProposal, dismissProjectProposal,
   getProjectProposal, refreshProjectProposalSources, updateProjectProposal,
@@ -11,13 +11,14 @@ import {
   actOnLearningTask, materializeLearningTask,
 } from '../../services/api'
 import type {
-  LearningSkill, LearningSkillRecommendation, LearningSkillRun,
+  ChatMode, ChatModeContract, LearningSkill, LearningSkillRecommendation, LearningSkillRun,
   LearningTask, ProjectProposal, ProjectProposalSource,
 } from '../../services/api'
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
 import LearningSkillRunCard from './LearningSkillRunCard'
 import LearningTaskSurfaceNotice from '../learning-task/LearningTaskSurfaceNotice'
+import ChatModeBar from './ChatModeBar'
 import {
   type CurrentLearningSurface,
   learningTaskPresentation,
@@ -235,20 +236,25 @@ export default function TutorPanel({
   const [proposalBusy, setProposalBusy] = useState(false)
   const [milestoneNotice, setMilestoneNotice] = useState<any>(null)
   const [learningSkills, setLearningSkills] = useState<LearningSkill[]>([])
+  const [modeContracts, setModeContracts] = useState<ChatModeContract[]>([])
+  const [chatMode, setChatMode] = useState<ChatMode | null>(null)
   const [activeSkillId, setActiveSkillId] = useState('adaptive')
   const [activeSkillRun, setActiveSkillRun] = useState<LearningSkillRun | null>(null)
   const [skillRecommendation, setSkillRecommendation] = useState<LearningSkillRecommendation | null>(null)
   const [skillMenuOpen, setSkillMenuOpen] = useState(false)
   const [learningTaskProposal, setLearningTaskProposal] = useState<LearningTask | null>(null)
   const [preparingTaskMaterials, setPreparingTaskMaterials] = useState(false)
+  const [selectedPassage, setSelectedPassage] = useState('')
   const messagesRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number | null>(null)
   const currentTaskSurface: CurrentLearningSurface = surfaceKind || (checkpointId ? 'checkpoint' : 'conversation')
 
   useEffect(() => {
-    if (!showSkillPicker) return
-    void listLearningSkills().then(setLearningSkills).catch(() => setLearningSkills([]))
+    void listChatModes().then(setModeContracts).catch(() => setModeContracts([]))
+    if (showSkillPicker) {
+      void listLearningSkills().then(setLearningSkills).catch(() => setLearningSkills([]))
+    }
   }, [showSkillPicker])
 
   useEffect(() => {
@@ -260,6 +266,8 @@ export default function TutorPanel({
     setActiveSkillRun(null)
     setSkillRecommendation(null)
     setLearningTaskProposal(null)
+    setChatMode(null)
+    setSelectedPassage('')
     const request = requestedSessionId
       ? getTutorSession(requestedSessionId)
       : createTutorSession({
@@ -276,6 +284,7 @@ export default function TutorPanel({
       setAction(data.action_card || null)
       setSummary(data.state_summary || null)
       setProposals(data.project_proposals || [])
+      setChatMode(data.chat_mode || null)
       setActiveSkillId(data.active_skill?.id || 'adaptive')
       setActiveSkillRun(data.active_skill_run || null)
       setSkillRecommendation(data.skill_recommendation || null)
@@ -321,6 +330,7 @@ export default function TutorPanel({
       }])
     }
     setActiveSkillId(data.active_skill?.id || 'adaptive')
+    if ('chat_mode' in data) setChatMode(data.chat_mode || null)
     if ('active_skill_run' in data) setActiveSkillRun(data.active_skill_run || null)
     if ('skill_recommendation' in data) setSkillRecommendation(data.skill_recommendation || null)
     if (data.learning_task_proposal) {
@@ -390,6 +400,7 @@ export default function TutorPanel({
     try {
       await dismissProjectProposal(proposal.id)
       setProposals(items => items.filter(item => item.id !== proposal.id))
+      setChatMode({ id: 'free', name: '自由探索', status: 'active', skills: ['intent_and_handoff'], reason: '项目提案已暂时收起' })
     } catch {}
   }
 
@@ -461,7 +472,7 @@ export default function TutorPanel({
     }
   }
 
-  const send = async (selectedActionId?: number, presetText?: string) => {
+  const send = async (selectedActionId?: number, presetText?: string, extraContext: Record<string, any> = {}) => {
     if (!sessionId || loading) return
     const text = (presetText ?? input).trim()
     if (!text && !selectedActionId) return
@@ -482,7 +493,7 @@ export default function TutorPanel({
         selected_action_id: selectedActionId,
         selected_skill_id: activeSkillId,
         client_turn_id: globalThis.crypto?.randomUUID?.() || `turn-${Date.now()}-${Math.random()}`,
-        context: turnContext,
+        context: { ...turnContext, ...extraContext },
       })
       applyResult(data)
     } catch (e: any) {
@@ -554,6 +565,16 @@ export default function TutorPanel({
         client_action_id: globalThis.crypto?.randomUUID?.() || `task-${actionName}-${learningTaskProposal.id}-${Date.now()}`,
       })
       setLearningTaskProposal(['canceled', 'completed'].includes(next.status) ? null : next)
+      if (['accept', 'start', 'resume'].includes(actionName)) {
+        setChatMode({
+          id: 'learn', name: '学习任务引导', status: 'active',
+          skills: ['atomic_learning_loop', 'guided_explanation'],
+          reason: '当前对话正在推进已确认的原子学习任务',
+          goal: next.objective, learning_task_id: next.id, returns_to: 'free',
+        })
+      } else if (actionName === 'cancel') {
+        setChatMode({ id: 'free', name: '自由探索', status: 'active', skills: ['intent_and_handoff'], reason: '当前任务已移出队列' })
+      }
       window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
     } catch (error: any) {
       setMessages(previous => [...previous, {
@@ -611,8 +632,26 @@ export default function TutorPanel({
     && activeSkillRun?.learning_task?.id === learningTaskProposal.id,
   )
 
+  const captureSelection = () => {
+    const selection = window.getSelection()
+    const text = selection?.toString().trim() || ''
+    if (!text || text.length < 2 || text.length > 2_000) return
+    const anchor = selection?.anchorNode
+    if (anchor && messagesRef.current?.contains(anchor)) setSelectedPassage(text)
+  }
+
+  const askAboutSelection = (deep = false) => {
+    if (!selectedPassage || loading) return
+    const prompt = deep
+      ? '带我深入理解我选中的这段内容，并安排一次练习与验证。'
+      : '请通俗解释我选中的这段内容，先讲清它在这里的作用。'
+    const selection = selectedPassage
+    setSelectedPassage('')
+    void send(undefined, prompt, { selected_text: selection, interaction: 'selected_text_question' })
+  }
+
   return (
-    <section className={`flex min-h-0 flex-col overflow-hidden border border-gray-200 bg-white rounded-lg ${className}`}>
+    <section className={`relative flex min-h-0 flex-col overflow-hidden border border-gray-200 bg-white rounded-lg ${className}`}>
       <header className="flex min-h-14 items-center justify-between border-b border-gray-200 px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-gray-900">{surfaceTitle || (checkpointId ? '关卡 Tutor' : projectId ? '学习 Tutor' : '主 Agent')}</h2>
@@ -634,6 +673,8 @@ export default function TutorPanel({
         )}
       </header>
 
+      <ChatModeBar mode={chatMode} contracts={modeContracts} />
+
       <ProjectProposalDock
         proposals={proposals}
         dragEnabled={proposalDragEnabled}
@@ -644,7 +685,7 @@ export default function TutorPanel({
         onUpdate={updateProposal}
       />
 
-      <div ref={messagesRef} className={`flex-1 space-y-3 overflow-x-hidden overflow-y-auto p-4 ${standalone ? 'bg-[#fafaf8] sm:px-8 sm:py-6' : ''}`}>
+      <div ref={messagesRef} onMouseUp={captureSelection} className={`flex-1 space-y-3 overflow-x-hidden overflow-y-auto p-4 ${standalone ? 'bg-[#fafaf8] sm:px-8 sm:py-6' : ''}`}>
         {milestoneNotice && (
           <div className="flex items-start justify-between gap-3 border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 rounded-lg">
             <div><p className="font-semibold">学习路径新增里程碑</p><p className="mt-1">{milestoneNotice.title}</p></div>
@@ -784,7 +825,24 @@ export default function TutorPanel({
               <span className="rounded-md bg-white/70 px-2 py-1">练习 {learningTaskProposal.runtime?.evidence?.practice_attempts || 0}</span>
               <span className="rounded-md bg-white/70 px-2 py-1">验证 {learningTaskProposal.runtime?.evidence?.successful_verifications || 0}</span>
             </div>
-            <p className="mt-2 text-[10px] text-emerald-800">学习包按“讲义 → 引导练习 → 独立验证 → 纠错/复习”使用；讲义阅读本身不代表掌握。</p>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-2" aria-label="当前任务计划">
+              {(learningTaskProposal.plan?.phases || []).map(phase => (
+                <div key={phase.id} className={`rounded-lg border px-2.5 py-2 text-[10px] ${phase.status === 'completed' ? 'border-emerald-200 bg-emerald-100/70 text-emerald-800' : phase.id === learningTaskProposal.current_phase_id ? 'border-indigo-200 bg-indigo-50 text-indigo-800' : 'border-emerald-100 bg-white/60 text-slate-500'}`}>
+                  <strong className="block font-semibold">{phase.title}</strong>
+                  <span className="mt-0.5 block truncate">{phase.purpose}</span>
+                </div>
+              ))}
+            </div>
+            {learningTaskProposal.artifact_refs?.some(item => item.path) && (
+              <div className="mt-2 flex flex-wrap gap-2" aria-label="任务文件">
+                {learningTaskProposal.artifact_refs.filter(item => item.path).map((item, index) => (
+                  <a key={`${item.type}-${item.id || index}`} href={item.path} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-indigo-800 hover:bg-indigo-50">
+                    <FileText size={12} />{item.logical_filename || (item.type.includes('exercise') || item.type.includes('question') ? '练习文件' : '讲义文件')}
+                  </a>
+                ))}
+              </div>
+            )}
+            <p className="mt-2 text-[10px] text-emerald-800">这段 Chat 是任务主现场：讲解、追问和计划都留在这里；讲义或独立验证作为文件工作台打开，用完再回到本对话。</p>
             <div className="mt-2.5 flex flex-wrap gap-2">
               {learningTaskProposal.status === 'proposed' ? (
                 <>
@@ -807,7 +865,7 @@ export default function TutorPanel({
                   <FileText size={12} />{preparingTaskMaterials ? '正在准备学习包…' : '准备学习包（讲义 + 练习）'}
                 </button>
               )}
-              <a href={learningTaskProposal.management_navigation.path} className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-white">任务与学习包</a>
+              <a href={learningTaskProposal.management_navigation.path} className="rounded-lg px-2.5 py-2 text-xs font-medium text-emerald-800 hover:bg-white/70">在任务队列中管理</a>
             </div>
           </section>
         )}
@@ -855,6 +913,19 @@ export default function TutorPanel({
 
       <div className={`border-t border-gray-200 p-3 ${standalone ? 'bg-white sm:px-8 sm:pb-5' : ''}`}>
         <div className={standalone ? 'mx-auto w-full max-w-3xl' : ''}>
+        {selectedPassage && (
+          <div className="mb-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2" data-testid="selection-mini-workbench">
+            <div className="flex items-start gap-2">
+              <MessageSquareQuote size={14} className="mt-0.5 shrink-0 text-sky-700" />
+              <p className="min-w-0 flex-1 truncate text-[11px] text-sky-900">“{selectedPassage}”</p>
+              <button type="button" onClick={() => setSelectedPassage('')} className="text-xs text-sky-600">×</button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" onClick={() => askAboutSelection(false)} className="rounded-lg bg-sky-700 px-2.5 py-1.5 text-[11px] font-semibold text-white">解释选中内容</button>
+              <button type="button" onClick={() => askAboutSelection(true)} className="rounded-lg border border-sky-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-sky-800">围绕它深入学习</button>
+            </div>
+          </div>
+        )}
         {quickPrompts.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {quickPrompts.map(prompt => (

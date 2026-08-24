@@ -686,6 +686,18 @@ def _remember_action(run: MicroLearningRun, action_id: str) -> bool:
     return True
 
 
+def learning_card_quality_status(card: dict[str, Any]) -> str:
+    """Block generic scaffolds from entering the evidence-bearing workflow."""
+    generation_mode = str(card.get("generation_mode") or "unknown")
+    generation_source = str(card.get("generation_source") or "")
+    if (
+        generation_mode == "deterministic_fallback"
+        and generation_source == "generic_goal_scaffold"
+    ):
+        return "blocked"
+    return "ready"
+
+
 async def regenerate_learning_artifact(
     db: AsyncSession,
     *,
@@ -833,6 +845,11 @@ async def advance_run(
         return run
     if run.version != expected_version:
         raise RuntimeError("version_conflict")
+    if (
+        action == "complete_card"
+        and learning_card_quality_status(dict(run.learning_card or {})) == "blocked"
+    ):
+        raise RuntimeError("quality_gate")
     if not _remember_action(run, client_action_id):
         return run
 
@@ -1055,6 +1072,8 @@ def _public_question(question: ConceptQuestion | None) -> dict[str, Any] | None:
 
 
 async def run_view(db: AsyncSession, run: MicroLearningRun) -> dict[str, Any]:
+    learning_card = dict(run.learning_card or {})
+    learning_card["quality_status"] = learning_card_quality_status(learning_card)
     question_ids = [int(item) for item in (run.verification or {}).get("question_ids") or []]
     questions = list((await db.execute(select(ConceptQuestion).where(
         ConceptQuestion.id.in_(question_ids),
@@ -1101,7 +1120,7 @@ async def run_view(db: AsyncSession, run: MicroLearningRun) -> dict[str, Any]:
         "checkpoint_id": run.checkpoint_id,
         "session_id": run.session_id,
         "skill_plan": dict(run.skill_plan or {}),
-        "learning_card": dict(run.learning_card or {}),
+        "learning_card": learning_card,
         "teach_back": dict(run.teach_back or {}),
         "verification": dict(run.verification or {}),
         "summary": dict(run.summary or {}),

@@ -52,7 +52,7 @@ ALLOWED_PHASE_KINDS = {"learn", "practice", "verify", "consolidate"}
 logger = logging.getLogger(__name__)
 
 EXPLICIT_ATOMIC_TASK_PATTERNS = (
-    r"(?:带我|帮我|教我)(?:学会|学懂|弄懂|搞懂|理解|完成|做完)\s*[：:，,]?\s*(.+)",
+    r"(?:带我|帮我|教我)(?:(?:深入|深度)地?)?(?:学会|学懂|弄懂|搞懂|理解|完成|做完)\s*[：:，,]?\s*(.+)",
     r"(?:我想|我要)(?:学会|弄懂|搞懂|理解)\s*[：:，,]?\s*(.+)",
     r"(?:陪我|带我)(?:完成|做完)\s*[：:，,]?\s*(.+)",
 )
@@ -140,7 +140,12 @@ def _default_lead_skill(objective: str) -> str:
     return "guided_explanation"
 
 
-def deterministic_learning_task_opportunity(message: str) -> dict[str, Any] | None:
+def deterministic_learning_task_opportunity(
+    message: str,
+    *,
+    selected_text: str = "",
+    force: bool = False,
+) -> dict[str, Any] | None:
     """Recognize an explicit, bounded learning request without relying on an LLM.
 
     This intentionally does not match broad exploration such as ``我想学操作系统``.
@@ -159,6 +164,17 @@ def deterministic_learning_task_opportunity(message: str) -> dict[str, Any] | No
     if not goal and any(marker in compact for marker in ("这道题", "这个题", "这段代码")):
         if any(marker in compact for marker in ("带我做", "帮我完成", "教我", "学习闭环")):
             goal = compact
+    selected_excerpt = _clean(selected_text, 500)
+    if goal and selected_excerpt and "选中" in goal:
+        goal = selected_excerpt
+    if not goal and force:
+        goal = selected_excerpt or compact
+    if not selected_excerpt:
+        goal = re.split(
+            r"[，,](?:并|然后|再)?(?:安排|完成|加入|进入|做)(?:一|1)?次?(?:练习|验证|学习闭环).*$",
+            goal,
+            maxsplit=1,
+        )[0]
     goal = goal.strip("。！？!?；;，,：: ")
     if len(goal) < 2:
         return None
@@ -1144,9 +1160,9 @@ async def _artifact_refs(db: AsyncSession, task: LearningTask) -> list[dict[str,
 def task_management_navigation(task: LearningTask) -> dict[str, Any]:
     """Return the stable task control surface.
 
-    The queue is where learners arrange the plan and files.  It is deliberately
-    separate from the execution surface so UI callers do not have to guess
-    whether "open task" means manage it or continue learning.
+    The queue only arranges, pauses and resumes tasks.  Conversation and
+    checkpoint tasks always execute at their origin; generated artifacts expose
+    their own paths separately.
     """
     return {
         "kind": "task",
@@ -1172,6 +1188,13 @@ def task_origin_navigation(task: LearningTask) -> dict[str, Any]:
 
 def task_execution_navigation(task: LearningTask) -> dict[str, Any]:
     """Return the surface where the next learning interaction should happen."""
+    if task.origin_kind == "checkpoint" and task.checkpoint_id and task.project_id:
+        return {
+            "kind": "checkpoint",
+            "path": f"/projects/{task.project_id}/checkpoints/{task.checkpoint_id}",
+        }
+    if task.origin_kind in {"conversation", "recommendation", "skill"} and task.session_id:
+        return {"kind": "conversation", "path": f"/agent/{task.session_id}"}
     if task.micro_learning_run_id:
         return {"kind": "focused_learning", "path": f"/learn/{task.micro_learning_run_id}"}
     if task.checkpoint_id and task.project_id:
