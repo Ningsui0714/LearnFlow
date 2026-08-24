@@ -638,6 +638,13 @@ export interface MicroLearningQuestion {
   evidence_claim: string
 }
 
+export type LearningTaskSurfaceKind = 'conversation' | 'checkpoint' | 'focused_learning' | 'task'
+
+export interface LearningTaskNavigation {
+  kind: LearningTaskSurfaceKind
+  path: string
+}
+
 export interface MicroLearningRun {
   id: number
   goal: string
@@ -658,6 +665,9 @@ export interface MicroLearningRun {
     example?: string
     common_confusion?: string
     success_criteria?: string
+    generation_mode?: 'model_enhanced' | 'deterministic_fallback' | 'unknown'
+    generation_reason?: string
+    generation_source?: string
   }
   teach_back: Record<string, any>
   verification: Record<string, any>
@@ -677,6 +687,9 @@ export interface MicroLearningRun {
     status: LearningTaskStatus
     current_phase_id: string
     path: string
+    navigation: LearningTaskNavigation
+    origin_navigation: LearningTaskNavigation
+    management_navigation: LearningTaskNavigation
     artifact_refs: Array<Record<string, any>>
   } | null
   started_at?: string
@@ -705,6 +718,12 @@ export const advanceMicroLearningRun = (
     client_action_id: string
   },
 ) => api.post(`/micro-learning/runs/${runId}/advance`, data)
+  .then(r => r.data as MicroLearningRun)
+
+export const regenerateMicroLearningRun = (
+  runId: number,
+  data: { expected_version: number; client_request_id: string },
+) => api.post(`/micro-learning/runs/${runId}/regenerate`, data)
   .then(r => r.data as MicroLearningRun)
 
 export const submitMicroLearningTeachBack = (
@@ -1184,7 +1203,9 @@ export interface LearningTask {
     path?: string
   }>
   review_handoff: Record<string, any>
-  navigation: { kind: string; path: string }
+  navigation: LearningTaskNavigation
+  origin_navigation: LearningTaskNavigation
+  management_navigation: LearningTaskNavigation
   runtime: {
     runtime_version: string
     current_phase: Partial<LearningTaskPhase>

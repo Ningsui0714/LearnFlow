@@ -8,6 +8,7 @@ from app.db.database import get_db
 from app.models.learning import MicroLearningRun
 from app.schemas.micro_learning import (
     MicroLearningAdvanceRequest,
+    MicroLearningRegenerateRequest,
     MicroLearningRunCreate,
     MicroLearningSyncRequest,
     TeachBackSubmitRequest,
@@ -17,6 +18,7 @@ from app.services.micro_learning import (
     advance_run,
     create_micro_learning_run,
     load_owned_run,
+    regenerate_learning_artifact,
     reconcile_run,
     run_view,
     submit_teach_back,
@@ -112,6 +114,30 @@ async def advance(
             action=request.action,
             expected_version=request.expected_version,
             client_action_id=request.client_action_id,
+        )
+    except RuntimeError as error:
+        raise _workflow_error(error) from error
+    await reconcile_task_for_micro_run(db, run)
+    await db.commit()
+    return await run_view(db, run)
+
+
+@router.post("/runs/{run_id}/regenerate")
+async def regenerate(
+    run_id: int,
+    request: MicroLearningRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    run = await _owned_run_or_404(db, current.learner.id, run_id)
+    try:
+        await regenerate_learning_artifact(
+            db,
+            run=run,
+            expected_version=request.expected_version,
+            client_request_id=request.client_request_id,
+            education_stage=current.profile.education_stage or "",
+            background=current.profile.background or "",
         )
     except RuntimeError as error:
         raise _workflow_error(error) from error

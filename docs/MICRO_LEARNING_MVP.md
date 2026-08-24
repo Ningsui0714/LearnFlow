@@ -100,6 +100,15 @@ learning_card
 题目质量门还会拒绝解释器私有属性、运行时魔改、版本特例、未定义或非标准行为等不适合
 基础学习验证的候选；这类内容即使 JSON 结构正确，也会被稳定的确定性题替换。
 
+确定性降级不能只做到“字段齐全”。常见核心主题使用经过人工审阅的离线 primer；当前首批
+覆盖朴素贝叶斯和条件概率/贝叶斯更新，包含真实定义、公式、假设、计算例子、常见误区以及
+不泄露答案的原题与变式。`generation_source` 记录具体 primer 版本。尚未覆盖的主题仍可使用
+通用结构兜底，但前端必须显式标记为内容降级，不能把机械复述目标的文本伪装成可靠讲义。
+
+处于 `learning_card` 且尚未产生复述或概念题 Attempt 的旧流程可以原地重生成学习包：保持
+run、LearningTask 和题目稳定 ID，新增 Lecture 版本并替换卡片内容。已有学习证据后禁止重
+生成，避免题目变化污染 Attempt、纠错与复习引用。重生成使用乐观版本和幂等请求 ID。
+
 在线候选生成有独立的 wall-clock budget（默认 18 秒）；超时不会继续占用请求，而是立即
 保存确定性学习卡和验证题。运行投影以 `generation_mode / generation_reason` 区分模型增强、
 未配置模型、超时和供应商/校验失败，便于诊断且不把生成来源当成学习证据。
@@ -125,6 +134,7 @@ venv/bin/python scripts/evaluate_micro_learning.py
 | `GET /api/micro-learning/runs` | 当前学习者的最近流程 |
 | `GET /api/micro-learning/runs/{id}` | 恢复并重投影权威尝试状态 |
 | `POST /api/micro-learning/runs/{id}/advance` | 阅读完成、反馈后继续、暂停或恢复 |
+| `POST /api/micro-learning/runs/{id}/regenerate` | 在产生学习证据前原地重生成低质量学习包 |
 | `POST /api/micro-learning/runs/{id}/teach-back` | 写入复述诊断 Attempt 和事件 |
 | `POST /api/micro-learning/runs/{id}/sync` | 把题目/纠错权威状态重投影到流程 |
 
@@ -163,3 +173,6 @@ venv/bin/python scripts/evaluate_micro_learning.py
   投影，不改变本流程的 Attempt、判题、纠错、复习或五核事件语义，也不需要数据库迁移。
 - 注册表 `2026-08-24.5` 为 Tutor、任务规划和学习包生成登记交互时延预算与确定性降级；
   新增配置和生成来源字段均向后兼容，不修改 Event schema、数据库表或五核 reducer。
+- 本次页面统一与内容质量升级向任务/运行回包增加可选导航和 `generation_source`，并增加重生成
+  API；旧 `path`、`navigation` 及现有事件继续可用，不修改数据库、Event schema、五核 reducer
+  或掌握规则。

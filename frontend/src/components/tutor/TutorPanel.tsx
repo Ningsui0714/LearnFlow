@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Check, ChevronDown, ExternalLink, ListTodo, Plus, RefreshCw, Sparkles } from 'lucide-react'
+import { Check, ChevronDown, ExternalLink, FileText, ListTodo, Play, Plus, RefreshCw, Sparkles } from 'lucide-react'
 import {
   createTutorSession, getTutorSession, listLearningSkills,
   sendTutorTurn, confirmTutorAction, cancelTutorAction,
@@ -17,6 +17,11 @@ import type {
 import ProjectProposalDock from './ProjectProposalDock'
 import LocalAgentRunCard from './LocalAgentRunCard'
 import LearningSkillRunCard from './LearningSkillRunCard'
+import LearningTaskSurfaceNotice from '../learning-task/LearningTaskSurfaceNotice'
+import {
+  type CurrentLearningSurface,
+  learningTaskPresentation,
+} from '../learning-task/taskPresentation'
 
 interface Message {
   id?: number
@@ -50,6 +55,7 @@ interface Props {
   showSkillPicker?: boolean
   autoOpenLearningRun?: boolean
   onSessionLoaded?: (session: any) => void
+  surfaceKind?: CurrentLearningSurface
 }
 
 const terminal = new Set(['completed', 'failed', 'canceled'])
@@ -217,7 +223,7 @@ export default function TutorPanel({
   onLearningRunCreated,
   projectSources = [], candidateSourcesRefreshing = false, addingCandidateUrl,
   onRefreshCandidateSources, onAddCandidateSource, standalone = false,
-  showSkillPicker = false, autoOpenLearningRun = true, onSessionLoaded,
+  showSkillPicker = false, autoOpenLearningRun = true, onSessionLoaded, surfaceKind,
 }: Props) {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -236,7 +242,9 @@ export default function TutorPanel({
   const [learningTaskProposal, setLearningTaskProposal] = useState<LearningTask | null>(null)
   const [preparingTaskMaterials, setPreparingTaskMaterials] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const pollRef = useRef<number | null>(null)
+  const currentTaskSurface: CurrentLearningSurface = surfaceKind || (checkpointId ? 'checkpoint' : 'conversation')
 
   useEffect(() => {
     if (!showSkillPicker) return
@@ -766,6 +774,7 @@ export default function TutorPanel({
             <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-950"><ListTodo size={13} />{learningTaskProposal.status === 'proposed' ? '建议形成一个学习任务' : '当前原子学习任务'}</p>
             <p className="mt-1.5 text-sm font-semibold text-slate-900">{learningTaskProposal.title}</p>
             <p className="mt-1 text-xs leading-5 text-emerald-900/80">{learningTaskProposal.objective}</p>
+            <LearningTaskSurfaceNotice task={learningTaskProposal} currentSurface={currentTaskSurface} compact className="mt-2 border-emerald-100 bg-white/55" />
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-emerald-800">
               <span className="rounded-md bg-white/70 px-2 py-1">下一步：{learningTaskProposal.runtime?.next_action?.label || '查看计划'}</span>
               <span className="rounded-md bg-white/70 px-2 py-1">练习 {learningTaskProposal.runtime?.evidence?.practice_attempts || 0}</span>
@@ -782,14 +791,19 @@ export default function TutorPanel({
                 <button type="button" onClick={() => decideLearningTask('start')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">开始任务</button>
               ) : learningTaskProposal.status === 'paused' ? (
                 <button type="button" onClick={() => decideLearningTask('resume')} disabled={loading} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">继续任务</button>
-              ) : !learningTaskProposal.micro_learning_run_id && !learningTaskProposal.checkpoint_id ? (
-                <button type="button" onClick={prepareLearningTask} disabled={loading} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:opacity-50">
-                  {preparingTaskMaterials ? '正在准备；模型超时会自动使用稳定模板…' : '生成讲义与验证题'}
+              ) : learningTaskPresentation(learningTaskProposal, currentTaskSurface).isCurrentSurface ? (
+                <button type="button" onClick={() => inputRef.current?.focus()} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
+                  <Play size={12} />{learningTaskPresentation(learningTaskProposal, currentTaskSurface).primaryActionLabel}
                 </button>
               ) : (
-                <a href={learningTaskProposal.navigation.path} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">继续学习与验证</a>
+                <a href={learningTaskProposal.navigation.path} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800"><Play size={12} />{learningTaskPresentation(learningTaskProposal, currentTaskSurface).primaryActionLabel}</a>
               )}
-              <a href={`/tasks?task=${learningTaskProposal.id}`} className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-white">查看计划与文件</a>
+              {!learningTaskProposal.micro_learning_run_id && !learningTaskProposal.checkpoint_id && ['queued', 'active', 'paused'].includes(learningTaskProposal.status) && (
+                <button type="button" onClick={prepareLearningTask} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-50">
+                  <FileText size={12} />{preparingTaskMaterials ? '正在准备学习包…' : '生成讲义与验证题'}
+                </button>
+              )}
+              <a href={learningTaskProposal.management_navigation.path} className="rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-white">计划与文件</a>
             </div>
           </section>
         )}
@@ -895,6 +909,7 @@ export default function TutorPanel({
         <div className="flex items-end gap-2">
           <textarea
             data-agent-conversation-input
+            ref={inputRef}
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={event => {

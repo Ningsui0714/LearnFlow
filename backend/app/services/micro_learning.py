@@ -15,7 +15,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -23,7 +23,7 @@ from app.models.learning import (
     LearningAttempt, LearningTask, MicroLearningRun, RemediationCase, ReviewSchedule,
 )
 from app.models.project import (
-    Checkpoint, ConceptQuestion, Lecture, Project, Roadmap,
+    Checkpoint, ConceptQuestion, Lecture, LectureVersion, Project, Roadmap,
 )
 from app.services.learning_runtime import create_attempt, record_event
 from app.services.model_latency import (
@@ -31,6 +31,7 @@ from app.services.model_latency import (
     invoke_with_budget,
 )
 from app.services.remediation import serialize_case
+from app.services.topic_primers import deterministic_topic_primer
 from app.services.tutor_service import get_or_create_session
 
 
@@ -106,6 +107,11 @@ def _sentences(source_text: str) -> list[str]:
 
 
 def _fallback_artifact(goal: str, source_text: str) -> dict[str, Any]:
+    primer = deterministic_topic_primer(goal)
+    if primer:
+        artifact, source_id = primer
+        artifact["_generation_source"] = source_id
+        return artifact
     source_rows = _sentences(source_text)
     if source_rows:
         points = source_rows[:4]
@@ -135,6 +141,7 @@ def _fallback_artifact(goal: str, source_text: str) -> dict[str, Any]:
     if len(first_options) < 2:
         first_options.append("只记住标题即可")
     return {
+        "_generation_source": "provided_material_extract" if source_rows else "generic_goal_scaffold",
         "card": {
             "title": f"15 分钟弄懂：{goal}",
             "objective": f"能够用自己的话解释“{goal}”的关键关系，并完成独立验证。",
@@ -300,9 +307,11 @@ async def generate_micro_learning_artifact(
     *, goal: str, source_text: str, education_stage: str, background: str,
 ) -> dict[str, Any]:
     fallback = _fallback_artifact(goal, source_text)
+    fallback_source = fallback.pop("_generation_source", "generic_goal_scaffold")
     fallback["generation"] = {
         "mode": "deterministic_fallback",
         "reason": "model_not_configured",
+        "source": fallback_source,
     }
     if not settings.llm_api_key or settings.llm_api_key in {
         "", "***", "sk-your-key-here",
@@ -344,6 +353,7 @@ async def generate_micro_learning_artifact(
         fallback["generation"] = {
             "mode": "deterministic_fallback",
             "reason": reason,
+            "source": fallback_source,
         }
         logger.info(
             "micro-learning artifact used deterministic fallback: %s",
@@ -499,6 +509,7 @@ async def create_micro_learning_run(
             "source_mode": "provided_text" if source_text else "topic",
             "generation_mode": (artifact.get("generation") or {}).get("mode", "unknown"),
             "generation_reason": (artifact.get("generation") or {}).get("reason", ""),
+            "generation_source": (artifact.get("generation") or {}).get("source", "model"),
         },
         teach_back={},
         verification={
@@ -673,6 +684,141 @@ def _remember_action(run: MicroLearningRun, action_id: str) -> bool:
         return False
     run.action_log = [*history, action_id][-60:]
     return True
+
+
+async def regenerate_learning_artifact(
+    db: AsyncSession,
+    *,
+    run: MicroLearningRun,
+    expected_version: int,
+    client_request_id: str,
+    education_stage: str = "",
+    background: str = "",
+) -> MicroLearningRun:
+    """Replace a not-yet-used learning card without changing task identity.
+
+    Regeneration is intentionally frozen after the learner leaves the card or
+    submits any question.  That preserves the exact content behind subsequent
+    evidence while still letting old or degraded cards be repaired in place.
+    """
+    action_key = f"regenerate:{client_request_id}"
+    if action_key in list(run.action_log or []):
+        return run
+    if run.version != expected_version:
+        raise RuntimeError("version_conflict")
+    if run.status != "active" or run.state != "learning_card":
+        raise RuntimeError("invalid_state")
+
+    old_question_ids = [
+        int(item) for item in (run.verification or {}).get("question_ids") or []
+    ]
+    attempt_count = int((await db.execute(select(func.count(LearningAttempt.id)).where(
+        LearningAttempt.learner_id == run.learner_id,
+        LearningAttempt.checkpoint_id == run.checkpoint_id,
+        LearningAttempt.item_type == "concept",
+        LearningAttempt.item_id.in_(old_question_ids),
+    ))).scalar_one()) if old_question_ids else 0
+    if attempt_count:
+        raise RuntimeError("invalid_state")
+
+    artifact = await generate_micro_learning_artifact(
+        goal=run.goal,
+        source_text=run.source_text or "",
+        education_stage=education_stage,
+        background=background,
+    )
+    card = dict(artifact["card"])
+    generation = dict(artifact.get("generation") or {})
+    run.learning_card = {
+        **card,
+        "source_mode": run.source_type,
+        "generation_mode": generation.get("mode", "unknown"),
+        "generation_reason": generation.get("reason", ""),
+        "generation_source": generation.get("source", "model"),
+    }
+
+    checkpoint = await db.get(Checkpoint, run.checkpoint_id)
+    if checkpoint:
+        checkpoint.title = _clean(card.get("title"), 255)
+        checkpoint.description = _clean(card.get("objective"), 2_000)
+    lecture = (await db.execute(select(Lecture).where(
+        Lecture.checkpoint_id == run.checkpoint_id,
+    ))).scalar_one_or_none()
+    if lecture:
+        db.add(LectureVersion(
+            checkpoint_id=run.checkpoint_id,
+            sections=list(lecture.sections or []),
+            source_version=int(lecture.version or 1),
+            reason="micro_learning_regenerate_before",
+            idempotency_key=f"micro-learning:{run.id}:regenerate:{client_request_id}",
+        ))
+        lecture.sections = _lecture_sections(card)
+        lecture.status = "published"
+        lecture.version = int(lecture.version or 1) + 1
+    else:
+        db.add(Lecture(
+            checkpoint_id=run.checkpoint_id,
+            sections=_lecture_sections(card),
+            status="published",
+            version=1,
+        ))
+
+    existing_questions = list((await db.execute(select(ConceptQuestion).where(
+        ConceptQuestion.checkpoint_id == run.checkpoint_id,
+        ConceptQuestion.id.in_(old_question_ids),
+    ).order_by(ConceptQuestion.order, ConceptQuestion.id))).scalars().all()) if old_question_ids else []
+    question_ids: list[int] = []
+    for order, question in enumerate(artifact["questions"], start=1):
+        row = existing_questions[order - 1] if order <= len(existing_questions) else ConceptQuestion(
+            checkpoint_id=run.checkpoint_id,
+        )
+        row.question = question["question"]
+        row.options = question["options"]
+        row.answer_indexes = question["answer_indexes"]
+        row.q_type = question["q_type"]
+        row.difficulty = question["difficulty"]
+        row.explanation = question["explanation"]
+        row.source_chunk_ids = []
+        row.assessment_meta = {
+            "mode": "verified_micro_learning",
+            "learning_target": question["learning_target"],
+            "evidence_claim": question["evidence_claim"],
+            "targets": list(card.get("target_concepts") or []),
+            "variant": question["variant"],
+        }
+        row.order = order
+        if row.id is None:
+            db.add(row)
+            await db.flush()
+        question_ids.append(row.id)
+
+    run.verification = {
+        "question_ids": question_ids,
+        "completed_question_ids": [],
+        "results": {},
+        "current_question_id": question_ids[0] if question_ids else None,
+    }
+    run.action_log = [*list(run.action_log or []), action_key][-60:]
+    run.version += 1
+    run.updated_at = datetime.utcnow()
+    await record_event(
+        db,
+        learner_id=run.learner_id,
+        project_id=run.project_id,
+        checkpoint_id=run.checkpoint_id,
+        session_id=run.session_id,
+        event_type="learning_card_generated",
+        source="learning_design",
+        payload={
+            "run_id": run.id,
+            "question_ids": question_ids,
+            "learning_task_id": _learning_task_id(run),
+            "regenerated": True,
+            "generation_source": generation.get("source", "model"),
+        },
+        client_event_id=f"micro-learning:{run.id}:regenerated:{client_request_id}",
+    )
+    return run
 
 
 async def advance_run(
@@ -937,6 +1083,12 @@ async def run_view(db: AsyncSession, run: MicroLearningRun) -> dict[str, Any]:
         LearningTask.learner_id == run.learner_id,
         LearningTask.micro_learning_run_id == run.id,
     ))).scalar_one_or_none()
+    if task:
+        from app.services.learning_tasks import (
+            task_execution_navigation,
+            task_management_navigation,
+            task_origin_navigation,
+        )
     return {
         "id": run.id,
         "goal": run.goal,
@@ -971,7 +1123,11 @@ async def run_view(db: AsyncSession, run: MicroLearningRun) -> dict[str, Any]:
             "title": task.title,
             "status": task.status,
             "current_phase_id": task.current_phase_id,
-            "path": f"/tasks?task={task.id}",
+            # ``path`` remains the task-management path for older clients.
+            "path": task_management_navigation(task)["path"],
+            "navigation": task_execution_navigation(task),
+            "origin_navigation": task_origin_navigation(task),
+            "management_navigation": task_management_navigation(task),
             "artifact_refs": list(task.artifact_refs or []),
         } if task else None),
     }

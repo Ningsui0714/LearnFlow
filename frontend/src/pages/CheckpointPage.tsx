@@ -5,11 +5,14 @@ import {
   createLectureTask, getActiveLectureTask, cancelTask, subscribeTaskEvents, type TaskEventSubscription,
   listLectureVersions, rollbackLecture,
   recordLearningEvent, listNotes, createNote, updateNote, deleteNote,
+  actOnLearningTask, type LearningTask,
 } from '../services/api'
 import LectureRenderer, { type LectureNote } from '../components/lecture/LectureRenderer'
 import ConceptGraphModal from '../components/lecture/ConceptGraphModal'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
+import LearningTaskSurfaceNotice from '../components/learning-task/LearningTaskSurfaceNotice'
+import { learningTaskPresentation } from '../components/learning-task/taskPresentation'
 
 interface Section {
   title: string
@@ -34,6 +37,8 @@ export default function CheckpointPage() {
   const [taskError, setTaskError] = useState<any>(null)  // structured {code, message, guidance}
   const [taskId, setTaskId] = useState<number | null>(null)
   const [checkpointTitle, setCheckpointTitle] = useState('')
+  const [checkpointTask, setCheckpointTask] = useState<LearningTask | null>(null)
+  const [taskBusy, setTaskBusy] = useState(false)
   const [selectedText, setSelectedText] = useState('')
   const [selectedSection, setSelectedSection] = useState(0)
   const [notes, setNotes] = useState<LectureNote[]>([])
@@ -111,6 +116,7 @@ export default function CheckpointPage() {
         const cp = (rm.checkpoints || []).find((c: any) => c.id === cid)
         if (cp) {
           setCheckpointTitle(`#${cp.order} ${cp.title}`)
+          setCheckpointTask(cp.learning_task || null)
         }
       } catch {}
 
@@ -359,6 +365,29 @@ export default function CheckpointPage() {
   const anchoredNotes = notes.filter(note => note.status !== 'orphaned')
   const orphanedNotes = notes.filter(note => note.status === 'orphaned')
 
+  const continueCheckpointTask = async () => {
+    if (!checkpointTask || taskBusy) return
+    if (checkpointTask.status === 'queued' || checkpointTask.status === 'paused') {
+      setTaskBusy(true)
+      try {
+        const next = await actOnLearningTask(checkpointTask.id, {
+          action: checkpointTask.status === 'queued' ? 'start' : 'resume',
+          expected_version: checkpointTask.version,
+          client_action_id: crypto.randomUUID(),
+        })
+        setCheckpointTask(next)
+        window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
+        if (next.navigation.kind !== 'checkpoint') navigate(next.navigation.path)
+      } catch (requestError: any) {
+        setError(requestError?.response?.data?.detail || '学习任务没有成功开始')
+      } finally {
+        setTaskBusy(false)
+      }
+      return
+    }
+    if (checkpointTask.navigation.kind !== 'checkpoint') navigate(checkpointTask.navigation.path)
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
@@ -463,6 +492,25 @@ export default function CheckpointPage() {
           )}
         </div>
       </div>
+
+      {checkpointTask && (
+        <div className="flex shrink-0 flex-col gap-2 border-b border-emerald-100 bg-emerald-50/60 px-4 py-2.5 sm:flex-row sm:items-center sm:px-6" data-testid="checkpoint-learning-task-bar">
+          <LearningTaskSurfaceNotice task={checkpointTask} currentSurface="checkpoint" compact className="min-w-0 flex-1 border-0 bg-transparent p-0" />
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {['queued', 'paused'].includes(checkpointTask.status) && (
+              <button type="button" disabled={taskBusy} onClick={continueCheckpointTask} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
+                {learningTaskPresentation(checkpointTask, 'checkpoint').primaryActionLabel}
+              </button>
+            )}
+            {checkpointTask.status === 'active' && checkpointTask.navigation.kind !== 'checkpoint' && (
+              <button type="button" onClick={continueCheckpointTask} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800">
+                {learningTaskPresentation(checkpointTask, 'checkpoint').primaryActionLabel}
+              </button>
+            )}
+            <button type="button" onClick={() => navigate(checkpointTask.management_navigation.path)} className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-50">计划与文件</button>
+          </div>
+        </div>
+      )}
 
       {/* Progress / error bar */}
       {(generating || progress) && (

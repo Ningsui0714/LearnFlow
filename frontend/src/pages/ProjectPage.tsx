@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, ListTodo } from 'lucide-react'
 import {
   getProject, addSource, uploadSource, listSources, processAllSources, processSource, getRoadmap,
   startImageCaptioning, getTaskStatus, setSourceRole, reconcileSources, applyReconcile,
@@ -526,6 +526,10 @@ export default function ProjectPage() {
                   <p className="mb-3 text-xs leading-5 text-gray-500">
                     这张路线图会随着你的反馈迭代；已产生学习记录的关卡会保留，避免丢失证据。
                   </p>
+                  <div className="mb-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900">
+                    <ListTodo size={15} className="mt-0.5 shrink-0" />
+                    <p><strong>每个关卡就是一个学习任务现场。</strong>点击关卡即可学习，不需要再转换；同一个任务也会出现在任务控制台，方便排序、暂停和恢复。</p>
+                  </div>
                   <CheckpointGraph
                     checkpoints={checkpoints}
                     onCheckpointClick={handleCheckpointClick}

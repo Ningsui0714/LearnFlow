@@ -89,12 +89,72 @@ def test_micro_learning_generation_falls_back_within_interactive_budget(monkeypa
     ))
 
     assert time.perf_counter() - started < 0.5
-    assert artifact["generation"] == {
-        "mode": "deterministic_fallback",
-        "reason": "budget_exceeded",
-    }
-    assert "理解条件概率" in artifact["card"]["objective"]
+    assert artifact["generation"]["mode"] == "deterministic_fallback"
+    assert artifact["generation"]["reason"] == "budget_exceeded"
+    assert artifact["generation"]["source"] == "curated.conditional_probability.v1"
+    assert "先验" in artifact["card"]["objective"]
+    assert any("P(A|B)" in point for point in artifact["card"]["key_points"])
     assert len(artifact["questions"]) >= 2
+
+
+def test_naive_bayes_offline_primer_contains_teachable_content(monkeypatch):
+    monkeypatch.setattr("app.services.micro_learning.settings.llm_api_key", "")
+    artifact = asyncio.run(generate_micro_learning_artifact(
+        goal="跟我讲讲什么是朴素贝叶斯分类器",
+        source_text="",
+        education_stage="本科",
+        background="计算机专业",
+    ))
+
+    assert artifact["generation"]["source"] == "curated.naive_bayes.v1"
+    assert artifact["card"]["title"] == "朴素贝叶斯分类器：用概率比较类别"
+    assert any("条件独立" in point for point in artifact["card"]["key_points"])
+    assert any("拉普拉斯平滑" in point for point in artifact["card"]["key_points"])
+    assert all("只要读过材料" not in question["question"] for question in artifact["questions"])
+
+
+def test_learning_card_can_be_regenerated_before_evidence(monkeypatch, client: TestClient):
+    monkeypatch.setattr("app.services.micro_learning.settings.llm_api_key", "")
+    created = client.post("/api/micro-learning/runs", json={
+        "goal": "跟我讲讲什么是朴素贝叶斯分类器",
+        "source_text": "",
+        "client_request_id": _request_id("naive-bayes-regenerate"),
+    })
+    assert created.status_code == 200, created.text
+    run = created.json()
+    task_id = run["learning_task"]["id"]
+    question_ids = [item["id"] for item in run["questions"]]
+    request_id = _request_id("regenerate-card")
+
+    regenerated = client.post(f"/api/micro-learning/runs/{run['id']}/regenerate", json={
+        "expected_version": run["version"],
+        "client_request_id": request_id,
+    })
+    assert regenerated.status_code == 200, regenerated.text
+    body = regenerated.json()
+    assert body["id"] == run["id"]
+    assert body["learning_task"]["id"] == task_id
+    assert body["learning_card"]["generation_source"] == "curated.naive_bayes.v1"
+    assert [item["id"] for item in body["questions"]][:len(question_ids)] == question_ids
+
+    replay = client.post(f"/api/micro-learning/runs/{run['id']}/regenerate", json={
+        "expected_version": run["version"],
+        "client_request_id": request_id,
+    })
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["version"] == body["version"]
+
+    advanced = client.post(f"/api/micro-learning/runs/{run['id']}/advance", json={
+        "action": "complete_card",
+        "expected_version": body["version"],
+        "client_action_id": _request_id("regenerated-card-viewed"),
+    })
+    assert advanced.status_code == 200, advanced.text
+    blocked = client.post(f"/api/micro-learning/runs/{run['id']}/regenerate", json={
+        "expected_version": advanced.json()["version"],
+        "client_request_id": _request_id("regenerate-after-evidence"),
+    })
+    assert blocked.status_code == 409
 
 
 def _start(client: TestClient, *, request_id: str | None = None) -> dict:

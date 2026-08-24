@@ -65,6 +65,7 @@ export default function AgentPage() {
       standalone
       showSkillPicker
       autoOpenLearningRun={false}
+      surfaceKind="conversation"
       surfaceTitle={title}
       surfaceDescription="独立学习对话 · 方法由当前 Session 调用"
       className="h-full rounded-none border-0"

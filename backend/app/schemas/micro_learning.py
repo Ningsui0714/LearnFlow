@@ -46,3 +46,13 @@ class MicroLearningSyncRequest(BaseModel):
     @classmethod
     def normalize_client_action_id(cls, value: Any) -> Any:
         return value.strip() if isinstance(value, str) else value
+
+
+class MicroLearningRegenerateRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    client_request_id: str = Field(min_length=8, max_length=120)
+
+    @field_validator("client_request_id", mode="before")
+    @classmethod
+    def normalize_client_request_id(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value

@@ -180,6 +180,7 @@ export default function WorkspaceAgentRail({
         key={`tutor:${state.projectId || 'global'}:${state.checkpointId || 'project'}`}
         projectId={state.projectId}
         checkpointId={state.checkpointId}
+        surfaceKind={state.checkpointId ? 'checkpoint' : 'conversation'}
         turnContext={turnContext}
         quickPrompts={quickPrompts}
         surfaceTitle={reviewContext ? '主 Agent · 复习协作' : state.title}

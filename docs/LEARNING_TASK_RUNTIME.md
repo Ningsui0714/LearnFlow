@@ -18,6 +18,21 @@ LearnFlow 的主界面只有两类学习空间：
 
 `/learn/:runId` 继续存在，但语义从独立产品模式收敛为 **Learning Task 的专注附件**：当任务需要保存讲义、题目和正式验证时，Tutor 可以按需物化该附件。
 
+### 1.1 页面与导航契约
+
+同一个 Learning Task 只拥有一个当前学习现场，前端不再把任务控制台、内部文件容器和真实
+学习过程混成三个入口。任务回包提供三种向后兼容的导航：
+
+| 字段 | 语义 | 典型路径 |
+|---|---|---|
+| `navigation` | 继续学习，进入当前真正执行任务的页面 | 原对话、项目关卡或 `/learn/:runId` |
+| `origin_navigation` | 返回任务被提出的位置 | 原对话或原项目关卡 |
+| `management_navigation` | 管理优先级、暂停、移除、计划与文件 | `/tasks?task=:id` |
+
+由对话建立但已物化学习包的任务，`navigation` 指向专注学习，`origin_navigation` 仍指向原
+对话。由项目关卡建立的任务以关卡本身为学习现场。所有页面共用同一任务位置提示和主操作
+文案；`/tasks` 明确标为控制台，不再表现成第三种学习模式。
+
 ## 2. 为什么要有 Learning Task
 
 Session、项目、后台作业和复习解决的是不同问题：
@@ -179,6 +194,11 @@ Learning Task 不建立第二套讲义/习题存储。正式学习文件继续�
 
 普通对话任务可以先只在 Session 中学习。需要保存材料和正式验证时，调用 `materialize`：系统创建内部 `task_artifact` 空间、Lecture、ConceptQuestion 和 checkpoint Session，并返回 `/learn/:runId`。该内部空间从真实项目列表隐藏，旧链接仍可恢复。
 
+任务中的 `.lflecture`、`.lfexercise` 和概念题引用在已有专注附件时统一打开
+`/learn/:runId`，不会暴露内部 `task_artifact` 项目或把学生带到没有来源说明的隐藏关卡。
+旧的内部关卡链接仍可恢复，但页面会明确提示该任务的实际学习现场，并提供进入专注学习的
+主操作。
+
 物化时材料来源按以下顺序确定：本次显式粘贴的来源文本、任务 `source_refs` 指向的原始对话
 消息与选中文本、最后才是纯主题生成。生成成功后，Lecture、ConceptQuestion 和 Exercise 的
 稳定引用会持久写入任务，而不是只在页面打开时临时拼接。讲义负责学习输入，题目负责检索与
@@ -263,6 +283,7 @@ LearningAttempt -> EvidenceEvent -> reducer -> KernelMutation -> Memory Graph
 - `POST /api/learning-tasks/{id}/actions`
 - `POST /api/learning-tasks/{id}/replan`
 - `POST /api/learning-tasks/{id}/materialize`
+- `POST /api/micro-learning/runs/{id}/regenerate`
 
 所有写入必须校验 learner/session/project/checkpoint ownership，并使用版本或幂等 ID。
 

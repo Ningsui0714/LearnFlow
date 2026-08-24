@@ -74,7 +74,7 @@ function CheckpointNodeComponent({ data }: NodeProps) {
       </div>
       <p className={`mt-1 text-[10px] ${status === 'verification_due' ? 'text-amber-700' : 'text-gray-500'}`}>
         {statusLabel[status] || statusLabel.not_started}
-        {taskStatus && <span className="ml-1.5 text-emerald-700">· 学习任务 {taskStatus === 'active' ? '进行中' : taskStatus === 'completed' ? '已完成' : taskStatus === 'paused' ? '已暂停' : '待开始'}</span>}
+        {taskStatus && <span className="ml-1.5 text-emerald-700">· 本关任务 {taskStatus === 'active' ? '进行中' : taskStatus === 'completed' ? '已完成' : taskStatus === 'paused' ? '已暂停' : '待开始'}</span>}
       </p>
       {hasProgress && (
         <div className="flex gap-1.5 mt-1.5">

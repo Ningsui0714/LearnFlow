@@ -173,6 +173,11 @@ def test_learning_task_creation_is_idempotent_and_plan_is_registered(client: Tes
     assert first.json()["id"] == replay.json()["id"]
     body = first.json()
     assert body["status"] == "queued"
+    assert body["navigation"] == {
+        "kind": "task", "path": f"/tasks?task={body['id']}",
+    }
+    assert body["management_navigation"] == body["navigation"]
+    assert body["origin_navigation"] == body["navigation"]
     assert body["plan"]["schema_version"] == "learning-task-plan.v1"
     assert {phase["kind"] for phase in body["plan"]["phases"]} >= {"learn", "verify"}
     assert body["plan_history"][0]["version"] == 1
@@ -282,6 +287,13 @@ def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
     assert first.status_code == 200, first.text
     task = first.json()["learning_task_proposal"]
     assert task["status"] == "active"
+    assert task["navigation"] == {
+        "kind": "conversation", "path": f"/agent/{session['id']}",
+    }
+    assert task["origin_navigation"] == task["navigation"]
+    assert task["management_navigation"] == {
+        "kind": "task", "path": f"/tasks?task={task['id']}",
+    }
     assert task["runtime"]["next_action"]["id"] == "prepare_materials"
     assert first.json()["learning_tasks"][0]["id"] == task["id"]
     assert model_calls == []
@@ -300,10 +312,21 @@ def test_explicit_atomic_request_works_without_llm_and_persists_in_dialogue(
         "client_request_id": _id("conversation-task-materialize"),
     })
     assert prepared.status_code == 200, prepared.text
+    assert prepared.json()["navigation"]["kind"] == "focused_learning"
+    assert prepared.json()["origin_navigation"] == {
+        "kind": "conversation", "path": f"/agent/{session['id']}",
+    }
     learning_run = client.get(
         f"/api/micro-learning/runs/{prepared.json()['micro_learning_run_id']}"
     ).json()
     assert "闭包" in learning_run["source_excerpt"]
+    assert learning_run["learning_task"]["navigation"]["kind"] == "focused_learning"
+    assert learning_run["learning_task"]["origin_navigation"] == {
+        "kind": "conversation", "path": f"/agent/{session['id']}",
+    }
+    assert learning_run["learning_task"]["management_navigation"]["path"] == (
+        f"/tasks?task={task['id']}"
+    )
     restored = client.get(f"/api/agent/sessions/{session['id']}")
     assert restored.status_code == 200
     assert restored.json()["learning_tasks"][0]["id"] == task["id"]

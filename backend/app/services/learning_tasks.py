@@ -1111,6 +1111,10 @@ async def _artifact_refs(db: AsyncSession, task: LearningTask) -> list[dict[str,
         ConceptQuestion.checkpoint_id == checkpoint.id,
     ).order_by(ConceptQuestion.order, ConceptQuestion.id))).scalars().all())
     project_id = task.project_id
+    focused_path = (
+        f"/learn/{task.micro_learning_run_id}"
+        if task.micro_learning_run_id else None
+    )
     prefix = f"{str(checkpoint.order).zfill(2)}-{checkpoint.title}"
     refs: list[dict[str, Any]] = []
     if lecture:
@@ -1118,26 +1122,56 @@ async def _artifact_refs(db: AsyncSession, task: LearningTask) -> list[dict[str,
             "type": "managed_lecture",
             "id": lecture.id,
             "logical_filename": f"{prefix}.lflecture",
-            "path": f"/projects/{project_id}/checkpoints/{checkpoint.id}",
+            "path": focused_path or f"/projects/{project_id}/checkpoints/{checkpoint.id}",
         })
     for exercise in exercises:
         refs.append({
             "type": "managed_exercise",
             "id": exercise.id,
             "logical_filename": f"{prefix}-{str(exercise.order).zfill(2)}.lfexercise",
-            "path": f"/projects/{project_id}/checkpoints/{checkpoint.id}/exercises?exercise={exercise.id}",
+            "path": focused_path or f"/projects/{project_id}/checkpoints/{checkpoint.id}/exercises?exercise={exercise.id}",
         })
     if questions:
         refs.append({
             "type": "concept_question_set",
             "ids": questions,
             "logical_filename": f"{prefix}-概念验证.lfexercise",
-            "path": f"/projects/{project_id}/checkpoints/{checkpoint.id}/exercises",
+            "path": focused_path or f"/projects/{project_id}/checkpoints/{checkpoint.id}/exercises",
         })
     return refs
 
 
-def _navigation(task: LearningTask) -> dict[str, Any]:
+def task_management_navigation(task: LearningTask) -> dict[str, Any]:
+    """Return the stable task control surface.
+
+    The queue is where learners arrange the plan and files.  It is deliberately
+    separate from the execution surface so UI callers do not have to guess
+    whether "open task" means manage it or continue learning.
+    """
+    return {
+        "kind": "task",
+        "path": f"/tasks?task={task.id}",
+    }
+
+
+def task_origin_navigation(task: LearningTask) -> dict[str, Any]:
+    """Return the learner-visible source/return anchor for a task."""
+    if (
+        task.origin_kind == "checkpoint"
+        and task.checkpoint_id
+        and task.project_id
+    ):
+        return {
+            "kind": "checkpoint",
+            "path": f"/projects/{task.project_id}/checkpoints/{task.checkpoint_id}",
+        }
+    if task.origin_kind in {"conversation", "recommendation", "skill"} and task.session_id:
+        return {"kind": "conversation", "path": f"/agent/{task.session_id}"}
+    return task_management_navigation(task)
+
+
+def task_execution_navigation(task: LearningTask) -> dict[str, Any]:
+    """Return the surface where the next learning interaction should happen."""
     if task.micro_learning_run_id:
         return {"kind": "focused_learning", "path": f"/learn/{task.micro_learning_run_id}"}
     if task.checkpoint_id and task.project_id:
@@ -1147,7 +1181,7 @@ def _navigation(task: LearningTask) -> dict[str, Any]:
         }
     if task.session_id:
         return {"kind": "conversation", "path": f"/agent/{task.session_id}"}
-    return {"kind": "task", "path": f"/tasks?task={task.id}"}
+    return task_management_navigation(task)
 
 
 def _runtime_projection(task: LearningTask) -> dict[str, Any]:
@@ -1184,7 +1218,7 @@ def _runtime_projection(task: LearningTask) -> dict[str, Any]:
         next_action = {
             "id": "open_checkpoint",
             "label": "进入关卡学习现场",
-            "path": _navigation(task)["path"],
+            "path": task_execution_navigation(task)["path"],
         }
     else:
         next_action = {
@@ -1259,7 +1293,9 @@ async def learning_task_view(db: AsyncSession, task: LearningTask) -> dict[str, 
         "execution_state": dict(task.execution_state or {}),
         "artifact_refs": list(task.artifact_refs or []),
         "review_handoff": dict(task.review_handoff or {}),
-        "navigation": _navigation(task),
+        "navigation": task_execution_navigation(task),
+        "origin_navigation": task_origin_navigation(task),
+        "management_navigation": task_management_navigation(task),
         "runtime": _runtime_projection(task),
         "available_actions": _available_actions(task),
         "version": task.version,

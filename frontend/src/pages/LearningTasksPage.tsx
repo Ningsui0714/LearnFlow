@@ -10,11 +10,12 @@ import {
   reorderLearningTasks, replanLearningTask, type LearningTask, type LearningTaskPhase,
 } from '../services/api'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
-
-const statusLabel: Record<string, string> = {
-  proposed: '待确认', queued: '待开始', active: '进行中', paused: '已暂停',
-  completed: '已完成', canceled: '已移除',
-}
+import LearningTaskSurfaceNotice from '../components/learning-task/LearningTaskSurfaceNotice'
+import {
+  learningTaskOriginLabel,
+  learningTaskPresentation,
+  learningTaskStatusLabel,
+} from '../components/learning-task/taskPresentation'
 
 const phaseLabel: Record<string, string> = {
   learn: '学习', practice: '练习', verify: '验证', consolidate: '复习转交',
@@ -136,8 +137,8 @@ export default function LearningTasksPage() {
     window.dispatchEvent(new CustomEvent('learnflow:learning-tasks-changed'))
   }
 
-  const runAction = async (action: Parameters<typeof actOnLearningTask>[1]['action'], phaseId = '') => {
-    if (!selected || busy) return
+  const runAction = async (action: Parameters<typeof actOnLearningTask>[1]['action'], phaseId = ''): Promise<LearningTask | null> => {
+    if (!selected || busy) return null
     setBusy(true)
     setNotice('')
     try {
@@ -149,8 +150,10 @@ export default function LearningTasksPage() {
       })
       replaceTask(next)
       setNotice(action === 'complete_task' ? '任务闭环已完成；这不等于稳定掌握。' : '')
+      return next
     } catch (error: any) {
       setNotice(error?.response?.data?.detail || '任务更新失败')
+      return null
     } finally {
       setBusy(false)
     }
@@ -235,6 +238,28 @@ export default function LearningTasksPage() {
     }
   }
 
+  const continueLearning = async () => {
+    if (!selected || busy) return
+    if (selected.status === 'proposed') {
+      await runAction('accept')
+      return
+    }
+    if (selected.status === 'canceled') {
+      await runAction('reopen')
+      return
+    }
+    if (selected.status === 'queued' || selected.status === 'paused') {
+      const next = await runAction(selected.status === 'queued' ? 'start' : 'resume')
+      if (next && next.navigation.kind !== 'task') navigate(next.navigation.path)
+      return
+    }
+    if (selected.status === 'active' && selected.navigation.kind === 'task') {
+      await materialize()
+      return
+    }
+    if (selected.status === 'active') navigate(selected.navigation.path)
+  }
+
   const selectTask = (task: LearningTask) => {
     setSelected(task)
     setSearchParams({ task: String(task.id) })
@@ -246,7 +271,7 @@ export default function LearningTasksPage() {
         <span className={`h-2 w-2 shrink-0 rounded-full ${task.status === 'active' ? 'bg-emerald-500' : task.status === 'proposed' ? 'bg-amber-500' : task.status === 'completed' ? 'bg-indigo-400' : 'bg-slate-300'}`} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs font-medium text-slate-700">{task.title}</span>
-          <span className="block text-[10px] text-slate-400">{statusLabel[task.status]} · {task.estimated_minutes} 分钟</span>
+          <span className="block text-[10px] text-slate-400">{learningTaskStatusLabel[task.status]} · {learningTaskOriginLabel(task)} · {task.estimated_minutes} 分钟</span>
         </span>
         <ChevronRight size={13} className="text-slate-300" />
       </button>
@@ -266,11 +291,11 @@ export default function LearningTasksPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700">Learning queue</p>
-              <h1 className="mt-1 text-lg font-bold text-slate-900">学习任务</h1>
+              <h1 className="mt-1 text-lg font-bold text-slate-900">学习任务控制台</h1>
             </div>
             <button type="button" onClick={() => setShowCreate(value => !value)} className="flex h-8 items-center gap-1 rounded-lg bg-emerald-700 px-2.5 text-xs font-semibold text-white hover:bg-emerald-800"><Plus size={13} />添加</button>
           </div>
-          <p className="mt-2 text-xs leading-5 text-slate-500">自由安排要完成的学习闭环；复习有自己的独立队列。</p>
+          <p className="mt-2 text-xs leading-5 text-slate-500">这里管理顺序、计划和文件；“继续学习”会返回对话、项目关卡或专注学习。</p>
         </header>
 
         {showCreate && (
@@ -301,7 +326,7 @@ export default function LearningTasksPage() {
             <header className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">{statusLabel[selected.status]}</span><span>计划 v{selected.plan_version}</span><span className="flex items-center gap-1"><Clock3 size={12} />{selected.estimated_minutes} 分钟</span></div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500"><span className="rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">{learningTaskStatusLabel[selected.status]}</span><span>{learningTaskOriginLabel(selected)}</span><span>计划 v{selected.plan_version}</span><span className="flex items-center gap-1"><Clock3 size={12} />{selected.estimated_minutes} 分钟</span></div>
                   <h2 className="mt-3 text-2xl font-bold text-slate-900">{selected.title}</h2>
                   <p className="mt-2 text-sm leading-6 text-slate-600">{selected.objective}</p>
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
@@ -311,15 +336,16 @@ export default function LearningTasksPage() {
                     <span>复习项 {selected.runtime.evidence.review_items}</span>
                   </div>
                 </div>
-                <button type="button" onClick={() => navigate(selected.navigation.path)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Play size={13} />打开学习现场</button>
+                {!['completed'].includes(selected.status) && (
+                  <button type="button" disabled={busy} onClick={continueLearning} className="flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50">
+                    <Play size={13} />{learningTaskPresentation(selected, 'task').primaryActionLabel}
+                  </button>
+                )}
               </div>
+              <LearningTaskSurfaceNotice task={selected} currentSurface="task" className="mt-4" />
               <p className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">{selected.plan.summary}</p>
               <div className="mt-4 flex flex-wrap gap-2">
-                {selected.status === 'proposed' && <button disabled={busy} onClick={() => runAction('accept')} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"><Check size={13} className="mr-1 inline" />接受并加入队列</button>}
-                {selected.status === 'queued' && <button disabled={busy} onClick={() => runAction('start')} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"><Play size={13} className="mr-1 inline" />开始任务</button>}
                 {selected.status === 'active' && <button disabled={busy} onClick={() => runAction('pause')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><Pause size={13} className="mr-1 inline" />暂停</button>}
-                {selected.status === 'paused' && <button disabled={busy} onClick={() => runAction('resume')} className="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"><Play size={13} className="mr-1 inline" />继续</button>}
-                {selected.status === 'canceled' && <button disabled={busy} onClick={() => runAction('reopen')} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"><RotateCcw size={13} className="mr-1 inline" />重新加入</button>}
                 {['proposed', 'queued', 'active', 'paused'].includes(selected.status) && <button disabled={busy} onClick={() => runAction('cancel')} className="rounded-lg px-3 py-2 text-xs text-slate-500 hover:bg-red-50 hover:text-red-700"><Trash2 size={13} className="mr-1 inline" />从队列移除</button>}
               </div>
             </header>
