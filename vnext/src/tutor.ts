@@ -3,8 +3,12 @@ import {
   hasExplicitLearningIntent,
   type LearningTaskTutorContext,
 } from './learning.ts'
+import {
+  hasPlanningIntent,
+  type LearningPlanTutorContext,
+} from './planning.ts'
 
-export type TutorMode = 'free' | 'simple_explain' | 'guided_learning'
+export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
 export type TutorContextMessage = {
   role: 'assistant' | 'user'
@@ -15,17 +19,21 @@ export const TUTOR_MODE_LABELS: Record<TutorMode, string> = {
   free: '自由态',
   simple_explain: '简单讲解态',
   guided_learning: '带领学习态',
+  learning_plan: '学习规划态',
 }
 
 const EXPLANATION_INTENT = /(?:什么是|讲讲|讲一下|解释(?:一下)?|怎么理解|如何理解|帮我理解|介绍一下)/
 
 export function isTutorMode(value: unknown): value is TutorMode {
-  return value === 'free' || value === 'simple_explain' || value === 'guided_learning'
+  return value === 'free' || value === 'simple_explain' || value === 'guided_learning' || value === 'learning_plan'
 }
 
 export function resolveTutorMode(selectedMode: TutorMode, input: string, hasActiveLearningTask = false): TutorMode {
-  if (selectedMode === 'guided_learning' || hasActiveLearningTask || hasExplicitLearningIntent(input)) return 'guided_learning'
+  if (selectedMode === 'guided_learning' || hasActiveLearningTask) return 'guided_learning'
+  if (selectedMode === 'learning_plan') return 'learning_plan'
   if (selectedMode === 'simple_explain') return selectedMode
+  if (hasPlanningIntent(input)) return 'learning_plan'
+  if (hasExplicitLearningIntent(input)) return 'guided_learning'
   return EXPLANATION_INTENT.test(input) ? 'simple_explain' : 'free'
 }
 
@@ -54,6 +62,10 @@ function systemPrompt(mode: TutorMode) {
 
   if (mode === 'guided_learning') {
     return `${common}\n\n当前状态：带领学习态。\n你正在同一段对话内带领一个原子学习任务。学习任务只提供目标和暂停点，当前 Skill 自己的步骤与循环由本地确定性流程提供；你只能完成当前教学动作，不能自行推进步骤、切换 Skill、完成任务、评分或宣布掌握。每轮先回应学生刚才的真实问题，再自然落实当前 Skill 动作。若学生说不知道、没懂或要求提示，按当前 Skill 的循环支架继续同一步，不把它冒充有效尝试。保持正常对话感，不要输出内部事件、状态机或冗长流程公告。`
+  }
+
+  if (mode === 'learning_plan') {
+    return `${common}\n\n当前状态：学习规划态。\n先判断这是“项目雏形规划”还是“发展方向规划”，并围绕同一规划目标持续对话。项目雏形规划要逐步确认目标产物、当前基础、来源资源、时间投入、实践验收和现实约束；一次最多追问一个最高价值缺口，不要在每轮重复整套问卷。发展方向规划要给有取舍依据的建议，并优先设计低成本探索实验，而不是替学生决定职业。你可以建议修改 Value Claim，但必须展示依据和影响范围，并明确说明只有学生本人可以接受、修改或拒绝；不得声称前端候选已经写入正式五核。当前项目功能尚未接入，不能伪造项目 ID、文件夹、关卡或已启动状态。`
   }
 
   return `${common}\n\n当前状态：自由态。\n自然回应学生当前意图，可以讨论、澄清、共同规划或回答短问题。只有在缺少关键信息时才追问，不擅自创建学习任务，不宣称学生已经掌握。`
@@ -161,6 +173,7 @@ export function buildTutorProviderRequest(options: {
   toolContext?: string
   selectionContext?: string
   learningTaskContext?: LearningTaskTutorContext
+  learningPlanContext?: LearningPlanTutorContext
 }) {
   const additions = [
     options.learningTaskContext
@@ -175,6 +188,20 @@ export function buildTutorProviderRequest(options: {
           `完成本步后的界面动作：${options.learningTaskContext.nextAction}`,
           '请把这些约束自然地落实在回复中，不要逐项复述。子状态由当前 Skill 步骤确定；步骤、子状态变化和循环只能由界面动作与事件队列决定。',
         ].join('\n')
+      : '',
+    options.learningPlanContext
+      ? [
+          '当前学习规划（浏览器本地运行投影，只读）：',
+          `规划类型：${options.learningPlanContext.kindLabel}`,
+          `目标：${options.learningPlanContext.objective}`,
+          `已确认信息：${options.learningPlanContext.confirmedSignals.length ? options.learningPlanContext.confirmedSignals.map(item => `${item.label}=${item.value}`).join('；') : '暂无'}`,
+          `仍需确认：${options.learningPlanContext.missingRequirements.join('、') || '请学生检查并修订草案'}`,
+          `本轮优先澄清：${options.learningPlanContext.nextQuestion}`,
+          '项目创建能力当前不可用；只能形成项目启动草案，不能声称已经创建项目。',
+          options.learningPlanContext.valueProposal
+            ? `Value Claim 候选：原内容“${options.learningPlanContext.valueProposal.currentClaim}”；建议“${options.learningPlanContext.valueProposal.proposedClaim}”；当前决定=${options.learningPlanContext.valueProposal.decision}；正式写入=false。`
+            : '',
+        ].filter(Boolean).join('\n')
       : '',
     options.selectionContext
       ? `当前位于选中追问纸张。学生选中的原文是：\n“${options.selectionContext.slice(0, 1200)}”\n回答当前问题时保持和原对话一致，并明确回应这段原文。`
@@ -215,6 +242,7 @@ export async function requestTutorReply(options: {
   toolChoice: TutorToolChoice
   selectionContext?: string
   learningTaskContext?: LearningTaskTutorContext
+  learningPlanContext?: LearningPlanTutorContext
 }) {
   const controller = new AbortController()
   const timeout = globalThis.setTimeout(() => controller.abort(), 105_000)

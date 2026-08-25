@@ -49,6 +49,11 @@ ACTION_BOARD = {
             ("search_computer_knowledge", "generate_learning_visual"),
         ),
         ActionDefinition(
+            "run_vnext_learning_plan", "在 vNext 对话中形成项目雏形或发展方向草案", "proposal", "explicit_or_auto",
+            {},
+            (),
+        ),
+        ActionDefinition(
             "read_vnext_five_kernel_profile", "为 vNext Tutor 读取相关模拟五核画像", "none", "none",
             {},
             (),

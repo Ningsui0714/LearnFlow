@@ -148,7 +148,7 @@ export const SIMULATED_FIVE_KERNEL_PROFILE: SimulatedFiveKernelProfile = {
 
 export type ProfileReaderInput = {
   message: string
-  mode?: 'free' | 'simple_explain' | 'guided_learning'
+  mode?: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
   learningTaskContext?: LearningTaskTutorContext
   maxModules?: number
   maxClaims?: number
@@ -215,6 +215,7 @@ export function readFiveKernelProfile(input: ProfileReaderInput): FiveKernelCont
   const requestedKernels = unique((intents.length ? intents : [{ kernels: ['knowledge', 'human'] as FiveKernelName[], tags: [] }])
     .flatMap(rule => rule.kernels))
   if (input.mode === 'guided_learning') requestedKernels.push(...(['practice', 'human'] as FiveKernelName[]))
+  if (input.mode === 'learning_plan') requestedKernels.push(...(['structure', 'value', 'practice', 'knowledge'] as FiveKernelName[]))
   const kernelPriority = unique(requestedKernels)
   const queryTags = unique([
     ...intents.flatMap(rule => rule.tags),

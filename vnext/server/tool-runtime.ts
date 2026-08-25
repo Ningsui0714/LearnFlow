@@ -202,7 +202,7 @@ export async function runTutorTools(options: {
   choice: TutorToolChoice
   generate: GenerateText
   searchConfiguration?: SearchProviderConfiguration
-  mode?: 'free' | 'simple_explain' | 'guided_learning'
+  mode?: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
   learningTaskContext?: LearningTaskTutorContext
 }) {
   const kinds = options.choice === 'auto' ? autoToolKinds(options.message) : [options.choice]

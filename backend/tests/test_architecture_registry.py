@@ -68,17 +68,20 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
 def test_vnext_tools_are_registered_without_learning_state_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
-        "vnext_learning_task_runtime", "vnext_five_kernel_profile_reader",
+        "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
-        "run_vnext_learning_task", "read_vnext_five_kernel_profile",
+        "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
     assert CAPABILITY_OWNERS["run_vnext_learning_task"] == (
         "tutor_agent", "vnext_learning_task_runtime", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["run_vnext_learning_plan"] == (
+        "tutor_agent", "vnext_learning_plan_runtime", "vnext_chat",
     )
     assert CAPABILITY_OWNERS["read_vnext_five_kernel_profile"] == (
         "tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat",
@@ -87,12 +90,13 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
-            "vnext_learning_task_runtime", "vnext_five_kernel_profile_reader",
+            "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
         }
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
     assert "append-only local event queue" in TOOLS["vnext_learning_task_runtime"].write_path
+    assert "learner-confirmed Value Claim proposal" in TOOLS["vnext_learning_plan_runtime"].write_path
     assert registry_manifest()["authority"]["vnext_learning_substate_projection"] == (
         "guided_learning main state -> bound learning skill -> current skill step substate; "
         "transitions only from the browser-local event queue"
@@ -110,6 +114,10 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
             "vnext_learning_task_learner_replied", "vnext_learning_support_requested",
             "vnext_learning_skill_selected", "vnext_learning_task_paused",
             "vnext_learning_task_resumed", "vnext_learning_task_completed",
+            "vnext_learning_plan_started", "vnext_learning_plan_note_captured",
+            "vnext_project_seed_ready", "vnext_value_claim_proposed",
+            "vnext_value_claim_proposal_accepted", "vnext_value_claim_proposal_rejected",
+            "vnext_value_claim_proposal_revision_requested", "vnext_learning_plan_closed",
         }
     )
 

@@ -94,6 +94,7 @@ button { cursor: pointer; }
 .mode-badge-free { background: #edf7f1; color: #237653; }
 .mode-badge-simple_explain { background: #fff5dc; color: #8c6514; }
 .mode-badge-guided_learning { background: #e7f0ff; color: #315e9d; }
+.mode-badge-learning_plan { background: #f1eefe; color: #64529b; }
 .skill-badge { border: 1px solid #d9e2f0; background: #f7f9fd; color: #667d9e; }
 .local-label { border: 1px solid #dde5e0; background: #fff; color: #829087; }
 
@@ -296,6 +297,44 @@ button { cursor: pointer; }
 .composer-dock { flex: none; background: linear-gradient(180deg, rgba(255,255,255,0), #fff 24%); padding: 10px 18px 18px; }
 .composer { width: min(100%, 790px); margin: 0 auto; border: 1px solid #ccd7d0; border-radius: 19px; background: #fff; padding: 10px 11px; box-shadow: 0 8px 28px rgba(28,47,37,.09); }
 .composer:focus-within { border-color: #82ad96; box-shadow: 0 8px 28px rgba(28,47,37,.1), 0 0 0 3px rgba(76,154,112,.07); }
+.planning-anchor { position: relative; display: flex; min-width: 0; height: 38px; align-items: center; gap: 8px; margin: -2px -2px 7px; border-bottom: 1px solid #e7e4ee; padding: 0 2px 7px; }
+.planning-mark { display: grid; height: 22px; width: 22px; flex: none; place-items: center; border-radius: 7px; background: #f0edfb; color: #69569f; font-size: 11px; font-weight: 800; }
+.planning-anchor-main { min-width: 0; flex: 1; }
+.planning-anchor-main strong, .planning-anchor-main span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.planning-anchor-main strong { color: #403953; font-size: 9px; font-weight: 750; }
+.planning-anchor-main span { margin-top: 2px; color: #918b9c; font-size: 7px; }
+.project-stub-badge { flex: none; border-radius: 999px; background: #f3f1f7; padding: 4px 7px; color: #8a8297; font-size: 7px; font-weight: 700; }
+.planning-menu { position: relative; flex: none; }
+.planning-menu > summary { display: grid; height: 25px; width: 28px; place-items: center; border: 1px solid #ddd9e7; border-radius: 8px; background: #fff; color: #746c83; cursor: pointer; font-size: 7px; font-weight: 750; letter-spacing: 1px; list-style: none; }
+.planning-menu > summary::-webkit-details-marker { display: none; }
+.planning-menu[open] > summary { border-color: #b5a9d3; background: #f5f2fb; color: #66539c; }
+.planning-popover { position: absolute; z-index: 32; right: 0; bottom: calc(100% + 8px); width: min(340px, 80vw); border: 1px solid #dcd6e8; border-radius: 13px; background: #fff; padding: 11px; box-shadow: 0 14px 36px rgba(43,35,63,.15); }
+.planning-popover header strong, .planning-popover header span { display: block; }
+.planning-popover header strong { color: #403752; font-size: 10px; }
+.planning-popover header span { margin-top: 3px; color: #91899b; font-size: 7px; }
+.planning-requirements { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin: 9px 0; }
+.planning-requirements span { display: flex; align-items: center; gap: 5px; border-radius: 7px; background: #f5f4f7; padding: 6px; color: #918b96; font-size: 7px; }
+.planning-requirements span.confirmed { background: #edf6f1; color: #397158; }
+.planning-requirements i { font-style: normal; font-weight: 800; }
+.planning-popover > p { margin: 8px 0; color: #81798c; font-size: 7px; line-height: 1.5; }
+.planning-popover > button { height: 25px; border: 1px solid #d9d4e4; border-radius: 7px; background: #fff; padding: 0 8px; color: #756d81; font-size: 7px; font-weight: 700; }
+.value-proposal-card { margin: 0 -2px 8px; border: 1px solid #e2dcef; border-radius: 11px; background: #fbf9ff; padding: 9px 10px; }
+.value-proposal-card > header { display: flex; align-items: baseline; gap: 7px; }
+.value-proposal-card > header span { color: #9184ad; font-size: 6px; font-weight: 800; letter-spacing: .12em; }
+.value-proposal-card > header strong { color: #4a405f; font-size: 9px; }
+.value-proposal-change { display: grid; grid-template-columns: minmax(0, 1fr) 15px minmax(0, 1fr); align-items: center; gap: 5px; margin-top: 7px; }
+.value-proposal-change > i { color: #a39aae; font-size: 9px; font-style: normal; text-align: center; }
+.value-proposal-change > div { min-width: 0; border-radius: 7px; background: #f2eff7; padding: 6px 7px; }
+.value-proposal-change span { color: #92899c; font-size: 6px; font-weight: 750; }
+.value-proposal-change p { display: -webkit-box; margin: 2px 0 0; overflow: hidden; color: #5b5267; font-size: 7px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.value-proposal-card > blockquote { margin: 6px 0 0; color: #796d89; font-size: 7px; }
+.value-proposal-card > p { margin: 5px 0 0; color: #948b9f; font-size: 6px; line-height: 1.4; }
+.value-proposal-actions { display: flex; gap: 5px; margin-top: 7px; }
+.value-proposal-actions button { height: 24px; border: 1px solid #ddd6e8; border-radius: 7px; background: #fff; padding: 0 8px; color: #766c83; font-size: 7px; font-weight: 700; }
+.value-proposal-actions .value-accept { border-color: #6e5d9c; background: #6e5d9c; color: #fff; }
+.value-proposal-decision { display: block; margin-top: 7px; color: #5f5283; font-size: 7px; }
+.value-proposal-accepted { border-color: #cfe2d6; background: #f6fbf8; }
+.value-proposal-rejected { opacity: .7; }
 .learning-task-anchor { position: relative; display: flex; min-width: 0; height: 38px; align-items: center; gap: 8px; margin: -2px -2px 7px; border-bottom: 1px solid #e4e9e6; padding: 0 2px 7px; }
 .learning-task-anchor-paused { opacity: .72; }
 .learning-task-mark { display: grid; height: 22px; width: 22px; flex: none; place-items: center; border-radius: 7px; background: #edf3ef; color: #19704e; font-size: 10px; font-weight: 800; }
@@ -448,6 +487,11 @@ button { cursor: pointer; }
   .composer-dock { padding: 8px 11px 12px; }
   .composer-tools > span { display: none; }
   .learning-task-anchor { gap: 6px; }
+  .planning-anchor { gap: 6px; }
+  .project-stub-badge { display: none; }
+  .planning-popover { right: -2px; width: min(340px, 86vw); }
+  .value-proposal-change { grid-template-columns: 1fr; }
+  .value-proposal-change > i { transform: rotate(90deg); }
   .learning-skill-dots { display: none; }
   .learning-task-anchor > .learning-primary-action { max-width: 90px; }
   .learning-task-popover { right: -2px; width: min(330px, 86vw); }

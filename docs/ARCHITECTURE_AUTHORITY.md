@@ -162,6 +162,18 @@ Contract impact：注册表版本提升到 `2026-08-25.7`。此次只把既有 S
 复用既有 `vnext_learning_skill_step_entered` 和浏览器本地事件队列；稳定 Skill ID、EventContract、
 后端 API、三 Agent 与五核写入链均向后兼容，没有新增 Kernel writer 或掌握语义。
 
+vNext 现补齐第四种 Tutor 姿态 `learning_plan`。确定性规则只把跨多个任务/阶段、较复杂真实产物，
+以及职业、科研和长期方向问题送入规划态；原子目标仍进入 `guided_learning`。规划态以浏览器本地
+追加事件投影 `project_seed` 或 `direction` 草案。前者只收集项目启动信息，当前不得生成项目 ID、
+关卡或文件夹；后者可以提出 Value Claim 候选，但必须展示当前内容、建议、学生原话依据和作用域，
+并等待接受、修改或拒绝。三个决定均为零 Kernel target；正式写入仍必须经过
+`EvidenceEvent -> five_kernel_reducer -> KernelMutation`，且长期 Value 目标要求学习者明确确认。
+
+Contract impact：注册表版本提升到 `2026-08-25.8`，新增 `vnext_learning_plan_runtime`、capability
+`run_vnext_learning_plan` 与八个浏览器本地零 target 规划事件。既有三 Agent、正式项目 API、
+LearningTask、Value reducer、模型 API 和 Skill ID 均向后兼容；当前没有新增 Kernel writer，
+也没有把本地候选确认视为正式 Value Claim 写入。
+
 ### Learning Task 与双队列
 
 `LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者

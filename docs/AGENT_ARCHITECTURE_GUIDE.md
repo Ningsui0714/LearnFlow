@@ -342,6 +342,13 @@ Learning Skill 只允许绑定 `guided_learning`；用户预选 Skill 时只绑�
 才启动 Skill。每个步骤 MUST 声明可见子状态，`vnext_learning_skill_step_entered` 同时投影步骤与
 子状态；循环 MUST 留在本步。UI 和 Tutor LLM 只能读取该投影，不得维护或转换另一套子状态机。
 
+vNext 的 `learning_plan` MUST 只处理跨多个任务/阶段、复杂真实产物或长期发展方向，不得吞并
+边界清楚的讲解和原子学习任务。`project_seed` 只能收集目标产物、基础、资源、时间、实践验收和
+约束，并 MUST 明示项目创建尚未接入。`direction` 可以产生 Value Claim Proposal，但 MUST 同时
+呈现旧内容、新建议、直接原话依据和作用域；学习者必须能接受、修改或拒绝。浏览器本地的决定
+事件 MUST 保持零 Kernel target，且 `formalWriteCompleted=false`；正式 Value 写入仍需有 scope 的
+EvidenceEvent 和 reducer，不能由 Tutor、UI 或本地 PlanningEvent 直接完成。
+
 vNext Tutor 每轮 MAY 先调用 `vnext_five_kernel_profile_reader`。当前数据源是学习者可检查的
 只读 Module/Claim 模拟，不是正式 KernelState；Reader MUST 按当前问题、任务目标和 Skill 做
 确定性相关检索与预算裁剪，MUST NOT 全量注入画像。敏感 Human Claim MUST 通过

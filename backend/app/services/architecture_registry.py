@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.7"
+REGISTRY_VERSION = "2026-08-25.8"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -228,6 +228,8 @@ TOOLS = {
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
                      (), (), "append-only local event queue -> deterministic task projection -> bounded Tutor context; no learner-state write"),
+        ToolContract("vnext_learning_plan_runtime", "vNext In-chat Learning Plan Runtime", "tutor_agent", "vnext", "orchestration",
+                     KERNEL_NAMES, (), "append-only local planning events -> project seed or direction projection -> learner-confirmed Value Claim proposal; no KernelState write"),
         ToolContract("vnext_five_kernel_profile_reader", "vNext Simulated Five-kernel Profile Reader", "tutor_agent", "vnext", "read",
                      KERNEL_NAMES, (), "simulated Module/Claim profile -> deterministic intent selection -> bounded read-only Tutor context; no learner-state write"),
         ToolContract("workspace_lifecycle", "Conversation and Project Workspace Lifecycle", "tutor_agent", "learnflow", "transaction",
@@ -438,7 +440,7 @@ WORKBENCHES = {
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
                           ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
-                           "run_vnext_learning_task", "read_vnext_five_kernel_profile"), "vnext"),
+                           "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -477,6 +479,7 @@ CAPABILITY_OWNERS = {
     "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
+    "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
     "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
@@ -550,6 +553,15 @@ EVENTS = {
         _event("vnext_learning_task_paused", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
         _event("vnext_learning_task_resumed", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
         _event("vnext_learning_task_completed", "run_vnext_learning_task", (), "local_operational_milestone", origin="vnext"),
+        _event("vnext_learning_plan_started", "run_vnext_learning_plan", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_plan_note_captured", "run_vnext_learning_plan", (), "local_interaction", origin="vnext"),
+        _event("vnext_project_seed_ready", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
+        _event("vnext_direction_plan_ready", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
+        _event("vnext_value_claim_proposed", "run_vnext_learning_plan", (), "local_proposal", origin="vnext"),
+        _event("vnext_value_claim_proposal_accepted", "run_vnext_learning_plan", (), "local_confirmation_without_kernel_write", origin="vnext"),
+        _event("vnext_value_claim_proposal_rejected", "run_vnext_learning_plan", (), "local_rejection", origin="vnext"),
+        _event("vnext_value_claim_proposal_revision_requested", "run_vnext_learning_plan", (), "local_revision_request", origin="vnext"),
+        _event("vnext_learning_plan_closed", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
         _event("conversation_deleted", "delete_conversation", (), "confirmed_workspace_removal"),
         _event("learning_task_created", "manage_learning_tasks", (), "operational"),
         _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
@@ -750,6 +762,7 @@ def registry_manifest() -> dict[str, Any]:
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
             "vnext_learning_task_projection": "append-only browser-local operational events -> deterministic in-chat task projection; never mastery evidence",
             "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> current skill step substate; transitions only from the browser-local event queue",
+            "vnext_learning_plan_projection": "planning intent -> append-only browser-local plan events -> project seed or direction advice; Value Claim changes remain learner-decided proposals until the formal EvidenceEvent reducer is connected",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],

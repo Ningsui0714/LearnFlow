@@ -12,6 +12,7 @@ import {
 } from './src/tutor'
 import { isTutorToolChoice } from './src/tooling'
 import { sanitizeLearningTaskTutorContext } from './src/learning'
+import { sanitizeLearningPlanTutorContext } from './src/planning'
 import { runTutorTools } from './server/tool-runtime'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 
@@ -173,6 +174,7 @@ function tutorProxy(mode: string): Plugin {
       const toolChoice = isTutorToolChoice(input.toolChoice) ? input.toolChoice : 'auto'
       const selectionContext = typeof input.selectionContext === 'string' ? input.selectionContext.slice(0, 1600) : ''
       const learningTaskContext = sanitizeLearningTaskTutorContext(input.learningTaskContext)
+      const learningPlanContext = sanitizeLearningPlanTutorContext(input.learningPlanContext)
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -214,6 +216,7 @@ function tutorProxy(mode: string): Plugin {
         toolContext: tools.context,
         selectionContext,
         learningTaskContext,
+        learningPlanContext,
       })
       let reply = tools.directReply
       if (!reply) {
@@ -230,6 +233,7 @@ function tutorProxy(mode: string): Plugin {
             toolContext: compactToolContext,
             selectionContext,
             learningTaskContext,
+            learningPlanContext,
           })
           reply = await callProvider({ ...retryRequest, timeoutMs: 32_000 })
         }
@@ -240,6 +244,7 @@ function tutorProxy(mode: string): Plugin {
           toolContext: `${tools.context}\n\n回复契约修正：上一次模型输出了不可展示的内部工具协议。请重新回答当前学生问题，只输出自然的中文教学正文，不得输出任何 tool_call、function、XML 参数或内部状态指令。`,
           selectionContext,
           learningTaskContext,
+          learningPlanContext,
         })
         reply = await callProvider({ ...repairRequest, timeoutMs: 32_000 })
         if (!isDisplayableTutorReply(reply)) {

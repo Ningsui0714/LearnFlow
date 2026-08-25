@@ -9,8 +9,9 @@
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
     "test:search": "node --experimental-strip-types --test server/computer-knowledge-search.test.ts",
     "test:learning": "node --experimental-strip-types --test server/learning-task.test.ts",
+    "test:planning": "node --experimental-strip-types --test server/planning.test.ts",
     "test:profile": "node --experimental-strip-types --test server/five-kernel-profile.test.ts",
-    "test": "npm run test:search && npm run test:learning && npm run test:profile"
+    "test": "npm run test:search && npm run test:learning && npm run test:planning && npm run test:profile"
   },
   "dependencies": {
     "katex": "^0.18.4",

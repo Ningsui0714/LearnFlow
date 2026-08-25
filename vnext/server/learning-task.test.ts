@@ -28,6 +28,8 @@ test('only an explicit atomic learning request starts guided learning automatica
   assert.equal(resolveTutorMode('free', '什么是操作系统'), 'simple_explain')
   assert.equal(resolveTutorMode('free', '什么是学习任务'), 'simple_explain')
   assert.equal(resolveTutorMode('free', '带我弄懂操作系统的进程调度'), 'guided_learning')
+  assert.equal(resolveTutorMode('free', '我想用半年系统学习操作系统并做一个内核项目'), 'learning_plan')
+  assert.equal(resolveTutorMode('free', '我未来适合走智能体工程还是机器学习科研方向'), 'learning_plan')
   assert.equal(hasExplicitLearningIntent('我想了解一下操作系统'), false)
   assert.equal(hasExplicitLearningIntent('带我学习操作系统'), true)
 })

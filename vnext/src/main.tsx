@@ -41,6 +41,20 @@ import {
   FIVE_KERNEL_LABELS,
   SIMULATED_FIVE_KERNEL_PROFILE,
 } from './five-kernel-profile'
+import {
+  activeLearningPlanProjection,
+  closeLearningPlan,
+  createLearningPlan,
+  decideValueClaimProposal,
+  learningPlanTutorContext,
+  planningKindLabel,
+  projectLearningPlan,
+  updateLearningPlan,
+  type LearningPlan,
+  type LearningPlanProjection,
+  type PlanningEvent,
+  type ValueProposalDecision,
+} from './planning'
 import './styles.css'
 
 type Message = {
@@ -89,6 +103,8 @@ type Conversation = {
   learningTasks: LearningTask[]
   learningEvents: LearningEvent[]
   preferredSkillId?: LearningSkillId
+  learningPlans: LearningPlan[]
+  planningEvents: PlanningEvent[]
 }
 
 type WorkspaceTab = {
@@ -130,10 +146,12 @@ function createConversation(): Conversation {
     activeSheetId: 'main',
     learningTasks: [],
     learningEvents: [],
+    learningPlans: [],
+    planningEvents: [],
     messages: [{
       id: uid('message'),
       role: 'assistant',
-      content: '现在处于自由态。你可以直接讨论学习问题；明确的解释请求会进入一轮简单讲解，“带我学 / 带我练”会在这段对话中开始一个原子学习任务。',
+      content: '现在处于自由态。你可以直接讨论学习问题；明确的解释请求会进入简单讲解，“带我学 / 带我练”会开始原子学习任务，较大的学习、项目或发展方向会进入学习规划态。',
       createdAt: now,
       tutorMode: 'free',
     }],
@@ -174,6 +192,8 @@ function restoreState(): PersistedState {
       sheets: Array.isArray(conversation.sheets) ? conversation.sheets : [],
       learningTasks: Array.isArray(conversation.learningTasks) ? conversation.learningTasks : [],
       learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
+      learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
+      planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
       preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
         || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
@@ -567,7 +587,7 @@ function App() {
         const activeTask = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
         return {
           ...conversation,
-          mode: activeTask ? 'guided_learning' : 'free',
+          mode: activeTask ? 'guided_learning' : mode === 'simple_explain' ? 'free' : mode,
           updatedAt: Date.now(),
           messages: sheetId === 'main' ? [...conversation.messages, finishedMessage] : conversation.messages,
           sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
@@ -599,6 +619,9 @@ function App() {
     let learningTasks = [...conversation.learningTasks]
     let learningEvents = [...conversation.learningEvents]
     let learningProjection = activeLearningTaskProjection(learningTasks, learningEvents)
+    let learningPlans = [...conversation.learningPlans]
+    let planningEvents = [...conversation.planningEvents]
+    let planningProjection = activeLearningPlanProjection(learningPlans, planningEvents)
     const mode = resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
 
     if (mode === 'guided_learning') {
@@ -643,6 +666,18 @@ function App() {
       }
     }
 
+    if (mode === 'learning_plan') {
+      if (!planningProjection) {
+        const created = createLearningPlan(content, now, planningEvents)
+        learningPlans = [...learningPlans, created.plan]
+        planningEvents = created.events
+        planningProjection = projectLearningPlan(created.plan, planningEvents)
+      } else {
+        planningEvents = updateLearningPlan(planningEvents, planningProjection, content, now + 8)
+        planningProjection = projectLearningPlan(planningProjection.plan, planningEvents)
+      }
+    }
+
     const contextMessages = [
       ...inheritedContextMessages(conversation)
         .filter((message): message is Message & { role: 'assistant' | 'user' } => message.role !== 'system')
@@ -670,6 +705,8 @@ function App() {
           mode,
           learningTasks,
           learningEvents,
+          learningPlans,
+          planningEvents,
           messages: sheetId === 'main' ? [...conversation.messages, userMessage] : conversation.messages,
           sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
             sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
@@ -704,6 +741,7 @@ function App() {
         toolChoice: toolChoices[draftKey] || 'auto',
         selectionContext: activeSheet(conversation)?.quote,
         learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
+        learningPlanContext: planningProjection ? learningPlanTutorContext(planningProjection) : undefined,
       })
       finishTurn(conversationId, sheetId, mode, {
         role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns,
@@ -791,6 +829,43 @@ function App() {
     }))
   }
 
+  const updateValueProposal = (
+    conversationId: string,
+    projection: LearningPlanProjection,
+    decision: Exclude<ValueProposalDecision, 'proposed'>,
+    draftKey?: string,
+  ) => {
+    if (pendingTurns[conversationId]) return
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => conversation.id === conversationId
+        ? {
+            ...conversation,
+            planningEvents: decideValueClaimProposal(conversation.planningEvents, projection, decision),
+            updatedAt: Date.now(),
+          }
+        : conversation),
+    }))
+    if (decision === 'revision_requested' && draftKey) {
+      setDrafts(previous => ({ ...previous, [draftKey]: '我希望把价值核建议改成：' }))
+    }
+  }
+
+  const finishLearningPlan = (conversationId: string, projection: LearningPlanProjection) => {
+    if (pendingTurns[conversationId]) return
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => conversation.id === conversationId
+        ? {
+            ...conversation,
+            mode: 'free',
+            planningEvents: closeLearningPlan(conversation.planningEvents, projection),
+            updatedAt: Date.now(),
+          }
+        : conversation),
+    }))
+  }
+
   const advanceTaskAndContinue = async (conversation: Conversation, projection: LearningTaskProjection) => {
     const next = nextLearningSkillStep(projection)
     if (!next || !canAdvanceLearningSkillStep(projection) || pendingTurns[conversation.id]) return
@@ -822,7 +897,7 @@ function App() {
           <div className="settings-intro">
             <span className="eyebrow">SETTINGS</span>
             <h1>设置</h1>
-            <p>自由态、简单讲解态和带领学习态共用这一条模型连接，不读取旧项目配置。</p>
+            <p>自由态、简单讲解态、带领学习态和学习规划态共用这一条模型连接，不读取旧项目配置。</p>
           </div>
           <form className="settings-card" onSubmit={event => { event.preventDefault(); setSettingsSaved(true) }}>
             <div className="settings-card-heading"><span>01</span><div><h2>模型连接</h2><p>支持 OpenAI 兼容的 Chat Completions 或 Responses 地址。</p></div></div>
@@ -872,6 +947,7 @@ function App() {
     const pendingMode = pendingTurns[conversation.id]
     const taskProjection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
     const activeTaskProjection = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    const planProjection = activeLearningPlanProjection(conversation.learningPlans, conversation.planningEvents)
     const taskSkill = taskProjection ? LEARNING_SKILLS[taskProjection.skillId] : undefined
     const taskStep = taskProjection ? currentLearningSkillStep(taskProjection) : undefined
     const activeTaskStep = activeTaskProjection ? currentLearningSkillStep(activeTaskProjection) : undefined
@@ -1074,6 +1150,63 @@ function App() {
         </div>
         <div className="composer-dock">
           <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
+            {planProjection && conversation.mode === 'learning_plan' && (
+              <>
+                <section className="planning-anchor" aria-label="当前学习规划">
+                  <span className="planning-mark">◇</span>
+                  <div className="planning-anchor-main">
+                    <strong>{planProjection.plan.objective}</strong>
+                    <span>
+                      学习规划态 · {planningKindLabel(planProjection.plan.kind)} · 已确认 {planProjection.requirements.length - planProjection.missingRequirements.length}/{planProjection.requirements.length}
+                      {planProjection.missingRequirements.length ? ` · 待确认 ${planProjection.missingRequirements.slice(0, 2).map(item => item.label).join('、')}` : ' · 草案信息已齐'}
+                    </span>
+                  </div>
+                  {planProjection.plan.kind === 'project_seed' && <span className="project-stub-badge">项目尚未接入</span>}
+                  <details className="planning-menu">
+                    <summary role="button" aria-label="学习规划详情">•••</summary>
+                    <div className="planning-popover">
+                      <header><strong>{planningKindLabel(planProjection.plan.kind)}</strong><span>信息来自当前对话，可继续补充和修订。</span></header>
+                      <div className="planning-requirements">
+                        {planProjection.requirements.map(requirement => (
+                          <span key={requirement.id} className={planProjection.signals[requirement.id] ? 'confirmed' : ''}>
+                            <i>{planProjection.signals[requirement.id] ? '✓' : '·'}</i>{requirement.label}
+                          </span>
+                        ))}
+                      </div>
+                      <p>{planProjection.plan.kind === 'project_seed'
+                        ? '信息足够后只形成项目启动草案；当前版本不会创建项目、关卡或文件夹。'
+                        : '先用项目、阅读或实践实验收集方向证据；不替你决定职业。'}</p>
+                      <button type="button" onClick={() => finishLearningPlan(conversation.id, planProjection)} disabled={Boolean(pendingMode)}>结束规划</button>
+                    </div>
+                  </details>
+                </section>
+                {planProjection.valueProposal && (
+                  <section className={`value-proposal-card value-proposal-${planProjection.valueProposal.decision}`} aria-label="价值核修改建议">
+                    <header><span>VALUE CLAIM PROPOSAL</span><strong>价值核修改建议</strong></header>
+                    <div className="value-proposal-change">
+                      <div><span>当前内容</span><p>{planProjection.valueProposal.currentClaim}</p></div>
+                      <i>→</i>
+                      <div><span>建议内容</span><p>{planProjection.valueProposal.proposedClaim}</p></div>
+                    </div>
+                    <blockquote>依据：你说“{planProjection.valueProposal.evidenceQuote}”</blockquote>
+                    <p>{planProjection.valueProposal.rationale} 接受后也只记录为已确认候选，正式五核写入尚未接入。</p>
+                    {planProjection.valueProposal.decision === 'proposed' ? (
+                      <div className="value-proposal-actions">
+                        <button type="button" className="value-accept" onClick={() => updateValueProposal(conversation.id, planProjection, 'accepted')} disabled={Boolean(pendingMode)}>接受为候选</button>
+                        <button type="button" onClick={() => updateValueProposal(conversation.id, planProjection, 'revision_requested', draftKey)} disabled={Boolean(pendingMode)}>我要修改</button>
+                        <button type="button" onClick={() => updateValueProposal(conversation.id, planProjection, 'rejected')} disabled={Boolean(pendingMode)}>不写入</button>
+                      </div>
+                    ) : (
+                      <strong className="value-proposal-decision">
+                        {planProjection.valueProposal.decision === 'accepted' && '✓ 你已确认这个候选；尚未写入正式五核'}
+                        {planProjection.valueProposal.decision === 'rejected' && '已拒绝；不会写入'}
+                        {planProjection.valueProposal.decision === 'revision_requested' && '等待你在输入框中写出修改版本'}
+                      </strong>
+                    )}
+                  </section>
+                )}
+              </>
+            )}
             {taskProjection && taskProjection.status !== 'completed' && (
               <section className={`learning-task-anchor learning-task-anchor-${taskProjection.status}`} aria-label="当前学习任务">
                 <span className="learning-task-mark">◎</span>
@@ -1188,6 +1321,13 @@ function App() {
                       ? updateLearningTask(conversation.id, 'resume')
                       : setConversationMode(conversation.id, 'guided_learning')}
                   >带领学习</button>
+                  <button
+                    type="button"
+                    title="规划较大的学习、真实产物项目或未来发展方向"
+                    aria-pressed={!activeTaskProjection && conversation.mode === 'learning_plan'}
+                    disabled={Boolean(pendingMode) || Boolean(activeTaskProjection)}
+                    onClick={() => setConversationMode(conversation.id, 'learning_plan')}
+                  >学习规划</button>
                 </div>
                 <label className="skill-choice" title="学习方法只在带领学习态运行；选择后下一条消息会建立任务">
                   <span>方法</span>
