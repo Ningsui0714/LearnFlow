@@ -66,6 +66,75 @@ class AgentProjectApiTests(unittest.TestCase):
             "POST", "/api/projects", {"student_id": self.student_id, "text": text}
         )
 
+    def test_learning_task_handoff_creates_idempotent_three_stage_project(self):
+        handoff = {
+            "schema_version": "learning-task-knowledge-to-personalized-learning-v1",
+            "entry_id": "ple_scoped_vlan_001",
+            "source": {
+                "source_system": "learning-work-task-conversion",
+                "task_card_id": "ltc_network_001",
+            },
+            "task_context": {
+                "work_task_id": "work_network_001",
+                "enterprise_task_name": "配置园区网络",
+                "teaching_task_name": "完成 VLAN 划分与连通性验收",
+            },
+            "focus": {
+                "knowledge_point": {
+                    "knowledge_id": "kp_vlan",
+                    "name": "VLAN 与 802.1Q",
+                },
+                "source_steps": [{
+                    "step_id": "step_config",
+                    "name": "配置交换机端口",
+                    "action": "创建 VLAN 并配置端口模式",
+                    "deliverable": "交换机配置记录",
+                    "check": "终端连通性测试通过",
+                }],
+                "strongly_related_skills": [{
+                    "skill_id": "skill_vlan_config",
+                    "name": "VLAN 配置与核验",
+                }],
+                "relationships": [{
+                    "relation_id": "rel_vlan_001",
+                    "step_id": "step_config",
+                    "knowledge_id": "kp_vlan",
+                    "skill_ids": ["skill_vlan_config"],
+                }],
+            },
+            "feedback_contract": {
+                "schema_version": "personalized-learning-to-task-conversion-feedback-v1",
+            },
+        }
+        payload = {"student_id": self.student_id, "handoff": handoff}
+        application = self.server.RequestHandlerClass.application
+
+        first = application.import_learning_task_knowledge(payload)
+        second = application.import_learning_task_knowledge(payload)
+
+        self.assertTrue(first["created"])
+        self.assertFalse(second["created"])
+        self.assertEqual(first["project_id"], second["project_id"])
+        self.assertEqual(first["knowledge_point_id"], "kp_vlan")
+        self.assertIn("agent.html?student_id=", first["redirect_url"])
+        self.assertIn("knowledge_point_id=kp_vlan", first["redirect_url"])
+
+        detail = application.get_project({
+            "project_id": first["project_id"],
+            "student_id": self.student_id,
+        })["project"]
+        path = detail["learning_path"]["items"]
+        self.assertEqual(path[0]["knowledge_point_id"], "kp_vlan")
+        self.assertEqual(
+            {item["stage_id"] for item in path},
+            {"foundation", "core", "application"},
+        )
+        self.assertTrue(path[-1]["is_target"])
+        self.assertEqual(
+            [stage["stage_id"] for stage in detail["learning_plan"]["stages"]],
+            ["foundation", "core", "application"],
+        )
+
     def set_zero_foundation_intake(self, project_id):
         return self.request_json(
             "POST",

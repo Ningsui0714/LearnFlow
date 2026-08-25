@@ -175,13 +175,14 @@ LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 个性化学习导入由后端功能私有配置控制：
 
 ```env
-PERSONALIZED_LEARNING_IMPORT_URL=http://127.0.0.1:4173/api/integrations/learning-task-knowledge
+PERSONALIZED_LEARNING_IMPORT_URL=http://127.0.0.1:4174/api/integrations/learning-task-knowledge
 PERSONALIZED_LEARNING_TIMEOUT_SECONDS=20
+PERSONALIZED_LEARNING_API_TOKEN=
 ```
 
 用户点击“开始生成个性化学习”后，LearnFlow 后端调用 `POST .../personalized-learning-launch`，将已校验的知识点级 JSON 直接导入下游。启动交接 ID 使用基础交接与当前学习者作用域稳定派生，不暴露学习者 ID；下游按该 `entry_id` 幂等创建或恢复项目，因此同一学习者重试不会重复创建，不同学习者也不会串用项目。返回的任务、知识点、项目 ID 与地址经后端校验后，在 LearnFlow 中央工作区嵌入展示。用户不需要下载、上传 JSON，也不会离开左侧项目栏和右侧主 Agent。
 
-未配置下游导入地址时，`/personalized-learning/tasks/{task_card_id}/knowledge/{knowledge_id}` 仍可预览待交接的知识点、来源步骤和强关系，启动操作会返回明确的配置错误，不会伪造成功项目。
+`start.sh` 会启动同仓个性化学习运行时，并通过进程环境把实际端口交给主后端；私有配置仍可覆盖为拆分部署地址。未配置且未通过一键脚本启动时，`/personalized-learning/tasks/{task_card_id}/knowledge/{knowledge_id}` 仍可预览待交接内容，启动操作会返回明确错误，不会伪造成功项目。
 
 ## 运行与验收
 

@@ -9,12 +9,15 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
+PERSONALIZED_DIR="$ROOT_DIR/integrations/wf04"
 VENV_DIR="$BACKEND_DIR/venv"
 REGULAR_PID_FILE="/tmp/learnflow-pids"
 DEMO_PID_FILE="/tmp/learnflow-demo-pids"
 PID_FILE="$REGULAR_PID_FILE"
 BACKEND_PORT=8010
 FRONTEND_PORT=5173
+PERSONALIZED_PORT=4174
+PERSONALIZED_DATABASE="backend/data/learning_app.db"
 OPEN_URL="http://localhost:$FRONTEND_PORT"
 
 GREEN='\033[0;32m'
@@ -36,6 +39,9 @@ banner() {
 }
 
 check_deps() {
+  if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$BACKEND_DIR/.venv/bin/python" ]; then
+    VENV_DIR="$BACKEND_DIR/.venv"
+  fi
   # Python + venv
   if [ ! -f "$VENV_DIR/bin/python" ]; then
     echo -e "${YELLOW}⚠  后端 venv 不存在，正在创建...${NC}"
@@ -74,6 +80,8 @@ prepare_competition_demo() {
   PID_FILE="$DEMO_PID_FILE"
   BACKEND_PORT="$(next_available_port 8010)"
   FRONTEND_PORT="$(next_available_port 5173)"
+  PERSONALIZED_PORT="$(next_available_port 4174)"
+  PERSONALIZED_DATABASE="backend/data/competition-demo.db"
   export VITE_API_PROXY="http://127.0.0.1:$BACKEND_PORT"
   OPEN_URL="http://localhost:$FRONTEND_PORT/demo"
 
@@ -114,12 +122,29 @@ stop_previous_demo() {
 }
 
 start_services() {
+  : > "$PID_FILE"
+  if [ -f "$PERSONALIZED_DIR/backend/server.py" ]; then
+    PERSONALIZED_PORT="$(next_available_port "$PERSONALIZED_PORT")"
+    export PERSONALIZED_LEARNING_IMPORT_URL="http://127.0.0.1:$PERSONALIZED_PORT/api/integrations/learning-task-knowledge"
+    echo -e "${BLUE}━━━ 启动个性化学习运行时 (端口 $PERSONALIZED_PORT) ━━━${NC}"
+    cd "$PERSONALIZED_DIR"
+    APP_HOST=127.0.0.1 \
+      APP_PORT="$PERSONALIZED_PORT" \
+      APP_DATABASE="$PERSONALIZED_DATABASE" \
+      APP_SEED_DEMO=0 \
+      "$VENV_DIR/bin/python" backend/server.py --host 127.0.0.1 --port "$PERSONALIZED_PORT" &
+    PERSONALIZED_PID=$!
+    echo $PERSONALIZED_PID >> "$PID_FILE"
+  else
+    echo -e "${YELLOW}⚠  未找到个性化学习运行时，知识点交接启动将不可用${NC}"
+  fi
+
   echo -e "${BLUE}━━━ 启动后端 (端口 $BACKEND_PORT) ━━━${NC}"
   cd "$BACKEND_DIR"
-  source venv/bin/activate
+  source "$VENV_DIR/bin/activate"
   uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload &
   BACK_PID=$!
-  echo $BACK_PID > "$PID_FILE"
+  echo $BACK_PID >> "$PID_FILE"
 
   echo -e "${BLUE}━━━ 启动前端 (端口 $FRONTEND_PORT) ━━━${NC}"
   cd "$FRONTEND_DIR"
@@ -132,6 +157,9 @@ start_services() {
   echo ""
   echo -e "   ${BLUE}前端:${NC}  http://localhost:$FRONTEND_PORT"
   echo -e "   ${BLUE}后端:${NC}  http://localhost:$BACKEND_PORT"
+  if [ -n "${PERSONALIZED_PID:-}" ]; then
+    echo -e "   ${BLUE}个性化学习:${NC}  http://localhost:$PERSONALIZED_PORT"
+  fi
   echo ""
   echo -e "   ${YELLOW}停止:${NC}  bash start.sh stop"
   echo ""
@@ -156,6 +184,8 @@ stop_services() {
   else
     pkill -f "uvicorn app.main:app" 2>/dev/null || true
     pkill -f "vite" 2>/dev/null || true
+    pkill -f "integrations/wf04/backend/server.py" 2>/dev/null || true
+    pkill -f "backend/server.py --host 127.0.0.1 --port 4174" 2>/dev/null || true
     echo -e "${GREEN}✅ 已停止 (清理模式)${NC}"
   fi
 }

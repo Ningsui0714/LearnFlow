@@ -8,8 +8,9 @@
 - 源码落位：`integrations/wf04/`
 - 合入方式：保留双方 Git 历史，并将个性化学习仓库隔离到子目录；未修改或推送任何 `main`
 
-本次只完成可恢复、可审查的源码合入。当前 LearnFlow 的 FastAPI/React 运行入口仍然是权威入口，
-`integrations/wf04/` 不会被主应用自动启动，也不会直接写入五核、掌握状态或学习证据。
+当前 LearnFlow 的 FastAPI/React 运行入口仍然是权威入口。`start.sh` 会把
+`integrations/wf04/` 作为同仓个性化学习运行时一并启动；它通过窄交接接口接收已校验 JSON，
+不会直接写入主应用五核、掌握状态或学习证据。
 
 ## 已带入的可复用能力
 
@@ -48,20 +49,27 @@ GET  /api/projects/{project_id}/plan
 GET  /api/projects/{project_id}/learning-map
 ```
 
-下一步应增加一个窄适配层，把知识点级交接 JSON 映射为下游项目创建请求，并返回：
+已新增窄适配接口：
+
+```text
+POST /api/integrations/learning-task-knowledge
+```
+
+它把知识点级交接 JSON 确定性映射成三阶段下游项目并返回：
 
 ```json
 {
   "project_id": "stable-project-id",
   "created": true,
-  "launch_url": "/projects/stable-project-id",
-  "handoff_id": "stable-idempotency-key"
+  "redirect_url": "/agent.html?student_id=...&project_id=...&knowledge_point_id=...",
+  "entry_id": "stable-idempotency-key"
 }
 ```
 
-适配层必须由服务端绑定当前学习者身份，校验 `task_card_id`、`knowledge_id`、来源步骤和强关联技能；
-重复交接应重放同一项目。打开入口和生成内容只记录零 kernel target 的导航/运营事件，不能被解释为
-掌握证据。
+适配层由服务端绑定当前学习者身份，双端校验 `task_card_id`、`knowledge_id`、来源步骤和强关联技能；
+数据库事务将 `entry_id` 与项目唯一绑定，并发或重复交接会恢复同一项目。下游路径严格由“知识点 →
+关联技能 → 原任务步骤”形成基础、核心、应用三阶段，不另造领域课程。打开入口和生成内容只记录零
+kernel target 的导航/运营事件，不能被解释为掌握证据。
 
 ## 运行配置边界
 
@@ -80,7 +88,7 @@ SPARK_MODEL=lite
 ## 合入后的约束
 
 1. 主应用继续使用 `CurrentLearner`、Action Board、Evidence Ledger 与架构注册表。
-2. 个性化学习源码先作为隔离参考实现；正式调用只能经过新的服务端适配层。
+2. 个性化学习源码作为隔离运行时；正式调用只能经过服务端窄适配层。
 3. 下游返回的页面地址必须是白名单内相对路径或可信来源，不接受模型生成的任意 URL。
 4. 规划、讲解、题目和页面生成均是内容产物；只有正式提交和确定性评估可形成学习证据。
 5. 后续稳定后再逐模块迁移，避免同时运行两套身份、数据库和证据体系。

@@ -6,6 +6,7 @@ features cannot depend on this integration accidentally.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -32,6 +33,7 @@ class PersonalizedLearningHandoffError(RuntimeError):
 class PersonalizedLearningHandoffConfig:
     import_url: str
     timeout_seconds: float = 20.0
+    api_token: str = ""
 
 
 def default_config_path() -> Path:
@@ -43,12 +45,18 @@ def load_personalized_learning_handoff_config(
     path: str | Path | None = None,
 ) -> PersonalizedLearningHandoffConfig:
     config_path = Path(path) if path is not None else default_config_path()
-    if not config_path.is_file():
+    values: Mapping[str, str | None] = (
+        dotenv_values(config_path) if config_path.is_file() else {}
+    )
+    import_url = str(
+        os.getenv("PERSONALIZED_LEARNING_IMPORT_URL")
+        or values.get("PERSONALIZED_LEARNING_IMPORT_URL")
+        or ""
+    ).strip()
+    if not import_url and not config_path.is_file():
         raise PersonalizedLearningHandoffConfigError(
             f"个性化学习交接私密配置不存在: {config_path}"
         )
-    values: Mapping[str, str | None] = dotenv_values(config_path)
-    import_url = str(values.get("PERSONALIZED_LEARNING_IMPORT_URL") or "").strip()
     parsed = urlsplit(import_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise PersonalizedLearningHandoffConfigError(
@@ -56,7 +64,9 @@ def load_personalized_learning_handoff_config(
         )
     try:
         timeout_seconds = float(
-            values.get("PERSONALIZED_LEARNING_TIMEOUT_SECONDS") or 20.0
+            os.getenv("PERSONALIZED_LEARNING_TIMEOUT_SECONDS")
+            or values.get("PERSONALIZED_LEARNING_TIMEOUT_SECONDS")
+            or 20.0
         )
     except (TypeError, ValueError) as exc:
         raise PersonalizedLearningHandoffConfigError(
@@ -65,6 +75,11 @@ def load_personalized_learning_handoff_config(
     return PersonalizedLearningHandoffConfig(
         import_url=import_url,
         timeout_seconds=max(1.0, min(timeout_seconds, 120.0)),
+        api_token=str(
+            os.getenv("PERSONALIZED_LEARNING_API_TOKEN")
+            or values.get("PERSONALIZED_LEARNING_API_TOKEN")
+            or ""
+        ).strip(),
     )
 
 
@@ -215,7 +230,16 @@ class PersonalizedLearningHandoffClient:
                 # macOS system HTTP proxy (common in development machines).
                 trust_env=False,
             ) as client:
-                response = await client.post(self.config.import_url, json=payload)
+                headers = (
+                    {"Authorization": f"Bearer {self.config.api_token}"}
+                    if self.config.api_token
+                    else None
+                )
+                response = await client.post(
+                    self.config.import_url,
+                    json=payload,
+                    headers=headers,
+                )
         except httpx.TimeoutException as exc:
             raise PersonalizedLearningHandoffError(
                 "个性化学习服务响应超时，请稍后重试",

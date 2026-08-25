@@ -9,6 +9,7 @@ from app.services.personalized_learning_handoff import (
     PersonalizedLearningHandoffClient,
     PersonalizedLearningHandoffConfig,
     PersonalizedLearningHandoffError,
+    load_personalized_learning_handoff_config,
 )
 
 
@@ -50,6 +51,21 @@ def _client(handler) -> PersonalizedLearningHandoffClient:
         ),
         transport=httpx.MockTransport(handler),
     )
+
+
+def test_handoff_config_accepts_launcher_environment_without_private_file(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv(
+        "PERSONALIZED_LEARNING_IMPORT_URL",
+        "http://127.0.0.1:4174/api/integrations/learning-task-knowledge",
+    )
+    monkeypatch.setenv("PERSONALIZED_LEARNING_TIMEOUT_SECONDS", "12")
+
+    config = load_personalized_learning_handoff_config(tmp_path / "missing.env")
+
+    assert config.import_url.startswith("http://127.0.0.1:4174/")
+    assert config.timeout_seconds == 12
 
 
 @pytest.mark.asyncio
@@ -140,3 +156,33 @@ async def test_handoff_client_rejects_cross_origin_redirect():
 
     with pytest.raises(PersonalizedLearningHandoffError, match="不受信任"):
         await _client(handler).import_entry(learner_id=17, handoff=_handoff())
+
+
+@pytest.mark.asyncio
+async def test_handoff_client_sends_optional_split_deployment_token():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer downstream-secret"
+        body = __import__("json").loads(request.content)
+        return httpx.Response(200, json={
+            "status": "ok",
+            "entry_id": body["handoff"]["entry_id"],
+            "project_id": "project_token_001",
+            "knowledge_point_id": "kp_vlan",
+            "redirect_url": "/agent.html?project_id=project_token_001",
+            "created": True,
+        })
+
+    client = PersonalizedLearningHandoffClient(
+        config=PersonalizedLearningHandoffConfig(
+            import_url=(
+                "https://learning.example/api/integrations/"
+                "learning-task-knowledge"
+            ),
+            api_token="downstream-secret",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.import_entry(learner_id=17, handoff=_handoff())
+
+    assert result["project_id"] == "project_token_001"

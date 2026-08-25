@@ -1308,7 +1308,12 @@
 
   <script>
     /* ================= 基础 ================= */
-    const STUDENT_ID = localStorage.getItem("learning.student_id") || "STU-DEMO-001";
+    const LAUNCH_PARAMS = new URLSearchParams(window.location.search);
+    const LAUNCH_STUDENT_ID = (LAUNCH_PARAMS.get("student_id") || "").trim();
+    if (LAUNCH_STUDENT_ID) localStorage.setItem("learning.student_id", LAUNCH_STUDENT_ID);
+    const STUDENT_ID = LAUNCH_STUDENT_ID || localStorage.getItem("learning.student_id") || "STU-DEMO-001";
+    const LAUNCH_PROJECT_ID = (LAUNCH_PARAMS.get("project_id") || "").trim();
+    const LAUNCH_KNOWLEDGE_POINT_ID = (LAUNCH_PARAMS.get("knowledge_point_id") || "").trim();
     const SESSION_ID = localStorage.getItem("learning.session_id") || "AGENT-WEB-SESSION";
     const $ = (id) => document.getElementById(id);
     const messagesEl = $("chat-messages");
@@ -5824,8 +5829,23 @@
           $("foot-avatar").textContent = name.slice(0, 1);
         }
       } catch (_) {}
-      const conversation = switchConversation(createDraftConversationKey());
-      initializeConversation(conversation);
+      if (LAUNCH_PROJECT_ID && state.projects.some((item) => item.project_id === LAUNCH_PROJECT_ID)) {
+        await selectProject(LAUNCH_PROJECT_ID);
+        if (LAUNCH_KNOWLEDGE_POINT_ID) {
+          const detail = await loadProjectDetail(LAUNCH_PROJECT_ID).catch(() => null);
+          const pathItem = detail && (detail.learning_path?.items || []).find(
+            (item) => item.knowledge_point_id === LAUNCH_KNOWLEDGE_POINT_ID,
+          );
+          await openLesson(
+            LAUNCH_PROJECT_ID,
+            LAUNCH_KNOWLEDGE_POINT_ID,
+            pathItem?.knowledge_point_name || LAUNCH_KNOWLEDGE_POINT_ID,
+          );
+        }
+      } else {
+        const conversation = switchConversation(createDraftConversationKey());
+        initializeConversation(conversation);
+      }
     }
     boot();
   </script>
