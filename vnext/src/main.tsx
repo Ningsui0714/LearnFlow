@@ -794,7 +794,7 @@ function App() {
                     {pages.length - 1 > backPages.length && <span className="paper-edge-more">+{pages.length - 1 - backPages.length}</span>}
                   </div>
                 )}
-                <div className={hasWorkbench ? 'paper-sheet' : undefined}>
+                <div className={hasWorkbench ? 'paper-sheet' : 'conversation-page-content'}>
                   {sheet && (
                     <blockquote className="selected-quote">
                       <span>本页从这段原文展开</span>

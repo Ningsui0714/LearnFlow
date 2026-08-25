@@ -75,7 +75,7 @@ button { cursor: pointer; }
 .split-pane-bar button:hover { background: #e0e6e1; color: #26372e; }
 
 .chat-page { display: flex; min-height: 0; flex: 1; flex-direction: column; background: #fff; }
-.chat-thread, .conversation-surface { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.chat-thread, .conversation-surface, .conversation-paper, .conversation-page-content { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
 .chat-heading { display: flex; min-height: 58px; flex: none; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid #e6ebe7; background: rgba(255,255,255,.94); padding: 10px 22px; }
 .chat-heading h1, .settings-intro h1 { margin: 0; color: #17231d; font-size: 16px; font-weight: 680; letter-spacing: -.015em; }
 .chat-heading h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
