@@ -4,6 +4,7 @@ from app.services.architecture_registry import (
     CHAT_MODES,
     CAPABILITY_OWNERS,
     EVENTS,
+    KERNELS,
     KERNEL_NAMES,
     SKILLS,
     TOOLS,
@@ -35,6 +36,11 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
         "free", "explain", "learn", "plan",
     ]
     assert len(manifest["chat_modes"]) == 4
+    assert KERNELS["knowledge"].claim_mode == "evidence_claims"
+    assert "Learning-path self-report never implies knowledge mastery." in KERNELS["structure"].hard_boundaries
+    assert KERNELS["human"].claim_mode == "directive_claims"
+    assert KERNELS["value"].claim_mode == "consent_claims"
+    assert KERNELS["practice"].claim_mode == "performance_claims"
 
 
 def test_chat_modes_are_tutor_postures_with_registered_action_projection():
@@ -65,7 +71,7 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
     assert EVENTS["project_deleted"].kernel_targets == ()
 
 
-def test_vnext_tools_are_registered_without_learning_state_writes():
+def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
@@ -103,8 +109,8 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
-    assert "append-only local event queue" in TOOLS["vnext_learning_task_runtime"].write_path
-    assert "learner-confirmed Value Claim proposal" in TOOLS["vnext_learning_plan_runtime"].write_path
+    assert "registered EvidenceEvent" in TOOLS["vnext_learning_task_runtime"].write_path
+    assert "explicit confirmation EvidenceEvent" in TOOLS["vnext_learning_plan_runtime"].write_path
     assert registry_manifest()["authority"]["vnext_learning_substate_projection"] == (
         "guided_learning main state -> bound learning skill -> current skill step substate; "
         "transitions only from the browser-local event queue"
@@ -113,9 +119,7 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
         "structure", "knowledge", "human", "value", "practice",
     )
     assert "bounded read-only Tutor context" in TOOLS["vnext_five_kernel_profile_reader"].write_path
-    assert all(
-        EVENTS[event_id].kernel_targets == ()
-        for event_id in {
+    assert all(EVENTS[event_id].kernel_targets == () for event_id in {
             "vnext_learning_task_created", "vnext_learning_task_started",
             "vnext_learning_task_phase_entered",
             "vnext_learning_skill_step_entered", "vnext_learning_skill_looped",
@@ -124,13 +128,21 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
             "vnext_learning_task_resumed", "vnext_learning_task_completed",
             "vnext_learning_plan_started", "vnext_learning_plan_note_captured",
             "vnext_project_seed_ready", "vnext_value_claim_proposed",
-            "vnext_value_claim_proposal_accepted", "vnext_value_claim_proposal_rejected",
+            "vnext_value_claim_proposal_rejected",
             "vnext_value_claim_proposal_revision_requested", "vnext_learning_plan_closed",
-            "vnext_learning_path_node_status_set", "vnext_personal_path_node_added",
-            "vnext_personal_path_node_removed",
-        }
+        })
+    assert EVENTS["vnext_value_claim_proposal_accepted"].kernel_targets == ("value",)
+    assert EVENTS["vnext_learning_path_node_status_set"].kernel_targets == (
+        "structure", "knowledge",
+    )
+    assert EVENTS["vnext_personal_path_node_added"].kernel_targets == (
+        "structure", "value",
     )
     assert "self-report is never Knowledge mastery" in TOOLS["vnext_learning_path_graph_reader"].write_path
+    assert CAPABILITY_OWNERS["manage_learner_memory"] == (
+        "tutor_agent", "learner_memory_manager", "vnext_profile",
+    )
+    assert "manage_learner_memory" in WORKBENCHES["vnext_profile"].capabilities
 
 
 def test_remediation_events_have_standard_authority_provenance():

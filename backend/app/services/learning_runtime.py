@@ -239,6 +239,154 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             )
         return
 
+    if et == "vnext_value_claim_proposal_accepted":
+        proposal_id = str(p.get("proposal_id") or f"event:{event.id}")[:160]
+        statement = str(p.get("proposed_claim") or p.get("goal") or "").strip()[:1000]
+        if not statement:
+            return
+        state = await _kernel(db, event.learner_id, "value")
+        confirmed_goals = dict((state.long_term or {}).get("confirmed_goals") or {})
+        confirmed_goals[proposal_id] = {
+            "statement": statement,
+            "evidence_quote": str(p.get("evidence_quote") or "")[:500],
+            "scope": str(p.get("scope") or "long_term_direction_candidate")[:80],
+            "status": "confirmed",
+            "evidence_id": event.id,
+        }
+        await _apply_patch(
+            db, event, "value",
+            {
+                "current_priority": statement,
+                "goal_candidate": statement,
+                "goal_status": "confirmed",
+            },
+            "学习者在规划态检查旧内容、建议与原话依据后确认了价值声明",
+            long_patch={"confirmed_goals": confirmed_goals},
+        )
+        return
+
+    if et == "vnext_learning_path_node_status_set":
+        node_id = str(p.get("node_id") or "").strip()[:160]
+        status = str(p.get("status") or "unmarked")
+        if not node_id or status not in {
+            "unmarked", "exploring", "self_reported_exposed", "self_reported_mastered",
+        }:
+            return
+        structure = await _kernel(db, event.learner_id, "structure")
+        statuses = dict((structure.long_term or {}).get("learning_path_statuses") or {})
+        if status == "unmarked":
+            statuses.pop(node_id, None)
+        else:
+            statuses[node_id] = {
+                "status": status,
+                "title": str(p.get("node_title") or node_id)[:200],
+                "self_reported": True,
+                "evidence_id": event.id,
+            }
+        short_patch: dict[str, Any] = {"learning_path_last_edit": node_id}
+        if status == "exploring":
+            short_patch["path_position"] = {
+                "level": "learning_path_node",
+                "node_id": node_id,
+                "title": str(p.get("node_title") or node_id)[:200],
+                "status": status,
+            }
+            short_patch["resume_anchor"] = {
+                "node_id": node_id,
+                "note": f"返回学习路径中的「{str(p.get('node_title') or node_id)[:120]}」",
+            }
+        await _apply_patch(
+            db, event, "structure", short_patch,
+            "学习者明确设置课程图节点状态；该状态只用于路径导航",
+            long_patch={"learning_path_statuses": statuses},
+        )
+
+        knowledge = await _kernel(db, event.learner_id, "knowledge")
+        exposure = dict((knowledge.short_term or {}).get("declared_course_exposure") or {})
+        if status in {"self_reported_exposed", "self_reported_mastered"}:
+            exposure[node_id] = {
+                "status": status,
+                "title": str(p.get("node_title") or node_id)[:200],
+                "self_reported_only": True,
+                "mastery_unchanged": True,
+                "evidence_id": event.id,
+            }
+        else:
+            exposure.pop(node_id, None)
+        await _apply_patch(
+            db, event, "knowledge",
+            {"declared_course_exposure": exposure, "mastery_unchanged": True},
+            "课程图标记只形成自报接触背景，不形成知识掌握",
+        )
+        return
+
+    if et == "vnext_personal_path_node_added":
+        node = dict(p.get("node") or {})
+        node_id = str(node.get("id") or p.get("node_id") or "").strip()[:160]
+        title = str(node.get("title") or p.get("node_title") or "").strip()[:200]
+        if not node_id or not title:
+            return
+        structure = await _kernel(db, event.learner_id, "structure")
+        nodes = dict((structure.long_term or {}).get("personal_learning_path_nodes") or {})
+        nodes[node_id] = {
+            "id": node_id,
+            "title": title,
+            "summary": str(node.get("summary") or "")[:1000],
+            "aliases": list(node.get("aliases") or [])[:8],
+            "domains": list(node.get("domains") or [])[:8],
+            "stage": str(node.get("stage") or "advanced")[:40],
+            "order": int(node.get("order") or 6),
+            "source_refs": list(node.get("sourceRefs") or node.get("source_refs") or [])[:8],
+            "edges": list(p.get("edges") or [])[:12],
+            "status": "active",
+            "evidence_id": event.id,
+        }
+        await _apply_patch(
+            db, event, "structure",
+            {"learning_path_last_edit": node_id, "goal_candidate_node": node_id},
+            "学习者确认把图谱外的真实学习目标加入个人课程图",
+            long_patch={"personal_learning_path_nodes": nodes},
+        )
+        await _apply_patch(
+            db, event, "value",
+            {
+                "interest_signal": title,
+                "goal_candidate": title,
+                "relevance_reason": str(p.get("reason") or "学习者主动加入个人路径节点")[:500],
+            },
+            "个人路径节点是明确兴趣候选，但不是固定长期方向",
+        )
+        return
+
+    if et == "vnext_personal_path_node_removed":
+        node_id = str(p.get("node_id") or "").strip()[:160]
+        if not node_id:
+            return
+        structure = await _kernel(db, event.learner_id, "structure")
+        nodes = dict((structure.long_term or {}).get("personal_learning_path_nodes") or {})
+        removed = dict(nodes.get(node_id) or {})
+        title = str(removed.get("title") or p.get("node_title") or node_id)[:200]
+        if node_id in nodes:
+            removed.update({"status": "removed", "removed_by_event_id": event.id})
+            nodes[node_id] = removed
+        statuses = dict((structure.long_term or {}).get("learning_path_statuses") or {})
+        statuses.pop(node_id, None)
+        await _apply_patch(
+            db, event, "structure",
+            {"learning_path_last_edit": node_id},
+            "学习者从当前个人课程图撤下节点；历史事件继续保留",
+            long_patch={
+                "personal_learning_path_nodes": nodes,
+                "learning_path_statuses": statuses,
+            },
+        )
+        await _apply_patch(
+            db, event, "value",
+            {"interest_signal": {"title": title, "status": "removed"}},
+            "撤下个人路径节点只结束当前兴趣候选，不改写历史动机",
+        )
+        return
+
     if et == "learning_action_segment_completed":
         action = {
             "segment_id": p.get("segment_id"),

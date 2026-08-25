@@ -329,13 +329,12 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
 完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
 
-`vnext/` 的重构原型在尚未接入后端任务与 Attempt 前，Learning Task 只保存目标、暂停点和本地
-事件；每个 Learning Skill 自己定义步骤、循环和支架。学生点击 Skill 下一动作可以追加零 target
-的 `vnext_learning_skill_step_entered`，请求支架或“再来一轮”追加
-`vnext_learning_skill_looped`，但两者 MUST NOT 发出正式 `learning_task_phase_completed`、表示
-前一步达标或升级掌握。旧 `vnext_learning_task_phase_entered` 只用于兼容 v0.5 浏览器存储。
-接入后端后，正式 `practice / verify / consolidate` 完成仍必须由下述证据投影裁决，不能沿用
-浏览器中的 Skill 导航。
+`vnext/` 已把任务生命周期接入正式 LearningTask API：对话识别或 Skill 启动时建立或复用同目标
+任务，并把开始、暂停、恢复、取消、重开和流程完成同步到全局任务队列。每个 Learning Skill 仍
+自己定义步骤、循环和支架；`vnext_learning_skill_step_entered` 与
+`vnext_learning_skill_looped` 只是零 target 的对话导航事件，MUST NOT 表示前一步达标或升级
+掌握。旧 `vnext_learning_task_phase_entered` 只用于兼容 v0.5 浏览器存储。正式
+`practice / verify / consolidate` 完成仍由证据投影裁决，不能沿用浏览器中的 Skill 导航。
 
 vNext MUST 使用 `Tutor 主状态 -> 绑定 Skill -> 当前 Skill 步骤子状态` 的单一包含关系。首批四个
 Learning Skill 只允许绑定 `guided_learning`；用户预选 Skill 时只绑定下一轮，发送消息并建立任务后
@@ -346,21 +345,23 @@ vNext 的 `learning_plan` MUST 只处理跨多个任务/阶段、复杂真实产
 边界清楚的讲解和原子学习任务。`project_seed` 只能收集目标产物、基础、资源、时间、实践验收和
 约束，并 MUST 明示项目创建尚未接入。`direction` 可以产生 Value Claim Proposal，但 MUST 同时
 呈现旧内容、新建议、直接原话依据和作用域；学习者必须能接受、修改或拒绝。浏览器本地的决定
-事件 MUST 保持零 Kernel target，且 `formalWriteCompleted=false`；正式 Value 写入仍需有 scope 的
-EvidenceEvent 和 reducer，不能由 Tutor、UI 或本地 PlanningEvent 直接完成。
+候选、拒绝和未确认事件 MUST 保持零 Kernel target。学习者明确接受时，前端 MUST 调用正式
+`confirm_value_claim` capability；网关记录带 scope 的 EvidenceEvent 并由 reducer 形成 Value
+投影。Tutor、UI 或本地 PlanningEvent 不能直接完成写入，失败时必须显示“未正式写入”。
 
-vNext Tutor 每轮 MAY 先调用 `vnext_five_kernel_profile_reader`。当前数据源是学习者可检查的
-只读 Module/Claim 模拟，不是正式 KernelState；Reader MUST 按当前问题、任务目标和 Skill 做
-确定性相关检索与预算裁剪，MUST NOT 全量注入画像。敏感 Human Claim MUST 通过
+vNext Tutor 每轮 SHOULD 调用正式 `five_kernel_retriever`；浏览器 Reader 只负责请求和展示
+ContextPacket，不再维护模拟画像。Reader MUST 按当前问题、任务目标和 Skill 做确定性相关检索
+与预算裁剪，MUST NOT 全量注入 KernelState。敏感 Human Claim MUST 通过
 `adapt_silently / ask_before_surface` 过滤，且不得形成固定学习风格、情绪、人格或能力标签。
 Knowledge 与 Structure 可以通过稳定 Module 关系联合读取，但二者不得共享写入权威；Practice
 项目能力必须引用产物与 rubric 证据，不能从任务事件、生成材料或提交计数直接推断。
 
 vNext `learning_plan` SHOULD 调用 `vnext_learning_path_graph_reader`。Reader 输入学习者目标和
-浏览器本地路径事件，输出官方/个人匹配、有限前后关系与缺口标记；输出只作为 Structure 参考，
+正式路径投影，输出官方/个人匹配、有限前后关系与缺口标记；输出只作为 Structure 参考，
 不是强制课表。稳定主题不能因包含一个已有短别名就被误匹配，图谱缺口 MUST 先经过已登记搜索
 形成来源支撑的个人节点提案。`vnext_personal_path_node_runtime` 只有在学习者点击确认后才可追加
-个人节点事件；节点状态必须显示为自报，禁止转译为 Knowledge mastery。
+个人节点事件；正式网关验证 learner scope、所有权和 DAG 约束后调用 `record_event()`。节点状态
+必须显示为自报，禁止转译为 Knowledge mastery。
 
 Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：
 `learn` 需要 Skill 完成、材料查看或学习者明确确认互动结束，`practice` 需要真实 Attempt，
@@ -488,6 +489,11 @@ Agent 文件提案 MUST 绑定 `learner_id + project_id + checkpoint_id + sessio
 | `practice` | 能否在给定约束下独立做出来，并迁移到新情境？ | 尝试、辅助、产物、反馈与迁移表现 | 当前尝试、辅助等级、产物状态、近期反馈 | 独立实践能力与迁移证据 | 有提示成功、原题重做或生成内容等同独立迁移 |
 
 把五核看成“决策分工”而不是“信息分类”更准确：`structure` 决定导航，`knowledge` 决定内容与验证对象，`human` 决定交互适配，`value` 决定优先级，`practice` 决定能力验证。一个事件可以同时触及多个核，但每个 `kernel_target` 都必须有独立证据理由，不能因为某个核发生变化就自动复制到其他核。
+
+五核共用 Fact/Module/Claim 的审计骨架，不共用内容模板。注册表的 KernelContract 还必须声明
+每个核的 Fact、Module、Claim 对象角色和 Claim 模式：Structure 是稀疏导航锚点，Knowledge 是
+证据声明，Human 是凝练交互指令，Value 是经同意的目标声明，Practice 是带产物和迁移证据的表现
+声明。Memory worker MUST 使用这些策略生成和校验候选，不能把一个通用摘要模板套到五个核。
 
 ### 9.2 结构与知识的边界
 

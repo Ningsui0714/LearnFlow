@@ -63,6 +63,7 @@ export type PlanningEvent = {
   signals?: PlanningSignal[]
   valueProposal?: ValueClaimProposal
   proposalId?: string
+  formalWriteCompleted?: boolean
 }
 
 export type LearningPlanProjection = {
@@ -73,7 +74,7 @@ export type LearningPlanProjection = {
   missingRequirements: Array<{ id: PlanningField; label: string }>
   noteCount: number
   eventCount: number
-  valueProposal?: ValueClaimProposal & { decision: ValueProposalDecision }
+  valueProposal?: ValueClaimProposal & { decision: ValueProposalDecision; formalWriteCompleted: boolean }
 }
 
 export type LearningPlanTutorContext = {
@@ -90,7 +91,7 @@ export type LearningPlanTutorContext = {
     proposedClaim: string
     evidenceQuote: string
     decision: ValueProposalDecision
-    formalWriteCompleted: false
+    formalWriteCompleted: boolean
   }
 }
 
@@ -222,10 +223,13 @@ export function projectLearningPlan(plan: LearningPlan, events: PlanningEvent[])
   relevant.forEach(event => {
     event.signals?.forEach(signal => { signals[signal.field] = signal.value })
     if (event.type === 'vnext_value_claim_proposed' && event.valueProposal) {
-      proposal = { ...event.valueProposal, decision: 'proposed' }
+      proposal = { ...event.valueProposal, decision: 'proposed', formalWriteCompleted: false }
     }
     if (proposal && event.proposalId === proposal.id) {
-      if (event.type === 'vnext_value_claim_proposal_accepted') proposal.decision = 'accepted'
+      if (event.type === 'vnext_value_claim_proposal_accepted') {
+        proposal.decision = 'accepted'
+        proposal.formalWriteCompleted = Boolean(event.formalWriteCompleted)
+      }
       if (event.type === 'vnext_value_claim_proposal_rejected') proposal.decision = 'rejected'
       if (event.type === 'vnext_value_claim_proposal_revision_requested') proposal.decision = 'revision_requested'
     }
@@ -271,7 +275,7 @@ export function updateLearningPlan(events: PlanningEvent[], projection: Learning
 
 export function decideValueClaimProposal(
   events: PlanningEvent[], projection: LearningPlanProjection,
-  decision: Exclude<ValueProposalDecision, 'proposed'>, now = Date.now(),
+  decision: Exclude<ValueProposalDecision, 'proposed'>, now = Date.now(), formalWriteCompleted = false,
 ) {
   const proposal = projection.valueProposal
   if (!proposal || proposal.decision !== 'proposed') return events
@@ -281,11 +285,13 @@ export function decideValueClaimProposal(
       ? 'vnext_value_claim_proposal_rejected'
       : 'vnext_value_claim_proposal_revision_requested'
   const detail = decision === 'accepted'
-    ? '学生确认 Value Claim 候选；正式五核写入尚未执行'
+    ? formalWriteCompleted
+      ? '学生确认 Value Claim 候选；已通过正式事件入口写入价值核'
+      : '学生确认 Value Claim 候选；正式后端不可用，本地保留待同步状态'
     : decision === 'rejected'
       ? '学生拒绝 Value Claim 候选；不写入'
       : '学生要求修改 Value Claim 候选；不写入'
-  return appendPlanningEvents(events, projection.plan.id, [{ type, detail, proposalId: proposal.id }], now)
+  return appendPlanningEvents(events, projection.plan.id, [{ type, detail, proposalId: proposal.id, formalWriteCompleted }], now)
 }
 
 export function closeLearningPlan(events: PlanningEvent[], projection: LearningPlanProjection, now = Date.now()) {
@@ -311,7 +317,7 @@ export function learningPlanTutorContext(projection: LearningPlanProjection): Le
       proposedClaim: projection.valueProposal.proposedClaim,
       evidenceQuote: projection.valueProposal.evidenceQuote,
       decision: projection.valueProposal.decision,
-      formalWriteCompleted: false,
+      formalWriteCompleted: projection.valueProposal.formalWriteCompleted,
     } : undefined,
   }
 }
@@ -348,7 +354,7 @@ export function sanitizeLearningPlanTutorContext(value: unknown): LearningPlanTu
         proposedClaim: rawProposal.proposedClaim.slice(0, 300),
         evidenceQuote: rawProposal.evidenceQuote.slice(0, 180),
         decision: rawProposal.decision as ValueProposalDecision,
-        formalWriteCompleted: false as const,
+        formalWriteCompleted: rawProposal.formalWriteCompleted === true,
       }
     : undefined
   return {

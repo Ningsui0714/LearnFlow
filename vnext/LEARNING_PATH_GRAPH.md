@@ -8,7 +8,7 @@
 
 - `LearningPathNode`：一门广为人知的课程或稳定技能域，分官方节点和个人节点。
 - `LearningPathEdge`：从前置指向后继，类型为硬前置、软前置或建议共学；所有边都必须保持 DAG。
-- `LearnerPathState`：浏览器本地追加事件队列，只记录节点状态、个人节点加入和个人节点移除。
+- `LearnerPathState`：正式 Structure 投影，记录节点状态、个人节点加入和个人节点移除；浏览器只保留离线缓存。
 - `LearningPathReadPacket`：规划态的有界只读上下文，包含匹配节点、前后关系、来源边界和图谱缺口判断。
 
 官方图当前有 96 个节点和 155 条边，按入门与基础、计算机核心、专业方向、高阶与新兴、研究与产出五层组织。节点覆盖高职、本科、研究生与自主学习，不等同于某个学校的完整培养方案。高职计算机信息技术专业群显式覆盖计算机应用、软件、网络、云计算、大数据、信息安全、人工智能和移动应用开发的稳定专业基础课与核心课。
@@ -37,7 +37,9 @@
 - `vnext_personal_path_node_added`
 - `vnext_personal_path_node_removed`
 
-这些事件的 Kernel target 都为空。未来要把可靠路线位置写入 Structure 核时，必须新增正式 `EvidenceEvent`，经 `five_kernel_reducer` 归约；练习、项目与迁移证据才能支持 Knowledge/Practice 核更新。
+这些事件已经通过正式学习者状态网关进入 `EvidenceEvent`，由 `five_kernel_reducer` 归约为
+Structure 路径投影。节点“自报学过/掌握”只允许在 Knowledge 记录 self-reported exposure，固定
+`mastery_unchanged=true`；练习、项目与迁移证据才能支持 Knowledge/Practice 核升级。
 
 ## 状态证据边界
 

@@ -1,36 +1,37 @@
-# vNext 五核画像模拟与读取工具 · v1
+# vNext 正式五核画像与读取工具 · v2
 
 ## 一分钟结论
 
-当前 vNext 维护一份**只有 Module 与 Claim**的学习者模拟画像。它来自学习者明确自述，主要用于让 Tutor 选对知识锚点、路径关系、表达方式、当前目标和实践证据缺口。
+当前 vNext 已读取正式后端的 `KernelState -> MemoryFact -> MemoryModule -> MemoryClaim`，不再把浏览器模拟画像当作权威。它让 Tutor 选对知识锚点、路径关系、表达方式、当前目标和实践证据缺口，同时让学习者在独立画像页逐核检查和纠正。
 
-它不是正式 `KernelState`，不记录 `MemoryFact`，不宣称掌握，也不接受 Agent 直接写入。Tutor 每轮调用 `vnext_five_kernel_profile_reader`，按当前问题、对话状态、学习任务目标和 Skill 确定性选出不超过 5 个 Module、9 个可直用 Claim；敏感的人因 Claim 不原样进入模型，而转成静默适配指令。工具调用会显示在对话里；Chat 顶部提供轻量五核概览，设置页可检查完整模拟画像。
+Tutor 每轮通过正式 `five_kernel_retriever` 请求有预算的 answer-free ContextPacket。敏感 Human Claim 不原样进入模型，而转成静默适配指令。任何写入都由 allow-list 网关生成 `EvidenceEvent`，再经 reducer；Agent、Reader 和 UI 都不能直接改 KernelState。
 
 ```text
 学习者问题 + Tutor mode + LearningTask/Skill
   -> 确定性意图与主题识别
-  -> 五核优先级 + 跨核联取
-  -> Module/Claim 评分与预算裁剪
+  -> ContextPolicy + 五核优先级 + scope/主题检索
+  -> Fact/Module/Claim 评分、关系展开与预算裁剪
   -> 敏感信息策略过滤
   -> bounded ContextPacket
   -> Tutor prompt（只读）
 ```
 
-## 1. 当前模拟对象
+## 1. 当前正式对象
 
 ### Module
 
-Module 是一个有主题边界、可单独纠正和版本化的画像单元：
+Module 是由同核、同主题 Fact 经确定性门槛形成的不可变版本：
 
 - `kernel`：Structure / Knowledge / Human / Value / Practice。
 - `subjectKey`：模块所描述的领域。
 - `summary`：供检索和人工检查的压缩摘要。
 - `relatedModuleIds`：跨核联取关系，不建立第六个共享状态核。
-- `claims`：该模块中的原子陈述。
+- `claims`：该模块中的可检查原子陈述。
+- `evidence_fact_ids / delta_fact_ids / parent_module_node_id`：可重放证据闭包与版本链。
 
 ### Claim
 
-Claim 当前只保留：文本、置信度、来源类型、敏感度、使用策略和检索标签。
+Claim 保留文本、置信度、证据边、状态、敏感度、使用策略和版本关系。
 
 - `user_self_report`：学习者明确说过，但不等于已验证能力。
 - `design_boundary`：系统的证据与推断边界，例如“学过不能推断掌握”。
@@ -38,9 +39,9 @@ Claim 当前只保留：文本、置信度、来源类型、敏感度、使用�
 - `adapt_silently`：只转成表达或支架约束，不向模型暴露敏感原文。
 - `ask_before_surface`：未来用于必须经学习者同意才能显式使用的内容；当前种子没有此类 Claim。
 
-这里故意没有 Fact。正式系统仍应遵守 `EvidenceEvent -> reducer -> MemoryFact -> MemoryModule -> MemoryClaim`；当前 vNext 只是验证“Module/Claim 是否足以承载有用内容”的只读产品模拟。
+学习者可以确认、纠正或撤回 Claim；系统生成新事件或新版本，不覆盖原始 Fact。画像中的“删除”是将当前 MemoryFact 归档为不再参考，仍保留审计历史。
 
-## 2. 当前学习者模拟画像
+## 2. 初始学习者自述与正式边界
 
 | 核 | 当前 Module | 关键边界 |
 |---|---|---|
@@ -84,29 +85,21 @@ Claim 当前只保留：文本、置信度、来源类型、敏感度、使用�
 
 对话工具过程只显示读取了哪些核、Module/Claim 数量和是否静默适配，不展示敏感 Claim 原文。Chat 的画像面板只显示学习者自述摘要与 Module 摘要；设置页由本地学习者本人检查完整 Claim。
 
-学习规划态可以产生 Value Claim Proposal，但它不是画像写入。候选必须由学习者接受、修改或拒绝；当前 vNext 即使记录“接受”也固定 `formalWriteCompleted=false`，直到正式 EvidenceEvent/reducer 接入。
+学习规划态可以产生 Value Claim Proposal。候选必须由学习者接受、修改或拒绝；只有正式确认接口成功记录 EvidenceEvent 后，前端才显示 `formalWriteCompleted=true`。失败或离线时保留候选，但明确标记未正式写入。
 
 ### 模型上下文契约
 
 ```ts
 type FiveKernelContextPacket = {
-  snapshotId: string
-  policyId: 'vnext-five-kernel-profile-reader-v1'
-  authority: 'simulated_read_only_profile'
-  selectedModules: Array<{
-    id: string
-    kernel: FiveKernelName
-    summary: string
-    claims: DirectClaim[]
-  }>
-  adaptationDirectives: string[]
-  missingFacets: string[]
-  manifest: {
-    moduleCount: number
-    claimCount: number
-    omittedModuleCount: number
-    noMasteryInference: true
-  }
+  schema_version: string
+  policy_id: string
+  purpose: 'global_tutor' | 'learning_plan' | 'learning_task'
+  heads: KernelHeadSummary[]
+  recalled_items: ContextMemoryItem[]
+  relation_paths: ContextRelationPath[]
+  conflicts: ContextConflict[]
+  missing_facets: string[]
+  omissions: ContextOmissionManifest
 }
 ```
 
@@ -179,18 +172,19 @@ Practice 应维护“在真实约束下能做什么”，至少拆成：
 
 下一版建议：定义 `PracticeEvidenceBundle`，由仓库快照、测试结果、Issue/PR、决策日志、反思、代码审查与独立复现组成；事件只引用该 Bundle，不把它压扁成几个计数。
 
-## 5. 从模拟走向正式系统
+## 5. 正式系统的下一步
 
-1. **可纠正模拟**：设置页支持逐条确认、修订、停用 Claim，并保留版本历史。
-2. **Reader 评测**：建立 30–50 个真实对话用例，检查相关性、遗漏、敏感泄漏、过度个性化和 token 预算。
-3. **共享领域图**：实现 Knowledge/Structure 对齐的 `LearningDomainMap` artifact。
-4. **正式读取适配器**：保持当前 Reader 接口，把数据源从模拟常量替换为正式 `KernelHead + MemoryGraph`，不改变 Tutor 调用方式。
-5. **受控写回**：对话、任务、项目只提出 `EvidenceEvent`；reducer 决定 KernelMutation、Module 版本与 Claim 巩固。Agent 仍无直接写权限。
-6. **项目实践 Bundle**：先在一个真实 Agent 工程项目里验证过程/产物/迁移证据，再扩展 Practice 核。
+1. **Reader 评测**：建立真实对话集，检查相关性、遗漏、敏感泄漏、过度个性化和 token 预算。
+2. **共享领域图**：继续扩充 Knowledge/Structure 共用主题坐标，但保持状态权威分离。
+3. **Human 生命周期**：补齐 TTL、consent、surface policy 与 contradiction count。
+4. **项目实践 Bundle**：在真实 Agent 工程项目里验证过程、产物、迁移与独立贡献证据。
+5. **项目接入**：让项目关卡创建正式 LearningTask，并用同一 ContextPacket 和事件网关读写。
 
 ## 6. 当前代码位置
 
-- 模拟画像、Reader 和 ContextPacket：`vnext/src/five-kernel-profile.ts`
+- 正式前端网关与 ContextPacket：`vnext/src/formal-runtime.ts`
 - Tutor 工具接入：`vnext/server/tool-runtime.ts`
-- 设置页检查界面：`vnext/src/main.tsx`
-- 确定性测试：`vnext/server/five-kernel-profile.test.ts`
+- 五核画像页：`vnext/src/LearnerProfilePage.tsx`
+- 后端正式网关：`backend/app/api/learner_state.py`
+- 读取与分核策略：`backend/app/services/five_kernel_context.py`、`backend/app/services/architecture_registry.py`
+- 确定性测试：`backend/tests/test_learner_state.py`、`backend/tests/test_memory_graph.py`

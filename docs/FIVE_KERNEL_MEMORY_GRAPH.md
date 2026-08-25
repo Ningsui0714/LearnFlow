@@ -8,6 +8,46 @@
 
 短期状态用于当前教学决策，长期模块和声明只在对应核的证据门槛满足后形成。尤其是 `human` 的情绪/负荷默认短期有效，`knowledge` 的掌握需要评分证据，`practice` 的独立能力优先需要无辅助和变式证据。
 
+## 分核内容模型
+
+五个核共用可追溯的数据骨架，但不共用同一种内容模板。注册表为每个核声明
+`fact_role / module_role / claim_role / claim_mode / shared_subjects / hard_boundaries`，合成器和
+读取器都以该策略为准：
+
+| Kernel | Fact 记录什么 | Module 怎样组织 | Claim 怎样表达 |
+|---|---|---|---|
+| `structure` | 当前位置、依赖、转向、阻塞、返回锚点、个人路径变更 | 按项目、路径节点或目标维护稀疏导航片段 | 可恢复的当前位置与下一跳，不出现掌握判断 |
+| `knowledge` | 概念答案、误解、缺口、检索表现与证据等级 | 按稳定 concept key 聚合相互支持或冲突的理解证据 | 带评分依据的理解/误解声明；自报只标记接触 |
+| `human` | 明确偏好、当前负荷、节奏、挫败与讲法反馈 | 按适配主题形成短小、敏感信息优先的交互指令 | “如何支持”而不是人格标签；易变状态默认不长期化 |
+| `value` | 目标候选、兴趣、优先级、原话依据与确认决定 | 按方向或目标主题保存候选、确认和撤回链 | 只有明确确认的长期目标可成为 active Claim |
+| `practice` | 尝试、辅助等级、测试、rubric、产物与迁移表现 | 按任务/项目产物和能力维度组织证据链 | 明确约束下的独立表现；必须能回到验证或迁移证据 |
+
+Structure 与 Knowledge 可以共享 `concept_key / path_node_id / checkpoint_id` 作为主题坐标，但不能
+共享结论：前者回答“现在在哪里”，后者回答“理解证据是什么”。Practice 可以引用同一 concept，
+却只表达“在什么约束下做出来”。Human 和 Value 默认不从答题结果旁推；敏感 Human 信息只在能
+改善交互时进入有界 ContextPacket。
+
+worker 对候选 Claim 执行确定性内容边界检查。它会拒绝 Structure 的掌握声明、Human 的人格/医学/
+固定学习风格标签、没有学生明确确认的 Value 长期目标，以及没有验证产物或独立迁移证据的
+Practice 能力声明。Module/Claim 可以因纠正形成 `SUPERSEDES` 版本，也可以被学习者归档或撤回；
+这些操作改变当前 active 投影，但不会删除原始 Event、Fact 或历史版本。
+
+## 原子事件与产品接入
+
+Chat、学习任务、学习路径和规划态只通过 allow-list 事件网关接入：
+
+- `chat_mode_entered`：记录模式边界，零 Kernel target。
+- `learning_action_segment_completed`：记录一次自由/讲解/带领学习/规划段落；讲解只形成 exposure，明确 learn/plan 目标可形成短期 Value，均不升级掌握。
+- LearningTask 生命周期事件：创建、开始、暂停、恢复、取消、重开、流程完成；零 Kernel target，任务完成不等于掌握。
+- `vnext_learning_path_node_status_set`：更新 Structure 的路径状态；“学过/掌握”只在 Knowledge 留 self-reported exposure，`mastery_unchanged=true`。
+- `vnext_personal_path_node_added/removed`：更新 Structure 个人覆盖层，并在 Value 留短期候选或 tombstone，不产生长期目标。
+- 已接受的 Value proposal：学生查看依据并确认后，由正式 capability 追加确认事件；拒绝、未确认和纯模型建议不能写长期 Value。
+- 记忆归档/恢复、Claim 确认/纠正/撤回：全部追加新事件或新版本，保留原始历史。
+
+vNext 通过 `/api/learner-state/snapshot` 获取五核、任务队列和路径覆盖层，通过
+`/api/learner-state/context` 为 Tutor 获取 answer-free ContextPacket。所有写请求由后端从当前会话
+解析 learner 身份，客户端不能指定其他 learner。
+
 ## 数据分层
 
 1. `EvidenceEvent` 是不可变动作账本，`occurred_at` 表示动作发生时间，`created_at` 表示系统记录时间，`learner_seq` 是学习者内单调序号。
@@ -102,6 +142,11 @@ MEMORY_AUTO_SYNTHESIS_ENABLED=true
 
 ## API
 
+- `GET /api/learner-state/snapshot`：读取当前学习者的五核、记忆、路径覆盖层和正式任务队列。
+- `GET /api/learner-state/context`：按问题和用途读取有预算、answer-free 的 ContextPacket。
+- `POST /api/learner-state/events`：写入 allow-list 的原子产品事件。
+- `POST /api/learner-state/path/*`：写入路径状态和个人节点事件。
+- `POST /api/learner-state/value-claims/*/confirm`：由学习者明确确认长期 Value 候选。
 - `GET /api/memory/graph`：按时间、核、节点类型、状态、项目和主题过滤，最多 300 节点。
 - `GET /api/memory/timeline`：按发生时间分页读取节点。
 - `GET /api/memory/nodes/{id}`：读取节点、邻居、原始动作、证据事实和合成审计。

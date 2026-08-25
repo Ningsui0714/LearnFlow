@@ -390,6 +390,53 @@ def test_synthesis_validator_rejects_out_of_whitelist_and_unproven_mastery():
     assert "claim_0_insufficient_mastery_evidence" in errors
 
 
+def test_kernel_specific_claim_policies_reject_overreach():
+    human_rows = [(
+        MemoryNode(id=2, kernel_name="human"),
+        MemoryFact(node_id=2, source_event_id=20, evidence_grade="inferred"),
+        EvidenceEvent(id=20, event_type="semantic_observation"),
+    )]
+    human_errors = _validate_draft(
+        MemorySynthesisRun(kernel_name="human"),
+        SynthesisDraft(summary="越界", claims=[SynthesisClaimDraft(
+            text="学习者天生属于固定学习风格", predicate="human.personality",
+            value=True, evidence_fact_ids=[2],
+        )]),
+        human_rows,
+    )
+    assert "claim_0_human_overreach" in human_errors
+
+    value_rows = [(
+        MemoryNode(id=3, kernel_name="value"),
+        MemoryFact(node_id=3, source_event_id=30, evidence_grade="inferred"),
+        EvidenceEvent(id=30, event_type="vnext_value_claim_proposed", payload={}),
+    )]
+    value_errors = _validate_draft(
+        MemorySynthesisRun(kernel_name="value"),
+        SynthesisDraft(summary="未确认", claims=[SynthesisClaimDraft(
+            text="学习者已经确定方向并形成长期目标", predicate="value.goal",
+            value=True, evidence_fact_ids=[3],
+        )]),
+        value_rows,
+    )
+    assert "claim_0_value_goal_without_consent" in value_errors
+
+    practice_rows = [(
+        MemoryNode(id=4, kernel_name="practice"),
+        MemoryFact(node_id=4, source_event_id=40, evidence_grade="observed"),
+        EvidenceEvent(id=40, event_type="exercise_attempt_evaluated", payload={}),
+    )]
+    practice_errors = _validate_draft(
+        MemorySynthesisRun(kernel_name="practice"),
+        SynthesisDraft(summary="证据不足", claims=[SynthesisClaimDraft(
+            text="学习者能够独立迁移该技能", predicate="practice.capability",
+            value=True, evidence_fact_ids=[4],
+        )]),
+        practice_rows,
+    )
+    assert "claim_0_practice_capability_without_verified_evidence" in practice_errors
+
+
 def test_cross_kernel_run_is_rejected_without_consuming_facts():
     async def scenario():
         await init_db()

@@ -54,7 +54,7 @@ ACTION_BOARD = {
             (),
         ),
         ActionDefinition(
-            "read_vnext_five_kernel_profile", "为 vNext Tutor 读取相关模拟五核画像", "none", "none",
+            "read_vnext_five_kernel_profile", "为 vNext Tutor 读取正式五核上下文", "none", "none",
             {},
             (),
         ),
@@ -64,9 +64,16 @@ ACTION_BOARD = {
             ("search_computer_knowledge", "manage_vnext_personal_path_node"),
         ),
         ActionDefinition(
-            "manage_vnext_personal_path_node", "标记路径状态或确认管理个人节点", "context", "explicit_or_click",
-            {},
+            "manage_vnext_personal_path_node", "标记路径状态或确认管理个人节点", "write", "explicit_or_click",
+            {"structure": "learning_path_overlay", "knowledge": "self_reported_exposure", "value": "learning_interest_candidate"},
             ("read_vnext_learning_path_graph",),
+        ),
+        ActionDefinition(
+            "manage_learner_memory", "确认、纠正、撤回或归档五核记忆", "write", "explicit_or_click",
+            {"structure": "learner_correction", "knowledge": "learner_correction",
+             "human": "learner_correction", "value": "learner_confirmation",
+             "practice": "learner_correction"},
+            ("read_vnext_five_kernel_profile",),
         ),
         ActionDefinition(
             "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",

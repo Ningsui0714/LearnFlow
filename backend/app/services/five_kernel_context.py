@@ -62,7 +62,7 @@ class ContextPolicy:
 CONTEXT_POLICIES = {
     item.id: item for item in (
         ContextPolicy(
-            "global_tutor", KERNEL_NAMES, ("structure", "human", "value"),
+            "global_tutor", KERNEL_NAMES, KERNEL_NAMES,
             10, 4, 1700, "portfolio_reference",
         ),
         ContextPolicy(

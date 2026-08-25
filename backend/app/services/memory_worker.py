@@ -31,6 +31,7 @@ from app.services.memory_graph import (
     module_evidence_fact_ids,
     rebuild_kernel_long_term_from_modules,
 )
+from app.services.architecture_registry import KERNELS, REGISTRY_VERSION
 from app.services.five_kernel_context import (
     MEMORY_SCHEMA_VERSION,
     memory_salience,
@@ -57,16 +58,28 @@ def _deterministic_draft(
     rows: list[tuple[MemoryNode, MemoryFact, EvidenceEvent]],
 ) -> SynthesisDraft:
     facts = [node for node, _, _ in rows]
-    detail = "；".join(node.text for node in facts)
-    summary = f"{subject_key} 的{kernel_name}动作已形成稳定片段：{detail}"
+    rendered = [
+        f"[{fact.evidence_grade}] {node.text}"
+        for node, fact, _ in rows
+    ]
+    detail = "；".join(rendered)
+    policy = KERNELS[kernel_name]
+    prefix = {
+        "structure": "可返回的学习位置与依赖记录",
+        "knowledge": "当前可证伪的知识证据记录",
+        "human": "当前可纠正的教学适配参考",
+        "value": "学习者目标、兴趣与相关性记录",
+        "practice": "带辅助等级与情境范围的实践记录",
+    }[kernel_name]
+    summary = f"{subject_key} · {prefix}：{detail}"
     if len(summary) > 1200:
         summary = summary[:1199] + "…"
     return SynthesisDraft(
         summary=summary,
         claims=[SynthesisClaimDraft(
-            text=detail[:800],
-            predicate=f"{kernel_name}.synthesis",
-            value={"fact_count": len(facts), "subject": subject_key},
+            text=f"{prefix}：{detail}"[:800],
+            predicate=f"{kernel_name}.{policy.claim_mode}",
+            value={"fact_count": len(facts), "subject": subject_key, "claim_mode": policy.claim_mode},
             evidence_fact_ids=[node.id for node in facts],
         )],
     )
@@ -99,11 +112,14 @@ async def _model_draft(
         max_retries=1,
     )
     structured = llm.with_structured_output(SynthesisDraft, include_raw=True)
+    policy = KERNELS[kernel_name]
     prompt = (
         "你是 LearnFlow 五核记忆合成器。只总结给定的同一维度事实，不补充外部知识。"
         "每条 claim 必须引用至少一个候选 fact_id，且不得引用列表外 ID。"
         "知识维度中，exposure_only 或 self_reported 不能被表述成已掌握。"
-        "保持可证伪、简洁，保留冲突，不要强行求一致。\n"
+        "保持可证伪、简洁，保留冲突，不要强行求一致。"
+        f"本核的 Module 角色：{policy.module_role} Claim 角色：{policy.claim_role} "
+        f"Claim 模式：{policy.claim_mode} 硬边界：{'；'.join(policy.hard_boundaries)}\n"
         f"维度: {kernel_name}\n主题: {subject_key}\n"
         f"候选事实: {json.dumps(candidates, ensure_ascii=False)}"
     )
@@ -126,6 +142,7 @@ def _validate_draft(
     errors: list[str] = []
     allowed = {node.id for node, _, _ in rows}
     facts = {node.id: fact for node, fact, _ in rows}
+    events = {node.id: event for node, _, event in rows}
     if not draft.claims:
         errors.append("module_has_no_claims")
     for index, claim in enumerate(draft.claims):
@@ -140,6 +157,29 @@ def _validate_draft(
                         if fact_id in refs and fact.evidence_grade == "verified"}
             if len(verified) < 2:
                 errors.append(f"claim_{index}_insufficient_mastery_evidence")
+        if run.kernel_name == "structure" and mastery_language:
+            errors.append(f"claim_{index}_structure_cannot_assert_mastery")
+        if run.kernel_name == "human":
+            forbidden = ("人格", "性格", "天生", "固定学习风格", "抑郁", "焦虑症", "智力")
+            if any(marker in claim.text for marker in forbidden):
+                errors.append(f"claim_{index}_human_overreach")
+        if run.kernel_name == "value":
+            goal_language = any(marker in claim.text for marker in ("长期目标", "职业目标", "确定方向", "未来将", "立志"))
+            confirmed = any(
+                events[fact_id].event_type in {"career_goal_confirmed", "vnext_value_claim_proposal_accepted"}
+                or (events[fact_id].payload or {}).get("career_goal_status") == "confirmed"
+                for fact_id in refs if fact_id in events
+            )
+            if goal_language and not confirmed:
+                errors.append(f"claim_{index}_value_goal_without_consent")
+        if run.kernel_name == "practice":
+            capability_language = any(marker in claim.text for marker in ("能够独立", "已经会", "熟练", "可迁移", "掌握"))
+            verified = refs and all(
+                facts[fact_id].evidence_grade == "verified"
+                for fact_id in refs if fact_id in facts
+            )
+            if capability_language and not verified:
+                errors.append(f"claim_{index}_practice_capability_without_verified_evidence")
     return errors
 
 
@@ -416,7 +456,7 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         module_type = (
             "correction" if run.trigger_reason == "correction"
             else "confirmation" if run.trigger_reason == "confirmation"
-            else "synthesis"
+            else KERNELS[run.kernel_name].claim_mode
         )
         revision_kind = (
             "correction" if run.trigger_reason == "correction"
@@ -438,7 +478,7 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
             revision_kind=revision_kind,
             evidence_fact_ids=evidence_ids,
             delta_fact_ids=[int(item) for item in (run.candidate_fact_ids or [])],
-            policy_version=MODULE_VERSION_POLICY,
+            policy_version=f"{MODULE_VERSION_POLICY}@{REGISTRY_VERSION}",
         ))
         await db.flush()
 
@@ -447,6 +487,13 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
             claim_rows = [allowed_rows[item] for item in claim.evidence_fact_ids]
             claim_confidence = min(item[0].confidence or 0 for item in claim_rows)
             verified = all(item[1].evidence_grade == "verified" for item in claim_rows)
+            self_reported = all(item[1].evidence_grade in {"self_reported", "corrected"} for item in claim_rows)
+            verification_status = (
+                "verified" if verified
+                else "self_reported" if run.kernel_name in {"human", "value"} and self_reported
+                else "boundary_recorded" if run.kernel_name == "structure"
+                else "supported"
+            )
             claim_node = MemoryNode(
                 learner_id=run.learner_id,
                 node_type="claim",
@@ -485,7 +532,7 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
                 claim_ordinal=ordinal,
                 predicate=claim.predicate,
                 value=claim.value,
-                verification_status="verified" if verified else "supported",
+                verification_status=verification_status,
             ))
             await db.flush()
             for fact_id in claim.evidence_fact_ids:

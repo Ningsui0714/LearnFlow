@@ -130,12 +130,12 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
 
-vNext 现在还通过 `vnext_learning_task_runtime` 在同一 Chat 中运行最小原子学习任务。明确请求或
-手动选择进入 `guided_learning`；任务只提供目标、暂停点和本地事件锚点，四种已登记 Skill 各自
-拥有不同的确定性步骤与循环。模型只收到当前 Skill 步骤的有界只读上下文。普通回复不切换
-步骤，“不知道/要提示”会追加支架和 Skill 循环事件，暂停、恢复、Skill 切换与流程完成也均为
-零 Kernel target。这个原型不写后端 `EvidenceEvent`、不创建正式 Attempt，也不声明掌握；后续
-接入正式验证时仍必须走既有 Learning Task 与 `LearningAttempt -> EvidenceEvent -> reducer` 契约。
+vNext 通过 `vnext_learning_task_runtime` 在同一 Chat 中编排原子学习任务。明确请求或手动选择进入
+`guided_learning`；四种已登记 Skill 各自拥有确定性步骤、循环和支架。Skill 步骤仍是零 Kernel
+导航事件，但任务的创建、开始、暂停、恢复、取消、重开和流程完成同步到正式 LearningTask API，
+并进入全局任务队列。模型只收到当前 Skill 步骤和有预算五核 ContextPacket。普通回复不切换步骤，
+“不知道/要提示”留在本步。任务完成只表示流程里程碑；正式掌握仍必须走
+`LearningAttempt -> EvidenceEvent -> reducer` 契约。
 
 Contract impact：注册表版本提升到 `2026-08-25.5`，新增零 target 的
 `vnext_learning_skill_step_entered` 与 `vnext_learning_skill_looped`。旧的
@@ -143,10 +143,10 @@ Contract impact：注册表版本提升到 `2026-08-25.5`，新增零 target 的
 Skill 的近似步骤；新任务不再写通用四阶段事件。既有三 Agent、五核、后端 LearningTask API、
 Skill 稳定 ID 和模型 API 均保持兼容。
 
-vNext 另登记只读工具 `vnext_five_kernel_profile_reader`。它从学习者明确自述形成的模拟
-Module/Claim 画像中，按问题、Tutor mode、LearningTask 与当前 Skill 确定性选择有预算的
-跨核 ContextPacket；敏感 Human Claim 只能转成静默适配指令。模拟画像不是正式
-`KernelState / MemoryFact`，Reader 不写任何 Kernel、不声明掌握，也不改变正式五核读取链。
+vNext 的只读工具 `vnext_five_kernel_profile_reader` 已收敛为正式 `five_kernel_retriever` 的前端入口。
+它按问题、Tutor mode、LearningTask 与当前 Skill 请求有预算的跨核 ContextPacket，不读取浏览器
+模拟画像；敏感 Human Claim 只能转成静默适配指令。Reader 不写任何 Kernel、不声明掌握，且
+Global Tutor 允许深读五核但仍受 ContextPolicy、scope、关系展开和 token budget 约束。
 
 Contract impact：注册表版本提升到 `2026-08-25.6`，新增 capability
 `read_vnext_five_kernel_profile` 与同名稳定工具登记。既有三 Agent、正式
@@ -162,33 +162,42 @@ Contract impact：注册表版本提升到 `2026-08-25.7`。此次只把既有 S
 复用既有 `vnext_learning_skill_step_entered` 和浏览器本地事件队列；稳定 Skill ID、EventContract、
 后端 API、三 Agent 与五核写入链均向后兼容，没有新增 Kernel writer 或掌握语义。
 
-vNext 现补齐第四种 Tutor 姿态 `learning_plan`。确定性规则只把跨多个任务/阶段、较复杂真实产物，
-以及职业、科研和长期方向问题送入规划态；原子目标仍进入 `guided_learning`。规划态以浏览器本地
-追加事件投影 `project_seed` 或 `direction` 草案。前者只收集项目启动信息，当前不得生成项目 ID、
+vNext 现有第四种 Tutor 姿态 `learning_plan`。确定性规则只把跨多个任务/阶段、较复杂真实产物，
+以及职业、科研和长期方向问题送入规划态；原子目标仍进入 `guided_learning`。规划态投影
+`project_seed` 或 `direction` 草案。前者只收集项目启动信息，当前不得生成项目 ID、
 关卡或文件夹；后者可以提出 Value Claim 候选，但必须展示当前内容、建议、学生原话依据和作用域，
-并等待接受、修改或拒绝。三个决定均为零 Kernel target；正式写入仍必须经过
-`EvidenceEvent -> five_kernel_reducer -> KernelMutation`，且长期 Value 目标要求学习者明确确认。
+并等待接受、修改或拒绝。拒绝和未确认候选不写 Value；接受由 `confirm_value_claim` capability
+追加正式、带作用域的确认事件，再经过 `EvidenceEvent -> five_kernel_reducer -> KernelMutation`。
+Tutor、UI 与规划模型都不能直接改长期 Value。
 
 Contract impact：注册表版本提升到 `2026-08-25.8`，新增 `vnext_learning_plan_runtime`、capability
 `run_vnext_learning_plan` 与八个浏览器本地零 target 规划事件。既有三 Agent、正式项目 API、
 LearningTask、Value reducer、模型 API 和 Skill ID 均向后兼容；当前没有新增 Kernel writer，
 也没有把本地候选确认视为正式 Value Claim 写入。
 
-vNext 新增 `vnext_learning_path_graph_reader` 与 `vnext_personal_path_node_runtime`。前者读取版本化
-官方课程 DAG 和学习者浏览器本地个人覆盖层，为学习规划态提供有界 Structure 参考；后者只接受
+vNext 使用 `vnext_learning_path_graph_reader` 与 `vnext_personal_path_node_runtime`。前者读取版本化
+官方课程 DAG 和正式个人覆盖层，为学习规划态提供有界 Structure 参考；后者只接受
 学习者点击确认后的自报状态或个人节点变更。官方节点不是强制培养方案，匹配失败时先由已登记的
 计算机知识搜索确认主题与已有节点关系，再生成可拒绝的个人节点提案。
 
-`/learning-path` 负责图谱查看、筛选、自报标记和个人节点管理，`/learner-profile` 负责单独展示
-模拟五核 Module/Claim 及路径摘要。两者继续使用 vNext 多页签和并排容器，不新增主 Agent。
-路径状态与个人节点通过三个浏览器本地零 Kernel 事件投影：
+`/learning-path` 负责图谱查看、筛选、自报标记和个人节点管理，`/learner-profile` 负责分核展示
+正式 KernelState、MemoryFact、Module/Claim 及路径摘要，`/tasks` 负责正式原子任务队列。三者
+继续使用 vNext 多页签和并排容器，不新增主 Agent。路径状态与个人节点通过三个正式事件投影：
 `vnext_learning_path_node_status_set`、`vnext_personal_path_node_added`、
-`vnext_personal_path_node_removed`。自报“学过/掌握”只能帮助路线导航，不能生成 Knowledge
-mastery；未来 Structure 写回仍必须走 `EvidenceEvent -> five_kernel_reducer -> KernelMutation`。
+`vnext_personal_path_node_removed`。正式网关校验 learner scope、所有权、稳定节点和 allow-list，
+然后统一调用 `record_event()`。自报“学过/掌握”更新 Structure，最多在 Knowledge 记录
+self-reported exposure，不能生成 mastery。
 
-Contract impact：注册表版本提升到 `2026-08-25.9`，新增两个工具、两个 capability、两个工作台和
-三个零 Kernel 事件。原有 API、正式五核写入链、三类主 Agent 和 vNext 浏览器状态均向后兼容；
-旧状态缺少学习路径字段时确定性补入初始自述投影。
+Contract impact：注册表版本提升到 `2026-08-25.11`。新增正式学习者状态网关、记忆管理工具、
+任务队列工作台及五核内容策略元数据；原有 API、稳定事件 ID、正式五核写入链、三类主 Agent 和
+vNext 浏览器工作区均向后兼容。浏览器路径状态继续作为离线缓存，联网后由正式投影覆盖；没有
+数据库 schema 迁移。
+
+五核内容策略由注册表公开，避免“所有核都长成同一种摘要”：Structure 使用稀疏锚点 Claim，
+Knowledge 使用证据声明，Human 使用交互指令，Value 使用经同意的目标声明，Practice 使用带产物、
+辅助等级和迁移证据的表现声明。每个策略分别声明 Fact/Module/Claim 的对象角色、共享主题和硬边界；
+worker 在生成后再次执行确定性越界校验，拒绝 Structure 掌握、Human 人格/医学标签、未确认 Value
+长期目标和无验证 Practice 能力声明。
 
 ### Learning Task 与双队列
 

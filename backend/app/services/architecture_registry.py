@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.9"
+REGISTRY_VERSION = "2026-08-25.11"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -72,6 +72,12 @@ class KernelContract:
     question: str
     short_term_keys: tuple[str, ...]
     long_term_rule: str
+    fact_role: str
+    module_role: str
+    claim_role: str
+    claim_mode: str
+    shared_subjects: tuple[str, ...]
+    hard_boundaries: tuple[str, ...]
     writer: str = "five_kernel_reducer"
 
 
@@ -195,19 +201,44 @@ KERNELS = {
     item.id: item for item in (
         KernelContract("structure", "学习者走到哪里，怎样离开与返回",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["structure"])),
-                       "Only stable path patterns and confirmed project structure may consolidate."),
+                       "Only stable path patterns and confirmed project structure may consolidate.",
+                       "Event-backed navigation, dependency and boundary observations.",
+                       "A replaceable route or boundary snapshot; it may remain state-first with one compact anchor claim.",
+                       "Optional factual anchor about position or dependency, never a mastery statement.",
+                       "sparse_anchor", ("course", "project", "checkpoint", "task"),
+                       ("Learning-path self-report never implies knowledge mastery.",)),
         KernelContract("knowledge", "对哪个知识点理解到什么程度",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["knowledge"])),
-                       "Mastery and misconception require graded or explicitly correctable evidence."),
+                       "Mastery and misconception require graded or explicitly correctable evidence.",
+                       "Concept attempts, misconceptions, questions, retention and correction facts.",
+                       "Concept-scoped evidence synthesis shared by subject key with Structure but independently authoritative.",
+                       "Testable concept claim with explicit evidence grade and correction history.",
+                       "evidence_claims", ("course", "concept", "checkpoint", "task"),
+                       ("Exposure and self-report cannot become mastery.", "Mastery requires repeated verified evidence.")),
         KernelContract("human", "当前怎样教更合适",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["human"])),
-                       "Preferences consolidate after explicit confirmation or cross-session evidence."),
+                       "Preferences consolidate after explicit confirmation or cross-session evidence.",
+                       "Explicit preferences plus bounded, time-sensitive load and support observations.",
+                       "A compact adaptation directive; transient sensitive facts normally expire before module synthesis.",
+                       "Sparse learner-correctable teaching directive, not a personality or diagnosis label.",
+                       "directive_claims", ("preference", "session", "task"),
+                       ("No personality, medical or fixed learning-style inference.", "Sensitive content is excluded from ordinary Agent context.")),
         KernelContract("value", "为什么学，什么更值得投入",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["value"])),
-                       "Long-term goals require explicit learner confirmation."),
+                       "Long-term goals require explicit learner confirmation.",
+                       "Goal proposals, confirmed goals, interests, relevance and priority observations.",
+                       "A learner-visible goal or interest trajectory; proposals remain short-lived until explicit confirmation.",
+                       "Confirmed direction or stable relevance claim with the learner's original evidence quote.",
+                       "consent_claims", ("goal", "course", "project", "task"),
+                       ("Planning tools may propose but never silently confirm a long-term goal.",)),
         KernelContract("practice", "能否独立做出来",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["practice"])),
-                       "Independent and transfer attempts outrank assisted completion."),
+                       "Independent and transfer attempts outrank assisted completion.",
+                       "Attempts, assistance level, artifacts, feedback, transfer and project performance facts.",
+                       "Artifact or task scoped performance history; event/fact-first and often richer than a generic summary module.",
+                       "Bounded capability claim that states assistance and transfer conditions; optional until evidence is sufficient.",
+                       "performance_claims", ("practice", "artifact", "project", "checkpoint", "task"),
+                       ("Assisted success and original-item retry never become independent transfer.", "Project evidence may outlive a single learning session.")),
     )
 }
 
@@ -227,15 +258,17 @@ TOOLS = {
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
-                     (), (), "append-only local event queue -> deterministic task projection -> bounded Tutor context; no learner-state write"),
+                     KERNEL_NAMES, (), "browser interaction -> registered EvidenceEvent + formal LearningTask API -> deterministic task projection; lifecycle events never imply mastery"),
         ToolContract("vnext_learning_plan_runtime", "vNext In-chat Learning Plan Runtime", "tutor_agent", "vnext", "orchestration",
-                     KERNEL_NAMES, (), "append-only local planning events -> project seed or direction projection -> learner-confirmed Value Claim proposal; no KernelState write"),
-        ToolContract("vnext_five_kernel_profile_reader", "vNext Simulated Five-kernel Profile Reader", "tutor_agent", "vnext", "read",
-                     KERNEL_NAMES, (), "simulated Module/Claim profile -> deterministic intent selection -> bounded read-only Tutor context; no learner-state write"),
+                     KERNEL_NAMES, (), "planning events -> learner-visible proposal -> explicit confirmation EvidenceEvent -> reducer; proposal/rejection remain zero-target"),
+        ToolContract("vnext_five_kernel_profile_reader", "vNext Formal Five-kernel Context Reader", "tutor_agent", "vnext", "read",
+                     KERNEL_NAMES, (), "ContextPolicy -> KernelHead + scoped Memory Graph -> bounded read-only Tutor context; local simulation is offline fallback only"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
-                     ("structure", "knowledge", "value"), (), "versioned official course DAG + browser-local personal overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
+                     ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
         ToolContract("vnext_personal_path_node_runtime", "vNext Personal Learning Path Node Runtime", "tutor_agent", "vnext", "orchestration",
-                     ("structure", "value"), (), "search-backed proposal -> explicit learner confirmation -> append-only browser-local path event; no KernelState write"),
+                     ("structure", "knowledge", "value"), (), "search-backed proposal or status edit -> explicit learner confirmation -> EvidenceEvent -> reducer"),
+        ToolContract("learner_memory_manager", "Learner-controlled Five-kernel Memory Manager", "tutor_agent", "learnflow", "transaction",
+                     KERNEL_NAMES, (), "learner confirmation/correction/retraction/archive -> EvidenceEvent -> reducer or projection filter; immutable history retained"),
         ToolContract("workspace_lifecycle", "Conversation and Project Workspace Lifecycle", "tutor_agent", "learnflow", "transaction",
                      (), (), "confirmed workspace removal + zero-target audit event; learning evidence retained"),
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
@@ -449,7 +482,7 @@ WORKBENCHES = {
         WorkbenchContract("vnext_learning_path", "vNext Learning Path Graph", "/learning-path", "tutor_agent",
                           ("read_vnext_learning_path_graph", "manage_vnext_personal_path_node"), "vnext"),
         WorkbenchContract("vnext_profile", "vNext Learner Profile", "/learner-profile", "tutor_agent",
-                          ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph"), "vnext"),
+                          ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph", "manage_learner_memory"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -492,6 +525,7 @@ CAPABILITY_OWNERS = {
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
     "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
     "manage_vnext_personal_path_node": ("tutor_agent", "vnext_personal_path_node_runtime", "vnext_learning_path"),
+    "manage_learner_memory": ("tutor_agent", "learner_memory_manager", "vnext_profile"),
     "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),
@@ -569,13 +603,18 @@ EVENTS = {
         _event("vnext_project_seed_ready", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
         _event("vnext_direction_plan_ready", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
         _event("vnext_value_claim_proposed", "run_vnext_learning_plan", (), "local_proposal", origin="vnext"),
-        _event("vnext_value_claim_proposal_accepted", "run_vnext_learning_plan", (), "local_confirmation_without_kernel_write", origin="vnext"),
+        _event("vnext_value_claim_proposal_accepted", "run_vnext_learning_plan", ("value",), "learner_confirmed_goal", origin="vnext"),
         _event("vnext_value_claim_proposal_rejected", "run_vnext_learning_plan", (), "local_rejection", origin="vnext"),
         _event("vnext_value_claim_proposal_revision_requested", "run_vnext_learning_plan", (), "local_revision_request", origin="vnext"),
         _event("vnext_learning_plan_closed", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
-        _event("vnext_learning_path_node_status_set", "manage_vnext_personal_path_node", (), "local_self_report_for_navigation", origin="vnext"),
-        _event("vnext_personal_path_node_added", "manage_vnext_personal_path_node", (), "local_confirmed_structure_overlay", origin="vnext"),
-        _event("vnext_personal_path_node_removed", "manage_vnext_personal_path_node", (), "local_confirmed_structure_overlay_removal", origin="vnext"),
+        _event("vnext_learning_path_node_status_set", "manage_vnext_personal_path_node", ("structure", "knowledge"), "learner_self_report_for_navigation", origin="vnext"),
+        _event("vnext_personal_path_node_added", "manage_vnext_personal_path_node", ("structure", "value"), "learner_confirmed_structure_overlay", origin="vnext"),
+        _event("vnext_personal_path_node_removed", "manage_vnext_personal_path_node", ("structure", "value"), "learner_confirmed_structure_overlay_removal", origin="vnext"),
+        _event("memory_correction_confirmed", "manage_learner_memory", KERNEL_NAMES, "learner_confirmation", tool="learner_memory_manager", workbench="vnext_profile"),
+        _event("memory_correction_added", "manage_learner_memory", KERNEL_NAMES, "learner_correction", tool="learner_memory_manager", workbench="vnext_profile"),
+        _event("memory_correction_retracted", "manage_learner_memory", KERNEL_NAMES, "learner_retraction", tool="learner_memory_manager", workbench="vnext_profile"),
+        _event("memory_archived", "manage_learner_memory", (), "projection_archive", tool="learner_memory_manager", workbench="vnext_profile"),
+        _event("memory_restored", "manage_learner_memory", (), "projection_restore", tool="learner_memory_manager", workbench="vnext_profile"),
         _event("conversation_deleted", "delete_conversation", (), "confirmed_workspace_removal"),
         _event("learning_task_created", "manage_learning_tasks", (), "operational"),
         _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
@@ -774,10 +813,10 @@ def registry_manifest() -> dict[str, Any]:
             "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
-            "vnext_learning_task_projection": "append-only browser-local operational events -> deterministic in-chat task projection; never mastery evidence",
+            "vnext_learning_task_projection": "browser interaction -> registered EvidenceEvent + formal LearningTask API -> deterministic in-chat task projection; lifecycle never mastery evidence",
             "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> current skill step substate; transitions only from the browser-local event queue",
-            "vnext_learning_plan_projection": "planning intent -> append-only browser-local plan events -> project seed or direction advice; Value Claim changes remain learner-decided proposals until the formal EvidenceEvent reducer is connected",
-            "vnext_learning_path_projection": "versioned official course DAG + append-only browser-local status/personal-node events -> deterministic Structure reference projection; learner self-report never implies Knowledge mastery",
+            "vnext_learning_plan_projection": "planning intent -> proposal -> explicit learner decision; accepted Value changes enter the formal EvidenceEvent reducer",
+            "vnext_learning_path_projection": "versioned official course DAG + formal learner overlay events -> Structure/Value reference projection; Knowledge only records self-reported exposure and never mastery",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],

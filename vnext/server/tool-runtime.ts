@@ -211,6 +211,7 @@ export async function runTutorTools(options: {
   mode?: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
   learningTaskContext?: LearningTaskTutorContext
   learnerPathState?: LearnerPathState
+  formalLearnerContext?: string
 }) {
   let kinds = options.choice === 'auto' ? autoToolKinds(options.message) : [options.choice]
   const runs: TutorToolRun[] = []
@@ -225,19 +226,28 @@ export async function runTutorTools(options: {
   if (pathPacket?.needsExternalResearch && !kinds.includes('search')) kinds = ['search', ...kinds]
 
   const profileStartedAt = Date.now()
-  const profilePacket = readFiveKernelProfile({
-    message: options.message,
-    mode: options.mode,
-    learningTaskContext: options.learningTaskContext,
-  })
-  if (profilePacket.selectedModules.length > 0) {
-    const kernelLabels = profilePacket.manifest.kernels.map(kernel => FIVE_KERNEL_LABELS[kernel])
+  if (options.formalLearnerContext) {
     runs.push({
       id: id('tool'), kind: 'memory', status: 'completed', title: '读取五核画像',
-      detail: `按本轮意图选取 ${kernelLabels.join('、')}中的 ${profilePacket.manifest.moduleCount} 个 Module / ${profilePacket.manifest.claimCount} 个可直用 Claim；${profilePacket.adaptationDirectives.length} 条人因信息仅作静默适配。未读取整份画像，也未写回学习状态。`,
+      detail: '从正式 ContextPacket 读取与本轮相关的五核投影、Module 与 Claim。上下文已做范围控制和答案隔离；本次工具调用只读、不改写五核。',
       durationMs: Date.now() - profileStartedAt,
     })
-    context.push(profilePacketToTutorContext(profilePacket))
+    context.push(options.formalLearnerContext)
+  } else {
+    const profilePacket = readFiveKernelProfile({
+      message: options.message,
+      mode: options.mode,
+      learningTaskContext: options.learningTaskContext,
+    })
+    if (profilePacket.selectedModules.length > 0) {
+      const kernelLabels = profilePacket.manifest.kernels.map(kernel => FIVE_KERNEL_LABELS[kernel])
+      runs.push({
+        id: id('tool'), kind: 'memory', status: 'completed', title: '读取五核画像（离线回退）',
+        detail: `正式五核未连接；仅使用本地演示画像中的 ${kernelLabels.join('、')}，共 ${profilePacket.manifest.moduleCount} 个 Module / ${profilePacket.manifest.claimCount} 个 Claim。该内容不作为正式用户状态。`,
+        durationMs: Date.now() - profileStartedAt,
+      })
+      context.push(profilePacketToTutorContext(profilePacket))
+    }
   }
 
   let pathRun: TutorToolRun | undefined

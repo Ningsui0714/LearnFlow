@@ -47,7 +47,8 @@ RELATION_TYPES = (
 TRANSIENT_HUMAN_KEYS = {"affect", "cognitive_load", "attention", "frustration", "support_need"}
 BOUNDARY_EVENTS = {
     "project_created", "project_imported", "project_selected", "checkpoint_entered",
-    "checkpoint_completed", "project_completed",
+    "checkpoint_completed", "project_completed", "vnext_personal_path_node_added",
+    "vnext_personal_path_node_removed", "vnext_learning_path_node_status_set",
 }
 EXPLICIT_PREFERENCE_KEYS = {
     "weekly_hours", "preferred_modes", "learning_preferences", "pace_preference",
@@ -407,6 +408,7 @@ def _trigger_reason(
     elif kernel_name == "value":
         confirmed = any(
             event.event_type == "career_goal_confirmed"
+            or event.event_type == "vnext_value_claim_proposal_accepted"
             or (event.payload or {}).get("career_goal_status") == "confirmed"
             for _, _, event in rows
         )

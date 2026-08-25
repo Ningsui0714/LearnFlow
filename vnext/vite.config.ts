@@ -42,6 +42,11 @@ function loadSearchConfiguration(mode: string): SearchProviderConfiguration {
   }
 }
 
+function loadBackendBase(mode: string) {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  return String(process.env.VNEXT_BACKEND_URL || localEnv.VNEXT_BACKEND_URL || 'http://127.0.0.1:8010').replace(/\/$/, '')
+}
+
 function readJsonBody(request: any): Promise<unknown> {
   return new Promise((resolveBody, rejectBody) => {
     let body = ''
@@ -74,7 +79,7 @@ function sendJson(response: any, status: number, payload: unknown) {
   response.end(JSON.stringify(payload))
 }
 
-function tutorProxy(mode: string): Plugin {
+function tutorProxy(mode: string, backendBase: string): Plugin {
   const keyConfiguration = loadTutorKey(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
 
@@ -197,6 +202,19 @@ function tutorProxy(mode: string): Plugin {
       }
 
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+      let formalLearnerContext = ''
+      try {
+        const contextResponse = await fetch(`${backendBase}/api/learner-state/context?query=${encodeURIComponent(latestMessage.slice(0, 1800))}`, {
+          headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
+          signal: AbortSignal.timeout(4_000),
+        })
+        if (contextResponse.ok) {
+          const packet = await contextResponse.json()
+          formalLearnerContext = `正式五核 ContextPacket（只读、答案隔离）：\n${JSON.stringify(packet).slice(0, 14_000)}`
+        }
+      } catch {
+        formalLearnerContext = ''
+      }
       const generate = async (instructions: string, inputText: string, timeoutMs?: number) => {
         const request = buildProviderRequest({
           baseUrl, model, instructions,
@@ -213,6 +231,7 @@ function tutorProxy(mode: string): Plugin {
         mode: modeValue,
         learningTaskContext,
         learnerPathState,
+        formalLearnerContext,
       })
       const providerRequest = buildTutorProviderRequest({
         baseUrl, model, mode: modeValue, messages,
@@ -277,11 +296,57 @@ function tutorProxy(mode: string): Plugin {
   }
 }
 
-export default defineConfig(({ mode }) => ({
-  plugins: [react(), tutorProxy(mode)],
+function backendApiProxy(backendBase: string): Plugin {
+  const middleware = async (request: any, response: any, next: () => void) => {
+    const requestUrl = new URL(request.url || '/', 'http://127.0.0.1:4174')
+    if (!requestUrl.pathname.startsWith('/api/') || requestUrl.pathname === '/api/tutor' || requestUrl.pathname === '/api/tutor/status') {
+      next()
+      return
+    }
+    try {
+      const method = String(request.method || 'GET').toUpperCase()
+      const body = method === 'GET' || method === 'HEAD'
+        ? undefined
+        : JSON.stringify(await readJsonBody(request))
+      const upstream = await fetch(`${backendBase}${requestUrl.pathname}${requestUrl.search}`, {
+        method,
+        headers: {
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
+          ...(request.headers.authorization ? { Authorization: request.headers.authorization } : {}),
+        },
+        body,
+        signal: AbortSignal.timeout(30_000),
+      })
+      response.statusCode = upstream.status
+      response.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8')
+      response.setHeader('Cache-Control', 'no-store')
+      const setCookie = upstream.headers.get('set-cookie')
+      if (setCookie) response.setHeader('Set-Cookie', setCookie)
+      response.end(await upstream.text())
+    } catch (error) {
+      sendJson(response, 503, {
+        detail: error instanceof Error && error.name === 'TimeoutError'
+          ? '正式后端请求超时'
+          : '正式五核后端未启动或无法连接',
+      })
+    }
+  }
+  return {
+    name: 'learnflow-formal-backend-proxy',
+    configureServer(server) { server.middlewares.use(middleware) },
+    configurePreviewServer(server) { server.middlewares.use(middleware) },
+  }
+}
+
+export default defineConfig(({ mode }) => {
+  const backendBase = loadBackendBase(mode)
+  return {
+  plugins: [react(), tutorProxy(mode, backendBase), backendApiProxy(backendBase)],
   server: {
     host: '127.0.0.1',
     port: 4174,
     strictPort: true,
   },
-}))
+  }
+})

@@ -24,6 +24,8 @@ export type LearningTask = {
   id: string
   objective: string
   createdAt: number
+  formalTaskId?: number
+  formalTaskVersion?: number
 }
 
 export type LearningSkillStep = {

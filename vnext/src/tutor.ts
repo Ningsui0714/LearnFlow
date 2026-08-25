@@ -200,7 +200,7 @@ export function buildTutorProviderRequest(options: {
           `本轮优先澄清：${options.learningPlanContext.nextQuestion}`,
           '项目创建能力当前不可用；只能形成项目启动草案，不能声称已经创建项目。',
           options.learningPlanContext.valueProposal
-            ? `Value Claim 候选：原内容“${options.learningPlanContext.valueProposal.currentClaim}”；建议“${options.learningPlanContext.valueProposal.proposedClaim}”；当前决定=${options.learningPlanContext.valueProposal.decision}；正式写入=false。`
+            ? `Value Claim 候选：原内容“${options.learningPlanContext.valueProposal.currentClaim}”；建议“${options.learningPlanContext.valueProposal.proposedClaim}”；当前决定=${options.learningPlanContext.valueProposal.decision}；正式写入=${options.learningPlanContext.valueProposal.formalWriteCompleted}。`
             : '',
         ].filter(Boolean).join('\n')
       : '',

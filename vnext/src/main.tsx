@@ -38,10 +38,6 @@ import {
   type TutorToolRun,
 } from './tooling'
 import {
-  FIVE_KERNEL_LABELS,
-  SIMULATED_FIVE_KERNEL_PROFILE,
-} from './five-kernel-profile'
-import {
   activeLearningPlanProjection,
   closeLearningPlan,
   createLearningPlan,
@@ -66,6 +62,23 @@ import {
   type LearnerPathStatus,
   type PersonalPathNodeProposal,
 } from './learning-path-graph'
+import {
+  actOnFormalLearningTask,
+  addFormalPersonalPathNode,
+  bootstrapFormalRuntime,
+  confirmFormalValueClaim,
+  createFormalLearningTask,
+  learnerPathStateFromFormal,
+  loadFormalLearnerSnapshot,
+  removeFormalPersonalPathNode,
+  setFormalMemoryArchived,
+  setFormalPathStatus,
+  submitFormalClaimFeedback,
+  syncFormalEvent,
+  syncFormalEvents,
+  type FormalLearnerSnapshot,
+  type FormalRuntimeConnection,
+} from './formal-runtime'
 import './styles.css'
 
 type Message = {
@@ -79,6 +92,9 @@ type Message = {
   learningSkillId?: LearningSkillId
   learningSubstateId?: LearningSubstateId
   learningSubstateLabel?: string
+  learningTaskId?: string
+  formalTaskId?: number
+  learningGoal?: string
 }
 
 type FollowUpSheet = {
@@ -120,7 +136,7 @@ type Conversation = {
 
 type WorkspaceTab = {
   id: string
-  kind: 'chat' | 'settings' | 'learning-path' | 'profile'
+  kind: 'chat' | 'settings' | 'learning-path' | 'profile' | 'tasks'
   title: string
   conversationId?: string
 }
@@ -143,11 +159,21 @@ const STORAGE_KEY = 'learnflow.vnext.workspace.v1'
 const SETTINGS_TAB: WorkspaceTab = { id: 'settings', kind: 'settings', title: '设置' }
 const LEARNING_PATH_TAB: WorkspaceTab = { id: 'learning-path', kind: 'learning-path', title: '学习路径' }
 const PROFILE_TAB: WorkspaceTab = { id: 'profile', kind: 'profile', title: '我的画像' }
+const TASKS_TAB: WorkspaceTab = { id: 'tasks', kind: 'tasks', title: '学习任务' }
 const MarkdownContent = lazy(() => import('./MarkdownContent'))
 const LearningPathPage = lazy(() => import('./LearningPathPage'))
+const LearnerProfilePage = lazy(() => import('./LearnerProfilePage'))
+const LearningTasksPage = lazy(() => import('./LearningTasksPage'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
+}
+
+function formalModeId(mode: TutorMode) {
+  if (mode === 'simple_explain') return 'explain'
+  if (mode === 'guided_learning') return 'learn'
+  if (mode === 'learning_plan') return 'plan'
+  return 'free'
 }
 
 function createConversation(): Conversation {
@@ -218,7 +244,7 @@ function restoreState(): PersistedState {
     }))
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
-      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
+      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile', 'tasks'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
     const safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
     const activeTabId = safeTabs.some(tab => tab.id === value.activeTabId)
@@ -248,6 +274,7 @@ function pathForTab(tab: WorkspaceTab) {
   if (tab.kind === 'settings') return '/settings'
   if (tab.kind === 'learning-path') return '/learning-path'
   if (tab.kind === 'profile') return '/learner-profile'
+  if (tab.kind === 'tasks') return '/tasks'
   return `/chat/${tab.conversationId}`
 }
 
@@ -263,32 +290,6 @@ function activeSheet(conversation: Conversation) {
 
 function activeMessages(conversation: Conversation) {
   return activeSheet(conversation)?.messages || conversation.messages
-}
-
-function ProfileModuleList({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={`profile-module-list${compact ? ' profile-module-list-compact' : ''}`}>
-      {SIMULATED_FIVE_KERNEL_PROFILE.modules.map(module => (
-        <details key={module.id} className={`profile-module profile-module-${module.kernel}`}>
-          <summary>
-            <span>{FIVE_KERNEL_LABELS[module.kernel]}</span>
-            <strong>{module.title}</strong>
-            <small>{module.claims.length} claims</small>
-          </summary>
-          <p>{module.summary}</p>
-          <ul>
-            {module.claims.map(item => (
-              <li key={item.id}>
-                <span>{item.provenance === 'user_self_report' ? '自述' : '边界'}</span>
-                <p>{item.text}</p>
-                {item.sensitivity === 'sensitive' && <em>敏感 · {item.usePolicy === 'adapt_silently' ? '静默适配' : '需确认'}</em>}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ))}
-    </div>
-  )
 }
 
 function paperPreview(messages: Message[]) {
@@ -317,7 +318,7 @@ function inheritedContextMessages(conversation: Conversation) {
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
-  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : '□'
+  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : '□'
   return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
@@ -332,6 +333,10 @@ function App() {
   const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
+  const [formalConnection, setFormalConnection] = useState<FormalRuntimeConnection>({ status: 'connecting', detail: '正在连接正式五核事件链' })
+  const [formalSnapshot, setFormalSnapshot] = useState<FormalLearnerSnapshot>()
+  const [formalBusyKey, setFormalBusyKey] = useState('')
+  const [formalError, setFormalError] = useState('')
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -355,10 +360,42 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    bootstrapFormalRuntime().then(result => {
+      if (!active) return
+      setFormalConnection(result.connection)
+      if (result.snapshot) {
+        setFormalSnapshot(result.snapshot)
+        setWorkspace(previous => ({
+          ...previous,
+          learningPath: learnerPathStateFromFormal(result.snapshot!.learning_path),
+        }))
+      }
+    })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
     if (!activeTab) return
     window.history.replaceState({ tabId: activeTab.id }, '', pathForTab(activeTab))
     document.title = `${activeTab.title} · LearnFlow vNext`
   }, [activeTab])
+
+  const refreshFormalSnapshot = async (includeTerminalTasks = false) => {
+    setFormalError('')
+    try {
+      const snapshot = await loadFormalLearnerSnapshot(includeTerminalTasks)
+      setFormalSnapshot(snapshot)
+      setFormalConnection({ status: 'connected', detail: snapshot.authority, learner: snapshot.learner })
+      setWorkspace(previous => ({ ...previous, learningPath: learnerPathStateFromFormal(snapshot.learning_path) }))
+      return snapshot
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '正式五核刷新失败'
+      setFormalError(detail)
+      setFormalConnection(previous => ({ ...previous, status: 'offline', detail }))
+      return undefined
+    }
+  }
 
   useEffect(() => {
     if (!pendingDelete && !pendingSheetDelete) return
@@ -612,6 +649,25 @@ function App() {
       delete next[conversationId]
       return next
     })
+    if (message.role === 'assistant' && formalConnection.status === 'connected') {
+      void syncFormalEvent({
+        id: `learning-segment:${finishedMessage.id}`,
+        type: 'learning_action_segment_completed',
+        at: finishedMessage.createdAt,
+        detail: `完成一段${TUTOR_MODE_LABELS[mode]}输出；只表示发生学习暴露，不表示掌握`,
+        payload: {
+          segment_id: finishedMessage.id,
+          mode: formalModeId(mode),
+          goal: message.learningGoal || '',
+          outcome: 'tutor_output_delivered',
+          content_exposure: mode === 'simple_explain' || mode === 'guided_learning',
+          learning_task_id: message.formalTaskId || message.learningTaskId,
+          skills: message.learningSkillId ? [message.learningSkillId] : [],
+          conversation_id: conversationId,
+          exit_message_id: finishedMessage.id,
+        },
+      }).catch(error => setFormalError(error instanceof Error ? error.message : '学习片段事件同步失败'))
+    }
   }
 
   const runTutorTurn = async (
@@ -627,18 +683,22 @@ function App() {
     if (!content || pendingTurns[conversationId]) return
 
     const now = Date.now()
+    const priorLearningEventIds = new Set(conversation.learningEvents.map(item => item.id))
+    const priorPlanningEventIds = new Set(conversation.planningEvents.map(item => item.id))
     let learningTasks = [...conversation.learningTasks]
     let learningEvents = [...conversation.learningEvents]
     let learningProjection = activeLearningTaskProjection(learningTasks, learningEvents)
     let learningPlans = [...conversation.learningPlans]
     let planningEvents = [...conversation.planningEvents]
     let planningProjection = activeLearningPlanProjection(learningPlans, planningEvents)
+    let createdLocalTask: LearningTask | undefined
     const mode = resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
 
     if (mode === 'guided_learning') {
       if (!learningProjection) {
         const created = createLearningTask(content, now, learningEvents, conversation.preferredSkillId)
         learningTasks = [...learningTasks, created.task]
+        createdLocalTask = created.task
         learningEvents = created.events
         learningProjection = projectLearningTask(created.task, learningEvents)
       }
@@ -686,6 +746,42 @@ function App() {
       } else {
         planningEvents = updateLearningPlan(planningEvents, planningProjection, content, now + 8)
         planningProjection = projectLearningPlan(planningProjection.plan, planningEvents)
+      }
+    }
+
+    if (formalConnection.status === 'connected') {
+      try {
+        if (createdLocalTask && learningProjection) {
+          const queuedFormalTask = await createFormalLearningTask(createdLocalTask, learningProjection.skillId, conversationId)
+          const formalTask = queuedFormalTask.available_actions.includes('start')
+            ? await actOnFormalLearningTask(queuedFormalTask, 'start')
+            : queuedFormalTask
+          learningTasks = learningTasks.map(task => task.id === createdLocalTask?.id
+            ? { ...task, formalTaskId: formalTask.id, formalTaskVersion: formalTask.version }
+            : task)
+          const linkedLocalTask = learningTasks.find(task => task.id === createdLocalTask?.id)
+          if (linkedLocalTask) learningProjection = projectLearningTask(linkedLocalTask, learningEvents)
+          setFormalSnapshot(previous => previous ? {
+            ...previous,
+            learning_tasks: [...previous.learning_tasks.filter(task => task.id !== formalTask.id), formalTask],
+          } : previous)
+        }
+        const atomicEvents = [
+          ...learningEvents.filter(item => !priorLearningEventIds.has(item.id)),
+          ...planningEvents.filter(item => !priorPlanningEventIds.has(item.id)),
+        ]
+        await Promise.all([
+          syncFormalEvent({
+            id: `chat-mode:${conversationId}:${now}`,
+            type: 'chat_mode_entered',
+            at: now,
+            detail: `对话进入${TUTOR_MODE_LABELS[mode]}`,
+            payload: { mode: formalModeId(mode), previous_mode: formalModeId(conversation.mode), conversation_id: conversationId },
+          }),
+          syncFormalEvents(atomicEvents),
+        ])
+      } catch (error) {
+        setFormalError(error instanceof Error ? error.message : '原子事件同步失败')
       }
     }
 
@@ -760,6 +856,9 @@ function App() {
         learningSkillId: learningProjection?.skillId,
         learningSubstateId: turnStep?.substateId,
         learningSubstateLabel: turnStep?.substateLabel,
+        learningTaskId: learningProjection?.task.id,
+        formalTaskId: learningProjection?.task.formalTaskId,
+        learningGoal: learningProjection?.task.objective || planningProjection?.plan.objective || content,
       })
       setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
     } catch (error) {
@@ -781,40 +880,54 @@ function App() {
     await runTutorTurn(conversationId, drafts[draftKey] || '')
   }
 
-  const updateLearningTask = (
+  const updateLearningTask = async (
     conversationId: string,
     action: 'pause' | 'resume' | 'complete' | 'skill',
     skillId?: LearningSkillId,
   ) => {
     if (pendingTurns[conversationId]) return
+    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    if (!conversation) return
+    const projection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    if (!projection || projection.status === 'completed') return
+    let learningEvents = conversation.learningEvents
+    if (action === 'skill') {
+      learningEvents = switchLearningSkill(learningEvents, projection, skillId || projection.skillId, Date.now())
+    } else {
+      const event = action === 'pause'
+        ? { type: 'vnext_learning_task_paused' as const, detail: '暂停学习任务' }
+        : action === 'resume'
+          ? { type: 'vnext_learning_task_resumed' as const, detail: '恢复学习任务' }
+          : { type: 'vnext_learning_task_completed' as const, detail: '结束本段 Skill 流程；不代表掌握，正式任务仍需可检查证据' }
+      learningEvents = appendLearningEvents(learningEvents, projection.task.id, [event], Date.now())
+    }
+    const previousIds = new Set(conversation.learningEvents.map(item => item.id))
+    const newEvents = learningEvents.filter(item => !previousIds.has(item.id))
     setWorkspace(previous => ({
       ...previous,
-      conversations: previous.conversations.map(conversation => {
-        if (conversation.id !== conversationId) return conversation
-        const projection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
-        if (!projection || projection.status === 'completed') return conversation
-        let learningEvents = conversation.learningEvents
-        if (action === 'skill') {
-          learningEvents = switchLearningSkill(
-            learningEvents, projection, skillId || projection.skillId, Date.now(),
-          )
-        } else {
-          const event = action === 'pause'
-            ? { type: 'vnext_learning_task_paused' as const, detail: '暂停学习任务' }
-            : action === 'resume'
-              ? { type: 'vnext_learning_task_resumed' as const, detail: '恢复学习任务' }
-              : { type: 'vnext_learning_task_completed' as const, detail: '完成任务流程；不代表掌握' }
-          learningEvents = appendLearningEvents(learningEvents, projection.task.id, [event], Date.now())
-        }
-        return {
-          ...conversation,
-          learningEvents,
-          mode: action === 'resume' || action === 'skill' ? 'guided_learning' : 'free',
-          preferredSkillId: action === 'complete' ? undefined : conversation.preferredSkillId,
-          updatedAt: Date.now(),
-        }
-      }),
+      conversations: previous.conversations.map(item => item.id === conversationId ? {
+        ...item,
+        learningEvents,
+        mode: action === 'resume' || action === 'skill' ? 'guided_learning' : 'free',
+        preferredSkillId: action === 'complete' ? undefined : item.preferredSkillId,
+        updatedAt: Date.now(),
+      } : item),
     }))
+    if (formalConnection.status === 'connected') {
+      try {
+        await syncFormalEvents(newEvents)
+        const formalTask = formalSnapshot?.learning_tasks.find(item => item.id === projection.task.formalTaskId)
+        if (formalTask && action !== 'skill' && action !== 'complete') {
+          const updated = await actOnFormalLearningTask(formalTask, action)
+          setFormalSnapshot(previous => previous ? {
+            ...previous,
+            learning_tasks: previous.learning_tasks.map(item => item.id === updated.id ? updated : item),
+          } : previous)
+        }
+      } catch (error) {
+        setFormalError(error instanceof Error ? error.message : '学习任务状态同步失败')
+      }
+    }
   }
 
   const selectLearningSkill = (conversationId: string, value: string) => {
@@ -841,19 +954,38 @@ function App() {
     }))
   }
 
-  const updateValueProposal = (
+  const updateValueProposal = async (
     conversationId: string,
     projection: LearningPlanProjection,
     decision: Exclude<ValueProposalDecision, 'proposed'>,
     draftKey?: string,
   ) => {
     if (pendingTurns[conversationId]) return
+    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    if (!conversation || !projection.valueProposal) return
+    let formalWriteCompleted = false
+    if (decision === 'accepted' && formalConnection.status === 'connected') {
+      setFormalBusyKey(`value:${projection.valueProposal.id}`)
+      try {
+        await confirmFormalValueClaim(projection.valueProposal, `value-confirm:${projection.valueProposal.id}`)
+        formalWriteCompleted = true
+        await refreshFormalSnapshot()
+      } catch (error) {
+        setFormalError(error instanceof Error ? error.message : '价值核确认写入失败')
+      } finally {
+        setFormalBusyKey('')
+      }
+    }
+    const planningEvents = decideValueClaimProposal(
+      conversation.planningEvents, projection, decision, Date.now(), formalWriteCompleted,
+    )
+    const newEvents = planningEvents.filter(item => !conversation.planningEvents.some(previous => previous.id === item.id))
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => conversation.id === conversationId
         ? {
             ...conversation,
-            planningEvents: decideValueClaimProposal(conversation.planningEvents, projection, decision),
+            planningEvents,
             updatedAt: Date.now(),
           }
         : conversation),
@@ -861,21 +993,31 @@ function App() {
     if (decision === 'revision_requested' && draftKey) {
       setDrafts(previous => ({ ...previous, [draftKey]: '我希望把价值核建议改成：' }))
     }
+    if (decision !== 'accepted' && formalConnection.status === 'connected') {
+      void syncFormalEvents(newEvents).catch(error => setFormalError(error instanceof Error ? error.message : '价值核决定事件同步失败'))
+    }
   }
 
   const finishLearningPlan = (conversationId: string, projection: LearningPlanProjection) => {
     if (pendingTurns[conversationId]) return
+    const current = workspace.conversations.find(item => item.id === conversationId)
+    if (!current) return
+    const planningEvents = closeLearningPlan(current.planningEvents, projection)
+    const additions = planningEvents.filter(item => !current.planningEvents.some(previous => previous.id === item.id))
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => conversation.id === conversationId
         ? {
             ...conversation,
             mode: 'free',
-            planningEvents: closeLearningPlan(conversation.planningEvents, projection),
+            planningEvents,
             updatedAt: Date.now(),
           }
         : conversation),
     }))
+    if (formalConnection.status === 'connected') {
+      void syncFormalEvents(additions).catch(error => setFormalError(error instanceof Error ? error.message : '规划结束事件同步失败'))
+    }
   }
 
   const advanceTaskAndContinue = async (conversation: Conversation, projection: LearningTaskProjection) => {
@@ -901,25 +1043,102 @@ function App() {
     setWorkspace(previous => ({ ...previous, settings: { ...previous.settings, ...patch } }))
   }
 
-  const updatePathStatus = (nodeId: string, status: LearnerPathStatus) => {
-    setWorkspace(previous => ({
-      ...previous,
-      learningPath: setLearnerPathStatus(previous.learningPath, nodeId, status),
-    }))
+  const updatePathStatus = async (nodeId: string, status: LearnerPathStatus) => {
+    const nodeTitle = projectLearnerPath(workspace.learningPath).nodes.find(node => node.id === nodeId)?.title || nodeId
+    if (formalConnection.status !== 'connected') {
+      setWorkspace(previous => ({ ...previous, learningPath: setLearnerPathStatus(previous.learningPath, nodeId, status) }))
+      setFormalError('正式事件链离线：该标记目前只保存在本机，恢复连接后请重新确认。')
+      return
+    }
+    setFormalBusyKey(`path:${nodeId}`)
+    try {
+      const result = await setFormalPathStatus(nodeId, nodeTitle, status, `path-status:${nodeId}:${status}:${Date.now()}`)
+      setWorkspace(previous => ({ ...previous, learningPath: learnerPathStateFromFormal(result.learning_path) }))
+      await refreshFormalSnapshot()
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '学习路径状态写入失败')
+    } finally {
+      setFormalBusyKey('')
+    }
   }
 
-  const acceptPersonalPathNode = (proposal: PersonalPathNodeProposal) => {
-    setWorkspace(previous => ({
-      ...previous,
-      learningPath: addPersonalPathNode(previous.learningPath, proposal),
-    }))
+  const acceptPersonalPathNode = async (proposal: PersonalPathNodeProposal) => {
+    if (formalConnection.status !== 'connected') {
+      setWorkspace(previous => ({ ...previous, learningPath: addPersonalPathNode(previous.learningPath, proposal) }))
+      setFormalError('正式事件链离线：个人节点目前只保存在本机。')
+      return
+    }
+    setFormalBusyKey(`path:${proposal.id}`)
+    try {
+      const result = await addFormalPersonalPathNode(proposal, `personal-path-add:${proposal.id}`)
+      setWorkspace(previous => ({ ...previous, learningPath: learnerPathStateFromFormal(result.learning_path) }))
+      await refreshFormalSnapshot()
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '个人路径节点写入失败')
+    } finally {
+      setFormalBusyKey('')
+    }
   }
 
-  const deletePersonalPathNode = (nodeId: string) => {
-    setWorkspace(previous => ({
-      ...previous,
-      learningPath: removePersonalPathNode(previous.learningPath, nodeId),
-    }))
+  const deletePersonalPathNode = async (nodeId: string) => {
+    const nodeTitle = projectLearnerPath(workspace.learningPath).nodes.find(node => node.id === nodeId)?.title || nodeId
+    if (formalConnection.status !== 'connected') {
+      setWorkspace(previous => ({ ...previous, learningPath: removePersonalPathNode(previous.learningPath, nodeId) }))
+      setFormalError('正式事件链离线：移除动作目前只保存在本机。')
+      return
+    }
+    setFormalBusyKey(`path:${nodeId}`)
+    try {
+      const result = await removeFormalPersonalPathNode(nodeId, nodeTitle, `personal-path-remove:${nodeId}:${Date.now()}`)
+      setWorkspace(previous => ({ ...previous, learningPath: learnerPathStateFromFormal(result.learning_path) }))
+      await refreshFormalSnapshot()
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '个人路径节点移除失败')
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
+  const updateFormalMemoryArchive = async (memoryId: string, archived: boolean) => {
+    setFormalBusyKey(`memory:${memoryId}`)
+    setFormalError('')
+    try {
+      await setFormalMemoryArchived(memoryId, archived)
+      await refreshFormalSnapshot(true)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '记忆归档失败')
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
+  const updateFormalClaim = async (claimId: number, action: 'confirm' | 'correct' | 'retract', correction = '') => {
+    setFormalBusyKey(`claim:${claimId}`)
+    setFormalError('')
+    try {
+      await submitFormalClaimFeedback(claimId, action, correction, action === 'retract' ? '学习者明确撤回该 Claim' : '')
+      await refreshFormalSnapshot(true)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : 'Claim 更新失败')
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
+  const updateFormalTask = async (task: NonNullable<FormalLearnerSnapshot['learning_tasks'][number]>, action: 'start' | 'pause' | 'resume' | 'cancel' | 'reopen') => {
+    setFormalBusyKey(`task:${task.id}`)
+    setFormalError('')
+    try {
+      const updated = await actOnFormalLearningTask(task, action)
+      setFormalSnapshot(previous => previous ? {
+        ...previous,
+        learning_tasks: previous.learning_tasks.map(item => item.id === updated.id ? updated : item),
+      } : previous)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '正式学习任务更新失败')
+    } finally {
+      setFormalBusyKey('')
+    }
   }
 
   const renderTab = (tab: WorkspaceTab | undefined) => {
@@ -937,21 +1156,33 @@ function App() {
       )
     }
     if (tab.kind === 'profile') {
-      const pathProjection = projectLearnerPath(workspace.learningPath)
-      const markedCount = Object.values(pathProjection.statuses).filter(status => status !== 'unmarked').length
       return (
-        <section className="profile-page">
-          <header className="profile-page-heading">
-            <div><span className="eyebrow">LEARNER PROFILE</span><h1>我的画像</h1><p>这是一份可检查的模拟五核画像。Module 组织上下文，Claim 保留可追溯陈述；当前仍不写入旧五核。</p></div>
-            <div className="profile-version"><strong>v{SIMULATED_FIVE_KERNEL_PROFILE.version}</strong><span>模拟画像</span></div>
-          </header>
-          <div className="profile-path-summary">
-            <div><span>结构核 · 学习路径</span><strong>{markedCount} 个已标记节点</strong><p>{pathProjection.personalNodeIds.length} 个个人节点；全部状态均为学习者自报。</p></div>
-            <button type="button" onClick={() => openTab(LEARNING_PATH_TAB)}>打开学习路径</button>
-          </div>
-          <p className="profile-description">{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
-          <ProfileModuleList />
-        </section>
+        <Suspense fallback={<div className="page-loading">正在载入正式五核画像…</div>}>
+          <LearnerProfilePage
+            connection={formalConnection}
+            snapshot={formalSnapshot}
+            busyKey={formalBusyKey}
+            error={formalError}
+            onRefresh={() => { void refreshFormalSnapshot(true) }}
+            onOpenPath={() => openTab(LEARNING_PATH_TAB)}
+            onMemoryArchive={(memoryId, archived) => { void updateFormalMemoryArchive(memoryId, archived) }}
+            onClaimAction={(claimId, action, correction) => { void updateFormalClaim(claimId, action, correction) }}
+          />
+        </Suspense>
+      )
+    }
+    if (tab.kind === 'tasks') {
+      return (
+        <Suspense fallback={<div className="page-loading">正在载入学习任务队列…</div>}>
+          <LearningTasksPage
+            connection={formalConnection}
+            tasks={formalSnapshot?.learning_tasks || []}
+            busyTaskId={formalBusyKey.startsWith('task:') ? Number(formalBusyKey.slice(5)) : undefined}
+            error={formalError}
+            onRefresh={() => { void refreshFormalSnapshot(true) }}
+            onAction={(task, action) => { void updateFormalTask(task, action) }}
+          />
+        </Suspense>
       )
     }
     if (tab.kind === 'settings') {
@@ -960,7 +1191,7 @@ function App() {
           <div className="settings-intro">
             <span className="eyebrow">SETTINGS</span>
             <h1>设置</h1>
-            <p>自由态、简单讲解态、带领学习态和学习规划态共用这一条模型连接，不读取旧项目配置。</p>
+            <p>四种 Tutor 状态共用模型连接；五核、学习路径与任务队列使用下方正式后端事件链。</p>
           </div>
           <form className="settings-card" onSubmit={event => { event.preventDefault(); setSettingsSaved(true) }}>
             <div className="settings-card-heading"><span>01</span><div><h2>模型连接</h2><p>支持 OpenAI 兼容的 Chat Completions 或 Responses 地址。</p></div></div>
@@ -989,16 +1220,16 @@ function App() {
               <span className={settingsSaved ? 'save-status save-status-visible' : 'save-status'}>✓ 已保存</span>
             </div>
           </form>
-          <section className="settings-card profile-settings-card" aria-labelledby="simulated-profile-title">
+          <section className="settings-card profile-settings-card" aria-labelledby="formal-profile-title">
             <div className="settings-card-heading">
               <span>02</span>
               <div>
-                <h2 id="simulated-profile-title">模拟五核画像</h2>
-                <p>画像已经迁移到独立页面；设置页只保留入口。</p>
+                <h2 id="formal-profile-title">正式学习者状态</h2>
+                <p>{formalConnection.status === 'connected' ? `已连接 ${formalConnection.learner?.display_name || '当前学习者'}；所有写入经过 EvidenceEvent 与 reducer。` : formalConnection.detail}</p>
               </div>
-              <i>v{SIMULATED_FIVE_KERNEL_PROFILE.version} · 模拟</i>
+              <i>{formalConnection.status === 'connected' ? '已连接' : '未连接'}</i>
             </div>
-            <div className="settings-actions"><button type="button" onClick={() => openTab(PROFILE_TAB)}>打开我的画像</button><button type="button" className="button-secondary" onClick={() => openTab(LEARNING_PATH_TAB)}>打开学习路径</button></div>
+            <div className="settings-actions"><button type="button" onClick={() => { void refreshFormalSnapshot(true) }}>重新连接</button><button type="button" className="button-secondary" onClick={() => openTab(PROFILE_TAB)}>打开五核画像</button><button type="button" className="button-secondary" onClick={() => openTab(TASKS_TAB)}>打开任务队列</button></div>
           </section>
         </section>
       )
@@ -1252,16 +1483,16 @@ function App() {
                       <div><span>建议内容</span><p>{planProjection.valueProposal.proposedClaim}</p></div>
                     </div>
                     <blockquote>依据：你说“{planProjection.valueProposal.evidenceQuote}”</blockquote>
-                    <p>{planProjection.valueProposal.rationale} 接受后也只记录为已确认候选，正式五核写入尚未接入。</p>
+                    <p>{planProjection.valueProposal.rationale} 接受时会先显示原文与建议，再通过正式事件入口写入价值核；你仍可在画像页纠正或撤回。</p>
                     {planProjection.valueProposal.decision === 'proposed' ? (
                       <div className="value-proposal-actions">
-                        <button type="button" className="value-accept" onClick={() => updateValueProposal(conversation.id, planProjection, 'accepted')} disabled={Boolean(pendingMode)}>接受为候选</button>
+                        <button type="button" className="value-accept" onClick={() => { void updateValueProposal(conversation.id, planProjection, 'accepted') }} disabled={Boolean(pendingMode) || formalBusyKey.startsWith('value:')}>确认并写入价值核</button>
                         <button type="button" onClick={() => updateValueProposal(conversation.id, planProjection, 'revision_requested', draftKey)} disabled={Boolean(pendingMode)}>我要修改</button>
                         <button type="button" onClick={() => updateValueProposal(conversation.id, planProjection, 'rejected')} disabled={Boolean(pendingMode)}>不写入</button>
                       </div>
                     ) : (
                       <strong className="value-proposal-decision">
-                        {planProjection.valueProposal.decision === 'accepted' && '✓ 你已确认这个候选；尚未写入正式五核'}
+                        {planProjection.valueProposal.decision === 'accepted' && (planProjection.valueProposal.formalWriteCompleted ? '✓ 你已确认，正式价值核已记录' : '已确认但正式后端离线，当前只保留待同步状态')}
                         {planProjection.valueProposal.decision === 'rejected' && '已拒绝；不会写入'}
                         {planProjection.valueProposal.decision === 'revision_requested' && '等待你在输入框中写出修改版本'}
                       </strong>
@@ -1431,7 +1662,8 @@ function App() {
           <span><strong>LearnFlow</strong><small>vNext · clean start</small></span>
         </button>
         <div className="topbar-spacer" />
-        <span className="prototype-badge"><i /> 本地界面原型</span>
+        <span className={`prototype-badge formal-status-badge formal-status-${formalConnection.status}`}><i /> {formalConnection.status === 'connected' ? '正式五核已连接' : '五核离线'}</span>
+        <button className="topbar-profile-button" type="button" onClick={() => openTab(TASKS_TAB)}><span>☷</span><strong>学习任务</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span><strong>学习路径</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(PROFILE_TAB)}><span>现</span><strong>我的画像</strong></button>
         <button className="icon-button" type="button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
@@ -1458,6 +1690,11 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
+            <button type="button" className="sidebar-profile-button sidebar-task-button" onClick={() => openTab(TASKS_TAB)}>
+              <span className="sidebar-profile-avatar">☷</span>
+              <span><strong>学习任务</strong><small>{formalSnapshot?.learning_tasks.filter(task => !['completed', 'canceled'].includes(task.status)).length || 0} 个待完成</small></span>
+              <i>›</i>
+            </button>
             <button type="button" className="sidebar-profile-button sidebar-path-button" onClick={() => openTab(LEARNING_PATH_TAB)}>
               <span className="sidebar-profile-avatar">⌁</span>
               <span><strong>学习路径</strong><small>{projectLearnerPath(workspace.learningPath).nodes.length} 节点 · 可个性化</small></span>
@@ -1465,10 +1702,10 @@ function App() {
             </button>
             <button type="button" className="sidebar-profile-button" onClick={() => openTab(PROFILE_TAB)}>
               <span className="sidebar-profile-avatar">现</span>
-              <span><strong>现有学习者</strong><small>准大二 · ML / Agent / RL</small></span>
+              <span><strong>{formalSnapshot?.learner.display_name || '学习者画像'}</strong><small>{formalConnection.status === 'connected' ? `${formalSnapshot?.learner.education_stage || ''} · 五核正式接入` : '正式五核未连接'}</small></span>
               <i>›</i>
             </button>
-            <small className="sidebar-logic-note">Chat · 路径 · 画像 · 设置</small>
+            <small className="sidebar-logic-note">Chat · 任务 · 路径 · 五核画像 · 设置</small>
           </div>
         </aside>
 

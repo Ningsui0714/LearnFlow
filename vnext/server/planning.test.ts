@@ -45,7 +45,7 @@ test('direction planning proposes a value claim and requires an explicit learner
   const context = learningPlanTutorContext(accepted)
   assert.equal(accepted.valueProposal?.decision, 'accepted')
   assert.equal(context.valueProposal?.formalWriteCompleted, false)
-  assert.match(acceptedEvents.at(-1)?.detail || '', /正式五核写入尚未执行/)
+  assert.match(acceptedEvents.at(-1)?.detail || '', /正式后端不可用/)
 })
 
 test('planning updates and closes only through its local event queue', () => {
@@ -76,12 +76,12 @@ test('direction readiness uses its own milestone instead of a project event', ()
   assert.equal(events.some(event => event.type === 'vnext_project_seed_ready'), false)
 })
 
-test('planning context sanitizer keeps bounded proposals and forces formal write false', () => {
+test('planning context sanitizer keeps bounded proposals and preserves explicit formal-write state', () => {
   const created = createLearningPlan('我以后希望从事智能体工程', 100)
   const context = learningPlanTutorContext(projectLearningPlan(created.plan, created.events))
   const sanitized = sanitizeLearningPlanTutorContext({
     ...context,
     valueProposal: { ...context.valueProposal, formalWriteCompleted: true },
   })
-  assert.equal(sanitized?.valueProposal?.formalWriteCompleted, false)
+  assert.equal(sanitized?.valueProposal?.formalWriteCompleted, true)
 })
