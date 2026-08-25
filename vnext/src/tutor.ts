@@ -21,13 +21,11 @@ export function resolveTutorMode(selectedMode: TutorMode, input: string): TutorM
   return EXPLANATION_INTENT.test(input) ? 'simple_explain' : 'free'
 }
 
-export function tutorConfigurationIssue(baseUrl: string, model: string, apiKey: string) {
+export function tutorConfigurationIssue(baseUrl: string, model: string) {
   if (!baseUrl.trim() || !model.trim()) return '请先在设置中填写 Base URL 和模型名称。'
   try {
     const url = new URL(baseUrl.trim())
     if (!['http:', 'https:'].includes(url.protocol)) return 'Base URL 必须使用 http 或 https。'
-    const localHost = ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
-    if (!localHost && !apiKey.trim()) return '远程模型还需要 API Key；Key 只保留在当前页面内存中。'
   } catch {
     return 'Base URL 不是有效地址。'
   }
@@ -54,7 +52,7 @@ function endpointFor(baseUrl: string) {
   return `${normalized}/chat/completions`
 }
 
-function textFromResponse(payload: unknown): string {
+export function textFromTutorProviderResponse(payload: unknown): string {
   if (!payload || typeof payload !== 'object') return ''
   const root = payload as Record<string, unknown>
   if (typeof root.output_text === 'string') return root.output_text.trim()
@@ -95,7 +93,7 @@ function textFromResponse(payload: unknown): string {
   return ''
 }
 
-function errorFromResponse(payload: unknown, status: number) {
+export function errorFromTutorProviderResponse(payload: unknown, status: number) {
   if (payload && typeof payload === 'object') {
     const error = (payload as Record<string, unknown>).error
     if (error && typeof error === 'object') {
@@ -106,18 +104,14 @@ function errorFromResponse(payload: unknown, status: number) {
   return `模型服务返回 HTTP ${status}`
 }
 
-export async function requestTutorReply(options: {
+export function buildTutorProviderRequest(options: {
   baseUrl: string
   model: string
-  apiKey: string
   mode: TutorMode
   messages: TutorContextMessage[]
 }) {
   const endpoint = endpointFor(options.baseUrl)
   const responsesApi = endpoint.endsWith('/responses')
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (options.apiKey.trim()) headers.Authorization = `Bearer ${options.apiKey.trim()}`
-
   const recentMessages = options.messages.slice(-16)
   const body = responsesApi
     ? {
@@ -133,29 +127,54 @@ export async function requestTutorReply(options: {
         ],
       }
 
+  return { endpoint, body }
+}
+
+export async function requestTutorReply(options: {
+  baseUrl: string
+  model: string
+  mode: TutorMode
+  messages: TutorContextMessage[]
+}) {
   const controller = new AbortController()
-  const timeout = globalThis.setTimeout(() => controller.abort(), 45_000)
+  const timeout = globalThis.setTimeout(() => controller.abort(), 50_000)
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch('/api/tutor', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options),
       signal: controller.signal,
     })
-    const payload = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(errorFromResponse(payload, response.status))
-    const text = textFromResponse(payload)
-    if (!text) throw new Error('模型服务没有返回可显示的文本')
-    return text
+    const payload = await response.json().catch(() => null) as { reply?: unknown; error?: unknown } | null
+    if (!response.ok) {
+      throw new Error(typeof payload?.error === 'string' ? payload.error : `本地 Tutor 服务返回 HTTP ${response.status}`)
+    }
+    if (typeof payload?.reply !== 'string' || !payload.reply.trim()) {
+      throw new Error('本地 Tutor 服务没有返回可显示的文本')
+    }
+    return payload.reply.trim()
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('模型请求超过 45 秒，已停止等待')
+      throw new Error('Tutor 请求超过 50 秒，已停止等待')
     }
     if (error instanceof TypeError) {
-      throw new Error('浏览器无法访问模型服务，请检查地址、网络或服务的 CORS 设置')
+      throw new Error('无法连接本地 Tutor 服务，请确认 vNext 服务正在运行')
     }
     throw error
   } finally {
     globalThis.clearTimeout(timeout)
+  }
+}
+
+export async function requestTutorEnvironmentStatus() {
+  try {
+    const response = await fetch('/api/tutor/status')
+    const payload = await response.json() as { configured?: unknown; source?: unknown }
+    return {
+      configured: response.ok && payload.configured === true,
+      source: typeof payload.source === 'string' ? payload.source : '',
+    }
+  } catch {
+    return { configured: false, source: '' }
   }
 }

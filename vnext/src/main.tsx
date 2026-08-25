@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   isTutorMode,
+  requestTutorEnvironmentStatus,
   requestTutorReply,
   resolveTutorMode,
   TUTOR_MODE_LABELS,
@@ -140,11 +141,11 @@ function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
 function App() {
   const [workspace, setWorkspace] = useState<PersistedState>(restoreState)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [apiKey, setApiKey] = useState('')
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
+  const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -158,6 +159,14 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace))
   }, [workspace])
+
+  useEffect(() => {
+    let active = true
+    requestTutorEnvironmentStatus().then(status => {
+      if (active) setTutorEnvironment({ checking: false, ...status })
+    })
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (!activeTab) return
@@ -365,7 +374,7 @@ function App() {
     })
     setDrafts(previous => ({ ...previous, [conversationId]: '' }))
 
-    const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model, apiKey)
+    const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
     if (configurationIssue) {
       finishTurn(conversationId, mode, {
         role: 'system',
@@ -378,7 +387,6 @@ function App() {
       const reply = await requestTutorReply({
         baseUrl: workspace.settings.baseUrl,
         model: workspace.settings.model,
-        apiKey,
         mode,
         messages: contextMessages,
       })
@@ -416,11 +424,18 @@ function App() {
               <span>模型名称</span>
               <input value={workspace.settings.model} onChange={event => updateSettings({ model: event.target.value })} placeholder="例如 model-name" />
             </label>
-            <label>
-              <span>API Key</span>
-              <input type="password" value={apiKey} onChange={event => { setApiKey(event.target.value); setSettingsSaved(false) }} placeholder="仅保留在当前页面内存" autoComplete="off" />
-              <small>请求会由浏览器直接发往 Base URL；Key 不写入 localStorage，刷新后自动清空。无需鉴权的本地模型可留空。</small>
-            </label>
+            <div className={`environment-key ${tutorEnvironment.configured ? 'environment-key-ready' : 'environment-key-missing'}`}>
+              <span className="environment-key-icon">{tutorEnvironment.checking ? '…' : tutorEnvironment.configured ? '✓' : '!'}</span>
+              <div>
+                <span>API Key</span>
+                <strong>{tutorEnvironment.checking ? '正在检查本地环境' : tutorEnvironment.configured ? '本地环境已配置' : '本地环境未配置'}</strong>
+                <small>
+                  {tutorEnvironment.configured
+                    ? `来源：${tutorEnvironment.source}。Key 只由本地服务读取，不会发送到页面。`
+                    : '在 vnext/.env.local 中设置 LEARNFLOW_API_KEY，然后重启服务。'}
+                </small>
+              </div>
+            </div>
             <div className="settings-actions">
               <button type="submit">保存界面配置</button>
               <span className={settingsSaved ? 'save-status save-status-visible' : 'save-status'}>✓ 已保存</span>
