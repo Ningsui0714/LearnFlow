@@ -337,6 +337,11 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 接入后端后，正式 `practice / verify / consolidate` 完成仍必须由下述证据投影裁决，不能沿用
 浏览器中的 Skill 导航。
 
+vNext MUST 使用 `Tutor 主状态 -> 绑定 Skill -> 当前 Skill 步骤子状态` 的单一包含关系。首批四个
+Learning Skill 只允许绑定 `guided_learning`；用户预选 Skill 时只绑定下一轮，发送消息并建立任务后
+才启动 Skill。每个步骤 MUST 声明可见子状态，`vnext_learning_skill_step_entered` 同时投影步骤与
+子状态；循环 MUST 留在本步。UI 和 Tutor LLM 只能读取该投影，不得维护或转换另一套子状态机。
+
 vNext Tutor 每轮 MAY 先调用 `vnext_five_kernel_profile_reader`。当前数据源是学习者可检查的
 只读 Module/Claim 模拟，不是正式 KernelState；Reader MUST 按当前问题、任务目标和 Skill 做
 确定性相关检索与预算裁剪，MUST NOT 全量注入画像。敏感 Human Claim MUST 通过

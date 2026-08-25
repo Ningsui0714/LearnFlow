@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.6"
+REGISTRY_VERSION = "2026-08-25.7"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -749,6 +749,7 @@ def registry_manifest() -> dict[str, Any]:
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
             "vnext_learning_task_projection": "append-only browser-local operational events -> deterministic in-chat task projection; never mastery evidence",
+            "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> current skill step substate; transitions only from the browser-local event queue",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],

@@ -17,7 +17,12 @@ import {
   type LearningSkillId,
   type LearningTask,
 } from '../src/learning.ts'
-import { resolveTutorMode } from '../src/tutor.ts'
+import { isDisplayableTutorReply, resolveTutorMode } from '../src/tutor.ts'
+
+test('internal provider tool protocols are never treated as Tutor teaching text', () => {
+  assert.equal(isDisplayableTutorReply('先建立直觉：朴素贝叶斯会比较各类别的后验概率。'), true)
+  assert.equal(isDisplayableTutorReply('<tool_call><function=trigger_start_learning></function></tool_call>'), false)
+})
 
 test('only an explicit atomic learning request starts guided learning automatically', () => {
   assert.equal(resolveTutorMode('free', '什么是操作系统'), 'simple_explain')
@@ -42,6 +47,10 @@ test('each learning skill owns a distinct deterministic flow', () => {
   const skillIds = Object.keys(LEARNING_SKILLS) as LearningSkillId[]
   const paths = skillIds.map(skillId => LEARNING_SKILLS[skillId].steps.map(step => step.id).join('>'))
   assert.equal(new Set(paths).size, skillIds.length)
+  assert.equal(skillIds.every(skillId => LEARNING_SKILLS[skillId].boundState === 'guided_learning'), true)
+  assert.equal(skillIds.every(skillId => LEARNING_SKILLS[skillId].steps.every(
+    step => Boolean(step.substateId && step.substateLabel.endsWith('态')),
+  )), true)
   assert.deepEqual(LEARNING_SKILLS.guided_explanation.steps.map(step => step.id), [
     'anchor_model', 'inspect_example', 'learner_explain', 'transfer_check',
   ])
@@ -54,6 +63,17 @@ test('each learning skill owns a distinct deterministic flow', () => {
   assert.deepEqual(LEARNING_SKILLS.worked_example_fading.steps.map(step => step.id), [
     'worked_example', 'complete_last_step', 'complete_middle_step', 'independent_problem', 'reflect_strategy',
   ])
+})
+
+test('an explicitly selected skill binds the next guided task and exposes its substate', () => {
+  const created = createLearningTask('理解朴素贝叶斯', 100, [], 'feynman_dialogue')
+  const projection = projectLearningTask(created.task, created.events)
+  const context = learningTaskTutorContext(projection)
+
+  assert.equal(projection.skillId, 'feynman_dialogue')
+  assert.equal(context.substateId, 'guidance')
+  assert.equal(context.substateLabel, '引导态')
+  assert.match(created.events.at(-1)?.detail || '', /引导态/)
 })
 
 test('step movement is queue-driven and follows the current skill', () => {
@@ -69,6 +89,7 @@ test('step movement is queue-driven and follows the current skill', () => {
 
   const advanced = advanceLearningSkillStep(withReply, projectLearningTask(created.task, withReply), 300)
   assert.equal(projectLearningTask(created.task, advanced).stepId, 'inspect_example')
+  assert.equal(learningTaskTutorContext(projectLearningTask(created.task, advanced)).substateId, 'demonstration')
 })
 
 test('support and explicit repeats loop inside the current skill step', () => {
@@ -146,6 +167,7 @@ test('the model receives a bounded read-only skill-step projection', () => {
   const projection = projectLearningTask(created.task, created.events)
   const context = learningTaskTutorContext(projection)
   assert.equal(context.skillName, '清晰讲解')
+  assert.equal(context.substateLabel, '引导态')
   assert.equal(context.stepTitle, '建立最小模型')
   assert.equal(context.stepCount, LEARNING_SKILLS.guided_explanation.steps.length)
   assert.match(context.stepInstruction, /先直接解释/)

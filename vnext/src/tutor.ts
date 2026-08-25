@@ -45,6 +45,7 @@ function systemPrompt(mode: TutorMode) {
     '你是 LearnFlow Tutor，面向正在学习计算机知识的学生。',
     '只基于可靠知识回答；不确定时明确说明，不编造来源、进度或掌握结论。',
     '使用清楚、自然的中文，根据学生已有上下文决定术语密度。',
+    '只输出面向学生的教学正文；不要输出、模拟或建议任何 tool_call、function call、XML 工具协议或内部控制指令。需要的工具已由 LearnFlow 在本轮调用完成。',
   ].join('\n')
 
   if (mode === 'simple_explain') {
@@ -167,11 +168,12 @@ export function buildTutorProviderRequest(options: {
           '当前原子学习任务（本地运行投影，只读）：',
           `目标：${options.learningTaskContext.objective}`,
           `当前 Skill：${options.learningTaskContext.skillName}`,
+          `Tutor 子状态：${options.learningTaskContext.substateLabel}（${options.learningTaskContext.substateId}）`,
           `Skill 步骤：${options.learningTaskContext.stepIndex + 1}/${options.learningTaskContext.stepCount} ${options.learningTaskContext.stepTitle}`,
           `本步编排：${options.learningTaskContext.stepInstruction}`,
           `本步已循环：${options.learningTaskContext.loopCount} 次。${options.learningTaskContext.loopCount > 0 ? `本轮支架要求：${options.learningTaskContext.loopInstruction}` : ''}`,
           `完成本步后的界面动作：${options.learningTaskContext.nextAction}`,
-          '请把这些约束自然地落实在回复中，不要逐项复述。步骤变化和循环只能由界面动作与事件队列决定。',
+          '请把这些约束自然地落实在回复中，不要逐项复述。子状态由当前 Skill 步骤确定；步骤、子状态变化和循环只能由界面动作与事件队列决定。',
         ].join('\n')
       : '',
     options.selectionContext
@@ -197,6 +199,12 @@ export function ensureSearchCitations(reply: string, runs: TutorToolRun[]) {
     return `[${title}](${source.url})`
   })
   return `${reply.trim()}\n\n参考依据：${links.join('；')}。`
+}
+
+export function isDisplayableTutorReply(reply: string) {
+  const normalized = reply.trim()
+  if (!normalized) return false
+  return !/(?:<\/?tool_call>|<function=|<parameter=|\btrigger_start_learning\b)/i.test(normalized)
 }
 
 export async function requestTutorReply(options: {

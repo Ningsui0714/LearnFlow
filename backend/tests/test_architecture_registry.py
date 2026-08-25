@@ -93,6 +93,10 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
     assert "append-only local event queue" in TOOLS["vnext_learning_task_runtime"].write_path
+    assert registry_manifest()["authority"]["vnext_learning_substate_projection"] == (
+        "guided_learning main state -> bound learning skill -> current skill step substate; "
+        "transitions only from the browser-local event queue"
+    )
     assert TOOLS["vnext_five_kernel_profile_reader"].reads_kernels == (
         "structure", "knowledge", "human", "value", "practice",
     )

@@ -5,6 +5,7 @@ import {
   buildTutorProviderRequest,
   errorFromTutorProviderResponse,
   ensureSearchCitations,
+  isDisplayableTutorReply,
   isTutorMode,
   textFromTutorProviderResponse,
   tutorConfigurationIssue,
@@ -231,6 +232,18 @@ function tutorProxy(mode: string): Plugin {
             learningTaskContext,
           })
           reply = await callProvider({ ...retryRequest, timeoutMs: 32_000 })
+        }
+      }
+      if (!isDisplayableTutorReply(reply)) {
+        const repairRequest = buildTutorProviderRequest({
+          baseUrl, model, mode: modeValue, messages: messages.slice(-10),
+          toolContext: `${tools.context}\n\n回复契约修正：上一次模型输出了不可展示的内部工具协议。请重新回答当前学生问题，只输出自然的中文教学正文，不得输出任何 tool_call、function、XML 参数或内部状态指令。`,
+          selectionContext,
+          learningTaskContext,
+        })
+        reply = await callProvider({ ...repairRequest, timeoutMs: 32_000 })
+        if (!isDisplayableTutorReply(reply)) {
+          throw new Error('模型连续返回内部工具协议，已停止展示；请重试本轮')
         }
       }
       reply = ensureSearchCitations(reply, tools.runs)

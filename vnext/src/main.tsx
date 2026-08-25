@@ -16,6 +16,7 @@ import {
   canAdvanceLearningSkillStep,
   createLearningTask,
   currentLearningSkillStep,
+  isLearningSkillId,
   isSupportRequest,
   latestLearningTaskProjection,
   LEARNING_SKILLS,
@@ -26,6 +27,7 @@ import {
   switchLearningSkill,
   type LearningEvent,
   type LearningSkillId,
+  type LearningSubstateId,
   type LearningTask,
   type LearningTaskProjection,
 } from './learning'
@@ -49,6 +51,9 @@ type Message = {
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
   learningActionLabel?: string
+  learningSkillId?: LearningSkillId
+  learningSubstateId?: LearningSubstateId
+  learningSubstateLabel?: string
 }
 
 type FollowUpSheet = {
@@ -83,6 +88,7 @@ type Conversation = {
   activeSheetId: string
   learningTasks: LearningTask[]
   learningEvents: LearningEvent[]
+  preferredSkillId?: LearningSkillId
 }
 
 type WorkspaceTab = {
@@ -168,6 +174,7 @@ function restoreState(): PersistedState {
       sheets: Array.isArray(conversation.sheets) ? conversation.sheets : [],
       learningTasks: Array.isArray(conversation.learningTasks) ? conversation.learningTasks : [],
       learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
+      preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
         || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
         ? conversation.activeSheetId || 'main'
@@ -218,6 +225,32 @@ function activeMessages(conversation: Conversation) {
   return activeSheet(conversation)?.messages || conversation.messages
 }
 
+function ProfileModuleList({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`profile-module-list${compact ? ' profile-module-list-compact' : ''}`}>
+      {SIMULATED_FIVE_KERNEL_PROFILE.modules.map(module => (
+        <details key={module.id} className={`profile-module profile-module-${module.kernel}`}>
+          <summary>
+            <span>{FIVE_KERNEL_LABELS[module.kernel]}</span>
+            <strong>{module.title}</strong>
+            <small>{module.claims.length} claims</small>
+          </summary>
+          <p>{module.summary}</p>
+          <ul>
+            {module.claims.map(item => (
+              <li key={item.id}>
+                <span>{item.provenance === 'user_self_report' ? '自述' : '边界'}</span>
+                <p>{item.text}</p>
+                {item.sensitivity === 'sensitive' && <em>敏感 · {item.usePolicy === 'adapt_silently' ? '静默适配' : '需确认'}</em>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ))}
+    </div>
+  )
+}
+
 function paperPreview(messages: Message[]) {
   const latest = [...messages].reverse().find(message => message.role !== 'system')
   return latest?.content
@@ -256,6 +289,7 @@ function App() {
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
   const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
+  const [profilePanelFor, setProfilePanelFor] = useState('')
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
 
@@ -306,6 +340,15 @@ function App() {
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [paperDeskView])
+
+  useEffect(() => {
+    if (!profilePanelFor) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfilePanelFor('')
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [profilePanelFor])
 
   const openTab = (next: WorkspaceTab) => {
     setWorkspace(previous => {
@@ -471,7 +514,9 @@ function App() {
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => (
-        conversation.id === conversationId ? { ...conversation, mode } : conversation
+        conversation.id === conversationId
+          ? { ...conversation, mode, preferredSkillId: mode === 'guided_learning' ? conversation.preferredSkillId : undefined }
+          : conversation
       )),
     }))
   }
@@ -558,7 +603,7 @@ function App() {
 
     if (mode === 'guided_learning') {
       if (!learningProjection) {
-        const created = createLearningTask(content, now, learningEvents)
+        const created = createLearningTask(content, now, learningEvents, conversation.preferredSkillId)
         learningTasks = [...learningTasks, created.task]
         learningEvents = created.events
         learningProjection = projectLearningTask(created.task, learningEvents)
@@ -604,6 +649,7 @@ function App() {
         .map(message => ({ role: message.role, content: message.content })),
       { role: 'user' as const, content },
     ]
+    const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
 
     setPendingTurns(previous => ({ ...previous, [conversationId]: mode }))
     setWorkspace(previous => {
@@ -613,6 +659,9 @@ function App() {
         const userMessage: Message = {
           id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
           learningActionLabel: options.learningActionLabel,
+          learningSkillId: learningProjection?.skillId,
+          learningSubstateId: turnStep?.substateId,
+          learningSubstateLabel: turnStep?.substateLabel,
         }
         return {
           ...conversation,
@@ -639,6 +688,9 @@ function App() {
       finishTurn(conversationId, sheetId, mode, {
         role: 'system',
         content: `本轮已识别为“${TUTOR_MODE_LABELS[mode]}”，但模型连接还不能使用：${configurationIssue}`,
+        learningSkillId: learningProjection?.skillId,
+        learningSubstateId: turnStep?.substateId,
+        learningSubstateLabel: turnStep?.substateLabel,
       })
       return
     }
@@ -653,12 +705,20 @@ function App() {
         selectionContext: activeSheet(conversation)?.quote,
         learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
       })
-      finishTurn(conversationId, sheetId, mode, { role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns })
+      finishTurn(conversationId, sheetId, mode, {
+        role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns,
+        learningSkillId: learningProjection?.skillId,
+        learningSubstateId: turnStep?.substateId,
+        learningSubstateLabel: turnStep?.substateLabel,
+      })
       setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
     } catch (error) {
       finishTurn(conversationId, sheetId, mode, {
         role: 'system',
         content: `“${TUTOR_MODE_LABELS[mode]}”请求失败：${error instanceof Error ? error.message : '未知错误'}`,
+        learningSkillId: learningProjection?.skillId,
+        learningSubstateId: turnStep?.substateId,
+        learningSubstateLabel: turnStep?.substateLabel,
       })
     }
   }
@@ -700,9 +760,34 @@ function App() {
           ...conversation,
           learningEvents,
           mode: action === 'resume' || action === 'skill' ? 'guided_learning' : 'free',
+          preferredSkillId: action === 'complete' ? undefined : conversation.preferredSkillId,
           updatedAt: Date.now(),
         }
       }),
+    }))
+  }
+
+  const selectLearningSkill = (conversationId: string, value: string) => {
+    if (pendingTurns[conversationId]) return
+    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    if (!conversation) return
+    const activeProjection = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    const latestProjection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    if (latestProjection?.status === 'paused') return
+    if (activeProjection && isLearningSkillId(value)) {
+      updateLearningTask(conversationId, 'skill', value)
+      return
+    }
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(item => item.id === conversationId
+        ? {
+            ...item,
+            mode: 'guided_learning',
+            preferredSkillId: isLearningSkillId(value) ? value : undefined,
+            updatedAt: Date.now(),
+          }
+        : item),
     }))
   }
 
@@ -776,27 +861,7 @@ function App() {
               <i>v{SIMULATED_FIVE_KERNEL_PROFILE.version} · 模拟</i>
             </div>
             <p className="profile-description">{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
-            <div className="profile-module-list">
-              {SIMULATED_FIVE_KERNEL_PROFILE.modules.map(module => (
-                <details key={module.id} className={`profile-module profile-module-${module.kernel}`}>
-                  <summary>
-                    <span>{FIVE_KERNEL_LABELS[module.kernel]}</span>
-                    <strong>{module.title}</strong>
-                    <small>{module.claims.length} claims</small>
-                  </summary>
-                  <p>{module.summary}</p>
-                  <ul>
-                    {module.claims.map(item => (
-                      <li key={item.id}>
-                        <span>{item.provenance === 'user_self_report' ? '自述' : '边界'}</span>
-                        <p>{item.text}</p>
-                        {item.sensitivity === 'sensitive' && <em>敏感 · {item.usePolicy === 'adapt_silently' ? '静默适配' : '需确认'}</em>}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              ))}
-            </div>
+            <ProfileModuleList />
           </section>
         </section>
       )
@@ -809,8 +874,14 @@ function App() {
     const activeTaskProjection = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
     const taskSkill = taskProjection ? LEARNING_SKILLS[taskProjection.skillId] : undefined
     const taskStep = taskProjection ? currentLearningSkillStep(taskProjection) : undefined
+    const activeTaskStep = activeTaskProjection ? currentLearningSkillStep(activeTaskProjection) : undefined
     const taskCanAdvance = taskProjection ? canAdvanceLearningSkillStep(taskProjection) : false
     const visibleMode = pendingMode || (activeTaskProjection ? 'guided_learning' : conversation.mode)
+    const visibleSkillId = activeTaskProjection?.skillId
+      || (conversation.mode === 'guided_learning' ? conversation.preferredSkillId : undefined)
+    const visibleSkill = visibleSkillId ? LEARNING_SKILLS[visibleSkillId] : undefined
+    const visibleSubstateLabel = activeTaskStep?.substateLabel
+      || (visibleMode === 'guided_learning' ? '准备态' : '')
     const sheet = activeSheet(conversation)
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
@@ -857,10 +928,38 @@ function App() {
         <header className="chat-heading">
           <h1>{conversation.title}</h1>
           <div className="chat-state-stack">
-            <span className={`mode-badge mode-badge-${visibleMode}`}>{TUTOR_MODE_LABELS[visibleMode]}</span>
+            <span className={`mode-badge mode-badge-${visibleMode}`}>
+              {TUTOR_MODE_LABELS[visibleMode]}{visibleSubstateLabel ? ` · ${visibleSubstateLabel}` : ''}
+            </span>
+            {visibleSkill && <span className="skill-badge">{visibleSkill.name}</span>}
+            <button
+              type="button"
+              className="profile-open-button"
+              aria-expanded={profilePanelFor === conversation.id}
+              onClick={() => setProfilePanelFor(current => current === conversation.id ? '' : conversation.id)}
+            >画像</button>
             <span className="local-label">{workspace.settings.model || '待配置模型'}</span>
           </div>
         </header>
+        {profilePanelFor === conversation.id && (
+          <div className="profile-panel-layer" role="presentation" onMouseDown={event => {
+            if (event.target === event.currentTarget) setProfilePanelFor('')
+          }}>
+            <aside className="profile-panel" aria-label="用户五核画像">
+              <header>
+                <div><span>LEARNER PROFILE</span><strong>你的模拟五核画像</strong></div>
+                <button type="button" onClick={() => setProfilePanelFor('')} aria-label="关闭用户画像">×</button>
+              </header>
+              <div className="profile-panel-summary">
+                <span>计算机专业 · 准大二</span>
+                <span>ML / Agent / RL</span>
+                <span>定义 → 例子 / 代码</span>
+              </div>
+              <p>{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
+              <ProfileModuleList compact />
+            </aside>
+          </div>
+        )}
         <div className={hasWorkbench ? 'paper-workbench' : 'chat-thread'}>
           {hasWorkbench && (
             <div className="paper-toolbar">
@@ -1006,7 +1105,7 @@ function App() {
                 <div className="learning-task-anchor-main">
                   <strong>{taskProjection.task.objective}</strong>
                   <span>
-                    {taskProjection.status === 'paused' ? '已暂停 · ' : ''}{taskSkill?.name} · {taskStep?.title}
+                    {taskProjection.status === 'paused' ? '已暂停 · ' : ''}带领学习态 · {taskStep?.substateLabel} · {taskSkill?.name} · {taskStep?.title}
                     {taskProjection.loopCount > 0 ? ` · 本步第 ${taskProjection.loopCount + 1} 轮` : ''}
                   </span>
                 </div>
@@ -1033,7 +1132,7 @@ function App() {
                 <details className="learning-task-menu">
                   <summary role="button" aria-label="学习任务选项">•••</summary>
                   <div className="learning-task-popover">
-                    <header><strong>{taskSkill?.name}</strong><span>{taskSkill?.description}</span></header>
+                    <header><strong>带领学习态 · {taskStep?.substateLabel} · {taskSkill?.name}</strong><span>{taskSkill?.description}</span></header>
                     <ol>
                       {taskSkill?.steps.map((step, index) => (
                         <li key={step.id} className={index === taskProjection.stepIndex ? 'current' : index < taskProjection.stepIndex ? 'done' : ''}>
@@ -1115,6 +1214,20 @@ function App() {
                       : setConversationMode(conversation.id, 'guided_learning')}
                   >带领学习</button>
                 </div>
+                <label className="skill-choice" title="学习方法只在带领学习态运行；选择后下一条消息会建立任务">
+                  <span>方法</span>
+                  <select
+                    aria-label="学习方法"
+                    value={activeTaskProjection?.skillId || (conversation.mode === 'guided_learning' ? conversation.preferredSkillId || 'auto' : 'auto')}
+                    disabled={Boolean(pendingMode) || taskProjection?.status === 'paused'}
+                    onChange={event => selectLearningSkill(conversation.id, event.target.value)}
+                  >
+                    <option value="auto" disabled={Boolean(activeTaskProjection)}>自动选择</option>
+                    {(Object.keys(LEARNING_SKILLS) as LearningSkillId[]).map(skillId => (
+                      <option key={skillId} value={skillId}>{LEARNING_SKILLS[skillId].name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label className="tool-choice">
                   <span>工具</span>
                   <select value={toolChoices[draftKey] || 'auto'} disabled={Boolean(pendingMode)} onChange={event => setToolChoices(previous => ({ ...previous, [draftKey]: event.target.value as TutorToolChoice }))}>
@@ -1332,7 +1445,13 @@ function MessageList({ messages, onQuoteFollowUp }: {
             <div className="message-content" onMouseUp={message.role === 'assistant' ? event => captureSelection(message.id, event.currentTarget) : undefined}>
               <div className="message-meta">
                 {message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'}
-                {message.tutorMode && <em>{TUTOR_MODE_LABELS[message.tutorMode]}</em>}
+                {message.tutorMode && (
+                  <em>
+                    {TUTOR_MODE_LABELS[message.tutorMode]}
+                    {message.tutorMode === 'guided_learning' && message.learningSubstateLabel ? ` · ${message.learningSubstateLabel}` : ''}
+                  </em>
+                )}
+                {message.learningSkillId && <em className="message-skill">{LEARNING_SKILLS[message.learningSkillId]?.name}</em>}
                 {message.role === 'assistant' && (
                   <button
                     type="button"

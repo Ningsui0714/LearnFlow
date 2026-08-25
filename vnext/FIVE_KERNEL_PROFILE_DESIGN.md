@@ -4,7 +4,7 @@
 
 当前 vNext 维护一份**只有 Module 与 Claim**的学习者模拟画像。它来自学习者明确自述，主要用于让 Tutor 选对知识锚点、路径关系、表达方式、当前目标和实践证据缺口。
 
-它不是正式 `KernelState`，不记录 `MemoryFact`，不宣称掌握，也不接受 Agent 直接写入。Tutor 每轮调用 `vnext_five_kernel_profile_reader`，按当前问题、对话状态、学习任务目标和 Skill 确定性选出不超过 5 个 Module、9 个可直用 Claim；敏感的人因 Claim 不原样进入模型，而转成静默适配指令。工具调用会显示在对话里，完整模拟画像可以在设置页检查。
+它不是正式 `KernelState`，不记录 `MemoryFact`，不宣称掌握，也不接受 Agent 直接写入。Tutor 每轮调用 `vnext_five_kernel_profile_reader`，按当前问题、对话状态、学习任务目标和 Skill 确定性选出不超过 5 个 Module、9 个可直用 Claim；敏感的人因 Claim 不原样进入模型，而转成静默适配指令。工具调用会显示在对话里；Chat 顶部提供轻量五核概览，设置页可检查完整模拟画像。
 
 ```text
 学习者问题 + Tutor mode + LearningTask/Skill
@@ -82,7 +82,7 @@ Claim 当前只保留：文本、置信度、来源类型、敏感度、使用�
 - “先定义后例子/代码”变为回答组织要求，不让 Tutor 复述“根据你的画像……”。
 - 负荷或挫败信号只影响当前步幅和支架；一次答错、停顿或“不会”不能形成稳定情绪、能力、人格或医学判断。
 
-对话里只显示读取了哪些核、Module/Claim 数量和是否静默适配，不展示敏感 Claim 原文。设置页由本地学习者本人检查完整模拟画像。
+对话工具过程只显示读取了哪些核、Module/Claim 数量和是否静默适配，不展示敏感 Claim 原文。Chat 的画像面板只显示学习者自述摘要与 Module 摘要；设置页由本地学习者本人检查完整 Claim。
 
 ### 模型上下文契约
 

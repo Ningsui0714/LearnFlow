@@ -153,6 +153,15 @@ Contract impact：注册表版本提升到 `2026-08-25.6`，新增 capability
 `five_kernel_retriever`、EvidenceEvent/reducer、后端 API 与 vNext 模型请求均向后兼容；这是一项
 vNext 只读能力登记，没有新增 EventContract 或 Kernel writer。
 
+vNext 的教学状态采用单向包含关系：`Tutor 主状态 -> 已绑定 Learning Skill -> 当前 Skill 步骤子状态`。
+首批四个 Skill 都只能绑定 `guided_learning`；选择 Skill 只能让下一轮进入带领学习态，不能在自由态
+或简单讲解态中独立运行。`vnext_learning_skill_step_entered` 同时投影步骤与可见子状态，例如
+`带领学习态 · 引导态`；循环事件保持本步和本子状态。页面与 Tutor LLM 只读该投影，均无权自行转换。
+
+Contract impact：注册表版本提升到 `2026-08-25.7`。此次只把既有 Skill 步骤收紧为显式子状态契约，
+复用既有 `vnext_learning_skill_step_entered` 和浏览器本地事件队列；稳定 Skill ID、EventContract、
+后端 API、三 Agent 与五核写入链均向后兼容，没有新增 Kernel writer 或掌握语义。
+
 ### Learning Task 与双队列
 
 `LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者
