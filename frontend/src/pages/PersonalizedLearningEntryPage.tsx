@@ -285,7 +285,7 @@ export default function PersonalizedLearningEntryPage() {
             </span>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${launched.content_generation?.configured ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'}`}>
               {launched.content_generation?.configured
-                ? `Spark ${launched.content_generation.model || 'Lite'}`
+                ? `${launched.content_generation.provider === 'deepseek' ? 'DeepSeek' : '兼容模型'} ${launched.content_generation.model}`
                 : '本地确定性模板'}
             </span>
             <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">

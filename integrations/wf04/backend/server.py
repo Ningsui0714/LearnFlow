@@ -356,10 +356,11 @@ class Settings:
         "http://localhost:4173",
     )
     api_token: str = ""
-    # 星火 OpenAI 兼容 LLM（讲解正文本地化）：api_key 为空时讲解模块退化为确定性模板
-    spark_api_base: str = "https://spark-api-open.xf-yun.com/v1/chat/completions"
+    # OpenAI 兼容内容模型（讲解正文本地化）：api_key 为空时退化为确定性模板。
+    # 字段名保留 spark_*，避免破坏现有调用方；新配置统一使用 CONTENT_LLM_*。
+    spark_api_base: str = "https://api.deepseek.com/chat/completions"
     spark_api_key: str = ""
-    spark_model: str = "lite"
+    spark_model: str = "deepseek-v4-flash"
     spark_timeout: float = 60.0
     spark_max_tokens: int = 1600
     spark_temperature: float = 0.4
@@ -455,15 +456,39 @@ class Settings:
             ),
             allowed_origins=allowed_origins,
             api_token=os.getenv("APP_API_TOKEN", "").strip(),
-            spark_api_base=os.getenv(
-                "SPARK_API_BASE",
-                "https://spark-api-open.xf-yun.com/v1/chat/completions",
+            spark_api_base=(
+                os.getenv("CONTENT_LLM_API_BASE")
+                or os.getenv("DEEPSEEK_API_BASE")
+                or os.getenv("SPARK_API_BASE")
+                or "https://api.deepseek.com/chat/completions"
             ).strip(),
-            spark_api_key=os.getenv("SPARK_API_KEY", "").strip(),
-            spark_model=os.getenv("SPARK_MODEL", "lite").strip() or "lite",
-            spark_timeout=max(1.0, float(os.getenv("SPARK_TIMEOUT", "60"))),
-            spark_max_tokens=max(64, int(os.getenv("SPARK_MAX_TOKENS", "1600"))),
-            spark_temperature=float(os.getenv("SPARK_TEMPERATURE", "0.4")),
+            spark_api_key=(
+                os.getenv("CONTENT_LLM_API_KEY")
+                or os.getenv("DEEPSEEK_API_KEY")
+                or os.getenv("SPARK_API_KEY")
+                or ""
+            ).strip(),
+            spark_model=(
+                os.getenv("CONTENT_LLM_MODEL")
+                or os.getenv("DEEPSEEK_MODEL")
+                or os.getenv("SPARK_MODEL")
+                or "deepseek-v4-flash"
+            ).strip(),
+            spark_timeout=max(1.0, float(
+                os.getenv("CONTENT_LLM_TIMEOUT")
+                or os.getenv("SPARK_TIMEOUT")
+                or "60"
+            )),
+            spark_max_tokens=max(64, int(
+                os.getenv("CONTENT_LLM_MAX_TOKENS")
+                or os.getenv("SPARK_MAX_TOKENS")
+                or "1600"
+            )),
+            spark_temperature=float(
+                os.getenv("CONTENT_LLM_TEMPERATURE")
+                or os.getenv("SPARK_TEMPERATURE")
+                or "0.4"
+            ),
         )
 
 
@@ -6712,7 +6737,13 @@ class LearningApplication:
             ),
             "content_generation": {
                 "provider": (
-                    "spark_openai_compatible"
+                    (
+                        "deepseek"
+                        if "deepseek" in (
+                            self.settings.spark_api_base + self.settings.spark_model
+                        ).lower()
+                        else "spark_openai_compatible"
+                    )
                     if self.local_engine.llm_available
                     else "deterministic_template"
                 ),
@@ -12932,7 +12963,13 @@ class LearningApplication:
             "material_knowledge_enabled": self.material_knowledge.enabled,
             "content_generation": {
                 "provider": (
-                    "spark_openai_compatible"
+                    (
+                        "deepseek"
+                        if "deepseek" in (
+                            self.settings.spark_api_base + self.settings.spark_model
+                        ).lower()
+                        else "spark_openai_compatible"
+                    )
                     if self.local_engine.llm_available
                     else "deterministic_template"
                 ),

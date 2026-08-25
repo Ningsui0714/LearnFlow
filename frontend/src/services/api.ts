@@ -255,7 +255,7 @@ export interface PersonalizedLearningLaunchResult {
   knowledge_point_id: string
   redirect_url: string
   content_generation: {
-    provider: 'spark_openai_compatible' | 'deterministic_template'
+    provider: 'deepseek' | 'spark_openai_compatible' | 'deterministic_template'
     model: string
     configured: boolean
   }

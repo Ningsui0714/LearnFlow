@@ -9,7 +9,7 @@ WF04 的错题优先个性化出题、错因级合并规则和联调验收方式
 - 上游测验/诊断结果入口；
 - 学生画像、推荐、目标与路径规划、对话、出题与 WF04 等星辰工作流的代理；
 - **讲解模块已本地化**（`backend/local_explanation_engine.py`）：正式章节讲解、
-  候选讲解与纠错讲解由本地课程知识库 + 联网检索 + 星火直连生成，不再调用星辰工作流；
+  候选讲解与纠错讲解由本地课程知识库 + 联网检索 + 内容模型直连生成，不再调用星辰工作流；
 - 本地学生画像缓存、策略引擎和知识依据缓存；
 - SQLite 学习状态和调用记录；
 - 学习周期、任务实例、题目、作答、讲解会话和结构化来源持久化；
@@ -46,12 +46,12 @@ APP_API_TOKEN=
 - 检索增强：讲解（learning/remediation）与选中追问都先按 `knowledge_point_id` + 讲解动作召回 top-k，拼成 `kb_text` 交给本地讲解引擎/对话生成，并把命中条目以 `sources[]` 结构注入教学包来源（前端来源弹窗可见标准号/章节）。
 - 无匹配时回退到原有 web_search/知识名证据链路，不影响无本地条目时的原行为。
 
-## 本地讲解引擎（星火直连）
+## 本地讲解引擎（OpenAI 兼容直连）
 
 讲解正文不再依赖星辰画布工作流，改由 `backend/local_explanation_engine.py` 在本地生成：
 
 1. **来源门禁**：仅使用本地课程知识库（FTS5）与白名单联网检索证据；两者都没有时返回 `knowledge_unavailable`，绝不用无来源 AI 内容替代。
-2. **LLM**：配置 `SPARK_API_KEY` 后直连讯飞星火 OpenAI 兼容端点（`SPARK_API_BASE`）生成讲解，失败/未配置自动回退确定性模板（等价历史 mock 行为）。
+2. **LLM**：配置 `CONTENT_LLM_API_KEY` 后直连 OpenAI 兼容端点生成讲解；当前默认 DeepSeek `deepseek-v4-flash`，失败/未配置自动回退确定性模板。
 3. 相关星辰配置项 `XINGCHEN_LEARNING_FLOW_ID`、`XINGCHEN_REMEDIATION_FLOW_ID`、`XINGCHEN_KNOWLEDGE_PLANNING_FLOW_ID`、`XINGCHEN_KNOWLEDGE_AUDIT_FLOW_ID` 已停用，保留仅为兼容历史配置。
 
 ## 接入讯飞星辰
@@ -59,7 +59,7 @@ APP_API_TOKEN=
 1. 在星辰平台导入并发布 `学生画像分析工作流.yml` 与 `测验后个性化纠错讲解工作流_v5.yml`（纠错讲解已本地化，非必需；对话/出题/WF04 等按需发布对应工作流）。
 2. 从发布页取得 `API_KEY`、`API_SECRET` 和对应工作流 ID。
 3. 复制 `backend/.env.example` 为 `backend/.env`，填写密钥和工作流 ID，并将 `XINGCHEN_MODE` 改为 `remote`。
-4. 可选：填写 `SPARK_API_KEY`（星火大模型 APIPassword，与 `XINGCHEN_API_KEY` 是两套独立凭据）启用 AI 讲解生成；留空则讲解走本地模板。
+4. 可选：填写 `CONTENT_LLM_API_KEY`（当前为 DeepSeek API Key，与 `XINGCHEN_API_KEY` 是两套独立凭据）启用 AI 讲解生成；留空则讲解走本地模板。
 
 ```powershell
 Copy-Item backend\.env.example backend\.env

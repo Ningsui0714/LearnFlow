@@ -323,7 +323,7 @@ class PersonalizedLearningHandoffClient:
             content_generation.get("provider") or "deterministic_template"
         ).strip()
         if generation_provider not in {
-            "spark_openai_compatible", "deterministic_template",
+            "deepseek", "spark_openai_compatible", "deterministic_template",
         }:
             raise PersonalizedLearningHandoffError(
                 "个性化学习服务返回了未知的内容生成来源"

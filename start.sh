@@ -60,10 +60,10 @@ check_deps() {
   fi
 
   # 个性化学习内容引擎使用独立私密配置。首次启动只复制安全
-  # 占位模板；SPARK_API_KEY 留空时明确降级为确定性模板。
+  # 占位模板；CONTENT_LLM_API_KEY 留空时明确降级为确定性模板。
   if [ ! -f "$PERSONALIZED_DIR/backend/.env" ]; then
     cp "$PERSONALIZED_DIR/backend/.env.example" "$PERSONALIZED_DIR/backend/.env"
-    echo -e "${YELLOW}⚠  已创建个性化学习配置；填写 SPARK_API_KEY 后使用 Spark Lite${NC}"
+    echo -e "${YELLOW}⚠  已创建个性化学习配置；填写 CONTENT_LLM_API_KEY 后使用 DeepSeek${NC}"
   fi
 
   # Node modules

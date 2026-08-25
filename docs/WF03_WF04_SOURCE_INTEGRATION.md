@@ -17,7 +17,7 @@
 | 位置 | 能力 | 后续用途 |
 |---|---|---|
 | `integrations/wf04/backend/server.py` | 个性化学习项目、诊断、题目、讲解、复习与学习路径 API | 作为下游服务能力来源，拆出稳定适配接口 |
-| `integrations/wf04/backend/spark_client.py` | 讯飞星火 OpenAI 兼容接口客户端 | 可复用为内容生成适配器，失败时保留确定性降级 |
+| `integrations/wf04/backend/spark_client.py` | OpenAI 兼容内容模型客户端（历史文件名） | 当前默认 DeepSeek，失败时保留确定性降级 |
 | `integrations/wf04/backend/learning_path_workflow.py` | 学习路径规划流程 | 接收知识点交接后生成下游学习计划 |
 | `integrations/wf04/backend/teaching_contract.py` | 教学内容契约与校验 | 校验下游生成产物，不作为掌握证据 |
 | `integrations/wf04/frontend/agent.html` | 对话和学习项目主界面 | 作为中央工作区嵌入与交互适配参考 |
@@ -65,8 +65,8 @@ POST /api/integrations/learning-task-knowledge
   "redirect_url": "/agent.html?student_id=...&project_id=...&knowledge_point_id=...&entry_id=...",
   "entry_id": "stable-idempotency-key",
   "content_generation": {
-    "provider": "spark_openai_compatible",
-    "model": "lite",
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
     "configured": true
   },
   "assessment": {
@@ -89,17 +89,17 @@ kernel target 的导航/运营事件，不能被解释为掌握证据。
 
 ## 运行配置边界
 
-个性化学习源码可在无远端密钥时使用本地确定性模板。启用讯飞星火内容生成时，只需在本地运行环境
+个性化学习源码可在无远端密钥时使用本地确定性模板。当前临时使用 DeepSeek 内容生成，只需在本地运行环境
 配置以下变量，真实值不得提交：
 
 ```text
-SPARK_API_BASE=https://spark-api-open.xf-yun.com/v1/chat/completions
-SPARK_API_KEY=<讯飞 HTTP APIPassword>
-SPARK_MODEL=lite
+CONTENT_LLM_API_BASE=https://api.deepseek.com/chat/completions
+CONTENT_LLM_API_KEY=<DeepSeek API Key>
+CONTENT_LLM_MODEL=deepseek-v4-flash
 ```
 
-只有继续调用星辰工作流时，才需要 `XINGCHEN_*` 配置。星火 HTTP `APIPassword` 与星辰
-`API_KEY:API_SECRET` 是两套凭据，不能混用。
+只有继续调用星辰工作流时，才需要 `XINGCHEN_*` 配置。DeepSeek 密钥与星辰
+`API_KEY:API_SECRET` 是两套凭据，不能混用。旧的 `SPARK_*` 变量仍作为兼容回退保留。
 
 ## 合入后的约束
 

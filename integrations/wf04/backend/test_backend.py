@@ -92,6 +92,24 @@ class BackendIntegrationTests(unittest.TestCase):
 
         self.assertEqual(settings.input_key, "AGENT_USER_INPUT")
 
+    def test_content_llm_settings_prefer_generic_deepseek_configuration(self):
+        with patch.dict(os.environ, {
+            "CONTENT_LLM_API_BASE": "https://api.deepseek.com/chat/completions",
+            "CONTENT_LLM_API_KEY": "test-deepseek-key",
+            "CONTENT_LLM_MODEL": "deepseek-v4-flash",
+            "SPARK_API_BASE": "https://legacy.example/v1/chat/completions",
+            "SPARK_API_KEY": "legacy-key",
+            "SPARK_MODEL": "legacy-model",
+        }):
+            settings = Settings.from_env(host="127.0.0.1", port=4173)
+
+        self.assertEqual(
+            settings.spark_api_base,
+            "https://api.deepseek.com/chat/completions",
+        )
+        self.assertEqual(settings.spark_api_key, "test-deepseek-key")
+        self.assertEqual(settings.spark_model, "deepseek-v4-flash")
+
     def test_unified_learning_context_overrides_assessment_route(self):
         application = self.server.RequestHandlerClass.application
         context = {

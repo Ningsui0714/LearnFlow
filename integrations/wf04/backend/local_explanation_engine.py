@@ -1,7 +1,7 @@
-"""本地讲解引擎：课程知识库 + 星火 LLM 生成讲解正文，确定性模板兜底。
+"""本地讲解引擎：课程知识库 + 内容 LLM 生成讲解正文，确定性模板兜底。
 
 替代星辰画布工作流的全部讲解相关调用，是 ``_mock_learning`` 的"升级正式实现"，
-mock（未配置 SPARK_API_KEY）与 remote（已配置）共用：有 LLM 优先用 LLM 生成，
+mock（未配置 CONTENT_LLM_API_KEY）与 remote（已配置）共用：有 LLM 优先用 LLM 生成，
 失败或未配置则回退确定性模板（课程知识库 + 能力池过滤），仍无来源才由上层
 门禁降级为 ``knowledge_unavailable``。
 
@@ -76,7 +76,7 @@ class LocalExplanationEngine:
     def has_local_kb_coverage(self, knowledge_point_id: str) -> bool:
         """本地课程知识库是否覆盖该知识点（concept/steps/example 至少一类命中）。
 
-        作为 LLM 路径的来源门禁：星火可用但没有网页证据且知识库无覆盖时，
+        作为 LLM 路径的来源门禁：模型可用但没有网页证据且知识库无覆盖时，
         服务器不会让模型用无来源内容生成讲解。
         """
         if not str(knowledge_point_id or "").strip():
@@ -98,11 +98,11 @@ class LocalExplanationEngine:
         if not self.llm_available:
             template["fallback_used"] = True
             template["fallback_reason"] = (
-                "本地讲解引擎未配置星火 API（SPARK_API_KEY 为空），使用课程知识库模板"
+                "本地讲解引擎未配置内容模型 API，使用课程知识库模板"
             )
             template["source_status"] = "verified_local_fallback"
             template["source_notice"] = (
-                "本次讲解由本地课程知识库确定性模板组织；配置星火 API 后可生成 AI 讲解。"
+                "本次讲解由本地课程知识库确定性模板组织；配置内容模型 API 后可生成 AI 讲解。"
             )
             return template
         capability_pool = self._capability_pool(context)
@@ -125,11 +125,11 @@ class LocalExplanationEngine:
         except SparkError as error:
             template["fallback_used"] = True
             template["fallback_reason"] = (
-                f"星火讲解生成失败（{error.kind}），已改用本地课程知识库模板"
+                f"内容模型讲解生成失败（{error.kind}），已改用本地课程知识库模板"
             )
             template["source_status"] = "verified_local_fallback"
             template["source_notice"] = (
-                "本次已自动改用本地课程知识库组织讲解；配置正确的星火 API 后可恢复 AI 生成。"
+                "本次已自动改用本地课程知识库组织讲解；配置正确的内容模型 API 后可恢复 AI 生成。"
             )
             return template
 
@@ -141,7 +141,7 @@ class LocalExplanationEngine:
     ) -> dict[str, Any]:
         """候选讲解正文：LLM 生成 Markdown；失败抛 ``SparkError``（调用方回落脚手架）。"""
         if not self.llm_available:
-            raise SparkError("auth", "未配置星火 API")
+            raise SparkError("auth", "未配置内容模型 API")
         messages = self._candidate_prompt(generation_request, capability_pack, student_id)
         text = self._llm_text(messages, max_tokens=1800)
         return {"markdown": text, "ai_generated": True}
@@ -182,7 +182,7 @@ class LocalExplanationEngine:
         max_tokens: int | None = None,
     ) -> str:
         if not self.llm_available or self.spark is None:
-            raise SparkError("auth", "未配置星火 API")
+            raise SparkError("auth", "未配置内容模型 API")
         last_error: SparkError | None = None
         for attempt in range(2):
             try:

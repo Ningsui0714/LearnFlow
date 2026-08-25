@@ -188,7 +188,7 @@ PERSONALIZED_LEARNING_API_TOKEN=
 
 `start.sh` 会启动同仓个性化学习运行时，并通过进程环境把实际端口交给主后端；私有配置仍可覆盖为拆分部署地址。未配置且未通过一键脚本启动时，`/personalized-learning/tasks/{task_card_id}/knowledge/{knowledge_id}` 仍可预览待交接内容，启动操作会返回明确错误，不会伪造成功项目。
 
-个性化学习运行时默认使用 Spark Lite；只有配置 `integrations/wf04/backend/.env` 中的 `SPARK_API_KEY` 才会调用远程模型，否则明确显示“本地确定性模板”。导入后立即预生成 `provisional_self_check` 练习型初测。完成初测时，嵌入页只向精确父窗口 origin 回传结果；主系统会复核交接 ID、项目 ID、知识点 ID 和启动事件。该结果的 `formal_evidence` 必须为 `false`，不更新五核、掌握度或学习路径。
+个性化学习运行时当前默认使用 DeepSeek `deepseek-v4-flash`；只有配置 `integrations/wf04/backend/.env` 中的 `CONTENT_LLM_API_KEY` 才会调用远程模型，否则明确显示“本地确定性模板”。导入后立即预生成 `provisional_self_check` 练习型初测。完成初测时，嵌入页只向精确父窗口 origin 回传结果；主系统会复核交接 ID、项目 ID、知识点 ID 和启动事件。该结果的 `formal_evidence` 必须为 `false`，不更新五核、掌握度或学习路径。
 
 结果回传协议为：
 

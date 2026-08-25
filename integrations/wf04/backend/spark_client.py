@@ -1,12 +1,13 @@
-"""标准库 urllib 实现的讯飞星火 OpenAI 兼容聊天客户端（零第三方依赖）。
+"""标准库 urllib 实现的 OpenAI 兼容聊天客户端（零第三方依赖）。
 
-讲解正文本地化后，后端直接用 ``urllib`` 直连星火 OpenAI 兼容端点
-（``spark-api-open.xf-yun.com/v1/chat/completions``），不再依赖星辰画布工作流。
+讲解正文本地化后，后端直接用 ``urllib`` 调用 OpenAI 兼容端点。
+当前默认直连 DeepSeek Chat Completions，同时保留星火等 OpenAI 兼容
+端点的配置能力，不再依赖星辰画布工作流。
 本模块只负责 chat completion 请求/响应；检索侧（本地 FTS5 知识库 + Bing RSS
 联网证据）均不需要 embedding，因此不提供 embeddings 调用。
 
-凭据注意：这里的 ``api_key`` 是星火大模型 API 的 APIPassword，与星辰工作流
-网关的 ``api_key:api_secret`` 是两套独立的凭据，不能混用。
+凭据注意：这里的内容模型凭据与星辰工作流网关的
+``api_key:api_secret`` 是两套独立凭据，不能混用。
 """
 
 from __future__ import annotations
@@ -19,12 +20,12 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Any
 
-SPARK_DEFAULT_API_BASE = "https://spark-api-open.xf-yun.com/v1/chat/completions"
-SPARK_DEFAULT_MODEL = "lite"
+SPARK_DEFAULT_API_BASE = "https://api.deepseek.com/chat/completions"
+SPARK_DEFAULT_MODEL = "deepseek-v4-flash"
 
 
 class SparkError(Exception):
-    """星火直连调用失败。
+    """OpenAI 兼容内容模型调用失败。
 
     ``kind`` 用于让上层决定降级策略：
     - ``timeout`` / ``network``：可重试（引擎至多重试 1 次）
@@ -52,6 +53,11 @@ class SparkConfig:
     def configured(self) -> bool:
         return bool(self.api_key.strip())
 
+    @property
+    def provider_label(self) -> str:
+        identity = f"{self.api_base} {self.model}".lower()
+        return "DeepSeek" if "deepseek" in identity else "OpenAI 兼容模型"
+
 
 class SparkClient:
     def __init__(self, config: SparkConfig) -> None:
@@ -73,7 +79,7 @@ class SparkClient:
         恒为 ``stream:false``；底层不重试，重试/降级由调用方决定。
         """
         if not self.config.configured:
-            raise SparkError("auth", "未配置星火 API 密钥（SPARK_API_KEY）")
+            raise SparkError("auth", f"未配置{self.config.provider_label} API 密钥")
         body: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
@@ -101,32 +107,32 @@ class SparkClient:
             status = int(getattr(error, "code", 0) or 0)
             reason = str(getattr(error, "reason", "") or "")
             if status in (401, 403):
-                raise SparkError("auth", f"星火鉴权失败（HTTP {status}）") from error
+                raise SparkError("auth", f"{self.config.provider_label}鉴权失败（HTTP {status}）") from error
             if status == 429:
-                raise SparkError("refused", "星火请求过于频繁（HTTP 429）") from error
+                raise SparkError("refused", f"{self.config.provider_label}请求过于频繁（HTTP 429）") from error
             if status >= 500:
-                raise SparkError("http", f"星火服务端错误（HTTP {status}）") from error
-            raise SparkError("http", f"星火请求失败（HTTP {status}）：{reason}") from error
+                raise SparkError("http", f"{self.config.provider_label}服务端错误（HTTP {status}）") from error
+            raise SparkError("http", f"{self.config.provider_label}请求失败（HTTP {status}）：{reason}") from error
         except (socket.timeout, TimeoutError) as error:
-            raise SparkError("timeout", "星火请求超时") from error
+            raise SparkError("timeout", f"{self.config.provider_label}请求超时") from error
         except urllib.error.URLError as error:
             raise SparkError(
-                "network", f"星火网络错误：{getattr(error, 'reason', error)}"
+                "network", f"{self.config.provider_label}网络错误：{getattr(error, 'reason', error)}"
             ) from error
         try:
             with closing(response):
                 raw = response.read().decode("utf-8", errors="replace")
         except Exception as error:
-            raise SparkError("network", f"读取星火响应失败：{error}") from error
+            raise SparkError("network", f"读取{self.config.provider_label}响应失败：{error}") from error
         try:
             data = json.loads(raw)
         except (ValueError, TypeError) as error:
             raise SparkError(
-                "parse", f"星火响应不是合法 JSON：{str(error)[:160]}"
+                "parse", f"{self.config.provider_label}响应不是合法 JSON：{str(error)[:160]}"
             ) from error
         choices = data.get("choices") if isinstance(data, dict) else None
         if not isinstance(choices, list) or not choices:
-            raise SparkError("empty", "星火响应没有 choices")
+            raise SparkError("empty", f"{self.config.provider_label}响应没有 choices")
         content = ""
         for choice in choices:
             if not isinstance(choice, dict):
@@ -136,5 +142,5 @@ class SparkClient:
                 content = message["content"]
                 break
         if not content.strip():
-            raise SparkError("empty", "星火响应正文为空")
+            raise SparkError("empty", f"{self.config.provider_label}响应正文为空")
         return content.strip()

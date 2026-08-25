@@ -1,4 +1,4 @@
-"""SparkClient（星火 OpenAI 兼容直连）单元测试。
+"""SparkClient（历史命名的 OpenAI 兼容直连客户端）单元测试。
 
 通过替换 ``urllib.request.urlopen`` 断言：鉴权头、stream:false、响应解析、
 401/429/超时/网络错误分类，以及未配置密钥时的 auth 拒绝。
@@ -64,7 +64,10 @@ class SparkClientTests(unittest.TestCase):
         self.assertEqual(captured["headers"]["Authorization"], "Bearer test-apipassword")
         self.assertEqual(captured["method"], "POST")
         self.assertFalse(captured["body"]["stream"])
-        self.assertEqual(captured["body"]["model"], "lite")
+        self.assertEqual(captured["body"]["model"], "deepseek-v4-flash")
+        self.assertEqual(
+            captured["url"], "https://api.deepseek.com/chat/completions",
+        )
 
     def test_configured_false_raises_auth(self):
         client = SparkClient(SparkConfig(api_key="  "))

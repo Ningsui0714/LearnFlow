@@ -86,8 +86,8 @@ async def test_handoff_client_preserves_wf04_identity_and_is_retry_safe():
             ),
             "created": len(requests) == 1,
             "content_generation": {
-                "provider": "spark_openai_compatible",
-                "model": "lite",
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
                 "configured": True,
             },
             "assessment": {
@@ -111,8 +111,8 @@ async def test_handoff_client_preserves_wf04_identity_and_is_retry_safe():
     assert other_learner["entry_id"] == requests[2]["handoff"]["entry_id"]
     assert _handoff()["entry_id"] != first["entry_id"]
     assert first["content_generation"] == {
-        "provider": "spark_openai_compatible",
-        "model": "lite",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
         "configured": True,
     }
     assert first["assessment"]["status"] == "ready"
