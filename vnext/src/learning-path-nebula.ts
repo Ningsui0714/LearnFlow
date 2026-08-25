@@ -29,19 +29,19 @@ export type NebulaNodePosition = {
   degree: number
 }
 
-export const NEBULA_WIDTH = 1500
-export const NEBULA_HEIGHT = 1120
+export const NEBULA_WIDTH = 1280
+export const NEBULA_HEIGHT = 930
 
 export const KNOWLEDGE_CLUSTERS: KnowledgeCluster[] = [
-  { id: 'mathematics', label: '数学与理论', caption: '抽象、证明与建模语言', color: '#7d78c9', rgb: '125,120,201', center: { x: 250, y: 205 } },
-  { id: 'foundations', label: '专业基础', caption: '编程、算法与计算思维', color: '#2f9a72', rgb: '47,154,114', center: { x: 750, y: 190 } },
-  { id: 'hardware', label: '硬件与嵌入式', caption: '从逻辑电路到真实设备', color: '#c28b45', rgb: '194,139,69', center: { x: 1250, y: 205 } },
-  { id: 'security', label: '网络与安全', caption: '连接、攻防与可信边界', color: '#bd6267', rgb: '189,98,103', center: { x: 250, y: 550 } },
-  { id: 'practice', label: '研究与实践', caption: '用产物和证据完成迁移', color: '#8a7257', rgb: '138,114,87', center: { x: 750, y: 535 } },
-  { id: 'systems', label: '系统与云', caption: '资源、并发与大规模运行', color: '#4d83aa', rgb: '77,131,170', center: { x: 1250, y: 550 } },
-  { id: 'data', label: '数据', caption: '组织、查询与数据工程', color: '#3b9290', rgb: '59,146,144', center: { x: 250, y: 900 } },
-  { id: 'ai', label: 'AI 与智能体', caption: '学习、生成、决策与行动', color: '#8763b0', rgb: '135,99,176', center: { x: 750, y: 895 } },
-  { id: 'software', label: '软件与交互', caption: '构造、架构与用户体验', color: '#5b8e5f', rgb: '91,142,95', center: { x: 1250, y: 900 } },
+  { id: 'mathematics', label: '数学与理论', caption: '抽象、证明与建模语言', color: '#766fb8', rgb: '118,111,184', center: { x: 350, y: 175 } },
+  { id: 'hardware', label: '硬件与嵌入式', caption: '从逻辑电路到真实设备', color: '#ac7d43', rgb: '172,125,67', center: { x: 755, y: 155 } },
+  { id: 'systems', label: '系统与云', caption: '资源、并发与大规模运行', color: '#497b9d', rgb: '73,123,157', center: { x: 1030, y: 330 } },
+  { id: 'security', label: '网络与安全', caption: '连接、攻防与可信边界', color: '#ad5c62', rgb: '173,92,98', center: { x: 1030, y: 655 } },
+  { id: 'software', label: '软件与交互', caption: '构造、架构与用户体验', color: '#548259', rgb: '84,130,89', center: { x: 770, y: 770 } },
+  { id: 'practice', label: '研究与实践', caption: '用产物和证据完成迁移', color: '#806d57', rgb: '128,109,87', center: { x: 485, y: 775 } },
+  { id: 'data', label: '数据', caption: '组织、查询与数据工程', color: '#3c8583', rgb: '60,133,131', center: { x: 245, y: 620 } },
+  { id: 'ai', label: 'AI 与智能体', caption: '学习、生成、决策与行动', color: '#7d5da1', rgb: '125,93,161', center: { x: 235, y: 360 } },
+  { id: 'foundations', label: '专业基础', caption: '编程、算法与计算思维', color: '#2d8966', rgb: '45,137,102', center: { x: 625, y: 445 } },
 ]
 
 const clusterById = new Map(KNOWLEDGE_CLUSTERS.map(cluster => [cluster.id, cluster]))
@@ -86,12 +86,14 @@ export function layoutLearningPathNebula(nodes: LearningPathNode[], edges: Learn
         positions.set(node.id, { nodeId: node.id, clusterId: cluster.id, x: cluster.center.x - size / 2, y: cluster.center.y - size / 2, size, degree: nodeDegree })
         return
       }
-      const firstRing = index <= 6
-      const ringIndex = firstRing ? index - 1 : index - 7
-      const ringCount = firstRing ? Math.min(6, Math.max(1, clusterNodes.length - 1)) : Math.max(1, clusterNodes.length - 7)
-      const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / ringCount + (firstRing ? 0 : Math.PI / Math.max(5, ringCount))
-      const radiusX = firstRing ? 102 : 184
-      const radiusY = firstRing ? 78 : 125
+      const ring = index <= 6 ? 1 : index <= 18 ? 2 : 3
+      const ringStart = ring === 1 ? 1 : ring === 2 ? 7 : 19
+      const ringCapacity = ring === 1 ? 6 : ring === 2 ? 12 : Math.max(1, clusterNodes.length - 19)
+      const ringIndex = index - ringStart
+      const ringCount = Math.min(ringCapacity, Math.max(1, clusterNodes.length - ringStart))
+      const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / ringCount + (ring === 2 ? Math.PI / Math.max(6, ringCount) : 0)
+      const radiusX = ring === 1 ? 92 : ring === 2 ? 148 : 188
+      const radiusY = ring === 1 ? 68 : ring === 2 ? 108 : 142
       positions.set(node.id, {
         nodeId: node.id,
         clusterId: cluster.id,
@@ -106,10 +108,19 @@ export function layoutLearningPathNebula(nodes: LearningPathNode[], edges: Learn
 }
 
 export function nebulaEdgePath(from: NebulaNodePosition, to: NebulaNodePosition, edgeId: string) {
-  const x1 = from.x + from.size / 2
-  const y1 = from.y + from.size / 2
-  const x2 = to.x + to.size / 2
-  const y2 = to.y + to.size / 2
+  const fromCenterX = from.x + from.size / 2
+  const fromCenterY = from.y + from.size / 2
+  const toCenterX = to.x + to.size / 2
+  const toCenterY = to.y + to.size / 2
+  const deltaX = toCenterX - fromCenterX
+  const deltaY = toCenterY - fromCenterY
+  const length = Math.max(1, Math.hypot(deltaX, deltaY))
+  const unitX = deltaX / length
+  const unitY = deltaY / length
+  const x1 = fromCenterX + unitX * (from.size / 2 + 3)
+  const y1 = fromCenterY + unitY * (from.size / 2 + 3)
+  const x2 = toCenterX - unitX * (to.size / 2 + 9)
+  const y2 = toCenterY - unitY * (to.size / 2 + 9)
   let hash = 0
   for (let index = 0; index < edgeId.length; index += 1) hash = (hash * 31 + edgeId.charCodeAt(index)) | 0
   const bend = (Math.abs(hash) % 43) - 21

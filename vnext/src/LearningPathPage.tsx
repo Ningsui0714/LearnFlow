@@ -43,8 +43,8 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   const [query, setQuery] = useState('')
   const [clusterFilter, setClusterFilter] = useState<'all' | KnowledgeClusterId>('all')
   const [audience, setAudience] = useState('全部')
-  const [showAllRelations, setShowAllRelations] = useState(false)
   const [selectedId, setSelectedId] = useState('agent-engineering')
+  const [hoveredId, setHoveredId] = useState<string>()
   const [showSources, setShowSources] = useState(false)
   const [personalTitle, setPersonalTitle] = useState('')
   const [anchorId, setAnchorId] = useState('machine-learning')
@@ -63,17 +63,20 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   const visibleIds = new Set(visibleNodes.map(node => node.id))
   const selected = projection.nodes.find(node => node.id === selectedId && visibleIds.has(node.id)) || visibleNodes[0]
   const nodeMap = new Map(projection.nodes.map(node => [node.id, node]))
-  const selectedEdgeIds = new Set(selected
-    ? projection.edges.filter(edge => edge.from === selected.id || edge.to === selected.id).map(edge => edge.id)
+  const emphasisId = hoveredId && visibleIds.has(hoveredId) ? hoveredId : selected?.id
+  const emphasisEdgeIds = new Set(emphasisId
+    ? projection.edges.filter(edge => edge.from === emphasisId || edge.to === emphasisId).map(edge => edge.id)
     : [])
-  const focusNodeIds = new Set(selected ? [selected.id] : [])
+  const hoverEdgeIds = new Set(hoveredId
+    ? projection.edges.filter(edge => edge.from === hoveredId || edge.to === hoveredId).map(edge => edge.id)
+    : [])
+  const focusNodeIds = new Set(hoveredId ? [hoveredId] : [])
   projection.edges.forEach(edge => {
-    if (!selectedEdgeIds.has(edge.id)) return
+    if (!hoverEdgeIds.has(edge.id)) return
     focusNodeIds.add(edge.from)
     focusNodeIds.add(edge.to)
   })
-  const visibleEdges = projection.edges.filter(edge => visibleIds.has(edge.from) && visibleIds.has(edge.to)
-    && (showAllRelations || selectedEdgeIds.has(edge.id)))
+  const visibleEdges = projection.edges.filter(edge => visibleIds.has(edge.from) && visibleIds.has(edge.to))
   const clusterCounts = useMemo(() => Object.fromEntries(KNOWLEDGE_CLUSTERS.map(cluster => [
     cluster.id,
     projection.nodes.filter(node => clusterLearningPathNode(node) === cluster.id).length,
@@ -135,7 +138,6 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
           <div className="path-filters">
             <label><span>查找课程或技能</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="机器学习、网络安全、Agent…" /></label>
             <label><span>学习阶段</span><select value={audience} onChange={event => setAudience(event.target.value)}><option>全部</option><option value="vocational">高职</option><option value="undergraduate">本科</option><option value="graduate">研究生</option><option value="self_directed">自主学习</option></select></label>
-            <button type="button" className={showAllRelations ? 'path-relation-toggle active' : 'path-relation-toggle'} onClick={() => setShowAllRelations(value => !value)}>{showAllRelations ? '隐藏全图关系' : '显示全图关系'}</button>
             <button type="button" onClick={() => setShowSources(value => !value)}>{showSources ? '收起来源' : '查看来源'}</button>
           </div>
 
@@ -160,24 +162,34 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
 
           <div className="path-canvas-scroll" ref={canvasScrollRef}>
             <div className="path-canvas path-nebula" style={{ width: NEBULA_WIDTH, height: NEBULA_HEIGHT }}>
-              <div className="nebula-field-label"><span>KNOWLEDGE NEBULA</span><strong>{showAllRelations ? '全图关系' : '一跳聚焦'}</strong><small>点击星体查看前置与去向</small></div>
+              <div className="nebula-field-label"><span>KNOWLEDGE NEBULA</span><strong>全图关系可见</strong><small>箭头指向后继；悬停星体聚焦一跳关系</small></div>
               {KNOWLEDGE_CLUSTERS.map(cluster => (
                 <button
                   type="button"
                   key={cluster.id}
                   className={`nebula-cluster${clusterFilter === cluster.id ? ' nebula-cluster-active' : ''}${clusterFilter !== 'all' && clusterFilter !== cluster.id ? ' nebula-cluster-muted' : ''}`}
-                  style={{ left: cluster.center.x - 210, top: cluster.center.y - 145, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
+                  style={{ left: cluster.center.x - 180, top: cluster.center.y - 125, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
                   onClick={() => setClusterFilter(current => current === cluster.id ? 'all' : cluster.id)}
                 >
                   <span>{cluster.label}</span><small>{cluster.caption}</small><i>{clusterCounts[cluster.id]}</i>
                 </button>
               ))}
               <svg className="path-edges" viewBox={`0 0 ${NEBULA_WIDTH} ${NEBULA_HEIGHT}`} aria-hidden="true">
-                <defs><marker id="path-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
+                <defs>
+                  <marker id="path-arrow-hard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path className="path-arrow-hard" d="M 0 0 L 10 5 L 0 10 z" /></marker>
+                  <marker id="path-arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path className="path-arrow-soft" d="M 0 0 L 10 5 L 0 10 z" /></marker>
+                  <marker id="path-arrow-co" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path className="path-arrow-co" d="M 0 0 L 10 5 L 0 10 z" /></marker>
+                </defs>
                 {visibleEdges.map(edge => {
                   const from = nebulaPositions.get(edge.from), to = nebulaPositions.get(edge.to)
                   if (!from || !to) return null
-                  return <path key={edge.id} className={`path-edge path-edge-${edge.kind}${selectedEdgeIds.has(edge.id) ? ' path-edge-focused' : ''}`} d={nebulaEdgePath(from, to, edge.id)} markerEnd="url(#path-arrow)" />
+                  const marker = edge.kind === 'hard_prerequisite' ? 'hard' : edge.kind === 'soft_prerequisite' ? 'soft' : 'co'
+                  return <path
+                    key={edge.id}
+                    className={`path-edge path-edge-${edge.kind}${emphasisEdgeIds.has(edge.id) ? ' path-edge-focused' : ''}${hoveredId && !hoverEdgeIds.has(edge.id) ? ' path-edge-dimmed' : ''}`}
+                    d={nebulaEdgePath(from, to, edge.id)}
+                    markerEnd={`url(#path-arrow-${marker})`}
+                  />
                 })}
               </svg>
               {visibleNodes.map(node => {
@@ -188,9 +200,11 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                   <button
                     type="button"
                     key={node.id}
-                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${!showAllRelations && selected && !focusNodeIds.has(node.id) ? ' path-node-muted' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
+                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${hoveredId && !focusNodeIds.has(node.id) ? ' path-node-muted' : ''}${hoveredId && focusNodeIds.has(node.id) ? ' path-node-related' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
                     style={{ left: position.x, top: position.y, width: position.size, height: position.size, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
                     onClick={() => setSelectedId(node.id)}
+                    onMouseEnter={() => setHoveredId(node.id)}
+                    onMouseLeave={() => setHoveredId(undefined)}
                     title={`${node.title} · ${cluster.label} · ${PATH_STATUS_LABELS[status]}`}
                   >
                     <strong>{node.title}</strong>

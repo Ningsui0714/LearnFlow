@@ -25,12 +25,34 @@ import {
 test('official graph is sourced, broad, and acyclic', () => {
   const validation = validateOfficialLearningPathGraph()
   assert.equal(validation.valid, true, validation.errors.join('\n'))
-  assert.ok(OFFICIAL_PATH_NODES.length >= 60)
-  assert.ok(OFFICIAL_PATH_EDGES.length >= 80)
+  assert.ok(OFFICIAL_PATH_NODES.length >= 90)
+  assert.ok(OFFICIAL_PATH_EDGES.length >= 140)
   assert.ok(OFFICIAL_PATH_NODES.some((node) => node.audiences.includes('vocational')))
   assert.ok(OFFICIAL_PATH_NODES.some((node) => node.audiences.includes('graduate')))
   assert.ok(OFFICIAL_PATH_NODES.some((node) => node.id === 'agent-engineering'))
   assert.ok(OFFICIAL_PATH_NODES.every((node) => node.sourceRefs.length > 0))
+})
+
+test('vocational computer and information technology pathways expose job-facing core courses', () => {
+  const expectedVocationalNodes = [
+    'computer-maintenance', 'windows-server-administration', 'network-cabling',
+    'software-modeling-design', 'enterprise-application-development', 'software-testing',
+    'wireless-networking', 'network-automation', 'network-systems-integration',
+    'virtualization-technology', 'cloud-platform-operations', 'container-cloud-operations',
+    'data-acquisition-technology', 'data-preprocessing-etl', 'data-analysis-applications',
+    'data-visualization-applications', 'big-data-platform-operations',
+    'operating-system-security', 'security-product-configuration', 'storage-disaster-recovery',
+    'digital-forensics', 'security-risk-assessment', 'mobile-cross-platform', 'mini-program-development',
+  ]
+  expectedVocationalNodes.forEach(nodeId => {
+    const node = OFFICIAL_PATH_NODES.find(item => item.id === nodeId)
+    assert.ok(node, `missing vocational node: ${nodeId}`)
+    assert.ok(node!.audiences.includes('vocational'), `${nodeId} must support vocational learners`)
+    assert.ok(node!.sourceRefs.some(source => source.startsWith('moe-')), `${nodeId} must cite an MOE standard`)
+  })
+  assert.ok(OFFICIAL_PATH_EDGES.some(edge => edge.from === 'network-routing-switching' && edge.to === 'network-systems-integration'))
+  assert.ok(OFFICIAL_PATH_EDGES.some(edge => edge.from === 'cloud-platform-operations' && edge.to === 'container-cloud-operations'))
+  assert.ok(OFFICIAL_PATH_EDGES.some(edge => edge.from === 'data-preprocessing-etl' && edge.to === 'data-analysis-applications'))
 })
 
 test('reader returns a planning packet around a known course', () => {
