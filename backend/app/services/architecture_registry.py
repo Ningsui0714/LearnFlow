@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.3"
+REGISTRY_VERSION = "2026-08-25.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -226,6 +226,8 @@ TOOLS = {
                      (), (), "validated graph plan -> sanitized static SVG or deterministic SVG frames"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
+        ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
+                     (), (), "append-only local event queue -> deterministic task projection -> bounded Tutor context; no learner-state write"),
         ToolContract("workspace_lifecycle", "Conversation and Project Workspace Lifecycle", "tutor_agent", "learnflow", "transaction",
                      (), (), "confirmed workspace removal + zero-target audit event; learning evidence retained"),
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
@@ -433,7 +435,8 @@ WORKBENCHES = {
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
-                          ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup"), "vnext"),
+                          ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
+                           "run_vnext_learning_task"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -471,6 +474,7 @@ CAPABILITY_OWNERS = {
     "search_computer_knowledge": ("learning_design_agent", "computer_knowledge_search", "vnext_chat"),
     "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
+    "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
     "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),
@@ -532,6 +536,15 @@ EVENTS = {
     item.id: item for item in (
         _event("chat_mode_entered", "coordinate_chat_mode", (), "operational_context"),
         _event("learning_action_segment_completed", "coordinate_chat_mode", ("structure", "knowledge", "value"), "learning_action_projection"),
+        _event("vnext_learning_task_created", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_task_started", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_task_phase_entered", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_task_learner_replied", "run_vnext_learning_task", (), "local_interaction", origin="vnext"),
+        _event("vnext_learning_support_requested", "run_vnext_learning_task", (), "local_support_signal", origin="vnext"),
+        _event("vnext_learning_skill_selected", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_task_paused", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_task_resumed", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_task_completed", "run_vnext_learning_task", (), "local_operational_milestone", origin="vnext"),
         _event("conversation_deleted", "delete_conversation", (), "confirmed_workspace_removal"),
         _event("learning_task_created", "manage_learning_tasks", (), "operational"),
         _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
@@ -730,6 +743,7 @@ def registry_manifest() -> dict[str, Any]:
             "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
+            "vnext_learning_task_projection": "append-only browser-local operational events -> deterministic in-chat task projection; never mastery evidence",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],

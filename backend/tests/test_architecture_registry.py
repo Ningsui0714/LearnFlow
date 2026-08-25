@@ -68,21 +68,38 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
 def test_vnext_tools_are_registered_without_learning_state_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
+        "vnext_learning_task_runtime",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
+        "run_vnext_learning_task",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
+    assert CAPABILITY_OWNERS["run_vnext_learning_task"] == (
+        "tutor_agent", "vnext_learning_task_runtime", "vnext_chat",
+    )
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
+            "vnext_learning_task_runtime",
         }
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
+    assert "append-only local event queue" in TOOLS["vnext_learning_task_runtime"].write_path
+    assert all(
+        EVENTS[event_id].kernel_targets == ()
+        for event_id in {
+            "vnext_learning_task_created", "vnext_learning_task_started",
+            "vnext_learning_task_phase_entered",
+            "vnext_learning_task_learner_replied", "vnext_learning_support_requested",
+            "vnext_learning_skill_selected", "vnext_learning_task_paused",
+            "vnext_learning_task_resumed", "vnext_learning_task_completed",
+        }
+    )
 
 
 def test_remediation_events_have_standard_authority_provenance():

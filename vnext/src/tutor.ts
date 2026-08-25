@@ -1,6 +1,10 @@
 import type { TutorToolChoice, TutorToolRun } from './tooling.ts'
+import {
+  hasExplicitLearningIntent,
+  type LearningTaskTutorContext,
+} from './learning.ts'
 
-export type TutorMode = 'free' | 'simple_explain'
+export type TutorMode = 'free' | 'simple_explain' | 'guided_learning'
 
 export type TutorContextMessage = {
   role: 'assistant' | 'user'
@@ -10,15 +14,17 @@ export type TutorContextMessage = {
 export const TUTOR_MODE_LABELS: Record<TutorMode, string> = {
   free: '自由态',
   simple_explain: '简单讲解态',
+  guided_learning: '带领学习态',
 }
 
 const EXPLANATION_INTENT = /(?:什么是|讲讲|讲一下|解释(?:一下)?|怎么理解|如何理解|帮我理解|介绍一下)/
 
 export function isTutorMode(value: unknown): value is TutorMode {
-  return value === 'free' || value === 'simple_explain'
+  return value === 'free' || value === 'simple_explain' || value === 'guided_learning'
 }
 
-export function resolveTutorMode(selectedMode: TutorMode, input: string): TutorMode {
+export function resolveTutorMode(selectedMode: TutorMode, input: string, hasActiveLearningTask = false): TutorMode {
+  if (selectedMode === 'guided_learning' || hasActiveLearningTask || hasExplicitLearningIntent(input)) return 'guided_learning'
   if (selectedMode === 'simple_explain') return selectedMode
   return EXPLANATION_INTENT.test(input) ? 'simple_explain' : 'free'
 }
@@ -43,6 +49,10 @@ function systemPrompt(mode: TutorMode) {
 
   if (mode === 'simple_explain') {
     return `${common}\n\n当前状态：简单讲解态。\n这一轮必须先直接给出必要的启发或解释，不能用一个空泛追问代替讲解。按需组织为：直观认识、核心机制、一个最小例子、一个简短自检问题。不要机械套标题；简单问题可以更短。只完成这一轮解释，不宣称学生已经掌握。`
+  }
+
+  if (mode === 'guided_learning') {
+    return `${common}\n\n当前状态：带领学习态。\n你正在同一段对话内带领一个原子学习任务。任务阶段和 Skill 由本地确定性流程提供；你只能完成当前教学动作，不能自行推进阶段、完成任务、评分或宣布掌握。每轮先回应学生刚才的真实问题，再自然地给出一个当前阶段最有价值的下一动作。若学生说不知道、没懂或要求提示，先补足支架并留在当前动作，不把它冒充有效尝试。保持正常对话感，不要输出内部事件、状态机或冗长流程公告。`
   }
 
   return `${common}\n\n当前状态：自由态。\n自然回应学生当前意图，可以讨论、澄清、共同规划或回答短问题。只有在缺少关键信息时才追问，不擅自创建学习任务，不宣称学生已经掌握。`
@@ -149,8 +159,20 @@ export function buildTutorProviderRequest(options: {
   messages: TutorContextMessage[]
   toolContext?: string
   selectionContext?: string
+  learningTaskContext?: LearningTaskTutorContext
 }) {
   const additions = [
+    options.learningTaskContext
+      ? [
+          '当前原子学习任务（本地运行投影，只读）：',
+          `目标：${options.learningTaskContext.objective}`,
+          `阶段：${options.learningTaskContext.phaseIndex + 1}/${options.learningTaskContext.phaseCount} ${options.learningTaskContext.phaseTitle}`,
+          `本阶段要求：${options.learningTaskContext.phaseInstruction}`,
+          `当前 Skill：${options.learningTaskContext.skillName}`,
+          `Skill 要求：${options.learningTaskContext.skillInstruction}`,
+          '请把这些约束自然地落实在回复中，不要逐项复述。阶段变化只能由界面动作和事件队列决定。',
+        ].join('\n')
+      : '',
     options.selectionContext
       ? `当前位于选中追问纸张。学生选中的原文是：\n“${options.selectionContext.slice(0, 1200)}”\n回答当前问题时保持和原对话一致，并明确回应这段原文。`
       : '',
@@ -183,6 +205,7 @@ export async function requestTutorReply(options: {
   messages: TutorContextMessage[]
   toolChoice: TutorToolChoice
   selectionContext?: string
+  learningTaskContext?: LearningTaskTutorContext
 }) {
   const controller = new AbortController()
   const timeout = globalThis.setTimeout(() => controller.abort(), 105_000)

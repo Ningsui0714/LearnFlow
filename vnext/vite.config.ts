@@ -10,6 +10,7 @@ import {
   tutorConfigurationIssue,
 } from './src/tutor'
 import { isTutorToolChoice } from './src/tooling'
+import { sanitizeLearningTaskTutorContext } from './src/learning'
 import { runTutorTools } from './server/tool-runtime'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 
@@ -170,6 +171,7 @@ function tutorProxy(mode: string): Plugin {
       const modeValue = input.mode
       const toolChoice = isTutorToolChoice(input.toolChoice) ? input.toolChoice : 'auto'
       const selectionContext = typeof input.selectionContext === 'string' ? input.selectionContext.slice(0, 1600) : ''
+      const learningTaskContext = sanitizeLearningTaskTutorContext(input.learningTaskContext)
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -203,6 +205,7 @@ function tutorProxy(mode: string): Plugin {
         baseUrl, model, mode: modeValue, messages,
         toolContext: tools.context,
         selectionContext,
+        learningTaskContext,
       })
       let reply = tools.directReply
       if (!reply) {
@@ -218,6 +221,7 @@ function tutorProxy(mode: string): Plugin {
             baseUrl, model, mode: modeValue, messages: messages.slice(-10),
             toolContext: compactToolContext,
             selectionContext,
+            learningTaskContext,
           })
           reply = await callProvider({ ...retryRequest, timeoutMs: 32_000 })
         }

@@ -1,6 +1,6 @@
 # LearnFlow vNext
 
-这是 LearnFlow 的独立重构起点。目前只有 Chat、设置、自由态、简单讲解态，以及支持删除对话和双栏并排的持久化多页签工作区，不连接旧后端。
+这是 LearnFlow 的独立重构起点。目前只有 Chat、设置、自由态、简单讲解态、对话内带领学习态，以及支持删除对话和双栏并排的持久化多页签工作区，不连接旧后端。
 
 先阅读 [LOGIC.md](./LOGIC.md)，产品逻辑变化应先在其中收紧。
 
@@ -25,3 +25,4 @@ npm run dev
 - 没有配置或调用失败时显示真实原因，不生成占位答案。
 - 这个目录不读取或写入旧 LearnFlow 的数据库、五核或学习记录。
 - 联网讲解使用分层的计算机知识来源和可检查的检索计划；设计与可选搜索后端见 [COMPUTER_KNOWLEDGE_SEARCH.md](./COMPUTER_KNOWLEDGE_SEARCH.md)。
+- 原子学习任务只使用浏览器本地事件队列和四种基础 Skill；活动位置、证据边界与研究依据见 [LEARNING_TASK_DESIGN.md](./LEARNING_TASK_DESIGN.md)。

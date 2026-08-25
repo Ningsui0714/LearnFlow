@@ -9,6 +9,23 @@ import {
   tutorConfigurationIssue,
   type TutorMode,
 } from './tutor'
+import {
+  activeLearningTaskProjection,
+  advanceLearningPhase,
+  appendLearningEvents,
+  createLearningTask,
+  isSupportRequest,
+  latestLearningTaskProjection,
+  LEARNING_PHASES,
+  LEARNING_SKILLS,
+  learningTaskTutorContext,
+  nextLearningPhase,
+  projectLearningTask,
+  type LearningEvent,
+  type LearningSkillId,
+  type LearningTask,
+  type LearningTaskProjection,
+} from './learning'
 import VisualArtifact from './VisualArtifact'
 import {
   TOOL_CHOICE_LABELS,
@@ -24,6 +41,7 @@ type Message = {
   createdAt: number
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
+  learningActionLabel?: string
 }
 
 type FollowUpSheet = {
@@ -56,6 +74,8 @@ type Conversation = {
   mode: TutorMode
   sheets: FollowUpSheet[]
   activeSheetId: string
+  learningTasks: LearningTask[]
+  learningEvents: LearningEvent[]
 }
 
 type WorkspaceTab = {
@@ -95,10 +115,12 @@ function createConversation(): Conversation {
     mode: 'free',
     sheets: [],
     activeSheetId: 'main',
+    learningTasks: [],
+    learningEvents: [],
     messages: [{
       id: uid('message'),
       role: 'assistant',
-      content: '现在处于自由态。你可以直接讨论学习问题；遇到明确的解释请求时，我会把那一轮切到简单讲解态。',
+      content: '现在处于自由态。你可以直接讨论学习问题；明确的解释请求会进入一轮简单讲解，“带我学 / 带我练”会在这段对话中开始一个原子学习任务。',
       createdAt: now,
       tutorMode: 'free',
     }],
@@ -137,6 +159,8 @@ function restoreState(): PersistedState {
       ...conversation,
       mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
       sheets: Array.isArray(conversation.sheets) ? conversation.sheets : [],
+      learningTasks: Array.isArray(conversation.learningTasks) ? conversation.learningTasks : [],
+      learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
       activeSheetId: conversation.activeSheetId === 'main'
         || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
         ? conversation.activeSheetId || 'main'
@@ -486,19 +510,19 @@ function App() {
     const finishedMessage = { ...message, id: uid('message'), createdAt: Date.now(), tutorMode: message.role === 'assistant' ? mode : undefined }
     setWorkspace(previous => ({
       ...previous,
-      conversations: previous.conversations.map(conversation => (
-        conversation.id === conversationId
-          ? {
-              ...conversation,
-              mode: 'free',
-              updatedAt: Date.now(),
-              messages: sheetId === 'main' ? [...conversation.messages, finishedMessage] : conversation.messages,
-              sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
-                sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, finishedMessage] } : sheet
-              )),
-            }
-          : conversation
-      )),
+      conversations: previous.conversations.map(conversation => {
+        if (conversation.id !== conversationId) return conversation
+        const activeTask = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+        return {
+          ...conversation,
+          mode: activeTask ? 'guided_learning' : 'free',
+          updatedAt: Date.now(),
+          messages: sheetId === 'main' ? [...conversation.messages, finishedMessage] : conversation.messages,
+          sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
+            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, finishedMessage] } : sheet
+          )),
+        }
+      }),
     }))
     setPendingTurns(previous => {
       const next = { ...previous }
@@ -507,17 +531,51 @@ function App() {
     })
   }
 
-  const sendMessage = async (conversationId: string, event: FormEvent) => {
-    event.preventDefault()
+  const runTutorTurn = async (
+    conversationId: string,
+    rawContent: string,
+    options: { advancePhase?: boolean; learningActionLabel?: string } = {},
+  ) => {
     const conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) return
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversationId, sheetId)
-    const content = (drafts[draftKey] || '').trim()
+    const content = rawContent.trim()
     if (!content || pendingTurns[conversationId]) return
 
-    const mode = resolveTutorMode(conversation.mode, content)
     const now = Date.now()
+    let learningTasks = [...conversation.learningTasks]
+    let learningEvents = [...conversation.learningEvents]
+    let learningProjection = activeLearningTaskProjection(learningTasks, learningEvents)
+    const mode = resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
+
+    if (mode === 'guided_learning') {
+      if (!learningProjection) {
+        const created = createLearningTask(content, now, learningEvents)
+        learningTasks = [...learningTasks, created.task]
+        learningEvents = created.events
+        learningProjection = projectLearningTask(created.task, learningEvents)
+      }
+      if (options.advancePhase && learningProjection) {
+        learningEvents = advanceLearningPhase(learningEvents, learningProjection, now + 8)
+        learningProjection = projectLearningTask(learningProjection.task, learningEvents)
+      }
+      if (learningProjection && !options.learningActionLabel) {
+        const additions: Array<Omit<LearningEvent, 'id' | 'sequence' | 'taskId' | 'at'>> = [{
+          type: 'vnext_learning_task_learner_replied',
+          detail: `学生回应：${content.slice(0, 80)}`,
+          phase: learningProjection.phase,
+        }]
+        if (isSupportRequest(content)) additions.push({
+          type: 'vnext_learning_support_requested',
+          detail: '学生需要补充支架，本轮不自动推进',
+          phase: learningProjection.phase,
+        })
+        learningEvents = appendLearningEvents(learningEvents, learningProjection.task.id, additions, now + 16)
+        learningProjection = projectLearningTask(learningProjection.task, learningEvents)
+      }
+    }
+
     const contextMessages = [
       ...inheritedContextMessages(conversation)
         .filter((message): message is Message & { role: 'assistant' | 'user' } => message.role !== 'system')
@@ -530,12 +588,17 @@ function App() {
       const conversations = previous.conversations.map(conversation => {
         if (conversation.id !== conversationId) return conversation
         const firstStudentMessage = !conversation.messages.some(message => message.role === 'user')
-        const userMessage: Message = { id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode }
+        const userMessage: Message = {
+          id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
+          learningActionLabel: options.learningActionLabel,
+        }
         return {
           ...conversation,
           title: sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : conversation.title,
           updatedAt: now,
           mode,
+          learningTasks,
+          learningEvents,
           messages: sheetId === 'main' ? [...conversation.messages, userMessage] : conversation.messages,
           sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
             sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
@@ -566,6 +629,7 @@ function App() {
         messages: contextMessages,
         toolChoice: toolChoices[draftKey] || 'auto',
         selectionContext: activeSheet(conversation)?.quote,
+        learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
       })
       finishTurn(conversationId, sheetId, mode, { role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns })
       setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
@@ -575,6 +639,61 @@ function App() {
         content: `“${TUTOR_MODE_LABELS[mode]}”请求失败：${error instanceof Error ? error.message : '未知错误'}`,
       })
     }
+  }
+
+  const sendMessage = async (conversationId: string, event: FormEvent) => {
+    event.preventDefault()
+    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    if (!conversation) return
+    const draftKey = surfaceKey(conversationId, conversation.activeSheetId)
+    await runTutorTurn(conversationId, drafts[draftKey] || '')
+  }
+
+  const updateLearningTask = (
+    conversationId: string,
+    action: 'pause' | 'resume' | 'complete' | 'skill',
+    skillId?: LearningSkillId,
+  ) => {
+    if (pendingTurns[conversationId]) return
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => {
+        if (conversation.id !== conversationId) return conversation
+        const projection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+        if (!projection || projection.status === 'completed') return conversation
+        const event = action === 'pause'
+          ? { type: 'vnext_learning_task_paused' as const, detail: '暂停学习任务', phase: projection.phase }
+          : action === 'resume'
+            ? { type: 'vnext_learning_task_resumed' as const, detail: '恢复学习任务', phase: projection.phase }
+            : action === 'complete'
+              ? { type: 'vnext_learning_task_completed' as const, detail: '完成任务流程；不代表掌握', phase: projection.phase }
+              : {
+                  type: 'vnext_learning_skill_selected' as const,
+                  detail: `切换为${LEARNING_SKILLS[skillId || projection.skillId].name}`,
+                  skillId: skillId || projection.skillId,
+                  phase: projection.phase,
+                }
+        const learningEvents = appendLearningEvents(
+          conversation.learningEvents, projection.task.id, [event], Date.now(),
+        )
+        return {
+          ...conversation,
+          learningEvents,
+          mode: action === 'resume' || action === 'skill' ? 'guided_learning' : 'free',
+          updatedAt: Date.now(),
+        }
+      }),
+    }))
+  }
+
+  const advanceTaskAndContinue = async (conversation: Conversation, projection: LearningTaskProjection) => {
+    const next = nextLearningPhase(projection.phase)
+    if (!next || pendingTurns[conversation.id]) return
+    const phase = LEARNING_PHASES.find(item => item.id === next)!
+    await runTutorTurn(conversation.id, `继续当前学习任务，进入${phase.title}。`, {
+      advancePhase: true,
+      learningActionLabel: `进入${phase.title}`,
+    })
   }
 
   const updateSettings = (patch: Partial<SettingsState>) => {
@@ -590,7 +709,7 @@ function App() {
           <div className="settings-intro">
             <span className="eyebrow">SETTINGS</span>
             <h1>设置</h1>
-            <p>自由态和简单讲解态共用这一条模型连接，不读取旧项目配置。</p>
+            <p>自由态、简单讲解态和带领学习态共用这一条模型连接，不读取旧项目配置。</p>
           </div>
           <form className="settings-card" onSubmit={event => { event.preventDefault(); setSettingsSaved(true) }}>
             <div className="settings-card-heading"><span>01</span><div><h2>模型连接</h2><p>支持 OpenAI 兼容的 Chat Completions 或 Responses 地址。</p></div></div>
@@ -626,7 +745,9 @@ function App() {
     const conversation = workspace.conversations.find(item => item.id === tab.conversationId)
     if (!conversation) return null
     const pendingMode = pendingTurns[conversation.id]
-    const visibleMode = pendingMode || conversation.mode
+    const taskProjection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    const activeTaskProjection = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    const visibleMode = pendingMode || (activeTaskProjection ? 'guided_learning' : conversation.mode)
     const sheet = activeSheet(conversation)
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
@@ -816,6 +937,63 @@ function App() {
         </div>
         <div className="composer-dock">
           <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
+            {taskProjection && taskProjection.status !== 'completed' && (
+              <section className={`learning-task-strip learning-task-strip-${taskProjection.status}`} aria-label="当前学习任务">
+                <div className="learning-task-summary">
+                  <span className="learning-task-mark">◎</span>
+                  <div>
+                    <span>{taskProjection.status === 'paused' ? '学习任务已暂停' : '当前学习任务 · 就在这段对话中'}</span>
+                    <strong>{taskProjection.task.objective}</strong>
+                  </div>
+                  <details className="learning-event-queue">
+                    <summary>记录 {taskProjection.eventCount}</summary>
+                    <div>
+                      {conversation.learningEvents
+                        .filter(item => item.taskId === taskProjection.task.id)
+                        .slice(-6)
+                        .reverse()
+                        .map(item => <span key={item.id}><i>{item.sequence}</i>{item.detail}</span>)}
+                    </div>
+                  </details>
+                </div>
+                <div className="learning-task-progress" aria-label={`学习任务进度：${LEARNING_PHASES[taskProjection.phaseIndex].title}`}>
+                  {LEARNING_PHASES.map((phase, index) => (
+                    <span
+                      key={phase.id}
+                      className={index < taskProjection.phaseIndex ? 'phase-done' : index === taskProjection.phaseIndex ? 'phase-current' : ''}
+                    ><i />{phase.shortTitle}</span>
+                  ))}
+                </div>
+                <div className="learning-task-controls">
+                  <label>
+                    <span>学习方法</span>
+                    <select
+                      value={taskProjection.skillId}
+                      disabled={Boolean(pendingMode) || taskProjection.status === 'paused'}
+                      onChange={event => updateLearningTask(conversation.id, 'skill', event.target.value as LearningSkillId)}
+                    >
+                      {(Object.keys(LEARNING_SKILLS) as LearningSkillId[]).map(skillId => (
+                        <option key={skillId} value={skillId}>{LEARNING_SKILLS[skillId].name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <span className="learning-skill-description">{LEARNING_SKILLS[taskProjection.skillId].description}</span>
+                  <div>
+                    {taskProjection.status === 'paused' ? (
+                      <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'resume')}>继续任务</button>
+                    ) : taskProjection.phase === 'consolidate' ? (
+                      <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'complete')}>完成流程</button>
+                    ) : (
+                      <button type="button" className="learning-primary-action" onClick={() => advanceTaskAndContinue(conversation, taskProjection)} disabled={Boolean(pendingMode)}>
+                        下一步 · {LEARNING_PHASES[taskProjection.phaseIndex + 1].shortTitle}
+                      </button>
+                    )}
+                    {taskProjection.status === 'active' && <button type="button" onClick={() => updateLearningTask(conversation.id, 'pause')} disabled={Boolean(pendingMode)}>暂停</button>}
+                    {taskProjection.phase !== 'consolidate' && <button type="button" onClick={() => updateLearningTask(conversation.id, 'complete')} disabled={Boolean(pendingMode)}>结束</button>}
+                  </div>
+                </div>
+              </section>
+            )}
             {pendingMode && <div className="turn-progress" role="status"><i /> 正在判断工具并由{TUTOR_MODE_LABELS[pendingMode]}组织回复…</div>}
             <textarea
               value={drafts[draftKey] || ''}
@@ -833,8 +1011,17 @@ function App() {
             <div className="composer-footer">
               <div className="composer-tools">
                 <div className="mode-options" aria-label="选择 Tutor 状态">
-                  <button type="button" title="自由讨论；解释请求仍可自动进入简单讲解" aria-pressed={conversation.mode === 'free'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
-                  <button type="button" title="下一轮使用简单讲解，完成后回到自由态" aria-pressed={conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
+                  <button type="button" title="自由讨论；解释请求仍可自动进入简单讲解" aria-pressed={!activeTaskProjection && conversation.mode === 'free'} disabled={Boolean(pendingMode) || Boolean(activeTaskProjection)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
+                  <button type="button" title="下一轮使用简单讲解，完成后回到自由态" aria-pressed={!activeTaskProjection && conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode) || Boolean(activeTaskProjection)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
+                  <button
+                    type="button"
+                    title="围绕一个原子目标在当前对话中持续学习"
+                    aria-pressed={Boolean(activeTaskProjection) || conversation.mode === 'guided_learning'}
+                    disabled={Boolean(pendingMode)}
+                    onClick={() => taskProjection?.status === 'paused'
+                      ? updateLearningTask(conversation.id, 'resume')
+                      : setConversationMode(conversation.id, 'guided_learning')}
+                  >带领学习</button>
                 </div>
                 <label className="tool-choice">
                   <span>工具</span>
@@ -1048,7 +1235,7 @@ function MessageList({ messages, onQuoteFollowUp }: {
     <div className="messages" aria-live="polite" ref={listRef}>
       <div className="message-column">
         {visibleMessages.map(message => (
-          <article key={message.id} data-message-id={message.id} data-message-role={message.role} className={`message message-${message.role}`}>
+          <article key={message.id} data-message-id={message.id} data-message-role={message.role} className={`message message-${message.role}${message.learningActionLabel ? ' message-learning-action' : ''}`}>
             {message.role !== 'user' && <span className="message-avatar">{message.role === 'assistant' ? '✦' : 'i'}</span>}
             <div className="message-content" onMouseUp={message.role === 'assistant' ? event => captureSelection(message.id, event.currentTarget) : undefined}>
               <div className="message-meta">
@@ -1077,9 +1264,13 @@ function MessageList({ messages, onQuoteFollowUp }: {
                 )}
               </div>
               {message.toolRuns?.map(run => <ToolRunCard key={run.id} run={run} />)}
-              <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>
-                <MarkdownContent content={message.content} />
-              </Suspense>
+              {message.learningActionLabel ? (
+                <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
+              ) : (
+                <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>
+                  <MarkdownContent content={message.content} />
+                </Suspense>
+              )}
             </div>
           </article>
         ))}

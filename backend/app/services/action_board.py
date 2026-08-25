@@ -44,6 +44,11 @@ ACTION_BOARD = {
             (),
         ),
         ActionDefinition(
+            "run_vnext_learning_task", "在 vNext 对话中编排原子学习任务", "context", "explicit_or_click",
+            {},
+            ("search_computer_knowledge", "generate_learning_visual"),
+        ),
+        ActionDefinition(
             "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",
             {},
             (),
