@@ -65,6 +65,24 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
     assert EVENTS["project_deleted"].kernel_targets == ()
 
 
+def test_vnext_tools_are_registered_without_learning_state_writes():
+    assert {
+        "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
+    } <= set(TOOLS)
+    assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
+    assert set(WORKBENCHES["vnext_chat"].capabilities) == {
+        "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
+    }
+    assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
+    assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
+    assert all(
+        TOOLS[tool_id].writes_kernels == ()
+        for tool_id in {
+            "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
+        }
+    )
+
+
 def test_remediation_events_have_standard_authority_provenance():
     expected = {
         "remediation_started",

@@ -1,12 +1,15 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import {
+  buildProviderRequest,
   buildTutorProviderRequest,
   errorFromTutorProviderResponse,
   isTutorMode,
   textFromTutorProviderResponse,
   tutorConfigurationIssue,
 } from './src/tutor'
+import { isTutorToolChoice } from './src/tooling'
+import { runTutorTools } from './server/tool-runtime'
 
 type KeyConfiguration = {
   apiKey: string
@@ -57,6 +60,65 @@ function sendJson(response: any, status: number, payload: unknown) {
 
 function tutorProxy(mode: string): Plugin {
   const keyConfiguration = loadTutorKey(mode)
+
+  const callProvider = async (options: {
+    endpoint: string
+    body: unknown
+    timeoutMs?: number
+  }) => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 65_000)
+    try {
+      const providerResponse = await fetch(options.endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(keyConfiguration.apiKey ? { Authorization: `Bearer ${keyConfiguration.apiKey}` } : {}),
+        },
+        body: JSON.stringify(options.body),
+        signal: controller.signal,
+      })
+      const providerBody = await providerResponse.text()
+      let providerPayload: unknown = null
+      try {
+        providerPayload = JSON.parse(providerBody)
+      } catch {
+        const streamParts = providerBody.split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trim())
+          .filter(line => line && line !== '[DONE]')
+          .flatMap(line => {
+            try {
+              const part = textFromTutorProviderResponse(JSON.parse(line))
+              return part ? [part] : []
+            } catch {
+              return []
+            }
+          })
+        providerPayload = streamParts.length ? streamParts.join('') : providerBody
+      }
+      if (!providerResponse.ok) {
+        throw new Error(errorFromTutorProviderResponse(providerPayload, providerResponse.status))
+      }
+      const text = textFromTutorProviderResponse(providerPayload)
+      if (!text) {
+        const root = providerPayload && typeof providerPayload === 'object' ? providerPayload as Record<string, unknown> : {}
+        const firstChoice = Array.isArray(root.choices) && root.choices[0] && typeof root.choices[0] === 'object'
+          ? root.choices[0] as Record<string, unknown> : {}
+        const message = firstChoice.message && typeof firstChoice.message === 'object'
+          ? firstChoice.message as Record<string, unknown> : {}
+        console.warn('[LearnFlow vNext] provider returned no display text', {
+          rootKeys: Object.keys(root), choiceKeys: Object.keys(firstChoice), messageKeys: Object.keys(message),
+          contentType: Array.isArray(message.content) ? 'array' : typeof message.content,
+        })
+        throw new Error('模型服务没有返回可显示的文本')
+      }
+      return text
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
   const middleware = async (request: any, response: any, next: () => void) => {
     const requestUrl = new URL(request.url || '/', 'http://127.0.0.1:4174')
     if (requestUrl.pathname === '/api/tutor/status') {
@@ -93,6 +155,8 @@ function tutorProxy(mode: string): Plugin {
       const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : ''
       const model = typeof input.model === 'string' ? input.model : ''
       const modeValue = input.mode
+      const toolChoice = isTutorToolChoice(input.toolChoice) ? input.toolChoice : 'auto'
+      const selectionContext = typeof input.selectionContext === 'string' ? input.selectionContext.slice(0, 1600) : ''
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -112,32 +176,43 @@ function tutorProxy(mode: string): Plugin {
         throw new Error('本地环境没有 API Key。请在 vnext/.env.local 设置 LEARNFLOW_API_KEY，然后重启服务。')
       }
 
-      const providerRequest = buildTutorProviderRequest({ baseUrl, model, mode: modeValue, messages })
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 45_000)
-      try {
-        const providerResponse = await fetch(providerRequest.endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(keyConfiguration.apiKey ? { Authorization: `Bearer ${keyConfiguration.apiKey}` } : {}),
-          },
-          body: JSON.stringify(providerRequest.body),
-          signal: controller.signal,
+      const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+      const generate = async (instructions: string, inputText: string, timeoutMs?: number) => {
+        const request = buildProviderRequest({
+          baseUrl, model, instructions,
+          messages: [{ role: 'user', content: inputText }],
+          maxTokens: 1200,
         })
-        const providerPayload = await providerResponse.json().catch(() => null)
-        if (!providerResponse.ok) {
-          throw new Error(errorFromTutorProviderResponse(providerPayload, providerResponse.status))
-        }
-        const reply = textFromTutorProviderResponse(providerPayload)
-        if (!reply) throw new Error('模型服务没有返回可显示的文本')
-        sendJson(response, 200, { reply })
-      } finally {
-        clearTimeout(timeout)
+        return callProvider({ ...request, timeoutMs })
       }
+      const tools = await runTutorTools({ message: latestMessage, choice: toolChoice, generate })
+      const providerRequest = buildTutorProviderRequest({
+        baseUrl, model, mode: modeValue, messages,
+        toolContext: tools.context,
+        selectionContext,
+      })
+      let reply = tools.directReply
+      if (!reply) {
+        try {
+          reply = await callProvider(providerRequest)
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== '模型服务没有返回可显示的文本') throw error
+          const compactToolContext = tools.runs.map(run => {
+            const sourceLines = (run.sources || []).slice(0, 5).map(source => `- ${source.title}: ${source.url}`)
+            return `${run.title}：${run.detail}${sourceLines.length ? `\n${sourceLines.join('\n')}` : ''}`
+          }).join('\n\n')
+          const retryRequest = buildTutorProviderRequest({
+            baseUrl, model, mode: modeValue, messages: messages.slice(-10),
+            toolContext: compactToolContext,
+            selectionContext,
+          })
+          reply = await callProvider({ ...retryRequest, timeoutMs: 32_000 })
+        }
+      }
+      sendJson(response, 200, { reply, toolRuns: tools.runs })
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError'
-        ? '模型请求超过 45 秒，已停止等待'
+        ? '模型请求超过当前时间预算，已停止等待'
         : error instanceof TypeError
           ? '本地服务无法连接模型地址，请检查 Base URL 和网络'
           : error instanceof Error ? error.message : 'Tutor 请求失败'

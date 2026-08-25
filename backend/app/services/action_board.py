@@ -29,6 +29,21 @@ ACTION_BOARD = {
             ("use_learning_skill", "run_learning_task", "draft_learning_project"),
         ),
         ActionDefinition(
+            "search_computer_knowledge", "检索计算机知识来源", "none", "explicit_or_auto",
+            {},
+            (),
+        ),
+        ActionDefinition(
+            "generate_learning_visual", "生成安全学习图解或动画", "artifact", "explicit_or_auto",
+            {},
+            (),
+        ),
+        ActionDefinition(
+            "open_selection_followup", "从选中文字打开追问纸张", "context", "explicit_or_click",
+            {},
+            (),
+        ),
+        ActionDefinition(
             "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",
             {},
             (),

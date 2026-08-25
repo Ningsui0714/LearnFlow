@@ -9,6 +9,12 @@ import {
   tutorConfigurationIssue,
   type TutorMode,
 } from './tutor'
+import VisualArtifact from './VisualArtifact'
+import {
+  TOOL_CHOICE_LABELS,
+  type TutorToolChoice,
+  type TutorToolRun,
+} from './tooling'
 import './styles.css'
 
 type Message = {
@@ -17,6 +23,17 @@ type Message = {
   content: string
   createdAt: number
   tutorMode?: TutorMode
+  toolRuns?: TutorToolRun[]
+}
+
+type FollowUpSheet = {
+  id: string
+  title: string
+  quote: string
+  sourceMessageId: string
+  parentSheetId: string
+  messages: Message[]
+  createdAt: number
 }
 
 type Conversation = {
@@ -25,6 +42,8 @@ type Conversation = {
   messages: Message[]
   updatedAt: number
   mode: TutorMode
+  sheets: FollowUpSheet[]
+  activeSheetId: string
 }
 
 type WorkspaceTab = {
@@ -62,6 +81,8 @@ function createConversation(): Conversation {
     title: '新对话',
     updatedAt: now,
     mode: 'free',
+    sheets: [],
+    activeSheetId: 'main',
     messages: [{
       id: uid('message'),
       role: 'assistant',
@@ -103,6 +124,11 @@ function restoreState(): PersistedState {
     const conversations = value.conversations.map(conversation => ({
       ...conversation,
       mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
+      sheets: Array.isArray(conversation.sheets) ? conversation.sheets : [],
+      activeSheetId: conversation.activeSheetId === 'main'
+        || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
+        ? conversation.activeSheetId || 'main'
+        : 'main',
     }))
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
@@ -135,6 +161,35 @@ function pathForTab(tab: WorkspaceTab) {
   return tab.kind === 'settings' ? '/settings' : `/chat/${tab.conversationId}`
 }
 
+function surfaceKey(conversationId: string, sheetId: string) {
+  return `${conversationId}:${sheetId}`
+}
+
+function activeSheet(conversation: Conversation) {
+  return conversation.activeSheetId === 'main'
+    ? undefined
+    : conversation.sheets.find(sheet => sheet.id === conversation.activeSheetId)
+}
+
+function activeMessages(conversation: Conversation) {
+  return activeSheet(conversation)?.messages || conversation.messages
+}
+
+function inheritedContextMessages(conversation: Conversation) {
+  if (conversation.activeSheetId === 'main') return conversation.messages
+  const chain: FollowUpSheet[] = []
+  const seen = new Set<string>()
+  let current = activeSheet(conversation)
+  while (current && !seen.has(current.id)) {
+    chain.unshift(current)
+    seen.add(current.id)
+    current = current.parentSheetId === 'main'
+      ? undefined
+      : conversation.sheets.find(sheet => sheet.id === current?.parentSheetId)
+  }
+  return [...conversation.messages, ...chain.flatMap(sheet => sheet.messages)]
+}
+
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
   return <span aria-hidden="true" className="tab-icon">{kind === 'settings' ? '⚙' : '□'}</span>
 }
@@ -142,6 +197,7 @@ function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
 function App() {
   const [workspace, setWorkspace] = useState<PersistedState>(restoreState)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [toolChoices, setToolChoices] = useState<Record<string, TutorToolChoice>>({})
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
@@ -291,10 +347,9 @@ function App() {
       return { ...previous, conversations, tabs, activeTabId, splitTabId }
     })
     setDrafts(previous => {
-      const next = { ...previous }
-      delete next[conversationId]
-      return next
+      return Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(`${conversationId}:`)))
     })
+    setToolChoices(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(`${conversationId}:`))))
     setPendingTurns(previous => {
       const next = { ...previous }
       delete next[conversationId]
@@ -313,7 +368,43 @@ function App() {
     }))
   }
 
-  const finishTurn = (conversationId: string, mode: TutorMode, message: Omit<Message, 'id' | 'createdAt'>) => {
+  const setActiveSheet = (conversationId: string, sheetId: string) => {
+    if (pendingTurns[conversationId]) return
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => (
+        conversation.id === conversationId
+          && (sheetId === 'main' || conversation.sheets.some(sheet => sheet.id === sheetId))
+          ? { ...conversation, activeSheetId: sheetId }
+          : conversation
+      )),
+    }))
+  }
+
+  const createFollowUpSheet = (conversationId: string, sourceMessageId: string, quote: string) => {
+    const cleaned = quote.replace(/\s+/g, ' ').trim().slice(0, 1200)
+    if (cleaned.length < 2) return
+    const sheet: FollowUpSheet = {
+      id: uid('sheet'),
+      title: cleaned.slice(0, 28),
+      quote: cleaned,
+      sourceMessageId,
+      parentSheetId: workspace.conversations.find(item => item.id === conversationId)?.activeSheetId || 'main',
+      messages: [],
+      createdAt: Date.now(),
+    }
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => (
+        conversation.id === conversationId
+          ? { ...conversation, sheets: [...conversation.sheets, sheet], activeSheetId: sheet.id, updatedAt: Date.now() }
+          : conversation
+      )),
+    }))
+  }
+
+  const finishTurn = (conversationId: string, sheetId: string, mode: TutorMode, message: Omit<Message, 'id' | 'createdAt'>) => {
+    const finishedMessage = { ...message, id: uid('message'), createdAt: Date.now(), tutorMode: message.role === 'assistant' ? mode : undefined }
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => (
@@ -322,10 +413,10 @@ function App() {
               ...conversation,
               mode: 'free',
               updatedAt: Date.now(),
-              messages: [
-                ...conversation.messages,
-                { ...message, id: uid('message'), createdAt: Date.now(), tutorMode: message.role === 'assistant' ? mode : undefined },
-              ],
+              messages: sheetId === 'main' ? [...conversation.messages, finishedMessage] : conversation.messages,
+              sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
+                sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, finishedMessage] } : sheet
+              )),
             }
           : conversation
       )),
@@ -339,14 +430,17 @@ function App() {
 
   const sendMessage = async (conversationId: string, event: FormEvent) => {
     event.preventDefault()
-    const content = (drafts[conversationId] || '').trim()
     const conversation = workspace.conversations.find(item => item.id === conversationId)
-    if (!content || !conversation || pendingTurns[conversationId]) return
+    if (!conversation) return
+    const sheetId = conversation.activeSheetId
+    const draftKey = surfaceKey(conversationId, sheetId)
+    const content = (drafts[draftKey] || '').trim()
+    if (!content || pendingTurns[conversationId]) return
 
     const mode = resolveTutorMode(conversation.mode, content)
     const now = Date.now()
     const contextMessages = [
-      ...conversation.messages
+      ...inheritedContextMessages(conversation)
         .filter((message): message is Message & { role: 'assistant' | 'user' } => message.role !== 'system')
         .map(message => ({ role: message.role, content: message.content })),
       { role: 'user' as const, content },
@@ -357,15 +451,16 @@ function App() {
       const conversations = previous.conversations.map(conversation => {
         if (conversation.id !== conversationId) return conversation
         const firstStudentMessage = !conversation.messages.some(message => message.role === 'user')
+        const userMessage: Message = { id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode }
         return {
           ...conversation,
-          title: firstStudentMessage ? content.slice(0, 22) : conversation.title,
+          title: sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : conversation.title,
           updatedAt: now,
           mode,
-          messages: [
-            ...conversation.messages,
-            { id: uid('message'), role: 'user' as const, content, createdAt: now, tutorMode: mode },
-          ],
+          messages: sheetId === 'main' ? [...conversation.messages, userMessage] : conversation.messages,
+          sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
+            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
+          )),
         }
       })
       const current = conversations.find(item => item.id === conversationId)
@@ -373,11 +468,11 @@ function App() {
       const tabs = previous.tabs.map(tab => tab.conversationId === current.id ? { ...tab, title: current.title } : tab)
       return { ...previous, conversations, tabs }
     })
-    setDrafts(previous => ({ ...previous, [conversationId]: '' }))
+    setDrafts(previous => ({ ...previous, [draftKey]: '' }))
 
     const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
     if (configurationIssue) {
-      finishTurn(conversationId, mode, {
+      finishTurn(conversationId, sheetId, mode, {
         role: 'system',
         content: `本轮已识别为“${TUTOR_MODE_LABELS[mode]}”，但模型连接还不能使用：${configurationIssue}`,
       })
@@ -390,10 +485,13 @@ function App() {
         model: workspace.settings.model,
         mode,
         messages: contextMessages,
+        toolChoice: toolChoices[draftKey] || 'auto',
+        selectionContext: activeSheet(conversation)?.quote,
       })
-      finishTurn(conversationId, mode, { role: 'assistant', content: reply })
+      finishTurn(conversationId, sheetId, mode, { role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns })
+      setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
     } catch (error) {
-      finishTurn(conversationId, mode, {
+      finishTurn(conversationId, sheetId, mode, {
         role: 'system',
         content: `“${TUTOR_MODE_LABELS[mode]}”请求失败：${error instanceof Error ? error.message : '未知错误'}`,
       })
@@ -450,6 +548,16 @@ function App() {
     if (!conversation) return null
     const pendingMode = pendingTurns[conversation.id]
     const visibleMode = pendingMode || conversation.mode
+    const sheet = activeSheet(conversation)
+    const sheetId = conversation.activeSheetId
+    const draftKey = surfaceKey(conversation.id, sheetId)
+    const pages = [
+      { id: 'main', title: '主对话' },
+      ...conversation.sheets.map((item, index) => ({ id: item.id, title: `${index + 1}. ${item.title}` })),
+    ]
+    const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
+    const messages = activeMessages(conversation)
+    const hasWorkbench = conversation.sheets.length > 0
     return (
       <section className="chat-page">
         <header className="chat-heading">
@@ -459,13 +567,46 @@ function App() {
             <span className="local-label">{workspace.settings.model || '待配置模型'}</span>
           </div>
         </header>
-        <MessageList messages={conversation.messages} />
+        <div className={hasWorkbench ? 'paper-workbench' : 'chat-thread'}>
+          {hasWorkbench && (
+            <div className="paper-toolbar">
+              <div>
+                <span className="paper-toolbar-label">选中追问工作台</span>
+                <strong>{pages[pageIndex]?.title}</strong>
+              </div>
+              <div className="paper-navigation">
+                <button type="button" onClick={() => setActiveSheet(conversation.id, pages[Math.max(0, pageIndex - 1)].id)} disabled={pageIndex === 0 || Boolean(pendingMode)} aria-label="上一张纸">←</button>
+                <select value={sheetId} onChange={event => setActiveSheet(conversation.id, event.target.value)} disabled={Boolean(pendingMode)} aria-label="选择追问纸张">
+                  {pages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
+                </select>
+                <button type="button" onClick={() => setActiveSheet(conversation.id, pages[Math.min(pages.length - 1, pageIndex + 1)].id)} disabled={pageIndex === pages.length - 1 || Boolean(pendingMode)} aria-label="下一张纸">→</button>
+              </div>
+            </div>
+          )}
+          <div className={hasWorkbench ? 'paper-stack' : 'conversation-surface'}>
+            <div className={hasWorkbench ? 'paper-sheet' : 'conversation-paper'}>
+              {sheet && (
+                <blockquote className="selected-quote">
+                  <span>本页从这段原文展开</span>
+                  <p>{sheet.quote}</p>
+                </blockquote>
+              )}
+              <MessageList
+                messages={messages}
+                onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
+              />
+              {sheet && messages.length === 0 && (
+                <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
+              )}
+            </div>
+          </div>
+        </div>
         <div className="composer-dock">
           <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
-            {pendingMode && <div className="turn-progress" role="status"><i /> {TUTOR_MODE_LABELS[pendingMode]}正在组织回复…</div>}
+            {pendingMode && <div className="turn-progress" role="status"><i /> 正在判断工具并由{TUTOR_MODE_LABELS[pendingMode]}组织回复…</div>}
             <textarea
-              value={drafts[conversation.id] || ''}
-              onChange={event => setDrafts(previous => ({ ...previous, [conversation.id]: event.target.value }))}
+              value={drafts[draftKey] || ''}
+              onChange={event => setDrafts(previous => ({ ...previous, [draftKey]: event.target.value }))}
               disabled={Boolean(pendingMode)}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -482,9 +623,15 @@ function App() {
                   <button type="button" title="自由讨论；解释请求仍可自动进入简单讲解" aria-pressed={conversation.mode === 'free'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
                   <button type="button" title="下一轮使用简单讲解，完成后回到自由态" aria-pressed={conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
                 </div>
+                <label className="tool-choice">
+                  <span>工具</span>
+                  <select value={toolChoices[draftKey] || 'auto'} disabled={Boolean(pendingMode)} onChange={event => setToolChoices(previous => ({ ...previous, [draftKey]: event.target.value as TutorToolChoice }))}>
+                    {(Object.keys(TOOL_CHOICE_LABELS) as TutorToolChoice[]).map(choice => <option key={choice} value={choice}>{TOOL_CHOICE_LABELS[choice]}</option>)}
+                  </select>
+                </label>
                 <span>Shift + Enter 换行</span>
               </div>
-              <button type="submit" disabled={Boolean(pendingMode) || !(drafts[conversation.id] || '').trim()} aria-label={pendingMode ? 'Tutor 回复中' : '发送消息'}>{pendingMode ? '…' : '↑'}</button>
+              <button type="submit" disabled={Boolean(pendingMode) || !(drafts[draftKey] || '').trim()} aria-label={pendingMode ? 'Tutor 回复中' : '发送消息'}>{pendingMode ? '…' : '↑'}</button>
             </div>
           </form>
         </div>
@@ -584,22 +731,115 @@ function App() {
   )
 }
 
-function MessageList({ messages }: { messages: Message[] }) {
+function ToolRunCard({ run }: { run: TutorToolRun }) {
+  const icon = run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+  return (
+    <section className={`tool-run tool-run-${run.status}`} aria-label={`${run.title}${run.status === 'completed' ? '已完成' : '失败'}`}>
+      <header>
+        <span className="tool-run-icon">{icon}</span>
+        <div><strong>{run.title}</strong><small>{run.status === 'completed' ? '调用完成' : '调用失败'} · {(run.durationMs / 1000).toFixed(1)}s</small></div>
+        <i>{run.status === 'completed' ? '✓' : '!'}</i>
+      </header>
+      <p>{run.detail}</p>
+      {run.sources && run.sources.length > 0 && (
+        <div className="tool-sources">
+          {run.sources.map(source => (
+            <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
+              <span>{source.source} · {source.quality === 'official' ? '权威' : source.quality === 'academic' ? '论文' : source.quality === 'repository' ? '仓库' : '社区'}</span>
+              <strong>{source.title}</strong>
+              {source.snippet && <small>{source.snippet}</small>}
+            </a>
+          ))}
+        </div>
+      )}
+      {run.artifact && <VisualArtifact artifact={run.artifact} />}
+    </section>
+  )
+}
+
+function MessageList({ messages, onQuoteFollowUp }: {
+  messages: Message[]
+  onQuoteFollowUp: (messageId: string, quote: string) => void
+}) {
   const endRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const [selectedText, setSelectedText] = useState<{ messageId: string; quote: string; left: number; top: number } | null>(null)
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages.length])
+  useEffect(() => { setSelectedText(null) }, [messages])
+  useEffect(() => {
+    const captureKeyboardSelection = () => {
+      const selection = globalThis.getSelection()
+      const quote = selection?.toString().replace(/\s+/g, ' ').trim() || ''
+      if (!selection || selection.rangeCount === 0 || quote.length < 1 || quote.length > 1200) return
+      const anchor = selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement
+      const article = anchor?.closest<HTMLElement>('article[data-message-role="assistant"]')
+      if (!article || !listRef.current?.contains(article)) return
+      const rect = selection.getRangeAt(0).getBoundingClientRect()
+      setSelectedText({
+        messageId: article.dataset.messageId || '', quote,
+        left: Math.min(globalThis.innerWidth - 126, Math.max(8, rect.left + rect.width / 2 - 58)),
+        top: Math.max(8, rect.top - 42),
+      })
+    }
+    document.addEventListener('selectionchange', captureKeyboardSelection)
+    return () => document.removeEventListener('selectionchange', captureKeyboardSelection)
+  }, [])
   const visibleMessages = useMemo(() => messages, [messages])
 
+  const captureSelection = (messageId: string, container: HTMLElement) => {
+    const selection = globalThis.getSelection()
+    const quote = selection?.toString().replace(/\s+/g, ' ').trim() || ''
+    if (!selection || selection.rangeCount === 0 || quote.length < 1 || quote.length > 1200) {
+      setSelectedText(null)
+      return
+    }
+    const range = selection.getRangeAt(0)
+    if (!container.contains(range.commonAncestorContainer)) {
+      setSelectedText(null)
+      return
+    }
+    const rect = range.getBoundingClientRect()
+    setSelectedText({
+      messageId,
+      quote,
+      left: Math.min(globalThis.innerWidth - 126, Math.max(8, rect.left + rect.width / 2 - 58)),
+      top: Math.max(8, rect.top - 42),
+    })
+  }
+
   return (
-    <div className="messages" aria-live="polite">
+    <div className="messages" aria-live="polite" ref={listRef}>
       <div className="message-column">
         {visibleMessages.map(message => (
-          <article key={message.id} className={`message message-${message.role}`}>
+          <article key={message.id} data-message-id={message.id} data-message-role={message.role} className={`message message-${message.role}`}>
             {message.role !== 'user' && <span className="message-avatar">{message.role === 'assistant' ? '✦' : 'i'}</span>}
-            <div className="message-content">
+            <div className="message-content" onMouseUp={message.role === 'assistant' ? event => captureSelection(message.id, event.currentTarget) : undefined}>
               <div className="message-meta">
                 {message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'}
                 {message.tutorMode && <em>{TUTOR_MODE_LABELS[message.tutorMode]}</em>}
+                {message.role === 'assistant' && (
+                  <button
+                    type="button"
+                    className="message-follow-up"
+                    title="选中文字后追问；未选中时从本条回答开一张纸"
+                    onMouseDown={event => event.preventDefault()}
+                    onClick={event => {
+                      const selection = globalThis.getSelection()
+                      const selectedQuote = selection?.toString().replace(/\s+/g, ' ').trim() || ''
+                      const article = event.currentTarget.closest('article')
+                      const anchor = selection?.anchorNode
+                      const quote = selectedQuote && anchor && article?.contains(anchor)
+                        ? selectedQuote
+                        : message.content.replace(/\s+/g, ' ').trim().slice(0, 600)
+                      if (!quote) return
+                      onQuoteFollowUp(message.id, quote)
+                      selection?.removeAllRanges()
+                      setSelectedText(null)
+                    }}
+                  >选中文字追问</button>
+                )}
               </div>
+              {message.toolRuns?.map(run => <ToolRunCard key={run.id} run={run} />)}
               <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>
                 <MarkdownContent content={message.content} />
               </Suspense>
@@ -608,6 +848,19 @@ function MessageList({ messages }: { messages: Message[] }) {
         ))}
         <div ref={endRef} />
       </div>
+      {selectedText && (
+        <button
+          type="button"
+          className="selection-follow-up"
+          style={{ left: selectedText.left, top: selectedText.top }}
+          onMouseDown={event => event.preventDefault()}
+          onClick={() => {
+            onQuoteFollowUp(selectedText.messageId, selectedText.quote)
+            globalThis.getSelection()?.removeAllRanges()
+            setSelectedText(null)
+          }}
+        >在新纸上追问</button>
+      )}
     </div>
   )
 }

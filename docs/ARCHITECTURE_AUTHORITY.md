@@ -124,6 +124,12 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 项目提案和产物引用经 reducer 投影为可恢复学习动作。讲解段只形成 Knowledge exposure 并固定
 `mastery_unchanged`；只有明确的 learn/plan 目标才形成短期 Value 投影，不能自动巩固长期目标。
 
+### vNext Chat 的工具与选中追问原型
+
+独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 以官方资料优先并把网页内容视为不可信输入；`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
+
+Contract impact：注册表版本提升到 `2026-08-25.2`。新增 `vnext_chat` 工作台、三个 vNext 工具和三个零证据 Action Board capability；没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
+
 ### Learning Task 与双队列
 
 `LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者
