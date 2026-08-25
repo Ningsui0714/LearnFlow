@@ -6,6 +6,10 @@
 - 当前条目覆盖 KN_JAVA_* 学习路径全部 7 个节点，每节点 8 条
   （concept/steps/warning/example/workplace/standard/safety 等分类），共 56 条
   （≥50 达标，见《专业群定位与场景说明_计算机信息技术.md》第 5 节）。
+- 岗位统一为定稿岗位「Java 应用开发工程师」（对齐《专业群定位与场景说明_
+  计算机信息技术.md》第 2.1 节；不再用「Java 后端开发工程师」表述）。
+- 待办（《专业群定位》第 8.4 节）：确定《Java 面向对象程序设计》实训指导书
+  书名/版本后回填页码；当前 source 以《Java 核心技术·卷I》权威教材为准，未臆造页码。
 
 字段说明：entry_id / knowledge_point_id / title / category / content / source / source_type /
 document_id / locator / safety / job_role / action / keywords。
@@ -24,7 +28,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-01",
         "locator": "第 1 节：类的定义与对象创建",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "类的定义与对象创建 Java 面向对象",
     },
     {
@@ -39,7 +43,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-02",
         "locator": "第 2 节：类的定义与对象创建",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "类的定义与对象创建 Java 面向对象",
     },
     {
@@ -54,7 +58,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-03",
         "locator": "第 3 节：类的定义与对象创建",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "类的定义与对象创建 Java 面向对象",
     },
     {
@@ -69,7 +73,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-04",
         "locator": "第 4 节：封装与访问控制",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "封装与访问控制 Java 面向对象",
     },
     {
@@ -84,7 +88,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-05",
         "locator": "第 5 节：封装与访问控制",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "封装与访问控制 Java 面向对象",
     },
     {
@@ -99,7 +103,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-06",
         "locator": "第 6 节：封装与访问控制",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "封装与访问控制 Java 面向对象",
     },
     {
@@ -114,7 +118,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-07",
         "locator": "第 7 节：继承与方法重写",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "继承与方法重写 Java 面向对象",
     },
     {
@@ -129,7 +133,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-08",
         "locator": "第 8 节：继承与方法重写",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "继承与方法重写 Java 面向对象",
     },
     {
@@ -144,7 +148,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-09",
         "locator": "第 9 节：继承与方法重写",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "继承与方法重写 Java 面向对象",
     },
     {
@@ -159,7 +163,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-10",
         "locator": "第 10 节：多态与接口",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "多态与接口 Java 面向对象",
     },
     {
@@ -174,7 +178,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-11",
         "locator": "第 11 节：多态与接口",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "多态与接口 Java 面向对象",
     },
     {
@@ -189,7 +193,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-12",
         "locator": "第 12 节：多态与接口",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "多态与接口 Java 面向对象",
     },
     {
@@ -204,7 +208,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-13",
         "locator": "第 13 节：集合与泛型",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "集合与泛型 Java 面向对象",
     },
     {
@@ -219,7 +223,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-14",
         "locator": "第 14 节：集合与泛型",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "集合与泛型 Java 面向对象",
     },
     {
@@ -234,7 +238,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-15",
         "locator": "第 15 节：集合与泛型",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "集合与泛型 Java 面向对象",
     },
     {
@@ -249,7 +253,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-16",
         "locator": "第 16 节：异常处理",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "异常处理 Java 面向对象",
     },
     {
@@ -264,7 +268,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-17",
         "locator": "第 17 节：异常处理",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "异常处理 Java 面向对象",
     },
     {
@@ -279,7 +283,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-18",
         "locator": "第 18 节：异常处理",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "异常处理 Java 面向对象",
     },
     {
@@ -294,7 +298,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-19",
         "locator": "第 19 节：输入输出流",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "输入输出流 Java 面向对象",
     },
     {
@@ -309,7 +313,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-20",
         "locator": "第 20 节：输入输出流",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "输入输出流 Java 面向对象",
     },
     {
@@ -324,7 +328,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-21",
         "locator": "第 21 节：输入输出流",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "输入输出流 Java 面向对象",
     },
 
@@ -340,7 +344,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-22",
         "locator": "第 1 节：类的定义与对象创建（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "class Java"
     },
     {
@@ -355,7 +359,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-23",
         "locator": "第 1 节：类的定义与对象创建（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "class Java"
     },
     {
@@ -370,7 +374,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-24",
         "locator": "第 1 节：类的定义与对象创建（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "class Java"
     },
     {
@@ -385,7 +389,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-25",
         "locator": "第 1 节：类的定义与对象创建（数据安全）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "class Java"
     },
     {
@@ -400,7 +404,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-26",
         "locator": "第 1 节：类的定义与对象创建",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "class Java"
     },
     {
@@ -415,7 +419,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-27",
         "locator": "第 4 节：封装与访问控制（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "encapsulation Java"
     },
     {
@@ -430,7 +434,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-28",
         "locator": "第 4 节：封装与访问控制（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "encapsulation Java"
     },
     {
@@ -445,7 +449,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-29",
         "locator": "第 4 节：封装与访问控制（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "encapsulation Java"
     },
     {
@@ -460,7 +464,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-30",
         "locator": "第 4 节：封装与访问控制（数据安全）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "encapsulation Java"
     },
     {
@@ -475,7 +479,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-31",
         "locator": "第 4 节：封装与访问控制",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "encapsulation Java"
     },
     {
@@ -490,7 +494,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-32",
         "locator": "第 7 节：继承与方法重写（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "inheritance Java"
     },
     {
@@ -505,7 +509,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-33",
         "locator": "第 7 节：继承与方法重写（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "inheritance Java"
     },
     {
@@ -520,7 +524,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-34",
         "locator": "第 7 节：继承与方法重写（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "inheritance Java"
     },
     {
@@ -535,7 +539,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-35",
         "locator": "第 7 节：继承与方法重写（安全约束）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "inheritance Java"
     },
     {
@@ -550,7 +554,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-36",
         "locator": "第 7 节：继承与方法重写",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "inheritance Java"
     },
     {
@@ -565,7 +569,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-37",
         "locator": "第 10 节：多态与接口（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "polymorphism Java"
     },
     {
@@ -580,7 +584,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-38",
         "locator": "第 10 节：多态与接口（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "polymorphism Java"
     },
     {
@@ -595,7 +599,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-39",
         "locator": "第 10 节：多态与接口（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "polymorphism Java"
     },
     {
@@ -610,7 +614,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-40",
         "locator": "第 10 节：多态与接口（安全约束）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "polymorphism Java"
     },
     {
@@ -625,7 +629,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-41",
         "locator": "第 10 节：多态与接口",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "polymorphism Java"
     },
     {
@@ -640,7 +644,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-42",
         "locator": "第 12 节：集合与泛型（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "collection Java"
     },
     {
@@ -655,7 +659,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-43",
         "locator": "第 12 节：集合与泛型（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "collection Java"
     },
     {
@@ -670,7 +674,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-44",
         "locator": "第 12 节：集合与泛型（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "collection Java"
     },
     {
@@ -685,7 +689,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-45",
         "locator": "第 12 节：集合与泛型（数据安全）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "collection Java"
     },
     {
@@ -700,7 +704,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-46",
         "locator": "第 12 节：集合与泛型",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "collection Java"
     },
     {
@@ -715,7 +719,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-47",
         "locator": "第 16 节：异常处理（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "exception Java"
     },
     {
@@ -730,7 +734,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-48",
         "locator": "第 16 节：异常处理（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "exception Java"
     },
     {
@@ -745,7 +749,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-49",
         "locator": "第 16 节：异常处理（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "exception Java"
     },
     {
@@ -760,7 +764,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-50",
         "locator": "第 16 节：异常处理（数据安全）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "exception Java"
     },
     {
@@ -775,7 +779,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-51",
         "locator": "第 16 节：异常处理",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "exception Java"
     },
     {
@@ -790,7 +794,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-52",
         "locator": "第 19 节：输入输出流（成绩管理示例）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "io Java"
     },
     {
@@ -805,7 +809,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-53",
         "locator": "第 19 节：输入输出流（岗位用法）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "io Java"
     },
     {
@@ -820,7 +824,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-54",
         "locator": "第 19 节：输入输出流（规范）",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "io Java"
     },
     {
@@ -835,7 +839,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-55",
         "locator": "第 19 节：输入输出流（数据安全）",
         "safety": 1,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "io Java"
     },
     {
@@ -850,7 +854,7 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "document_id": "JAVA-CORE-56",
         "locator": "第 19 节：输入输出流",
         "safety": 0,
-        "job_role": "Java 后端开发工程师",
+        "job_role": "Java 应用开发工程师",
         "keywords": "io Java"
     },
 
