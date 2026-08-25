@@ -8,6 +8,12 @@ import {
   searchComputerKnowledge,
   type SearchProviderConfiguration,
 } from './computer-knowledge-search.ts'
+import type { LearningTaskTutorContext } from '../src/learning.ts'
+import {
+  FIVE_KERNEL_LABELS,
+  profilePacketToTutorContext,
+  readFiveKernelProfile,
+} from '../src/five-kernel-profile.ts'
 
 type GenerateText = (instructions: string, input: string, timeoutMs?: number) => Promise<string>
 
@@ -196,11 +202,29 @@ export async function runTutorTools(options: {
   choice: TutorToolChoice
   generate: GenerateText
   searchConfiguration?: SearchProviderConfiguration
+  mode?: 'free' | 'simple_explain' | 'guided_learning'
+  learningTaskContext?: LearningTaskTutorContext
 }) {
   const kinds = options.choice === 'auto' ? autoToolKinds(options.message) : [options.choice]
   const runs: TutorToolRun[] = []
   const context: string[] = []
   const directReplies: string[] = []
+
+  const profileStartedAt = Date.now()
+  const profilePacket = readFiveKernelProfile({
+    message: options.message,
+    mode: options.mode,
+    learningTaskContext: options.learningTaskContext,
+  })
+  if (profilePacket.selectedModules.length > 0) {
+    const kernelLabels = profilePacket.manifest.kernels.map(kernel => FIVE_KERNEL_LABELS[kernel])
+    runs.push({
+      id: id('tool'), kind: 'memory', status: 'completed', title: '读取五核画像',
+      detail: `按本轮意图选取 ${kernelLabels.join('、')}中的 ${profilePacket.manifest.moduleCount} 个 Module / ${profilePacket.manifest.claimCount} 个可直用 Claim；${profilePacket.adaptationDirectives.length} 条人因信息仅作静默适配。未读取整份画像，也未写回学习状态。`,
+      durationMs: Date.now() - profileStartedAt,
+    })
+    context.push(profilePacketToTutorContext(profilePacket))
+  }
 
   for (const kind of kinds.slice(0, 2)) {
     const startedAt = Date.now()
@@ -234,9 +258,10 @@ export async function runTutorTools(options: {
       })
     }
   }
-  const visualOnly = runs.length > 0 && runs.every(run => run.kind !== 'search')
+  const contentRuns = runs.filter(run => run.kind !== 'memory')
+  const visualOnly = contentRuns.length > 0 && contentRuns.every(run => run.kind === 'image' || run.kind === 'animation')
   const visualReply = directReplies.join('\n\n') || (visualOnly
-    ? `可视化工具本轮没有生成通过校验的产物：${runs.map(run => run.detail).join('；')}。我不会用普通文本或代码块冒充图片/动画；可以缩小主题后重试。`
+    ? `可视化工具本轮没有生成通过校验的产物：${contentRuns.map(run => run.detail).join('；')}。我不会用普通文本或代码块冒充图片/动画；可以缩小主题后重试。`
     : '')
   return { runs, context: context.join('\n\n'), directReply: visualReply }
 }

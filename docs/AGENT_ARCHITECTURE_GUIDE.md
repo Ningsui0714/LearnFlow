@@ -337,6 +337,13 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 接入后端后，正式 `practice / verify / consolidate` 完成仍必须由下述证据投影裁决，不能沿用
 浏览器中的 Skill 导航。
 
+vNext Tutor 每轮 MAY 先调用 `vnext_five_kernel_profile_reader`。当前数据源是学习者可检查的
+只读 Module/Claim 模拟，不是正式 KernelState；Reader MUST 按当前问题、任务目标和 Skill 做
+确定性相关检索与预算裁剪，MUST NOT 全量注入画像。敏感 Human Claim MUST 通过
+`adapt_silently / ask_before_surface` 过滤，且不得形成固定学习风格、情绪、人格或能力标签。
+Knowledge 与 Structure 可以通过稳定 Module 关系联合读取，但二者不得共享写入权威；Practice
+项目能力必须引用产物与 rubric 证据，不能从任务事件、生成材料或提交计数直接推断。
+
 Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：
 `learn` 需要 Skill 完成、材料查看或学习者明确确认互动结束，`practice` 需要真实 Attempt，
 `verify` 需要无辅助成功的原始正式 Attempt 或已校验变式（诊断、提示成功、纠错原题重做和

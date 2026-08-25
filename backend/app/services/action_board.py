@@ -49,6 +49,11 @@ ACTION_BOARD = {
             ("search_computer_knowledge", "generate_learning_visual"),
         ),
         ActionDefinition(
+            "read_vnext_five_kernel_profile", "为 vNext Tutor 读取相关模拟五核画像", "none", "none",
+            {},
+            (),
+        ),
+        ActionDefinition(
             "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",
             {},
             (),

@@ -143,6 +143,16 @@ Contract impact：注册表版本提升到 `2026-08-25.5`，新增零 target 的
 Skill 的近似步骤；新任务不再写通用四阶段事件。既有三 Agent、五核、后端 LearningTask API、
 Skill 稳定 ID 和模型 API 均保持兼容。
 
+vNext 另登记只读工具 `vnext_five_kernel_profile_reader`。它从学习者明确自述形成的模拟
+Module/Claim 画像中，按问题、Tutor mode、LearningTask 与当前 Skill 确定性选择有预算的
+跨核 ContextPacket；敏感 Human Claim 只能转成静默适配指令。模拟画像不是正式
+`KernelState / MemoryFact`，Reader 不写任何 Kernel、不声明掌握，也不改变正式五核读取链。
+
+Contract impact：注册表版本提升到 `2026-08-25.6`，新增 capability
+`read_vnext_five_kernel_profile` 与同名稳定工具登记。既有三 Agent、正式
+`five_kernel_retriever`、EvidenceEvent/reducer、后端 API 与 vNext 模型请求均向后兼容；这是一项
+vNext 只读能力登记，没有新增 EventContract 或 Kernel writer。
+
 ### Learning Task 与双队列
 
 `LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者

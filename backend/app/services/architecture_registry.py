@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.5"
+REGISTRY_VERSION = "2026-08-25.6"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -228,6 +228,8 @@ TOOLS = {
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
                      (), (), "append-only local event queue -> deterministic task projection -> bounded Tutor context; no learner-state write"),
+        ToolContract("vnext_five_kernel_profile_reader", "vNext Simulated Five-kernel Profile Reader", "tutor_agent", "vnext", "read",
+                     KERNEL_NAMES, (), "simulated Module/Claim profile -> deterministic intent selection -> bounded read-only Tutor context; no learner-state write"),
         ToolContract("workspace_lifecycle", "Conversation and Project Workspace Lifecycle", "tutor_agent", "learnflow", "transaction",
                      (), (), "confirmed workspace removal + zero-target audit event; learning evidence retained"),
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
@@ -436,7 +438,7 @@ WORKBENCHES = {
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
                           ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
-                           "run_vnext_learning_task"), "vnext"),
+                           "run_vnext_learning_task", "read_vnext_five_kernel_profile"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -475,6 +477,7 @@ CAPABILITY_OWNERS = {
     "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
+    "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
     "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),

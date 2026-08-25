@@ -25,7 +25,7 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'search' | 'image' | 'animation'
+  kind: 'memory' | 'search' | 'image' | 'animation'
   status: 'completed' | 'failed'
   title: string
   detail: string

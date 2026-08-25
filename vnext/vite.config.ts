@@ -200,7 +200,14 @@ function tutorProxy(mode: string): Plugin {
         })
         return callProvider({ ...request, timeoutMs })
       }
-      const tools = await runTutorTools({ message: latestMessage, choice: toolChoice, generate, searchConfiguration })
+      const tools = await runTutorTools({
+        message: latestMessage,
+        choice: toolChoice,
+        generate,
+        searchConfiguration,
+        mode: modeValue,
+        learningTaskContext,
+      })
       const providerRequest = buildTutorProviderRequest({
         baseUrl, model, mode: modeValue, messages,
         toolContext: tools.context,

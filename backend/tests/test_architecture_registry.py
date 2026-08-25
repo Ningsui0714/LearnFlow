@@ -68,28 +68,35 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
 def test_vnext_tools_are_registered_without_learning_state_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
-        "vnext_learning_task_runtime",
+        "vnext_learning_task_runtime", "vnext_five_kernel_profile_reader",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
-        "run_vnext_learning_task",
+        "run_vnext_learning_task", "read_vnext_five_kernel_profile",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
     assert CAPABILITY_OWNERS["run_vnext_learning_task"] == (
         "tutor_agent", "vnext_learning_task_runtime", "vnext_chat",
     )
+    assert CAPABILITY_OWNERS["read_vnext_five_kernel_profile"] == (
+        "tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat",
+    )
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
-            "vnext_learning_task_runtime",
+            "vnext_learning_task_runtime", "vnext_five_kernel_profile_reader",
         }
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
     assert "append-only local event queue" in TOOLS["vnext_learning_task_runtime"].write_path
+    assert TOOLS["vnext_five_kernel_profile_reader"].reads_kernels == (
+        "structure", "knowledge", "human", "value", "practice",
+    )
+    assert "bounded read-only Tutor context" in TOOLS["vnext_five_kernel_profile_reader"].write_path
     assert all(
         EVENTS[event_id].kernel_targets == ()
         for event_id in {

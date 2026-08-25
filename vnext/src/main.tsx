@@ -35,6 +35,10 @@ import {
   type TutorToolChoice,
   type TutorToolRun,
 } from './tooling'
+import {
+  FIVE_KERNEL_LABELS,
+  SIMULATED_FIVE_KERNEL_PROFILE,
+} from './five-kernel-profile'
 import './styles.css'
 
 type Message = {
@@ -762,6 +766,38 @@ function App() {
               <span className={settingsSaved ? 'save-status save-status-visible' : 'save-status'}>✓ 已保存</span>
             </div>
           </form>
+          <section className="settings-card profile-settings-card" aria-labelledby="simulated-profile-title">
+            <div className="settings-card-heading">
+              <span>02</span>
+              <div>
+                <h2 id="simulated-profile-title">模拟五核画像</h2>
+                <p>只有 Module 与 Claim；当前只读、可检查，不代表正式掌握，也不写入旧五核。</p>
+              </div>
+              <i>v{SIMULATED_FIVE_KERNEL_PROFILE.version} · 模拟</i>
+            </div>
+            <p className="profile-description">{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
+            <div className="profile-module-list">
+              {SIMULATED_FIVE_KERNEL_PROFILE.modules.map(module => (
+                <details key={module.id} className={`profile-module profile-module-${module.kernel}`}>
+                  <summary>
+                    <span>{FIVE_KERNEL_LABELS[module.kernel]}</span>
+                    <strong>{module.title}</strong>
+                    <small>{module.claims.length} claims</small>
+                  </summary>
+                  <p>{module.summary}</p>
+                  <ul>
+                    {module.claims.map(item => (
+                      <li key={item.id}>
+                        <span>{item.provenance === 'user_self_report' ? '自述' : '边界'}</span>
+                        <p>{item.text}</p>
+                        {item.sensitivity === 'sensitive' && <em>敏感 · {item.usePolicy === 'adapt_silently' ? '静默适配' : '需确认'}</em>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ))}
+            </div>
+          </section>
         </section>
       )
     }
@@ -1207,7 +1243,7 @@ function App() {
 }
 
 function ToolRunCard({ run }: { run: TutorToolRun }) {
-  const icon = run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+  const icon = run.kind === 'memory' ? '◇' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
     standard: '规范', reference: '参考', textbook: '教材', course: '课程',
     definition: '定义', research: '研究', example: '实例', discussion: '讨论',
