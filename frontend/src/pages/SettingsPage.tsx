@@ -132,7 +132,10 @@ export default function SettingsPage() {
         base_url: editUrl,
         model: editModel,
       })
-      setTestResult({ type: 'ok', msg: `✅ 连接成功！模型: ${res.data.model}` })
+      const latency = Number.isFinite(res.data.latency_ms)
+        ? `，响应 ${(res.data.latency_ms / 1000).toFixed(2)} 秒`
+        : ''
+      setTestResult({ type: 'ok', msg: `✅ 连接与正文输出正常！模型: ${res.data.model}${latency}` })
     } catch (e: any) {
       const detail = e?.response?.data?.detail || e.message
       setTestResult({ type: 'error', msg: `❌ ${detail}` })

@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
@@ -33,6 +34,26 @@ def normalize_openai_base_url(value: str) -> str:
     return normalized
 
 
+def openai_chat_provider_kwargs(
+    base_url: str,
+    model: str,
+    *,
+    thinking_enabled: bool,
+) -> dict:
+    """Return narrowly scoped OpenAI-compatible provider extensions."""
+    hostname = (urlsplit(str(base_url or "")).hostname or "").casefold()
+    model_name = str(model or "").casefold()
+    if hostname == "api.xiaomimimo.com" and model_name.startswith("mimo-"):
+        return {
+            "extra_body": {
+                "thinking": {
+                    "type": "enabled" if thinking_enabled else "disabled",
+                },
+            },
+        }
+    return {}
+
+
 class Settings(BaseSettings):
     app_name: str = "LearnFlow"
     app_version: str = "0.1.0"
@@ -43,7 +64,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     # Optional online enhancement must not hold an interactive request for the
     # provider's full transport timeout. Deterministic fallbacks remain usable.
-    tutor_model_budget_seconds: float = 10.0
+    tutor_model_budget_seconds: float = 15.0
     learning_task_plan_model_budget_seconds: float = 12.0
     micro_learning_artifact_model_budget_seconds: float = 18.0
 

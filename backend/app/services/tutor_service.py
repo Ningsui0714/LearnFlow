@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.config import openai_chat_provider_kwargs, settings
 from app.models.learning import (
     AgentSession, AgentMessage, AgentAction, EvidenceEvent, LearnerProfile,
     LearningProjectProposal, LearningSkillRun, LearningTask, MicroLearningRun,
@@ -48,7 +48,11 @@ from app.services.learning_skill_runtime import (
     prepare_learning_skill_turn,
     recommend_learning_skill,
 )
-from app.services.model_latency import invoke_before_deadline, model_deadline
+from app.services.model_latency import (
+    InteractiveModelBudgetExceeded,
+    invoke_before_deadline,
+    model_deadline,
+)
 from app.services.chat_modes import (
     attach_mode_domain_refs,
     chat_mode_prompt,
@@ -273,6 +277,57 @@ def _decode_tutor_content(
             local_agent_task if isinstance(local_agent_task, dict) else None,
         )
     return text, [], None, None, [], None
+
+
+PLAIN_TUTOR_REPLY_PROMPT = """
+本轮使用纯文本兼容输出。只返回直接给学习者看的自然中文回复，不要返回 JSON、字段名、
+observations、意图分析或项目提案。保持当前 Chat Mode 和教学边界，不要声称已经掌握，
+不要使用表格或多级标题；正文控制在 300 个汉字以内并完整收尾，最多给一个明确下一步。
+""".strip()
+
+
+def _plain_tutor_messages(messages: list[Any]) -> list[Any]:
+    """Override the structured contract for latency-safe plain replies."""
+    if not messages or not isinstance(messages[0], SystemMessage):
+        return messages
+    system_content = str(messages[0].content or "")
+    return [
+        SystemMessage(content=f"{system_content}\n\n{PLAIN_TUTOR_REPLY_PROMPT}"),
+        *messages[1:],
+    ]
+
+
+async def _invoke_plain_tutor_reply(
+    llm: Any,
+    messages: list[Any],
+    deadline: float,
+) -> tuple[str, list[dict], dict | None, dict | None, list[dict], dict | None]:
+    response = await invoke_before_deadline(
+        lambda: llm.ainvoke(_plain_tutor_messages(messages)),
+        deadline,
+    )
+    content = response.content if isinstance(response.content, str) else str(response.content)
+    decoded = _decode_tutor_content(content)
+    if not str(decoded[0] or "").strip():
+        raise ValueError("empty_plain_tutor_reply")
+    return decoded
+
+
+def _tutor_model_failure_message(error: Exception, *, budget_seconds: float) -> str:
+    if isinstance(error, InteractiveModelBudgetExceeded):
+        return (
+            f"模型已经配置，但本轮生成超过 {budget_seconds:g} 秒，"
+            "未在交互时限内返回正文。你可以直接重试；若持续发生，请换用响应更快的模型。"
+        )
+    if str(error).startswith("empty_"):
+        return (
+            "模型已经连接，但本轮返回了空正文。请直接重试；"
+            "若持续发生，请在设置中测试该模型的正文输出能力。"
+        )
+    return (
+        "模型已经配置，但本轮调用失败，未返回可用正文。"
+        "请在设置中运行连接测试查看具体错误后重试。"
+    )
 
 
 def _extract_project_name(message: str) -> str | None:
@@ -1966,6 +2021,7 @@ async def _generate_tutor_reply(
     active_skill = selectable_learning_skill(
         str((session.context_summary or {}).get("active_learning_skill_id") or "")
     )
+    mode_view = chat_mode_view(session)
     context = {
         "session_scope": {
             "type": session.session_type,
@@ -1977,7 +2033,7 @@ async def _generate_tutor_reply(
             ),
         },
         "active_surface_context": review_workspace,
-        "chat_mode": chat_mode_view(session),
+        "chat_mode": mode_view,
         "current_state": state,
         "available_projects": [{"id": p.id, "name": p.name, "description": p.description} for p in projects],
         "learning_projection": prompt_projection,
@@ -2046,7 +2102,7 @@ async def _generate_tutor_reply(
         + "\n\n"
         + scope_prompt
         + "\n\n"
-        + chat_mode_prompt(chat_mode_view(session))
+        + chat_mode_prompt(mode_view)
         + (
             "\n\n当前会话调用的学习 Skill：\n" + active_skill.invocation_prompt
             if active_skill else
@@ -2097,6 +2153,11 @@ async def _generate_tutor_reply(
 
     model_budget = max(0.01, settings.tutor_model_budget_seconds)
     deadline = model_deadline(model_budget)
+    provider_kwargs = openai_chat_provider_kwargs(
+        settings.llm_base_url,
+        settings.llm_model,
+        thinking_enabled=False,
+    )
     llm = ChatOpenAI(
         model=settings.llm_model,
         api_key=settings.llm_api_key,
@@ -2104,16 +2165,21 @@ async def _generate_tutor_reply(
         temperature=0.45,
         timeout=max(1.0, model_budget),
         max_retries=0,
+        **provider_kwargs,
+    )
+    plain_llm = ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0.45,
+        timeout=max(1.0, model_budget),
+        max_retries=0,
+        max_tokens=512,
+        **provider_kwargs,
     )
     if workflow_instruction:
         try:
-            response = await invoke_before_deadline(
-                lambda: llm.ainvoke(messages), deadline,
-            )
-            content = response.content if isinstance(response.content, str) else str(response.content)
-            decoded = _decode_tutor_content(content)
-            if not str(decoded[0] or "").strip():
-                raise ValueError("empty_skill_tutor_reply")
+            decoded = await _invoke_plain_tutor_reply(plain_llm, messages, deadline)
             return (*decoded, None)
         except Exception as skill_error:
             logger.info(
@@ -2138,10 +2204,30 @@ async def _generate_tutor_reply(
                 or workflow_fallback
                 or "当前教学调用没有返回内容。请保留在这一步，稍后重试或切换学习方法。"
             ), [], None, None, [], None, None
+    if mode_view.get("id") == "explain":
+        try:
+            decoded = await _invoke_plain_tutor_reply(plain_llm, messages, deadline)
+            return (*decoded, None)
+        except Exception as explain_error:
+            logger.info(
+                "plain explanation Tutor response failed: %s",
+                type(explain_error).__name__,
+            )
+            return (
+                workflow_fallback
+                or _tutor_model_failure_message(
+                    explain_error,
+                    budget_seconds=model_budget,
+                )
+            ), [], None, None, [], None, None
+
+    fallback_reserve = min(10.0, model_budget * (2 / 3))
+    structured_budget = max(0.01, model_budget - fallback_reserve)
+    structured_deadline = min(deadline, model_deadline(structured_budget))
     try:
         structured = llm.with_structured_output(TutorModelOutput)
         output = await invoke_before_deadline(
-            lambda: structured.ainvoke(messages), deadline,
+            lambda: structured.ainvoke(messages), structured_deadline,
         )
         reply = str(output.reply or "").strip()
         if not reply:
@@ -2168,13 +2254,7 @@ async def _generate_tutor_reply(
             type(structured_error).__name__,
         )
         try:
-            response = await invoke_before_deadline(
-                lambda: llm.ainvoke(messages), deadline,
-            )
-            content = response.content if isinstance(response.content, str) else str(response.content)
-            decoded = _decode_tutor_content(content)
-            if not str(decoded[0] or "").strip():
-                raise ValueError("empty_plain_tutor_reply")
+            decoded = await _invoke_plain_tutor_reply(plain_llm, messages, deadline)
             return (*decoded, None)
         except Exception as fallback_error:
             logger.info(
@@ -2185,7 +2265,10 @@ async def _generate_tutor_reply(
                 return await _candidate_sources_follow_up(db, session), [], None, None, [], None, None
             return (
                 workflow_fallback
-                or "模型服务没有响应或没有返回可靠内容，本轮不会用通用占位答案冒充讲解。请先在设置中测试模型连接，或补充一份可靠来源后重试。"
+                or _tutor_model_failure_message(
+                    fallback_error,
+                    budget_seconds=model_budget,
+                )
             ), [], None, None, [], None, None
 
 

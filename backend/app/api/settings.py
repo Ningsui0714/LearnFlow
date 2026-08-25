@@ -3,11 +3,16 @@ Settings API: read/write .env config, test connections.
 """
 import os
 import json
+import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
-from app.core.config import normalize_openai_base_url, settings
+from app.core.config import (
+    normalize_openai_base_url,
+    openai_chat_provider_kwargs,
+    settings,
+)
 from app.services.auth import CurrentLearner, get_current_learner, valid_desktop_request
 
 router = APIRouter()
@@ -212,15 +217,37 @@ async def test_connection(
     base_url = _normalize_base_url(req.base_url or app_settings.llm_base_url)
 
     try:
+        started = time.perf_counter()
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         resp = await client.chat.completions.create(
             model=req.model,
-            messages=[{"role": "user", "content": "say just: OK"}],
-            max_tokens=10,
+            messages=[{"role": "user", "content": "只回复 OK"}],
+            max_tokens=128,
             timeout=15,
+            **openai_chat_provider_kwargs(
+                base_url,
+                req.model,
+                thinking_enabled=False,
+            ),
         )
-        msg = resp.choices[0].message.content
-        return {"status": "ok", "message": msg or "(empty response)", "model": resp.model}
+        message = resp.choices[0].message
+        msg = str(message.content or "").strip()
+        if not msg:
+            reasoning = str(getattr(message, "reasoning_content", "") or "").strip()
+            detail = (
+                "模型已连接，但输出预算被推理过程耗尽，没有返回正文"
+                if reasoning else
+                "模型已连接，但没有返回正文"
+            )
+            raise HTTPException(400, f"{detail}；请检查模型能力或输出参数")
+        return {
+            "status": "ok",
+            "message": msg,
+            "model": resp.model,
+            "latency_ms": round((time.perf_counter() - started) * 1000),
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         error_str = str(e)
         if "401" in error_str or "Unauthorized" in error_str or "Authentication" in error_str:
@@ -228,7 +255,7 @@ async def test_connection(
         elif "404" in error_str:
             raise HTTPException(400, f"模型不存在：{req.model}，请检查模型名称")
         elif "timeout" in error_str.lower() or "timed out" in error_str.lower():
-            raise HTTPException(400, "连接超时：请检查 Base URL 是否正确")
+            raise HTTPException(400, "连接或生成超时：请检查 Base URL 和模型响应速度")
         else:
             raise HTTPException(400, f"连接失败：{error_str[:200]}")
 

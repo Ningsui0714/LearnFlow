@@ -6,11 +6,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.core.config import settings
+from app.core.config import openai_chat_provider_kwargs
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import AgentSession, EvidenceEvent, KernelMutation, LearningAttempt
@@ -161,6 +163,73 @@ def test_settings_preserve_api_key_and_normalize_deepseek(monkeypatch, tmp_path)
         assert after_blank_save.json()["llm_api_key"] == "sk-test-…1234"
         assert after_blank_save.json()["llm_base_url"] == "https://api.deepseek.com"
         assert f"LLM_API_KEY={secret}" in settings_path.read_text(encoding="utf-8")
+
+
+def test_settings_connection_requires_visible_model_content(monkeypatch):
+    enable_desktop(monkeypatch)
+    responses = [
+        SimpleNamespace(
+            model="reasoning-test-model",
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content="OK",
+                reasoning_content="先分析指令",
+            ))],
+        ),
+        SimpleNamespace(
+            model="reasoning-test-model",
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content="",
+                reasoning_content="只有推理过程",
+            ))],
+        ),
+    ]
+    observed = []
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            observed.append(kwargs)
+            return responses.pop(0)
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("openai.AsyncOpenAI", FakeAsyncOpenAI)
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            headers=DESKTOP_HEADERS,
+            json=registration("workspace_settings_content_test"),
+        )
+        assert registered.status_code == 200
+        payload = {
+            "api_key": "test-key",
+            "base_url": "https://api.xiaomimimo.com/v1",
+            "model": "mimo-v2.5",
+        }
+        successful = client.post("/api/settings/test", headers=DESKTOP_HEADERS, json=payload)
+        assert successful.status_code == 200, successful.text
+        assert successful.json()["message"] == "OK"
+        assert successful.json()["latency_ms"] >= 0
+        assert observed[0]["max_tokens"] == 128
+        assert observed[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+        empty = client.post("/api/settings/test", headers=DESKTOP_HEADERS, json=payload)
+        assert empty.status_code == 400
+        assert "推理过程耗尽" in empty.json()["detail"]
+
+
+def test_mimo_provider_disables_thinking_only_for_mimo_chat():
+    assert openai_chat_provider_kwargs(
+        "https://api.xiaomimimo.com/v1",
+        "mimo-v2.5",
+        thinking_enabled=False,
+    ) == {"extra_body": {"thinking": {"type": "disabled"}}}
+    assert openai_chat_provider_kwargs(
+        "https://api.openai.com/v1",
+        "gpt-4o-mini",
+        thinking_enabled=False,
+    ) == {}
 
 
 def test_repo_files_dir_can_be_overridden_for_desktop_storage(tmp_path):

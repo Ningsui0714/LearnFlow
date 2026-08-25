@@ -1279,7 +1279,76 @@ def test_tutor_structured_and_plain_attempts_share_one_model_budget(
 
     assert time.perf_counter() - started < 1
     assert response.status_code == 200
-    assert "模型服务没有响应" in response.json()["message"]
+    assert "模型已经配置" in response.json()["message"]
+    assert "超过" in response.json()["message"]
+
+
+def test_explanation_mode_uses_latency_safe_plain_reply(
+    client: TestClient,
+    monkeypatch,
+):
+    class PlainExplanationModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, _schema):
+            raise AssertionError("简单讲解不应先等待结构化输出")
+
+        async def ainvoke(self, messages):
+            assert "本轮使用纯文本兼容输出" in messages[0].content
+            return type("PlainResult", (), {
+                "content": "核方法用核函数隐式比较高维空间中的样本关系。",
+            })()
+
+    monkeypatch.setattr("app.services.tutor_service.ChatOpenAI", PlainExplanationModel)
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    session_id = new_session(client)
+    response = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "跟我讲讲什么是核方法",
+        "client_turn_id": f"plain-explain-{uuid.uuid4().hex}",
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["chat_mode"]["id"] == "explain"
+    assert response.json()["message"] == "核方法用核函数隐式比较高维空间中的样本关系。"
+
+
+def test_structured_timeout_preserves_budget_for_plain_fallback(
+    client: TestClient,
+    monkeypatch,
+):
+    class SlowStructuredInvoker:
+        async def ainvoke(self, _messages):
+            await asyncio.sleep(1)
+
+    class FallbackModel:
+        def __init__(self, **_kwargs):
+            pass
+
+        def with_structured_output(self, _schema):
+            return SlowStructuredInvoker()
+
+        async def ainvoke(self, messages):
+            assert "本轮使用纯文本兼容输出" in messages[0].content
+            return type("PlainResult", (), {"content": "你好，我们可以先明确今天的目标。"})()
+
+    monkeypatch.setattr("app.services.tutor_service.ChatOpenAI", FallbackModel)
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "test-key")
+    monkeypatch.setattr(
+        "app.services.tutor_service.settings.tutor_model_budget_seconds",
+        0.08,
+    )
+    session_id = new_session(client)
+
+    started = time.perf_counter()
+    response = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "你好",
+        "client_turn_id": f"plain-reserve-{uuid.uuid4().hex}",
+    })
+
+    assert time.perf_counter() - started < 0.5
+    assert response.status_code == 200, response.text
+    assert response.json()["message"] == "你好，我们可以先明确今天的目标。"
 
 
 def test_empty_model_reply_uses_skill_fallback_instead_of_blank_message(
