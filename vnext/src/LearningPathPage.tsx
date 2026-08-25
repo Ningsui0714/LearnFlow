@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
 import {
   LEARNING_PATH_SOURCES,
   PATH_EDGE_LABELS,
-  PATH_STAGE_LABELS,
   PATH_STATUS_LABELS,
   buildPersonalNodeProposal,
   projectLearnerPath,
@@ -14,6 +13,16 @@ import {
   type PathEdgeKind,
   type PersonalPathNodeProposal,
 } from './learning-path-graph'
+import {
+  KNOWLEDGE_CLUSTERS,
+  NEBULA_HEIGHT,
+  NEBULA_WIDTH,
+  clusterLearningPathNode,
+  knowledgeCluster,
+  layoutLearningPathNebula,
+  nebulaEdgePath,
+  type KnowledgeClusterId,
+} from './learning-path-nebula'
 
 type Props = {
   state: LearnerPathState
@@ -22,7 +31,6 @@ type Props = {
   onRemovePersonalNode: (nodeId: string) => void
 }
 
-const STAGES = ['foundation', 'core', 'domain', 'advanced', 'research'] as const
 const STATUS_ORDER: LearnerPathStatus[] = ['unmarked', 'exploring', 'self_reported_exposed', 'self_reported_mastered']
 
 function compact(value: string) {
@@ -31,40 +39,61 @@ function compact(value: string) {
 
 export default function LearningPathPage({ state, onStatusChange, onAddPersonalNode, onRemovePersonalNode }: Props) {
   const projection = useMemo(() => projectLearnerPath(state), [state])
+  const canvasScrollRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
-  const [domain, setDomain] = useState('全部')
+  const [clusterFilter, setClusterFilter] = useState<'all' | KnowledgeClusterId>('all')
   const [audience, setAudience] = useState('全部')
+  const [showAllRelations, setShowAllRelations] = useState(false)
   const [selectedId, setSelectedId] = useState('agent-engineering')
   const [showSources, setShowSources] = useState(false)
   const [personalTitle, setPersonalTitle] = useState('')
   const [anchorId, setAnchorId] = useState('machine-learning')
   const [edgeKind, setEdgeKind] = useState<PathEdgeKind>('soft_prerequisite')
 
-  const domains = useMemo(() => ['全部', ...new Set(projection.nodes.flatMap(node => node.domains))], [projection.nodes])
+  const nebulaPositions = useMemo(() => layoutLearningPathNebula(projection.nodes, projection.edges), [projection.nodes, projection.edges])
   const visibleNodes = useMemo(() => {
     const normalized = compact(query)
     return projection.nodes.filter(node => {
       const matchesQuery = !normalized || [node.title, ...node.aliases, ...node.domains].some(value => compact(value).includes(normalized))
-      const matchesDomain = domain === '全部' || node.domains.includes(domain)
+      const matchesCluster = clusterFilter === 'all' || clusterLearningPathNode(node) === clusterFilter
       const matchesAudience = audience === '全部' || node.audiences.includes(audience as LearningPathNode['audiences'][number])
-      return matchesQuery && matchesDomain && matchesAudience
+      return matchesQuery && matchesCluster && matchesAudience
     })
-  }, [projection.nodes, query, domain, audience])
+  }, [projection.nodes, query, clusterFilter, audience])
   const visibleIds = new Set(visibleNodes.map(node => node.id))
-  const selected = projection.nodes.find(node => node.id === selectedId) || visibleNodes[0]
+  const selected = projection.nodes.find(node => node.id === selectedId && visibleIds.has(node.id)) || visibleNodes[0]
   const nodeMap = new Map(projection.nodes.map(node => [node.id, node]))
-  const stageRows = new Map(STAGES.map(stage => [stage, visibleNodes.filter(node => node.stage === stage).sort((a, b) => a.order - b.order || a.title.localeCompare(b.title))]))
-  const positions = new Map<string, { x: number; y: number }>()
-  STAGES.forEach((stage, stageIndex) => {
-    stageRows.get(stage)?.forEach((node, rowIndex) => positions.set(node.id, { x: 42 + stageIndex * 226, y: 68 + rowIndex * 74 }))
+  const selectedEdgeIds = new Set(selected
+    ? projection.edges.filter(edge => edge.from === selected.id || edge.to === selected.id).map(edge => edge.id)
+    : [])
+  const focusNodeIds = new Set(selected ? [selected.id] : [])
+  projection.edges.forEach(edge => {
+    if (!selectedEdgeIds.has(edge.id)) return
+    focusNodeIds.add(edge.from)
+    focusNodeIds.add(edge.to)
   })
-  const canvasHeight = Math.max(460, ...STAGES.map(stage => (stageRows.get(stage)?.length || 0) * 74 + 110))
+  const visibleEdges = projection.edges.filter(edge => visibleIds.has(edge.from) && visibleIds.has(edge.to)
+    && (showAllRelations || selectedEdgeIds.has(edge.id)))
+  const clusterCounts = useMemo(() => Object.fromEntries(KNOWLEDGE_CLUSTERS.map(cluster => [
+    cluster.id,
+    projection.nodes.filter(node => clusterLearningPathNode(node) === cluster.id).length,
+  ])) as Record<KnowledgeClusterId, number>, [projection.nodes])
   const selectedPrerequisites = selected
     ? projection.edges.filter(edge => edge.to === selected.id).map(edge => ({ edge, node: nodeMap.get(edge.from) })).filter(item => item.node)
     : []
   const selectedSuccessors = selected
     ? projection.edges.filter(edge => edge.from === selected.id).map(edge => ({ edge, node: nodeMap.get(edge.to) })).filter(item => item.node)
     : []
+
+  useEffect(() => {
+    if (!selected || !canvasScrollRef.current) return
+    const position = nebulaPositions.get(selected.id)
+    if (!position) return
+    const viewport = canvasScrollRef.current
+    const left = Math.max(0, position.x + position.size / 2 - viewport.clientWidth / 2)
+    const top = Math.max(0, position.y + position.size / 2 - viewport.clientHeight / 2)
+    viewport.scrollTo({ left, top, behavior: 'smooth' })
+  }, [selected?.id, nebulaPositions])
 
   const addManualNode = () => {
     const title = personalTitle.trim()
@@ -105,9 +134,22 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
         <main className="path-main">
           <div className="path-filters">
             <label><span>查找课程或技能</span><input value={query} onChange={event => setQuery(event.target.value)} placeholder="机器学习、网络安全、Agent…" /></label>
-            <label><span>领域</span><select value={domain} onChange={event => setDomain(event.target.value)}>{domains.map(item => <option key={item}>{item}</option>)}</select></label>
             <label><span>学习阶段</span><select value={audience} onChange={event => setAudience(event.target.value)}><option>全部</option><option value="vocational">高职</option><option value="undergraduate">本科</option><option value="graduate">研究生</option><option value="self_directed">自主学习</option></select></label>
+            <button type="button" className={showAllRelations ? 'path-relation-toggle active' : 'path-relation-toggle'} onClick={() => setShowAllRelations(value => !value)}>{showAllRelations ? '隐藏全图关系' : '显示全图关系'}</button>
             <button type="button" onClick={() => setShowSources(value => !value)}>{showSources ? '收起来源' : '查看来源'}</button>
+          </div>
+
+          <div className="nebula-cluster-filter" aria-label="知识星团筛选">
+            <button type="button" className={clusterFilter === 'all' ? 'active' : ''} onClick={() => setClusterFilter('all')}><i />全部星团<span>{projection.nodes.length}</span></button>
+            {KNOWLEDGE_CLUSTERS.map(cluster => (
+              <button
+                type="button"
+                key={cluster.id}
+                className={clusterFilter === cluster.id ? 'active' : ''}
+                style={{ '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
+                onClick={() => setClusterFilter(current => current === cluster.id ? 'all' : cluster.id)}
+              ><i />{cluster.label}<span>{clusterCounts[cluster.id]}</span></button>
+            ))}
           </div>
 
           {showSources && (
@@ -116,31 +158,43 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
             </div>
           )}
 
-          <div className="path-canvas-scroll">
-            <div className="path-canvas" style={{ height: canvasHeight }}>
-              <div className="path-stage-headings">{STAGES.map(stage => <span key={stage}>{PATH_STAGE_LABELS[stage]}</span>)}</div>
-              <svg className="path-edges" viewBox={`0 0 1160 ${canvasHeight}`} preserveAspectRatio="none" aria-hidden="true">
+          <div className="path-canvas-scroll" ref={canvasScrollRef}>
+            <div className="path-canvas path-nebula" style={{ width: NEBULA_WIDTH, height: NEBULA_HEIGHT }}>
+              <div className="nebula-field-label"><span>KNOWLEDGE NEBULA</span><strong>{showAllRelations ? '全图关系' : '一跳聚焦'}</strong><small>点击星体查看前置与去向</small></div>
+              {KNOWLEDGE_CLUSTERS.map(cluster => (
+                <button
+                  type="button"
+                  key={cluster.id}
+                  className={`nebula-cluster${clusterFilter === cluster.id ? ' nebula-cluster-active' : ''}${clusterFilter !== 'all' && clusterFilter !== cluster.id ? ' nebula-cluster-muted' : ''}`}
+                  style={{ left: cluster.center.x - 210, top: cluster.center.y - 145, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
+                  onClick={() => setClusterFilter(current => current === cluster.id ? 'all' : cluster.id)}
+                >
+                  <span>{cluster.label}</span><small>{cluster.caption}</small><i>{clusterCounts[cluster.id]}</i>
+                </button>
+              ))}
+              <svg className="path-edges" viewBox={`0 0 ${NEBULA_WIDTH} ${NEBULA_HEIGHT}`} aria-hidden="true">
                 <defs><marker id="path-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
-                {projection.edges.filter(edge => visibleIds.has(edge.from) && visibleIds.has(edge.to)).map(edge => {
-                  const from = positions.get(edge.from), to = positions.get(edge.to)
+                {visibleEdges.map(edge => {
+                  const from = nebulaPositions.get(edge.from), to = nebulaPositions.get(edge.to)
                   if (!from || !to) return null
-                  return <line key={edge.id} className={`path-edge path-edge-${edge.kind}`} x1={from.x + 164} y1={from.y + 25} x2={to.x} y2={to.y + 25} markerEnd="url(#path-arrow)" />
+                  return <path key={edge.id} className={`path-edge path-edge-${edge.kind}${selectedEdgeIds.has(edge.id) ? ' path-edge-focused' : ''}`} d={nebulaEdgePath(from, to, edge.id)} markerEnd="url(#path-arrow)" />
                 })}
               </svg>
               {visibleNodes.map(node => {
-                const position = positions.get(node.id)!
+                const position = nebulaPositions.get(node.id)!
+                const cluster = knowledgeCluster(position.clusterId)
                 const status = projection.statuses[node.id] || 'unmarked'
                 return (
                   <button
                     type="button"
                     key={node.id}
-                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}`}
-                    style={{ left: position.x, top: position.y }}
+                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${!showAllRelations && selected && !focusNodeIds.has(node.id) ? ' path-node-muted' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
+                    style={{ left: position.x, top: position.y, width: position.size, height: position.size, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
                     onClick={() => setSelectedId(node.id)}
+                    title={`${node.title} · ${cluster.label} · ${PATH_STATUS_LABELS[status]}`}
                   >
-                    <span>{node.origin === 'personal' ? '个人' : node.domains[0]}</span>
                     <strong>{node.title}</strong>
-                    <small>{PATH_STATUS_LABELS[status]}</small>
+                    <small>{node.origin === 'personal' ? '个人节点' : PATH_STATUS_LABELS[status]}</small>
                   </button>
                 )
               })}
@@ -148,7 +202,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
             </div>
           </div>
           <div className="path-legend">
-            <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span>
+            <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span><em>节点越大，连接越多；彩色实环表示正在学习或自报状态。</em>
           </div>
         </main>
 
@@ -158,7 +212,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
               <span className="eyebrow">{selected.origin === 'personal' ? 'PERSONAL NODE' : 'COURSE NODE'}</span>
               <h2>{selected.title}</h2>
               <p>{selected.summary}</p>
-              <div className="path-node-tags">{selected.domains.map(item => <span key={item}>{item}</span>)}</div>
+              <div className="path-node-tags"><span className="path-cluster-tag" style={{ '--cluster-color': knowledgeCluster(clusterLearningPathNode(selected)).color, '--cluster-rgb': knowledgeCluster(clusterLearningPathNode(selected)).rgb } as CSSProperties}>{knowledgeCluster(clusterLearningPathNode(selected)).label}</span>{selected.domains.map(item => <span key={item}>{item}</span>)}</div>
               <div className="path-status-picker">
                 <label>我的状态</label>
                 <div>{STATUS_ORDER.map(status => <button type="button" key={status} className={(projection.statuses[selected.id] || 'unmarked') === status ? 'active' : ''} onClick={() => onStatusChange(selected.id, status)}>{PATH_STATUS_LABELS[status]}</button>)}</div>
