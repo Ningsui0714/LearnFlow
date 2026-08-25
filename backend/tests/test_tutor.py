@@ -204,6 +204,106 @@ def test_independent_global_chats_invoke_registered_session_skills(client: TestC
     assert invalid.status_code == 400
 
 
+def test_deleting_global_chat_removes_workspace_and_cancels_open_task(client: TestClient):
+    session_id = new_session(client)
+    turn = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": "带我弄懂 Python 装饰器为什么能包装函数",
+        "client_turn_id": f"delete-chat-{uuid.uuid4().hex}",
+    })
+    assert turn.status_code == 200, turn.text
+    task_id = turn.json()["learning_task_proposal"]["id"]
+
+    deleted = client.delete(f"/api/agent/sessions/{session_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["evidence_retained"] is True
+    assert deleted.json()["canceled_learning_tasks"] == 1
+    repeated = client.delete(f"/api/agent/sessions/{session_id}")
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["status"] == "already_deleted"
+    assert repeated.json()["evidence_retained"] is True
+    assert client.get(f"/api/agent/sessions/{session_id}").status_code == 404
+    listed = client.get("/api/agent/sessions", params={"session_type": "global"}).json()
+    assert session_id not in {item["id"] for item in listed}
+
+    async def deletion_state():
+        async with async_session() as db:
+            session = await db.get(AgentSession, session_id)
+            task = await db.get(LearningTask, task_id)
+            event = (await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+                EvidenceEvent.event_type == "conversation_deleted",
+            ))).scalar_one()
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id == event.id,
+            ))).scalars().all())
+            return session, task, mutations
+
+    session, task, mutations = asyncio.run(deletion_state())
+    assert session.status == "deleted"
+    assert task.status == "canceled"
+    assert mutations == []
+
+
+def test_deleting_project_removes_all_project_surfaces_but_retains_evidence(client: TestClient):
+    project_response = client.post("/api/projects", json={
+        "name": f"待删除项目 {uuid.uuid4().hex[:8]}",
+        "description": "验证项目工作区删除",
+        "user_level": "beginner",
+    })
+    assert project_response.status_code == 200, project_response.text
+    project_id = project_response.json()["id"]
+    project_session = client.post("/api/agent/sessions", json={
+        "session_type": "project",
+        "project_id": project_id,
+    })
+    assert project_session.status_code == 200, project_session.text
+    project_session_id = project_session.json()["id"]
+    task_response = client.post("/api/learning-tasks", json={
+        "title": "项目中的未完成任务",
+        "objective": "完成项目中的一个原子学习任务",
+        "project_id": project_id,
+        "client_request_id": f"delete-project-task-{uuid.uuid4().hex}",
+    })
+    assert task_response.status_code == 200, task_response.text
+    task_id = task_response.json()["id"]
+
+    direct_session_delete = client.delete(f"/api/agent/sessions/{project_session_id}")
+    assert direct_session_delete.status_code == 409
+
+    deleted = client.delete(f"/api/projects/{project_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["evidence_retained"] is True
+    assert deleted.json()["retired_sessions"] == 1
+    assert deleted.json()["canceled_learning_tasks"] == 1
+    repeated = client.delete(f"/api/projects/{project_id}")
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["status"] == "already_deleted"
+    assert repeated.json()["evidence_retained"] is True
+    assert client.get(f"/api/projects/{project_id}").status_code == 404
+    assert project_id not in {item["id"] for item in client.get("/api/projects").json()}
+    assert client.get(f"/api/agent/sessions/{project_session_id}").status_code == 404
+
+    async def deletion_state():
+        async with async_session() as db:
+            project = await db.get(Project, project_id)
+            session = await db.get(AgentSession, project_session_id)
+            task = await db.get(LearningTask, task_id)
+            event = (await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.project_id == project_id,
+                EvidenceEvent.event_type == "project_deleted",
+            ))).scalar_one()
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id == event.id,
+            ))).scalars().all())
+            return project, session, task, mutations
+
+    project, session, task, mutations = asyncio.run(deletion_state())
+    assert project.visibility == "deleted"
+    assert session.status == "deleted"
+    assert task.status == "canceled"
+    assert mutations == []
+
+
 def test_socratic_skill_run_is_bounded_resumable_and_hands_off_to_verification(
     client: TestClient,
 ):

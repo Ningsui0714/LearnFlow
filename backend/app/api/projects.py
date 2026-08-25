@@ -1,5 +1,4 @@
 from pathlib import Path
-import shutil
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,48 +103,17 @@ async def delete_project(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a project and all related data."""
-    # Also clear embedding cache for this project's chunks
-    from app.services.embedding import load_cache, save_cache
-    project = await require_owned_project(db, current.learner.id, project_id)
-    
-    # Get chunk IDs before deletion
-    chunk_ids = []
-    from app.models.project import Source, Chunk
-    srcs = await db.execute(select(Chunk.id).join(Source).where(Source.project_id == project_id))
-    chunk_ids = [r[0] for r in srcs.all()]
-    source_ids_result = await db.execute(
-        select(Source.id).where(Source.project_id == project_id)
-    )
-    source_ids = [r[0] for r in source_ids_result.all()]
-    
-    # Delete project (cascades to sources, chunks, roadmap, checkpoints, etc.)
-    await db.delete(project)
+    """Remove a project from the active workspace while retaining evidence."""
+    project = (await db.execute(select(Project).where(
+        Project.id == project_id,
+        Project.learner_id == current.learner.id,
+    ))).scalar_one_or_none()
+    if not project:
+        raise HTTPException(404, "Project not found")
+    from app.services.workspace_lifecycle import delete_project_workspace
+    result = await delete_project_workspace(db, project=project)
     await db.commit()
-    
-    # Clean up embedding cache
-    try:
-        cache = load_cache()
-        for cid in chunk_ids:
-            cache.pop(f"chunk-{cid}", None)
-        save_cache(cache)
-    except Exception:
-        pass
-
-    # Reference originals and derived caches are application data, not
-    # project-workspace files. Clean only this project's own source data.
-    shutil.rmtree(
-        Path(settings.source_uploads_dir).expanduser()
-        / str(current.learner.id) / str(project_id),
-        ignore_errors=True,
-    )
-    for source_id in source_ids:
-        shutil.rmtree(
-            Path(settings.source_cache_dir).expanduser() / str(source_id),
-            ignore_errors=True,
-        )
-    
-    return {"status": "ok", "deleted": project.name, "chunks_cleaned": len(chunk_ids)}
+    return result
 
 
 # ── Sources ──

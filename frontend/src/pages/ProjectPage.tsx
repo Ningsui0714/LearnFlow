@@ -1,15 +1,16 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { BookOpen, ListTodo } from 'lucide-react'
+import { BookOpen, ListTodo, Trash2 } from 'lucide-react'
 import {
   getProject, addSource, uploadSource, listSources, processAllSources, processSource, getRoadmap,
   startImageCaptioning, getTaskStatus, setSourceRole, reconcileSources, applyReconcile,
-  getAcceptedProjectProposal, getProjectProposal, refreshProjectProposalSources,
+  deleteProject, getAcceptedProjectProposal, getProjectProposal, refreshProjectProposalSources,
 } from '../services/api'
 import type { ProjectProposal, ProjectProposalSource } from '../services/api'
 import CheckpointGraph from '../components/checkpoint/CheckpointGraph'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
 import { publishWorkspaceAgentContext } from '../components/workspace/workspaceAgentContext'
+import DeleteConfirmationDialog from '../components/workspace/DeleteConfirmationDialog'
 
 interface CheckpointNode {
   id: number
@@ -46,6 +47,8 @@ export default function ProjectPage() {
   const [projectProposal, setProjectProposal] = useState<ProjectProposal | null>(null)
   const [addingCandidateUrl, setAddingCandidateUrl] = useState<string | null>(null)
   const [refreshingCandidates, setRefreshingCandidates] = useState(false)
+  const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false)
+  const [deletingProject, setDeletingProject] = useState(false)
 
   // Check whether paid API enhance is allowed (settings)
   useEffect(() => {
@@ -273,6 +276,24 @@ export default function ProjectPage() {
     navigate(`/projects/${pid}/checkpoints/${checkpointId}`)
   }
 
+  const handleDeleteProject = async () => {
+    if (!project || deletingProject) return
+    setDeletingProject(true)
+    try {
+      await deleteProject(pid)
+      window.dispatchEvent(new CustomEvent('learnflow:projects-changed'))
+      window.dispatchEvent(new CustomEvent('learnflow:workspace-item-deleted', {
+        detail: { kind: 'project', id: pid },
+      }))
+      setShowDeleteConfirmation(false)
+      navigate('/projects', { replace: true })
+    } catch (error: any) {
+      setNotification('❌ ' + (error?.response?.data?.detail || '删除项目失败'))
+    } finally {
+      setDeletingProject(false)
+    }
+  }
+
   useEffect(() => {
     publishWorkspaceAgentContext({
       kind: 'project_tutor',
@@ -308,10 +329,21 @@ export default function ProjectPage() {
         <button onClick={() => navigate('/')} className="text-sm text-gray-400 hover:text-gray-600 mb-1">
           ← 返回
         </button>
-        <h1 className="text-2xl font-bold text-gray-900">{project.name}</h1>
-        {project.description && (
-          <p className="text-gray-500 text-sm mt-0.5">{project.description}</p>
-        )}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="truncate text-2xl font-bold text-gray-900">{project.name}</h1>
+            {project.description && (
+              <p className="mt-0.5 text-sm text-gray-500">{project.description}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirmation(true)}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-200 px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-50"
+          >
+            <Trash2 size={14} /> 删除项目
+          </button>
+        </div>
       </div>
 
       {projectProposal && (
@@ -605,6 +637,15 @@ export default function ProjectPage() {
           </div>
         </div>
       )}
+      <DeleteConfirmationDialog
+        open={showDeleteConfirmation}
+        itemType="项目"
+        itemName={project.name || ''}
+        consequence="项目、关卡、来源和学习文件将从工作区移除，未完成任务会被取消。"
+        busy={deletingProject}
+        onCancel={() => setShowDeleteConfirmation(false)}
+        onConfirm={handleDeleteProject}
+      />
     </div>
   )
 }

@@ -29,6 +29,11 @@ ACTION_BOARD = {
             ("use_learning_skill", "run_learning_task", "draft_learning_project"),
         ),
         ActionDefinition(
+            "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",
+            {},
+            (),
+        ),
+        ActionDefinition(
             "manage_learning_tasks", "管理学习任务队列", "write", "explicit_or_click",
             {},
             ("plan_learning_task", "run_learning_task"),
@@ -94,6 +99,11 @@ ACTION_BOARD = {
             "create_project", "建立学习项目", "write", "explicit_or_card",
             {"structure": "project_selection", "value": "goal_confirmation"},
             ("add_source", "plan_learning_path"),
+        ),
+        ActionDefinition(
+            "delete_project", "从工作区删除学习项目", "write", "explicit_or_click",
+            {},
+            (),
         ),
         ActionDefinition(
             "bootstrap_project", "建立项目并接入来源", "write", "explicit",

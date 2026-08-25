@@ -4,13 +4,14 @@ import { useNavigate } from 'react-router-dom'
 import { DndContext, DragOverlay, useDraggable, useDroppable } from '@dnd-kit/core'
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import { FolderPlus, GripVertical, Layers3 } from 'lucide-react'
+import { FolderPlus, GripVertical, Layers3, Trash2 } from 'lucide-react'
 import {
-  acceptProjectProposal, createProject, createTutorSession, listProjects,
+  acceptProjectProposal, createProject, createTutorSession, deleteProject, listProjects,
   recordLearningEvent,
 } from '../services/api'
 import type { ProjectProposal } from '../services/api'
 import { useWorkspaceTitle } from '../components/workspace/WorkspaceContext'
+import DeleteConfirmationDialog from '../components/workspace/DeleteConfirmationDialog'
 
 interface ProjectSummary {
   id: number
@@ -66,6 +67,8 @@ export default function HomePage() {
   const [dragTitle, setDragTitle] = useState('')
   const [acceptingProposal, setAcceptingProposal] = useState(false)
   const [proposals, setProposals] = useState<ProjectProposal[]>([])
+  const [projectToDelete, setProjectToDelete] = useState<ProjectSummary | null>(null)
+  const [deletingProject, setDeletingProject] = useState(false)
   const navigate = useNavigate()
   useWorkspaceTitle('学习项目', { kind: 'projects' })
 
@@ -88,14 +91,21 @@ export default function HomePage() {
     navigate(`/projects/${project.id}`)
   }
 
-  const handleDeleteProject = async (id: number, projectName: string) => {
-    if (!confirm(`确定删除项目「${projectName}」？所有切片、路线图和讲义将被永久删除。`)) return
+  const handleDeleteProject = async () => {
+    if (!projectToDelete || deletingProject) return
+    setDeletingProject(true)
     try {
-      await import('../services/api').then(module => module.default.delete(`/projects/${id}`))
-      setProjects(previous => previous.filter(project => project.id !== id))
+      await deleteProject(projectToDelete.id)
+      setProjects(previous => previous.filter(project => project.id !== projectToDelete.id))
       window.dispatchEvent(new CustomEvent('learnflow:projects-changed'))
+      window.dispatchEvent(new CustomEvent('learnflow:workspace-item-deleted', {
+        detail: { kind: 'project', id: projectToDelete.id },
+      }))
+      setProjectToDelete(null)
     } catch (error: any) {
       alert('删除失败: ' + (error?.response?.data?.detail || error.message))
+    } finally {
+      setDeletingProject(false)
     }
   }
 
@@ -238,11 +248,13 @@ export default function HomePage() {
                   </div>
                 </button>
                 <button
-                  onClick={() => handleDeleteProject(project.id, project.name)}
+                  type="button"
+                  onClick={() => setProjectToDelete(project)}
+                  aria-label={`删除项目 ${project.name}`}
                   title="删除项目"
-                  className="absolute right-3 top-3 h-7 w-7 text-gray-300 opacity-0 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 rounded"
+                  className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded text-gray-400 opacity-40 hover:bg-red-50 hover:text-red-600 hover:opacity-100 focus:opacity-100 group-hover:opacity-100"
                 >
-                  ×
+                  <Trash2 size={14} />
                 </button>
               </article>
             ))}
@@ -258,6 +270,15 @@ export default function HomePage() {
           ) : null}
         </DragOverlay>
       </DndContext>
+      <DeleteConfirmationDialog
+        open={!!projectToDelete}
+        itemType="项目"
+        itemName={projectToDelete?.name || ''}
+        consequence="项目、关卡、来源和学习文件将从工作区移除，未完成任务会被取消。"
+        busy={deletingProject}
+        onCancel={() => setProjectToDelete(null)}
+        onConfirm={handleDeleteProject}
+      />
     </div>
   )
 }

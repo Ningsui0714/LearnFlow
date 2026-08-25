@@ -173,7 +173,9 @@ async def load_current_learner(db: AsyncSession, learner_id: int) -> CurrentLear
 
 async def require_owned_project(db: AsyncSession, learner_id: int, project_id: int) -> Project:
     project = (await db.execute(select(Project).where(
-        Project.id == project_id, Project.learner_id == learner_id,
+        Project.id == project_id,
+        Project.learner_id == learner_id,
+        Project.visibility != "deleted",
     ))).scalar_one_or_none()
     if not project:
         raise HTTPException(404, "Project not found")
@@ -185,7 +187,11 @@ async def require_owned_checkpoint(db: AsyncSession, learner_id: int, checkpoint
         select(Checkpoint)
         .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
         .join(Project, Project.id == Roadmap.project_id)
-        .where(Checkpoint.id == checkpoint_id, Project.learner_id == learner_id)
+        .where(
+            Checkpoint.id == checkpoint_id,
+            Project.learner_id == learner_id,
+            Project.visibility != "deleted",
+        )
     )).scalar_one_or_none()
     if not checkpoint:
         raise HTTPException(404, "Checkpoint not found")
@@ -208,6 +214,7 @@ async def require_owned_source(
     query = select(Source).join(Project, Project.id == Source.project_id).where(
         Source.id == source_id,
         Project.learner_id == learner_id,
+        Project.visibility != "deleted",
     )
     if project_id is not None:
         query = query.where(Source.project_id == project_id)
@@ -223,7 +230,11 @@ async def require_owned_exercise(db: AsyncSession, learner_id: int, exercise_id:
         .join(Checkpoint, Checkpoint.id == Exercise.checkpoint_id)
         .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
         .join(Project, Project.id == Roadmap.project_id)
-        .where(Exercise.id == exercise_id, Project.learner_id == learner_id)
+        .where(
+            Exercise.id == exercise_id,
+            Project.learner_id == learner_id,
+            Project.visibility != "deleted",
+        )
     )).scalar_one_or_none()
     if not exercise:
         raise HTTPException(404, "Exercise not found")
@@ -236,7 +247,11 @@ async def require_owned_note(db: AsyncSession, learner_id: int, note_id: int) ->
         .join(Checkpoint, Checkpoint.id == LectureNote.checkpoint_id)
         .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
         .join(Project, Project.id == Roadmap.project_id)
-        .where(LectureNote.id == note_id, Project.learner_id == learner_id)
+        .where(
+            LectureNote.id == note_id,
+            Project.learner_id == learner_id,
+            Project.visibility != "deleted",
+        )
     )).scalar_one_or_none()
     if not note:
         raise HTTPException(404, "Note not found")

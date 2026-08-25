@@ -297,6 +297,46 @@ export function WorkspaceProvider({ learnerKey, children }: { learnerKey: string
     return () => window.removeEventListener('learnflow:workspace-path-moved', remapWorkspacePath)
   }, [activeTabId, navigate, tabs])
 
+  useEffect(() => {
+    const removeWorkspaceItem = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        kind: 'conversation' | 'project'
+        id: number
+      }>).detail
+      if (!detail?.id) return
+      if (detail.kind === 'conversation') {
+        const deletedPath = `/agent/${detail.id}`
+        setTabs(previous => previous.map(tab => (
+          tab.id === HOME_TAB.id && new URL(tab.path, window.location.origin).pathname === deletedPath
+            ? HOME_TAB
+            : tab
+        )))
+        if (location.pathname === deletedPath) {
+          setActiveTabId(HOME_TAB.id)
+          navigate('/agent', { replace: true })
+        }
+        return
+      }
+
+      const removedIds = new Set(tabs.filter(tab => tab.projectId === detail.id).map(tab => tab.id))
+      if (removedIds.size === 0) return
+      const projectsTab = pathMeta('/projects')
+      setTabs(previous => {
+        const remaining = previous.filter(tab => tab.projectId !== detail.id)
+        return remaining.some(tab => tab.id === projectsTab.id)
+          ? remaining
+          : limitTabs([...remaining, projectsTab])
+      })
+      setSplitTabIds(previous => previous.filter(id => !removedIds.has(id)))
+      if (removedIds.has(activeTabId)) {
+        setActiveTabId(projectsTab.id)
+        navigate(projectsTab.path, { replace: true })
+      }
+    }
+    window.addEventListener('learnflow:workspace-item-deleted', removeWorkspaceItem)
+    return () => window.removeEventListener('learnflow:workspace-item-deleted', removeWorkspaceItem)
+  }, [activeTabId, location.pathname, navigate, tabs])
+
   const openPath = useCallback((path: string, patch: WorkspaceTabPatch = {}) => {
     const base = pathMeta(path)
     const next = { ...base, ...patch, id: base.id, path: base.path }

@@ -389,6 +389,21 @@ start_micro_learning
 样例比对见 `docs/CONVERSATION_SKILL_RUNTIME.md`；方法选型与研究依据见
 `docs/ATOMIC_LEARNING_SKILLS.md`。
 
+#### 8.3.1 对话和项目删除
+
+独立 Chat 和学习项目 MUST 提供清晰可发现的删除入口，并在执行前显示统一确认弹窗。该动作
+由 Tutor 所有的 `workspace_lifecycle` 处理，不允许页面各自实现不同的数据库级联逻辑。
+
+删除是工作区生命周期操作：global Session 标记为 `deleted`，项目标记
+`visibility=deleted`，相关的非终态 LearningTask、SkillRun、生成任务和待确认 Action 必须停止。
+项目/关卡 Session 不能单独删除，只能随所属项目一起移除。项目关联的外部本地目录不在删除
+范围内，避免 UI 动作造成未单独确认的文件系统破坏。
+
+`conversation_deleted` 与 `project_deleted` MUST 是零 Kernel target 事件。工作区删除不得删除
+历史 `EvidenceEvent`、`LearningAttempt`、`ReviewSchedule`、Memory Fact/Module/Claim，也不得据此
+重算、降级或升级掌握。受保护 API MUST 对 deleted 对象返回 404，Explorer 和工作区标签必须
+同步清除旧入口。
+
 ### 8.4 用户成长工作台
 
 `/growth` 是 Tutor 所有的只读用户投影，把个人资料、五核当前状态、Memory Fact

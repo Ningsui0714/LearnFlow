@@ -51,6 +51,20 @@ def test_chat_modes_are_tutor_postures_with_registered_action_projection():
     assert WORKBENCHES["focused_learning"].name == "Learning Artifact Workbench"
 
 
+def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
+    assert "workspace_lifecycle" in TOOLS
+    assert CAPABILITY_OWNERS["delete_conversation"] == (
+        "tutor_agent", "workspace_lifecycle", "global_tutor",
+    )
+    assert CAPABILITY_OWNERS["delete_project"] == (
+        "tutor_agent", "workspace_lifecycle", "project_tutor",
+    )
+    assert "delete_conversation" in WORKBENCHES["global_tutor"].capabilities
+    assert "delete_project" in WORKBENCHES["project_tutor"].capabilities
+    assert EVENTS["conversation_deleted"].kernel_targets == ()
+    assert EVENTS["project_deleted"].kernel_targets == ()
+
+
 def test_remediation_events_have_standard_authority_provenance():
     expected = {
         "remediation_started",

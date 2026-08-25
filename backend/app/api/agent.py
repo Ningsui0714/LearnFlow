@@ -65,6 +65,7 @@ async def _owned_session(
     session = (await db.execute(select(AgentSession).where(
         AgentSession.id == session_id,
         AgentSession.learner_id == learner_id,
+        AgentSession.status == "active",
     ))).scalar_one_or_none()
     if not session:
         raise HTTPException(404, "Tutor session not found")
@@ -225,6 +226,29 @@ async def list_sessions(
             "created_at": session.created_at.isoformat() if session.created_at else None,
             "updated_at": session.updated_at.isoformat() if session.updated_at else None,
         })
+    return result
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    session = (await db.execute(select(AgentSession).where(
+        AgentSession.id == session_id,
+        AgentSession.learner_id == current.learner.id,
+    ))).scalar_one_or_none()
+    if not session:
+        raise HTTPException(404, "Tutor session not found")
+    from app.services.workspace_lifecycle import delete_conversation_workspace
+    try:
+        result = await delete_conversation_workspace(db, session=session)
+    except RuntimeError as error:
+        if str(error) == "project_session_managed_by_project":
+            raise HTTPException(409, "项目与关卡对话由所属项目统一管理，请删除项目") from error
+        raise
+    await db.commit()
     return result
 
 

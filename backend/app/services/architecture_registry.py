@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-24.7"
+REGISTRY_VERSION = "2026-08-25.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -220,6 +220,8 @@ TOOLS = {
                      KERNEL_NAMES),
         ToolContract("chat_mode_runtime", "Deterministic Chat Mode Runtime", "tutor_agent", "learnflow", "orchestration",
                      KERNEL_NAMES, (), "AgentSession context + registered EvidenceEvent only"),
+        ToolContract("workspace_lifecycle", "Conversation and Project Workspace Lifecycle", "tutor_agent", "learnflow", "transaction",
+                     (), (), "confirmed workspace removal + zero-target audit event; learning evidence retained"),
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
         ToolContract("source_ingestion", "Source Ingestion + Chunking", "learning_design_agent", "learnflow", "artifact"),
@@ -423,7 +425,7 @@ WORKBENCHES = {
                           ("coordinate_chat_mode", "use_learning_skill", "start_learning_skill_run", "advance_learning_skill_run",
                            "start_skill_verification", "start_micro_learning", "search_projects",
                            "draft_learning_project", "create_project", "manage_learning_tasks",
-                           "plan_learning_task", "run_learning_task")),
+                           "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -432,7 +434,7 @@ WORKBENCHES = {
                            "evaluate_transfer_variant", "plan_review_queue")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
                           ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint",
-                           "manage_learning_tasks", "plan_learning_task", "run_learning_task")),
+                           "manage_learning_tasks", "plan_learning_task", "run_learning_task", "delete_project")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
         WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
@@ -458,6 +460,7 @@ WORKBENCHES = {
 
 CAPABILITY_OWNERS = {
     "coordinate_chat_mode": ("tutor_agent", "chat_mode_runtime", "global_tutor"),
+    "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),
     "run_learning_task": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
@@ -473,6 +476,7 @@ CAPABILITY_OWNERS = {
     "revise_learning_project_proposal": ("tutor_agent", "action_board", "global_tutor"),
     "search_learning_resources": ("tutor_agent", "action_board", "project_tutor"),
     "create_project": ("tutor_agent", "action_board", "global_tutor"),
+    "delete_project": ("tutor_agent", "workspace_lifecycle", "project_tutor"),
     "bootstrap_project": ("tutor_agent", "action_board", "global_tutor"),
     "enter_project": ("tutor_agent", "action_board", "project_tutor"),
     "add_source": ("tutor_agent", "source_ingestion", "project_tutor"),
@@ -517,6 +521,7 @@ EVENTS = {
     item.id: item for item in (
         _event("chat_mode_entered", "coordinate_chat_mode", (), "operational_context"),
         _event("learning_action_segment_completed", "coordinate_chat_mode", ("structure", "knowledge", "value"), "learning_action_projection"),
+        _event("conversation_deleted", "delete_conversation", (), "confirmed_workspace_removal"),
         _event("learning_task_created", "manage_learning_tasks", (), "operational"),
         _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
         _event("learning_task_replanned", "plan_learning_task", (), "plan_revision"),
@@ -550,6 +555,7 @@ EVENTS = {
         _event("project_proposal_user_edited", "revise_learning_project_proposal", KERNEL_NAMES, "explicit_edit"),
         _event("project_proposal_accepted", "create_project", ("structure", "value"), "confirmed_action"),
         _event("project_created", "create_project", ("structure", "value"), "action_result"),
+        _event("project_deleted", "delete_project", (), "confirmed_workspace_removal"),
         _event("project_selected", "enter_project", ("structure",), "navigation"),
         _event("source_added", "add_source", ("structure", "practice"), "artifact"),
         _event("source_processed", "add_source", ("structure", "practice"), "artifact"),

@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   BookOpen, Braces, CalendarClock, ChevronDown, ChevronRight, FileText, Folder, FolderKanban,
-  ListTodo, Loader2, MessageSquare, Plus, Route, TrendingUp,
+  ListTodo, Loader2, MessageSquare, Plus, Route, Trash2, TrendingUp,
 } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import {
-  createTutorSession, getCheckpointWorkspaceArtifacts, getRoadmap,
-  getLearningTaskSummary, listProjects, listTutorSessions,
+  createTutorSession, deleteProject, deleteTutorSession, getCheckpointWorkspaceArtifacts,
+  getRoadmap, getLearningTaskSummary, listProjects, listTutorSessions,
 } from '../../services/api'
 import type { TutorSessionSummary } from '../../services/api'
 import { useAuth } from '../../contexts/AuthContext'
 import { useWorkspace } from './WorkspaceContext'
 import WorkspaceFileExplorer from './WorkspaceFileExplorer'
+import DeleteConfirmationDialog from './DeleteConfirmationDialog'
 
 interface ProjectSummary {
   id: number
@@ -30,6 +31,12 @@ interface CheckpointSummary {
   learning_status?: 'not_started' | 'in_progress' | 'verification_due' | 'blocked' | 'completed'
 }
 
+type DeleteTarget = {
+  kind: 'conversation' | 'project'
+  id: number
+  name: string
+}
+
 export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: () => void }) {
   const { user } = useAuth()
   const location = useLocation()
@@ -42,6 +49,8 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
   const [artifacts, setArtifacts] = useState<Record<number, any>>({})
   const [loadingIds, setLoadingIds] = useState<number[]>([])
   const [queueSummary, setQueueSummary] = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const current = useMemo(() => {
     const match = location.pathname.match(/^\/projects\/(\d+)(?:\/checkpoints\/(\d+))?/)
@@ -150,6 +159,36 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
     }
   }
 
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
+    try {
+      if (deleteTarget.kind === 'conversation') {
+        await deleteTutorSession(deleteTarget.id)
+        setSessions(previous => previous.filter(item => item.id !== deleteTarget.id))
+        window.dispatchEvent(new CustomEvent('learnflow:sessions-changed'))
+      } else {
+        await deleteProject(deleteTarget.id)
+        setProjects(previous => previous.filter(item => item.id !== deleteTarget.id))
+        setExpandedIds(previous => previous.filter(id => id !== deleteTarget.id))
+        setRoadmaps(previous => {
+          const next = { ...previous }
+          delete next[deleteTarget.id]
+          return next
+        })
+        window.dispatchEvent(new CustomEvent('learnflow:projects-changed'))
+      }
+      window.dispatchEvent(new CustomEvent('learnflow:workspace-item-deleted', {
+        detail: { kind: deleteTarget.kind, id: deleteTarget.id },
+      }))
+      setDeleteTarget(null)
+    } catch (error: any) {
+      window.alert(error?.response?.data?.detail || `删除${deleteTarget.kind === 'conversation' ? '对话' : '项目'}失败`)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <aside className="flex h-full min-h-0 w-full flex-col bg-white">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-3">
@@ -173,19 +212,29 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
         </div>
         <div className="space-y-0.5">
           {sessions.map(session => (
-            <button
-              key={session.id}
-              type="button"
-              onClick={() => open(`/agent/${session.id}`, { title: session.title || '对话', kind: 'home' })}
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs ${
-                currentChatId === session.id ? 'bg-emerald-50 font-semibold text-emerald-900' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-              title={session.last_message || session.title}
-            >
-              <MessageSquare size={13} className={currentChatId === session.id ? 'text-emerald-700' : 'text-slate-400'} />
-              <span className="min-w-0 flex-1 truncate">{session.title || '新对话'}</span>
-              {session.active_skill?.name && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" title={session.active_skill.name} />}
-            </button>
+            <div key={session.id} className="group flex items-center gap-0.5 rounded-md">
+              <button
+                type="button"
+                onClick={() => open(`/agent/${session.id}`, { title: session.title || '对话', kind: 'home' })}
+                className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs ${
+                  currentChatId === session.id ? 'bg-emerald-50 font-semibold text-emerald-900' : 'text-slate-600 hover:bg-slate-100'
+                }`}
+                title={session.last_message || session.title}
+              >
+                <MessageSquare size={13} className={currentChatId === session.id ? 'text-emerald-700' : 'text-slate-400'} />
+                <span className="min-w-0 flex-1 truncate">{session.title || '新对话'}</span>
+                {session.active_skill?.name && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" title={session.active_skill.name} />}
+              </button>
+              <button
+                type="button"
+                aria-label={`删除对话 ${session.title || '新对话'}`}
+                title="删除对话"
+                onClick={() => setDeleteTarget({ kind: 'conversation', id: session.id, name: session.title || '新对话' })}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-40 hover:bg-rose-50 hover:text-rose-700 hover:opacity-100 focus:opacity-100 group-hover:opacity-100"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
           ))}
           {sessions.length === 0 && <p className="px-2.5 py-2 text-[11px] text-slate-400">点击“新对话”开始学习</p>}
         </div>
@@ -217,16 +266,27 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
           const progress = total ? Math.round(completed * 100 / total) : 0
           return (
             <section key={project.id} className={`mb-1 overflow-visible rounded-lg ${expanded ? 'bg-slate-50' : ''}`}>
-              <button
-                type="button"
-                onClick={() => toggleProject(project)}
-                className="flex w-full items-center gap-1.5 px-2 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
-              >
-                {expanded ? <ChevronDown size={13} className="text-slate-400" /> : <ChevronRight size={13} className="text-slate-400" />}
-                <Folder size={14} className="text-emerald-700" />
-                <span className="min-w-0 flex-1 truncate font-semibold">{project.name}</span>
-                <span className="text-[10px] tabular-nums text-slate-400">{progress}%</span>
-              </button>
+              <div className="group flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => toggleProject(project)}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-2 text-left text-xs text-slate-700 hover:bg-slate-100"
+                >
+                  {expanded ? <ChevronDown size={13} className="text-slate-400" /> : <ChevronRight size={13} className="text-slate-400" />}
+                  <Folder size={14} className="text-emerald-700" />
+                  <span className="min-w-0 flex-1 truncate font-semibold">{project.name}</span>
+                  <span className="text-[10px] tabular-nums text-slate-400">{progress}%</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`删除项目 ${project.name}`}
+                  title="删除项目"
+                  onClick={() => setDeleteTarget({ kind: 'project', id: project.id, name: project.name })}
+                  className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-40 hover:bg-rose-50 hover:text-rose-700 hover:opacity-100 focus:opacity-100 group-hover:opacity-100"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
 
               {expanded && (
                 <div className="pb-2 pl-6 pr-1.5">
@@ -335,6 +395,17 @@ export default function WorkspaceProjectExplorer({ onNavigate }: { onNavigate?: 
           </div>
         </div>
       </footer>
+      <DeleteConfirmationDialog
+        open={!!deleteTarget}
+        itemType={deleteTarget?.kind === 'conversation' ? '对话' : '项目'}
+        itemName={deleteTarget?.name || ''}
+        consequence={deleteTarget?.kind === 'conversation'
+          ? '这段对话会从工作区移除，关联的未完成学习任务会被取消。'
+          : '项目、关卡、来源和学习文件将从工作区移除，未完成任务会被取消。'}
+        busy={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
     </aside>
   )
 }

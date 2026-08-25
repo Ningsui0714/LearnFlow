@@ -153,6 +153,24 @@ Tutor 识别或用户创建任务
 讲义、练习和题目仍以现有 `Lecture / Exercise / ConceptQuestion` 为权威，任务只保存引用。
 完整对象、状态、API 与迁移见 `docs/LEARNING_TASK_RUNTIME.md`。
 
+### 对话与项目的工作区删除
+
+学习者可以从 Explorer、项目列表或项目工作台删除独立对话和项目。删除必须先显示对象名称、
+影响范围和二次确认；前端按钮与 API 统一使用 `workspace_lifecycle`：
+
+- `delete_conversation` 只处理 global Session。对话从活动列表移除，关联的未完成 LearningTask、
+  SkillRun、待确认 Action 和项目提案终止；项目/关卡 Session 必须由所属项目统一管理。
+- `delete_project` 将项目、关卡、来源和学习文件从活动工作区移除，并终止项目内未完成任务、
+  Session、生成任务和本地 Agent 运行。项目绑定的本地目录本身不被删除。
+- 删除使用 `AgentSession.status=deleted` 与 `Project.visibility=deleted` 作为可审计 tombstone。
+  `LearningAttempt`、`ReviewSchedule`、`EvidenceEvent`、KernelState 和 Memory Graph 历史不被
+  反向擦除；删除不是新的遗忘协议，也不能改变掌握结论。
+- `conversation_deleted` 与 `project_deleted` 只记录经过确认的工作区操作，Kernel target 为空。
+
+Contract impact：注册表版本提升到 `2026-08-25.1`，新增一个零 Kernel 写入的生命周期工具、
+两个 capability 与两个运行事件。既有 `DELETE /api/projects/{id}` 路径保持兼容，但语义从物理
+级联删除收敛为证据安全的工作区删除；列表与所有受保护读取接口继续把已删除对象视为不存在。
+
 `learning-task-runtime-v2` 在每次读取时从受管产物、同 scope Attempt 和 ReviewSchedule
 确定性重建 `materials / current_phase / next_action / evidence`。讲义或题目生成只建立材料，
 查看材料只形成接触证据，复述形成诊断证据，只有判题成功的独立 Attempt 才能通过 verify，

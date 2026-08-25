@@ -173,6 +173,19 @@ export const listProjects = () =>
 export const getProject = (id: number) =>
   api.get(`/projects/${id}`).then(r => r.data)
 
+export interface WorkspaceDeletionResult {
+  status: 'deleted' | 'already_deleted'
+  kind: 'conversation' | 'project'
+  id: number
+  title?: string
+  name?: string
+  canceled_learning_tasks?: number
+  evidence_retained: boolean
+}
+
+export const deleteProject = (id: number) =>
+  api.delete(`/projects/${id}`).then(r => r.data as WorkspaceDeletionResult)
+
 // ── Desktop project workspace ──
 export type WorkspaceNodeKind =
   | 'managed_lecture'
@@ -478,6 +491,9 @@ export const createTutorSession = (data: { session_type?: 'global' | 'project' |
 
 export const getTutorSession = (sessionId: number) =>
   api.get(`/agent/sessions/${sessionId}`).then(r => r.data)
+
+export const deleteTutorSession = (sessionId: number) =>
+  api.delete(`/agent/sessions/${sessionId}`).then(r => r.data as WorkspaceDeletionResult)
 
 export const sendTutorTurn = (sessionId: number, data: {
   message: string
