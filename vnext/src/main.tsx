@@ -289,7 +289,7 @@ function App() {
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
   const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
-  const [profilePanelFor, setProfilePanelFor] = useState('')
+  const [profilePanelOpen, setProfilePanelOpen] = useState(false)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
 
@@ -342,13 +342,13 @@ function App() {
   }, [paperDeskView])
 
   useEffect(() => {
-    if (!profilePanelFor) return
+    if (!profilePanelOpen) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setProfilePanelFor('')
+      if (event.key === 'Escape') setProfilePanelOpen(false)
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [profilePanelFor])
+  }, [profilePanelOpen])
 
   const openTab = (next: WorkspaceTab) => {
     setWorkspace(previous => {
@@ -932,34 +932,9 @@ function App() {
               {TUTOR_MODE_LABELS[visibleMode]}{visibleSubstateLabel ? ` · ${visibleSubstateLabel}` : ''}
             </span>
             {visibleSkill && <span className="skill-badge">{visibleSkill.name}</span>}
-            <button
-              type="button"
-              className="profile-open-button"
-              aria-expanded={profilePanelFor === conversation.id}
-              onClick={() => setProfilePanelFor(current => current === conversation.id ? '' : conversation.id)}
-            >画像</button>
             <span className="local-label">{workspace.settings.model || '待配置模型'}</span>
           </div>
         </header>
-        {profilePanelFor === conversation.id && (
-          <div className="profile-panel-layer" role="presentation" onMouseDown={event => {
-            if (event.target === event.currentTarget) setProfilePanelFor('')
-          }}>
-            <aside className="profile-panel" aria-label="用户五核画像">
-              <header>
-                <div><span>LEARNER PROFILE</span><strong>你的模拟五核画像</strong></div>
-                <button type="button" onClick={() => setProfilePanelFor('')} aria-label="关闭用户画像">×</button>
-              </header>
-              <div className="profile-panel-summary">
-                <span>计算机专业 · 准大二</span>
-                <span>ML / Agent / RL</span>
-                <span>定义 → 例子 / 代码</span>
-              </div>
-              <p>{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
-              <ProfileModuleList compact />
-            </aside>
-          </div>
-        )}
         <div className={hasWorkbench ? 'paper-workbench' : 'chat-thread'}>
           {hasWorkbench && (
             <div className="paper-toolbar">
@@ -1254,8 +1229,37 @@ function App() {
         </button>
         <div className="topbar-spacer" />
         <span className="prototype-badge"><i /> 本地界面原型</span>
+        <button
+          className="topbar-profile-button"
+          type="button"
+          aria-expanded={profilePanelOpen}
+          onClick={() => setProfilePanelOpen(value => !value)}
+        >
+          <span>现</span>
+          <strong>我的画像</strong>
+        </button>
         <button className="icon-button" type="button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
       </header>
+
+      {profilePanelOpen && (
+        <div className="profile-panel-layer" role="presentation" onMouseDown={event => {
+          if (event.target === event.currentTarget) setProfilePanelOpen(false)
+        }}>
+          <aside className="profile-panel" aria-label="用户五核画像">
+            <header>
+              <div><span>LEARNER PROFILE</span><strong>你的模拟五核画像</strong></div>
+              <button type="button" onClick={() => setProfilePanelOpen(false)} aria-label="关闭用户画像">×</button>
+            </header>
+            <div className="profile-panel-summary">
+              <span>计算机专业 · 准大二</span>
+              <span>ML / Agent / RL</span>
+              <span>定义 → 例子 / 代码</span>
+            </div>
+            <p>{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
+            <ProfileModuleList compact />
+          </aside>
+        </div>
+      )}
 
       <div className="workspace">
         <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
@@ -1278,8 +1282,17 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
-            <p>当前只有 Chat 和设置。</p>
-            <span>产品逻辑见 LOGIC.md</span>
+            <button
+              type="button"
+              className="sidebar-profile-button"
+              aria-expanded={profilePanelOpen}
+              onClick={() => setProfilePanelOpen(value => !value)}
+            >
+              <span className="sidebar-profile-avatar">现</span>
+              <span><strong>现有学习者</strong><small>准大二 · ML / Agent / RL</small></span>
+              <i>›</i>
+            </button>
+            <small className="sidebar-logic-note">Chat · 设置 · LOGIC.md</small>
           </div>
         </aside>
 

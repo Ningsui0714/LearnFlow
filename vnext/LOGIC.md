@@ -69,7 +69,7 @@ LearnFlow 是一个持续陪伴学生学习的对话空间。
 
 搜索先识别讲解、对比、排错、实现、研究或最新变化，再围绕任务寻找互补证据。来源按“规范/官方文档 → 教材/大学课程 → 论文 → 社区实践 → 代码仓库”确定性重排；“什么是”默认覆盖定义、机制、最小例子和边界/误区。网页内容只作为不可信资料进入回答，搜索与讲解不写五核。完整约束见 `COMPUTER_KNOWLEDGE_SEARCH.md`。静态图只保存消毒后的 SVG；动画保存 3–9 个安全 SVG 步骤，由本地播放器切换，不运行模型生成的脚本。
 
-当前五核画像是根据学习者明确自述建立的 vNext 模拟，只包含 Module 与 Claim。Chat 顶部的“画像”按钮展示轻量摘要与五核 Module，设置页展示完整 Claim；Reader 不把整份画像塞给模型：讲解联取 Knowledge/Human/Structure，路径联取 Structure/Knowledge/Value，项目联取 Practice/Knowledge/Structure；敏感 Human Claim 只转成静默适配。它不写旧五核、不推断掌握，完整设计见 `FIVE_KERNEL_PROFILE_DESIGN.md`。
+当前五核画像是根据学习者明确自述建立的 vNext 模拟，只包含 Module 与 Claim。它是全局学习者对象，不属于某个 Session：最上方全局栏与左下角学习者卡片都可打开轻量摘要及五核 Module，设置页展示完整 Claim；Reader 不把整份画像塞给模型：讲解联取 Knowledge/Human/Structure，路径联取 Structure/Knowledge/Value，项目联取 Practice/Knowledge/Structure；敏感 Human Claim 只转成静默适配。它不写旧五核、不推断掌握，完整设计见 `FIVE_KERNEL_PROFILE_DESIGN.md`。
 
 主对话是一张不可删除的纸。选中 Tutor 文字后创建子纸；子纸读取主对话、祖先纸和本页消息，但新消息只写本页。其他纸压在当前纸下，悬停纸边可横向展开并切换；第一次点击桌面空白会缩小平铺全部纸张，再次点击空白会按父子关系展开纸张树。任意追问纸均可单独删除，直接子纸会保留并上移一层。纸张不产生新的长期学习状态。
 
