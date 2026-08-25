@@ -4,6 +4,13 @@ import type {
   FormalRuntimeConnection,
   KernelName,
 } from './formal-runtime'
+import {
+  presentClaimText,
+  presentEvidenceCount,
+  presentModuleScope,
+  presentModuleTitle,
+  presentVerification,
+} from './profile-presentation'
 
 const KERNELS: Array<{ id: KernelName; name: string; short: string; description: string }> = [
   { id: 'structure', name: '结构核', short: '结构', description: '学习位置、路径依赖、当前锚点与可返回的位置。它与知识核共享主题标识，但不替知识核判断掌握。' },
@@ -103,29 +110,57 @@ export default function LearnerProfilePage({
         </section>
 
         <section className="kernel-module-column">
-          <header><div><span>长期凝练层</span><h2>Module 与 Claim</h2></div><small>{modules.length} 个模块</small></header>
-          {modules.length === 0 && <p className="formal-empty-copy">当前没有已经凝练的 Module。核状态仍可工作；只有满足证据门槛时才生成长期 Claim。</p>}
-          {modules.map(module => (
-            <details key={module.id} className="formal-module-card" open={modules.length <= 2}>
-              <summary><div><span>{module.subject_key} · v{module.version}</span><strong>{module.summary || module.title}</strong></div><small>{module.claims.length} claims</small></summary>
-              <div className="formal-claim-list">
-                {module.claims.map(claim => (
-                  <article key={claim.id} className={claim.status === 'challenged' ? 'challenged' : ''}>
-                    <div><span>{claim.verification_status} · {Math.round(claim.confidence * 100)}%</span><p>{claim.text}</p></div>
-                    <div className="claim-actions">
-                      <button type="button" disabled={busyKey === `claim:${claim.id}`} onClick={() => onClaimAction(claim.id, 'confirm')}>仍然准确</button>
-                      <details>
-                        <summary>纠正</summary>
-                        <textarea value={corrections[claim.id] || ''} onChange={event => setCorrections(previous => ({ ...previous, [claim.id]: event.target.value }))} placeholder="写出你认为更准确的版本" />
-                        <button type="button" disabled={!corrections[claim.id]?.trim() || busyKey === `claim:${claim.id}`} onClick={() => onClaimAction(claim.id, 'correct', corrections[claim.id])}>提交纠正</button>
-                      </details>
-                      <button type="button" className="claim-retract" disabled={busyKey === `claim:${claim.id}`} onClick={() => onClaimAction(claim.id, 'retract')}>撤回这条</button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </details>
-          ))}
+          <header><div><span>长期认识如何形成</span><h2>主题记忆与可纠正认识</h2></div><small>{modules.length} 个主题</small></header>
+          <div className="memory-formation-map" aria-label="长期记忆形成过程">
+            <div><b>学习事件</b><span>回答、选择与实践</span></div><i aria-hidden="true">→</i>
+            <div><b>Fact</b><span>记录发生了什么</span></div><i aria-hidden="true">→</i>
+            <div className="module-stage"><b>Module</b><span>按主题归在一起</span></div><i aria-hidden="true">→</i>
+            <div className="claim-stage"><b>Claim</b><span>形成可纠正认识</span></div>
+          </div>
+          {modules.length === 0 && <p className="formal-empty-copy">当前还没有形成稳定的主题记忆。学习事件会先成为事实；只有相关事实达到本核门槛，才会凝练为 Module 和可纠正的 Claim。</p>}
+          {modules.map(module => {
+            const title = presentModuleTitle(module)
+            return (
+              <details key={module.id} className="formal-module-card" open={modules.length <= 2}>
+                <summary>
+                  <div className="module-node-mark" aria-hidden="true">M</div>
+                  <div className="module-summary-copy">
+                    <span>主题记忆 Module · {presentModuleScope(module)}</span>
+                    <strong>{title}</strong>
+                    <p>{presentEvidenceCount(module)}</p>
+                  </div>
+                  <div className="module-summary-meta"><em>第 {module.version} 版</em><small>{module.claims.length} 条认识</small></div>
+                </summary>
+                <div className="formal-claim-list">
+                  {module.claims.map(claim => (
+                    <article key={claim.id} className={claim.status === 'challenged' ? 'challenged' : ''}>
+                      <div className="claim-node-mark" aria-hidden="true">C</div>
+                      <div className="claim-node-body">
+                        <div className="claim-node-heading"><span>可纠正认识 Claim</span><b>{presentVerification(claim)} · {Math.round(claim.confidence * 100)}%</b></div>
+                        <p>{presentClaimText(module, claim)}</p>
+                        <div className="claim-actions">
+                          <button type="button" disabled={busyKey === `claim:${claim.id}`} onClick={() => onClaimAction(claim.id, 'confirm')}>仍然准确</button>
+                          <details>
+                            <summary>纠正</summary>
+                            <textarea value={corrections[claim.id] || ''} onChange={event => setCorrections(previous => ({ ...previous, [claim.id]: event.target.value }))} placeholder="写出你认为更准确的版本" />
+                            <button type="button" disabled={!corrections[claim.id]?.trim() || busyKey === `claim:${claim.id}`} onClick={() => onClaimAction(claim.id, 'correct', corrections[claim.id])}>提交纠正</button>
+                          </details>
+                          <button type="button" className="claim-retract" disabled={busyKey === `claim:${claim.id}`} onClick={() => onClaimAction(claim.id, 'retract')}>撤回这条</button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <details className="memory-technical-record">
+                  <summary>查看形成依据与技术记录</summary>
+                  <div><span>主题键</span><code>{module.subject_key}</code></div>
+                  <div><span>事实依据</span><code>{module.evidence_fact_ids.length ? module.evidence_fact_ids.join('、') : '未公开编号'}</code></div>
+                  <div><span>版本类型</span><code>{module.revision_kind || 'initial'}</code></div>
+                  <pre>{module.summary || module.title}</pre>
+                </details>
+              </details>
+            )
+          })}
         </section>
       </div>
     </section>

@@ -708,25 +708,48 @@ button { cursor: pointer; }
 .kernel-memory-row p { margin: 0; color: #5c6c63; font-size: 8px; line-height: 1.55; overflow-wrap: anywhere; }
 .kernel-memory-row small { color: #a0aaa4; font-size: 6px; }
 .kernel-memory-row > button { flex: none; border: 1px solid #d8e1dc; border-radius: 8px; background: #fff; padding: 6px 8px; color: #66776d; font-size: 7px; }
-.formal-module-card { border-top: 1px solid #e2e8e4; padding: 10px 0; }
-.formal-module-card summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
-.formal-module-card summary::-webkit-details-marker { display: none; }
-.formal-module-card summary > div { min-width: 0; }
-.formal-module-card summary span { display: block; color: #839188; font-size: 6px; }
-.formal-module-card summary strong { display: block; margin-top: 3px; font-size: 10px; line-height: 1.4; }
-.formal-module-card summary small { flex: none; color: #839188; font-size: 6px; }
-.formal-claim-list { margin-top: 9px; border-left: 2px solid #dbeadf; padding-left: 10px; }
-.formal-claim-list > article { border-radius: 9px; background: #f7faf8; padding: 10px; }
+.memory-formation-map { display: grid; grid-template-columns: minmax(74px, 1fr) auto minmax(64px, .8fr) auto minmax(70px, 1fr) auto minmax(76px, 1fr); align-items: center; gap: 5px; margin: 4px 0 14px; border: 1px solid #dce8e1; border-radius: 12px; background: #f8fbf9; padding: 9px; }
+.memory-formation-map > div { min-width: 0; }
+.memory-formation-map b, .memory-formation-map span { display: block; }
+.memory-formation-map b { color: #32483c; font-size: 7.5px; }
+.memory-formation-map span { margin-top: 2px; color: #89978f; font-size: 5.5px; line-height: 1.35; }
+.memory-formation-map i { color: #a5b7ad; font-size: 8px; font-style: normal; }
+.memory-formation-map .module-stage b { color: #16704e; }
+.memory-formation-map .claim-stage b { color: #815e2f; }
+.formal-module-card { margin-top: 9px; border: 1px solid #dce6e0; border-radius: 13px; background: #fcfdfc; overflow: hidden; }
+.formal-module-card > summary { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 10px; cursor: pointer; list-style: none; padding: 12px; }
+.formal-module-card > summary::-webkit-details-marker { display: none; }
+.module-node-mark, .claim-node-mark { display: grid; place-items: center; border-radius: 9px; font-weight: 850; }
+.module-node-mark { width: 30px; height: 30px; background: #dff1e7; color: #176d4c; font-size: 10px; }
+.module-summary-copy { min-width: 0; }
+.module-summary-copy span { display: block; color: #74877c; font-size: 6.5px; font-weight: 750; }
+.module-summary-copy strong { display: block; margin-top: 3px; color: #24392e; font-size: 10.5px; line-height: 1.4; }
+.module-summary-copy p { margin: 3px 0 0; color: #91a098; font-size: 6.5px; }
+.module-summary-meta { display: grid; justify-items: end; gap: 3px; }
+.module-summary-meta em { border-radius: 999px; background: #edf5f0; padding: 3px 6px; color: #4e6d5c; font-size: 5.8px; font-style: normal; }
+.module-summary-meta small { color: #87978e; font-size: 6px; }
+.formal-claim-list { margin: 0 12px 12px 26px; border-left: 2px solid #cfe2d7; padding: 0 0 0 17px; }
+.formal-claim-list > article { position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 9px; border: 1px solid #e1e8e4; border-radius: 11px; background: #fff; padding: 10px; }
+.formal-claim-list > article::before { position: absolute; top: 22px; left: -19px; width: 17px; border-top: 2px solid #cfe2d7; content: ''; }
 .formal-claim-list > article + article { margin-top: 7px; }
 .formal-claim-list > article.challenged { background: #fff7f3; }
-.formal-claim-list span { color: #819087; font-size: 6px; }
-.formal-claim-list p { margin: 3px 0 0; color: #31443a; font-size: 8px; line-height: 1.5; }
+.claim-node-mark { width: 26px; height: 26px; background: #f4ecde; color: #805d2d; font-size: 8px; }
+.claim-node-body { min-width: 0; }
+.claim-node-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.claim-node-heading span { color: #7b8b82; font-size: 6.5px; font-weight: 750; }
+.claim-node-heading b { color: #6f806f; font-size: 6px; font-weight: 650; }
+.formal-claim-list p { margin: 5px 0 0; color: #2e4237; font-size: 8.5px; line-height: 1.6; }
 .claim-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .claim-actions > button, .claim-actions details > summary, .claim-actions details button { border: 1px solid #d4dfd8; border-radius: 7px; background: #fff; padding: 5px 7px; color: #4c6859; font-size: 6.5px; cursor: pointer; }
 .claim-actions details { position: relative; }
 .claim-actions details[open] { width: 100%; }
 .claim-actions details textarea { display: block; width: 100%; min-height: 65px; margin: 6px 0; border: 1px solid #d5dfd9; border-radius: 8px; padding: 7px; resize: vertical; color: #2f4338; font: inherit; font-size: 8px; }
 .claim-actions .claim-retract { border-color: #ead2cc; color: #a05248; }
+.memory-technical-record { margin: 0 12px 12px; border-top: 1px dashed #dbe4df; padding-top: 8px; }
+.memory-technical-record > summary { color: #86948c; cursor: pointer; font-size: 6.5px; list-style-position: inside; }
+.memory-technical-record > div { display: grid; grid-template-columns: 55px minmax(0, 1fr); gap: 8px; margin-top: 6px; color: #89968f; font-size: 6px; }
+.memory-technical-record code { overflow-wrap: anywhere; color: #586b61; font-size: 6px; }
+.memory-technical-record pre { max-height: 130px; overflow: auto; margin: 8px 0 0; border-radius: 8px; background: #f1f4f2; padding: 8px; color: #63736a; font: 6px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .formal-empty-copy { margin: 14px 0; color: #849188; font-size: 9px; line-height: 1.65; }
 
 .task-queue-page { min-height: 0; flex: 1; overflow-y: auto; background: #f6f8f5; padding-bottom: 50px; }
