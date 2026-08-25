@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   isTutorMode,
@@ -175,6 +175,16 @@ function activeMessages(conversation: Conversation) {
   return activeSheet(conversation)?.messages || conversation.messages
 }
 
+function paperPreview(messages: Message[]) {
+  const latest = [...messages].reverse().find(message => message.role !== 'system')
+  return latest?.content
+    .replace(/```[\s\S]*?```/g, ' 代码片段 ')
+    .replace(/[#>*_`\[\]()~-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 150) || '还没有写入内容'
+}
+
 function inheritedContextMessages(conversation: Conversation) {
   if (conversation.activeSheetId === 'main') return conversation.messages
   const chain: FollowUpSheet[] = []
@@ -201,6 +211,7 @@ function App() {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
+  const [paperOverviewId, setPaperOverviewId] = useState('')
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
 
@@ -239,6 +250,15 @@ function App() {
     window.addEventListener('keydown', cancelOnEscape)
     return () => window.removeEventListener('keydown', cancelOnEscape)
   }, [pendingDelete])
+
+  useEffect(() => {
+    if (!paperOverviewId) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPaperOverviewId('')
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [paperOverviewId])
 
   const openTab = (next: WorkspaceTab) => {
     setWorkspace(previous => {
@@ -370,6 +390,7 @@ function App() {
 
   const setActiveSheet = (conversationId: string, sheetId: string) => {
     if (pendingTurns[conversationId]) return
+    setPaperOverviewId(current => current === conversationId ? '' : current)
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => (
@@ -384,6 +405,7 @@ function App() {
   const createFollowUpSheet = (conversationId: string, sourceMessageId: string, quote: string) => {
     const cleaned = quote.replace(/\s+/g, ' ').trim().slice(0, 1200)
     if (cleaned.length < 2) return
+    setPaperOverviewId('')
     const sheet: FollowUpSheet = {
       id: uid('sheet'),
       title: cleaned.slice(0, 28),
@@ -552,12 +574,19 @@ function App() {
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
     const pages = [
-      { id: 'main', title: '主对话' },
-      ...conversation.sheets.map((item, index) => ({ id: item.id, title: `${index + 1}. ${item.title}` })),
+      { id: 'main', title: '主对话', quote: '', messages: conversation.messages },
+      ...conversation.sheets.map((item, index) => ({
+        id: item.id,
+        title: `${index + 1}. ${item.title}`,
+        quote: item.quote,
+        messages: item.messages,
+      })),
     ]
     const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
+    const backPages = pages.filter(page => page.id !== sheetId).slice(-6)
     const messages = activeMessages(conversation)
     const hasWorkbench = conversation.sheets.length > 0
+    const paperOverview = paperOverviewId === conversation.id
     return (
       <section className="chat-page">
         <header className="chat-heading">
@@ -580,25 +609,82 @@ function App() {
                   {pages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
                 </select>
                 <button type="button" onClick={() => setActiveSheet(conversation.id, pages[Math.min(pages.length - 1, pageIndex + 1)].id)} disabled={pageIndex === pages.length - 1 || Boolean(pendingMode)} aria-label="下一张纸">→</button>
+                <button type="button" className="paper-overview-toggle" onClick={() => setPaperOverviewId(current => current === conversation.id ? '' : conversation.id)} disabled={Boolean(pendingMode)} aria-label={paperOverview ? '退出纸张总览' : '平铺所有纸张'} aria-pressed={paperOverview} title="平铺所有纸张">▦</button>
               </div>
             </div>
           )}
-          <div className={hasWorkbench ? 'paper-stack' : 'conversation-surface'}>
-            <div className={hasWorkbench ? 'paper-sheet' : 'conversation-paper'}>
-              {sheet && (
-                <blockquote className="selected-quote">
-                  <span>本页从这段原文展开</span>
-                  <p>{sheet.quote}</p>
-                </blockquote>
-              )}
-              <MessageList
-                messages={messages}
-                onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
-              />
-              {sheet && messages.length === 0 && (
-                <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
-              )}
-            </div>
+          <div
+            className={hasWorkbench ? `paper-stage${paperOverview ? ' paper-stage-overview' : ''}` : 'conversation-surface'}
+            onClick={hasWorkbench && !paperOverview && !pendingMode ? event => {
+              if (event.target === event.currentTarget) setPaperOverviewId(conversation.id)
+            } : undefined}
+          >
+            {hasWorkbench && paperOverview ? (
+              <div className="paper-overview" role="listbox" aria-label="全部追问纸张">
+                <header>
+                  <div><span>ALL SHEETS</span><strong>{pages.length} 张纸</strong></div>
+                  <p>选择一张纸回到桌面 · Esc 退出</p>
+                </header>
+                <div className="paper-overview-grid">
+                  {pages.map((page, index) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={page.id === sheetId}
+                      key={page.id}
+                      className="paper-thumbnail"
+                      onClick={() => setActiveSheet(conversation.id, page.id)}
+                    >
+                      <span className="paper-thumbnail-index">{String(index + 1).padStart(2, '0')}</span>
+                      <strong>{page.title}</strong>
+                      {page.quote && <blockquote>{page.quote}</blockquote>}
+                      <p>{paperPreview(page.messages)}</p>
+                      <small>{page.messages.length} 条内容{page.id === sheetId ? ' · 当前纸张' : ''}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className={hasWorkbench ? 'paper-stack' : 'conversation-paper'}>
+                {hasWorkbench && backPages.length > 0 && (
+                  <div className="paper-edge-deck" aria-label="其他纸张；悬停展开">
+                    {backPages.map((page, index) => (
+                      <button
+                        type="button"
+                        key={page.id}
+                        className="paper-edge"
+                        style={{
+                          '--paper-y': `${index * 3}px`,
+                          '--paper-x': `${index * 4}px`,
+                          '--paper-open-x': `${index * -44}px`,
+                          '--paper-background': `hsl(135 15% ${98 - index * .7}%)`,
+                        } as CSSProperties}
+                        onClick={() => setActiveSheet(conversation.id, page.id)}
+                        aria-label={`打开${page.title}`}
+                        title={page.title}
+                      ><span>{page.title}</span></button>
+                    ))}
+                    {pages.length - 1 > backPages.length && <span className="paper-edge-more">+{pages.length - 1 - backPages.length}</span>}
+                  </div>
+                )}
+                <div className={hasWorkbench ? 'paper-sheet' : undefined}>
+                  {sheet && (
+                    <blockquote className="selected-quote">
+                      <span>本页从这段原文展开</span>
+                      <p>{sheet.quote}</p>
+                    </blockquote>
+                  )}
+                  <MessageList
+                    messages={messages}
+                    onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
+                  />
+                  {sheet && messages.length === 0 && (
+                    <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
+                  )}
+                </div>
+              </div>
+            )}
+            {hasWorkbench && !paperOverview && <span className="paper-desktop-hint">点击桌面空白，平铺全部纸张</span>}
           </div>
         </div>
         <div className="composer-dock">
