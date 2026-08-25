@@ -62,6 +62,7 @@ def test_learning_work_task_events_are_zero_kernel_adapter_events():
         "learning_work_task_generation_follow_up",
         "learning_work_task_review_submitted",
         "personalized_learning_handoff_opened",
+        "personalized_learning_result_received",
     }
     assert expected <= set(EVENTS)
     for event_type in expected:

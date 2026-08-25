@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-20.1"
+REGISTRY_VERSION = "2026-08-25.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -412,6 +412,7 @@ EVENTS = {
         _event("learning_work_task_generation_follow_up", "generate_learning_work_task", (), "operational", origin="companion"),
         _event("learning_work_task_review_submitted", "review_learning_work_task", (), "operational", origin="companion"),
         _event("personalized_learning_handoff_opened", "open_personalized_learning", (), "navigation", origin="companion"),
+        _event("personalized_learning_result_received", "open_personalized_learning", (), "operational", origin="companion"),
         _event("explanation_requested", "explain_selection", ("knowledge", "human"), "assistance"),
         _event("code_review_requested", "explain_selection", ("practice", "human"), "assistance", workbench="assessment"),
         _event("concept_attempt_evaluated", "evaluate_attempt", ("knowledge", "practice"), "graded_attempt"),

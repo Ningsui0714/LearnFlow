@@ -1314,6 +1314,7 @@
     const STUDENT_ID = LAUNCH_STUDENT_ID || localStorage.getItem("learning.student_id") || "STU-DEMO-001";
     const LAUNCH_PROJECT_ID = (LAUNCH_PARAMS.get("project_id") || "").trim();
     const LAUNCH_KNOWLEDGE_POINT_ID = (LAUNCH_PARAMS.get("knowledge_point_id") || "").trim();
+    const LAUNCH_ENTRY_ID = (LAUNCH_PARAMS.get("entry_id") || "").trim();
     const SESSION_ID = localStorage.getItem("learning.session_id") || "AGENT-WEB-SESSION";
     const $ = (id) => document.getElementById(id);
     const messagesEl = $("chat-messages");
@@ -4015,6 +4016,39 @@
     };
 
     /* ================= 分析结果 ================= */
+    function notifyParentOfAssessmentResult(summary, assessedProjectId) {
+      if (
+        window.parent === window || !LAUNCH_ENTRY_ID || !LAUNCH_KNOWLEDGE_POINT_ID ||
+        !assessedProjectId || summary.formal_evidence !== false
+      ) return;
+      let parentOrigin = "";
+      try {
+        parentOrigin = new URL(document.referrer).origin;
+      } catch (_) {
+        return;
+      }
+      if (!parentOrigin || parentOrigin === "null") return;
+      window.parent.postMessage({
+        type: "learnflow:personalized-learning-result",
+        payload: {
+          schema_version: "personalized-learning-result-v1",
+          entry_id: LAUNCH_ENTRY_ID,
+          project_id: assessedProjectId,
+          knowledge_point_id: LAUNCH_KNOWLEDGE_POINT_ID,
+          result_type: "assessment_completed",
+          result_id: String(summary.assessment_id || ""),
+          formal_evidence: false,
+          summary: {
+            assessment_type: String(summary.assessment_type || ""),
+            score: Number(summary.score || 0),
+            total: Number(summary.total || 0),
+            weak_point_count: Array.isArray(summary.weak_points) ? summary.weak_points.length : 0,
+            feedback: String(summary.feedback || ""),
+          },
+        },
+      }, parentOrigin);
+    }
+
     async function showAnalysis(summary) {
       setInputEnabled(false);
       const typing = addMsg("bot", '<div class="typing"><i></i><i></i><i></i></div>');
@@ -4042,6 +4076,7 @@
       analysisMessage.querySelector("[data-open-center]").onclick = () => {
         if (assessedProjectId) openAssessmentCenter(assessedProjectId);
       };
+      notifyParentOfAssessmentResult(summary, assessedProjectId);
       state.quiz = null;
       await refreshProjects();
       if (isFormalEvidence && state.profileDashboard) await loadProfilePage();

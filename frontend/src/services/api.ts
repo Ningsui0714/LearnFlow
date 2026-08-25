@@ -254,7 +254,41 @@ export interface PersonalizedLearningLaunchResult {
   project_id: string
   knowledge_point_id: string
   redirect_url: string
+  content_generation: {
+    provider: 'spark_openai_compatible' | 'deterministic_template'
+    model: string
+    configured: boolean
+  }
+  assessment: {
+    type: 'provisional_self_check'
+    status: 'queued' | 'generating' | 'ready' | 'failed'
+    formal_evidence: false
+  }
   created: boolean
+}
+
+export interface PersonalizedLearningResultPayload {
+  schema_version: 'personalized-learning-result-v1'
+  entry_id: string
+  project_id: string
+  knowledge_point_id: string
+  result_type: 'assessment_completed'
+  result_id: string
+  formal_evidence: false
+  summary: {
+    assessment_type: 'provisional_self_check'
+    score: number
+    total: number
+    weak_point_count: number
+    feedback: string
+  }
+}
+
+export interface PersonalizedLearningResultReceipt {
+  status: 'accepted'
+  event_id: number
+  result_id: string
+  formal_evidence: false
 }
 
 export const getLearningTaskConversionCapabilities = () =>
@@ -534,6 +568,16 @@ export const launchPersonalizedLearningKnowledgeEntry = (
   `/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}`
   + `/knowledge/${encodeURIComponent(knowledgeId)}/personalized-learning-launch`,
 ).then(r => r.data as PersonalizedLearningLaunchResult)
+
+export const submitPersonalizedLearningResult = (
+  taskCardId: string,
+  knowledgeId: string,
+  payload: PersonalizedLearningResultPayload,
+) => api.post(
+  `/learning-task-conversion/tasks/${encodeURIComponent(taskCardId)}`
+  + `/knowledge/${encodeURIComponent(knowledgeId)}/personalized-learning-results`,
+  payload,
+).then(r => r.data as PersonalizedLearningResultReceipt)
 
 export const submitPersonalizedLearningFeedback = (feedback: Record<string, any>) =>
   api.post('/learning-task-conversion/downstream-feedback', feedback).then(r => r.data)

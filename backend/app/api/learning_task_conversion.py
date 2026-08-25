@@ -16,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.core.config import settings
-from app.models.learning import AgentMessage, AgentSession, Learner, UserAccount
+from app.models.learning import (
+    AgentMessage, AgentSession, EvidenceEvent, Learner, UserAccount,
+)
 from app.services.auth import CurrentLearner, get_current_learner
 from app.services.learning_task_conversion_gateway import (
     LearningTaskConversionError,
@@ -31,6 +33,7 @@ from app.services.personalized_learning_handoff import (
     PersonalizedLearningHandoffClient,
     PersonalizedLearningHandoffConfigError,
     PersonalizedLearningHandoffError,
+    scoped_personalized_learning_entry_id,
 )
 from app.services.learning_runtime import record_event
 
@@ -52,6 +55,21 @@ class LearningTaskGenerationRequest(BaseModel):
 class LearningTaskIntegrationRequest(BaseModel):
     query: str = Field(min_length=2, max_length=500)
     student_id: str = Field(default="", max_length=120)
+
+
+class PersonalizedLearningResultRequest(BaseModel):
+    schema_version: str = Field(
+        pattern=r"^personalized-learning-result-v1$",
+    )
+    entry_id: str = Field(min_length=8, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    project_id: str = Field(min_length=3, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
+    knowledge_point_id: str = Field(
+        min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$",
+    )
+    result_type: str = Field(pattern=r"^assessment_completed$")
+    result_id: str = Field(min_length=3, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    formal_evidence: bool = False
+    summary: dict[str, Any] = Field(default_factory=dict)
 
 
 def _require_learning_task_integration(request: Request) -> None:
@@ -1086,6 +1104,117 @@ async def launch_knowledge_personalized_learning(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PersonalizedLearningHandoffError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post(
+    "/tasks/{task_card_id}/knowledge/{knowledge_id}/personalized-learning-results"
+)
+async def receive_personalized_learning_result(
+    payload: PersonalizedLearningResultRequest,
+    task_card_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,100}$"),
+    knowledge_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,100}$"),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Persist a verified downstream result as a zero-kernel audit artifact.
+
+    The imported direction only supports provisional self-checks.  The result
+    is useful for continuity and review, but cannot become mastery evidence
+    until LearnFlow owns a formal assessment specification and attempt.
+    """
+
+    try:
+        bundle = await _gateway().task_bundle(task_card_id)
+        entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
+    except LearningTaskConversionError as exc:
+        _raise_gateway_error(exc)
+
+    expected_entry_id = scoped_personalized_learning_entry_id(
+        str(entry["entry_id"]),
+        current.learner.id,
+    )
+    if payload.entry_id != expected_entry_id or payload.knowledge_point_id != knowledge_id:
+        raise HTTPException(status_code=409, detail="个性化学习结果身份与当前交接不一致")
+    if payload.formal_evidence:
+        raise HTTPException(
+            status_code=422,
+            detail="当前交接仅允许回传临时自测结果，不能声明正式掌握证据",
+        )
+
+    summary = payload.summary
+    assessment_type = str(summary.get("assessment_type") or "").strip()
+    if assessment_type != "provisional_self_check":
+        raise HTTPException(status_code=422, detail="当前仅接受练习型初测结果")
+
+    def bounded_count(name: str, *, minimum: int, maximum: int) -> int:
+        value = summary.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise HTTPException(status_code=422, detail=f"{name} 必须是整数")
+        if value < minimum or value > maximum:
+            raise HTTPException(status_code=422, detail=f"{name} 超出允许范围")
+        return value
+
+    total = bounded_count("total", minimum=1, maximum=100)
+    score = bounded_count("score", minimum=0, maximum=total)
+    weak_point_count = bounded_count(
+        "weak_point_count", minimum=0, maximum=total,
+    )
+
+    launch_events = (await db.execute(
+        select(EvidenceEvent)
+        .where(
+            EvidenceEvent.learner_id == current.learner.id,
+            EvidenceEvent.event_type == "personalized_learning_handoff_opened",
+        )
+        .order_by(EvidenceEvent.id.desc())
+        .limit(100)
+    )).scalars().all()
+    launch_found = any(
+        str((event.payload or {}).get("task_card_id") or "") == task_card_id
+        and str((event.payload or {}).get("knowledge_id") or "") == knowledge_id
+        and str((event.payload or {}).get("downstream_project_id") or "")
+        == payload.project_id
+        for event in launch_events
+    )
+    if not launch_found:
+        raise HTTPException(status_code=409, detail="没有找到与该结果匹配的个性化学习启动记录")
+
+    event = await record_event(
+        db,
+        learner_id=current.learner.id,
+        event_type="personalized_learning_result_received",
+        source="personalized_learning",
+        payload={
+            "task_card_id": task_card_id,
+            "knowledge_id": knowledge_id,
+            "entry_id": expected_entry_id,
+            "downstream_project_id": payload.project_id,
+            "result_type": payload.result_type,
+            "result_id": payload.result_id,
+            "assessment_type": assessment_type,
+            "score": score,
+            "total": total,
+            "weak_point_count": weak_point_count,
+            "formal_evidence": False,
+            "feedback": str(summary.get("feedback") or "").strip()[:500],
+        },
+        artifact_refs=[
+            f"learning-task:{task_card_id}",
+            f"knowledge:{knowledge_id}",
+            f"personalized-project:{payload.project_id}",
+            f"assessment:{payload.result_id}",
+        ],
+        client_event_id=(
+            f"personalized-result:{expected_entry_id}:{payload.result_id}"
+        ),
+    )
+    await db.commit()
+    return {
+        "status": "accepted",
+        "event_id": event.id,
+        "result_id": payload.result_id,
+        "formal_evidence": False,
+    }
 
 
 @router.post("/downstream-feedback")

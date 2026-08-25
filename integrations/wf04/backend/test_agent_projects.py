@@ -118,6 +118,12 @@ class AgentProjectApiTests(unittest.TestCase):
         self.assertEqual(first["knowledge_point_id"], "kp_vlan")
         self.assertIn("agent.html?student_id=", first["redirect_url"])
         self.assertIn("knowledge_point_id=kp_vlan", first["redirect_url"])
+        self.assertIn("entry_id=ple_scoped_vlan_001", first["redirect_url"])
+        self.assertEqual(first["assessment"]["status"], "ready")
+        self.assertFalse(first["assessment"]["formal_evidence"])
+        self.assertEqual(
+            first["content_generation"]["provider"], "deterministic_template",
+        )
 
         detail = application.get_project({
             "project_id": first["project_id"],
@@ -134,6 +140,16 @@ class AgentProjectApiTests(unittest.TestCase):
             [stage["stage_id"] for stage in detail["learning_plan"]["stages"]],
             ["foundation", "core", "application"],
         )
+        stored_state = application.store.get_project(first["project_id"])["state"]
+        self.assertEqual(stored_state["initial_assessment_state"], "awaiting_practice")
+        started = application.project_assessment_start({
+            "student_id": self.student_id,
+            "project_id": first["project_id"],
+            "assessment_type": "provisional_self_check",
+            "knowledge_point_id": "kp_vlan",
+        })
+        self.assertEqual(started["assessment_type"], "provisional_self_check")
+        self.assertGreater(started["total"], 0)
 
     def set_zero_foundation_intake(self, project_id):
         return self.request_json(

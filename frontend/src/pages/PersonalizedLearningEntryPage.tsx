@@ -9,8 +9,10 @@ import {
   getPersonalizedLearningKnowledgeEntry,
   launchPersonalizedLearningKnowledgeEntry,
   submitPersonalizedLearningFeedback,
+  submitPersonalizedLearningResult,
   type PersonalizedLearningKnowledgeEntry,
   type PersonalizedLearningLaunchResult,
+  type PersonalizedLearningResultPayload,
 } from '../services/api'
 
 function errorMessage(error: any) {
@@ -31,11 +33,13 @@ function ResponsiveEmbeddedProject({
   title,
   revision,
   onLoad,
+  onFrame,
 }: {
   src: string
   title: string
   revision: number
   onLoad: () => void
+  onFrame: (frame: HTMLIFrameElement | null) => void
 }) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -72,6 +76,7 @@ function ResponsiveEmbeddedProject({
         allow="clipboard-read; clipboard-write"
         referrerPolicy="strict-origin"
         onLoad={onLoad}
+        ref={onFrame}
       />
     </div>
   )
@@ -84,6 +89,8 @@ export default function PersonalizedLearningEntryPage() {
   const loadRequestRef = useRef(0)
   const activeEntryKeyRef = useRef(`${taskCardId}:${knowledgeId}`)
   const loadedEntryKeyRef = useRef(initialEntry ? `${taskCardId}:${knowledgeId}` : '')
+  const embeddedFrameRef = useRef<HTMLIFrameElement | null>(null)
+  const resultReceiptsRef = useRef(new Set<string>())
   const [entry, setEntry] = useState<PersonalizedLearningKnowledgeEntry | null>(initialEntry || null)
   const [loading, setLoading] = useState(!initialEntry)
   const [error, setError] = useState('')
@@ -97,6 +104,7 @@ export default function PersonalizedLearningEntryPage() {
   const [feedbackCorrection, setFeedbackCorrection] = useState('')
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
   const [feedbackStatus, setFeedbackStatus] = useState('')
+  const [resultSyncStatus, setResultSyncStatus] = useState('')
   useWorkspaceTitle(entry?.focus.knowledge_point.name || '个性化学习交接', { kind: 'wf03' })
 
   const load = useCallback(async () => {
@@ -140,6 +148,44 @@ export default function PersonalizedLearningEntryPage() {
     }
   }, [knowledgeId, taskCardId])
 
+  useEffect(() => {
+    if (!launched) return undefined
+    let expectedOrigin = ''
+    try {
+      expectedOrigin = new URL(launched.redirect_url).origin
+    } catch {
+      return undefined
+    }
+    const receiveResult = (event: MessageEvent) => {
+      if (
+        event.origin !== expectedOrigin
+        || event.source !== embeddedFrameRef.current?.contentWindow
+        || event.data?.type !== 'learnflow:personalized-learning-result'
+      ) return
+      const payload = event.data?.payload as PersonalizedLearningResultPayload | undefined
+      if (
+        !payload
+        || payload.entry_id !== launched.entry_id
+        || payload.project_id !== launched.project_id
+        || payload.knowledge_point_id !== knowledgeId
+        || payload.formal_evidence !== false
+        || payload.summary?.assessment_type !== 'provisional_self_check'
+        || !payload.result_id
+        || resultReceiptsRef.current.has(payload.result_id)
+      ) return
+      resultReceiptsRef.current.add(payload.result_id)
+      setResultSyncStatus('正在回传练习结果…')
+      submitPersonalizedLearningResult(taskCardId, knowledgeId, payload)
+        .then(() => setResultSyncStatus('练习结果已回传，仅作连续学习参考，不作为正式掌握证据。'))
+        .catch(failure => {
+          resultReceiptsRef.current.delete(payload.result_id)
+          setResultSyncStatus(`练习结果回传失败：${errorMessage(failure)}`)
+        })
+    }
+    window.addEventListener('message', receiveResult)
+    return () => window.removeEventListener('message', receiveResult)
+  }, [knowledgeId, launched, taskCardId])
+
   const sourceStepCount = useMemo(() => entry?.focus.source_steps.length || 0, [entry])
 
   const launch = async () => {
@@ -157,6 +203,7 @@ export default function PersonalizedLearningEntryPage() {
       )
       setLaunched(result)
       setFrameLoading(true)
+      setLaunching(false)
     } catch (failure) {
       setError(errorMessage(failure))
       setLaunching(false)
@@ -167,6 +214,7 @@ export default function PersonalizedLearningEntryPage() {
     setLaunched(null)
     setFrameLoading(false)
     setFeedbackOpen(false)
+    setResultSyncStatus('')
   }
 
   const submitFeedback = async () => {
@@ -235,6 +283,14 @@ export default function PersonalizedLearningEntryPage() {
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700">
               <CheckCircle2 size={11} className="mr-1 inline" />知识点交接已锁定
             </span>
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${launched.content_generation?.configured ? 'bg-indigo-50 text-indigo-700' : 'bg-amber-50 text-amber-700'}`}>
+              {launched.content_generation?.configured
+                ? `Spark ${launched.content_generation.model || 'Lite'}`
+                : '本地确定性模板'}
+            </span>
+            <span className="rounded-full bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">
+              {launched.assessment?.status === 'ready' ? '练习型初测已就绪' : '正在准备练习型初测'}
+            </span>
             <span className="min-w-0 flex-1 truncate text-xs text-slate-500">
               {knowledge.name} · {launched.project_id}
             </span>
@@ -264,6 +320,7 @@ export default function PersonalizedLearningEntryPage() {
             </div>
           )}
           {feedbackStatus && <p className="mt-2 text-[11px] text-slate-600">{feedbackStatus}</p>}
+          {resultSyncStatus && <p className="mt-2 text-[11px] text-indigo-700">{resultSyncStatus}</p>}
         </header>
         <div className="relative min-h-0 flex-1 bg-white">
           {frameLoading && (
@@ -276,6 +333,7 @@ export default function PersonalizedLearningEntryPage() {
             title={`个性化学习：${knowledge.name}`}
             revision={frameRevision}
             onLoad={() => setFrameLoading(false)}
+            onFrame={frame => { embeddedFrameRef.current = frame }}
           />
         </div>
       </main>

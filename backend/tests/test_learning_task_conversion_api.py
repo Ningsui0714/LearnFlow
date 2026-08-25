@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 from app.api import learning_task_conversion
 from app.main import app
 from app.services.learning_task_conversion_xfyun import XfyunWorkflowError
+from app.services.personalized_learning_handoff import (
+    scoped_personalized_learning_entry_id,
+)
 
 
 class _FakeGateway:
@@ -136,15 +139,28 @@ class _FakePersonalizedLearningClient:
     async def import_entry(self, *, learner_id: int, handoff: dict):
         self.imports.append({"learner_id": learner_id, "handoff": handoff})
         knowledge_id = handoff["focus"]["knowledge_point"]["knowledge_id"]
+        entry_id = scoped_personalized_learning_entry_id(
+            handoff["entry_id"], learner_id,
+        )
         return {
             "status": "ok",
-            "entry_id": handoff["entry_id"],
+            "entry_id": entry_id,
             "project_id": "PROJ-DOWNSTREAM-001",
             "knowledge_point_id": knowledge_id,
             "redirect_url": (
                 "http://127.0.0.1:4173/?project_id=PROJ-DOWNSTREAM-001"
-                f"&knowledge_point_id={knowledge_id}"
+                f"&knowledge_point_id={knowledge_id}&entry_id={entry_id}"
             ),
+            "content_generation": {
+                "provider": "deterministic_template",
+                "model": "",
+                "configured": False,
+            },
+            "assessment": {
+                "type": "provisional_self_check",
+                "status": "ready",
+                "formal_evidence": False,
+            },
             "created": True,
         }
 
@@ -645,6 +661,43 @@ def test_learning_task_conversion_proxies_both_handoff_directions(monkeypatch):
         assert len(personalized.imports) == 1
         assert personalized.imports[0]["learner_id"] > 0
         assert personalized.imports[0]["handoff"]["entry_id"] == entry["entry_id"]
+
+        result_payload = {
+            "schema_version": "personalized-learning-result-v1",
+            "entry_id": launched.json()["entry_id"],
+            "project_id": launched.json()["project_id"],
+            "knowledge_point_id": "kp_camera",
+            "result_type": "assessment_completed",
+            "result_id": "assessment-provisional-001",
+            "formal_evidence": False,
+            "summary": {
+                "assessment_type": "provisional_self_check",
+                "score": 3,
+                "total": 5,
+                "weak_point_count": 1,
+                "feedback": "本次为练习型初测。",
+            },
+        }
+        result_url = (
+            "/api/learning-task-conversion/tasks/ltc_generated_01/knowledge/"
+            "kp_camera/personalized-learning-results"
+        )
+        received = client.post(result_url, json=result_payload)
+        replayed = client.post(result_url, json=result_payload)
+        assert received.status_code == 200
+        assert replayed.status_code == 200
+        assert received.json()["event_id"] == replayed.json()["event_id"]
+        assert received.json()["formal_evidence"] is False
+
+        rejected_formal = client.post(
+            result_url,
+            json={
+                **result_payload,
+                "result_id": "assessment-formal-001",
+                "formal_evidence": True,
+            },
+        )
+        assert rejected_formal.status_code == 422
 
         missing_knowledge = client.get(
             "/api/learning-task-conversion/tasks/ltc_generated_01/knowledge/"

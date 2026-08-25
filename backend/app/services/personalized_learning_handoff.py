@@ -29,6 +29,17 @@ class PersonalizedLearningHandoffError(RuntimeError):
         self.status_code = status_code
 
 
+def scoped_personalized_learning_entry_id(
+    source_entry_id: str,
+    learner_id: int,
+) -> str:
+    """Return the stable downstream handoff identity for one learner."""
+
+    return "ple_" + sha256(
+        f"{source_entry_id}:learner:{learner_id}".encode("utf-8")
+    ).hexdigest()[:24]
+
+
 @dataclass(frozen=True)
 class PersonalizedLearningHandoffConfig:
     import_url: str
@@ -213,9 +224,10 @@ class PersonalizedLearningHandoffClient:
         # WF04 owns a globally unique entry_id. Scope the stable source entry
         # to one learner so retries resume the same project without allowing
         # different learners to share or conflict on that project.
-        entry_id = "ple_" + sha256(
-            f"{source_entry_id}:learner:{learner_id}".encode("utf-8")
-        ).hexdigest()[:24]
+        entry_id = scoped_personalized_learning_entry_id(
+            source_entry_id,
+            learner_id,
+        )
         scoped_handoff = {**handoff, "entry_id": entry_id}
         payload = {
             "student_id": f"LEARNFLOW-{learner_id}",
@@ -304,11 +316,41 @@ class PersonalizedLearningHandoffClient:
             raise PersonalizedLearningHandoffError(
                 "个性化学习服务未返回可恢复的项目 ID"
             )
+        content_generation = result.get("content_generation")
+        if not isinstance(content_generation, dict):
+            content_generation = {}
+        generation_provider = str(
+            content_generation.get("provider") or "deterministic_template"
+        ).strip()
+        if generation_provider not in {
+            "spark_openai_compatible", "deterministic_template",
+        }:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习服务返回了未知的内容生成来源"
+            )
+        assessment = result.get("assessment")
+        if not isinstance(assessment, dict):
+            assessment = {}
+        assessment_status = str(assessment.get("status") or "generating").strip()
+        if assessment_status not in {"queued", "generating", "ready", "failed"}:
+            raise PersonalizedLearningHandoffError(
+                "个性化学习服务返回了未知的测评准备状态"
+            )
         return {
             "status": "ok",
             "entry_id": returned_entry_id,
             "project_id": project_id,
             "knowledge_point_id": returned_knowledge_id,
             "redirect_url": redirect_url,
+            "content_generation": {
+                "provider": generation_provider,
+                "model": str(content_generation.get("model") or "").strip()[:80],
+                "configured": bool(content_generation.get("configured")),
+            },
+            "assessment": {
+                "type": "provisional_self_check",
+                "status": assessment_status,
+                "formal_evidence": False,
+            },
             "created": bool(result.get("created")),
         }

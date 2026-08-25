@@ -603,6 +603,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 动画与静态图决策 | `backend/app/services/animation_agent.py` |
 | 学习型工作任务 Plan | `backend/app/api/learning_task_plan.py`、`backend/app/services/learning_task_plan_gateway.py`、`backend/app/services/learning_task_plan_orchestrator.py`、`frontend/src/pages/LearningTaskPlanPage.tsx` |
 | 学习型工作任务与个性化学习交接 | `backend/app/api/learning_task_conversion.py`、`frontend/src/pages/PersonalizedLearningEntryPage.tsx` |
+| 上游岗位任务节点接入 | `frontend/src/pages/LearningTaskUpstreamBridgePage.tsx` |
 | 后台任务编排 | `backend/app/services/task_runners.py` |
 | 记忆图谱写入与查询 | `backend/app/services/memory_graph.py` |
 | 记忆异步合成 | `backend/app/services/memory_worker.py` |

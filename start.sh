@@ -59,6 +59,13 @@ check_deps() {
     echo -e "${YELLOW}⚠  请编辑 backend/.env 填入你的 LLM_API_KEY${NC}"
   fi
 
+  # 个性化学习内容引擎使用独立私密配置。首次启动只复制安全
+  # 占位模板；SPARK_API_KEY 留空时明确降级为确定性模板。
+  if [ ! -f "$PERSONALIZED_DIR/backend/.env" ]; then
+    cp "$PERSONALIZED_DIR/backend/.env.example" "$PERSONALIZED_DIR/backend/.env"
+    echo -e "${YELLOW}⚠  已创建个性化学习配置；填写 SPARK_API_KEY 后使用 Spark Lite${NC}"
+  fi
+
   # Node modules
   if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
     echo -e "${YELLOW}⚠  前端依赖未安装，正在安装...${NC}"

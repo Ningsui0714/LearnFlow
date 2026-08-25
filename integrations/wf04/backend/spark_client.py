@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 SPARK_DEFAULT_API_BASE = "https://spark-api-open.xf-yun.com/v1/chat/completions"
-SPARK_DEFAULT_MODEL = "4.0Ultra"
+SPARK_DEFAULT_MODEL = "lite"
 
 
 class SparkError(Exception):

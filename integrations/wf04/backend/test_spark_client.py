@@ -64,7 +64,7 @@ class SparkClientTests(unittest.TestCase):
         self.assertEqual(captured["headers"]["Authorization"], "Bearer test-apipassword")
         self.assertEqual(captured["method"], "POST")
         self.assertFalse(captured["body"]["stream"])
-        self.assertEqual(captured["body"]["model"], "4.0Ultra")
+        self.assertEqual(captured["body"]["model"], "lite")
 
     def test_configured_false_raises_auth(self):
         client = SparkClient(SparkConfig(api_key="  "))

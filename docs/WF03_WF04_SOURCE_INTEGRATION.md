@@ -36,6 +36,7 @@
 ```text
 GET/POST /api/learning-task-conversion/tasks/{task_card_id}/knowledge/{knowledge_id}/personalized-learning-entry
 POST     /api/learning-task-conversion/tasks/{task_card_id}/knowledge/{knowledge_id}/personalized-learning-launch
+POST     /api/learning-task-conversion/tasks/{task_card_id}/knowledge/{knowledge_id}/personalized-learning-results
 ```
 
 下游已有可落地能力主要集中在：
@@ -61,8 +62,18 @@ POST /api/integrations/learning-task-knowledge
 {
   "project_id": "stable-project-id",
   "created": true,
-  "redirect_url": "/agent.html?student_id=...&project_id=...&knowledge_point_id=...",
-  "entry_id": "stable-idempotency-key"
+  "redirect_url": "/agent.html?student_id=...&project_id=...&knowledge_point_id=...&entry_id=...",
+  "entry_id": "stable-idempotency-key",
+  "content_generation": {
+    "provider": "spark_openai_compatible",
+    "model": "lite",
+    "configured": true
+  },
+  "assessment": {
+    "type": "provisional_self_check",
+    "status": "ready",
+    "formal_evidence": false
+  }
 }
 ```
 
@@ -70,6 +81,11 @@ POST /api/integrations/learning-task-knowledge
 数据库事务将 `entry_id` 与项目唯一绑定，并发或重复交接会恢复同一项目。下游路径严格由“知识点 →
 关联技能 → 原任务步骤”形成基础、核心、应用三阶段，不另造领域课程。打开入口和生成内容只记录零
 kernel target 的导航/运营事件，不能被解释为掌握证据。
+
+导入后会立即准备练习型初测。嵌入页完成初测后，通过精确 origin 约束的
+`postMessage` 把结果交回主应用；主应用再核对 `entry_id`、`project_id`、
+`knowledge_point_id` 和启动记录。回传只接受 `provisional_self_check` 且
+`formal_evidence=false`，记录为 `personalized_learning_result_received` 零核审计事件。
 
 ## 运行配置边界
 

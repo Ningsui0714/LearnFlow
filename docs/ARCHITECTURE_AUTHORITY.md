@@ -114,7 +114,7 @@
 5. 外部工作流输出先校验为 LearnFlow artifact；不得直接写五核或决定纠错状态。
 6. 更新架构/融合/比赛文档，提升注册表版本，并运行注册漂移、后端、前端与 demo 验收。
 
-岗位典型工作任务转化功能向个性化学习交付时，必须使用版本化、知识点级的 JSON，保留任务步骤—知识点—技能点关系和回传地址。`personalized_learning_handoff_opened` 只记录跨功能导航，为零 kernel target；不能由“点击进入”推断学习者已学习、已练习或已掌握。
+岗位典型工作任务转化功能向个性化学习交付时，必须使用版本化、知识点级的 JSON，保留任务步骤—知识点—技能点关系和回传地址。`personalized_learning_handoff_opened` 只记录跨功能导航；`personalized_learning_result_received` 只记录经身份核对的练习型初测回传。两者均为零 kernel target；不能由“点击进入”或临时自测推断学习者已学习、已练习或已掌握。
 
 任务转化进入生成前，`plan_learning_work_task` 可以创建、确认并局部重规划版本化 `TaskPlan`。`learning_work_task_plan_created`、`learning_work_task_plan_confirmed` 与 `learning_work_task_plan_replanned` 只记录计划产物、明确确认和运营修订，均为零 kernel target；Plan 内容、确认和后续执行状态都不能作为掌握证据。具体接口与阶段边界见 `docs/LEARNING_WORK_TASK_PLAN.md`。
 

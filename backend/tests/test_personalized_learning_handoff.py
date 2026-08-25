@@ -85,6 +85,16 @@ async def test_handoff_client_preserves_wf04_identity_and_is_retry_safe():
                 "/?project_id=project_handoff_001&knowledge_point_id=kp_vlan"
             ),
             "created": len(requests) == 1,
+            "content_generation": {
+                "provider": "spark_openai_compatible",
+                "model": "lite",
+                "configured": True,
+            },
+            "assessment": {
+                "type": "provisional_self_check",
+                "status": "ready",
+                "formal_evidence": False,
+            },
         })
 
     client = _client(handler)
@@ -100,6 +110,13 @@ async def test_handoff_client_preserves_wf04_identity_and_is_retry_safe():
     assert requests[2]["handoff"]["entry_id"] != requests[0]["handoff"]["entry_id"]
     assert other_learner["entry_id"] == requests[2]["handoff"]["entry_id"]
     assert _handoff()["entry_id"] != first["entry_id"]
+    assert first["content_generation"] == {
+        "provider": "spark_openai_compatible",
+        "model": "lite",
+        "configured": True,
+    }
+    assert first["assessment"]["status"] == "ready"
+    assert first["assessment"]["formal_evidence"] is False
 
 
 @pytest.mark.asyncio
@@ -155,6 +172,24 @@ async def test_handoff_client_rejects_cross_origin_redirect():
         })
 
     with pytest.raises(PersonalizedLearningHandoffError, match="不受信任"):
+        await _client(handler).import_entry(learner_id=17, handoff=_handoff())
+
+
+@pytest.mark.asyncio
+async def test_handoff_client_rejects_unknown_content_generation_provider():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        return httpx.Response(200, json={
+            "status": "ok",
+            "entry_id": body["handoff"]["entry_id"],
+            "project_id": "project_handoff_001",
+            "knowledge_point_id": "kp_vlan",
+            "redirect_url": "/agent.html?project_id=project_handoff_001",
+            "created": True,
+            "content_generation": {"provider": "unknown-provider"},
+        })
+
+    with pytest.raises(PersonalizedLearningHandoffError, match="生成来源"):
         await _client(handler).import_entry(learner_id=17, handoff=_handoff())
 
 

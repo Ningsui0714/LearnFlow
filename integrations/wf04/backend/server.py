@@ -359,7 +359,7 @@ class Settings:
     # 星火 OpenAI 兼容 LLM（讲解正文本地化）：api_key 为空时讲解模块退化为确定性模板
     spark_api_base: str = "https://spark-api-open.xf-yun.com/v1/chat/completions"
     spark_api_key: str = ""
-    spark_model: str = "4.0Ultra"
+    spark_model: str = "lite"
     spark_timeout: float = 60.0
     spark_max_tokens: int = 1600
     spark_temperature: float = 0.4
@@ -460,7 +460,7 @@ class Settings:
                 "https://spark-api-open.xf-yun.com/v1/chat/completions",
             ).strip(),
             spark_api_key=os.getenv("SPARK_API_KEY", "").strip(),
-            spark_model=os.getenv("SPARK_MODEL", "4.0Ultra").strip() or "4.0Ultra",
+            spark_model=os.getenv("SPARK_MODEL", "lite").strip() or "lite",
             spark_timeout=max(1.0, float(os.getenv("SPARK_TIMEOUT", "60"))),
             spark_max_tokens=max(64, int(os.getenv("SPARK_MAX_TOKENS", "1600"))),
             spark_temperature=float(os.getenv("SPARK_TEMPERATURE", "0.4")),
@@ -6619,7 +6619,7 @@ class LearningApplication:
             "support_level": "generated_scaffold",
             "capability_pack": {},
             "assessment_state": "question_sources_pending",
-            "initial_assessment_state": "awaiting_reviewed_sources",
+            "initial_assessment_state": "awaiting_practice",
             "initial_knowledge_self_report": {},
             "baseline_profile": {"status": "not_created", "knowledge_points": []},
             "current_profile": {"status": "not_created", "knowledge_points": []},
@@ -6681,6 +6681,24 @@ class LearningApplication:
                     "knowledge_point_id": knowledge_id,
                 },
             )
+        # Imported directions do not have a formal reviewed capability pack,
+        # but they can immediately offer a provisional self-check. This is
+        # also run for restored projects created before prebuilding was added.
+        self._queue_project_assessment_generation(
+            project_id,
+            student_id,
+            background=self.gateway.mode == "remote",
+        )
+        assessment_prebuild = self.store.get_assessment_prebuild(
+            project_id,
+            student_id,
+            knowledge_id,
+            "provisional_self_check",
+            self.ASSESSMENT_GENERATION_VERSION,
+        )
+        assessment_status = str(
+            as_dict(assessment_prebuild).get("status") or "generating"
+        )
         return {
             "status": "ok",
             "entry_id": entry_id,
@@ -6690,7 +6708,26 @@ class LearningApplication:
                 "/agent.html?student_id=" + quote_plus(student_id)
                 + "&project_id=" + quote_plus(project_id)
                 + "&knowledge_point_id=" + quote_plus(knowledge_id)
+                + "&entry_id=" + quote_plus(entry_id)
             ),
+            "content_generation": {
+                "provider": (
+                    "spark_openai_compatible"
+                    if self.local_engine.llm_available
+                    else "deterministic_template"
+                ),
+                "model": (
+                    self.settings.spark_model
+                    if self.local_engine.llm_available
+                    else ""
+                ),
+                "configured": self.local_engine.llm_available,
+            },
+            "assessment": {
+                "type": "provisional_self_check",
+                "status": assessment_status,
+                "formal_evidence": False,
+            },
             "created": created,
         }
 
@@ -12893,6 +12930,19 @@ class LearningApplication:
             "video_search_enabled": self.video_search.enabled,
             "material_knowledge_status": self.material_knowledge.status,
             "material_knowledge_enabled": self.material_knowledge.enabled,
+            "content_generation": {
+                "provider": (
+                    "spark_openai_compatible"
+                    if self.local_engine.llm_available
+                    else "deterministic_template"
+                ),
+                "model": (
+                    self.settings.spark_model
+                    if self.local_engine.llm_available
+                    else ""
+                ),
+                "configured": self.local_engine.llm_available,
+            },
             "time": utc_now(),
         }
 

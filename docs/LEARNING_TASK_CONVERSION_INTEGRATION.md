@@ -69,6 +69,8 @@ LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 | `GET /api/learning-task-conversion/tasks/{id}/personalized-learning` | 获取个性化学习输入 JSON | `/api/v1/learning-task-conversion/tasks/{id}/personalized-learning.json` |
 | `GET /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-entry` | 获取单知识点级交接 JSON | 由 LearnFlow 从已校验任务包确定性裁剪 |
 | `POST /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-entry` | 显式进入个性化学习并记录零核导航事件 | 返回同版本交接 JSON |
+| `POST /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-launch` | 幂等创建/恢复知识点学习项目 | 同仓个性化学习导入接口 |
+| `POST /api/learning-task-conversion/tasks/{id}/knowledge/{knowledge_id}/personalized-learning-results` | 接收已核对身份的练习型初测结果 | 只形成零核审计事件 |
 | `POST /api/learning-task-conversion/downstream-feedback` | 回传弱关系、知识范围错误、步骤映射问题等批注 | `/api/v1/learning-task-conversion/downstream-feedback` |
 
 任务包、能力发现和个性化学习 JSON 都是只读查询。远端出现 429、502、503、504
@@ -93,6 +95,8 @@ LEARNING_TASK_CONVERSION_TIMEOUT_SECONDS=30
 前端只渲染合法的 HTTP(S) 资源地址。空地址、相对空链接和工作流编排页不会被当作步骤资源。
 
 ## 上游岗位能力图谱交接
+
+同仓上游页面点击任务节点时，推荐跳转到 `/learning-task-conversion/upstream`，并通过 React Router `state.handoff` 传入下列 JSON。也可以先写入 `sessionStorage` 的 `learnflow.upstream-handoff:{handoff_key}`，再携带 `?handoff_key=...`；同源嵌入页可发送 `learnflow:competency-task-selected` 窗口消息。该页面会完成交接校验、任务生成和中央工作区打开。
 
 ```json
 {
@@ -184,6 +188,29 @@ PERSONALIZED_LEARNING_API_TOKEN=
 
 `start.sh` 会启动同仓个性化学习运行时，并通过进程环境把实际端口交给主后端；私有配置仍可覆盖为拆分部署地址。未配置且未通过一键脚本启动时，`/personalized-learning/tasks/{task_card_id}/knowledge/{knowledge_id}` 仍可预览待交接内容，启动操作会返回明确错误，不会伪造成功项目。
 
+个性化学习运行时默认使用 Spark Lite；只有配置 `integrations/wf04/backend/.env` 中的 `SPARK_API_KEY` 才会调用远程模型，否则明确显示“本地确定性模板”。导入后立即预生成 `provisional_self_check` 练习型初测。完成初测时，嵌入页只向精确父窗口 origin 回传结果；主系统会复核交接 ID、项目 ID、知识点 ID 和启动事件。该结果的 `formal_evidence` 必须为 `false`，不更新五核、掌握度或学习路径。
+
+结果回传协议为：
+
+```json
+{
+  "schema_version": "personalized-learning-result-v1",
+  "entry_id": "ple_xxx",
+  "project_id": "PROJ-xxx",
+  "knowledge_point_id": "knowledge_xxx",
+  "result_type": "assessment_completed",
+  "result_id": "ASSESS-xxx",
+  "formal_evidence": false,
+  "summary": {
+    "assessment_type": "provisional_self_check",
+    "score": 3,
+    "total": 5,
+    "weak_point_count": 1,
+    "feedback": "练习型初测完成。"
+  }
+}
+```
+
 ## 运行与验收
 
 ```bash
@@ -193,4 +220,4 @@ make verify-learning-task-conversion
 
 验证脚本不会打印密钥值，会检查功能私有配置字段、后端契约/API/架构测试和前端生产构建。
 
-当前边界：知识点交接、下游项目物化/恢复、中央工作区展示和关系纠偏回传已连通。这些导航与运营事件仍是零 kernel target；不会因生成项目、打开页面或提交复核而写入五核掌握证据。
+当前边界：上游节点接入、知识点交接、下游项目物化/恢复、临时自测、中央工作区展示、结果回传和关系纠偏已连通。这些导航与运营事件仍是零 kernel target；不会因生成项目、打开页面、完成临时自测或提交复核而写入五核掌握证据。
