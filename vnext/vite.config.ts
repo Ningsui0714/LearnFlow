@@ -4,12 +4,14 @@ import {
   buildProviderRequest,
   buildTutorProviderRequest,
   errorFromTutorProviderResponse,
+  ensureSearchCitations,
   isTutorMode,
   textFromTutorProviderResponse,
   tutorConfigurationIssue,
 } from './src/tutor'
 import { isTutorToolChoice } from './src/tooling'
 import { runTutorTools } from './server/tool-runtime'
+import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 
 type KeyConfiguration = {
   apiKey: string
@@ -24,6 +26,16 @@ function loadTutorKey(mode: string): KeyConfiguration {
   ]
   const match = candidates.find(([, value]) => value && value !== 'sk-your-key-here')
   return { apiKey: match?.[1]?.trim() || '', source: match?.[0] || '' }
+}
+
+function loadSearchConfiguration(mode: string): SearchProviderConfiguration {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  const value = (name: string) => String(process.env[name] || localEnv[name] || '').trim()
+  return {
+    jinaApiKey: value('JINA_API_KEY'),
+    exaApiKey: value('EXA_API_KEY'),
+    tavilyApiKey: value('TAVILY_API_KEY'),
+  }
 }
 
 function readJsonBody(request: any): Promise<unknown> {
@@ -60,6 +72,7 @@ function sendJson(response: any, status: number, payload: unknown) {
 
 function tutorProxy(mode: string): Plugin {
   const keyConfiguration = loadTutorKey(mode)
+  const searchConfiguration = loadSearchConfiguration(mode)
 
   const callProvider = async (options: {
     endpoint: string
@@ -185,7 +198,7 @@ function tutorProxy(mode: string): Plugin {
         })
         return callProvider({ ...request, timeoutMs })
       }
-      const tools = await runTutorTools({ message: latestMessage, choice: toolChoice, generate })
+      const tools = await runTutorTools({ message: latestMessage, choice: toolChoice, generate, searchConfiguration })
       const providerRequest = buildTutorProviderRequest({
         baseUrl, model, mode: modeValue, messages,
         toolContext: tools.context,
@@ -209,6 +222,7 @@ function tutorProxy(mode: string): Plugin {
           reply = await callProvider({ ...retryRequest, timeoutMs: 32_000 })
         }
       }
+      reply = ensureSearchCitations(reply, tools.runs)
       sendJson(response, 200, { reply, toolRuns: tools.runs })
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError'

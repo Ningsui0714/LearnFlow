@@ -81,6 +81,8 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         }
     )
+    assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
+    assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
 
 
 def test_remediation_events_have_standard_authority_provenance():

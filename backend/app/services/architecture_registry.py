@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.2"
+REGISTRY_VERSION = "2026-08-25.3"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -220,8 +220,8 @@ TOOLS = {
                      KERNEL_NAMES),
         ToolContract("chat_mode_runtime", "Deterministic Chat Mode Runtime", "tutor_agent", "learnflow", "orchestration",
                      KERNEL_NAMES, (), "AgentSession context + registered EvidenceEvent only"),
-        ToolContract("computer_knowledge_search", "Computer Knowledge Federated Search", "learning_design_agent", "vnext", "read",
-                     (), (), "official-source routing + live source adapters; untrusted web content only"),
+        ToolContract("computer_knowledge_search", "Explanation-oriented Computer Knowledge Search", "learning_design_agent", "vnext", "read",
+                     (), (), "intent/facet plan -> tiered source adapters -> deterministic rerank -> bounded untrusted evidence bundle"),
         ToolContract("safe_visual_generation", "Safe Learning Visual Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "validated graph plan -> sanitized static SVG or deterministic SVG frames"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",

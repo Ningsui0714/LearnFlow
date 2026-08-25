@@ -24,3 +24,4 @@ npm run dev
 - 修改 `.env.local` 后需要重启 vNext 服务。
 - 没有配置或调用失败时显示真实原因，不生成占位答案。
 - 这个目录不读取或写入旧 LearnFlow 的数据库、五核或学习记录。
+- 联网讲解使用分层的计算机知识来源和可检查的检索计划；设计与可选搜索后端见 [COMPUTER_KNOWLEDGE_SEARCH.md](./COMPUTER_KNOWLEDGE_SEARCH.md)。

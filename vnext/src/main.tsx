@@ -965,6 +965,10 @@ function App() {
 
 function ToolRunCard({ run }: { run: TutorToolRun }) {
   const icon = run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+  const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
+    standard: '规范', reference: '参考', textbook: '教材', course: '课程',
+    definition: '定义', research: '研究', example: '实例', discussion: '讨论',
+  }
   return (
     <section className={`tool-run tool-run-${run.status}`} aria-label={`${run.title}${run.status === 'completed' ? '已完成' : '失败'}`}>
       <header>
@@ -977,9 +981,10 @@ function ToolRunCard({ run }: { run: TutorToolRun }) {
         <div className="tool-sources">
           {run.sources.map(source => (
             <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
-              <span>{source.source} · {source.quality === 'official' ? '权威' : source.quality === 'academic' ? '论文' : source.quality === 'repository' ? '仓库' : '社区'}</span>
+              <span>{source.source} · {source.quality === 'official' ? '权威' : source.quality === 'academic' ? '论文' : source.quality === 'repository' ? '仓库' : '社区'} · {roleLabel[source.role]}</span>
               <strong>{source.title}</strong>
               {source.snippet && <small>{source.snippet}</small>}
+              {source.reason && <em>{source.reason}</em>}
             </a>
           ))}
         </div>

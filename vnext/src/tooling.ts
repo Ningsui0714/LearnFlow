@@ -6,6 +6,8 @@ export type SearchSource = {
   snippet: string
   source: string
   quality: 'official' | 'academic' | 'community' | 'repository'
+  role: 'standard' | 'reference' | 'textbook' | 'course' | 'definition' | 'research' | 'example' | 'discussion'
+  reason: string
 }
 
 export type VisualStep = {

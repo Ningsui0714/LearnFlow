@@ -126,9 +126,9 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 
 ### vNext Chat 的工具与选中追问原型
 
-独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 以官方资料优先并把网页内容视为不可信输入；`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
+独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
-Contract impact：注册表版本提升到 `2026-08-25.2`。新增 `vnext_chat` 工作台、三个 vNext 工具和三个零证据 Action Board capability；没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
+Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
 
 ### Learning Task 与双队列
 
