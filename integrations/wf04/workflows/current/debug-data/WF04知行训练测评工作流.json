@@ -1,0 +1,95 @@
+{
+  "schema_version": "ZHIXING_WF04_REQUEST.v1",
+  "request_id": "REQ-WF04-DEBUG-001",
+  "action": "generate_question",
+  "student_id": "STU-DEMO-001",
+  "project_id": "PROJ-JAVA-001",
+  "training_cycle_id": "CYCLE-JAVA-01",
+  "learning_task_id": "TASK-JAVA-01",
+  "task_instance_id": "TASK-INST-JAVA-01",
+  "knowledge_point": {
+    "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+    "knowledge_point_name": "封装与访问控制"
+  },
+  "requested_question_type": "short_answer",
+  "difficulty": "medium",
+  "question_role": "recommended",
+  "source_question_instance_id": "",
+  "learner_context": {
+    "mastery": 52,
+    "error_count": 2,
+    "recent_errors": [
+      "getter 直接返回内部数组引用，调用方可绕过校验修改数据"
+    ]
+  },
+  "task_contract": {
+    "assessment_mode": "formal",
+    "rubric": [
+      {
+        "criterion": "说明封装要求私有字段 + 公有方法",
+        "points": 1
+      },
+      {
+        "criterion": "说明 getter 应返回副本或只读视图",
+        "points": 1
+      },
+      {
+        "criterion": "说明 setter 应包含合法性校验（如 null/越界检查）",
+        "points": 1
+      }
+    ],
+    "validation_rules": {
+      "minimum_points": 2
+    }
+  },
+  "knowledge_context": {
+    "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+    "knowledge_point_name": "封装与访问控制",
+    "knowledge_type": "conceptual",
+    "definition": "private 字段、getter/setter、对外只读接口，防止外部直接篡改内部状态。",
+    "goal_connection": "成绩管理系统要求成绩数据只能经受控入口读写",
+    "learning_outcome": "能写出字段 private、getter 返回副本、setter 带校验的封装类",
+    "prerequisite_knowledge": [
+      "类的定义与对象创建"
+    ],
+    "goal_name": "六周掌握 Java 面向对象编程并完成成绩管理系统",
+    "target_outcome": "独立完成成绩管理系统的封装与访问控制部分",
+    "source_status": "verified",
+    "core_concepts": [
+      "封装",
+      "private",
+      "getter",
+      "setter",
+      "访问控制",
+      "只读视图"
+    ],
+    "knowledge_evidence": [
+      {
+        "title": "封装的本质：私有字段 + 公有方法",
+        "category": "concept",
+        "content": "封装要求将内部数据声明为 private，通过 public 的 getter/setter 方法提供受控访问。例如成绩数组 scores 应保持 private，外部通过 getScores() 获取副本、setScores() 校验后写入，避免外部直接修改内部状态导致数据不一致。"
+      },
+      {
+        "title": "封装常见错误",
+        "category": "warning",
+        "content": "错误一：getter 直接返回内部数组引用，调用方可绕过校验修改数据；错误二：把字段设为 public 图省事；错误三：setter 不做 null 校验导致统计口径混入无效数据。"
+      }
+    ],
+    "source_refs": [
+      {
+        "title": "《Java 核心技术·卷I》（原书第11版）Oracle Java 教程",
+        "source": "《Java 核心技术·卷I》",
+        "source_type": "textbook",
+        "document_id": "JAVA-CORE-04",
+        "locator": "第 4 节：封装与访问控制"
+      },
+      {
+        "title": "《Java 核心技术·卷I》（原书第11版）Oracle Java 教程",
+        "source": "《Java 核心技术·卷I》",
+        "source_type": "textbook",
+        "document_id": "JAVA-CORE-06",
+        "locator": "第 6 节：封装常见错误"
+      }
+    ]
+  }
+}

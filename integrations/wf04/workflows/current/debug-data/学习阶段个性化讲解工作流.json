@@ -1,0 +1,127 @@
+{
+    "student_id": "STU-WF-001",
+    "session_id": "SESSION-LEARN-001",
+    "context": {
+      "scene": "learn",
+      "event_type": "initialize_learning",
+      "learner_action": "first",
+      "learning_goal": {
+        "goal_id": "GOAL-JAVA-CERT",
+        "goal_name": "1+X Java 应用开发认证"
+      },
+      "current_knowledge_point": {
+        "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+        "knowledge_point_name": "封装与访问控制",
+        "knowledge_type": "conceptual",
+        "mastery": 42,
+        "weakness_evidence": "getter 直接返回内部数组引用"
+      },
+      "learning_path": {
+        "items": [
+          {
+            "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+            "knowledge_point_name": "封装与访问控制",
+            "status": "current"
+          },
+          {
+            "knowledge_point_id": "KN_JAVA_INHERITANCE",
+            "knowledge_point_name": "继承",
+            "status": "pending"
+          }
+        ]
+      },
+      "teaching_history": {
+        "events": []
+      },
+      "initial_assessment_context": {
+        "basis": "formal_initial_assessment",
+        "assessment_id": "ASSESS-INITIAL-001",
+        "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+        "coverage_status": "assessed",
+        "evidence": {
+          "evidence_status": "needs_support",
+          "mastery": 35,
+          "confidence": 0.55,
+          "source_event_ids": ["EVID-INITIAL-001"]
+        },
+        "performance": {
+          "correct_count": 0,
+          "incorrect_count": 1,
+          "skipped_count": 0
+        },
+        "presentation_requirements": [
+          "围绕初次测评暴露的薄弱点解释根因、边界和常见误区。"
+        ]
+      },
+      "teaching_contract": {
+        "teaching_contract_id": "TC-KN_JAVA_ENCAPSULATION-V1",
+        "contract_version": "teaching-contract-v1",
+        "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+        "required_scope": ["访问控制", "受控接口", "可变状态保护"],
+        "excluded_scope": ["继承重写的完整规则", "多态分派机制"],
+        "outcomes": [
+          {
+            "outcome_id": "OUT-KN_JAVA_ENCAPSULATION-01",
+            "statement": "说明封装为何要隐藏内部状态。",
+            "accepted_block_types": ["concept"]
+          },
+          {
+            "outcome_id": "OUT-KN_JAVA_ENCAPSULATION-02",
+            "statement": "为一个字段设计受控访问方法。",
+            "accepted_block_types": ["steps", "example", "workplace"]
+          },
+          {
+            "outcome_id": "OUT-KN_JAVA_ENCAPSULATION-03",
+            "statement": "识别 getter 直接泄露可变内部引用的问题。",
+            "accepted_block_types": ["warning", "pitfall", "check", "standard", "safety"]
+          }
+        ],
+        "immutable_facts": ["private 字段不能被类外代码直接访问。"]
+      },
+      "explanation_policy": {
+        "capability_pool": ["concept", "example", "steps", "warning", "check"],
+        "allowed_block_types": ["concept", "example", "steps", "warning", "check"],
+        "selection_rule": "优先覆盖必讲 outcome，再选择能补足当前缺失目标的区块。"
+      },
+      "web_evidence_pack": {
+        "status": "ready",
+        "evidence": [
+          {
+            "title": "Java Platform SE Documentation",
+            "source": "Oracle 官方文档",
+            "url": "https://docs.oracle.com/javase/",
+            "quote": "Encapsulation controls access to an object's state through its public operations."
+          }
+        ]
+      }
+    },
+    "strategy": {
+      "strategy_code": "concept_to_example",
+      "preferred_representation": "worked_example",
+      "explanation_depth": "guided",
+      "avoid_repeating_strategies": [
+        "analogy"
+      ],
+      "student_pace_hint": 0.9,
+      "misconception_tags": [
+        "封装边界混淆"
+      ]
+    },
+    "student_profile": {
+      "learning_style": "example_driven",
+      "learning_style_confidence": 0.82,
+      "effective_modes": {
+        "worked_example": 0.8,
+        "execution_trace": 0.67
+      },
+      "ineffective_modes": [
+        "analogy"
+      ],
+      "misconception_tags": [
+        "封装边界混淆"
+      ],
+      "pace_factor": 0.9,
+      "scaffold_preference": "moderate"
+    },
+    "kb_text": "【Java Platform SE Documentation】\nEncapsulation controls access to an object's state through its public operations.\n来源：Oracle 官方文档；URL：https://docs.oracle.com/javase/"
+}

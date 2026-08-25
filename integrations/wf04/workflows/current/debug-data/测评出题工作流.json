@@ -1,0 +1,18 @@
+{
+    "goal": "competition",
+    "student_id": "STU-WF-001",
+    "weak_points": [
+      {
+        "knowledge_point_id": "KN_JAVA_ENCAPSULATION",
+        "knowledge_point_name": "封装与访问控制",
+        "mastery": 52,
+        "error_count": 2
+      },
+      {
+        "knowledge_point_id": "KN_JAVA_POLYMORPHISM",
+        "knowledge_point_name": "多态",
+        "mastery": 42,
+        "error_count": 2
+      }
+    ]
+}
