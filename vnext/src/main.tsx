@@ -1,5 +1,13 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
+import {
+  isTutorMode,
+  requestTutorReply,
+  resolveTutorMode,
+  TUTOR_MODE_LABELS,
+  tutorConfigurationIssue,
+  type TutorMode,
+} from './tutor'
 import './styles.css'
 
 type Message = {
@@ -7,6 +15,7 @@ type Message = {
   role: 'assistant' | 'user' | 'system'
   content: string
   createdAt: number
+  tutorMode?: TutorMode
 }
 
 type Conversation = {
@@ -14,6 +23,7 @@ type Conversation = {
   title: string
   messages: Message[]
   updatedAt: number
+  mode: TutorMode
 }
 
 type WorkspaceTab = {
@@ -49,11 +59,13 @@ function createConversation(): Conversation {
     id: uid('chat'),
     title: '新对话',
     updatedAt: now,
+    mode: 'free',
     messages: [{
       id: uid('message'),
       role: 'assistant',
-      content: '这是一个干净的 vNext 对话。现在只验证 Chat 和工作区，不接入旧系统逻辑。',
+      content: '现在处于自由态。你可以直接讨论学习问题；遇到明确的解释请求时，我会把那一轮切到简单讲解态。',
       createdAt: now,
+      tutorMode: 'free',
     }],
   }
 }
@@ -86,11 +98,15 @@ function restoreState(): PersistedState {
   try {
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') as Partial<PersistedState> | null
     if (!value || !Array.isArray(value.conversations) || value.conversations.length === 0) return initialState()
-    const conversationIds = new Set(value.conversations.map(item => item.id))
+    const conversations = value.conversations.map(conversation => ({
+      ...conversation,
+      mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
+    }))
+    const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
       ? value.tabs.filter(tab => tab?.kind === 'settings' || (tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
-    const safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(value.conversations[0])]
+    const safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
     const activeTabId = safeTabs.some(tab => tab.id === value.activeTabId)
       ? String(value.activeTabId)
       : safeTabs[0].id
@@ -99,7 +115,7 @@ function restoreState(): PersistedState {
       ? String(value.splitTabId)
       : ''
     return {
-      conversations: value.conversations,
+      conversations,
       tabs: safeTabs,
       activeTabId,
       splitTabId,
@@ -128,6 +144,7 @@ function App() {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
+  const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -268,14 +285,64 @@ function App() {
       delete next[conversationId]
       return next
     })
+    setPendingTurns(previous => {
+      const next = { ...previous }
+      delete next[conversationId]
+      return next
+    })
     setPendingDelete(null)
   }
 
-  const sendMessage = (conversationId: string, event: FormEvent) => {
+  const setConversationMode = (conversationId: string, mode: TutorMode) => {
+    if (pendingTurns[conversationId]) return
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => (
+        conversation.id === conversationId ? { ...conversation, mode } : conversation
+      )),
+    }))
+  }
+
+  const finishTurn = (conversationId: string, mode: TutorMode, message: Omit<Message, 'id' | 'createdAt'>) => {
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => (
+        conversation.id === conversationId
+          ? {
+              ...conversation,
+              mode: 'free',
+              updatedAt: Date.now(),
+              messages: [
+                ...conversation.messages,
+                { ...message, id: uid('message'), createdAt: Date.now(), tutorMode: message.role === 'assistant' ? mode : undefined },
+              ],
+            }
+          : conversation
+      )),
+    }))
+    setPendingTurns(previous => {
+      const next = { ...previous }
+      delete next[conversationId]
+      return next
+    })
+  }
+
+  const sendMessage = async (conversationId: string, event: FormEvent) => {
     event.preventDefault()
     const content = (drafts[conversationId] || '').trim()
-    if (!content) return
+    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    if (!content || !conversation || pendingTurns[conversationId]) return
+
+    const mode = resolveTutorMode(conversation.mode, content)
     const now = Date.now()
+    const contextMessages = [
+      ...conversation.messages
+        .filter((message): message is Message & { role: 'assistant' | 'user' } => message.role !== 'system')
+        .map(message => ({ role: message.role, content: message.content })),
+      { role: 'user' as const, content },
+    ]
+
+    setPendingTurns(previous => ({ ...previous, [conversationId]: mode }))
     setWorkspace(previous => {
       const conversations = previous.conversations.map(conversation => {
         if (conversation.id !== conversationId) return conversation
@@ -284,15 +351,10 @@ function App() {
           ...conversation,
           title: firstStudentMessage ? content.slice(0, 22) : conversation.title,
           updatedAt: now,
+          mode,
           messages: [
             ...conversation.messages,
-            { id: uid('message'), role: 'user' as const, content, createdAt: now },
-            {
-              id: uid('message'),
-              role: 'system' as const,
-              content: 'Tutor 尚未接入。这条输入只保存在当前浏览器中，没有被发送到模型。',
-              createdAt: now + 1,
-            },
+            { id: uid('message'), role: 'user' as const, content, createdAt: now, tutorMode: mode },
           ],
         }
       })
@@ -302,6 +364,31 @@ function App() {
       return { ...previous, conversations, tabs }
     })
     setDrafts(previous => ({ ...previous, [conversationId]: '' }))
+
+    const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model, apiKey)
+    if (configurationIssue) {
+      finishTurn(conversationId, mode, {
+        role: 'system',
+        content: `本轮已识别为“${TUTOR_MODE_LABELS[mode]}”，但模型连接还不能使用：${configurationIssue}`,
+      })
+      return
+    }
+
+    try {
+      const reply = await requestTutorReply({
+        baseUrl: workspace.settings.baseUrl,
+        model: workspace.settings.model,
+        apiKey,
+        mode,
+        messages: contextMessages,
+      })
+      finishTurn(conversationId, mode, { role: 'assistant', content: reply })
+    } catch (error) {
+      finishTurn(conversationId, mode, {
+        role: 'system',
+        content: `“${TUTOR_MODE_LABELS[mode]}”请求失败：${error instanceof Error ? error.message : '未知错误'}`,
+      })
+    }
   }
 
   const updateSettings = (patch: Partial<SettingsState>) => {
@@ -317,10 +404,10 @@ function App() {
           <div className="settings-intro">
             <span className="eyebrow">SETTINGS</span>
             <h1>设置</h1>
-            <p>先只保留模型连接。没有隐藏的学习逻辑，也不读取旧项目配置。</p>
+            <p>自由态和简单讲解态共用这一条模型连接，不读取旧项目配置。</p>
           </div>
           <form className="settings-card" onSubmit={event => { event.preventDefault(); setSettingsSaved(true) }}>
-            <div className="settings-card-heading"><span>01</span><div><h2>模型连接</h2><p>这里只保存地址和模型名称。</p></div></div>
+            <div className="settings-card-heading"><span>01</span><div><h2>模型连接</h2><p>支持 OpenAI 兼容的 Chat Completions 或 Responses 地址。</p></div></div>
             <label>
               <span>Base URL</span>
               <input value={workspace.settings.baseUrl} onChange={event => updateSettings({ baseUrl: event.target.value })} placeholder="https://api.example.com/v1" />
@@ -332,7 +419,7 @@ function App() {
             <label>
               <span>API Key</span>
               <input type="password" value={apiKey} onChange={event => { setApiKey(event.target.value); setSettingsSaved(false) }} placeholder="仅保留在当前页面内存" autoComplete="off" />
-              <small>不会写入 localStorage，刷新页面后自动清空。</small>
+              <small>请求会由浏览器直接发往 Base URL；Key 不写入 localStorage，刷新后自动清空。无需鉴权的本地模型可留空。</small>
             </label>
             <div className="settings-actions">
               <button type="submit">保存界面配置</button>
@@ -345,17 +432,36 @@ function App() {
 
     const conversation = workspace.conversations.find(item => item.id === tab.conversationId)
     if (!conversation) return null
+    const pendingMode = pendingTurns[conversation.id]
+    const visibleMode = pendingMode || conversation.mode
     return (
       <section className="chat-page">
         <header className="chat-heading">
           <div><span className="eyebrow">CONVERSATION</span><h1>{conversation.title}</h1></div>
-          <span className="local-label">仅本地</span>
+          <div className="chat-state-stack">
+            <span className={`mode-badge mode-badge-${visibleMode}`}>{TUTOR_MODE_LABELS[visibleMode]}</span>
+            <span className="local-label">{workspace.settings.model || '待配置模型'}</span>
+          </div>
         </header>
         <MessageList messages={conversation.messages} />
         <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
+          <div className="mode-picker" aria-label="选择 Tutor 状态">
+            <div><span>NEXT TURN</span><strong>本轮方式</strong></div>
+            <div className="mode-options">
+              <button type="button" aria-pressed={conversation.mode === 'free'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
+              <button type="button" aria-pressed={conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
+            </div>
+          </div>
+          <p className="mode-hint">
+            {conversation.mode === 'simple_explain'
+              ? '下一轮先解释，再给最小例子和一个自检问题；完成后回到自由态。'
+              : '开放讨论；识别到“什么是 / 讲讲 / 解释”等请求时，本轮会自动转为简单讲解。'}
+          </p>
+          {pendingMode && <div className="turn-progress" role="status"><i /> {TUTOR_MODE_LABELS[pendingMode]}正在组织回复…</div>}
           <textarea
             value={drafts[conversation.id] || ''}
             onChange={event => setDrafts(previous => ({ ...previous, [conversation.id]: event.target.value }))}
+            disabled={Boolean(pendingMode)}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
@@ -365,7 +471,7 @@ function App() {
             placeholder="先写下你希望 Tutor 回应的问题…"
             rows={3}
           />
-          <div className="composer-footer"><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={!(drafts[conversation.id] || '').trim()}>发送 ↑</button></div>
+          <div className="composer-footer"><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={Boolean(pendingMode) || !(drafts[conversation.id] || '').trim()}>{pendingMode ? '回复中…' : '发送 ↑'}</button></div>
         </form>
       </section>
     )
@@ -474,7 +580,13 @@ function MessageList({ messages }: { messages: Message[] }) {
         {visibleMessages.map(message => (
           <article key={message.id} className={`message message-${message.role}`}>
             {message.role !== 'user' && <span className="message-avatar">{message.role === 'assistant' ? '✦' : 'i'}</span>}
-            <div><small>{message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'}</small><p>{message.content}</p></div>
+            <div>
+              <small>
+                {message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'}
+                {message.tutorMode && <em>{TUTOR_MODE_LABELS[message.tutorMode]}</em>}
+              </small>
+              <p>{message.content}</p>
+            </div>
           </article>
         ))}
         <div ref={endRef} />
@@ -483,4 +595,8 @@ function MessageList({ messages }: { messages: Message[] }) {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<App />)
+const rootElement = document.getElementById('root')!
+const rootScope = globalThis as typeof globalThis & { __learnflowVNextRoot?: Root }
+const root = rootScope.__learnflowVNextRoot || createRoot(rootElement)
+rootScope.__learnflowVNextRoot = root
+root.render(<App />)
