@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.4"
+REGISTRY_VERSION = "2026-08-25.5"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -539,6 +539,8 @@ EVENTS = {
         _event("vnext_learning_task_created", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
         _event("vnext_learning_task_started", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
         _event("vnext_learning_task_phase_entered", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_skill_step_entered", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
+        _event("vnext_learning_skill_looped", "run_vnext_learning_task", (), "local_support_signal", origin="vnext"),
         _event("vnext_learning_task_learner_replied", "run_vnext_learning_task", (), "local_interaction", origin="vnext"),
         _event("vnext_learning_support_requested", "run_vnext_learning_task", (), "local_support_signal", origin="vnext"),
         _event("vnext_learning_skill_selected", "run_vnext_learning_task", (), "local_operational", origin="vnext"),

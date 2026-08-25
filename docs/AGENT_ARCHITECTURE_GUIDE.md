@@ -329,10 +329,13 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
 完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
 
-`vnext/` 的重构原型在尚未接入后端任务与 Attempt 前，只能把四个环节投影为 Conversation 内的
-教学活动位置。学生点击“下一步”可以追加零 target 的 `vnext_learning_task_phase_entered`，但
-MUST NOT 发出正式 `learning_task_phase_completed`、表示上一环节达标或升级掌握。接入后端后，
-`practice / verify / consolidate` 的正式完成仍必须由下述证据投影裁决，不能沿用浏览器导航。
+`vnext/` 的重构原型在尚未接入后端任务与 Attempt 前，Learning Task 只保存目标、暂停点和本地
+事件；每个 Learning Skill 自己定义步骤、循环和支架。学生点击 Skill 下一动作可以追加零 target
+的 `vnext_learning_skill_step_entered`，请求支架或“再来一轮”追加
+`vnext_learning_skill_looped`，但两者 MUST NOT 发出正式 `learning_task_phase_completed`、表示
+前一步达标或升级掌握。旧 `vnext_learning_task_phase_entered` 只用于兼容 v0.5 浏览器存储。
+接入后端后，正式 `practice / verify / consolidate` 完成仍必须由下述证据投影裁决，不能沿用
+浏览器中的 Skill 导航。
 
 Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：
 `learn` 需要 Skill 完成、材料查看或学习者明确确认互动结束，`practice` 需要真实 Attempt，

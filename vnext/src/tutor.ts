@@ -52,7 +52,7 @@ function systemPrompt(mode: TutorMode) {
   }
 
   if (mode === 'guided_learning') {
-    return `${common}\n\n当前状态：带领学习态。\n你正在同一段对话内带领一个原子学习任务。任务阶段和 Skill 由本地确定性流程提供；你只能完成当前教学动作，不能自行推进阶段、完成任务、评分或宣布掌握。每轮先回应学生刚才的真实问题，再自然地给出一个当前阶段最有价值的下一动作。若学生说不知道、没懂或要求提示，先补足支架并留在当前动作，不把它冒充有效尝试。保持正常对话感，不要输出内部事件、状态机或冗长流程公告。`
+    return `${common}\n\n当前状态：带领学习态。\n你正在同一段对话内带领一个原子学习任务。学习任务只提供目标和暂停点，当前 Skill 自己的步骤与循环由本地确定性流程提供；你只能完成当前教学动作，不能自行推进步骤、切换 Skill、完成任务、评分或宣布掌握。每轮先回应学生刚才的真实问题，再自然落实当前 Skill 动作。若学生说不知道、没懂或要求提示，按当前 Skill 的循环支架继续同一步，不把它冒充有效尝试。保持正常对话感，不要输出内部事件、状态机或冗长流程公告。`
   }
 
   return `${common}\n\n当前状态：自由态。\n自然回应学生当前意图，可以讨论、澄清、共同规划或回答短问题。只有在缺少关键信息时才追问，不擅自创建学习任务，不宣称学生已经掌握。`
@@ -166,11 +166,12 @@ export function buildTutorProviderRequest(options: {
       ? [
           '当前原子学习任务（本地运行投影，只读）：',
           `目标：${options.learningTaskContext.objective}`,
-          `阶段：${options.learningTaskContext.phaseIndex + 1}/${options.learningTaskContext.phaseCount} ${options.learningTaskContext.phaseTitle}`,
-          `本阶段要求：${options.learningTaskContext.phaseInstruction}`,
           `当前 Skill：${options.learningTaskContext.skillName}`,
-          `Skill 要求：${options.learningTaskContext.skillInstruction}`,
-          '请把这些约束自然地落实在回复中，不要逐项复述。阶段变化只能由界面动作和事件队列决定。',
+          `Skill 步骤：${options.learningTaskContext.stepIndex + 1}/${options.learningTaskContext.stepCount} ${options.learningTaskContext.stepTitle}`,
+          `本步编排：${options.learningTaskContext.stepInstruction}`,
+          `本步已循环：${options.learningTaskContext.loopCount} 次。${options.learningTaskContext.loopCount > 0 ? `本轮支架要求：${options.learningTaskContext.loopInstruction}` : ''}`,
+          `完成本步后的界面动作：${options.learningTaskContext.nextAction}`,
+          '请把这些约束自然地落实在回复中，不要逐项复述。步骤变化和循环只能由界面动作与事件队列决定。',
         ].join('\n')
       : '',
     options.selectionContext

@@ -95,6 +95,7 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
         for event_id in {
             "vnext_learning_task_created", "vnext_learning_task_started",
             "vnext_learning_task_phase_entered",
+            "vnext_learning_skill_step_entered", "vnext_learning_skill_looped",
             "vnext_learning_task_learner_replied", "vnext_learning_support_requested",
             "vnext_learning_skill_selected", "vnext_learning_task_paused",
             "vnext_learning_task_resumed", "vnext_learning_task_completed",

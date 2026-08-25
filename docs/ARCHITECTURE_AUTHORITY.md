@@ -131,16 +131,17 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
 
 vNext 现在还通过 `vnext_learning_task_runtime` 在同一 Chat 中运行最小原子学习任务。明确请求或
-手动选择进入 `guided_learning`，四个粗阶段和四种已登记 Skill 都由浏览器本地追加式事件队列
-投影；模型只收到有界只读上下文。普通回复不切换活动段，“不知道/要提示”只追加支架事件，
-暂停、恢复、Skill 切换与流程完成也均为零 Kernel target。这个原型不写后端 `EvidenceEvent`、
-不创建正式 Attempt，也不声明掌握；后续接入正式验证时仍必须走既有 Learning Task 与
-`LearningAttempt -> EvidenceEvent -> reducer` 契约。
+手动选择进入 `guided_learning`；任务只提供目标、暂停点和本地事件锚点，四种已登记 Skill 各自
+拥有不同的确定性步骤与循环。模型只收到当前 Skill 步骤的有界只读上下文。普通回复不切换
+步骤，“不知道/要提示”会追加支架和 Skill 循环事件，暂停、恢复、Skill 切换与流程完成也均为
+零 Kernel target。这个原型不写后端 `EvidenceEvent`、不创建正式 Attempt，也不声明掌握；后续
+接入正式验证时仍必须走既有 Learning Task 与 `LearningAttempt -> EvidenceEvent -> reducer` 契约。
 
-Contract impact：注册表版本提升到 `2026-08-25.4`，新增 vNext 专用零写入工具、一个 Action
-Board capability 和九个零 target 本地运行事件。vNext 的 `phase_entered` 只表达学生导航，
-不会发出正式 `learning_task_phase_completed`。既有三 Agent、五核、后端 LearningTask API、
-Skill 稳定 ID 和模型 API 均保持兼容；旧浏览器存储缺少任务字段时自动迁移为空队列。
+Contract impact：注册表版本提升到 `2026-08-25.5`，新增零 target 的
+`vnext_learning_skill_step_entered` 与 `vnext_learning_skill_looped`。旧的
+`vnext_learning_task_phase_entered` 保留为只读兼容事件，v0.5 浏览器任务会确定性映射到当前
+Skill 的近似步骤；新任务不再写通用四阶段事件。既有三 Agent、五核、后端 LearningTask API、
+Skill 稳定 ID 和模型 API 均保持兼容。
 
 ### Learning Task 与双队列
 

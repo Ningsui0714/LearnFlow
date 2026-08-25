@@ -11,16 +11,19 @@ import {
 } from './tutor'
 import {
   activeLearningTaskProjection,
-  advanceLearningPhase,
+  advanceLearningSkillStep,
   appendLearningEvents,
+  canAdvanceLearningSkillStep,
   createLearningTask,
+  currentLearningSkillStep,
   isSupportRequest,
   latestLearningTaskProjection,
-  LEARNING_PHASES,
   LEARNING_SKILLS,
   learningTaskTutorContext,
-  nextLearningPhase,
+  loopLearningSkillStep,
+  nextLearningSkillStep,
   projectLearningTask,
+  switchLearningSkill,
   type LearningEvent,
   type LearningSkillId,
   type LearningTask,
@@ -534,7 +537,7 @@ function App() {
   const runTutorTurn = async (
     conversationId: string,
     rawContent: string,
-    options: { advancePhase?: boolean; learningActionLabel?: string } = {},
+    options: { advanceStep?: boolean; repeatStep?: boolean; learningActionLabel?: string } = {},
   ) => {
     const conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) return
@@ -556,21 +559,36 @@ function App() {
         learningEvents = created.events
         learningProjection = projectLearningTask(created.task, learningEvents)
       }
-      if (options.advancePhase && learningProjection) {
-        learningEvents = advanceLearningPhase(learningEvents, learningProjection, now + 8)
+      if (options.advanceStep && learningProjection) {
+        learningEvents = advanceLearningSkillStep(learningEvents, learningProjection, now + 8)
+        learningProjection = projectLearningTask(learningProjection.task, learningEvents)
+      }
+      if (options.repeatStep && learningProjection) {
+        learningEvents = loopLearningSkillStep(learningEvents, learningProjection, '学生选择再来一轮', now + 8)
         learningProjection = projectLearningTask(learningProjection.task, learningEvents)
       }
       if (learningProjection && !options.learningActionLabel) {
+        const step = currentLearningSkillStep(learningProjection)
         const additions: Array<Omit<LearningEvent, 'id' | 'sequence' | 'taskId' | 'at'>> = [{
           type: 'vnext_learning_task_learner_replied',
           detail: `学生回应：${content.slice(0, 80)}`,
-          phase: learningProjection.phase,
+          skillId: learningProjection.skillId,
+          stepId: step.id,
         }]
-        if (isSupportRequest(content)) additions.push({
-          type: 'vnext_learning_support_requested',
-          detail: '学生需要补充支架，本轮不自动推进',
-          phase: learningProjection.phase,
-        })
+        if (isSupportRequest(content)) additions.push(
+          {
+            type: 'vnext_learning_support_requested',
+            detail: '学生需要补充支架，本轮不自动推进',
+            skillId: learningProjection.skillId,
+            stepId: step.id,
+          },
+          {
+            type: 'vnext_learning_skill_looped',
+            detail: `补充支架并重做：${step.title}`,
+            skillId: learningProjection.skillId,
+            stepId: step.id,
+          },
+        )
         learningEvents = appendLearningEvents(learningEvents, learningProjection.task.id, additions, now + 16)
         learningProjection = projectLearningTask(learningProjection.task, learningEvents)
       }
@@ -661,21 +679,19 @@ function App() {
         if (conversation.id !== conversationId) return conversation
         const projection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
         if (!projection || projection.status === 'completed') return conversation
-        const event = action === 'pause'
-          ? { type: 'vnext_learning_task_paused' as const, detail: '暂停学习任务', phase: projection.phase }
-          : action === 'resume'
-            ? { type: 'vnext_learning_task_resumed' as const, detail: '恢复学习任务', phase: projection.phase }
-            : action === 'complete'
-              ? { type: 'vnext_learning_task_completed' as const, detail: '完成任务流程；不代表掌握', phase: projection.phase }
-              : {
-                  type: 'vnext_learning_skill_selected' as const,
-                  detail: `切换为${LEARNING_SKILLS[skillId || projection.skillId].name}`,
-                  skillId: skillId || projection.skillId,
-                  phase: projection.phase,
-                }
-        const learningEvents = appendLearningEvents(
-          conversation.learningEvents, projection.task.id, [event], Date.now(),
-        )
+        let learningEvents = conversation.learningEvents
+        if (action === 'skill') {
+          learningEvents = switchLearningSkill(
+            learningEvents, projection, skillId || projection.skillId, Date.now(),
+          )
+        } else {
+          const event = action === 'pause'
+            ? { type: 'vnext_learning_task_paused' as const, detail: '暂停学习任务' }
+            : action === 'resume'
+              ? { type: 'vnext_learning_task_resumed' as const, detail: '恢复学习任务' }
+              : { type: 'vnext_learning_task_completed' as const, detail: '完成任务流程；不代表掌握' }
+          learningEvents = appendLearningEvents(learningEvents, projection.task.id, [event], Date.now())
+        }
         return {
           ...conversation,
           learningEvents,
@@ -687,12 +703,20 @@ function App() {
   }
 
   const advanceTaskAndContinue = async (conversation: Conversation, projection: LearningTaskProjection) => {
-    const next = nextLearningPhase(projection.phase)
-    if (!next || pendingTurns[conversation.id]) return
-    const phase = LEARNING_PHASES.find(item => item.id === next)!
-    await runTutorTurn(conversation.id, `继续当前学习任务，进入${phase.title}。`, {
-      advancePhase: true,
-      learningActionLabel: `进入${phase.title}`,
+    const next = nextLearningSkillStep(projection)
+    if (!next || !canAdvanceLearningSkillStep(projection) || pendingTurns[conversation.id]) return
+    await runTutorTurn(conversation.id, `继续当前学习任务，进入“${next.title}”。`, {
+      advanceStep: true,
+      learningActionLabel: `进入${next.title}`,
+    })
+  }
+
+  const repeatTaskStep = async (conversation: Conversation, projection: LearningTaskProjection) => {
+    if (pendingTurns[conversation.id]) return
+    const step = currentLearningSkillStep(projection)
+    await runTutorTurn(conversation.id, `换一种支架，再完成一轮“${step.title}”。`, {
+      repeatStep: true,
+      learningActionLabel: `再来一轮 · ${step.shortTitle}`,
     })
   }
 
@@ -747,6 +771,9 @@ function App() {
     const pendingMode = pendingTurns[conversation.id]
     const taskProjection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
     const activeTaskProjection = activeLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    const taskSkill = taskProjection ? LEARNING_SKILLS[taskProjection.skillId] : undefined
+    const taskStep = taskProjection ? currentLearningSkillStep(taskProjection) : undefined
+    const taskCanAdvance = taskProjection ? canAdvanceLearningSkillStep(taskProjection) : false
     const visibleMode = pendingMode || (activeTaskProjection ? 'guided_learning' : conversation.mode)
     const sheet = activeSheet(conversation)
     const sheetId = conversation.activeSheetId
@@ -938,60 +965,89 @@ function App() {
         <div className="composer-dock">
           <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
             {taskProjection && taskProjection.status !== 'completed' && (
-              <section className={`learning-task-strip learning-task-strip-${taskProjection.status}`} aria-label="当前学习任务">
-                <div className="learning-task-summary">
-                  <span className="learning-task-mark">◎</span>
-                  <div>
-                    <span>{taskProjection.status === 'paused' ? '学习任务已暂停' : '当前学习任务 · 就在这段对话中'}</span>
-                    <strong>{taskProjection.task.objective}</strong>
-                  </div>
-                  <details className="learning-event-queue">
-                    <summary>记录 {taskProjection.eventCount}</summary>
-                    <div>
-                      {conversation.learningEvents
-                        .filter(item => item.taskId === taskProjection.task.id)
-                        .slice(-6)
-                        .reverse()
-                        .map(item => <span key={item.id}><i>{item.sequence}</i>{item.detail}</span>)}
-                    </div>
-                  </details>
+              <section className={`learning-task-anchor learning-task-anchor-${taskProjection.status}`} aria-label="当前学习任务">
+                <span className="learning-task-mark">◎</span>
+                <div className="learning-task-anchor-main">
+                  <strong>{taskProjection.task.objective}</strong>
+                  <span>
+                    {taskProjection.status === 'paused' ? '已暂停 · ' : ''}{taskSkill?.name} · {taskStep?.title}
+                    {taskProjection.loopCount > 0 ? ` · 本步第 ${taskProjection.loopCount + 1} 轮` : ''}
+                  </span>
                 </div>
-                <div className="learning-task-progress" aria-label={`学习任务进度：${LEARNING_PHASES[taskProjection.phaseIndex].title}`}>
-                  {LEARNING_PHASES.map((phase, index) => (
-                    <span
-                      key={phase.id}
-                      className={index < taskProjection.phaseIndex ? 'phase-done' : index === taskProjection.phaseIndex ? 'phase-current' : ''}
-                    ><i />{phase.shortTitle}</span>
+                <div className="learning-skill-dots" aria-label={`${taskSkill?.name}：第 ${taskProjection.stepIndex + 1}/${taskSkill?.steps.length} 步`}>
+                  {taskSkill?.steps.map((step, index) => (
+                    <i key={step.id} className={index < taskProjection.stepIndex ? 'done' : index === taskProjection.stepIndex ? 'current' : ''} />
                   ))}
                 </div>
-                <div className="learning-task-controls">
-                  <label>
-                    <span>学习方法</span>
-                    <select
-                      value={taskProjection.skillId}
-                      disabled={Boolean(pendingMode) || taskProjection.status === 'paused'}
-                      onChange={event => updateLearningTask(conversation.id, 'skill', event.target.value as LearningSkillId)}
-                    >
-                      {(Object.keys(LEARNING_SKILLS) as LearningSkillId[]).map(skillId => (
-                        <option key={skillId} value={skillId}>{LEARNING_SKILLS[skillId].name}</option>
+                {taskProjection.status === 'paused' ? (
+                  <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'resume')}>继续</button>
+                ) : nextLearningSkillStep(taskProjection) ? (
+                  <button
+                    type="button"
+                    className="learning-primary-action"
+                    title={taskCanAdvance ? taskStep?.nextAction : '先在对话中完成当前动作'}
+                    onClick={() => advanceTaskAndContinue(conversation, taskProjection)}
+                    disabled={Boolean(pendingMode) || !taskCanAdvance}
+                  >
+                    {taskCanAdvance ? taskStep?.nextAction : '等待回答'}
+                  </button>
+                ) : (
+                  <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'complete')} disabled={Boolean(pendingMode) || !taskCanAdvance}>完成本轮</button>
+                )}
+                <details className="learning-task-menu">
+                  <summary role="button" aria-label="学习任务选项">•••</summary>
+                  <div className="learning-task-popover">
+                    <header><strong>{taskSkill?.name}</strong><span>{taskSkill?.description}</span></header>
+                    <ol>
+                      {taskSkill?.steps.map((step, index) => (
+                        <li key={step.id} className={index === taskProjection.stepIndex ? 'current' : index < taskProjection.stepIndex ? 'done' : ''}>
+                          <i>{index + 1}</i><span>{step.title}</span>
+                        </li>
                       ))}
-                    </select>
-                  </label>
-                  <span className="learning-skill-description">{LEARNING_SKILLS[taskProjection.skillId].description}</span>
-                  <div>
-                    {taskProjection.status === 'paused' ? (
-                      <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'resume')}>继续任务</button>
-                    ) : taskProjection.phase === 'consolidate' ? (
-                      <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'complete')}>完成流程</button>
-                    ) : (
-                      <button type="button" className="learning-primary-action" onClick={() => advanceTaskAndContinue(conversation, taskProjection)} disabled={Boolean(pendingMode)}>
-                        下一步 · {LEARNING_PHASES[taskProjection.phaseIndex + 1].shortTitle}
-                      </button>
-                    )}
-                    {taskProjection.status === 'active' && <button type="button" onClick={() => updateLearningTask(conversation.id, 'pause')} disabled={Boolean(pendingMode)}>暂停</button>}
-                    {taskProjection.phase !== 'consolidate' && <button type="button" onClick={() => updateLearningTask(conversation.id, 'complete')} disabled={Boolean(pendingMode)}>结束</button>}
+                    </ol>
+                    <label>
+                      <span>切换学习方法</span>
+                      <select
+                        value={taskProjection.skillId}
+                        disabled={Boolean(pendingMode) || taskProjection.status === 'paused'}
+                        onChange={event => {
+                          updateLearningTask(conversation.id, 'skill', event.target.value as LearningSkillId)
+                          event.currentTarget.closest('details')?.removeAttribute('open')
+                        }}
+                      >
+                        {(Object.keys(LEARNING_SKILLS) as LearningSkillId[]).map(skillId => (
+                          <option key={skillId} value={skillId}>{LEARNING_SKILLS[skillId].name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="learning-task-menu-actions">
+                      {taskProjection.status === 'active' && taskStep?.canLoop && (
+                        <button type="button" onClick={event => {
+                          event.currentTarget.closest('details')?.removeAttribute('open')
+                          repeatTaskStep(conversation, taskProjection)
+                        }} disabled={Boolean(pendingMode)}>再来一轮</button>
+                      )}
+                      {taskProjection.status === 'active' && <button type="button" onClick={event => {
+                        event.currentTarget.closest('details')?.removeAttribute('open')
+                        updateLearningTask(conversation.id, 'pause')
+                      }} disabled={Boolean(pendingMode)}>暂停</button>}
+                      <button type="button" onClick={event => {
+                        event.currentTarget.closest('details')?.removeAttribute('open')
+                        updateLearningTask(conversation.id, 'complete')
+                      }} disabled={Boolean(pendingMode)}>结束任务</button>
+                    </div>
+                    <details className="learning-event-queue">
+                      <summary>运行记录 {taskProjection.eventCount}</summary>
+                      <div>
+                        {conversation.learningEvents
+                          .filter(item => item.taskId === taskProjection.task.id)
+                          .slice(-6)
+                          .reverse()
+                          .map(item => <span key={item.id}><i>{item.sequence}</i>{item.detail}</span>)}
+                      </div>
+                    </details>
                   </div>
-                </div>
+                </details>
               </section>
             )}
             {pendingMode && <div className="turn-progress" role="status"><i /> 正在判断工具并由{TUTOR_MODE_LABELS[pendingMode]}组织回复…</div>}
