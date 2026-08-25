@@ -47,6 +47,8 @@ LearnFlow 是一个持续陪伴学生学习的对话空间。
 
 模型请求固定经过本地 `/api/tutor`。API Key 不进入页面、不写 `localStorage`，修改 `.env.local` 后重启服务生效。
 
+对话正文按 Markdown、GFM 和 LaTeX 数学公式渲染；原始 HTML 不执行。
+
 ## 现在明确不做
 
 - 不创建学习任务。

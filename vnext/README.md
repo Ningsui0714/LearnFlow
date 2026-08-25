@@ -20,6 +20,7 @@ npm run dev
 - 对话和工作区仅保存在浏览器 `localStorage`。
 - API Key 只保存在被 Git 忽略的 `vnext/.env.local`，页面不会读取或返回 Key。
 - 模型请求经过本地 `/api/tutor` 代理；支持 Chat Completions 和 Responses endpoint，不要求供应商开放浏览器 CORS。
+- 对话内容支持安全的 Markdown、GFM 和 KaTeX 数学公式渲染，不执行模型返回的原始 HTML。
 - 修改 `.env.local` 后需要重启 vNext 服务。
 - 没有配置或调用失败时显示真实原因，不生成占位答案。
 - 这个目录不读取或写入旧 LearnFlow 的数据库、五核或学习记录。

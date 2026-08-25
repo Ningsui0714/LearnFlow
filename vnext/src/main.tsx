@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   isTutorMode,
@@ -49,6 +49,7 @@ type PersistedState = {
 
 const STORAGE_KEY = 'learnflow.vnext.workspace.v1'
 const SETTINGS_TAB: WorkspaceTab = { id: 'settings', kind: 'settings', title: '设置' }
+const MarkdownContent = lazy(() => import('./MarkdownContent'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -452,42 +453,41 @@ function App() {
     return (
       <section className="chat-page">
         <header className="chat-heading">
-          <div><span className="eyebrow">CONVERSATION</span><h1>{conversation.title}</h1></div>
+          <h1>{conversation.title}</h1>
           <div className="chat-state-stack">
             <span className={`mode-badge mode-badge-${visibleMode}`}>{TUTOR_MODE_LABELS[visibleMode]}</span>
             <span className="local-label">{workspace.settings.model || '待配置模型'}</span>
           </div>
         </header>
         <MessageList messages={conversation.messages} />
-        <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
-          <div className="mode-picker" aria-label="选择 Tutor 状态">
-            <div><span>NEXT TURN</span><strong>本轮方式</strong></div>
-            <div className="mode-options">
-              <button type="button" aria-pressed={conversation.mode === 'free'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
-              <button type="button" aria-pressed={conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
+        <div className="composer-dock">
+          <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
+            {pendingMode && <div className="turn-progress" role="status"><i /> {TUTOR_MODE_LABELS[pendingMode]}正在组织回复…</div>}
+            <textarea
+              value={drafts[conversation.id] || ''}
+              onChange={event => setDrafts(previous => ({ ...previous, [conversation.id]: event.target.value }))}
+              disabled={Boolean(pendingMode)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+              placeholder="发送消息…"
+              rows={2}
+            />
+            <div className="composer-footer">
+              <div className="composer-tools">
+                <div className="mode-options" aria-label="选择 Tutor 状态">
+                  <button type="button" title="自由讨论；解释请求仍可自动进入简单讲解" aria-pressed={conversation.mode === 'free'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
+                  <button type="button" title="下一轮使用简单讲解，完成后回到自由态" aria-pressed={conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
+                </div>
+                <span>Shift + Enter 换行</span>
+              </div>
+              <button type="submit" disabled={Boolean(pendingMode) || !(drafts[conversation.id] || '').trim()} aria-label={pendingMode ? 'Tutor 回复中' : '发送消息'}>{pendingMode ? '…' : '↑'}</button>
             </div>
-          </div>
-          <p className="mode-hint">
-            {conversation.mode === 'simple_explain'
-              ? '下一轮先解释，再给最小例子和一个自检问题；完成后回到自由态。'
-              : '开放讨论；识别到“什么是 / 讲讲 / 解释”等请求时，本轮会自动转为简单讲解。'}
-          </p>
-          {pendingMode && <div className="turn-progress" role="status"><i /> {TUTOR_MODE_LABELS[pendingMode]}正在组织回复…</div>}
-          <textarea
-            value={drafts[conversation.id] || ''}
-            onChange={event => setDrafts(previous => ({ ...previous, [conversation.id]: event.target.value }))}
-            disabled={Boolean(pendingMode)}
-            onKeyDown={event => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                event.currentTarget.form?.requestSubmit()
-              }
-            }}
-            placeholder="先写下你希望 Tutor 回应的问题…"
-            rows={3}
-          />
-          <div className="composer-footer"><span>Enter 发送 · Shift + Enter 换行</span><button type="submit" disabled={Boolean(pendingMode) || !(drafts[conversation.id] || '').trim()}>{pendingMode ? '回复中…' : '发送 ↑'}</button></div>
-        </form>
+          </form>
+        </div>
       </section>
     )
   }
@@ -595,12 +595,14 @@ function MessageList({ messages }: { messages: Message[] }) {
         {visibleMessages.map(message => (
           <article key={message.id} className={`message message-${message.role}`}>
             {message.role !== 'user' && <span className="message-avatar">{message.role === 'assistant' ? '✦' : 'i'}</span>}
-            <div>
-              <small>
+            <div className="message-content">
+              <div className="message-meta">
                 {message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'}
                 {message.tutorMode && <em>{TUTOR_MODE_LABELS[message.tutorMode]}</em>}
-              </small>
-              <p>{message.content}</p>
+              </div>
+              <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>
+                <MarkdownContent content={message.content} />
+              </Suspense>
             </div>
           </article>
         ))}
