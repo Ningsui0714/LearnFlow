@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import {
   isTutorMode,
@@ -34,6 +34,18 @@ type FollowUpSheet = {
   parentSheetId: string
   messages: Message[]
   createdAt: number
+}
+
+type PendingSheetDelete = {
+  conversationId: string
+  sheetId: string
+  title: string
+  childCount: number
+}
+
+type PaperDeskView = {
+  conversationId: string
+  mode: 'overview' | 'tree'
 }
 
 type Conversation = {
@@ -211,7 +223,8 @@ function App() {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
-  const [paperOverviewId, setPaperOverviewId] = useState('')
+  const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
+  const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
 
@@ -243,22 +256,25 @@ function App() {
   }, [activeTab])
 
   useEffect(() => {
-    if (!pendingDelete) return
+    if (!pendingDelete && !pendingSheetDelete) return
     const cancelOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPendingDelete(null)
+      if (event.key === 'Escape') {
+        setPendingDelete(null)
+        setPendingSheetDelete(null)
+      }
     }
     window.addEventListener('keydown', cancelOnEscape)
     return () => window.removeEventListener('keydown', cancelOnEscape)
-  }, [pendingDelete])
+  }, [pendingDelete, pendingSheetDelete])
 
   useEffect(() => {
-    if (!paperOverviewId) return
+    if (!paperDeskView) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPaperOverviewId('')
+      if (event.key === 'Escape') setPaperDeskView(null)
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [paperOverviewId])
+  }, [paperDeskView])
 
   const openTab = (next: WorkspaceTab) => {
     setWorkspace(previous => {
@@ -375,7 +391,48 @@ function App() {
       delete next[conversationId]
       return next
     })
+    setPaperDeskView(current => current?.conversationId === conversationId ? null : current)
     setPendingDelete(null)
+  }
+
+  const requestSheetDelete = (conversation: Conversation, sheetId: string) => {
+    if (sheetId === 'main' || pendingTurns[conversation.id]) return
+    const sheet = conversation.sheets.find(item => item.id === sheetId)
+    if (!sheet) return
+    setPendingSheetDelete({
+      conversationId: conversation.id,
+      sheetId,
+      title: sheet.title,
+      childCount: conversation.sheets.filter(item => item.parentSheetId === sheetId).length,
+    })
+  }
+
+  const deleteSheet = (conversationId: string, sheetId: string) => {
+    if (sheetId === 'main') return
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => {
+        if (conversation.id !== conversationId) return conversation
+        const target = conversation.sheets.find(sheet => sheet.id === sheetId)
+        if (!target) return conversation
+        const parentSheetId = target.parentSheetId === 'main'
+          || conversation.sheets.some(sheet => sheet.id === target.parentSheetId && sheet.id !== sheetId)
+          ? target.parentSheetId
+          : 'main'
+        return {
+          ...conversation,
+          activeSheetId: conversation.activeSheetId === sheetId ? parentSheetId : conversation.activeSheetId,
+          sheets: conversation.sheets
+            .filter(sheet => sheet.id !== sheetId)
+            .map(sheet => sheet.parentSheetId === sheetId ? { ...sheet, parentSheetId } : sheet),
+          updatedAt: Date.now(),
+        }
+      }),
+    }))
+    const deletedSurface = surfaceKey(conversationId, sheetId)
+    setDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== deletedSurface)))
+    setToolChoices(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== deletedSurface)))
+    setPendingSheetDelete(null)
   }
 
   const setConversationMode = (conversationId: string, mode: TutorMode) => {
@@ -390,7 +447,7 @@ function App() {
 
   const setActiveSheet = (conversationId: string, sheetId: string) => {
     if (pendingTurns[conversationId]) return
-    setPaperOverviewId(current => current === conversationId ? '' : current)
+    setPaperDeskView(current => current?.conversationId === conversationId ? null : current)
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => (
@@ -405,7 +462,7 @@ function App() {
   const createFollowUpSheet = (conversationId: string, sourceMessageId: string, quote: string) => {
     const cleaned = quote.replace(/\s+/g, ' ').trim().slice(0, 1200)
     if (cleaned.length < 2) return
-    setPaperOverviewId('')
+    setPaperDeskView(null)
     const sheet: FollowUpSheet = {
       id: uid('sheet'),
       title: cleaned.slice(0, 28),
@@ -574,19 +631,43 @@ function App() {
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
     const pages = [
-      { id: 'main', title: '主对话', quote: '', messages: conversation.messages },
+      { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '' },
       ...conversation.sheets.map((item, index) => ({
         id: item.id,
         title: `${index + 1}. ${item.title}`,
         quote: item.quote,
         messages: item.messages,
+        parentSheetId: item.parentSheetId,
       })),
     ]
     const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
     const backPages = pages.filter(page => page.id !== sheetId).slice(-6)
     const messages = activeMessages(conversation)
     const hasWorkbench = conversation.sheets.length > 0
-    const paperOverview = paperOverviewId === conversation.id
+    const paperMode = paperDeskView?.conversationId === conversation.id ? paperDeskView.mode : 'stack'
+    const renderPaperTreeNode = (page: typeof pages[number], ancestors: string[] = []): ReactNode => {
+      const childPages = pages.filter(candidate => (
+        candidate.parentSheetId === page.id && !ancestors.includes(candidate.id)
+      ))
+      return (
+        <li key={page.id}>
+          <div className={`paper-tree-card-wrap${page.id === sheetId ? ' paper-tree-card-active' : ''}`}>
+            <button type="button" className="paper-tree-card" onClick={() => setActiveSheet(conversation.id, page.id)}>
+              <span>{page.id === 'main' ? 'ROOT' : 'FOLLOW-UP'}</span>
+              <strong>{page.title}</strong>
+              <p>{page.quote || paperPreview(page.messages)}</p>
+              <small>{page.messages.length} 条内容{page.id === sheetId ? ' · 当前纸张' : ''}</small>
+            </button>
+            {page.id !== 'main' && (
+              <button type="button" className="paper-tree-delete" onClick={() => requestSheetDelete(conversation, page.id)} disabled={Boolean(pendingMode)} aria-label={`删除纸张${page.title}`} title="删除这张纸">⌫</button>
+            )}
+          </div>
+          {childPages.length > 0 && (
+            <ul>{childPages.map(child => renderPaperTreeNode(child, [...ancestors, page.id]))}</ul>
+          )}
+        </li>
+      )
+    }
     return (
       <section className="chat-page">
         <header className="chat-heading">
@@ -609,38 +690,84 @@ function App() {
                   {pages.map(page => <option key={page.id} value={page.id}>{page.title}</option>)}
                 </select>
                 <button type="button" onClick={() => setActiveSheet(conversation.id, pages[Math.min(pages.length - 1, pageIndex + 1)].id)} disabled={pageIndex === pages.length - 1 || Boolean(pendingMode)} aria-label="下一张纸">→</button>
-                <button type="button" className="paper-overview-toggle" onClick={() => setPaperOverviewId(current => current === conversation.id ? '' : conversation.id)} disabled={Boolean(pendingMode)} aria-label={paperOverview ? '退出纸张总览' : '平铺所有纸张'} aria-pressed={paperOverview} title="平铺所有纸张">▦</button>
+                {sheet && <button type="button" className="paper-delete" onClick={() => requestSheetDelete(conversation, sheet.id)} disabled={Boolean(pendingMode)} aria-label={`删除纸张${sheet.title}`} title="删除当前纸张">⌫</button>}
+                <button
+                  type="button"
+                  className="paper-overview-toggle"
+                  onClick={() => setPaperDeskView(current => {
+                    if (current?.conversationId !== conversation.id) return { conversationId: conversation.id, mode: 'overview' }
+                    if (current.mode === 'overview') return { conversationId: conversation.id, mode: 'tree' }
+                    return null
+                  })}
+                  disabled={Boolean(pendingMode)}
+                  aria-label={paperMode === 'stack' ? '平铺所有纸张' : paperMode === 'overview' ? '展开纸张关系树' : '退出纸张关系树'}
+                  aria-pressed={paperMode !== 'stack'}
+                  title={paperMode === 'stack' ? '平铺所有纸张' : paperMode === 'overview' ? '查看纸张树' : '回到纸堆'}
+                >{paperMode === 'tree' ? '□' : paperMode === 'overview' ? '树' : '▦'}</button>
               </div>
             </div>
           )}
           <div
-            className={hasWorkbench ? `paper-stage${paperOverview ? ' paper-stage-overview' : ''}` : 'conversation-surface'}
-            onClick={hasWorkbench && !paperOverview && !pendingMode ? event => {
-              if (event.target === event.currentTarget) setPaperOverviewId(conversation.id)
+            className={hasWorkbench ? `paper-stage${paperMode !== 'stack' ? ' paper-stage-overview' : ''}` : 'conversation-surface'}
+            onClick={hasWorkbench && paperMode === 'stack' && !pendingMode ? event => {
+              if (event.target === event.currentTarget) setPaperDeskView({ conversationId: conversation.id, mode: 'overview' })
             } : undefined}
           >
-            {hasWorkbench && paperOverview ? (
-              <div className="paper-overview" role="listbox" aria-label="全部追问纸张">
+            {hasWorkbench && paperMode === 'tree' ? (
+              <div
+                className="paper-tree"
+                aria-label="纸张关系树"
+                onClick={event => {
+                  const target = event.target as Element
+                  if (!target.closest('button')) setPaperDeskView(null)
+                }}
+              >
+                <header>
+                  <div><span>PAPER TREE</span><strong>追问关系</strong></div>
+                  <p>从主对话沿选中原文向下展开 · 点击空白回到纸堆</p>
+                </header>
+                <ul className="paper-tree-root">{renderPaperTreeNode(pages[0])}</ul>
+              </div>
+            ) : hasWorkbench && paperMode === 'overview' ? (
+              <div
+                className="paper-overview"
+                role="listbox"
+                aria-label="全部追问纸张"
+                onClick={event => {
+                  const target = event.target as Element
+                  if (!target.closest('button')) setPaperDeskView({ conversationId: conversation.id, mode: 'tree' })
+                }}
+              >
                 <header>
                   <div><span>ALL SHEETS</span><strong>{pages.length} 张纸</strong></div>
-                  <p>选择一张纸回到桌面 · Esc 退出</p>
+                  <p>选择纸张，或再次点击空白展开关系树 · Esc 退出</p>
                 </header>
                 <div className="paper-overview-grid">
                   {pages.map((page, index) => (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={page.id === sheetId}
-                      key={page.id}
-                      className="paper-thumbnail"
-                      onClick={() => setActiveSheet(conversation.id, page.id)}
-                    >
-                      <span className="paper-thumbnail-index">{String(index + 1).padStart(2, '0')}</span>
-                      <strong>{page.title}</strong>
-                      {page.quote && <blockquote>{page.quote}</blockquote>}
-                      <p>{paperPreview(page.messages)}</p>
-                      <small>{page.messages.length} 条内容{page.id === sheetId ? ' · 当前纸张' : ''}</small>
-                    </button>
+                    <div className="paper-thumbnail-wrap" role="option" aria-selected={page.id === sheetId} key={page.id}>
+                      <button
+                        type="button"
+                        className="paper-thumbnail"
+                        onClick={() => setActiveSheet(conversation.id, page.id)}
+                        aria-label={`打开${page.title}`}
+                      >
+                        <span className="paper-thumbnail-index">{String(index + 1).padStart(2, '0')}</span>
+                        <strong>{page.title}</strong>
+                        {page.quote && <blockquote>{page.quote}</blockquote>}
+                        <p>{paperPreview(page.messages)}</p>
+                        <small>{page.messages.length} 条内容{page.id === sheetId ? ' · 当前纸张' : ''}</small>
+                      </button>
+                      {page.id !== 'main' && (
+                        <button
+                          type="button"
+                          className="paper-thumbnail-delete"
+                          onClick={() => requestSheetDelete(conversation, page.id)}
+                          disabled={Boolean(pendingMode)}
+                          aria-label={`删除纸张${page.title}`}
+                          title="删除这张纸"
+                        >⌫</button>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -684,7 +811,7 @@ function App() {
                 </div>
               </div>
             )}
-            {hasWorkbench && !paperOverview && <span className="paper-desktop-hint">点击桌面空白，平铺全部纸张</span>}
+            {hasWorkbench && paperMode === 'stack' && <span className="paper-desktop-hint">点击桌面空白，平铺全部纸张</span>}
           </div>
         </div>
         <div className="composer-dock">
@@ -809,6 +936,25 @@ function App() {
             <div className="dialog-actions">
               <button type="button" className="button-secondary" onClick={() => setPendingDelete(null)}>取消</button>
               <button type="button" className="button-danger" onClick={() => deleteConversation(pendingDelete.id)}>删除对话</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {pendingSheetDelete && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPendingSheetDelete(null) }}>
+          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-sheet-dialog-title">
+            <span className="dialog-eyebrow">DELETE SHEET</span>
+            <h2 id="delete-sheet-dialog-title">删除“{pendingSheetDelete.title}”？</h2>
+            <p>
+              只删除这张追问纸，主对话不会受到影响。
+              {pendingSheetDelete.childCount > 0
+                ? ` 它下面的 ${pendingSheetDelete.childCount} 张子纸会保留并移动到上一层。`
+                : ''}
+              此操作无法撤销。
+            </p>
+            <div className="dialog-actions">
+              <button type="button" className="button-secondary" onClick={() => setPendingSheetDelete(null)}>取消</button>
+              <button type="button" className="button-danger" onClick={() => deleteSheet(pendingSheetDelete.conversationId, pendingSheetDelete.sheetId)}>删除纸张</button>
             </div>
           </section>
         </div>
