@@ -15,6 +15,7 @@ import { sanitizeLearningTaskTutorContext } from './src/learning'
 import { sanitizeLearningPlanTutorContext } from './src/planning'
 import { runTutorTools } from './server/tool-runtime'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
+import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
 
 type KeyConfiguration = {
   apiKey: string
@@ -175,6 +176,7 @@ function tutorProxy(mode: string): Plugin {
       const selectionContext = typeof input.selectionContext === 'string' ? input.selectionContext.slice(0, 1600) : ''
       const learningTaskContext = sanitizeLearningTaskTutorContext(input.learningTaskContext)
       const learningPlanContext = sanitizeLearningPlanTutorContext(input.learningPlanContext)
+      const learnerPathState = sanitizeLearnerPathState(input.learnerPathState)
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -210,6 +212,7 @@ function tutorProxy(mode: string): Plugin {
         searchConfiguration,
         mode: modeValue,
         learningTaskContext,
+        learnerPathState,
       })
       const providerRequest = buildTutorProviderRequest({
         baseUrl, model, mode: modeValue, messages,

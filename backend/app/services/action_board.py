@@ -59,6 +59,16 @@ ACTION_BOARD = {
             (),
         ),
         ActionDefinition(
+            "read_vnext_learning_path_graph", "为规划态读取官方与个人学习路径图", "none", "none",
+            {},
+            ("search_computer_knowledge", "manage_vnext_personal_path_node"),
+        ),
+        ActionDefinition(
+            "manage_vnext_personal_path_node", "标记路径状态或确认管理个人节点", "context", "explicit_or_click",
+            {},
+            ("read_vnext_learning_path_graph",),
+        ),
+        ActionDefinition(
             "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",
             {},
             (),

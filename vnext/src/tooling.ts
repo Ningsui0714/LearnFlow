@@ -1,3 +1,5 @@
+import type { PersonalPathNodeProposal } from './learning-path-graph.ts'
+
 export type TutorToolChoice = 'auto' | 'search' | 'image' | 'animation'
 
 export type SearchSource = {
@@ -25,13 +27,14 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'search' | 'image' | 'animation'
+  kind: 'memory' | 'path' | 'search' | 'image' | 'animation'
   status: 'completed' | 'failed'
   title: string
   detail: string
   durationMs: number
   sources?: SearchSource[]
   artifact?: VisualArtifact
+  pathProposal?: PersonalPathNodeProposal
 }
 
 export const TOOL_CHOICE_LABELS: Record<TutorToolChoice, string> = {

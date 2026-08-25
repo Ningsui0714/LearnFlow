@@ -7,6 +7,7 @@ import {
   hasPlanningIntent,
   type LearningPlanTutorContext,
 } from './planning.ts'
+import type { LearnerPathState } from './learning-path-graph.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -243,6 +244,7 @@ export async function requestTutorReply(options: {
   selectionContext?: string
   learningTaskContext?: LearningTaskTutorContext
   learningPlanContext?: LearningPlanTutorContext
+  learnerPathState?: LearnerPathState
 }) {
   const controller = new AbortController()
   const timeout = globalThis.setTimeout(() => controller.abort(), 105_000)

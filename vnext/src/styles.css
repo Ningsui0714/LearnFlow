@@ -528,3 +528,110 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .paper-edge-deck, .paper-edge, .paper-thumbnail, .paper-tree-card { transition: none; }
 }
+
+/* Learning path and dedicated learner profile */
+.page-loading { display: grid; min-height: 0; flex: 1; place-items: center; color: #7d8c84; font-size: 11px; }
+.path-page, .profile-page { min-height: 0; flex: 1; overflow-y: auto; background: #f7f8f5; }
+.path-heading, .profile-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; border-bottom: 1px solid #dfe6e1; background: #fff; padding: 28px 34px 24px; }
+.path-heading h1, .profile-page-heading h1 { margin: 5px 0 5px; font-size: 27px; letter-spacing: -.04em; }
+.path-heading p, .profile-page-heading p { max-width: 700px; margin: 0; color: #728078; font-size: 11px; line-height: 1.65; }
+.path-manifest { display: grid; grid-template-columns: repeat(3, auto); align-items: baseline; gap: 3px 8px; border: 1px solid #dce6df; border-radius: 13px; background: #f8fbf9; padding: 12px 14px; }
+.path-manifest strong { color: #176848; font-size: 18px; }
+.path-manifest span { color: #7d8c84; font-size: 8px; }
+.path-boundary-note { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #eadfbd; background: #fff9e9; padding: 9px 34px; }
+.path-boundary-note span { border-radius: 99px; background: #f4e5b5; padding: 4px 7px; color: #826217; font-size: 8px; font-weight: 800; }
+.path-boundary-note p { margin: 0; color: #70664b; font-size: 9px; }
+.path-layout { display: grid; min-height: calc(100% - 142px); grid-template-columns: minmax(0, 1fr) 286px; }
+.path-main { min-width: 0; border-right: 1px solid #dfe6e1; background: #f5f7f3; padding: 17px; }
+.path-filters { display: grid; grid-template-columns: minmax(210px, 1fr) 130px 130px auto; gap: 9px; margin-bottom: 12px; }
+.path-filters label, .personal-node-form label { display: grid; gap: 4px; }
+.path-filters label > span, .personal-node-form label > span, .path-status-picker > label { color: #829087; font-size: 8px; font-weight: 750; }
+.path-filters input, .path-filters select, .personal-node-form input, .personal-node-form select { min-width: 0; border: 1px solid #d8e1dc; border-radius: 8px; outline: none; background: #fff; padding: 8px 9px; color: #2b3d33; font-size: 9px; }
+.path-filters input:focus, .path-filters select:focus, .personal-node-form input:focus, .personal-node-form select:focus { border-color: #68a88a; box-shadow: 0 0 0 3px rgba(45,139,95,.09); }
+.path-filters > button { align-self: end; border: 1px solid #d3dfd8; border-radius: 8px; background: #fff; padding: 8px 10px; color: #4c6659; font-size: 9px; font-weight: 700; }
+.path-sources { display: grid; max-height: 200px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 7px; overflow-y: auto; margin-bottom: 11px; border: 1px solid #dce4df; border-radius: 10px; background: #fff; padding: 9px; }
+.path-sources a { border-radius: 7px; padding: 7px; color: #375347; text-decoration: none; }
+.path-sources a:hover { background: #eef6f1; }
+.path-sources span, .path-sources strong { display: block; }
+.path-sources span { color: #8a9891; font-size: 7px; }
+.path-sources strong { margin-top: 2px; font-size: 8px; line-height: 1.4; }
+.path-canvas-scroll { min-height: 440px; overflow: auto; border: 1px solid #dce4df; border-radius: 14px; background-color: #fbfcfa; background-image: radial-gradient(#dce5df 0.8px, transparent 0.8px); background-size: 16px 16px; }
+.path-canvas { position: relative; width: 1160px; min-width: 100%; }
+.path-stage-headings { position: absolute; z-index: 2; top: 0; left: 30px; display: grid; width: 1120px; grid-template-columns: repeat(5, 226px); padding-top: 18px; }
+.path-stage-headings span { color: #809088; font-size: 8px; font-weight: 800; letter-spacing: .08em; }
+.path-edges { position: absolute; z-index: 1; inset: 0; width: 1160px; height: 100%; overflow: visible; }
+.path-edges marker path { fill: #92a59a; }
+.path-edge { fill: none; stroke: #92a59a; stroke-width: 1.25; opacity: .58; vector-effect: non-scaling-stroke; }
+.path-edge-soft_prerequisite { stroke-dasharray: 5 4; }
+.path-edge-co_learning { stroke: #c99a3d; stroke-dasharray: 2 4; }
+.path-node { position: absolute; z-index: 3; display: grid; width: 164px; height: 51px; align-content: center; gap: 2px; overflow: hidden; border: 1px solid #d6e1db; border-radius: 10px; background: rgba(255,255,255,.96); padding: 7px 9px; color: #31483d; text-align: left; box-shadow: 0 2px 7px rgba(31,52,41,.05); }
+.path-node:hover, .path-node-selected { z-index: 4; border-color: #46a276; box-shadow: 0 4px 14px rgba(31,91,62,.13); transform: translateY(-1px); }
+.path-node > span { overflow: hidden; color: #8b9992; font-size: 6px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.path-node strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.path-node small { color: #8b9992; font-size: 6px; }
+.path-node-exploring { border-color: #84b9a0; background: #eef8f2; }
+.path-node-self_reported_exposed { border-color: #9cafc8; background: #f1f5fb; }
+.path-node-self_reported_mastered { border-color: #4e9c70; background: #e7f5ec; }
+.path-node-personal { border-color: #d1a74d; background: #fff9e9; }
+.path-empty { position: absolute; top: 120px; left: 50%; transform: translateX(-50%); color: #809088; font-size: 10px; }
+.path-legend { display: flex; gap: 17px; padding: 9px 4px 0; color: #7c8a83; font-size: 8px; }
+.path-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.path-legend i { width: 22px; border-top: 2px solid #92a59a; }
+.path-legend .legend-soft { border-top-style: dashed; }
+.path-legend .legend-co { border-color: #c99a3d; border-top-style: dotted; }
+.path-inspector { min-width: 0; overflow-y: auto; background: #fff; padding: 22px 19px 34px; }
+.path-inspector h2 { margin: 6px 0 8px; font-size: 19px; letter-spacing: -.025em; }
+.path-inspector > p, .personal-node-form > p { margin: 0 0 12px; color: #718078; font-size: 9px; line-height: 1.6; }
+.path-node-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.path-node-tags span { border-radius: 99px; background: #edf4ef; padding: 4px 7px; color: #537062; font-size: 7px; font-weight: 700; }
+.path-status-picker { margin: 18px 0; }
+.path-status-picker > div { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; margin-top: 6px; }
+.path-status-picker button { border: 1px solid #dce4df; border-radius: 7px; background: #fff; padding: 7px 5px; color: #68776f; font-size: 8px; }
+.path-status-picker button.active { border-color: #4d9d72; background: #eaf6ef; color: #176848; font-weight: 750; }
+.path-relations { margin: 15px 0; border-top: 1px solid #e4e9e6; padding-top: 12px; }
+.path-relations h3, .personal-node-form h3 { margin: 0 0 7px; font-size: 10px; }
+.path-relations button { display: flex; width: 100%; align-items: center; gap: 7px; border: 0; border-radius: 7px; background: transparent; padding: 6px; color: #435b4f; text-align: left; font-size: 8px; }
+.path-relations button:hover { background: #eef5f0; }
+.path-relations button span { border-radius: 99px; background: #edf1ee; padding: 3px 5px; color: #79877f; font-size: 6px; }
+.path-relations p { margin: 0; color: #98a39d; font-size: 8px; }
+.path-remove-node { width: 100%; border: 1px solid #e6c7c2; border-radius: 8px; background: #fff8f7; padding: 8px; color: #9b493e; font-size: 8px; font-weight: 700; }
+.personal-node-form { display: grid; gap: 8px; margin-top: 24px; border-top: 1px solid #dfe6e1; padding-top: 18px; }
+.personal-node-form > button, .path-proposal-card button { border: 1px solid #17734f; border-radius: 8px; background: #17734f; padding: 9px; color: #fff; font-size: 8px; font-weight: 750; }
+.personal-node-form > button:disabled { border-color: #d8dfdb; background: #d8dfdb; }
+.path-proposal-card { display: grid; gap: 5px; margin: 9px 0; border: 1px solid #e1c774; border-radius: 10px; background: #fffaf0; padding: 11px; }
+.path-proposal-card > span { color: #95711c; font-size: 7px; font-weight: 800; letter-spacing: .08em; }
+.path-proposal-card strong { color: #4d4123; font-size: 11px; }
+.path-proposal-card p { margin: 0; color: #776b4e; font-size: 8px; line-height: 1.5; }
+.path-proposal-card small { color: #9a8c69; font-size: 7px; }
+.profile-page { padding-bottom: 40px; }
+.profile-page-heading, .profile-page > .profile-description, .profile-page > .profile-module-list, .profile-path-summary { width: min(960px, calc(100% - 48px)); margin-inline: auto; }
+.profile-page-heading { margin-top: 28px; border: 1px solid #dee6e1; border-radius: 16px; }
+.profile-version { display: grid; flex: none; border-radius: 12px; background: #eaf5ee; padding: 12px 15px; color: #20704f; text-align: center; }
+.profile-version strong { font-size: 15px; }
+.profile-version span { margin-top: 2px; font-size: 7px; }
+.profile-path-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 14px; border: 1px solid #dbe5df; border-radius: 13px; background: #fff; padding: 14px 17px; }
+.profile-path-summary span, .profile-path-summary strong, .profile-path-summary p { display: block; }
+.profile-path-summary span { color: #74847b; font-size: 8px; }
+.profile-path-summary strong { margin-top: 3px; font-size: 12px; }
+.profile-path-summary p { margin: 3px 0 0; color: #94a098; font-size: 8px; }
+.profile-path-summary button { border: 1px solid #b9d2c4; border-radius: 8px; background: #edf7f1; padding: 8px 11px; color: #176848; font-size: 8px; font-weight: 750; }
+.profile-page > .profile-description { margin-top: 16px; margin-bottom: 12px; color: #738078; font-size: 10px; line-height: 1.6; }
+
+@media (max-width: 900px) {
+  .path-layout { grid-template-columns: 1fr; }
+  .path-main { border-right: 0; }
+  .path-inspector { border-top: 1px solid #dfe6e1; }
+  .path-filters { grid-template-columns: 1fr 1fr; }
+  .path-filters label:first-child { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+  .path-heading, .profile-page-heading { align-items: flex-start; flex-direction: column; padding: 20px 17px; }
+  .path-manifest { width: 100%; }
+  .path-boundary-note { align-items: flex-start; padding-inline: 17px; }
+  .path-main { padding: 10px; }
+  .path-filters { grid-template-columns: 1fr; }
+  .path-filters label:first-child { grid-column: auto; }
+  .profile-page-heading, .profile-page > .profile-description, .profile-page > .profile-module-list, .profile-path-summary { width: calc(100% - 24px); }
+  .profile-page-heading { margin-top: 12px; }
+}

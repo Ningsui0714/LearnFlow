@@ -55,6 +55,17 @@ import {
   type PlanningEvent,
   type ValueProposalDecision,
 } from './planning'
+import {
+  addPersonalPathNode,
+  createInitialLearnerPathState,
+  projectLearnerPath,
+  removePersonalPathNode,
+  sanitizeLearnerPathState,
+  setLearnerPathStatus,
+  type LearnerPathState,
+  type LearnerPathStatus,
+  type PersonalPathNodeProposal,
+} from './learning-path-graph'
 import './styles.css'
 
 type Message = {
@@ -109,7 +120,7 @@ type Conversation = {
 
 type WorkspaceTab = {
   id: string
-  kind: 'chat' | 'settings'
+  kind: 'chat' | 'settings' | 'learning-path' | 'profile'
   title: string
   conversationId?: string
 }
@@ -125,11 +136,15 @@ type PersistedState = {
   activeTabId: string
   splitTabId: string
   settings: SettingsState
+  learningPath: LearnerPathState
 }
 
 const STORAGE_KEY = 'learnflow.vnext.workspace.v1'
 const SETTINGS_TAB: WorkspaceTab = { id: 'settings', kind: 'settings', title: '设置' }
+const LEARNING_PATH_TAB: WorkspaceTab = { id: 'learning-path', kind: 'learning-path', title: '学习路径' }
+const PROFILE_TAB: WorkspaceTab = { id: 'profile', kind: 'profile', title: '我的画像' }
 const MarkdownContent = lazy(() => import('./MarkdownContent'))
+const LearningPathPage = lazy(() => import('./LearningPathPage'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -179,6 +194,7 @@ function initialState(): PersistedState {
       baseUrl: 'https://api.example.com/v1',
       model: '',
     },
+    learningPath: createInitialLearnerPathState(),
   }
 }
 
@@ -202,7 +218,7 @@ function restoreState(): PersistedState {
     }))
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
-      ? value.tabs.filter(tab => tab?.kind === 'settings' || (tab?.conversationId && conversationIds.has(tab.conversationId)))
+      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
     const safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
     const activeTabId = safeTabs.some(tab => tab.id === value.activeTabId)
@@ -221,6 +237,7 @@ function restoreState(): PersistedState {
         baseUrl: value.settings?.baseUrl || 'https://api.example.com/v1',
         model: value.settings?.model || '',
       },
+      learningPath: sanitizeLearnerPathState(value.learningPath),
     }
   } catch {
     return initialState()
@@ -228,7 +245,10 @@ function restoreState(): PersistedState {
 }
 
 function pathForTab(tab: WorkspaceTab) {
-  return tab.kind === 'settings' ? '/settings' : `/chat/${tab.conversationId}`
+  if (tab.kind === 'settings') return '/settings'
+  if (tab.kind === 'learning-path') return '/learning-path'
+  if (tab.kind === 'profile') return '/learner-profile'
+  return `/chat/${tab.conversationId}`
 }
 
 function surfaceKey(conversationId: string, sheetId: string) {
@@ -297,7 +317,8 @@ function inheritedContextMessages(conversation: Conversation) {
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
-  return <span aria-hidden="true" className="tab-icon">{kind === 'settings' ? '⚙' : '□'}</span>
+  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : '□'
+  return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
 function App() {
@@ -309,7 +330,6 @@ function App() {
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
   const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
-  const [profilePanelOpen, setProfilePanelOpen] = useState(false)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
 
@@ -360,15 +380,6 @@ function App() {
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [paperDeskView])
-
-  useEffect(() => {
-    if (!profilePanelOpen) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setProfilePanelOpen(false)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [profilePanelOpen])
 
   const openTab = (next: WorkspaceTab) => {
     setWorkspace(previous => {
@@ -742,6 +753,7 @@ function App() {
         selectionContext: activeSheet(conversation)?.quote,
         learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
         learningPlanContext: planningProjection ? learningPlanTutorContext(planningProjection) : undefined,
+        learnerPathState: workspace.learningPath,
       })
       finishTurn(conversationId, sheetId, mode, {
         role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns,
@@ -889,8 +901,59 @@ function App() {
     setWorkspace(previous => ({ ...previous, settings: { ...previous.settings, ...patch } }))
   }
 
+  const updatePathStatus = (nodeId: string, status: LearnerPathStatus) => {
+    setWorkspace(previous => ({
+      ...previous,
+      learningPath: setLearnerPathStatus(previous.learningPath, nodeId, status),
+    }))
+  }
+
+  const acceptPersonalPathNode = (proposal: PersonalPathNodeProposal) => {
+    setWorkspace(previous => ({
+      ...previous,
+      learningPath: addPersonalPathNode(previous.learningPath, proposal),
+    }))
+  }
+
+  const deletePersonalPathNode = (nodeId: string) => {
+    setWorkspace(previous => ({
+      ...previous,
+      learningPath: removePersonalPathNode(previous.learningPath, nodeId),
+    }))
+  }
+
   const renderTab = (tab: WorkspaceTab | undefined) => {
     if (!tab) return null
+    if (tab.kind === 'learning-path') {
+      return (
+        <Suspense fallback={<div className="page-loading">正在载入学习路径…</div>}>
+          <LearningPathPage
+            state={workspace.learningPath}
+            onStatusChange={updatePathStatus}
+            onAddPersonalNode={acceptPersonalPathNode}
+            onRemovePersonalNode={deletePersonalPathNode}
+          />
+        </Suspense>
+      )
+    }
+    if (tab.kind === 'profile') {
+      const pathProjection = projectLearnerPath(workspace.learningPath)
+      const markedCount = Object.values(pathProjection.statuses).filter(status => status !== 'unmarked').length
+      return (
+        <section className="profile-page">
+          <header className="profile-page-heading">
+            <div><span className="eyebrow">LEARNER PROFILE</span><h1>我的画像</h1><p>这是一份可检查的模拟五核画像。Module 组织上下文，Claim 保留可追溯陈述；当前仍不写入旧五核。</p></div>
+            <div className="profile-version"><strong>v{SIMULATED_FIVE_KERNEL_PROFILE.version}</strong><span>模拟画像</span></div>
+          </header>
+          <div className="profile-path-summary">
+            <div><span>结构核 · 学习路径</span><strong>{markedCount} 个已标记节点</strong><p>{pathProjection.personalNodeIds.length} 个个人节点；全部状态均为学习者自报。</p></div>
+            <button type="button" onClick={() => openTab(LEARNING_PATH_TAB)}>打开学习路径</button>
+          </div>
+          <p className="profile-description">{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
+          <ProfileModuleList />
+        </section>
+      )
+    }
     if (tab.kind === 'settings') {
       return (
         <section className="settings-page">
@@ -931,12 +994,11 @@ function App() {
               <span>02</span>
               <div>
                 <h2 id="simulated-profile-title">模拟五核画像</h2>
-                <p>只有 Module 与 Claim；当前只读、可检查，不代表正式掌握，也不写入旧五核。</p>
+                <p>画像已经迁移到独立页面；设置页只保留入口。</p>
               </div>
               <i>v{SIMULATED_FIVE_KERNEL_PROFILE.version} · 模拟</i>
             </div>
-            <p className="profile-description">{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
-            <ProfileModuleList />
+            <div className="settings-actions"><button type="button" onClick={() => openTab(PROFILE_TAB)}>打开我的画像</button><button type="button" className="button-secondary" onClick={() => openTab(LEARNING_PATH_TAB)}>打开学习路径</button></div>
           </section>
         </section>
       )
@@ -1138,6 +1200,7 @@ function App() {
                   <MessageList
                     messages={messages}
                     onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
+                    onAcceptPathProposal={acceptPersonalPathNode}
                   />
                   {sheet && messages.length === 0 && (
                     <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
@@ -1369,37 +1432,10 @@ function App() {
         </button>
         <div className="topbar-spacer" />
         <span className="prototype-badge"><i /> 本地界面原型</span>
-        <button
-          className="topbar-profile-button"
-          type="button"
-          aria-expanded={profilePanelOpen}
-          onClick={() => setProfilePanelOpen(value => !value)}
-        >
-          <span>现</span>
-          <strong>我的画像</strong>
-        </button>
+        <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span><strong>学习路径</strong></button>
+        <button className="topbar-profile-button" type="button" onClick={() => openTab(PROFILE_TAB)}><span>现</span><strong>我的画像</strong></button>
         <button className="icon-button" type="button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
       </header>
-
-      {profilePanelOpen && (
-        <div className="profile-panel-layer" role="presentation" onMouseDown={event => {
-          if (event.target === event.currentTarget) setProfilePanelOpen(false)
-        }}>
-          <aside className="profile-panel" aria-label="用户五核画像">
-            <header>
-              <div><span>LEARNER PROFILE</span><strong>你的模拟五核画像</strong></div>
-              <button type="button" onClick={() => setProfilePanelOpen(false)} aria-label="关闭用户画像">×</button>
-            </header>
-            <div className="profile-panel-summary">
-              <span>计算机专业 · 准大二</span>
-              <span>ML / Agent / RL</span>
-              <span>定义 → 例子 / 代码</span>
-            </div>
-            <p>{SIMULATED_FIVE_KERNEL_PROFILE.description}</p>
-            <ProfileModuleList compact />
-          </aside>
-        </div>
-      )}
 
       <div className="workspace">
         <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
@@ -1422,17 +1458,17 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
-            <button
-              type="button"
-              className="sidebar-profile-button"
-              aria-expanded={profilePanelOpen}
-              onClick={() => setProfilePanelOpen(value => !value)}
-            >
+            <button type="button" className="sidebar-profile-button sidebar-path-button" onClick={() => openTab(LEARNING_PATH_TAB)}>
+              <span className="sidebar-profile-avatar">⌁</span>
+              <span><strong>学习路径</strong><small>{projectLearnerPath(workspace.learningPath).nodes.length} 节点 · 可个性化</small></span>
+              <i>›</i>
+            </button>
+            <button type="button" className="sidebar-profile-button" onClick={() => openTab(PROFILE_TAB)}>
               <span className="sidebar-profile-avatar">现</span>
               <span><strong>现有学习者</strong><small>准大二 · ML / Agent / RL</small></span>
               <i>›</i>
             </button>
-            <small className="sidebar-logic-note">Chat · 设置 · LOGIC.md</small>
+            <small className="sidebar-logic-note">Chat · 路径 · 画像 · 设置</small>
           </div>
         </aside>
 
@@ -1508,8 +1544,8 @@ function App() {
   )
 }
 
-function ToolRunCard({ run }: { run: TutorToolRun }) {
-  const icon = run.kind === 'memory' ? '◇' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+function ToolRunCard({ run, onAcceptPathProposal }: { run: TutorToolRun; onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void }) {
+  const icon = run.kind === 'memory' ? '◇' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
     standard: '规范', reference: '参考', textbook: '教材', course: '课程',
     definition: '定义', research: '研究', example: '实例', discussion: '讨论',
@@ -1522,6 +1558,15 @@ function ToolRunCard({ run }: { run: TutorToolRun }) {
         <i>{run.status === 'completed' ? '✓' : '!'}</i>
       </header>
       <p>{run.detail}</p>
+      {run.pathProposal && (
+        <div className="path-proposal-card">
+          <span>个人节点提案</span>
+          <strong>{run.pathProposal.title}</strong>
+          <p>{run.pathProposal.summary}</p>
+          <small>{run.pathProposal.connections.length} 条建议关系 · {run.pathProposal.sourceUrls.length} 个联网来源</small>
+          <button type="button" onClick={() => onAcceptPathProposal(run.pathProposal!)}>确认加入我的学习路径</button>
+        </div>
+      )}
       {run.sources && run.sources.length > 0 && (
         <div className="tool-sources">
           {run.sources.map(source => (
@@ -1539,9 +1584,10 @@ function ToolRunCard({ run }: { run: TutorToolRun }) {
   )
 }
 
-function MessageList({ messages, onQuoteFollowUp }: {
+function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal }: {
   messages: Message[]
   onQuoteFollowUp: (messageId: string, quote: string) => void
+  onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
 }) {
   const endRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -1627,7 +1673,7 @@ function MessageList({ messages, onQuoteFollowUp }: {
                   >选中文字追问</button>
                 )}
               </div>
-              {message.toolRuns?.map(run => <ToolRunCard key={run.id} run={run} />)}
+              {message.toolRuns?.map(run => <ToolRunCard key={run.id} run={run} onAcceptPathProposal={onAcceptPathProposal} />)}
               {message.learningActionLabel ? (
                 <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
               ) : (

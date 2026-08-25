@@ -174,6 +174,22 @@ Contract impact：注册表版本提升到 `2026-08-25.8`，新增 `vnext_learni
 LearningTask、Value reducer、模型 API 和 Skill ID 均向后兼容；当前没有新增 Kernel writer，
 也没有把本地候选确认视为正式 Value Claim 写入。
 
+vNext 新增 `vnext_learning_path_graph_reader` 与 `vnext_personal_path_node_runtime`。前者读取版本化
+官方课程 DAG 和学习者浏览器本地个人覆盖层，为学习规划态提供有界 Structure 参考；后者只接受
+学习者点击确认后的自报状态或个人节点变更。官方节点不是强制培养方案，匹配失败时先由已登记的
+计算机知识搜索确认主题与已有节点关系，再生成可拒绝的个人节点提案。
+
+`/learning-path` 负责图谱查看、筛选、自报标记和个人节点管理，`/learner-profile` 负责单独展示
+模拟五核 Module/Claim 及路径摘要。两者继续使用 vNext 多页签和并排容器，不新增主 Agent。
+路径状态与个人节点通过三个浏览器本地零 Kernel 事件投影：
+`vnext_learning_path_node_status_set`、`vnext_personal_path_node_added`、
+`vnext_personal_path_node_removed`。自报“学过/掌握”只能帮助路线导航，不能生成 Knowledge
+mastery；未来 Structure 写回仍必须走 `EvidenceEvent -> five_kernel_reducer -> KernelMutation`。
+
+Contract impact：注册表版本提升到 `2026-08-25.9`，新增两个工具、两个 capability、两个工作台和
+三个零 Kernel 事件。原有 API、正式五核写入链、三类主 Agent 和 vNext 浏览器状态均向后兼容；
+旧状态缺少学习路径字段时确定性补入初始自述投影。
+
 ### Learning Task 与双队列
 
 `LearningTask` 是对话、项目关卡和可验证微学习共用的学习执行基础设施。它表达学习者

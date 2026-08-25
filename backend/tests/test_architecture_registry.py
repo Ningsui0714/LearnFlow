@@ -69,11 +69,13 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
+        "vnext_learning_path_graph_reader", "vnext_personal_path_node_runtime",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
+        "read_vnext_learning_path_graph", "manage_vnext_personal_path_node",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
@@ -86,11 +88,17 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
     assert CAPABILITY_OWNERS["read_vnext_five_kernel_profile"] == (
         "tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat",
     )
+    assert CAPABILITY_OWNERS["read_vnext_learning_path_graph"] == (
+        "tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat",
+    )
+    assert WORKBENCHES["vnext_learning_path"].surface == "/learning-path"
+    assert WORKBENCHES["vnext_profile"].surface == "/learner-profile"
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
+            "vnext_learning_path_graph_reader", "vnext_personal_path_node_runtime",
         }
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
@@ -118,8 +126,11 @@ def test_vnext_tools_are_registered_without_learning_state_writes():
             "vnext_project_seed_ready", "vnext_value_claim_proposed",
             "vnext_value_claim_proposal_accepted", "vnext_value_claim_proposal_rejected",
             "vnext_value_claim_proposal_revision_requested", "vnext_learning_plan_closed",
+            "vnext_learning_path_node_status_set", "vnext_personal_path_node_added",
+            "vnext_personal_path_node_removed",
         }
     )
+    assert "self-report is never Knowledge mastery" in TOOLS["vnext_learning_path_graph_reader"].write_path
 
 
 def test_remediation_events_have_standard_authority_provenance():

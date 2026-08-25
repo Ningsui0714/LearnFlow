@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.8"
+REGISTRY_VERSION = "2026-08-25.9"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -232,6 +232,10 @@ TOOLS = {
                      KERNEL_NAMES, (), "append-only local planning events -> project seed or direction projection -> learner-confirmed Value Claim proposal; no KernelState write"),
         ToolContract("vnext_five_kernel_profile_reader", "vNext Simulated Five-kernel Profile Reader", "tutor_agent", "vnext", "read",
                      KERNEL_NAMES, (), "simulated Module/Claim profile -> deterministic intent selection -> bounded read-only Tutor context; no learner-state write"),
+        ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
+                     ("structure", "knowledge", "value"), (), "versioned official course DAG + browser-local personal overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
+        ToolContract("vnext_personal_path_node_runtime", "vNext Personal Learning Path Node Runtime", "tutor_agent", "vnext", "orchestration",
+                     ("structure", "value"), (), "search-backed proposal -> explicit learner confirmation -> append-only browser-local path event; no KernelState write"),
         ToolContract("workspace_lifecycle", "Conversation and Project Workspace Lifecycle", "tutor_agent", "learnflow", "transaction",
                      (), (), "confirmed workspace removal + zero-target audit event; learning evidence retained"),
         ToolContract("checkpoint_context", "Checkpoint Tutor Context Assembler", "tutor_agent", "learnflow", "read",
@@ -440,7 +444,12 @@ WORKBENCHES = {
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
                           ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
-                           "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile"), "vnext"),
+                           "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
+                           "read_vnext_learning_path_graph", "manage_vnext_personal_path_node"), "vnext"),
+        WorkbenchContract("vnext_learning_path", "vNext Learning Path Graph", "/learning-path", "tutor_agent",
+                          ("read_vnext_learning_path_graph", "manage_vnext_personal_path_node"), "vnext"),
+        WorkbenchContract("vnext_profile", "vNext Learner Profile", "/learner-profile", "tutor_agent",
+                          ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -481,6 +490,8 @@ CAPABILITY_OWNERS = {
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
     "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
+    "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
+    "manage_vnext_personal_path_node": ("tutor_agent", "vnext_personal_path_node_runtime", "vnext_learning_path"),
     "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
     "manage_learning_tasks": ("tutor_agent", "learning_task_runtime", "learning_tasks"),
     "plan_learning_task": ("learning_design_agent", "learning_task_planner", "learning_tasks"),
@@ -562,6 +573,9 @@ EVENTS = {
         _event("vnext_value_claim_proposal_rejected", "run_vnext_learning_plan", (), "local_rejection", origin="vnext"),
         _event("vnext_value_claim_proposal_revision_requested", "run_vnext_learning_plan", (), "local_revision_request", origin="vnext"),
         _event("vnext_learning_plan_closed", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
+        _event("vnext_learning_path_node_status_set", "manage_vnext_personal_path_node", (), "local_self_report_for_navigation", origin="vnext"),
+        _event("vnext_personal_path_node_added", "manage_vnext_personal_path_node", (), "local_confirmed_structure_overlay", origin="vnext"),
+        _event("vnext_personal_path_node_removed", "manage_vnext_personal_path_node", (), "local_confirmed_structure_overlay_removal", origin="vnext"),
         _event("conversation_deleted", "delete_conversation", (), "confirmed_workspace_removal"),
         _event("learning_task_created", "manage_learning_tasks", (), "operational"),
         _event("learning_task_accepted", "manage_learning_tasks", (), "confirmed_operational"),
@@ -763,6 +777,7 @@ def registry_manifest() -> dict[str, Any]:
             "vnext_learning_task_projection": "append-only browser-local operational events -> deterministic in-chat task projection; never mastery evidence",
             "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> current skill step substate; transitions only from the browser-local event queue",
             "vnext_learning_plan_projection": "planning intent -> append-only browser-local plan events -> project seed or direction advice; Value Claim changes remain learner-decided proposals until the formal EvidenceEvent reducer is connected",
+            "vnext_learning_path_projection": "versioned official course DAG + append-only browser-local status/personal-node events -> deterministic Structure reference projection; learner self-report never implies Knowledge mastery",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],

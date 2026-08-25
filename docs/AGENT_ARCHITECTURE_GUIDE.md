@@ -356,6 +356,12 @@ vNext Tutor 每轮 MAY 先调用 `vnext_five_kernel_profile_reader`。当前数�
 Knowledge 与 Structure 可以通过稳定 Module 关系联合读取，但二者不得共享写入权威；Practice
 项目能力必须引用产物与 rubric 证据，不能从任务事件、生成材料或提交计数直接推断。
 
+vNext `learning_plan` SHOULD 调用 `vnext_learning_path_graph_reader`。Reader 输入学习者目标和
+浏览器本地路径事件，输出官方/个人匹配、有限前后关系与缺口标记；输出只作为 Structure 参考，
+不是强制课表。稳定主题不能因包含一个已有短别名就被误匹配，图谱缺口 MUST 先经过已登记搜索
+形成来源支撑的个人节点提案。`vnext_personal_path_node_runtime` 只有在学习者点击确认后才可追加
+个人节点事件；节点状态必须显示为自报，禁止转译为 Knowledge mastery。
+
 Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：
 `learn` 需要 Skill 完成、材料查看或学习者明确确认互动结束，`practice` 需要真实 Attempt，
 `verify` 需要无辅助成功的原始正式 Attempt 或已校验变式（诊断、提示成功、纠错原题重做和
