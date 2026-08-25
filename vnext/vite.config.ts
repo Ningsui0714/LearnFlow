@@ -44,7 +44,13 @@ function loadSearchConfiguration(mode: string): SearchProviderConfiguration {
 
 function loadBackendBase(mode: string) {
   const localEnv = loadEnv(mode, process.cwd(), '')
-  return String(process.env.VNEXT_BACKEND_URL || localEnv.VNEXT_BACKEND_URL || 'http://127.0.0.1:8010').replace(/\/$/, '')
+  return String(
+    process.env.VNEXT_BACKEND_URL
+      || process.env.LEARNFLOW_FORMAL_BACKEND_URL
+      || localEnv.VNEXT_BACKEND_URL
+      || localEnv.LEARNFLOW_FORMAL_BACKEND_URL
+      || 'http://127.0.0.1:8010',
+  ).replace(/\/$/, '')
 }
 
 function readJsonBody(request: any): Promise<unknown> {

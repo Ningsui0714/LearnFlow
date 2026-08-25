@@ -13,9 +13,15 @@ cp .env.example .env.local
 npm run dev
 ```
 
-默认地址：`http://localhost:4174`
+`npm run dev` 会统一启动 vNext 页面和正式后端，并在页面开放前检查五核后端是否健康。停止该命令时，由它启动的进程会一起退出；已经健康运行的外部后端只会被复用，不会被误停。默认页面地址：`http://localhost:4174`。
 
-正式后端默认地址为 `http://127.0.0.1:8010`，可用 `LEARNFLOW_FORMAL_BACKEND_URL` 覆盖。开发环境会复用后端登录会话；没有会话时可使用后端开发账号自动建立隔离学习者身份。
+只调试页面、且已经单独启动正式后端时，可以使用：
+
+```bash
+npm run dev:web
+```
+
+正式后端默认地址为 `http://127.0.0.1:8010`，可用 `VNEXT_BACKEND_URL` 覆盖（旧的 `LEARNFLOW_FORMAL_BACKEND_URL` 仍兼容）。开发环境会复用后端登录会话；没有会话时可使用后端开发账号自动建立隔离学习者身份。
 
 ## 当前边界
 

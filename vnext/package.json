@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 4174 --strictPort",
+    "dev": "node scripts/dev-stack.mjs",
+    "dev:web": "vite --host 127.0.0.1 --port 4174 --strictPort",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
     "test:search": "node --experimental-strip-types --test server/computer-knowledge-search.test.ts",
