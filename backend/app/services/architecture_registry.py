@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.18"
+REGISTRY_VERSION = "2026-08-26.19"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -209,7 +209,7 @@ KERNELS = {
                        ("Learning-path self-report never implies knowledge mastery.",)),
         KernelContract("knowledge", "对哪个知识点理解到什么程度",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["knowledge"])),
-                       "Mastery and misconception require graded or explicitly correctable evidence.",
+                       "Two explicit same-concept self-reports may consolidate only as an exposure boundary; mastery and misconception require graded or explicitly correctable evidence.",
                        "Concept attempts, misconceptions, questions, retention and correction facts.",
                        "Concept-scoped evidence synthesis shared by subject key with Structure but independently authoritative.",
                        "Testable concept claim with explicit evidence grade and correction history.",

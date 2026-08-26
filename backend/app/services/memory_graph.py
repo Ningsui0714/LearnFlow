@@ -56,6 +56,7 @@ EXPLICIT_PREFERENCE_KEYS = {
 }
 MODULE_VERSION_POLICY = "memory-module-version-v1"
 MODULE_EVIDENCE_LIMIT = 64
+KNOWLEDGE_SELF_REPORT_THRESHOLD = 2
 
 
 def actor_type_for_source(source: str) -> str:
@@ -383,6 +384,22 @@ def _trigger_reason(
         if len(rows) >= 2 and trigger_event.event_type in BOUNDARY_EVENTS:
             return "structure_boundary"
     elif kernel_name == "knowledge":
+        # A learner may explicitly ask LearnFlow to remember the boundary of
+        # prior exposure before any assessment exists. Two or more reviewed
+        # observations for the same concept may therefore form an
+        # exposure-only module. The worker still labels every resulting claim
+        # as self-reported and rejects mastery language without repeated
+        # verified evidence.
+        exposure_only = (
+            len(rows) >= KNOWLEDGE_SELF_REPORT_THRESHOLD
+            and all(fact.evidence_grade == "self_reported" for _, fact, _ in rows)
+            and all(
+                event.event_type == "learner_concept_observation_recorded"
+                for _, _, event in rows
+            )
+        )
+        if exposure_only:
+            return "knowledge_self_report"
         verified_events = {
             event.id for _, fact, event in rows if fact.evidence_grade == "verified"
         }

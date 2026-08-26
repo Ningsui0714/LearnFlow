@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Any
 
@@ -50,6 +51,59 @@ class SynthesisClaimDraft(BaseModel):
 class SynthesisDraft(BaseModel):
     summary: str = Field(min_length=1, max_length=1200)
     claims: list[SynthesisClaimDraft] = Field(min_length=1, max_length=8)
+
+
+def _asserts_mastery(text: str, predicate: str) -> bool:
+    """Distinguish a mastery assertion from an explicit evidence boundary."""
+    remaining = text
+    boundary_found = False
+    for pattern in (
+        r"(?:未|尚未|不|并未|没有|缺乏|不能证明|无法证明|不足以证明)[^，。；]{0,16}掌握(?:证据|结论|程度|状态)?",
+        r"(?:不构成|不代表|不可视为|不能视为)[^，。；]{0,16}掌握",
+        r"掌握(?:证据|结论)[^，。；]{0,16}(?:不足|缺乏|未验证|待验证|不存在)",
+        r"掌握(?:程度|状态)[^，。；]{0,16}(?:未|不|尚未|待验证)",
+    ):
+        remaining, count = re.subn(pattern, "", remaining)
+        boundary_found = boundary_found or count > 0
+    if "掌握" in remaining:
+        return True
+    return "master" in predicate.casefold() and not boundary_found
+
+
+async def normalize_self_reported_claim_statuses(
+    db: AsyncSession,
+    *,
+    learner_id: int | None = None,
+    module_node_id: int | None = None,
+) -> int:
+    """Repair derived Claim labels from their immutable evidence closure."""
+    query = (
+        select(MemoryNode, MemoryClaim)
+        .join(MemoryClaim, MemoryClaim.node_id == MemoryNode.id)
+        .where(MemoryClaim.verification_status != "verified")
+    )
+    if learner_id is not None:
+        query = query.where(MemoryNode.learner_id == learner_id)
+    if module_node_id is not None:
+        query = query.where(MemoryClaim.module_node_id == module_node_id)
+    changed = 0
+    for node, claim in (await db.execute(query)).all():
+        evidence_ids = [
+            int(item) for item in (node.payload or {}).get("evidence_fact_ids", [])
+        ]
+        if not evidence_ids:
+            continue
+        grades = list((await db.execute(
+            select(MemoryFact.evidence_grade).where(
+                MemoryFact.node_id.in_(evidence_ids),
+            )
+        )).scalars().all())
+        if len(grades) == len(evidence_ids) and all(
+            grade == "self_reported" for grade in grades
+        ) and claim.verification_status != "self_reported":
+            claim.verification_status = "self_reported"
+            changed += 1
+    return changed
 
 
 def _deterministic_draft(
@@ -151,7 +205,7 @@ def _validate_draft(
             errors.append(f"claim_{index}_has_no_evidence")
         if not refs.issubset(allowed):
             errors.append(f"claim_{index}_references_outside_whitelist")
-        mastery_language = "掌握" in claim.text or "master" in claim.predicate.casefold()
+        mastery_language = _asserts_mastery(claim.text, claim.predicate)
         if run.kernel_name == "knowledge" and mastery_language:
             verified = {fact.source_event_id for fact_id, fact in facts.items()
                         if fact_id in refs and fact.evidence_grade == "verified"}
@@ -487,10 +541,18 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
             claim_rows = [allowed_rows[item] for item in claim.evidence_fact_ids]
             claim_confidence = min(item[0].confidence or 0 for item in claim_rows)
             verified = all(item[1].evidence_grade == "verified" for item in claim_rows)
-            self_reported = all(item[1].evidence_grade in {"self_reported", "corrected"} for item in claim_rows)
+            self_reported = all(item[1].evidence_grade == "self_reported" for item in claim_rows)
+            learner_supported = all(
+                item[1].evidence_grade in {"self_reported", "corrected"}
+                for item in claim_rows
+            )
             verification_status = (
                 "verified" if verified
-                else "self_reported" if run.kernel_name in {"human", "value"} and self_reported
+                else "self_reported" if self_reported or (
+                    run.kernel_name == "knowledge"
+                    and run.trigger_reason == "knowledge_self_report"
+                )
+                else "self_reported" if run.kernel_name in {"human", "value"} and learner_supported
                 else "boundary_recorded" if run.kernel_name == "structure"
                 else "supported"
             )
@@ -567,6 +629,11 @@ async def process_synthesis_run(run_id: int) -> MemorySynthesisRun | None:
         run.validation_errors = []
         run.usage = usage
         run.finished_at = datetime.utcnow()
+        await normalize_self_reported_claim_statuses(
+            db,
+            learner_id=run.learner_id,
+            module_node_id=module_node.id,
+        )
         await rebuild_kernel_long_term_from_modules(db, run.learner_id)
         await refresh_kernel_head(db, run.learner_id, run.kernel_name)
         await db.commit()
@@ -586,6 +653,9 @@ async def process_due_runs(limit: int = 4) -> int:
 
 async def memory_worker_loop(stop_event: asyncio.Event) -> None:
     await recover_interrupted_runs()
+    async with async_session() as db:
+        await normalize_self_reported_claim_statuses(db)
+        await db.commit()
     if not settings.memory_auto_synthesis_enabled:
         await stop_event.wait()
         return

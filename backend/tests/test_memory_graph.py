@@ -92,6 +92,79 @@ def test_event_dual_write_creates_cross_kernel_facts_and_sparse_edges():
     assert after_first == after_second
 
 
+def test_explicit_concept_self_reports_form_exposure_only_knowledge_claim():
+    async def scenario():
+        await init_db()
+        async with async_session() as db:
+            learner = Learner(
+                key=_key("knowledge-self-report"),
+                display_name="Knowledge Self Report",
+            )
+            db.add(learner)
+            await db.flush()
+            for index, statement in enumerate((
+                "学习者自述接触过决策树的基本思想",
+                "学习者自述接触过支持向量机的基本思想",
+            )):
+                await record_event(
+                    db,
+                    learner_id=learner.id,
+                    event_type="learner_concept_observation_recorded",
+                    source="user",
+                    payload={
+                        "concept_key": "machine-learning",
+                        "concept_name": "机器学习",
+                        "observation_type": "example_seen",
+                        "statement": statement,
+                        "verification": "unverified",
+                        "source_tag": "user_self_input",
+                        "mastery_inference": False,
+                        "memory_subject_key": "concept:machine-learning",
+                    },
+                    provenance={
+                        "self_report": True,
+                        "explicit_click": True,
+                        "mastery_unchanged": True,
+                    },
+                    client_event_id=f"{_key('self-report-event')}-{index}",
+                )
+            run = (await db.execute(select(MemorySynthesisRun).where(
+                MemorySynthesisRun.learner_id == learner.id,
+                MemorySynthesisRun.kernel_name == "knowledge",
+                MemorySynthesisRun.subject_key == "concept:machine-learning",
+            ).order_by(MemorySynthesisRun.id.desc()))).scalars().first()
+            assert run is not None
+            assert run.trigger_reason == "knowledge_self_report"
+            run.due_at = datetime.utcnow()
+            await db.commit()
+            return learner.id, run.id
+
+    learner_id, run_id = asyncio.run(scenario())
+    completed = asyncio.run(process_synthesis_run(run_id))
+    assert completed and completed.status == "completed"
+
+    async def inspect():
+        async with async_session() as db:
+            row = (await db.execute(
+                select(MemoryNode, MemoryClaim, MemoryModule)
+                .join(MemoryClaim, MemoryClaim.node_id == MemoryNode.id)
+                .join(MemoryModule, MemoryModule.node_id == MemoryClaim.module_node_id)
+                .where(
+                    MemoryNode.learner_id == learner_id,
+                    MemoryNode.kernel_name == "knowledge",
+                    MemoryNode.subject_key == "concept:machine-learning",
+                    MemoryNode.status == "active",
+                )
+            )).first()
+            return row
+
+    claim_node, claim, module = asyncio.run(inspect())
+    assert module.module_type == "evidence_claims"
+    assert claim.verification_status == "self_reported"
+    assert "掌握" not in claim_node.text
+    assert len(module.evidence_fact_ids) == 2
+
+
 def test_same_kernel_synthesis_has_complete_evidence_path_and_consumes_once():
     async def scenario():
         await init_db()
@@ -388,6 +461,45 @@ def test_synthesis_validator_rejects_out_of_whitelist_and_unproven_mastery():
     errors = _validate_draft(run, draft, [(node, fact, event)])
     assert "claim_0_references_outside_whitelist" in errors
     assert "claim_0_insufficient_mastery_evidence" in errors
+
+    self_reported_fact = MemoryFact(
+        node_id=2, source_event_id=11, evidence_grade="self_reported",
+    )
+    boundary_errors = _validate_draft(
+        MemorySynthesisRun(
+            kernel_name="knowledge", trigger_reason="knowledge_self_report",
+        ),
+        SynthesisDraft(summary="接触边界", claims=[SynthesisClaimDraft(
+            text="学习者自述接触过该主题，但缺乏可验证的掌握证据。",
+            predicate="knowledge.exposure_boundary",
+            value="self_reported",
+            evidence_fact_ids=[2],
+        )]),
+        [(
+            MemoryNode(id=2, kernel_name="knowledge"),
+            self_reported_fact,
+            EvidenceEvent(id=11, event_type="learner_concept_observation_recorded"),
+        )],
+    )
+    assert "claim_0_insufficient_mastery_evidence" not in boundary_errors
+
+    second_boundary_errors = _validate_draft(
+        MemorySynthesisRun(
+            kernel_name="knowledge", trigger_reason="module_refinement",
+        ),
+        SynthesisDraft(summary="接触边界", claims=[SynthesisClaimDraft(
+            text="学习者的掌握程度明确为未完成，未达到可验证的掌握状态。",
+            predicate="knowledge.mastery_level",
+            value="not_mastered",
+            evidence_fact_ids=[2],
+        )]),
+        [(
+            MemoryNode(id=2, kernel_name="knowledge"),
+            self_reported_fact,
+            EvidenceEvent(id=11, event_type="learner_concept_observation_recorded"),
+        )],
+    )
+    assert "claim_0_insufficient_mastery_evidence" not in second_boundary_errors
 
 
 def test_kernel_specific_claim_policies_reject_overreach():

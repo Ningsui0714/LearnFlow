@@ -39,6 +39,8 @@
 
 五核在决策链中的分工可以概括为：`structure` 决定“走哪儿”，`knowledge` 决定“学什么/哪里没懂”，`human` 决定“怎么教”，`value` 决定“为什么现在学这个”，`practice` 决定“怎样验证能不能做”。它们可以由同一行为分别产生证据，但每个目标都必须有独立理由；一个核的变化不能自动推导其他核的变化。
 
+Contract impact（`2026-08-26.19`）：Knowledge 初始巩固增加一个严格的自述边界。只有同一概念至少两条显式 `learner_concept_observation_recorded` 且全部为 `self_reported` 时，才可形成 exposure-only Module/Claim；Claim 继续标记为 `self_reported`，现有重复评分证据、掌握校验、纠错链和 API schema 均保持不变。掌握校验区分肯定断言和“缺乏掌握证据 / 不代表掌握”等否定边界，后者允许保留但仍不能提供任何掌握升级。worker 还会依据 Claim 的不可变证据闭包确定性归一历史验证标签；全为 self-report Fact 的 Claim 只能显示为 `self_reported`。该规则让学习者可以要求系统长期记住“接触过哪些内容”，但不会把接触经历升级为掌握证据。
+
 长期巩固不是把短期字段复制到长期区，而是按核使用不同门槛：
 
 | Kernel | 长期巩固门槛 |
