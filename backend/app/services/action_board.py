@@ -64,6 +64,16 @@ ACTION_BOARD = {
             ("search_computer_knowledge", "manage_vnext_personal_path_node"),
         ),
         ActionDefinition(
+            "read_personal_concept_graph", "读取个人概念学习图", "none", "none",
+            {},
+            ("record_concept_self_report",),
+        ),
+        ActionDefinition(
+            "record_concept_self_report", "记录学习者明确提交的概念自述", "write", "explicit_or_click",
+            {"knowledge": "concept_history_self_report", "structure": "concept_relation_self_report"},
+            ("read_personal_concept_graph", "manage_learner_memory"),
+        ),
+        ActionDefinition(
             "manage_vnext_personal_path_node", "标记路径状态或确认管理个人节点", "write", "explicit_or_click",
             {"structure": "learning_path_overlay", "knowledge": "self_reported_exposure", "value": "learning_interest_candidate"},
             ("read_vnext_learning_path_graph",),

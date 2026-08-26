@@ -29,13 +29,129 @@ type Props = {
   onOpenPath: () => void
   onMemoryArchive: (memoryId: string, archived: boolean) => void
   onClaimAction: (claimId: number, action: 'confirm' | 'correct' | 'retract', correction?: string) => void
+  onRecordSelfReport: (rawText: string) => Promise<boolean>
+}
+
+function PersonalConceptGraph({ snapshot, kernel }: { snapshot: FormalLearnerSnapshot; kernel: KernelName }) {
+  const [selectedKey, setSelectedKey] = useState('')
+  const graph = snapshot.concept_graph
+  const visibleNodes = graph.nodes.slice(0, 18)
+  const visibleKeys = new Set(visibleNodes.map(node => node.concept_key))
+  const visibleEdges = graph.edges.filter(edge => visibleKeys.has(edge.source_key) && visibleKeys.has(edge.target_key))
+  const selected = graph.nodes.find(node => node.concept_key === selectedKey) || visibleNodes[0]
+  const width = 760
+  const height = 330
+  const center = { x: 350, y: 165 }
+  const innerCount = Math.min(7, visibleNodes.length)
+  const outerCount = Math.max(visibleNodes.length - innerCount, 0)
+  const positions = new Map(visibleNodes.map((node, index) => {
+    const inner = index < innerCount
+    const ring = inner ? 98 : 151
+    const ringIndex = inner ? index : index - innerCount
+    const ringCount = inner ? innerCount : outerCount
+    const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / Math.max(ringCount, 1)
+    return [node.concept_key, {
+      x: center.x + Math.cos(angle) * ring,
+      y: center.y + Math.sin(angle) * ring * .72,
+    }]
+  }))
+  const selectedEdges = selected
+    ? graph.edges.filter(edge => edge.source_key === selected.concept_key || edge.target_key === selected.concept_key)
+    : []
+  const currentState = selected?.knowledge.current_state || {
+    status: selected?.knowledge.timeline.length ? 'self_report_only' : 'relation_only',
+    certain_claims: [],
+    uncertain_observations: [],
+    conflicts: [],
+  }
+
+  return (
+    <section className={`personal-concept-panel concept-panel-${kernel}`}>
+      <header>
+        <div><span>KNOWLEDGE × STRUCTURE</span><h2>个人概念学习图</h2><p>节点身份共享；节点内部的认识历程归知识核，节点之间的关系归结构核。</p></div>
+        <div><strong>{graph.manifest.node_count}</strong><small>概念</small><strong>{graph.manifest.edge_count}</strong><small>关系</small></div>
+      </header>
+      {visibleNodes.length === 0 ? (
+        <p className="formal-empty-copy">尚无个人概念节点。可在上方录入明确自述，或在学习过程中由正式事件逐步形成。</p>
+      ) : (
+        <div className="personal-concept-layout">
+          <div className="concept-graph-canvas">
+            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="个人概念学习图">
+              <defs>
+                <marker id="concept-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" /></marker>
+              </defs>
+              {visibleEdges.map(edge => {
+                const source = positions.get(edge.source_key)
+                const target = positions.get(edge.target_key)
+                if (!source || !target) return null
+                const highlighted = selected?.concept_key === edge.source_key || selected?.concept_key === edge.target_key
+                const mx = (source.x + target.x) / 2
+                const my = (source.y + target.y) / 2
+                return <g key={edge.id} className={highlighted ? 'concept-edge highlighted' : 'concept-edge'}>
+                  <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#concept-arrow)" />
+                  {highlighted && <text x={mx} y={my - 4}>{edge.label}</text>}
+                </g>
+              })}
+              {visibleNodes.map(node => {
+                const position = positions.get(node.concept_key)!
+                const active = selected?.concept_key === node.concept_key
+                return <g key={node.concept_key} role="button" tabIndex={0} aria-label={`查看${node.name}`} className={active ? 'concept-node active' : 'concept-node'} transform={`translate(${position.x},${position.y})`} onClick={() => setSelectedKey(node.concept_key)} onKeyDown={event => { if (event.key === 'Enter') setSelectedKey(node.concept_key) }}>
+                  <circle r={active ? 31 : 25} />
+                  <text textAnchor="middle" y="-2">{node.name.length > 8 ? `${node.name.slice(0, 7)}…` : node.name}</text>
+                  <text className="concept-node-count" textAnchor="middle" y="11">{kernel === 'knowledge' ? `${node.knowledge_event_count} 历程` : `${node.structure_relation_count} 关系`}</text>
+                </g>
+              })}
+            </svg>
+            {graph.nodes.length > visibleNodes.length && <small>当前显示最相关的 {visibleNodes.length} 个节点；详情列表仍保留全部 {graph.nodes.length} 个节点。</small>}
+          </div>
+          <aside className="concept-node-inspector">
+            {selected && <>
+              <span>{selected.official_node_id ? '官方课程节点叠加' : '个人概念节点'}</span>
+              <h3>{selected.name}</h3>
+              <code>{selected.concept_key}</code>
+              <div className="concept-inspector-stats"><b>{selected.knowledge_event_count}<small>知识历程</small></b><b>{selected.structure_relation_count}<small>结构关系</small></b><b>{selected.knowledge.verified_count}<small>验证证据</small></b></div>
+              {kernel === 'knowledge' ? (
+                <div className="concept-timeline">
+                  <h4>节点内部发生了什么</h4>
+                  <div className={`concept-current-state state-${currentState.status}`}>
+                    <b>{currentState.status === 'self_report_only' ? '目前只有自述，等待验证' : currentState.status === 'evidence_backed_claim' ? '已有证据支持的可纠正认识' : currentState.status === 'conflicting_evidence' ? '当前证据存在冲突' : currentState.status === 'verified_events' ? '已有验证事件，尚未凝练 Claim' : '尚无节点内部证据'}</b>
+                    <span>{currentState.uncertain_observations.length} 条模糊/缺口 · {currentState.conflicts.length} 条冲突</span>
+                  </div>
+                  {currentState.certain_claims.slice(-2).map(claim => <article key={`claim-${claim.claim_id}`} className="concept-evidence-claim">
+                    <i /><div><span>Claim · {claim.verification_status} · {Math.round(claim.confidence * 100)}%</span><p>{claim.statement}</p></div>
+                  </article>)}
+                  {selected.knowledge.timeline.length === 0 && <p>目前只有结构关系，还没有知识历程。</p>}
+                  {[...selected.knowledge.timeline].reverse().slice(0, 6).map(item => <article key={item.fact_id}>
+                    <i /><div><span>{item.observation_type} · {item.verification}</span><p>{item.statement}</p>{item.raw_text && <details><summary>查看保留的原文</summary><q>{item.raw_text}</q></details>}</div>
+                  </article>)}
+                </div>
+              ) : (
+                <div className="concept-relation-list">
+                  <h4>它与什么相连</h4>
+                  {selectedEdges.length === 0 && <p>还没有记录概念关系。</p>}
+                  {selectedEdges.slice(0, 8).map(edge => {
+                    const outgoing = edge.source_key === selected.concept_key
+                    const peerKey = outgoing ? edge.target_key : edge.source_key
+                    const peer = graph.nodes.find(node => node.concept_key === peerKey)
+                    return <article key={edge.id}><b>{outgoing ? '→' : '←'} {edge.label}</b><span>{peer?.name || peerKey}</span><p>{edge.rationale || '暂无关系说明'}</p><small>{edge.verification} · 不推断掌握</small></article>
+                  })}
+                </div>
+              )}
+            </>}
+          </aside>
+        </div>
+      )}
+      <footer>官方课程图描述一般培养路径；这里描述你实际怎样理解、联想、受阻和迁移。规划时两张图可以叠加，但不会合并权威。</footer>
+    </section>
+  )
 }
 
 export default function LearnerProfilePage({
-  connection, snapshot, busyKey, error, onRefresh, onOpenPath, onMemoryArchive, onClaimAction,
+  connection, snapshot, busyKey, error, onRefresh, onOpenPath, onMemoryArchive, onClaimAction, onRecordSelfReport,
 }: Props) {
   const [activeKernel, setActiveKernel] = useState<KernelName>('structure')
   const [corrections, setCorrections] = useState<Record<number, string>>({})
+  const [selfReport, setSelfReport] = useState('')
   const meta = KERNELS.find(item => item.id === activeKernel) || KERNELS[0]
   const area = snapshot?.growth.areas.find(item => item.id === activeKernel)
   const modules = useMemo(
@@ -80,6 +196,29 @@ export default function LearnerProfilePage({
         <button type="button" onClick={onOpenPath}>查看结构核的学习路径</button>
       </div>
 
+      <section className="formal-self-report-card">
+        <div className="formal-profile-source">
+          <span>学习者明确资料</span>
+          <h2>原始自述保持可见</h2>
+          <p>{snapshot.profile.background || '尚未填写学习基础。'}</p>
+          <dl>
+            <div><dt>关注方向</dt><dd>{snapshot.profile.focus_areas.join('、') || '未填写'}</dd></div>
+            <div><dt>偏好形式</dt><dd>{snapshot.profile.preferred_modes.join('、') || '未填写'}</dd></div>
+            <div><dt>方向目标</dt><dd>{snapshot.profile.career_goal || '仍在探索'}</dd></div>
+          </dl>
+        </div>
+        <form onSubmit={event => {
+          event.preventDefault()
+          if (!selfReport.trim()) return
+          void onRecordSelfReport(selfReport.trim()).then(saved => { if (saved) setSelfReport('') })
+        }}>
+          <span>补充到个人概念图</span>
+          <p>写下“我学过……”“我不懂……”或明确的阻碍、推动、联想。系统只记录为用户自输入、待验证，不会据此宣称掌握。</p>
+          <textarea value={selfReport} onChange={event => setSelfReport(event.target.value)} placeholder="例如：我学过概率论，但条件概率总是搞混。链式法则帮助我理解反向传播。" />
+          <button type="submit" disabled={!selfReport.trim() || busyKey === 'concept-report'}>{busyKey === 'concept-report' ? '正在写入事件链…' : '记录明确自述'}</button>
+        </form>
+      </section>
+
       <nav className="kernel-tabs" aria-label="五核切换" role="tablist">
         {KERNELS.map(item => (
           <button key={item.id} type="button" role="tab" aria-selected={activeKernel === item.id} className={activeKernel === item.id ? 'active' : ''} onClick={() => setActiveKernel(item.id)}>
@@ -92,6 +231,8 @@ export default function LearnerProfilePage({
         <div><span>{meta.name}</span><p>{meta.description}</p></div>
         <small>短期键 {Object.keys(rawKernel?.short_term || {}).length} · 长期键 {Object.keys(rawKernel?.long_term || {}).length} · 置信度 {Math.round((rawKernel?.confidence || 0) * 100)}%</small>
       </div>
+
+      {(activeKernel === 'knowledge' || activeKernel === 'structure') && <PersonalConceptGraph snapshot={snapshot} kernel={activeKernel} />}
 
       <div className="formal-profile-grid" role="tabpanel" aria-label={meta.name}>
         <section className="kernel-memory-column">

@@ -193,6 +193,25 @@ Contract impact：注册表版本提升到 `2026-08-25.11`。新增正式学习�
 vNext 浏览器工作区均向后兼容。浏览器路径状态继续作为离线缓存，联网后由正式投影覆盖；没有
 数据库 schema 迁移。
 
+### 个人概念学习图投影
+
+Knowledge 与 Structure 现在通过稳定 `concept_key` 共享 `ConceptAnchor` 身份坐标，并分别拥有
+`KnowledgeProjection` 与 `StructureProjection`。前者保存概念内部的接触、定义理解、例子、题目、
+错误、纠正、回忆、变式和迁移历程；后者只保存硬/软前置、阻碍、推动、联想、类比、易混淆、共生、
+应用、返回锚点和迁移关系。该图直接从 EvidenceEvent、KernelMutation 与 MemoryFact 重建，不增加
+数据库长期权威表，也不改变 Module/Claim 门槛。
+
+`concept_self_report_gateway` 接受学习者显式提交的原文，产生一个零 target 原文事件，再为每个已
+抽取/核对概念和关系追加独立注册事件。所有自述固定为 unverified、`mastery_inference=false`。
+`personal_concept_graph_reader` 向 Tutor 和画像页返回有界只读图；`/api/learner-state/context` 同步附带
+相关概念子图。v17 启动迁移只把已有 `LearnerProfile.background` 中的明确课程接触投影为自报事实，
+不生成掌握或结构关系。
+
+Contract impact：注册表版本提升到 `2026-08-26.12`。新增两个工具、两个 capability 和三个事件；
+`registration_profile_completed/profile_updated` 的登记 targets 修正为与既有 reducer 一致的
+Knowledge + Human + Value。现有 EvidenceEvent、KernelState、Memory Graph schema 与旧 API 保持兼容，
+没有新增 Agent、Kernel writer 或掌握推断路径。
+
 五核内容策略由注册表公开，避免“所有核都长成同一种摘要”：Structure 使用稀疏锚点 Claim，
 Knowledge 使用证据声明，Human 使用交互指令，Value 使用经同意的目标声明，Practice 使用带产物、
 辅助等级和迁移证据的表现声明。每个策略分别声明 Fact/Module/Claim 的对象角色、共享主题和硬边界；

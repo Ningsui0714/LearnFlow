@@ -27,6 +27,7 @@ from app.models.learning import (
     MemoryNode,
 )
 from app.services.architecture_registry import KERNEL_NAMES
+from app.services.personal_concept_graph import build_personal_concept_context
 
 
 MEMORY_SCHEMA_VERSION = "memory-item.v2"
@@ -63,27 +64,27 @@ CONTEXT_POLICIES = {
     item.id: item for item in (
         ContextPolicy(
             "global_tutor", KERNEL_NAMES, KERNEL_NAMES,
-            10, 4, 1700, "portfolio_reference",
+            10, 4, 2400, "portfolio_reference",
         ),
         ContextPolicy(
             "project_tutor", KERNEL_NAMES, KERNEL_NAMES,
-            12, 6, 2100, "project",
+            12, 6, 2800, "project",
         ),
         ContextPolicy(
             "checkpoint_tutor", KERNEL_NAMES, KERNEL_NAMES,
-            12, 6, 2200, "checkpoint",
+            12, 6, 2900, "checkpoint",
         ),
         ContextPolicy(
             "review_tutor", KERNEL_NAMES, ("knowledge", "practice"),
-            12, 6, 2100, "review_item",
+            12, 6, 2800, "review_item",
         ),
         ContextPolicy(
             "learning_design", KERNEL_NAMES, ("structure", "knowledge", "human", "value"),
-            10, 4, 1900, "project",
+            10, 4, 2600, "project",
         ),
         ContextPolicy(
             "practice_validation", KERNEL_NAMES, ("knowledge", "practice"),
-            10, 5, 1800, "checkpoint",
+            10, 5, 2500, "checkpoint",
         ),
     )
 }
@@ -584,6 +585,14 @@ async def build_five_kernel_context(
     ).limit(240))).scalars().all())
     facts, claims, modules = await _node_metadata(db, [node.id for node in nodes])
     query_terms = _search_terms(query)
+    concept_context = await build_personal_concept_context(
+        db,
+        learner_id,
+        query,
+        project_id=project_id,
+        checkpoint_id=checkpoint_id,
+        session_id=session_id,
+    )
     now = datetime.utcnow()
     ranked: list[tuple[float, int, MemoryNode, list[str]]] = []
     excluded_sensitive = 0
@@ -625,7 +634,10 @@ async def build_five_kernel_context(
             score += lexical
             reasons.append("lexical_match")
         if node.node_type == "claim" and node.status == "active":
-            score += 0.7
+            # An evidence-backed current claim is a denser summary than a raw
+            # event and must survive when concept history competes for the
+            # bounded packet.
+            score += 3.0
             reasons.append("active_claim")
         age_days = max(0.0, (now - node.occurred_at).total_seconds() / 86400) if node.occurred_at else 999
         score += 0.5 / (1.0 + age_days)
@@ -633,14 +645,16 @@ async def build_five_kernel_context(
     ranked.sort(key=lambda item: (-item[0], -item[1]))
 
     items: list[dict[str, Any]] = []
-    used_tokens = _token_estimate(head_payload)
+    # The personal concept graph is part of the Agent packet, not an unbudgeted
+    # attachment added by an API route after retrieval has finished.
+    used_tokens = _token_estimate(head_payload) + _token_estimate(concept_context)
     for score, _, node, reasons in ranked:
         candidate = _serialize_item(
             node, score=score, reasons=reasons, fact=facts.get(node.id),
             claim=claims.get(node.id), module=modules.get(node.id),
         )
         candidate_tokens = _token_estimate(candidate)
-        if items and used_tokens + candidate_tokens > policy.token_budget:
+        if used_tokens + candidate_tokens > policy.token_budget:
             continue
         items.append(candidate)
         used_tokens += candidate_tokens
@@ -703,6 +717,38 @@ async def build_five_kernel_context(
             if len(relation_paths) >= policy.max_paths:
                 break
 
+    def current_packet_tokens() -> int:
+        return _token_estimate({
+            "heads": head_payload,
+            "items": items,
+            "paths": relation_paths,
+            "personal_concept_graph": concept_context,
+        })
+
+    # One-hop paths are discovered after item selection.  Trim the least
+    # essential tail deterministically so every caller receives a packet that
+    # actually respects the declared policy budget.
+    while current_packet_tokens() > policy.token_budget:
+        if relation_paths:
+            relation_paths.pop()
+            continue
+        if items:
+            items.pop()
+            continue
+        concept_edges = concept_context.get("edges") or []
+        if concept_edges:
+            concept_edges.pop()
+            continue
+        concept_nodes = concept_context.get("nodes") or []
+        if len(concept_nodes) > 1:
+            concept_nodes.pop()
+            continue
+        break
+    conflicts = [
+        path for path in relation_paths
+        if path["relation"] in {"CONTRADICTS", "SUPERSEDES"}
+    ]
+
     evidence_ids = sorted({
         int(ref) for item in items for ref in item.get("evidence_refs", []) if ref is not None
     })
@@ -727,6 +773,12 @@ async def build_five_kernel_context(
             [path["source"]["id"], path["relation"], path["target"]["id"]]
             for path in relation_paths
         ],
+        "concept_keys": [
+            node["concept_key"] for node in concept_context.get("nodes", [])
+        ],
+        "concept_edge_ids": [
+            edge["id"] for edge in concept_context.get("edges", [])
+        ],
     }
     snapshot_id = hashlib.sha256(
         json.dumps(manifest_base, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -744,6 +796,7 @@ async def build_five_kernel_context(
         "kernel_heads": head_payload,
         "items": items,
         "relation_paths": relation_paths,
+        "personal_concept_graph": concept_context,
         "missing_facets": missing_facets,
         "conflicts": conflicts,
         "omitted": {
@@ -759,11 +812,18 @@ async def build_five_kernel_context(
             "policy": asdict(policy),
             "evidence_ids": evidence_ids,
             "token_estimate": _token_estimate({
-                "heads": head_payload, "items": items, "paths": relation_paths,
+                "heads": head_payload,
+                "items": items,
+                "paths": relation_paths,
+                "personal_concept_graph": concept_context,
             }),
             "answer_free": True,
             "retrieval_order": ["exact_scope", "subject_and_lexical", "one_hop_relations"],
             "authority": "read_only_projection_from_evidence_and_memory_graph",
+            "personal_concept_graph": (
+                "read-only Knowledge node history + Structure relations "
+                "sharing ConceptAnchor identity"
+            ),
         },
     }
     return packet

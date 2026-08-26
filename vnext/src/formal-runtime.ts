@@ -84,6 +84,88 @@ export type FormalPathOverlay = {
   knowledge_mastery_inference: false
 }
 
+export type FormalConceptTimelineEntry = {
+  fact_id: number
+  event_id: number
+  occurred_at: string
+  event_type: string
+  observation_type: string
+  statement: string
+  evidence_grade: string
+  verification: string
+  source_tag: string
+  raw_text: string
+  question_ref: Record<string, unknown>
+  mastery_inference: boolean | null
+  correctable: boolean
+}
+
+export type FormalConceptEvidenceClaim = {
+  claim_id: number
+  statement: string
+  predicate: string
+  verification_status: string
+  status: string
+  confidence: number
+  module_version: number
+  evidence_fact_ids: number[]
+}
+
+export type FormalConceptNode = {
+  concept_key: string
+  name: string
+  aliases: string[]
+  origin: string
+  official_node_id?: string | null
+  knowledge_event_count: number
+  structure_relation_count: number
+  knowledge: {
+    timeline: FormalConceptTimelineEntry[]
+    latest_observation?: FormalConceptTimelineEntry | null
+    evidence_grades: string[]
+    verified_count: number
+    self_reported_count: number
+    claims: FormalConceptEvidenceClaim[]
+    current_state: {
+      status: string
+      certain_claims: FormalConceptEvidenceClaim[]
+      uncertain_observations: FormalConceptTimelineEntry[]
+      conflicts: FormalConceptTimelineEntry[]
+    }
+    mastery_claim: FormalConceptEvidenceClaim | null
+  }
+}
+
+export type FormalConceptEdge = {
+  id: string
+  source_key: string
+  target_key: string
+  relation_type: string
+  label: string
+  rationale: string
+  evidence_event_id: number
+  verification: string
+  source_tag: string
+  mastery_inference: false
+}
+
+export type FormalConceptGraph = {
+  version: string
+  authority: string
+  nodes: FormalConceptNode[]
+  edges: FormalConceptEdge[]
+  manifest: {
+    node_count: number
+    edge_count: number
+    knowledge_owns_node_history: true
+    structure_owns_relations: true
+    shared_identity_only: true
+    official_course_graph_is_separate: true
+    self_report_never_implies_mastery: true
+    truncated_at_fact_count: number
+  }
+}
+
 export type FormalLearnerSnapshot = {
   authority: string
   learner: FormalLearner
@@ -103,6 +185,7 @@ export type FormalLearnerSnapshot = {
     evidence: Array<Record<string, unknown>>
   }
   modules: FormalMemoryModule[]
+  concept_graph: FormalConceptGraph
   learning_path: FormalPathOverlay
   learning_tasks: FormalLearningTask[]
 }
@@ -276,6 +359,23 @@ export async function confirmFormalValueClaim(proposal: ValueClaimProposal, clie
       proposed_claim: proposal.proposedClaim,
       evidence_quote: proposal.evidenceQuote,
       scope: proposal.scope,
+      client_event_id: clientEventId,
+    }),
+  })
+}
+
+export async function recordFormalConceptStatement(rawText: string, clientEventId: string) {
+  return jsonRequest<{
+    statement_event_id: number
+    knowledge_event_ids: number[]
+    structure_event_ids: number[]
+    extracted: { concepts: Array<Record<string, unknown>>; relations: Array<Record<string, unknown>> }
+    concept_graph: FormalConceptGraph
+  }>('/api/learner-state/concept-graph/statements', {
+    method: 'POST',
+    body: JSON.stringify({
+      raw_text: rawText,
+      source_tag: 'user_self_input',
       client_event_id: clientEventId,
     }),
   })

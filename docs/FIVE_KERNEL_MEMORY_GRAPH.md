@@ -27,6 +27,28 @@ Structure 与 Knowledge 可以共享 `concept_key / path_node_id / checkpoint_id
 却只表达“在什么约束下做出来”。Human 和 Value 默认不从答题结果旁推；敏感 Human 信息只在能
 改善交互时进入有界 ContextPacket。
 
+### 个人概念学习图
+
+Knowledge 与 Structure 共同维护一个可从事件账本重建的个人概念学习图，但不建立第六个核或第二套
+掌握权威。`ConceptAnchor` 只是共享身份坐标：`concept_key`、名称、别名、来源和可选的官方课程节点
+引用。两核都可以使用 `concept:<concept_key>` 作为 `MemoryNode.subject_key`，但各自只生成本核事实：
+
+```text
+ConceptAnchor(backpropagation)
+├─ KnowledgeProjection：首次接触、定义理解、例子/反例、题目、错误、纠正、回忆、变式与迁移
+└─ StructureProjection：硬/软前置、阻碍、推动、联想、类比、易混淆、共生、应用、返回锚点与迁移边
+```
+
+知识历程由 `learner_concept_observation_recorded` 或既有评分/学习事件形成；题目通过
+`question_ref` 挂在概念下，但一道题的熟悉不能替代概念理解。概念关系由
+`learner_concept_relation_recorded` 形成，关系事实不得替任一端生成掌握结论。原始自述先以零 target
+的 `learner_concept_statement_recorded` 保留全文，再拆成可纠正的 Knowledge/Structure 子事件。
+这些事件固定带 `source_tag`、`verification=unverified` 和 `mastery_inference=false`；后续评分、复习和
+实践事件只能追加验证或冲突证据，不能改写原文。
+
+官方课程学习路径图和个人概念学习图保持分离：前者描述一般培养路径，后者描述该学习者实际怎样
+理解、联想、受阻和迁移。规划工具可以用 `official_node_id` 叠加两张图，但不能合并二者权威。
+
 worker 对候选 Claim 执行确定性内容边界检查。它会拒绝 Structure 的掌握声明、Human 的人格/医学/
 固定学习风格标签、没有学生明确确认的 Value 长期目标，以及没有验证产物或独立迁移证据的
 Practice 能力声明。Module/Claim 可以因纠正形成 `SUPERSEDES` 版本，也可以被学习者归档或撤回；
@@ -41,6 +63,9 @@ Chat、学习任务、学习路径和规划态只通过 allow-list 事件网关�
 - LearningTask 生命周期事件：创建、开始、暂停、恢复、取消、重开、流程完成；零 Kernel target，任务完成不等于掌握。
 - `vnext_learning_path_node_status_set`：更新 Structure 的路径状态；“学过/掌握”只在 Knowledge 留 self-reported exposure，`mastery_unchanged=true`。
 - `vnext_personal_path_node_added/removed`：更新 Structure 个人覆盖层，并在 Value 留短期候选或 tombstone，不产生长期目标。
+- `learner_concept_statement_recorded`：保留学习者原文，零 Kernel target。
+- `learner_concept_observation_recorded`：只写 Knowledge 概念历程，自述保持待验证且不推断掌握。
+- `learner_concept_relation_recorded`：只写 Structure 概念关系，不替 Knowledge 下结论。
 - 已接受的 Value proposal：学生查看依据并确认后，由正式 capability 追加确认事件；拒绝、未确认和纯模型建议不能写长期 Value。
 - 记忆归档/恢复、Claim 确认/纠正/撤回：全部追加新事件或新版本，保留原始历史。
 
@@ -144,6 +169,8 @@ MEMORY_AUTO_SYNTHESIS_ENABLED=true
 
 - `GET /api/learner-state/snapshot`：读取当前学习者的五核、记忆、路径覆盖层和正式任务队列。
 - `GET /api/learner-state/context`：按问题和用途读取有预算、answer-free 的 ContextPacket。
+- `GET /api/learner-state/concept-graph`：读取共享锚点、Knowledge 历程和 Structure 关系的个人图投影。
+- `POST /api/learner-state/concept-graph/statements`：显式提交原文和可选结构化条目，经注册事件写入。
 - `POST /api/learner-state/events`：写入 allow-list 的原子产品事件。
 - `POST /api/learner-state/path/*`：写入路径状态和个人节点事件。
 - `POST /api/learner-state/value-claims/*/confirm`：由学习者明确确认长期 Value 候选。

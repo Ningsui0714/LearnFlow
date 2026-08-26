@@ -75,13 +75,15 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
-        "vnext_learning_path_graph_reader", "vnext_personal_path_node_runtime",
+        "vnext_learning_path_graph_reader", "personal_concept_graph_reader",
+        "concept_self_report_gateway", "vnext_personal_path_node_runtime",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-        "read_vnext_learning_path_graph", "manage_vnext_personal_path_node",
+        "read_vnext_learning_path_graph", "read_personal_concept_graph",
+        "record_concept_self_report", "manage_vnext_personal_path_node",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
@@ -104,7 +106,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
-            "vnext_learning_path_graph_reader", "vnext_personal_path_node_runtime",
+            "vnext_learning_path_graph_reader", "personal_concept_graph_reader",
+            "concept_self_report_gateway", "vnext_personal_path_node_runtime",
         }
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
@@ -143,6 +146,17 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "tutor_agent", "learner_memory_manager", "vnext_profile",
     )
     assert "manage_learner_memory" in WORKBENCHES["vnext_profile"].capabilities
+    assert CAPABILITY_OWNERS["read_personal_concept_graph"] == (
+        "tutor_agent", "personal_concept_graph_reader", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["record_concept_self_report"] == (
+        "tutor_agent", "concept_self_report_gateway", "vnext_profile",
+    )
+    assert EVENTS["learner_concept_statement_recorded"].kernel_targets == ()
+    assert EVENTS["learner_concept_observation_recorded"].kernel_targets == ("knowledge",)
+    assert EVENTS["learner_concept_relation_recorded"].kernel_targets == ("structure",)
+    assert "shared ConceptAnchor identity" in TOOLS["personal_concept_graph_reader"].write_path
+    assert "no mastery inference" in TOOLS["concept_self_report_gateway"].write_path
 
 
 def test_remediation_events_have_standard_authority_provenance():

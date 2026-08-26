@@ -363,6 +363,15 @@ vNext `learning_plan` SHOULD 调用 `vnext_learning_path_graph_reader`。Reader 
 个人节点事件；正式网关验证 learner scope、所有权和 DAG 约束后调用 `record_event()`。节点状态
 必须显示为自报，禁止转译为 Knowledge mastery。
 
+vNext Tutor 还可以调用 `personal_concept_graph_reader`。该只读工具把同一 `concept_key` 下的
+Knowledge 节点内部历程与 Structure 节点间关系装成有界上下文；共享的 `ConceptAnchor` 仅提供名称、
+别名、来源和官方课程节点引用，不提供掌握结论。学习者在画像页显式提交自述时，
+`concept_self_report_gateway` 必须先保留原文，再追加独立的 Knowledge observation 和 Structure
+relation 事件。工具或模型不得把“学过”“熟悉”或课程图标记提升为 mastery，也不得从一条阻碍关系
+反推前置概念不会；只有后续验证事件可以改变证据等级。官方课程图仍是一般培养路径，个人概念图是
+学习者实际认识与联系，两者只能在规划读取时叠加。Project、Checkpoint 与 Session Tutor 读取该图时
+必须沿用 ContextPolicy 的 scope 过滤：允许全局事实与当前 scope，禁止带入其他项目或关卡的题目原文。
+
 Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：
 `learn` 需要 Skill 完成、材料查看或学习者明确确认互动结束，`practice` 需要真实 Attempt，
 `verify` 需要无辅助成功的原始正式 Attempt 或已校验变式（诊断、提示成功、纠错原题重做和
@@ -580,7 +589,7 @@ EvidenceEvent
 1. learner ownership 与 project/checkpoint/session 精确过滤；
 2. subject key 精确召回，再用本地词项匹配和 salience 排序；
 3. 只展开白名单内的一跳稀疏关系；
-4. 按 item、path 与 token 预算生成 answer-free `ContextPacket`。
+4. 按 item、path、个人概念图与统一 token 预算生成 answer-free `ContextPacket`。接入个人概念图后，各策略预算增加 700 个估算 token，保留原有五核召回能力；超限时按确定性顺序裁剪，而不是在 API 层无预算追加。
 
 `ContextPacket` 包含五核热头部、召回项、关系路径、冲突、缺失 facet、省略统计和
 evidence manifest。它是一次 Agent 回合的只读快照，不是第六个核，也不参与掌握归约。

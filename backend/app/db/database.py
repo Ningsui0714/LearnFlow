@@ -133,6 +133,7 @@ MICRO_LEARNING_MIGRATION = "v13-focused-micro-learning"
 CONVERSATION_SKILL_RUNTIME_MIGRATION = "v14-conversation-skill-runtime"
 LEARNING_TASK_RUNTIME_MIGRATION = "v15-learning-task-runtime"
 ATOMIC_LEARNING_SKILL_MIGRATION = "v16-atomic-learning-skill-runtime"
+PERSONAL_CONCEPT_GRAPH_MIGRATION = "v17-personal-concept-learning-graph"
 
 
 def _sqlite_path() -> Path | None:
@@ -1150,6 +1151,86 @@ async def _backfill_atomic_learning_skill_runtime():
         print(f"[migrate] applied {ATOMIC_LEARNING_SKILL_MIGRATION}: {linked} SkillRuns linked")
 
 
+async def _backfill_personal_concept_graph():
+    """Project existing profile background into self-reported concept history.
+
+    This is an additive EvidenceEvent backfill.  It intentionally records only
+    exposure and explicit gaps; profile prose never becomes mastery evidence.
+    """
+    from app.models.learning import LearnerProfile, SchemaMigration
+    from app.services.learning_runtime import record_event
+    from app.services.personal_concept_graph import (
+        concept_client_event_id, extract_self_report, normalize_observation,
+    )
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == PERSONAL_CONCEPT_GRAPH_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        profiles = list((await db.execute(select(LearnerProfile))).scalars().all())
+        created = 0
+        for profile in profiles:
+            raw_text = str(profile.background or "").strip()
+            if not raw_text:
+                continue
+            drafts, _ = extract_self_report(raw_text)
+            if not drafts:
+                continue
+            parent = await record_event(
+                db,
+                learner_id=profile.learner_id,
+                event_type="learner_concept_statement_recorded",
+                source="profile",
+                payload={
+                    "raw_text": raw_text,
+                    "source_tag": "profile_background_backfill",
+                    "verification": "unverified",
+                    "mastery_inference": False,
+                    "extracted_concept_count": len(drafts),
+                    "extracted_relation_count": 0,
+                },
+                provenance={"self_report": True, "projection_backfill": True, "mastery_unchanged": True},
+                client_event_id=concept_client_event_id(
+                    f"concept-graph-v17:{profile.learner_id}", "statement",
+                ),
+            )
+            for index, draft in enumerate(drafts):
+                concept = normalize_observation(draft)
+                await record_event(
+                    db,
+                    learner_id=profile.learner_id,
+                    event_type="learner_concept_observation_recorded",
+                    source="profile",
+                    payload={
+                        "statement_event_id": parent.id,
+                        "raw_text": raw_text,
+                        "source_tag": "profile_background_backfill",
+                        "verification": "unverified",
+                        "mastery_inference": False,
+                        "memory_subject_key": f"concept:{concept['concept_key']}",
+                        "concept_key": concept["concept_key"],
+                        "concept_name": concept["name"],
+                        "concept_aliases": concept["aliases"],
+                        "concept_origin": concept["origin"],
+                        "official_node_id": concept["official_node_id"],
+                        "observation_type": concept["observation_type"],
+                        "statement": concept["statement"],
+                        "question_ref": concept["question_ref"],
+                    },
+                    provenance={"self_report": True, "projection_backfill": True, "mastery_unchanged": True},
+                    client_event_id=concept_client_event_id(
+                        f"concept-graph-v17:{profile.learner_id}",
+                        "knowledge", index, concept["concept_key"],
+                    ),
+                )
+                created += 1
+        db.add(SchemaMigration(version=PERSONAL_CONCEPT_GRAPH_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {PERSONAL_CONCEPT_GRAPH_MIGRATION}: {created} concept observations")
+
+
 async def init_db():
     _backup_before_five_kernel_migration()
     _backup_before_project_proposal_migration()
@@ -1180,3 +1261,4 @@ async def init_db():
     await _mark_conversation_skill_runtime_migration()
     await _backfill_learning_task_runtime()
     await _backfill_atomic_learning_skill_runtime()
+    await _backfill_personal_concept_graph()

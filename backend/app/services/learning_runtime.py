@@ -486,6 +486,54 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
+    if et == "learner_concept_statement_recorded":
+        # Raw learner text is retained in the immutable evidence ledger.  The
+        # reviewed child events below own the actual kernel projections.
+        return
+
+    if et == "learner_concept_observation_recorded":
+        concept_key = str(p.get("concept_key") or "").strip()[:160]
+        if not concept_key:
+            return
+        observation = {
+            "concept_key": concept_key,
+            "name": str(p.get("concept_name") or concept_key)[:160],
+            "observation_type": str(p.get("observation_type") or "self_reported_exposure")[:80],
+            "statement": str(p.get("statement") or "")[:1000],
+            "verification": str(p.get("verification") or "unverified")[:40],
+            "source_tag": str(p.get("source_tag") or "user_self_input")[:60],
+            "question_ref": dict(p.get("question_ref") or {}),
+            "mastery_inference": False,
+        }
+        await _apply_patch(
+            db, event, "knowledge",
+            {"concept_observation": observation},
+            "记录概念节点内部的认识历程；自述与接触不升级为掌握结论",
+        )
+        return
+
+    if et == "learner_concept_relation_recorded":
+        relation_type = str(p.get("relation_type") or "").strip()[:80]
+        source_anchor = dict(p.get("source_anchor") or {})
+        target_anchor = dict(p.get("target_anchor") or {})
+        if not relation_type or not source_anchor.get("concept_key") or not target_anchor.get("concept_key"):
+            return
+        relation = {
+            "source": source_anchor,
+            "target": target_anchor,
+            "relation_type": relation_type,
+            "rationale": str(p.get("rationale") or "")[:500],
+            "verification": str(p.get("verification") or "unverified")[:40],
+            "source_tag": str(p.get("source_tag") or "user_self_input")[:60],
+            "mastery_inference": False,
+        }
+        await _apply_patch(
+            db, event, "structure",
+            {"concept_relation": relation},
+            "记录概念之间的学习关系；关系事实不替知识核判断任一概念是否掌握",
+        )
+        return
+
     if et == "career_goal_confirmed":
         await _apply_patch(
             db, event, "value",

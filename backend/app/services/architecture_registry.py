@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-25.11"
+REGISTRY_VERSION = "2026-08-26.12"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -205,7 +205,7 @@ KERNELS = {
                        "Event-backed navigation, dependency and boundary observations.",
                        "A replaceable route or boundary snapshot; it may remain state-first with one compact anchor claim.",
                        "Optional factual anchor about position or dependency, never a mastery statement.",
-                       "sparse_anchor", ("course", "project", "checkpoint", "task"),
+                       "sparse_anchor", ("course", "concept", "project", "checkpoint", "task"),
                        ("Learning-path self-report never implies knowledge mastery.",)),
         KernelContract("knowledge", "对哪个知识点理解到什么程度",
                        tuple(sorted(SEMANTIC_MEMORY_KEYS["knowledge"])),
@@ -265,6 +265,10 @@ TOOLS = {
                      KERNEL_NAMES, (), "ContextPolicy -> KernelHead + scoped Memory Graph -> bounded read-only Tutor context; local simulation is offline fallback only"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
+        ToolContract("personal_concept_graph_reader", "Personal Concept Learning Graph Reader", "tutor_agent", "vnext", "read",
+                     ("structure", "knowledge"), (), "shared ConceptAnchor identity + Knowledge history + Structure relations -> bounded read-only context; official course graph remains separate"),
+        ToolContract("concept_self_report_gateway", "Learner Concept Self-report Gateway", "tutor_agent", "vnext", "orchestration",
+                     ("structure", "knowledge"), (), "explicit raw learner text -> registered statement/observation/relation EvidenceEvents -> deterministic reducer; unverified and no mastery inference"),
         ToolContract("vnext_personal_path_node_runtime", "vNext Personal Learning Path Node Runtime", "tutor_agent", "vnext", "orchestration",
                      ("structure", "knowledge", "value"), (), "search-backed proposal or status edit -> explicit learner confirmation -> EvidenceEvent -> reducer"),
         ToolContract("learner_memory_manager", "Learner-controlled Five-kernel Memory Manager", "tutor_agent", "learnflow", "transaction",
@@ -478,11 +482,14 @@ WORKBENCHES = {
         WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
                           ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-                           "read_vnext_learning_path_graph", "manage_vnext_personal_path_node"), "vnext"),
+                           "read_vnext_learning_path_graph", "read_personal_concept_graph",
+                           "record_concept_self_report", "manage_vnext_personal_path_node"), "vnext"),
         WorkbenchContract("vnext_learning_path", "vNext Learning Path Graph", "/learning-path", "tutor_agent",
                           ("read_vnext_learning_path_graph", "manage_vnext_personal_path_node"), "vnext"),
         WorkbenchContract("vnext_profile", "vNext Learner Profile", "/learner-profile", "tutor_agent",
-                          ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph", "manage_learner_memory"), "vnext"),
+                          ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph",
+                           "read_personal_concept_graph", "record_concept_self_report",
+                           "manage_learner_memory"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -524,6 +531,8 @@ CAPABILITY_OWNERS = {
     "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
     "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
+    "read_personal_concept_graph": ("tutor_agent", "personal_concept_graph_reader", "vnext_chat"),
+    "record_concept_self_report": ("tutor_agent", "concept_self_report_gateway", "vnext_profile"),
     "manage_vnext_personal_path_node": ("tutor_agent", "vnext_personal_path_node_runtime", "vnext_learning_path"),
     "manage_learner_memory": ("tutor_agent", "learner_memory_manager", "vnext_profile"),
     "delete_conversation": ("tutor_agent", "workspace_lifecycle", "global_tutor"),
@@ -610,6 +619,9 @@ EVENTS = {
         _event("vnext_learning_path_node_status_set", "manage_vnext_personal_path_node", ("structure", "knowledge"), "learner_self_report_for_navigation", origin="vnext"),
         _event("vnext_personal_path_node_added", "manage_vnext_personal_path_node", ("structure", "value"), "learner_confirmed_structure_overlay", origin="vnext"),
         _event("vnext_personal_path_node_removed", "manage_vnext_personal_path_node", ("structure", "value"), "learner_confirmed_structure_overlay_removal", origin="vnext"),
+        _event("learner_concept_statement_recorded", "record_concept_self_report", (), "raw_learner_self_report", origin="vnext"),
+        _event("learner_concept_observation_recorded", "record_concept_self_report", ("knowledge",), "unverified_concept_history", origin="vnext"),
+        _event("learner_concept_relation_recorded", "record_concept_self_report", ("structure",), "unverified_concept_relation", origin="vnext"),
         _event("memory_correction_confirmed", "manage_learner_memory", KERNEL_NAMES, "learner_confirmation", tool="learner_memory_manager", workbench="vnext_profile"),
         _event("memory_correction_added", "manage_learner_memory", KERNEL_NAMES, "learner_correction", tool="learner_memory_manager", workbench="vnext_profile"),
         _event("memory_correction_retracted", "manage_learner_memory", KERNEL_NAMES, "learner_retraction", tool="learner_memory_manager", workbench="vnext_profile"),
@@ -640,8 +652,8 @@ EVENTS = {
         _event("micro_learning_paused", "continue_micro_learning", (), "operational"),
         _event("micro_learning_resumed", "continue_micro_learning", (), "operational"),
         _event("micro_learning_completed", "continue_micro_learning", (), "operational_milestone"),
-        _event("registration_profile_completed", "draft_learning_project", ("human", "value"), "self_report"),
-        _event("profile_updated", "draft_learning_project", ("human", "value"), "self_report", workbench="profile"),
+        _event("registration_profile_completed", "draft_learning_project", ("knowledge", "human", "value"), "self_report"),
+        _event("profile_updated", "draft_learning_project", ("knowledge", "human", "value"), "self_report", workbench="profile"),
         _event("career_goal_confirmed", "draft_learning_project", ("value",), "confirmed_goal", workbench="profile"),
         _event("user_message", "draft_learning_project", KERNEL_NAMES, "interaction"),
         _event("project_proposal_created", "draft_learning_project", ("structure", "value", "practice"), "proposal"),

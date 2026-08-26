@@ -71,6 +71,7 @@ import {
   learnerPathStateFromFormal,
   loadFormalLearnerSnapshot,
   removeFormalPersonalPathNode,
+  recordFormalConceptStatement,
   setFormalMemoryArchived,
   setFormalPathStatus,
   submitFormalClaimFeedback,
@@ -1125,6 +1126,25 @@ function App() {
     }
   }
 
+  const recordConceptSelfReport = async (rawText: string) => {
+    setFormalBusyKey('concept-report')
+    setFormalError('')
+    try {
+      const result = await recordFormalConceptStatement(
+        rawText,
+        `concept-report-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      )
+      setFormalSnapshot(previous => previous ? { ...previous, concept_graph: result.concept_graph } : previous)
+      await refreshFormalSnapshot(true)
+      return true
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '概念自述写入失败')
+      return false
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
   const updateFormalTask = async (task: NonNullable<FormalLearnerSnapshot['learning_tasks'][number]>, action: 'start' | 'pause' | 'resume' | 'cancel' | 'reopen') => {
     setFormalBusyKey(`task:${task.id}`)
     setFormalError('')
@@ -1167,6 +1187,7 @@ function App() {
             onOpenPath={() => openTab(LEARNING_PATH_TAB)}
             onMemoryArchive={(memoryId, archived) => { void updateFormalMemoryArchive(memoryId, archived) }}
             onClaimAction={(claimId, action, correction) => { void updateFormalClaim(claimId, action, correction) }}
+            onRecordSelfReport={recordConceptSelfReport}
           />
         </Suspense>
       )

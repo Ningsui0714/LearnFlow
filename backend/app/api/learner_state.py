@@ -17,6 +17,13 @@ from app.services.learning_tasks import (
     ensure_all_checkpoint_learning_tasks,
     learning_task_view,
 )
+from app.services.personal_concept_graph import (
+    build_personal_concept_graph,
+    concept_client_event_id,
+    extract_self_report,
+    normalize_observation,
+    normalize_relation,
+)
 from app.services.profile import growth_projection
 
 
@@ -107,6 +114,14 @@ class ValueClaimConfirmationRequest(BaseModel):
     evidence_quote: str = Field(min_length=1, max_length=500)
     scope: str = Field(default="long_term_direction_candidate", max_length=80)
     client_event_id: str = Field(min_length=4, max_length=160)
+
+
+class ConceptStatementRequest(BaseModel):
+    raw_text: str = Field(min_length=2, max_length=12000)
+    concepts: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
+    relations: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
+    source_tag: str = Field(default="user_self_input", min_length=2, max_length=60)
+    client_event_id: str = Field(min_length=4, max_length=120)
 
 
 def _path_overlay(projection: dict[str, Any]) -> dict[str, Any]:
@@ -242,6 +257,7 @@ async def get_learner_state_snapshot(
     task_views = [await learning_task_view(db, task) for task in tasks]
     growth = await growth_projection(db, current.learner.id)
     modules = await _memory_modules(db, current.learner.id)
+    concept_graph = await build_personal_concept_graph(db, current.learner.id)
     await db.commit()
     return {
         "authority": "EvidenceEvent -> five_kernel_reducer -> Memory Graph",
@@ -261,6 +277,7 @@ async def get_learner_state_snapshot(
         "kernels": projection,
         "growth": growth,
         "modules": modules,
+        "concept_graph": concept_graph,
         "learning_path": _path_overlay(projection),
         "learning_tasks": task_views,
     }
@@ -272,12 +289,132 @@ async def get_learner_context(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    return await build_five_kernel_context(
+    packet = await build_five_kernel_context(
         db,
         learner_id=current.learner.id,
         policy="global_tutor",
         query=query,
     )
+    return packet
+
+
+@router.get("/concept-graph")
+async def get_personal_concept_graph(
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    return await build_personal_concept_graph(db, current.learner.id)
+
+
+@router.post("/concept-graph/statements")
+async def record_concept_statement(
+    request: ConceptStatementRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    extracted_concepts, extracted_relations = extract_self_report(request.raw_text)
+    concept_inputs = request.concepts or extracted_concepts
+    relation_inputs = request.relations or extracted_relations
+    if not concept_inputs and not relation_inputs:
+        raise HTTPException(
+            422,
+            "没有识别到明确的概念自述。请使用“我学过 / 我不懂 / 我混淆”等表达，或提交已核对的概念条目。",
+        )
+    try:
+        concepts = [normalize_observation(item) for item in concept_inputs]
+        relations = [normalize_relation(item) for item in relation_inputs]
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+    statement_event = await record_event(
+        db,
+        learner_id=current.learner.id,
+        event_type="learner_concept_statement_recorded",
+        source="user",
+        payload={
+            "raw_text": request.raw_text,
+            "source_tag": request.source_tag,
+            "verification": "unverified",
+            "mastery_inference": False,
+            "extracted_concept_count": len(concepts),
+            "extracted_relation_count": len(relations),
+        },
+        confidence=1.0,
+        provenance={"self_report": True, "explicit_click": True, "mastery_unchanged": True},
+        client_event_id=concept_client_event_id(request.client_event_id, "statement"),
+    )
+
+    knowledge_event_ids: list[int] = []
+    for index, concept in enumerate(concepts):
+        event = await record_event(
+            db,
+            learner_id=current.learner.id,
+            event_type="learner_concept_observation_recorded",
+            source="user",
+            payload={
+                "statement_event_id": statement_event.id,
+                "raw_text": request.raw_text,
+                "source_tag": request.source_tag,
+                "verification": "unverified",
+                "mastery_inference": False,
+                "memory_subject_key": f"concept:{concept['concept_key']}",
+                "concept_key": concept["concept_key"],
+                "concept_name": concept["name"],
+                "concept_aliases": concept["aliases"],
+                "concept_origin": concept["origin"],
+                "official_node_id": concept["official_node_id"],
+                "observation_type": concept["observation_type"],
+                "statement": concept["statement"],
+                "question_ref": concept["question_ref"],
+            },
+            confidence=1.0,
+            provenance={"self_report": True, "explicit_click": True, "mastery_unchanged": True},
+            client_event_id=concept_client_event_id(
+                request.client_event_id, "knowledge", index, concept["concept_key"],
+            ),
+        )
+        knowledge_event_ids.append(event.id)
+
+    structure_event_ids: list[int] = []
+    for index, relation in enumerate(relations):
+        event = await record_event(
+            db,
+            learner_id=current.learner.id,
+            event_type="learner_concept_relation_recorded",
+            source="user",
+            payload={
+                "statement_event_id": statement_event.id,
+                "raw_text": request.raw_text,
+                "source_tag": request.source_tag,
+                "verification": "unverified",
+                "mastery_inference": False,
+                "memory_subject_key": f"concept:{relation['target']['concept_key']}",
+                "concept_key": relation["target"]["concept_key"],
+                "concept_name": relation["target"]["name"],
+                "official_node_id": relation["target"].get("official_node_id"),
+                "source_anchor": relation["source"],
+                "target_anchor": relation["target"],
+                "relation_type": relation["relation_type"],
+                "rationale": relation["rationale"],
+            },
+            confidence=1.0,
+            provenance={"self_report": True, "explicit_click": True, "mastery_unchanged": True},
+            client_event_id=concept_client_event_id(
+                request.client_event_id, "structure", index, relation["relation_type"],
+                relation["source"]["concept_key"], relation["target"]["concept_key"],
+            ),
+        )
+        structure_event_ids.append(event.id)
+
+    graph = await build_personal_concept_graph(db, current.learner.id)
+    await db.commit()
+    return {
+        "statement_event_id": statement_event.id,
+        "knowledge_event_ids": knowledge_event_ids,
+        "structure_event_ids": structure_event_ids,
+        "extracted": {"concepts": concepts, "relations": relations},
+        "concept_graph": graph,
+    }
 
 
 @router.post("/events")
