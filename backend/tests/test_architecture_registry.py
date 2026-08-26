@@ -239,8 +239,12 @@ def test_review_workbench_is_registered_without_new_kernel_writer():
     assert "spaced_review" in SKILLS
     assert "review_scheduler" in TOOLS
     assert {
-        "plan_review_queue", "evaluate_review_attempt", "manage_review_item",
+        "plan_review_queue", "evaluate_review_attempt", "evaluate_transfer_variant",
+        "manage_review_item",
     } <= set(ACTION_BOARD)
+    assert {
+        "evaluate_review_attempt", "evaluate_transfer_variant",
+    } <= set(WORKBENCHES["review"].capabilities)
     assert CAPABILITY_OWNERS["plan_review_queue"][0] == "tutor_agent"
     assert CAPABILITY_OWNERS["evaluate_review_attempt"][0] == "practice_agent"
     assert EVENTS["review_attempt_evaluated"].kernel_targets == (

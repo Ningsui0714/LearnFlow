@@ -179,6 +179,8 @@ learner 级 `knowledge_gap`、`current_priority`、`assistance_level`、`path_po
 阶段满足后才写入流程完成；若任务已经物化专注附件，还必须完成该附件中的整组题目与纠错，
 不能在第一道正确题产生 ReviewSchedule 后提前结束其余验证。“任务完成”仍不等于“长期稳定掌握”。
 
+全局 `/tasks` 队列显示同一运行投影的当前阶段和完成比例，并只渲染 `available_actions`。学习者可从任务卡返回原 Session/项目学习现场；“完成当前阶段”仍调用正式 action gateway，`practice / verify / consolidate` 的证据门不会因前端按钮而放宽。所有必做阶段满足后 runtime 可自动完成任务，且完成事件继续保持零 Kernel target。
+
 重规划使用乐观版本：
 
 1. 学生说明调整原因或新方向。

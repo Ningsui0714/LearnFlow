@@ -293,7 +293,11 @@ Tutor: plan_review_queue / 导航 / 过滤
 
 `review_scheduler` 只能写 `ReviewSchedule`，不能写 `KernelState`。复习提交必须携带 `client_submission_id` 和 `expected_version`；重复提交重放原结果，陈旧版本返回 409。跳过不创建 Attempt，延期/暂停/恢复只产生零 kernel target 事件。答案、测试期望和变式正确项只存在于后端判题契约中，取题响应不得暴露。
 
+复习工作台的题面提交是一个统一 ACI：客户端只提交当前服务端题面版本和作答，不判断它属于普通复习还是纠错变式。服务端读取 learner-owned `ReviewSchedule + RemediationCase` 后，在 `evaluate_review_attempt / evaluate_transfer_variant` 之间确定性分派，沿用同一个幂等键，并把重放结果裁剪为 answer-free 响应。迁移变式仍必须经过已登记的 deterministic assessment，不能由 Tutor 或前端决定通过。
+
 vNext `/review` 使用 `concept-proficiency-v1` 展示可重建的证据化熟练度与 D/S/R 冷启动状态，并同时展示误解、有效启发、独立/迁移优势和待解决问题。`review_context_reader` 可以把这些答案隔离后的观察带入 Tutor 的 ReAct 循环；`review_proficiency_projector` 仍是确定性服务端投影，不是模型工具。学习者显式反思通过 `review_reflection_gateway -> review_reflection_recorded -> five_kernel_reducer` 进入 Knowledge，固定为待验证、可纠正且不产生掌握推断。完整规则见 `docs/REVIEW_EVIDENCE_MODEL.md`。
+
+复习和纠错事件同时携带 `memory_subject_key / concept_key / concept_name`，但这只是 Knowledge/Structure 共用的 ConceptAnchor 身份坐标。事件仍先经 reducer 生成 MemoryFact；个人概念图只从事实重建节点内部历程，不另写掌握结论，也不把反思或一次通过升级为长期 Claim。
 
 复习台选择题目后，Workspace 只向 Tutor 回合发送 `review_schedule_id`。后端必须验证 learner ownership，并从题目、Attempt、纠错案例、Knowledge/Practice 投影和 `ReviewSchedule` 重新装配 answer-free 的 `active_surface_context`；不得信任浏览器提交的熟悉度、错因或证据状态。Tutor 只可解释、提示与说明调度，不能通过对话改变判题、间隔或掌握。
 

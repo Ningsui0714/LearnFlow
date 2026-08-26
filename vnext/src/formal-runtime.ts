@@ -74,7 +74,14 @@ export type FormalLearningTask = {
   preferred_skills?: string[]
   source_refs: Array<Record<string, unknown>>
   success_criteria: string[]
+  plan: {
+    schema_version?: string
+    phases?: Array<{ id: string; title?: string; kind?: string; status?: string; required?: boolean }>
+  }
   current_phase_id: string
+  navigation?: { kind: string; path: string }
+  origin_navigation?: { kind: string; path: string }
+  management_navigation?: { kind: string; path: string }
   available_actions: string[]
   version: number
   created_at?: string | null
@@ -549,13 +556,16 @@ export async function actOnFormalLearningSkillRun(
   })
 }
 
-export async function actOnFormalLearningTask(task: FormalLearningTask, action: 'start' | 'pause' | 'resume' | 'cancel' | 'reopen') {
+export type FormalLearningTaskAction = 'start' | 'pause' | 'resume' | 'cancel' | 'reopen' | 'complete_phase' | 'complete_task'
+
+export async function actOnFormalLearningTask(task: FormalLearningTask, action: FormalLearningTaskAction) {
   return jsonRequest<FormalLearningTask>(`/api/learning-tasks/${task.id}/actions`, {
     method: 'POST',
     body: JSON.stringify({
       action,
       expected_version: task.version,
       client_action_id: `vnext-task-action:${task.id}:${action}:${Date.now()}`,
+      phase_id: action === 'complete_phase' ? task.current_phase_id : '',
       evidence_refs: [],
     }),
   })

@@ -244,6 +244,18 @@ def test_review_reflection_is_answer_free_correctable_knowledge_evidence(client:
     kernel = asyncio.run(read_kernel())
     reflections = (kernel.short_term.get("concept_understanding") or {}).get(item["subject_key"], {}).get("learner_reflections") or []
     assert any(value["text"] == text and value["verification"] == "unverified" for value in reflections)
+    graph = client.get("/api/learner-state/concept-graph")
+    assert graph.status_code == 200
+    concept = next(
+        node for node in graph.json()["nodes"]
+        if any(event["event_type"] == "review_reflection_recorded" for event in node["knowledge"]["timeline"])
+    )
+    reflection = next(
+        event for event in concept["knowledge"]["timeline"]
+        if event["event_type"] == "review_reflection_recorded"
+    )
+    assert reflection["statement"] == text
+    assert reflection["mastery_inference"] is False
 
 
 def test_review_wrong_reuses_remediation_and_schedules_next_day(client: TestClient):
@@ -293,22 +305,48 @@ def test_review_wrong_reuses_remediation_and_schedules_next_day(client: TestClie
     assert retry.status_code == 200
     assert retry.json()["remediation"]["status"] == "variant_ready"
 
-    completed = client.post(
-        f"/api/remediation/{remediation['id']}/variant/submit",
-        json={"answer_indexes": [1]},
-    )
+    variant_item = client.get(f"/api/review/items/{schedule_id}").json()
+    variant_payload = {
+        "expected_version": variant_item["version"],
+        "client_submission_id": f"review-variant-{uuid.uuid4()}",
+        "response_status": "answered",
+        "answer_indexes": [1],
+        "assistance_level": "none",
+        "presentation_version": variant_item["presentation"]["version"],
+    }
+    completed = client.post(f"/api/review/items/{schedule_id}/submit", json=variant_payload)
     assert completed.status_code == 200
     assert completed.json()["remediation"]["status"] == "completed"
+    assert completed.json()["submission_contract"] == "remediation_variant"
+    replay = client.post(f"/api/review/items/{schedule_id}/submit", json=variant_payload)
+    assert replay.status_code == 200
+    assert replay.json()["idempotent_replay"] is True
+    assert not _contains_hidden_answers(replay.json())
 
     refreshed = client.get(f"/api/review/items/{schedule_id}").json()
     assert refreshed["phase"] == "active"
     assert refreshed["interval_level"] == 0
     assert refreshed["last_grade"] == "remediated"
+    assert refreshed["proficiency"]["dimensions"]["transfer"] >= 75
+    assert all(
+        cap["code"] != "no_transfer_variant"
+        for cap in refreshed["proficiency"]["caps"]
+    )
     history = client.get(f"/api/review/items/{schedule_id}/history").json()
     assert {attempt["attempt_role"] for attempt in history["attempts"]} >= {
         "original", "retry", "variant",
     }
+    assert history["proficiency"]["dimensions"]["transfer"] >= 75
     assert not _contains_hidden_answers(history["attempts"])
+    graph = client.get("/api/learner-state/concept-graph").json()
+    variant_event = next(
+        entry
+        for node in graph["nodes"]
+        for entry in node["knowledge"]["timeline"]
+        if entry["event_type"] == "remediation_variant_evaluated"
+    )
+    assert variant_event["evidence_grade"] == "verified"
+    assert any(node["knowledge"]["verified_count"] >= 1 for node in graph["nodes"])
     due_at = datetime.fromisoformat(refreshed["due_at"])
     assert timedelta(hours=23) <= due_at - datetime.utcnow() <= timedelta(hours=25)
 

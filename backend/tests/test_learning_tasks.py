@@ -233,6 +233,8 @@ def test_tutor_distinguishes_explicit_task_consent_from_recommendation(
 
 def test_task_is_resumable_but_verification_cannot_be_self_declared(client: TestClient):
     task = _action(client, _create(client), "start")
+    assert "complete_phase" in task["available_actions"]
+    assert "complete_task" not in task["available_actions"]
     task = _action(client, task, "complete_phase", "learn")
     fake_practice = client.post(f"/api/learning-tasks/{task['id']}/actions", json={
         "action": "complete_phase",

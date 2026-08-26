@@ -12,7 +12,7 @@ import hashlib
 import re
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.learning import (
@@ -250,7 +250,12 @@ def normalize_relation(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _anchor_from_payload(payload: dict[str, Any], fallback_key: str) -> dict[str, Any]:
-    concept_key = str(payload.get("concept_key") or fallback_key).removeprefix("concept:")
+    fallback = str(payload.get("subject_key") or fallback_key or "")
+    for prefix in ("concept:", "target:", "concept-item:", "checkpoint:"):
+        if fallback.startswith(prefix):
+            fallback = fallback.removeprefix(prefix)
+            break
+    concept_key = str(payload.get("concept_key") or fallback)
     raw_name = str(payload.get("concept_name") or payload.get("name") or concept_key)
     cleaned_name = re.sub(
         r"^(?:我)?(?:已经|曾经|目前)?(?:学习过|学过|基础课掌握)", "", raw_name,
@@ -259,8 +264,9 @@ def _anchor_from_payload(payload: dict[str, Any], fallback_key: str) -> dict[str
     # Early profile migrations could preserve a conversational prefix in both
     # key and title.  The graph is a rebuildable projection, so canonicalize
     # those coordinates here without rewriting or deleting source evidence.
+    if canonical_key:
+        concept_key = canonical_key
     if official or cleaned_name != raw_name:
-        concept_key = canonical_key or concept_key
         raw_name = canonical_name or raw_name
     return {
         "concept_key": concept_key,
@@ -286,9 +292,18 @@ async def build_personal_concept_graph(
         .join(EvidenceEvent, EvidenceEvent.id == MemoryFact.source_event_id)
         .where(
             MemoryNode.learner_id == learner_id,
-            MemoryNode.subject_key.like("concept:%"),
             MemoryNode.kernel_name.in_(("knowledge", "structure")),
             MemoryNode.status.in_(("active", "legacy")),
+            or_(
+                MemoryNode.subject_key.like("concept:%"),
+                EvidenceEvent.event_type.in_((
+                    "review_attempt_evaluated",
+                    "review_reflection_recorded",
+                    "remediation_started",
+                    "remediation_retry_evaluated",
+                    "remediation_completed",
+                )),
+            ),
         )
         .order_by(MemoryNode.occurred_at.asc(), MemoryNode.id.asc())
         .limit(5000)
@@ -312,6 +327,7 @@ async def build_personal_concept_graph(
     relations: list[dict[str, Any]] = []
     claims: dict[str, list[dict[str, Any]]] = {}
     relation_keys: set[tuple[int, str, str, str]] = set()
+    timeline_event_keys: set[tuple[int, str]] = set()
 
     def in_scope(node: MemoryNode) -> bool:
         if project_id is not None and node.project_id not in (None, project_id):
@@ -346,6 +362,10 @@ async def build_personal_concept_graph(
         payload = dict(event.payload or {})
         anchor = ensure(_anchor_from_payload(payload, node.subject_key))
         if node.kernel_name == "knowledge":
+            event_marker = (event.id, anchor["concept_key"])
+            if event_marker in timeline_event_keys:
+                continue
+            timeline_event_keys.add(event_marker)
             anchor["knowledge_event_count"] += 1
             question_ref = dict(payload.get("question_ref") or {})
             for field in ("question_id", "item_id", "attempt_id", "exercise_id"):

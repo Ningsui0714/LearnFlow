@@ -124,7 +124,11 @@ async def current_learner_from_request(
             raise HTTPException(401, "登录已失效")
         return None
     session, account, learner, profile = row
-    session.last_seen_at = now
+    # Authentication is an observation, not an application write.  Updating
+    # last_seen_at in this shared dependency made every nominal GET acquire a
+    # SQLite write lock when the endpoint later autoflushed.  The session's
+    # issuance/login timestamp remains the durable activity marker; explicit
+    # auth lifecycle operations own any future audit updates.
     return CurrentLearner(
         account=account, learner=learner, profile=profile,
         is_dev_login=bool(session.is_dev_login),

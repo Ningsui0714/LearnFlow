@@ -81,11 +81,17 @@ def _event_by_attempt(events: list[EvidenceEvent]) -> dict[int, EvidenceEvent]:
 
 
 def _question_form(attempt: LearningAttempt, event: EvidenceEvent | None) -> str:
+    # A retry is evidence about recovering the source item, never transfer,
+    # even when a legacy assessment event carried a variant-shaped label.
+    if attempt.attempt_role == "retry":
+        return "original"
+    if attempt.attempt_role in {"variant", "transfer"}:
+        return "validated_variant"
     if event:
         value = str((event.payload or {}).get("question_form") or "")
         if value:
             return value
-    return "validated_variant" if attempt.attempt_role in {"variant", "transfer"} else "original"
+    return "original"
 
 
 def _days_between(start: datetime | None, end: datetime) -> float:

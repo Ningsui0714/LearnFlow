@@ -90,6 +90,7 @@ import {
   updateFormalLearnerProfile,
   type FormalLearnerProfilePatch,
   type FormalLearnerSnapshot,
+  type FormalLearningTaskAction,
   type FormalLearningSkillRun,
   type FormalRuntimeConnection,
 } from './formal-runtime'
@@ -1356,7 +1357,7 @@ function App() {
     }
   }
 
-  const updateFormalTask = async (task: NonNullable<FormalLearnerSnapshot['learning_tasks'][number]>, action: 'start' | 'pause' | 'resume' | 'cancel' | 'reopen') => {
+  const updateFormalTask = async (task: NonNullable<FormalLearnerSnapshot['learning_tasks'][number]>, action: FormalLearningTaskAction) => {
     setFormalBusyKey(`task:${task.id}`)
     setFormalError('')
     try {

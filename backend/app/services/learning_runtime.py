@@ -1009,15 +1009,33 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
 
     if et == "remediation_variant_evaluated":
         correct = bool(p.get("correct"))
+        outcome = str(p.get("outcome") or ("correct" if correct else "incorrect"))
         await _apply_patch(
             db, event, "practice",
             {
                 "remediation_status": "completed" if correct else "variant_ready",
                 "remediation_case_id": p.get("case_id"),
                 "current_attempt": p.get("attempt_id"),
-                "recent_feedback": "variant_passed" if correct else "variant_failed",
+                "recent_feedback": (
+                    "variant_passed" if correct
+                    else "variant_unknown" if outcome == "unknown"
+                    else "variant_failed"
+                ),
             },
             "变式作答验证纠错规则是否可迁移",
+        )
+        await _apply_patch(
+            db, event, "knowledge",
+            {
+                "remediation_variant_verified": correct,
+                "last_variant_attempt": {
+                    "case_id": p.get("case_id"),
+                    "attempt_id": p.get("attempt_id"),
+                    "outcome": outcome,
+                },
+                "pending_question": "" if correct else "迁移变式仍需再次验证",
+            },
+            "变式结果记录概念规则是否能迁移到新情境",
         )
         return
 
@@ -1049,6 +1067,8 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         return
 
     if et == "review_reflection_recorded":
+        # Keep the ReviewSchedule key for the operational short-term lookup;
+        # MemoryFact uses memory_subject_key as the ConceptAnchor coordinate.
         subject_key = str(p.get("subject_key") or p.get("memory_subject_key") or "global")
         knowledge = await _kernel(db, event.learner_id, "knowledge")
         understanding = dict((knowledge.short_term or {}).get("concept_understanding") or {})

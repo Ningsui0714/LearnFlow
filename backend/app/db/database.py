@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import text, select, func, Integer
+from sqlalchemy import text, select, func, Integer, event
 from pathlib import Path
 import os
 import shutil
@@ -8,7 +8,22 @@ import sqlite3
 
 from app.core.config import settings
 
-engine = create_async_engine(settings.database_url, echo=False)
+_sqlite = settings.database_url.startswith("sqlite")
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    connect_args={"timeout": 30} if _sqlite else {},
+)
+
+
+if _sqlite:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _configure_sqlite_connection(dbapi_connection, _connection_record):
+        """Let concurrent local workbenches wait for short writes to finish."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

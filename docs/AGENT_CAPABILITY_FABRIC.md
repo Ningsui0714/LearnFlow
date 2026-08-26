@@ -43,8 +43,11 @@ ContextPacket 是只读投影，不是第二份记忆。它必须公开 scope、
 | 记录概念自述与关系 | `concept_self_report_gateway` | 学习者明确原文 | 写 Knowledge/Structure 的 unverified 事件，禁止 mastery inference |
 | 修改明确资料 | `vnext_five_kernel_explicit_editor` | 学习者 | 按核路由到 profile、concept、plan 或 memory gateway |
 | 纠正、撤回或归档 Claim | `learner_memory_manager` | 学习者 | 原历史不删除，当前有效版本更新 |
+| 提交复习与纠错变式 | `deterministic_assessment` | Practice | `/review` 统一提交由服务端在 `evaluate_review_attempt / evaluate_transfer_variant` 间分派；幂等重放不含答案 |
 
 任何 Tool 如果需要改变学习者状态，只能提出或追加已登记 EvidenceEvent。唯一直接 KernelState writer 仍是 `five_kernel_reducer`。
+
+学习任务队列也是对象 ACI，而不是一组前端按钮：`LearningTask.available_actions` 来自证据重建后的状态机，卡片展示阶段进度并返回原学习现场；前端不能跳过练习、独立验证或复习转交门。
 
 ## Skill 怎样成为真正流程
 

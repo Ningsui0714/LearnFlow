@@ -16,8 +16,9 @@ from app.schemas.review import ReviewActionRequest, ReviewReflectionRequest, Rev
 from app.services.auth import CurrentLearner, get_current_learner
 from app.services.learning_runtime import create_attempt, record_event
 from app.services.remediation import (
-    apply_retry_result, create_remediation_case, serialize_case,
+    apply_retry_result, create_remediation_case, serialize_case, submit_variant,
 )
+from app.services.personal_concept_graph import normalize_concept_key
 from app.services.review import (
     ACTIVE_PHASE, REMEDIATION_PHASE, SUSPENDED_PHASE,
     apply_assessment_result, load_owned_schedule, review_presentation,
@@ -29,6 +30,30 @@ from app.services.review_proficiency import (
 
 
 router = APIRouter(prefix="/review", tags=["Spaced Review"])
+
+
+def _concept_evidence_fields(
+    schedule: ReviewSchedule, *, fallback_name: str = "",
+) -> dict[str, Any]:
+    """Give Knowledge facts one stable ConceptAnchor coordinate."""
+    raw = str(schedule.subject_key or "").strip()
+    if raw.startswith("concept:"):
+        name = raw.removeprefix("concept:").strip()
+    elif raw.startswith("target:"):
+        name = raw.removeprefix("target:").strip()
+    elif raw.startswith(("concept-item:", "exercise:")):
+        name = fallback_name.strip()
+    else:
+        name = raw or fallback_name.strip()
+    name = name or f"{schedule.item_type}-{schedule.item_id}"
+    concept_key = normalize_concept_key(name)
+    return {
+        "subject_key": schedule.subject_key,
+        "memory_subject_key": f"concept:{concept_key}",
+        "concept_key": concept_key,
+        "concept_name": name[:160],
+        "concept_origin": "assessment_projection",
+    }
 
 
 def _attempt_passed(attempt: LearningAttempt) -> bool:
@@ -84,6 +109,41 @@ async def _all_attempts(
         )
         .order_by(LearningAttempt.evaluated_at.desc(), LearningAttempt.id.desc())
     )).scalars().all())
+
+
+async def _with_case_attempts(
+    db: AsyncSession,
+    *,
+    learner_id: int,
+    attempts: list[LearningAttempt],
+    cases: list[RemediationCase],
+) -> list[LearningAttempt]:
+    """Include retry/variant attempts in evidence projections.
+
+    A remediation variant has its own item identity so it cannot be mistaken
+    for another submission to the source question.  Read models still need to
+    join it through the owned RemediationCase when calculating transfer.
+    """
+    linked_attempt_ids = {
+        attempt_id
+        for case in cases
+        for attempt_id in (case.source_attempt_id, case.retry_attempt_id, case.variant_attempt_id)
+        if attempt_id is not None
+    }
+    known_attempt_ids = {attempt.id for attempt in attempts}
+    missing_attempt_ids = linked_attempt_ids - known_attempt_ids
+    if not missing_attempt_ids:
+        return attempts
+    linked_attempts = list((await db.execute(select(LearningAttempt).where(
+        LearningAttempt.learner_id == learner_id,
+        LearningAttempt.id.in_(missing_attempt_ids),
+    ))).scalars().all())
+    result = [*attempts, *linked_attempts]
+    result.sort(
+        key=lambda attempt: attempt.evaluated_at or attempt.submitted_at or datetime.min,
+        reverse=True,
+    )
+    return result
 
 
 async def _review_events(
@@ -147,7 +207,10 @@ async def _question_state(
     open_case = next((case for case in cases if case.status != "completed"), None)
     completed_case = next((case for case in cases if case.status == "completed"), None)
     wrong_count = sum(1 for attempt in attempts if not _attempt_passed(attempt))
-    events = await _review_events(db, schedule, attempts, cases)
+    evidence_attempts = await _with_case_attempts(
+        db, learner_id=schedule.learner_id, attempts=attempts, cases=cases,
+    )
+    events = await _review_events(db, schedule, evidence_attempts, cases)
 
     if not latest:
         attempt_state = "unseen"
@@ -255,7 +318,7 @@ async def _question_state(
             "knowledge": retention,
             "practice": practice_review,
         },
-        "proficiency": build_concept_proficiency(schedule, attempts, events),
+        "proficiency": build_concept_proficiency(schedule, evidence_attempts, events),
         "memory_notes": build_review_memory_notes(schedule, attempts, cases, events),
         "learning_task": ({
             "id": learning_task.id,
@@ -485,24 +548,9 @@ async def get_review_history(
         )
         .order_by(RemediationCase.created_at.desc())
     )).scalars().all())
-    linked_attempt_ids = {
-        attempt_id
-        for case in cases
-        for attempt_id in (case.source_attempt_id, case.retry_attempt_id, case.variant_attempt_id)
-        if attempt_id is not None
-    }
-    known_attempt_ids = {attempt.id for attempt in attempts}
-    missing_attempt_ids = linked_attempt_ids - known_attempt_ids
-    if missing_attempt_ids:
-        linked_attempts = list((await db.execute(select(LearningAttempt).where(
-            LearningAttempt.learner_id == current.learner.id,
-            LearningAttempt.id.in_(missing_attempt_ids),
-        ))).scalars().all())
-        attempts = [*attempts, *linked_attempts]
-        attempts.sort(
-            key=lambda attempt: attempt.evaluated_at or attempt.submitted_at or datetime.min,
-            reverse=True,
-        )
+    attempts = await _with_case_attempts(
+        db, learner_id=current.learner.id, attempts=attempts, cases=cases,
+    )
     events = await _review_events(db, schedule, attempts, cases)
     return {
         "schedule": serialize_schedule(schedule),
@@ -535,6 +583,10 @@ async def record_review_reflection(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     schedule = await _owned_schedule_or_404(db, current.learner.id, schedule_id)
+    state = await _question_state(db, schedule, include_presentation=False)
+    concept_fields = _concept_evidence_fields(
+        schedule, fallback_name=str(state.get("title") or ""),
+    )
     event = await record_event(
         db,
         learner_id=current.learner.id,
@@ -546,9 +598,10 @@ async def record_review_reflection(
             "review_schedule_id": schedule.id,
             "source_item_type": schedule.item_type,
             "item_id": schedule.item_id,
-            "subject_key": schedule.subject_key,
-            "memory_subject_key": schedule.subject_key or f"concept-item:{schedule.item_id}",
+            **concept_fields,
             "reflection_kind": request.reflection_kind,
+            "observation_type": request.reflection_kind,
+            "statement": " ".join(request.text.split()),
             "text": " ".join(request.text.split()),
             "source_tag": "user_self_input",
             "verification": "unverified",
@@ -664,6 +717,43 @@ async def submit_review_item(
         await db.commit()
         return {"outcome": "skipped", "item": await _question_state(db, schedule)}
 
+    open_case = await _open_remediation(db, schedule)
+    if open_case and open_case.status == "variant_ready":
+        if request.response_status == "answered":
+            variant_type = str((open_case.variant_payload or {}).get("type") or "")
+            if variant_type == "concept_choice" and not request.answer_indexes:
+                raise HTTPException(422, "未提交答案；如暂时不会，请使用‘不会’")
+            if variant_type != "concept_choice" and not request.answer_text.strip():
+                raise HTTPException(422, "未提交答案；如暂时不会，请使用‘不会’")
+        remediation, public_result = await submit_variant(
+            db,
+            remediation=open_case,
+            submission={
+                "answer_indexes": request.answer_indexes,
+                "answer_text": request.answer_text,
+                "response_status": request.response_status,
+            },
+            client_submission_id=submission_key,
+        )
+        outcome = (
+            "unknown" if request.response_status == "unknown"
+            else "correct" if public_result.get("correct") else "incorrect"
+        )
+        response = {
+            "outcome": outcome,
+            "passed": bool(public_result.get("correct")),
+            "attempt_id": remediation.variant_attempt_id,
+            "result": public_result,
+            "remediation": serialize_case(remediation),
+            "submission_contract": "remediation_variant",
+            "item": await _question_state(db, schedule),
+        }
+        attempt = await db.get(LearningAttempt, remediation.variant_attempt_id)
+        if attempt:
+            attempt.result = _safe_result(response)
+        await db.commit()
+        return response
+
     private = dict(presentation["private"])
     unknown = request.response_status == "unknown"
     if request.response_status == "answered":
@@ -715,9 +805,6 @@ async def submit_review_item(
         passed = total > 0 and int(stored_result.get("passed") or 0) == total
 
     outcome = "unknown" if unknown else "correct" if passed else "incorrect"
-    open_case = await _open_remediation(db, schedule)
-    if open_case and open_case.status == "variant_ready":
-        raise HTTPException(409, "请先完成当前纠错案例的变式验证")
     remediation_retry = bool(open_case and open_case.status == "explaining")
     attempt = await create_attempt(
         db,
@@ -749,7 +836,20 @@ async def submit_review_item(
             "learning_task_id": learning_task_id,
             "source_item_type": schedule.item_type,
             "item_id": schedule.item_id,
+            **_concept_evidence_fields(
+                schedule, fallback_name=str(private.get("prompt") or ""),
+            ),
             "prompt": private.get("prompt", ""),
+            "observation_type": (
+                "variant_task" if presentation["question_form"] == "validated_variant"
+                else "recall" if passed else "error"
+            ),
+            "statement": (
+                "独立完成了迁移变式" if passed and presentation["question_form"] == "validated_variant"
+                else "完成了一次主动检索" if passed
+                else "主动检索中表示暂时不会" if unknown
+                else "主动检索暴露了待纠正错误"
+            ),
             "outcome": outcome,
             "passed": passed,
             "independent": request.assistance_level == "none",
@@ -832,7 +932,7 @@ async def submit_review_item(
         "remediation": remediation_payload,
         "item": await _question_state(db, schedule),
     }
-    attempt.result = response
+    attempt.result = _safe_result(response)
     await db.commit()
     return response
 

@@ -237,6 +237,30 @@ def _fingerprint(item_type: str, item_id: int | None, evidence: dict[str, Any]) 
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _concept_event_fields(remediation: RemediationCase) -> dict[str, Any]:
+    """Project a remediation case onto the same shared concept identity."""
+    evidence = dict(remediation.evidence or {})
+    meta = dict(evidence.get("assessment_meta") or {})
+    targets = meta.get("targets") or meta.get("concepts") or []
+    if isinstance(targets, dict):
+        targets = list(targets)
+    first = targets[0] if isinstance(targets, list) and targets else ""
+    if isinstance(first, dict):
+        first = first.get("id") or first.get("key") or first.get("name") or ""
+    name = str(
+        first or meta.get("learning_target") or evidence.get("title")
+        or evidence.get("question") or f"{remediation.item_type}-{remediation.item_id}"
+    ).strip()
+    from app.services.personal_concept_graph import normalize_concept_key
+    concept_key = normalize_concept_key(name)
+    return {
+        "memory_subject_key": f"concept:{concept_key}",
+        "concept_key": concept_key,
+        "concept_name": name[:160],
+        "concept_origin": "assessment_projection",
+    }
+
+
 async def create_remediation_case(
     db: AsyncSession,
     *,
@@ -319,6 +343,9 @@ async def create_remediation_case(
             "misconception_tag": misconception_tag,
             "delivery_mode": strategy["delivery_mode"],
             "source_evidence_id": evidence_event_id,
+            **_concept_event_fields(remediation),
+            "observation_type": "misconception",
+            "statement": f"在正式作答中暴露了待纠正问题：{misconception_tag}",
         },
         provenance={"policy": "remediation-v1", "decision_owner": "deterministic_policy"},
         client_event_id=f"remediation:{remediation.id}:started",
@@ -502,7 +529,10 @@ async def apply_retry_result(
         event_type="remediation_retry_evaluated", source="assessment",
         payload={"case_id": remediation.id, "attempt_id": attempt.id,
                  "passed": bool(passed), "delivery_mode": remediation.current_delivery_mode,
-                 "source_evidence_id": evidence_event_id},
+                 "source_evidence_id": evidence_event_id,
+                 **_concept_event_fields(remediation),
+                 "observation_type": "original_task",
+                 "statement": "原题独立重做通过，等待迁移验证" if passed else "原题重做仍未通过"},
         confidence=0.95,
         provenance={"grader": "existing_assessment_pipeline"},
         client_event_id=f"remediation:{remediation.id}:retry:{attempt.id}",
@@ -567,23 +597,25 @@ async def submit_variant(
     *,
     remediation: RemediationCase,
     submission: dict[str, Any],
+    client_submission_id: str | None = None,
 ) -> tuple[RemediationCase, dict[str, Any]]:
     await ensure_variant(remediation)
     variant = dict(remediation.variant_payload or {})
+    unknown = str(submission.get("response_status") or "answered") == "unknown"
     if variant.get("type") == "concept_choice":
         expected = sorted(int(index) for index in variant.get("answer_indexes") or [])
         actual = sorted(int(index) for index in submission.get("answer_indexes") or [])
-        correct = bool(actual) and actual == expected
-        stored_result = {"correct": correct, "answer_indexes": expected,
+        correct = not unknown and bool(actual) and actual == expected
+        stored_result = {"correct": correct, "outcome": "unknown" if unknown else "answered", "answer_indexes": expected,
                          "user_answer_indexes": actual}
-        public_result = {"correct": correct, "user_answer_indexes": actual}
+        public_result = {"correct": correct, "outcome": "unknown" if unknown else "answered", "user_answer_indexes": actual}
     else:
         expected_text = _text(variant.get("expected"), 300)
         actual_text = _text(submission.get("answer_text"), 300)
         normalize = lambda value: " ".join(value.split()).casefold()
-        correct = bool(actual_text) and normalize(actual_text) == normalize(expected_text)
-        stored_result = {"correct": correct, "expected": expected_text, "actual": actual_text}
-        public_result = {"correct": correct, "actual": actual_text}
+        correct = not unknown and bool(actual_text) and normalize(actual_text) == normalize(expected_text)
+        stored_result = {"correct": correct, "outcome": "unknown" if unknown else "answered", "expected": expected_text, "actual": actual_text}
+        public_result = {"correct": correct, "outcome": "unknown" if unknown else "answered", "actual": actual_text}
 
     from app.services.learning_runtime import create_attempt, record_event
     attempt = await create_attempt(
@@ -591,6 +623,8 @@ async def submit_variant(
         checkpoint_id=remediation.checkpoint_id,
         item_type="remediation_variant", item_id=remediation.id,
         submission=submission, result=stored_result, assistance_level="none",
+        status="abstained" if unknown else "evaluated",
+        client_submission_id=client_submission_id,
     )
     attempt.remediation_case_id = remediation.id
     attempt.attempt_role = "variant"
@@ -603,7 +637,12 @@ async def submit_variant(
         project_id=remediation.project_id, checkpoint_id=remediation.checkpoint_id,
         event_type="remediation_variant_evaluated", source="assessment",
         payload={"case_id": remediation.id, "attempt_id": attempt.id,
-                 "correct": correct, "variant_type": variant.get("type")},
+                 "correct": correct,
+                 "outcome": "unknown" if unknown else "correct" if correct else "incorrect",
+                 "variant_type": variant.get("type"),
+                 **_concept_event_fields(remediation),
+                 "observation_type": "variant_task",
+                 "statement": "迁移变式独立通过" if correct else "迁移变式表示不会" if unknown else "迁移变式未通过"},
         confidence=0.95,
         provenance={"grader": "deterministic_variant_contract"},
         client_event_id=f"remediation:{remediation.id}:variant:{attempt.id}",
@@ -621,7 +660,10 @@ async def submit_variant(
                      "retry_attempt_id": remediation.retry_attempt_id,
                      "variant_attempt_id": attempt.id,
                      "delivery_mode": remediation.current_delivery_mode,
-                     "evidence_event_ids": remediation.evidence_event_ids},
+                     "evidence_event_ids": remediation.evidence_event_ids,
+                     **_concept_event_fields(remediation),
+                     "observation_type": "remediation_effect",
+                     "statement": "原题重做与迁移变式均通过，纠错闭环完成"},
             confidence=1.0,
             provenance={"loop": "wrong-explain-retry-variant-writeback"},
             client_event_id=f"remediation:{remediation.id}:completed",

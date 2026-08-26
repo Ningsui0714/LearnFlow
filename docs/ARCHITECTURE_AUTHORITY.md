@@ -112,7 +112,7 @@ KernelState + Memory Graph
 
 `concept-proficiency-v1` 在此权威链上增加可重建的熟练度与 D/S/R 读取投影。它使用作答可靠性、当前可提取性、独立性、变式迁移和间隔稳定性，并以确定性证据上限阻止一次答对或辅助成功变成“掌握”。当前 D/S/R 参数是显式标注的冷启动代理，不是已经按个人日志训练的 FSRS。具体误解、有效启发、独立完成与学习者反思以带 provenance 的记忆条目呈现；学习者反思仍是待验证、可纠正且不升级掌握的 Knowledge 证据。详细公式、论文依据与工具边界见 `docs/REVIEW_EVIDENCE_MODEL.md`。
 
-Contract impact：注册表版本提升到 `2026-08-26.17`。新增 `review_proficiency_projector`、`review_context_reader`、`review_reflection_gateway`，以及 `read_review_context`、`record_review_reflection` capability 和 `review_reflection_recorded` 事件；保留既有 ReviewSchedule、Attempt、五核 schema 和 API 兼容性，新增响应字段均为向后兼容的读取投影。
+Contract impact：注册表版本提升到 `2026-08-26.18`。`/review` 工作台显式登记 `evaluate_transfer_variant`，统一提交入口按服务端拥有的 `RemediationCase` 状态确定性路由普通检索、原题重做与迁移变式；浏览器不再选择私有判题端点。复习、反思和纠错事件补充共享 ConceptAnchor 坐标，使 Knowledge 事实可重建为个人概念历程。保留既有 ReviewSchedule、Attempt、五核 schema 和旧纠错 API，属于向后兼容的行为修复。
 
 ### Chat Mode 与学习动作
 

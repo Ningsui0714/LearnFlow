@@ -1292,7 +1292,16 @@ def _available_actions(task: LearningTask) -> list[str]:
     if task.status == "queued":
         return ["start", "cancel"]
     if task.status == "active":
-        return ["complete_phase", "pause", "complete_task", "cancel"]
+        phases = list(_phase_map(task).values())
+        actions = ["pause", "cancel"]
+        if any(phase.get("status") != "completed" for phase in phases):
+            actions.insert(0, "complete_phase")
+        if not phases or all(
+            not phase.get("required", True) or phase.get("status") == "completed"
+            for phase in phases
+        ):
+            actions.insert(0, "complete_task")
+        return actions
     if task.status == "paused":
         return ["resume", "cancel"]
     if task.status == "canceled":

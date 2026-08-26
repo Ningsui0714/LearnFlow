@@ -131,8 +131,8 @@ def _evidence_grade(event: EvidenceEvent, key: str) -> str:
         return "legacy"
     if event.event_type == "lecture_viewed" or provenance.get("exposure_only"):
         return "exposure_only"
-    if event.event_type == "transfer_attempt_evaluated" and (
-        (event.payload or {}).get("passed")
+    if event.event_type in {"transfer_attempt_evaluated", "remediation_variant_evaluated"} and (
+        ((event.payload or {}).get("passed") or (event.payload or {}).get("correct"))
         and (event.payload or {}).get("assistance_level", "none") == "none"
         and (event.confidence or 0) >= 0.9
     ):

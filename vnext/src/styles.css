@@ -940,8 +940,14 @@ button { cursor: pointer; }
 .task-queue-copy h2 { margin: 3px 0; font-size: 12px; }
 .task-queue-copy p { margin: 0; color: #607067; font-size: 8px; line-height: 1.5; }
 .task-queue-copy small { display: block; margin-top: 4px; color: #98a39d; font-size: 6.5px; }
+.task-phase-progress { display: grid; grid-template-columns: minmax(52px, 110px) auto minmax(0, 1fr); align-items: center; gap: 6px; margin-top: 7px; color: #6e8176; font-size: 6.5px; }
+.task-phase-progress::before { content: ''; grid-column: 1; grid-row: 1; height: 4px; border-radius: 999px; background: #e6eee9; }
+.task-phase-progress i { grid-column: 1; grid-row: 1; z-index: 1; display: block; height: 4px; max-width: 100%; border-radius: 999px; background: #18845a; }
+.task-phase-progress b { font-variant-numeric: tabular-nums; color: #33715a; }
+.task-phase-progress em { overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .task-queue-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .task-queue-actions button { border: 1px solid #b9d5c6; border-radius: 8px; background: #eef8f2; padding: 7px 9px; color: #176848; font-size: 7px; font-weight: 750; }
+.task-queue-actions a { align-self: center; border-bottom: 1px solid #a9c9b9; color: #2a7156; font-size: 7px; font-weight: 750; text-decoration: none; }
 .task-queue-actions .task-cancel { border-color: #e6cec8; background: #fff8f6; color: #9e5146; }
 
 @media (max-width: 850px) {
