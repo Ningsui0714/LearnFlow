@@ -2261,12 +2261,15 @@
     }
 
     async function api(path, options = {}) {
+      const apiPrefix = window.location.pathname.startsWith("/personalized-learning/")
+        ? "/personalized-learning"
+        : "";
       const controller = options.timeoutMs ? new AbortController() : null;
       const timeout = controller
         ? window.setTimeout(() => controller.abort(), options.timeoutMs)
         : null;
       try {
-        const response = await fetch(path, {
+        const response = await fetch(apiPrefix + path, {
           method: options.method || "GET",
           headers: { "Content-Type": "application/json" },
           body: options.body ? JSON.stringify(options.body) : undefined,

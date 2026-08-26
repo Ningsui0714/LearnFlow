@@ -61,11 +61,52 @@ def test_handoff_config_accepts_launcher_environment_without_private_file(
         "http://127.0.0.1:4174/api/integrations/learning-task-knowledge",
     )
     monkeypatch.setenv("PERSONALIZED_LEARNING_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv(
+        "PERSONALIZED_LEARNING_PUBLIC_BASE_URL",
+        "https://learning.example/personalized-learning/",
+    )
 
     config = load_personalized_learning_handoff_config(tmp_path / "missing.env")
 
     assert config.import_url.startswith("http://127.0.0.1:4174/")
     assert config.timeout_seconds == 12
+    assert config.public_base_url == (
+        "https://learning.example/personalized-learning/"
+    )
+
+
+@pytest.mark.asyncio
+async def test_handoff_client_uses_public_reverse_proxy_base_for_redirect():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = __import__("json").loads(request.content)
+        return httpx.Response(200, json={
+            "status": "ok",
+            "entry_id": body["handoff"]["entry_id"],
+            "project_id": "project_public_001",
+            "knowledge_point_id": "kp_vlan",
+            "redirect_url": "/agent.html?project_id=project_public_001",
+            "created": True,
+        })
+
+    client = PersonalizedLearningHandoffClient(
+        config=PersonalizedLearningHandoffConfig(
+            import_url=(
+                "http://127.0.0.1:4174/api/integrations/"
+                "learning-task-knowledge"
+            ),
+            public_base_url=(
+                "https://learning.example/personalized-learning/"
+            ),
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = await client.import_entry(learner_id=17, handoff=_handoff())
+
+    assert result["redirect_url"] == (
+        "https://learning.example/personalized-learning/"
+        "agent.html?project_id=project_public_001"
+    )
 
 
 @pytest.mark.asyncio

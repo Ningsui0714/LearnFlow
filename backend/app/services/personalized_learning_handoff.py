@@ -45,6 +45,7 @@ class PersonalizedLearningHandoffConfig:
     import_url: str
     timeout_seconds: float = 20.0
     api_token: str = ""
+    public_base_url: str = ""
 
 
 def default_config_path() -> Path:
@@ -73,6 +74,17 @@ def load_personalized_learning_handoff_config(
         raise PersonalizedLearningHandoffConfigError(
             "PERSONALIZED_LEARNING_IMPORT_URL 必须是完整的 HTTP(S) 地址"
         )
+    public_base_url = str(
+        os.getenv("PERSONALIZED_LEARNING_PUBLIC_BASE_URL")
+        or values.get("PERSONALIZED_LEARNING_PUBLIC_BASE_URL")
+        or ""
+    ).strip()
+    if public_base_url:
+        public_parts = urlsplit(public_base_url)
+        if public_parts.scheme not in {"http", "https"} or not public_parts.netloc:
+            raise PersonalizedLearningHandoffConfigError(
+                "PERSONALIZED_LEARNING_PUBLIC_BASE_URL 必须是完整的 HTTP(S) 地址"
+            )
     try:
         timeout_seconds = float(
             os.getenv("PERSONALIZED_LEARNING_TIMEOUT_SECONDS")
@@ -91,6 +103,7 @@ def load_personalized_learning_handoff_config(
             or values.get("PERSONALIZED_LEARNING_API_TOKEN")
             or ""
         ).strip(),
+        public_base_url=public_base_url,
     )
 
 
@@ -293,12 +306,20 @@ class PersonalizedLearningHandoffClient:
             raise PersonalizedLearningHandoffError(
                 "个性化学习服务没有返回可打开的项目地址"
             )
-        redirect_url = urljoin(self.config.import_url, redirect_path)
+        if self.config.public_base_url:
+            redirect_url = urljoin(
+                self.config.public_base_url.rstrip("/") + "/",
+                redirect_path.lstrip("/"),
+            )
+            trusted_base_url = self.config.public_base_url
+        else:
+            redirect_url = urljoin(self.config.import_url, redirect_path)
+            trusted_base_url = self.config.import_url
         redirect_parts = urlsplit(redirect_url)
-        import_parts = urlsplit(self.config.import_url)
+        trusted_parts = urlsplit(trusted_base_url)
         if (
             redirect_parts.scheme not in {"http", "https"}
-            or redirect_parts.netloc != import_parts.netloc
+            or redirect_parts.netloc != trusted_parts.netloc
         ):
             raise PersonalizedLearningHandoffError(
                 "个性化学习服务返回了不受信任的跳转地址"
