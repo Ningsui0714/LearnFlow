@@ -1,15 +1,15 @@
-import type { LearningPathEdge, LearningPathNode } from './learning-path-graph'
+import type { LearningPathEdge, LearningPathNode, PathStage } from './learning-path-graph'
 
 export type KnowledgeClusterId =
-  | 'mathematics'
   | 'foundations'
+  | 'mathematics'
   | 'hardware'
-  | 'security'
-  | 'practice'
   | 'systems'
   | 'data'
-  | 'ai'
   | 'software'
+  | 'security'
+  | 'ai'
+  | 'practice'
 
 export type KnowledgeCluster = {
   id: KnowledgeClusterId
@@ -17,34 +17,67 @@ export type KnowledgeCluster = {
   caption: string
   color: string
   rgb: string
-  center: { x: number; y: number }
+}
+
+export type KnowledgeStageColumn = {
+  id: PathStage
+  label: string
+  caption: string
+  x: number
+}
+
+export type NebulaClusterBounds = {
+  clusterId: KnowledgeClusterId
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export type NebulaNodePosition = {
   nodeId: string
   clusterId: KnowledgeClusterId
+  stage: PathStage
   x: number
   y: number
+  width: number
+  height: number
   size: number
   degree: number
 }
 
-export const NEBULA_WIDTH = 1280
-export const NEBULA_HEIGHT = 930
+export const NEBULA_WIDTH = 1570
+export const NEBULA_STAGE_TOP = 86
+const CLUSTER_LEFT = 18
+const CLUSTER_WIDTH = NEBULA_WIDTH - 36
+const CLUSTER_GAP = 16
+const NODE_WIDTH = 112
+const NODE_HEIGHT = 38
+const NODE_COLUMN_GAP = 10
+const NODE_ROW_GAP = 7
+
+export const KNOWLEDGE_STAGE_COLUMNS: KnowledgeStageColumn[] = [
+  { id: 'foundation', label: '入门与基础', caption: '共同语言', x: 190 },
+  { id: 'core', label: '核心骨架', caption: '专业必需', x: 460 },
+  { id: 'domain', label: '专业分流', caption: '方向能力', x: 730 },
+  { id: 'advanced', label: '高阶专题', caption: '深入与迁移', x: 1000 },
+  { id: 'research', label: '研究与产出', caption: '问题和作品', x: 1270 },
+]
 
 export const KNOWLEDGE_CLUSTERS: KnowledgeCluster[] = [
-  { id: 'mathematics', label: '数学与理论', caption: '抽象、证明与建模语言', color: '#766fb8', rgb: '118,111,184', center: { x: 350, y: 175 } },
-  { id: 'hardware', label: '硬件与嵌入式', caption: '从逻辑电路到真实设备', color: '#ac7d43', rgb: '172,125,67', center: { x: 755, y: 155 } },
-  { id: 'systems', label: '系统与云', caption: '资源、并发与大规模运行', color: '#497b9d', rgb: '73,123,157', center: { x: 1030, y: 330 } },
-  { id: 'security', label: '网络与安全', caption: '连接、攻防与可信边界', color: '#ad5c62', rgb: '173,92,98', center: { x: 1030, y: 655 } },
-  { id: 'software', label: '软件与交互', caption: '构造、架构与用户体验', color: '#548259', rgb: '84,130,89', center: { x: 770, y: 770 } },
-  { id: 'practice', label: '研究与实践', caption: '用产物和证据完成迁移', color: '#806d57', rgb: '128,109,87', center: { x: 485, y: 775 } },
-  { id: 'data', label: '数据', caption: '组织、查询与数据工程', color: '#3c8583', rgb: '60,133,131', center: { x: 245, y: 620 } },
-  { id: 'ai', label: 'AI 与智能体', caption: '学习、生成、决策与行动', color: '#7d5da1', rgb: '125,93,161', center: { x: 235, y: 360 } },
-  { id: 'foundations', label: '专业基础', caption: '编程、算法与计算思维', color: '#2d8966', rgb: '45,137,102', center: { x: 625, y: 445 } },
+  { id: 'foundations', label: '专业基础', caption: '编程、算法与计算思维', color: '#24765a', rgb: '36,118,90' },
+  { id: 'mathematics', label: '数学与理论', caption: '抽象、证明与建模语言', color: '#665fa4', rgb: '102,95,164' },
+  { id: 'hardware', label: '硬件与嵌入式', caption: '从逻辑电路到真实设备', color: '#956b32', rgb: '149,107,50' },
+  { id: 'systems', label: '系统与云', caption: '资源、并发与大规模运行', color: '#3f708f', rgb: '63,112,143' },
+  { id: 'data', label: '数据', caption: '组织、查询与数据工程', color: '#277b79', rgb: '39,123,121' },
+  { id: 'software', label: '软件与交互', caption: '构造、架构与用户体验', color: '#4b764f', rgb: '75,118,79' },
+  { id: 'security', label: '网络与安全', caption: '连接、攻防与可信边界', color: '#9a4f57', rgb: '154,79,87' },
+  { id: 'ai', label: 'AI 与智能体', caption: '学习、生成、决策与行动', color: '#765492', rgb: '118,84,146' },
+  { id: 'practice', label: '研究与实践', caption: '用产物和证据完成迁移', color: '#77624d', rgb: '119,98,77' },
 ]
 
 const clusterById = new Map(KNOWLEDGE_CLUSTERS.map(cluster => [cluster.id, cluster]))
+const stageIndex = new Map(KNOWLEDGE_STAGE_COLUMNS.map((stage, index) => [stage.id, index]))
 
 const FOUNDATION_IDS = new Set([
   'digital-literacy', 'computer-introduction', 'computing-ethics', 'programming-foundations',
@@ -69,38 +102,70 @@ export function knowledgeCluster(clusterId: KnowledgeClusterId) {
   return clusterById.get(clusterId)!
 }
 
+function clusterRowCount(nodes: LearningPathNode[], clusterId: KnowledgeClusterId) {
+  const counts = new Map<PathStage, number>()
+  nodes.forEach(node => {
+    if (clusterLearningPathNode(node) !== clusterId) return
+    counts.set(node.stage, (counts.get(node.stage) || 0) + 1)
+  })
+  return Math.max(1, ...[...counts.values()].map(count => Math.ceil(count / 2)))
+}
+
+export function layoutKnowledgeClusters(nodes: LearningPathNode[]) {
+  const bounds = new Map<KnowledgeClusterId, NebulaClusterBounds>()
+  let y = NEBULA_STAGE_TOP
+  KNOWLEDGE_CLUSTERS.forEach(cluster => {
+    const rows = clusterRowCount(nodes, cluster.id)
+    const height = Math.max(126, 63 + rows * (NODE_HEIGHT + NODE_ROW_GAP))
+    bounds.set(cluster.id, {
+      clusterId: cluster.id,
+      x: CLUSTER_LEFT,
+      y,
+      width: CLUSTER_WIDTH,
+      height,
+    })
+    y += height + CLUSTER_GAP
+  })
+  return bounds
+}
+
+export function nebulaHeight(nodes: LearningPathNode[]) {
+  const bounds = layoutKnowledgeClusters(nodes)
+  const last = bounds.get(KNOWLEDGE_CLUSTERS[KNOWLEDGE_CLUSTERS.length - 1].id)!
+  return last.y + last.height + 24
+}
+
 export function layoutLearningPathNebula(nodes: LearningPathNode[], edges: LearningPathEdge[]) {
   const degree = new Map(nodes.map(node => [node.id, 0]))
   edges.forEach(edge => {
     degree.set(edge.from, (degree.get(edge.from) || 0) + 1)
     degree.set(edge.to, (degree.get(edge.to) || 0) + 1)
   })
+  const bounds = layoutKnowledgeClusters(nodes)
   const positions = new Map<string, NebulaNodePosition>()
+
   KNOWLEDGE_CLUSTERS.forEach(cluster => {
-    const clusterNodes = nodes.filter(node => clusterLearningPathNode(node) === cluster.id)
-      .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.order - b.order || a.title.localeCompare(b.title))
-    clusterNodes.forEach((node, index) => {
-      const nodeDegree = degree.get(node.id) || 0
-      const size = Math.max(52, Math.min(82, 52 + nodeDegree * 3))
-      if (index === 0) {
-        positions.set(node.id, { nodeId: node.id, clusterId: cluster.id, x: cluster.center.x - size / 2, y: cluster.center.y - size / 2, size, degree: nodeDegree })
-        return
-      }
-      const ring = index <= 6 ? 1 : index <= 18 ? 2 : 3
-      const ringStart = ring === 1 ? 1 : ring === 2 ? 7 : 19
-      const ringCapacity = ring === 1 ? 6 : ring === 2 ? 12 : Math.max(1, clusterNodes.length - 19)
-      const ringIndex = index - ringStart
-      const ringCount = Math.min(ringCapacity, Math.max(1, clusterNodes.length - ringStart))
-      const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / ringCount + (ring === 2 ? Math.PI / Math.max(6, ringCount) : 0)
-      const radiusX = ring === 1 ? 92 : ring === 2 ? 148 : 188
-      const radiusY = ring === 1 ? 68 : ring === 2 ? 108 : 142
-      positions.set(node.id, {
-        nodeId: node.id,
-        clusterId: cluster.id,
-        x: cluster.center.x + Math.cos(angle) * radiusX - size / 2,
-        y: cluster.center.y + Math.sin(angle) * radiusY - size / 2,
-        size,
-        degree: nodeDegree,
+    const clusterBounds = bounds.get(cluster.id)!
+    KNOWLEDGE_STAGE_COLUMNS.forEach(stage => {
+      const stageNodes = nodes
+        .filter(node => clusterLearningPathNode(node) === cluster.id && node.stage === stage.id)
+        .sort((a, b) => a.order - b.order || (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.title.localeCompare(b.title))
+      stageNodes.forEach((node, index) => {
+        const column = index % 2
+        const row = Math.floor(index / 2)
+        const x = stage.x + column * (NODE_WIDTH + NODE_COLUMN_GAP)
+        const y = clusterBounds.y + 50 + row * (NODE_HEIGHT + NODE_ROW_GAP)
+        positions.set(node.id, {
+          nodeId: node.id,
+          clusterId: cluster.id,
+          stage: node.stage,
+          x,
+          y,
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
+          size: NODE_WIDTH,
+          degree: degree.get(node.id) || 0,
+        })
       })
     })
   })
@@ -108,23 +173,67 @@ export function layoutLearningPathNebula(nodes: LearningPathNode[], edges: Learn
 }
 
 export function nebulaEdgePath(from: NebulaNodePosition, to: NebulaNodePosition, edgeId: string) {
-  const fromCenterX = from.x + from.size / 2
-  const fromCenterY = from.y + from.size / 2
-  const toCenterX = to.x + to.size / 2
-  const toCenterY = to.y + to.size / 2
-  const deltaX = toCenterX - fromCenterX
-  const deltaY = toCenterY - fromCenterY
-  const length = Math.max(1, Math.hypot(deltaX, deltaY))
-  const unitX = deltaX / length
-  const unitY = deltaY / length
-  const x1 = fromCenterX + unitX * (from.size / 2 + 3)
-  const y1 = fromCenterY + unitY * (from.size / 2 + 3)
-  const x2 = toCenterX - unitX * (to.size / 2 + 9)
-  const y2 = toCenterY - unitY * (to.size / 2 + 9)
+  const fromCenterX = from.x + from.width / 2
+  const fromCenterY = from.y + from.height / 2
+  const toCenterX = to.x + to.width / 2
+  const toCenterY = to.y + to.height / 2
+  const forward = toCenterX >= fromCenterX
+  const x1 = fromCenterX + (forward ? from.width / 2 : -from.width / 2)
+  const y1 = fromCenterY
+  const x2 = toCenterX + (forward ? -to.width / 2 - 7 : to.width / 2 + 7)
+  const y2 = toCenterY
   let hash = 0
   for (let index = 0; index < edgeId.length; index += 1) hash = (hash * 31 + edgeId.charCodeAt(index)) | 0
-  const bend = (Math.abs(hash) % 43) - 21
-  const controlX = (x1 + x2) / 2 + (y2 - y1) * 0.035
-  const controlY = (y1 + y2) / 2 + bend
-  return `M ${x1} ${y1} Q ${controlX} ${controlY} ${x2} ${y2}`
+  if (Math.abs(x2 - x1) < 42) {
+    const side = (Math.abs(hash) % 2 ? 1 : -1) * (48 + Math.abs(hash) % 34)
+    return `M ${x1} ${y1} C ${x1 + side} ${y1}, ${x2 + side} ${y2}, ${x2} ${y2}`
+  }
+  const midpoint = (x1 + x2) / 2
+  const bend = (Math.abs(hash) % 17) - 8
+  return `M ${x1} ${y1} C ${midpoint} ${y1 + bend}, ${midpoint} ${y2 - bend}, ${x2} ${y2}`
+}
+
+export function traceLearningPath(edges: LearningPathEdge[], nodeId: string, transitive: boolean) {
+  const upstream = new Set<string>([nodeId])
+  const downstream = new Set<string>([nodeId])
+  const edgeIds = new Set<string>()
+
+  if (!transitive) {
+    edges.forEach(edge => {
+      if (edge.to === nodeId) {
+        upstream.add(edge.from)
+        edgeIds.add(edge.id)
+      }
+      if (edge.from === nodeId) {
+        downstream.add(edge.to)
+        edgeIds.add(edge.id)
+      }
+    })
+    return { upstream, downstream, edgeIds, nodes: new Set([...upstream, ...downstream]) }
+  }
+
+  for (let pass = 0; pass < edges.length + 1; pass += 1) {
+    let changed = false
+    edges.forEach(edge => {
+      if (edge.kind === 'co_learning' && pass > 0) return
+      if (upstream.has(edge.to) && !upstream.has(edge.from)) {
+        upstream.add(edge.from)
+        changed = true
+      }
+      if (downstream.has(edge.from) && !downstream.has(edge.to)) {
+        downstream.add(edge.to)
+        changed = true
+      }
+      if (
+        upstream.has(edge.to) && upstream.has(edge.from)
+        || downstream.has(edge.from) && downstream.has(edge.to)
+      ) edgeIds.add(edge.id)
+    })
+    if (!changed) break
+  }
+  return { upstream, downstream, edgeIds, nodes: new Set([...upstream, ...downstream]) }
+}
+
+export function learningStageIndex(stage: PathStage) {
+  return stageIndex.get(stage) || 0
 }

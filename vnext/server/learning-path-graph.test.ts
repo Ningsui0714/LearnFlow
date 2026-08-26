@@ -16,10 +16,12 @@ import {
 import { runTutorTools } from './tool-runtime.ts'
 import {
   KNOWLEDGE_CLUSTERS,
-  NEBULA_HEIGHT,
   NEBULA_WIDTH,
   clusterLearningPathNode,
+  learningStageIndex,
   layoutLearningPathNebula,
+  nebulaHeight,
+  traceLearningPath,
 } from '../src/learning-path-nebula.ts'
 
 test('official graph is sourced, broad, and acyclic', () => {
@@ -111,14 +113,26 @@ test('planning mode invokes the path reader without asking the model to decide s
 
 test('knowledge nebula gives every course one bounded thematic position', () => {
   const positions = layoutLearningPathNebula(OFFICIAL_PATH_NODES, OFFICIAL_PATH_EDGES)
+  const canvasHeight = nebulaHeight(OFFICIAL_PATH_NODES)
   assert.equal(positions.size, OFFICIAL_PATH_NODES.length)
   assert.equal(new Set(OFFICIAL_PATH_NODES.map(clusterLearningPathNode)).size, KNOWLEDGE_CLUSTERS.length)
   positions.forEach(position => {
-    assert.ok(position.x >= 0 && position.x + position.size <= NEBULA_WIDTH)
-    assert.ok(position.y >= 0 && position.y + position.size <= NEBULA_HEIGHT)
+    assert.ok(position.x >= 0 && position.x + position.width <= NEBULA_WIDTH)
+    assert.ok(position.y >= 0 && position.y + position.height <= canvasHeight)
   })
+  assert.ok(learningStageIndex(OFFICIAL_PATH_NODES.find(node => node.id === 'python-programming')!.stage)
+    < learningStageIndex(OFFICIAL_PATH_NODES.find(node => node.id === 'agent-engineering')!.stage))
   assert.equal(clusterLearningPathNode(OFFICIAL_PATH_NODES.find(node => node.id === 'linear-algebra')!), 'mathematics')
   assert.equal(clusterLearningPathNode(OFFICIAL_PATH_NODES.find(node => node.id === 'operating-systems')!), 'systems')
   assert.equal(clusterLearningPathNode(OFFICIAL_PATH_NODES.find(node => node.id === 'agent-engineering')!), 'ai')
   assert.equal(clusterLearningPathNode(OFFICIAL_PATH_NODES.find(node => node.id === 'computer-security')!), 'security')
+})
+
+test('knowledge nebula distinguishes one-hop hover from pinned prerequisite paths', () => {
+  const oneHop = traceLearningPath(OFFICIAL_PATH_EDGES, 'machine-learning', false)
+  const fullPath = traceLearningPath(OFFICIAL_PATH_EDGES, 'machine-learning', true)
+  assert.ok(oneHop.nodes.has('machine-learning'))
+  assert.ok(fullPath.nodes.size >= oneHop.nodes.size)
+  assert.ok(fullPath.upstream.has('linear-algebra'))
+  assert.ok(fullPath.edgeIds.size > 0)
 })

@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type CSSProperties } from 'react'
 import type {
+  FormalConceptEdge,
+  FormalConceptNode,
   FormalLearnerSnapshot,
   FormalRuntimeConnection,
   KernelName,
@@ -32,29 +34,148 @@ type Props = {
   onRecordSelfReport: (rawText: string) => Promise<boolean>
 }
 
+type ConceptPosition = {
+  x: number
+  y: number
+  width: number
+  height: number
+  lane: number
+}
+
+const CONCEPT_CANVAS_WIDTH = 760
+const CONCEPT_CARD_HEIGHT = 40
+
+const KNOWLEDGE_LANES = [
+  { label: '用户自述', caption: '接触与待验证', color: '#82705d' },
+  { label: '学习中验证', caption: '事件与冲突证据', color: '#3f718c' },
+  { label: '稳定认识', caption: '证据支持的 Claim', color: '#247052' },
+]
+
+const STRUCTURE_LANES = [
+  { label: '前置与来源', caption: '从哪里来' },
+  { label: '当前连接', caption: '正在形成关系' },
+  { label: '迁移与应用', caption: '向哪里去' },
+  { label: '后续概念', caption: '可继续展开' },
+]
+
+function conceptKnowledgeStatus(node: FormalConceptNode) {
+  return node.knowledge.current_state?.status
+    || (node.knowledge.timeline.length ? 'self_report_only' : 'relation_only')
+}
+
+function knowledgeLane(node: FormalConceptNode) {
+  const status = conceptKnowledgeStatus(node)
+  if (status === 'evidence_backed_claim' || node.knowledge.current_state?.certain_claims.length) return 2
+  if (status === 'verified_events' || status === 'conflicting_evidence' || node.knowledge.verified_count > 0) return 1
+  return 0
+}
+
+function layoutKnowledgeConcepts(nodes: FormalConceptNode[]) {
+  const laneRows = [0, 0, 0]
+  const positions = new Map<string, ConceptPosition>()
+  nodes.forEach(node => {
+    const lane = knowledgeLane(node)
+    const row = laneRows[lane]++
+    positions.set(node.concept_key, {
+      x: 24 + lane * 246,
+      y: 72 + row * 49,
+      width: 220,
+      height: CONCEPT_CARD_HEIGHT,
+      lane,
+    })
+  })
+  return {
+    positions,
+    height: Math.max(330, 88 + Math.max(...laneRows) * 49),
+  }
+}
+
+function layoutStructureConcepts(nodes: FormalConceptNode[], edges: FormalConceptEdge[]) {
+  const nodeKeys = new Set(nodes.map(node => node.concept_key))
+  const visibleEdges = edges.filter(edge => nodeKeys.has(edge.source_key) && nodeKeys.has(edge.target_key))
+  const positions = new Map<string, ConceptPosition>()
+  if (visibleEdges.length === 0) {
+    nodes.forEach((node, index) => {
+      const column = index % 3
+      const row = Math.floor(index / 3)
+      positions.set(node.concept_key, {
+        x: 35 + column * 240,
+        y: 80 + row * 54,
+        width: 210,
+        height: CONCEPT_CARD_HEIGHT,
+        lane: column,
+      })
+    })
+    return { positions, height: Math.max(330, 100 + Math.ceil(nodes.length / 3) * 54), hasRelations: false }
+  }
+
+  const incoming = new Map(nodes.map(node => [node.concept_key, 0]))
+  const outgoing = new Map(nodes.map(node => [node.concept_key, [] as string[]]))
+  visibleEdges.forEach(edge => {
+    incoming.set(edge.target_key, (incoming.get(edge.target_key) || 0) + 1)
+    outgoing.get(edge.source_key)?.push(edge.target_key)
+  })
+  const queue = nodes.filter(node => incoming.get(node.concept_key) === 0).map(node => node.concept_key)
+  const layers = new Map(nodes.map(node => [node.concept_key, 0]))
+  const visited = new Set<string>()
+  while (queue.length) {
+    const key = queue.shift()!
+    if (visited.has(key)) continue
+    visited.add(key)
+    outgoing.get(key)?.forEach(target => {
+      layers.set(target, Math.max(layers.get(target) || 0, (layers.get(key) || 0) + 1))
+      incoming.set(target, (incoming.get(target) || 0) - 1)
+      if (incoming.get(target) === 0) queue.push(target)
+    })
+  }
+  nodes.filter(node => !visited.has(node.concept_key)).forEach(node => layers.set(node.concept_key, 1))
+  const maxLayer = Math.max(1, ...layers.values())
+  const laneRows = [0, 0, 0, 0]
+  nodes.forEach(node => {
+    const rawLayer = layers.get(node.concept_key) || 0
+    const lane = Math.min(3, Math.round((rawLayer / maxLayer) * 3))
+    const row = laneRows[lane]++
+    positions.set(node.concept_key, {
+      x: 18 + lane * 186,
+      y: 72 + row * 51,
+      width: 168,
+      height: CONCEPT_CARD_HEIGHT,
+      lane,
+    })
+  })
+  return { positions, height: Math.max(330, 90 + Math.max(...laneRows) * 51), hasRelations: true }
+}
+
+function conceptEdgePath(source: ConceptPosition, target: ConceptPosition) {
+  const fromRight = target.x >= source.x
+  const x1 = fromRight ? source.x + source.width : source.x
+  const x2 = fromRight ? target.x : target.x + target.width
+  const y1 = source.y + source.height / 2
+  const y2 = target.y + target.height / 2
+  const bend = Math.max(28, Math.abs(x2 - x1) * .46)
+  const c1 = x1 + (fromRight ? bend : -bend)
+  const c2 = x2 - (fromRight ? bend : -bend)
+  return `M ${x1} ${y1} C ${c1} ${y1}, ${c2} ${y2}, ${x2} ${y2}`
+}
+
 function PersonalConceptGraph({ snapshot, kernel }: { snapshot: FormalLearnerSnapshot; kernel: KernelName }) {
   const [selectedKey, setSelectedKey] = useState('')
+  const [hoveredKey, setHoveredKey] = useState('')
   const graph = snapshot.concept_graph
   const visibleNodes = graph.nodes.slice(0, 18)
   const visibleKeys = new Set(visibleNodes.map(node => node.concept_key))
   const visibleEdges = graph.edges.filter(edge => visibleKeys.has(edge.source_key) && visibleKeys.has(edge.target_key))
   const selected = graph.nodes.find(node => node.concept_key === selectedKey) || visibleNodes[0]
-  const width = 760
-  const height = 330
-  const center = { x: 350, y: 165 }
-  const innerCount = Math.min(7, visibleNodes.length)
-  const outerCount = Math.max(visibleNodes.length - innerCount, 0)
-  const positions = new Map(visibleNodes.map((node, index) => {
-    const inner = index < innerCount
-    const ring = inner ? 98 : 151
-    const ringIndex = inner ? index : index - innerCount
-    const ringCount = inner ? innerCount : outerCount
-    const angle = -Math.PI / 2 + (Math.PI * 2 * ringIndex) / Math.max(ringCount, 1)
-    return [node.concept_key, {
-      x: center.x + Math.cos(angle) * ring,
-      y: center.y + Math.sin(angle) * ring * .72,
-    }]
-  }))
+  const layout = kernel === 'knowledge'
+    ? { ...layoutKnowledgeConcepts(visibleNodes), hasRelations: false }
+    : layoutStructureConcepts(visibleNodes, visibleEdges)
+  const positions = layout.positions
+  const focusKey = hoveredKey || selected?.concept_key || ''
+  const relatedKeys = new Set<string>([focusKey])
+  visibleEdges.forEach(edge => {
+    if (edge.source_key === focusKey) relatedKeys.add(edge.target_key)
+    if (edge.target_key === focusKey) relatedKeys.add(edge.source_key)
+  })
   const selectedEdges = selected
     ? graph.edges.filter(edge => edge.source_key === selected.concept_key || edge.target_key === selected.concept_key)
     : []
@@ -76,29 +197,49 @@ function PersonalConceptGraph({ snapshot, kernel }: { snapshot: FormalLearnerSna
       ) : (
         <div className="personal-concept-layout">
           <div className="concept-graph-canvas">
-            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="个人概念学习图">
+            <div className="concept-graph-guide">
+              <div><strong>{kernel === 'knowledge' ? '认识成熟度' : '关系方向'}</strong><span>{kernel === 'knowledge' ? '每个概念沿证据链移动，不用单一掌握度替代历程' : '箭头从来源指向被支持、被阻碍或被迁移的概念'}</span></div>
+              <small>{kernel === 'knowledge' ? '自述 → 验证 → Claim' : visibleEdges.length ? '悬停聚焦一跳 · 点击固定概念' : '当前只有节点，没有已验证关系'}</small>
+            </div>
+            <svg viewBox={`0 0 ${CONCEPT_CANVAS_WIDTH} ${layout.height}`} role="img" aria-label="个人概念学习图">
               <defs>
                 <marker id="concept-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" /></marker>
               </defs>
-              {visibleEdges.map(edge => {
+              {kernel === 'knowledge' ? <>
+                {KNOWLEDGE_LANES.map((lane, index) => <g key={lane.label} className="concept-lane-heading" transform={`translate(${24 + index * 246},18)`}>
+                  <rect width="220" height="36" rx="8" style={{ '--concept-lane-color': lane.color } as CSSProperties} />
+                  <text x="11" y="15">{lane.label}</text><text className="concept-lane-caption" x="11" y="27">{lane.caption}</text>
+                </g>)}
+                <path className="concept-maturity-arrow" d="M 236 36 L 268 36 M 482 36 L 514 36" markerEnd="url(#concept-arrow)" />
+              </> : <>
+                {layout.hasRelations && STRUCTURE_LANES.map((lane, index) => <g key={lane.label} className="concept-lane-heading structure" transform={`translate(${18 + index * 186},18)`}>
+                  <text x="8" y="13">{lane.label}</text><text className="concept-lane-caption" x="8" y="25">{lane.caption}</text>
+                </g>)}
+                {!layout.hasRelations && <text className="concept-isolated-note" x="35" y="42">未记录概念之间的前置、阻碍、推动或迁移关系；以下节点按孤立概念展示。</text>}
+              </>}
+              {kernel === 'structure' && visibleEdges.map(edge => {
                 const source = positions.get(edge.source_key)
                 const target = positions.get(edge.target_key)
                 if (!source || !target) return null
-                const highlighted = selected?.concept_key === edge.source_key || selected?.concept_key === edge.target_key
-                const mx = (source.x + target.x) / 2
-                const my = (source.y + target.y) / 2
-                return <g key={edge.id} className={highlighted ? 'concept-edge highlighted' : 'concept-edge'}>
-                  <line x1={source.x} y1={source.y} x2={target.x} y2={target.y} markerEnd="url(#concept-arrow)" />
-                  {highlighted && <text x={mx} y={my - 4}>{edge.label}</text>}
+                const highlighted = focusKey === edge.source_key || focusKey === edge.target_key
+                const muted = focusKey && !highlighted
+                const mx = (source.x + source.width + target.x) / 2
+                const my = (source.y + target.y) / 2 + 13
+                return <g key={edge.id} className={`concept-edge${highlighted ? ' highlighted' : ''}${muted ? ' muted' : ''}`}>
+                  <path d={conceptEdgePath(source, target)} markerEnd="url(#concept-arrow)" />
+                  {highlighted && <text x={mx} y={my}>{edge.label}</text>}
                 </g>
               })}
               {visibleNodes.map(node => {
                 const position = positions.get(node.concept_key)!
                 const active = selected?.concept_key === node.concept_key
-                return <g key={node.concept_key} role="button" tabIndex={0} aria-label={`查看${node.name}`} className={active ? 'concept-node active' : 'concept-node'} transform={`translate(${position.x},${position.y})`} onClick={() => setSelectedKey(node.concept_key)} onKeyDown={event => { if (event.key === 'Enter') setSelectedKey(node.concept_key) }}>
-                  <circle r={active ? 31 : 25} />
-                  <text textAnchor="middle" y="-2">{node.name.length > 8 ? `${node.name.slice(0, 7)}…` : node.name}</text>
-                  <text className="concept-node-count" textAnchor="middle" y="11">{kernel === 'knowledge' ? `${node.knowledge_event_count} 历程` : `${node.structure_relation_count} 关系`}</text>
+                const muted = kernel === 'structure' && layout.hasRelations && Boolean(focusKey) && !relatedKeys.has(node.concept_key)
+                const state = conceptKnowledgeStatus(node)
+                return <g key={node.concept_key} role="button" tabIndex={0} aria-label={`查看${node.name}`} className={`concept-node concept-node-card${active ? ' active' : ''}${muted ? ' muted' : ''} state-${state}`} transform={`translate(${position.x},${position.y})`} onMouseEnter={() => setHoveredKey(node.concept_key)} onMouseLeave={() => setHoveredKey('')} onClick={() => setSelectedKey(node.concept_key)} onKeyDown={event => { if (event.key === 'Enter') setSelectedKey(node.concept_key) }}>
+                  <rect width={position.width} height={position.height} rx="8" />
+                  <circle cx="12" cy="13" r="3" />
+                  <text x="21" y="16">{node.name.length > 13 ? `${node.name.slice(0, 12)}…` : node.name}</text>
+                  <text className="concept-node-count" x="12" y="30">{kernel === 'knowledge' ? `${node.knowledge_event_count} 条认识历程 · ${node.knowledge.verified_count} 条验证` : `${node.structure_relation_count} 条关系`}</text>
                 </g>
               })}
             </svg>

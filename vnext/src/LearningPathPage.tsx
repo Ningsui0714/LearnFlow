@@ -15,12 +15,15 @@ import {
 } from './learning-path-graph'
 import {
   KNOWLEDGE_CLUSTERS,
-  NEBULA_HEIGHT,
+  KNOWLEDGE_STAGE_COLUMNS,
   NEBULA_WIDTH,
   clusterLearningPathNode,
   knowledgeCluster,
+  layoutKnowledgeClusters,
   layoutLearningPathNebula,
+  nebulaHeight,
   nebulaEdgePath,
+  traceLearningPath,
   type KnowledgeClusterId,
 } from './learning-path-nebula'
 
@@ -45,12 +48,15 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   const [audience, setAudience] = useState('全部')
   const [selectedId, setSelectedId] = useState('agent-engineering')
   const [hoveredId, setHoveredId] = useState<string>()
+  const [focusPinned, setFocusPinned] = useState(false)
   const [showSources, setShowSources] = useState(false)
   const [personalTitle, setPersonalTitle] = useState('')
   const [anchorId, setAnchorId] = useState('machine-learning')
   const [edgeKind, setEdgeKind] = useState<PathEdgeKind>('soft_prerequisite')
 
   const nebulaPositions = useMemo(() => layoutLearningPathNebula(projection.nodes, projection.edges), [projection.nodes, projection.edges])
+  const clusterBounds = useMemo(() => layoutKnowledgeClusters(projection.nodes), [projection.nodes])
+  const nebulaCanvasHeight = useMemo(() => nebulaHeight(projection.nodes), [projection.nodes])
   const visibleNodes = useMemo(() => {
     const normalized = compact(query)
     return projection.nodes.filter(node => {
@@ -60,23 +66,21 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
       return matchesQuery && matchesCluster && matchesAudience
     })
   }, [projection.nodes, query, clusterFilter, audience])
-  const visibleIds = new Set(visibleNodes.map(node => node.id))
+  const visibleIds = useMemo(() => new Set(visibleNodes.map(node => node.id)), [visibleNodes])
   const selected = projection.nodes.find(node => node.id === selectedId && visibleIds.has(node.id)) || visibleNodes[0]
-  const nodeMap = new Map(projection.nodes.map(node => [node.id, node]))
-  const emphasisId = hoveredId && visibleIds.has(hoveredId) ? hoveredId : selected?.id
-  const emphasisEdgeIds = new Set(emphasisId
-    ? projection.edges.filter(edge => edge.from === emphasisId || edge.to === emphasisId).map(edge => edge.id)
-    : [])
-  const hoverEdgeIds = new Set(hoveredId
-    ? projection.edges.filter(edge => edge.from === hoveredId || edge.to === hoveredId).map(edge => edge.id)
-    : [])
-  const focusNodeIds = new Set(hoveredId ? [hoveredId] : [])
-  projection.edges.forEach(edge => {
-    if (!hoverEdgeIds.has(edge.id)) return
-    focusNodeIds.add(edge.from)
-    focusNodeIds.add(edge.to)
-  })
-  const visibleEdges = projection.edges.filter(edge => visibleIds.has(edge.from) && visibleIds.has(edge.to))
+  const nodeMap = useMemo(() => new Map(projection.nodes.map(node => [node.id, node])), [projection.nodes])
+  const visibleEdges = useMemo(
+    () => projection.edges.filter(edge => visibleIds.has(edge.from) && visibleIds.has(edge.to)),
+    [projection.edges, visibleIds],
+  )
+  const focusId = hoveredId && visibleIds.has(hoveredId) ? hoveredId : focusPinned ? selected?.id : undefined
+  const focusTrace = useMemo(
+    () => focusId ? traceLearningPath(visibleEdges, focusId, !hoveredId && focusPinned) : undefined,
+    [focusId, focusPinned, hoveredId, visibleEdges],
+  )
+  const selectedEdgeIds = useMemo(() => new Set(selected
+    ? visibleEdges.filter(edge => edge.from === selected.id || edge.to === selected.id).map(edge => edge.id)
+    : []), [selected, visibleEdges])
   const clusterCounts = useMemo(() => Object.fromEntries(KNOWLEDGE_CLUSTERS.map(cluster => [
     cluster.id,
     projection.nodes.filter(node => clusterLearningPathNode(node) === cluster.id).length,
@@ -93,8 +97,8 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
     const position = nebulaPositions.get(selected.id)
     if (!position) return
     const viewport = canvasScrollRef.current
-    const left = Math.max(0, position.x + position.size / 2 - viewport.clientWidth / 2)
-    const top = Math.max(0, position.y + position.size / 2 - viewport.clientHeight / 2)
+    const left = Math.max(0, position.x + position.width / 2 - viewport.clientWidth / 2)
+    const top = Math.max(0, position.y + position.height / 2 - viewport.clientHeight / 2)
     viewport.scrollTo({ left, top, behavior: 'smooth' })
   }, [selected?.id, nebulaPositions])
 
@@ -111,6 +115,11 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
       connections: [{ nodeId: anchor.id, kind: edgeKind, rationale: `由学习者手动关联到“${anchor.title}”` }],
     })
     setPersonalTitle('')
+  }
+
+  const selectAndFocus = (nodeId: string) => {
+    setSelectedId(nodeId)
+    setFocusPinned(true)
   }
 
   return (
@@ -160,21 +169,30 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
             </div>
           )}
 
+          <div className="path-canvas-toolbar">
+            <div><strong>学习星图</strong><span>从左到右：基础 → 核心 → 方向 → 高阶 → 产出</span></div>
+            <div><button type="button" className={!focusPinned ? 'active' : ''} onClick={() => setFocusPinned(false)}>全图</button><button type="button" className={focusPinned ? 'active' : ''} disabled={!selected} onClick={() => setFocusPinned(true)}>聚焦路径</button></div>
+          </div>
           <div className="path-canvas-scroll" ref={canvasScrollRef}>
-            <div className="path-canvas path-nebula" style={{ width: NEBULA_WIDTH, height: NEBULA_HEIGHT }}>
-              <div className="nebula-field-label"><span>KNOWLEDGE NEBULA</span><strong>全图关系可见</strong><small>箭头指向后继；悬停星体聚焦一跳关系</small></div>
+            <div className="path-canvas path-nebula" style={{ width: NEBULA_WIDTH, height: nebulaCanvasHeight }}>
+              <div className="nebula-field-label"><span>LEARNING CONSTELLATION</span><strong>语义成团，阶段成路</strong><small>悬停看一跳 · 点击固定完整前置与后继链</small></div>
+              {KNOWLEDGE_STAGE_COLUMNS.map(stage => (
+                <div className="nebula-stage-column" key={stage.id} style={{ left: stage.x - 12, height: nebulaCanvasHeight - 18 }}>
+                  <span>{stage.label}</span><small>{stage.caption}</small>
+                </div>
+              ))}
               {KNOWLEDGE_CLUSTERS.map(cluster => (
                 <button
                   type="button"
                   key={cluster.id}
                   className={`nebula-cluster${clusterFilter === cluster.id ? ' nebula-cluster-active' : ''}${clusterFilter !== 'all' && clusterFilter !== cluster.id ? ' nebula-cluster-muted' : ''}`}
-                  style={{ left: cluster.center.x - 180, top: cluster.center.y - 125, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
-                  onClick={() => setClusterFilter(current => current === cluster.id ? 'all' : cluster.id)}
+                  style={{ left: clusterBounds.get(cluster.id)!.x, top: clusterBounds.get(cluster.id)!.y, width: clusterBounds.get(cluster.id)!.width, height: clusterBounds.get(cluster.id)!.height, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
+                  onClick={() => { setClusterFilter(current => current === cluster.id ? 'all' : cluster.id); setFocusPinned(false) }}
                 >
                   <span>{cluster.label}</span><small>{cluster.caption}</small><i>{clusterCounts[cluster.id]}</i>
                 </button>
               ))}
-              <svg className="path-edges" viewBox={`0 0 ${NEBULA_WIDTH} ${NEBULA_HEIGHT}`} aria-hidden="true">
+              <svg className="path-edges" viewBox={`0 0 ${NEBULA_WIDTH} ${nebulaCanvasHeight}`} aria-hidden="true">
                 <defs>
                   <marker id="path-arrow-hard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path className="path-arrow-hard" d="M 0 0 L 10 5 L 0 10 z" /></marker>
                   <marker id="path-arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path className="path-arrow-soft" d="M 0 0 L 10 5 L 0 10 z" /></marker>
@@ -186,7 +204,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                   const marker = edge.kind === 'hard_prerequisite' ? 'hard' : edge.kind === 'soft_prerequisite' ? 'soft' : 'co'
                   return <path
                     key={edge.id}
-                    className={`path-edge path-edge-${edge.kind}${emphasisEdgeIds.has(edge.id) ? ' path-edge-focused' : ''}${hoveredId && !hoverEdgeIds.has(edge.id) ? ' path-edge-dimmed' : ''}`}
+                    className={`path-edge path-edge-${edge.kind}${(focusTrace?.edgeIds.has(edge.id) || !focusId && selectedEdgeIds.has(edge.id)) ? ' path-edge-focused' : ''}${focusId && !focusTrace?.edgeIds.has(edge.id) ? ' path-edge-dimmed' : ''}`}
                     d={nebulaEdgePath(from, to, edge.id)}
                     markerEnd={`url(#path-arrow-${marker})`}
                   />
@@ -200,9 +218,9 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                   <button
                     type="button"
                     key={node.id}
-                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${hoveredId && !focusNodeIds.has(node.id) ? ' path-node-muted' : ''}${hoveredId && focusNodeIds.has(node.id) ? ' path-node-related' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
-                    style={{ left: position.x, top: position.y, width: position.size, height: position.size, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
-                    onClick={() => setSelectedId(node.id)}
+                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${focusId && !focusTrace?.nodes.has(node.id) ? ' path-node-muted' : ''}${focusTrace?.upstream.has(node.id) && node.id !== focusId ? ' path-node-upstream' : ''}${focusTrace?.downstream.has(node.id) && node.id !== focusId ? ' path-node-downstream' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
+                    style={{ left: position.x, top: position.y, width: position.width, height: position.height, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
+                    onClick={() => selectAndFocus(node.id)}
                     onMouseEnter={() => setHoveredId(node.id)}
                     onMouseLeave={() => setHoveredId(undefined)}
                     title={`${node.title} · ${cluster.label} · ${PATH_STATUS_LABELS[status]}`}
@@ -216,7 +234,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
             </div>
           </div>
           <div className="path-legend">
-            <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span><em>节点越大，连接越多；彩色实环表示正在学习或自报状态。</em>
+            <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span><em>聚焦时：蓝色是来到这里的前置，绿色是从这里继续的后继。</em>
           </div>
         </main>
 
@@ -231,8 +249,9 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                 <label>我的状态</label>
                 <div>{STATUS_ORDER.map(status => <button type="button" key={status} className={(projection.statuses[selected.id] || 'unmarked') === status ? 'active' : ''} onClick={() => onStatusChange(selected.id, status)}>{PATH_STATUS_LABELS[status]}</button>)}</div>
               </div>
-              <section className="path-relations"><h3>来到这里</h3>{selectedPrerequisites.length ? selectedPrerequisites.map(({ edge, node }) => <button type="button" key={edge.id} onClick={() => setSelectedId(node!.id)}><span>{PATH_EDGE_LABELS[edge.kind]}</span>{node!.title}</button>) : <p>没有显式前置。</p>}</section>
-              <section className="path-relations"><h3>可以继续</h3>{selectedSuccessors.length ? selectedSuccessors.map(({ edge, node }) => <button type="button" key={edge.id} onClick={() => setSelectedId(node!.id)}><span>{PATH_EDGE_LABELS[edge.kind]}</span>{node!.title}</button>) : <p>当前没有直接后继。</p>}</section>
+              <button type="button" className="path-focus-action" onClick={() => setFocusPinned(value => !value)}>{focusPinned ? '返回完整星图' : '在星图中聚焦完整路径'}</button>
+              <section className="path-relations"><h3>来到这里</h3>{selectedPrerequisites.length ? selectedPrerequisites.map(({ edge, node }) => <button type="button" key={edge.id} onClick={() => selectAndFocus(node!.id)}><span>{PATH_EDGE_LABELS[edge.kind]}</span>{node!.title}</button>) : <p>没有显式前置。</p>}</section>
+              <section className="path-relations"><h3>可以继续</h3>{selectedSuccessors.length ? selectedSuccessors.map(({ edge, node }) => <button type="button" key={edge.id} onClick={() => selectAndFocus(node!.id)}><span>{PATH_EDGE_LABELS[edge.kind]}</span>{node!.title}</button>) : <p>当前没有直接后继。</p>}</section>
               {selected.origin === 'personal' && <button type="button" className="path-remove-node" onClick={() => { if (globalThis.confirm(`删除个人节点“${selected.title}”？`)) onRemovePersonalNode(selected.id) }}>删除个人节点</button>}
             </>
           )}
