@@ -51,6 +51,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   const [hoveredId, setHoveredId] = useState<string>()
   const [focusPinned, setFocusPinned] = useState(false)
   const [showSources, setShowSources] = useState(false)
+  const [zoom, setZoom] = useState(.82)
   const [personalTitle, setPersonalTitle] = useState('')
   const [anchorId, setAnchorId] = useState('machine-learning')
   const [edgeKind, setEdgeKind] = useState<PathEdgeKind>('soft_prerequisite')
@@ -106,10 +107,10 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
     const position = nebulaPositions.get(selected.id)
     if (!position) return
     const viewport = canvasScrollRef.current
-    const left = Math.max(0, position.x + position.width / 2 - viewport.clientWidth / 2)
-    const top = Math.max(0, position.y + position.height / 2 - viewport.clientHeight / 2)
+    const left = Math.max(0, (position.x + position.width / 2) * zoom - viewport.clientWidth / 2)
+    const top = Math.max(0, (position.y + position.height / 2) * zoom - viewport.clientHeight / 2)
     viewport.scrollTo({ left, top, behavior: 'smooth' })
-  }, [selected?.id, nebulaPositions])
+  }, [selected?.id, nebulaPositions, zoom])
 
   const addManualNode = () => {
     const title = personalTitle.trim()
@@ -134,35 +135,16 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   return (
     <section className="path-page">
       <header className="path-heading">
-        <div>
-          <span className="eyebrow">STRUCTURE MAP · PERSONAL OVERLAY</span>
-          <h1>学习路径</h1>
-          <p>官方课程图提供共同坐标，个人节点补足真实目标；它帮助规划，不命令你按图学习。</p>
-        </div>
-        <div className="path-manifest">
-          <strong>{projection.nodes.length}</strong><span>节点</span>
-          <strong>{projection.edges.length}</strong><span>关系</span>
-          <strong>{projection.personalNodeIds.length}</strong><span>个人节点</span>
-        </div>
+        <div><h1>学习路径</h1><p>查看课程之间的前置关系，以及你正在走的路线。</p></div>
       </header>
-
-      <div className="path-boundary-note">
-        <span>证据边界</span>
-        <p>“学过 / 掌握”是你的自报标记，只用于路线导航；正式 Knowledge 核掌握仍需练习、项目或迁移证据。</p>
-      </div>
 
       {activePlan && (
         <section className="path-active-plan" aria-label="当前长期学习路径">
           <div>
-            <span>ACTIVE LEARNING PLAN · v{activePlan.revision}</span>
+            <span>当前规划</span>
             <strong>{activePlan.title}</strong>
-            <p>{activePlan.objective}</p>
+            <p>{activePlan.horizon} · {planTargetTitles.join('、')} · {activePlan.routeNodeIds.length} 个节点</p>
           </div>
-          <dl>
-            <div><dt>周期</dt><dd>{activePlan.horizon}</dd></div>
-            <div><dt>目标</dt><dd>{planTargetTitles.join('、')}</dd></div>
-            <div><dt>路线</dt><dd>{activePlan.routeNodeIds.length} 节点 · {activePlan.milestoneNodeIds.length} 里程碑</dd></div>
-          </dl>
           <button type="button" onClick={() => { if (globalThis.confirm(`归档长期路径“${activePlan.title}”？历史记录会保留。`)) onArchivePlan(activePlan.id) }}>归档这条路径</button>
         </section>
       )}
@@ -195,11 +177,12 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
           )}
 
           <div className="path-canvas-toolbar">
-            <div><strong>学习星图</strong><span>从左到右：基础 → 核心 → 方向 → 高阶 → 产出</span></div>
-            <div><button type="button" className={!focusPinned ? 'active' : ''} onClick={() => setFocusPinned(false)}>全图</button><button type="button" className={focusPinned ? 'active' : ''} disabled={!selected} onClick={() => setFocusPinned(true)}>聚焦路径</button></div>
+            <div><strong>学习星图</strong><span>基础 → 核心 → 方向 → 高阶 → 产出</span></div>
+            <div className="path-canvas-actions"><button type="button" className={!focusPinned ? 'active' : ''} onClick={() => setFocusPinned(false)}>全图</button><button type="button" className={focusPinned ? 'active' : ''} disabled={!selected} onClick={() => setFocusPinned(true)}>聚焦</button><i /><button type="button" onClick={() => setZoom(value => Math.max(.55, +(value - .1).toFixed(2)))} aria-label="缩小星图">−</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(value => Math.min(1.3, +(value + .1).toFixed(2)))} aria-label="放大星图">＋</button></div>
           </div>
           <div className="path-canvas-scroll" ref={canvasScrollRef}>
-            <div className="path-canvas path-nebula" style={{ width: NEBULA_WIDTH, height: nebulaCanvasHeight }}>
+            <div className="path-zoom-stage" style={{ width: NEBULA_WIDTH * zoom, height: nebulaCanvasHeight * zoom }}>
+            <div className="path-canvas path-nebula" style={{ width: NEBULA_WIDTH, height: nebulaCanvasHeight, transform: `scale(${zoom})` }}>
               <div className="nebula-field-label"><span>LEARNING CONSTELLATION</span><strong>语义成团，阶段成路</strong><small>悬停看一跳 · 点击固定完整前置与后继链</small></div>
               {KNOWLEDGE_STAGE_COLUMNS.map(stage => (
                 <div className="nebula-stage-column" key={stage.id} style={{ left: stage.x - 12, height: nebulaCanvasHeight - 18 }}>
@@ -258,6 +241,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
               })}
               {visibleNodes.length === 0 && <div className="path-empty">没有匹配节点。你可以在右侧建立一个个人节点。</div>}
             </div>
+            </div>
           </div>
           <div className="path-legend">
             <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span><span><i className="legend-plan" />我的长期路线</span><em>聚焦时：蓝色是来到这里的前置，绿色是从这里继续的后继。</em>
@@ -267,7 +251,6 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
         <aside className="path-inspector">
           {selected && (
             <>
-              <span className="eyebrow">{selected.origin === 'personal' ? 'PERSONAL NODE' : 'COURSE NODE'}</span>
               <h2>{selected.title}</h2>
               <p>{selected.summary}</p>
               <div className="path-node-tags"><span className="path-cluster-tag" style={{ '--cluster-color': knowledgeCluster(clusterLearningPathNode(selected)).color, '--cluster-rgb': knowledgeCluster(clusterLearningPathNode(selected)).rgb } as CSSProperties}>{knowledgeCluster(clusterLearningPathNode(selected)).label}</span>{selected.domains.map(item => <span key={item}>{item}</span>)}</div>
@@ -281,22 +264,22 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                 <label>我的状态</label>
                 <div>{STATUS_ORDER.map(status => <button type="button" key={status} className={(projection.statuses[selected.id] || 'unmarked') === status ? 'active' : ''} onClick={() => onStatusChange(selected.id, status)}>{PATH_STATUS_LABELS[status]}</button>)}</div>
               </div>
-              <button type="button" className="path-focus-action" onClick={() => setFocusPinned(value => !value)}>{focusPinned ? '返回完整星图' : '在星图中聚焦完整路径'}</button>
+              <button type="button" className="path-focus-action" onClick={() => setFocusPinned(value => !value)}>{focusPinned ? '返回全图' : '只看相关路径'}</button>
               <section className="path-relations"><h3>来到这里</h3>{selectedPrerequisites.length ? selectedPrerequisites.map(({ edge, node }) => <button type="button" key={edge.id} onClick={() => selectAndFocus(node!.id)}><span>{PATH_EDGE_LABELS[edge.kind]}</span>{node!.title}</button>) : <p>没有显式前置。</p>}</section>
               <section className="path-relations"><h3>可以继续</h3>{selectedSuccessors.length ? selectedSuccessors.map(({ edge, node }) => <button type="button" key={edge.id} onClick={() => selectAndFocus(node!.id)}><span>{PATH_EDGE_LABELS[edge.kind]}</span>{node!.title}</button>) : <p>当前没有直接后继。</p>}</section>
               {selected.origin === 'personal' && <button type="button" className="path-remove-node" onClick={() => { if (globalThis.confirm(`删除个人节点“${selected.title}”？`)) onRemovePersonalNode(selected.id) }}>删除个人节点</button>}
             </>
           )}
 
+          <details className="personal-node-disclosure">
+            <summary>＋ 添加图中没有的学习目标</summary>
           <section className="personal-node-form">
-            <span className="eyebrow">QUICK PERSONAL NODE</span>
-            <h3>补一个个人节点</h3>
-            <p>适合图中没有、但你确实想学的内容。规划态还会先联网研究并给你确认提案。</p>
             <label><span>节点名称</span><input value={personalTitle} onChange={event => setPersonalTitle(event.target.value)} placeholder="例如：量子机器学习" /></label>
             <label><span>连接到</span><select value={anchorId} onChange={event => setAnchorId(event.target.value)}>{projection.nodes.filter(node => node.origin === 'official').map(node => <option key={node.id} value={node.id}>{node.title}</option>)}</select></label>
             <label><span>关系</span><select value={edgeKind} onChange={event => setEdgeKind(event.target.value as PathEdgeKind)}><option value="hard_prerequisite">硬前置</option><option value="soft_prerequisite">软前置</option><option value="co_learning">建议共学</option></select></label>
             <button type="button" onClick={addManualNode} disabled={!personalTitle.trim()}>加入我的图</button>
           </section>
+          </details>
         </aside>
       </div>
     </section>

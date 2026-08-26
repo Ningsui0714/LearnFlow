@@ -307,8 +307,6 @@ export default function LearnerProfilePage({
     () => snapshot?.modules.filter(item => item.kernel === activeKernel) || [],
     [activeKernel, snapshot],
   )
-  const rawKernel = snapshot?.kernels[activeKernel]
-
   useEffect(() => {
     if (!snapshot) return
     setBackground(snapshot.profile.background || '')
@@ -338,13 +336,11 @@ export default function LearnerProfilePage({
     <section className="profile-page formal-profile-page">
       <header className="profile-page-heading">
         <div>
-          <span className="eyebrow">FIVE-KERNEL LEARNER MODEL</span>
-          <h1>{snapshot.learner.display_name}的五核画像</h1>
-          <p>所有内容都来自 EvidenceEvent 的确定性归约。原始事件不可改写；你的“删除”和“修改”会记录为归档、撤回或纠正，后续 Agent 读取最新有效版本。</p>
+          <h1>{snapshot.learner.display_name}的学习画像</h1>
+          <p>你的基础、目标、偏好，以及学习过程中逐渐形成的认识。</p>
         </div>
         <div className="profile-version formal-authority-badge">
-          <strong>{connection.status === 'connected' ? '已接入' : '离线'}</strong>
-          <span>{snapshot.authority}</span>
+          <i /> <span>{connection.status === 'connected' ? '已同步' : '离线'}</span>
         </div>
       </header>
 
@@ -354,13 +350,12 @@ export default function LearnerProfilePage({
         <div><span>当前重点</span><strong>{String(snapshot.growth.overview.current_focus || '尚未确定')}</strong></div>
         <div><span>有效记忆</span><strong>{snapshot.growth.stats.active_memories || 0}</strong></div>
         <div><span>可追溯记录</span><strong>{snapshot.growth.stats.learning_records || 0}</strong></div>
-        <button type="button" onClick={onOpenPath}>查看结构核的学习路径</button>
+        <button type="button" onClick={onOpenPath}>打开学习路径</button>
       </div>
 
-      <section className="formal-self-report-card">
+      <section className="formal-profile-summary-card">
         <div className="formal-profile-source">
-          <span>学习者明确资料</span>
-          <h2>原始自述保持可见</h2>
+          <span>我的明确资料</span>
           <p>{snapshot.profile.background || '尚未填写学习基础。'}</p>
           <dl>
             <div><dt>关注方向</dt><dd>{snapshot.profile.focus_areas.join('、') || '未填写'}</dd></div>
@@ -368,36 +363,36 @@ export default function LearnerProfilePage({
             <div><dt>方向目标</dt><dd>{snapshot.profile.career_goal || '仍在探索'}</dd></div>
           </dl>
         </div>
+      </section>
+      <details className="profile-input-disclosure">
+        <summary>＋ 补充学习经历、阻碍或联想</summary>
         <form onSubmit={event => {
           event.preventDefault()
           if (!selfReport.trim()) return
           void onRecordSelfReport(selfReport.trim()).then(saved => { if (saved) setSelfReport('') })
         }}>
-          <span>补充到个人概念图</span>
-          <p>写下“我学过……”“我不懂……”或明确的阻碍、推动、联想。系统只记录为用户自输入、待验证，不会据此宣称掌握。</p>
+          <p>可以写“我学过……”“我不懂……”或某个知识怎样阻碍、推动了理解。</p>
           <textarea value={selfReport} onChange={event => setSelfReport(event.target.value)} placeholder="例如：我学过概率论，但条件概率总是搞混。链式法则帮助我理解反向传播。" />
           <button type="submit" disabled={!selfReport.trim() || busyKey === 'concept-report'}>{busyKey === 'concept-report' ? '正在写入事件链…' : '记录明确自述'}</button>
         </form>
-      </section>
+      </details>
 
       <nav className="kernel-tabs" aria-label="五核切换" role="tablist">
         {KERNELS.map(item => (
           <button key={item.id} type="button" role="tab" aria-selected={activeKernel === item.id} className={activeKernel === item.id ? 'active' : ''} onClick={() => setActiveKernel(item.id)}>
-            <span>{item.short}</span><small>{snapshot.modules.filter(module => module.kernel === item.id).length} modules</small>
+            <span>{item.short}</span><small>{snapshot.modules.filter(module => module.kernel === item.id).length} 个主题</small>
           </button>
         ))}
       </nav>
 
       <div className="kernel-definition-card">
         <div><span>{meta.name}</span><p>{meta.description}</p></div>
-        <small>短期键 {Object.keys(rawKernel?.short_term || {}).length} · 长期键 {Object.keys(rawKernel?.long_term || {}).length} · 置信度 {Math.round((rawKernel?.confidence || 0) * 100)}%</small>
+        <small>{area?.active_count || 0} 条当前参考</small>
       </div>
 
-      <section className={`kernel-explicit-editor kernel-explicit-editor-${activeKernel}`}>
-        <header>
-          <div><span>LEARNER-CONTROLLED EDIT</span><h2>{meta.name}如何明确改写</h2></div>
-          <small>所有操作先形成 EvidenceEvent，再由 reducer 更新投影；不会覆盖历史。</small>
-        </header>
+      <details className={`kernel-explicit-editor kernel-explicit-editor-${activeKernel}`}>
+        <summary>编辑{meta.name}</summary>
+        <div className="kernel-editor-body">
         {activeKernel === 'knowledge' && (
           <form onSubmit={event => { event.preventDefault(); if (background.trim()) void onUpdateProfile({ background: background.trim() }) }}>
             <p>知识背景只作为“用户自述、待验证”写入；具体概念的认识、误解和题目历程请使用上方“补充到个人概念图”。</p>
@@ -440,9 +435,10 @@ export default function LearnerProfilePage({
             <p>实践核不能靠自述把自己升级为“会做”。你可以在下方纠正或撤回已有 Claim；新的正向结论只能来自做题、代码、项目产物、独立重做或迁移验证。</p>
           </div>
         )}
-      </section>
+        </div>
+      </details>
 
-      {(activeKernel === 'knowledge' || activeKernel === 'structure') && <PersonalConceptGraph snapshot={snapshot} kernel={activeKernel} />}
+      {(activeKernel === 'knowledge' || activeKernel === 'structure') && <details className="concept-graph-disclosure"><summary>个人概念学习图</summary><PersonalConceptGraph snapshot={snapshot} kernel={activeKernel} /></details>}
 
       <div className="formal-profile-grid" role="tabpanel" aria-label={meta.name}>
         <section className="kernel-memory-column">
@@ -472,7 +468,7 @@ export default function LearnerProfilePage({
           {modules.map(module => {
             const title = presentModuleTitle(module)
             return (
-              <details key={module.id} className="formal-module-card" open={modules.length <= 2}>
+              <details key={module.id} className="formal-module-card">
                 <summary>
                   <div className="module-node-mark" aria-hidden="true">M</div>
                   <div className="module-summary-copy">

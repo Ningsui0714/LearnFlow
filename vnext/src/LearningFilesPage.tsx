@@ -16,7 +16,7 @@ export default function LearningFilesPage({ onOpen }: Props) {
   useEffect(() => { void refresh() }, [])
   return (
     <section className="learning-files-page">
-      <header className="file-page-heading"><div><span className="eyebrow">MANAGED LEARNING FILES</span><h1>讲义与练习</h1><p>这是正式学习对象的播放器，不是普通文件夹。讲义有版本和来源；练习隐藏答案并通过正式提交形成证据。</p></div><button type="button" onClick={() => void refresh()}>刷新</button></header>
+      <header className="file-page-heading"><div><h1>讲义与练习</h1><p>阅读、练习与继续学习，都从这里打开。</p></div><button type="button" onClick={() => void refresh()} aria-label="刷新讲义与练习">↻</button></header>
       {error && <div className="formal-inline-error">{error}</div>}
       <div className="learning-file-columns">
         <section><header><span>LECTURES</span><h2>讲义</h2><i>{lectures.length}</i></header>{lectures.length === 0 && <p className="formal-empty-copy">学习任务生成后，讲义会出现在这里。</p>}{lectures.map(file => <FileCard key={`${file.kind}:${file.ref}`} file={file} onOpen={onOpen} />)}</section>
@@ -27,5 +27,5 @@ export default function LearningFilesPage({ onOpen }: Props) {
 }
 
 function FileCard({ file, onOpen }: { file: FormalLearningFileRef; onOpen: (file: FormalLearningFileRef) => void }) {
-  return <article className="learning-file-card"><span>{file.kind === 'lecture' ? '讲义文件' : file.practice_kind === 'concept_question_set' ? '概念验证' : '代码练习'}</span><h3>{file.title}</h3><code>{file.logical_filename}</code><small>{file.question_count ? `${file.question_count} 道题 · ` : ''}Checkpoint #{file.checkpoint_id}</small><button type="button" onClick={() => onOpen(file)}>打开工作台</button></article>
+  return <article className="learning-file-card"><div><span>{file.kind === 'lecture' ? '讲义' : file.practice_kind === 'concept_question_set' ? '概念练习' : '代码练习'}</span><h3>{file.title}</h3>{file.question_count ? <small>{file.question_count} 道题</small> : null}</div><button type="button" onClick={() => onOpen(file)}>打开</button></article>
 }

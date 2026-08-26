@@ -81,6 +81,8 @@ import {
   createFormalTutorSession,
   generateFormalLearningFiles,
   learnerPathStateFromFormal,
+  listFormalProjects,
+  loadFormalProject,
   loadFormalLearnerSnapshot,
   loadLearningFiles,
   removeFormalPersonalPathNode,
@@ -208,6 +210,7 @@ const LectureFilePage = lazy(() => import('./LectureFilePage'))
 const PracticeFilePage = lazy(() => import('./PracticeFilePage'))
 const ProjectsPage = lazy(() => import('./ProjectsPage'))
 const ProjectWorkspacePage = lazy(() => import('./ProjectWorkspacePage'))
+const ProjectContextPanel = lazy(() => import('./ProjectContextPanel'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -437,6 +440,9 @@ function App() {
   const [sourceBusy, setSourceBusy] = useState<Record<string, string>>({})
   const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({})
   const [sourceUrls, setSourceUrls] = useState<Record<string, string>>({})
+  const [formalProjects, setFormalProjects] = useState<FormalProjectWorkspace['project'][]>([])
+  const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({})
+  const [projectPanelConversationId, setProjectPanelConversationId] = useState('')
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -458,6 +464,14 @@ function App() {
     })
     return () => { active = false }
   }, [])
+
+  const refreshFormalProjects = () => {
+    void listFormalProjects()
+      .then(result => setFormalProjects(result.projects))
+      .catch(() => setFormalProjects([]))
+  }
+
+  useEffect(() => { refreshFormalProjects() }, [])
 
   useEffect(() => {
     let active = true
@@ -607,6 +621,16 @@ function App() {
       tabs: [...previous.tabs, tab].slice(-12),
       activeTabId: tab.id,
     }))
+  }
+
+  const openProjectTutor = async (projectId: number) => {
+    try {
+      const projectWorkspace = await loadFormalProject(projectId)
+      setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
+      openProjectConversation(projectWorkspace, 'tutor')
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '项目加载失败')
+    }
   }
 
   const closeTab = (tabId: string) => {
@@ -1652,7 +1676,7 @@ function App() {
   const renderTab = (tab: WorkspaceTab | undefined) => {
     if (!tab) return null
     if (tab.kind === 'projects') {
-      return <Suspense fallback={<div className="page-loading">正在载入学习项目…</div>}><ProjectsPage onOpen={project => openTab(projectTab(project))} /></Suspense>
+      return <Suspense fallback={<div className="page-loading">正在载入学习项目…</div>}><ProjectsPage onOpen={project => { refreshFormalProjects(); void openProjectTutor(project.id) }} /></Suspense>
     }
     if (tab.kind === 'project' && tab.projectId) {
       return (
@@ -1840,10 +1864,11 @@ function App() {
       )
     }
     return (
-      <section className="chat-page">
+      <section className={`chat-page${conversation.projectId ? ' project-chat-page' : ''}`}>
         <header className="chat-heading">
           <h1>{conversation.title}</h1>
           <div className="chat-state-stack">
+            {conversation.projectId && <button type="button" className="project-panel-toggle" aria-expanded={projectPanelConversationId === conversation.id} onClick={() => setProjectPanelConversationId(current => current === conversation.id ? '' : conversation.id)}>项目面板</button>}
             <span className={`mode-badge mode-badge-${visibleMode}`}>
               {TUTOR_MODE_LABELS[visibleMode]}{visibleSubstateLabel ? ` · ${visibleSubstateLabel}` : ''}
             </span>
@@ -2271,37 +2296,55 @@ function App() {
             </div>
           </form>
         </div>
+        {conversation.projectId && projectPanelConversationId === conversation.id && (
+          <Suspense fallback={<aside className="project-context-panel"><div className="page-loading">正在读取项目…</div></aside>}>
+            <ProjectContextPanel
+              projectId={conversation.projectId}
+              onClose={() => setProjectPanelConversationId('')}
+              onOpenCheckpoint={(projectWorkspace, checkpoint) => openProjectConversation(projectWorkspace, 'checkpoint', { checkpoint })}
+              onOpenFree={(projectWorkspace, session) => openProjectConversation(projectWorkspace, 'free', { session })}
+              onOpenFile={file => openTab(learningFileTab(file))}
+              onGenerateFiles={generateTaskFiles}
+            />
+          </Suspense>
+        )}
       </section>
     )
   }
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <button className="icon-button mobile-only" type="button" onClick={() => setSidebarOpen(value => !value)} aria-label="打开对话列表">☰</button>
-        <button className="brand" type="button" onClick={newConversation} aria-label="新建 LearnFlow 对话">
-          <span className="brand-mark">✦</span>
-          <span><strong>LearnFlow</strong><small>vNext · clean start</small></span>
-        </button>
-        <div className="topbar-spacer" />
-        <span className={`prototype-badge formal-status-badge formal-status-${formalConnection.status}`}><i /> {formalConnection.status === 'connected' ? '正式五核已连接' : '五核离线'}</span>
-        <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_FILES_TAB)}><span>▤</span><strong>学习文件</strong></button>
-        <button className="topbar-profile-button" type="button" onClick={() => openTab(PROJECTS_TAB)}><span>◇</span><strong>项目</strong></button>
-        <button className="topbar-profile-button" type="button" onClick={() => openTab(TASKS_TAB)}><span>☷</span><strong>学习任务</strong></button>
-        <button className="topbar-profile-button" type="button" onClick={() => openTab(REVIEW_TAB)}><span>↺</span><strong>复习</strong></button>
-        <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span><strong>学习路径</strong></button>
-        <button className="topbar-profile-button" type="button" onClick={() => openTab(PROFILE_TAB)}><span>现</span><strong>我的画像</strong></button>
-        <button className="icon-button" type="button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
-      </header>
-
       <div className="workspace">
         <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-          <div className="sidebar-heading">
-            <div><span>CONVERSATIONS</span><strong>对话</strong></div>
-            <button type="button" onClick={newConversation} aria-label="新建对话">＋</button>
-          </div>
-          <nav className="conversation-list" aria-label="对话列表">
-            {workspace.conversations.map(conversation => (
+          <button className="sidebar-brand" type="button" onClick={newConversation} aria-label="新建 LearnFlow 对话">
+            <span className="brand-mark">✦</span><span><strong>LearnFlow</strong><small>学习空间</small></span>
+          </button>
+          <nav className="sidebar-primary-nav" aria-label="学习工作台">
+            <button type="button" onClick={() => openTab(LEARNING_FILES_TAB)}><span>▤</span>讲义与练习</button>
+            <button type="button" onClick={() => openTab(REVIEW_TAB)}><span>↺</span>复习与错题</button>
+            <button type="button" onClick={() => openTab(TASKS_TAB)}><span>☷</span>学习任务</button>
+            <button type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span>学习路径</button>
+          </nav>
+          <div className="sidebar-scroll-area">
+            <section className="sidebar-section sidebar-projects">
+              <header><strong>项目</strong><button type="button" onClick={() => openTab(PROJECTS_TAB)} aria-label="管理学习项目">＋</button></header>
+              {formalProjects.map(project => {
+                const projectChats = workspace.conversations.filter(item => item.projectId === project.id)
+                const expanded = expandedProjects[project.id] !== false
+                return <div className="sidebar-project-folder" key={project.id}>
+                  <div className="sidebar-project-row">
+                    <button type="button" className="project-folder-toggle" onClick={() => setExpandedProjects(previous => ({ ...previous, [project.id]: !expanded }))} aria-label={`${expanded ? '收起' : '展开'}${project.name}`}>{expanded ? '⌄' : '›'}</button>
+                    <button type="button" className="project-folder-open" onClick={() => void openProjectTutor(project.id)}><span>▱</span><strong>{project.name}</strong></button>
+                  </div>
+                  {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(conversation => <button type="button" key={conversation.id} className={activeConversation?.id === conversation.id ? 'active' : ''} onClick={() => openTab(chatTab(conversation))}><span>{conversation.projectRole === 'checkpoint' ? '◇' : '·'}</span>{conversation.title.replace(`${project.name} · `, '')}</button>)}</div>}
+                </div>
+              })}
+              {!formalProjects.length && <button type="button" className="sidebar-empty-project" onClick={() => openTab(PROJECTS_TAB)}>＋ 新建学习项目</button>}
+            </section>
+            <section className="sidebar-section sidebar-conversations">
+              <header><strong>对话</strong><button type="button" onClick={newConversation} aria-label="新建对话">＋</button></header>
+              <nav className="conversation-list" aria-label="对话列表">
+            {workspace.conversations.filter(conversation => !conversation.projectId).map(conversation => (
               <div
                 key={conversation.id}
                 className={`conversation-row ${activeConversation?.id === conversation.id ? 'conversation-active' : ''} ${splitConversation?.id === conversation.id ? 'conversation-secondary' : ''}`}
@@ -2313,39 +2356,15 @@ function App() {
                 <button type="button" className="conversation-delete" onClick={() => setPendingDelete(conversation)} aria-label={`删除对话${conversation.title}`} title="删除对话">⌫</button>
               </div>
             ))}
-          </nav>
+              </nav>
+            </section>
+          </div>
           <div className="sidebar-footer">
-            <button type="button" className="sidebar-profile-button sidebar-project-button" onClick={() => openTab(PROJECTS_TAB)}>
-              <span className="sidebar-profile-avatar">◇</span>
-              <span><strong>学习项目</strong><small>真实产物 · 关卡旅程</small></span>
-              <i>›</i>
-            </button>
-            <button type="button" className="sidebar-profile-button" onClick={() => openTab(LEARNING_FILES_TAB)}>
-              <span className="sidebar-profile-avatar">▤</span>
-              <span><strong>讲义与练习</strong><small>正式文件 · 独立工作台</small></span>
-              <i>›</i>
-            </button>
-            <button type="button" className="sidebar-profile-button sidebar-review-button" onClick={() => openTab(REVIEW_TAB)}>
-              <span className="sidebar-profile-avatar">↺</span>
-              <span><strong>复习与错题</strong><small>检索 · 纠错 · 间隔</small></span>
-              <i>›</i>
-            </button>
-            <button type="button" className="sidebar-profile-button sidebar-task-button" onClick={() => openTab(TASKS_TAB)}>
-              <span className="sidebar-profile-avatar">☷</span>
-              <span><strong>学习任务</strong><small>{formalSnapshot?.learning_tasks.filter(task => !['completed', 'canceled'].includes(task.status)).length || 0} 个待完成</small></span>
-              <i>›</i>
-            </button>
-            <button type="button" className="sidebar-profile-button sidebar-path-button" onClick={() => openTab(LEARNING_PATH_TAB)}>
-              <span className="sidebar-profile-avatar">⌁</span>
-              <span><strong>学习路径</strong><small>{projectLearnerPath(workspace.learningPath).nodes.length} 节点 · 可个性化</small></span>
-              <i>›</i>
-            </button>
-            <button type="button" className="sidebar-profile-button" onClick={() => openTab(PROFILE_TAB)}>
+            <button type="button" className="sidebar-user-button" onClick={() => openTab(PROFILE_TAB)}>
               <span className="sidebar-profile-avatar">现</span>
-              <span><strong>{formalSnapshot?.learner.display_name || '学习者画像'}</strong><small>{formalConnection.status === 'connected' ? `${formalSnapshot?.learner.education_stage || ''} · 五核正式接入` : '正式五核未连接'}</small></span>
-              <i>›</i>
+              <span><strong>{formalSnapshot?.learner.display_name || '学习者'}</strong><small>{formalConnection.status === 'connected' ? '画像已连接' : '画像离线'}</small></span>
             </button>
-            <small className="sidebar-logic-note">Chat · 项目 · 文件 · 任务 · 复习 · 路径 · 五核画像 · 设置</small>
+            <button type="button" className="sidebar-settings-button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
           </div>
         </aside>
 
@@ -2353,6 +2372,7 @@ function App() {
 
         <main className="main-stage">
           <nav className="tabs" aria-label="已打开页面">
+            <button className="mobile-menu-trigger mobile-only" type="button" onClick={() => setSidebarOpen(true)} aria-label="打开侧栏">☰</button>
             {workspace.tabs.map(tab => (
               <div key={tab.id} className={`tab ${tab.id === activeTab?.id ? 'tab-active' : ''} ${tab.id === splitTab?.id ? 'tab-secondary' : ''}`}>
                 <button type="button" className="tab-main" onClick={() => openTab(tab)}>

@@ -20,12 +20,12 @@ export default function LearningTasksPage({ connection, tasks, busyTaskId, error
   return (
     <section className="task-queue-page">
       <header className="task-queue-heading">
-        <div><span className="eyebrow">ATOMIC LEARNING QUEUE</span><h1>学习任务队列</h1><p>对话中识别出的原子学习任务会进入这里。队列负责安排与恢复；具体学习仍回到原对话中完成。</p></div>
-        <button type="button" onClick={onRefresh}>刷新正式队列</button>
+        <div><h1>学习任务</h1><p>安排待完成的学习；具体过程回到原对话继续。</p></div>
+        <button type="button" onClick={onRefresh} aria-label="刷新学习任务">↻</button>
       </header>
-      <div className={`formal-runtime-strip formal-runtime-${connection.status}`}><i /> <strong>{connection.status === 'connected' ? '正式事件链已连接' : '正式事件链未连接'}</strong><span>{connection.detail}</span></div>
+      {connection.status !== 'connected' && <div className={`formal-runtime-strip formal-runtime-${connection.status}`}><i /> <strong>学习记录暂时离线</strong><span>{connection.detail}</span></div>}
       {error && <div className="formal-inline-error" role="alert">{error}</div>}
-      <div className="task-queue-summary"><strong>{active.length}</strong><span>个待完成任务</span><small>任务完成只表示流程结束，不自动宣称知识掌握。</small></div>
+      <div className="task-queue-summary"><strong>{active.length}</strong><span>个待完成</span></div>
       <div className="task-queue-list">
         {tasks.length === 0 && <div className="formal-empty-copy">还没有正式学习任务。在对话中说“带我学……”或切到带领学习态即可创建。</div>}
         {tasks.map((task, index) => {
@@ -46,7 +46,7 @@ export default function LearningTasksPage({ connection, tasks, busyTaskId, error
               <small>{task.success_criteria?.[0] || '按任务计划完成可检查的学习动作'}</small>
             </div>
             <div className="task-queue-actions">
-              {task.origin_navigation?.path && <a href={task.origin_navigation.path}>回到学习现场</a>}
+              {task.origin_navigation?.path && <a className="task-return-primary" href={task.origin_navigation.path}>回到学习现场</a>}
               {task.artifact_refs?.length > 0
                 ? <button type="button" onClick={onOpenFiles}>打开讲义与练习</button>
                 : ['queued', 'active', 'paused'].includes(task.status) && <button type="button" disabled={busyTaskId === task.id} onClick={() => onGenerateFiles(task)}>生成讲义与练习</button>}
