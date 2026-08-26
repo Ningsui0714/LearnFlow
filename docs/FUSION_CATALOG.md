@@ -20,7 +20,7 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 | “换种讲法 / 看步骤 / 看示例” | RemediationPanel | 已实现并将被替换的讲法记录为 `remediation_mode_rejected` |
 | 原题重做和变式题 | 概念/代码提交 API + variant API | 共用同一个 remediation case 和证据链 |
 | 上游 `event_id` 去重 | `EvidenceEvent.client_event_id` | learner 范围幂等，避免重复副作用 |
-| 本地 mock 演示 | `bash start.sh demo`、`/demo` | 独立 seeded SQLite、无 LLM、离线可验收 |
+| 本地 mock 演示 | `bash start.sh demo`、`/review` | 独立 seeded SQLite、无 LLM、离线可验收 |
 | 目标图和连续学习路径 | Roadmap DAG + structure kernel | 统一到项目、路线、关卡和返回锚点 |
 | 星辰三工作流 | `workflow_gateway` contract | 保留为可选 adapter；不能直接写五核或决定策略 |
 | 工作流构建/校验脚本 | `workflow_validator` maintenance tool | 纳入注册表，接入时必须输出符合 LearnFlow artifact/event contract 的结果 |

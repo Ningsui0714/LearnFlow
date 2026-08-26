@@ -153,12 +153,18 @@ def test_two_cookie_clients_are_strictly_isolated():
 
 def test_login_password_session_and_dev_switching():
     with TestClient(app) as client:
+        assert client.get("/api/auth/status").json() == {"authenticated": False}
         created = client.post("/api/auth/register", json=registration(
             "case_sensitive_demo", "Case User", "Python 基础",
         ))
         assert created.status_code == 200
         account_id = created.json()["id"]
+        status = client.get("/api/auth/status")
+        assert status.status_code == 200
+        assert status.json()["authenticated"] is True
+        assert status.json()["id"] == account_id
         assert client.post("/api/auth/logout").status_code == 200
+        assert client.get("/api/auth/status").json() == {"authenticated": False}
         assert client.post("/api/auth/login", json={
             "username": "CASE_SENSITIVE_DEMO", "password": "wrong-password",
         }).status_code == 401

@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     embedding_base_url: str = ""  # separate from llm_base_url (empty = use llm_base_url)
 
     # CORS — stored as comma-separated in env, split at use
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = "http://localhost:4174,http://127.0.0.1:4174"
 
     log_level: str = "info"
 

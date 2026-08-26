@@ -11,7 +11,7 @@ from app.models.project import Project
 from app.schemas.auth import LoginRequest, RegisterRequest
 from app.services.auth import (
     CurrentLearner, auth_token_from_request, clear_auth_cookie, create_auth_session,
-    get_current_learner, hash_password, normalize_username, set_auth_cookie,
+    current_learner_from_request, get_current_learner, hash_password, normalize_username, set_auth_cookie,
     valid_desktop_request, verify_password,
 )
 from app.services.learning_runtime import ensure_kernel_states, record_event
@@ -163,6 +163,18 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 @router.get("/auth/me")
 async def me(current: CurrentLearner = Depends(get_current_learner)):
     return _account_view(current)
+
+
+@router.get("/auth/status")
+async def auth_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Probe the current session without turning an expected signed-out state into a 401."""
+    current = await current_learner_from_request(request, db, required=False)
+    if current is None:
+        return {"authenticated": False}
+    return {"authenticated": True, **_account_view(current)}
 
 
 @router.get("/demo/status")

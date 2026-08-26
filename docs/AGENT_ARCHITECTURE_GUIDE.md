@@ -26,7 +26,7 @@ Contract impact（`2026-08-26.21`）：规划态资源推荐使用 `learning_res
 
 LearnFlow 不是一个“聊天机器人包装器”，也不是多个人格化 Agent 同时与用户对话。它是一套围绕单个学习者持续运行的教学系统：
 
-`vnext/` 的 Chat 原型仍服从同一责任边界：联网资料由学习设计能力按意图、证据角度和来源层级形成有界 Evidence Bundle，安全视觉产物由学习设计能力生成，选中追问上下文由 Tutor 组装。联网片段是不可信数据；搜索与讲解只产生来源，不能直接形成掌握证据。三者只产生来源、产物或会话分支，不直接写五核。
+`frontend/` 的正式 Chat 服从同一责任边界：联网资料由学习设计能力按意图、证据角度和来源层级形成有界 Evidence Bundle，安全视觉产物由学习设计能力生成，选中追问上下文由 Tutor 组装。联网片段是不可信数据；搜索与讲解只产生来源，不能直接形成掌握证据。三者只产生来源、产物或会话分支，不直接写五核。
 
 - 常驻 Tutor 维护教学关系、理解意图并协调下一步。
 - Action Board 把自然语言转换为受控、可审计、可幂等执行的语义行动。
@@ -369,7 +369,7 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
 完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
 
-`vnext/` 已把任务生命周期接入正式 `AgentSession -> LearningSkillRun -> LearningTask`：对话识别或
+正式 `frontend/` 已把任务生命周期接入 `AgentSession -> LearningSkillRun -> LearningTask`：对话识别或
 Skill 启动时先建立 Session，再启动 SkillRun 并绑定其正式任务；后续学习者输入只调用确定性
 Skill turn API，不能触发第二次 Tutor 模型回答。暂停、恢复、取消、重开和流程完成同步到全局任务队列。每个 Learning Skill 仍
 自己定义步骤、循环和支架；`vnext_learning_skill_step_entered` 与
@@ -938,11 +938,12 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 身份与会话 | `backend/app/services/auth.py`、`backend/app/api/auth.py` |
 | Agent API 与 owner resolver | `backend/app/api/agent.py` |
 | 学习者与 Agent 持久化模型 | `backend/app/models/learning.py` |
-| 前端路由与空间划分 | `frontend/src/App.tsx` |
-| vNext 项目列表、工作台与对话联动 | `vnext/src/ProjectsPage.tsx`、`vnext/src/ProjectWorkspacePage.tsx`、`vnext/src/main.tsx` |
-| Tutor UI 与提案轨道 | `frontend/src/components/tutor/` |
-| 学习任务工作台 | `frontend/src/pages/LearningTasksPage.tsx` |
-| 项目、关卡、练习与复习页面 | `frontend/src/pages/ProjectPage.tsx`、`CheckpointPage.tsx`、`ExercisePage.tsx`、`ReviewPage.tsx` |
+| 唯一前端路由、Chat、页签与 Tutor UI | `frontend/src/main.tsx` |
+| 项目列表、侧栏、工作台与对话联动 | `frontend/src/ProjectsPage.tsx`、`frontend/src/ProjectWorkspacePage.tsx`、`frontend/src/ProjectContextPanel.tsx` |
+| 有界 Agent 回合与原生工具运行时 | `frontend/server/agent-runtime.ts`、`frontend/server/tool-runtime.ts` |
+| 正式 API、桌面 sidecar 地址与认证适配 | `frontend/src/formal-runtime.ts`、`frontend/src/runtime-client.ts` |
+| 学习任务、复习、路径与画像工作台 | `frontend/src/LearningTasksPage.tsx`、`frontend/src/ReviewWorkbenchPage.tsx`、`frontend/src/LearningPathPage.tsx`、`frontend/src/LearnerProfilePage.tsx` |
+| 讲义与练习文件工作台 | `frontend/src/LearningFilesPage.tsx`、`frontend/src/LectureFilePage.tsx`、`frontend/src/PracticeFilePage.tsx` |
 
 ## 23. 最终判断准则
 

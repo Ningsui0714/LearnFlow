@@ -359,7 +359,7 @@ uvicorn app.main:app --reload --port 8000
 # 前端
 cd LearnFlow/frontend
 npm install
-npm run dev  # 默认 :5173
+npm run dev  # 默认 :4174
 ```
 
 ---

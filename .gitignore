@@ -10,8 +10,8 @@ backend/.env
 # Node
 frontend/node_modules/
 frontend/dist/
-vnext/.env.local
-vnext/.env.*.local
+frontend/.env.local
+frontend/.env.*.local
 
 # macOS
 .DS_Store
@@ -35,5 +35,7 @@ backend/*.pth
 
 # Tauri desktop build output and generated sidecars
 desktop/node_modules/
+desktop/.sidecar-build/
+desktop/src-tauri/gen/
 desktop/src-tauri/target/
 desktop/src-tauri/binaries/learnflow-backend-*

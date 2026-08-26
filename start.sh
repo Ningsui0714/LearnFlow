@@ -2,7 +2,8 @@
 # LearnFlow 一键启动脚本
 # 使用: bash start.sh         (启动 + 自动打开浏览器)
 #       bash start.sh demo    (隔离数据库 + 离线比赛演示)
-#       bash start.sh stop   (停止)
+#       bash start.sh stop    (停止)
+#       bash start.sh status  (查看状态)
 
 set -e
 
@@ -14,8 +15,10 @@ REGULAR_PID_FILE="/tmp/learnflow-pids"
 DEMO_PID_FILE="/tmp/learnflow-demo-pids"
 PID_FILE="$REGULAR_PID_FILE"
 BACKEND_PORT=8010
-FRONTEND_PORT=5173
+FRONTEND_PORT=4174
 OPEN_URL="http://localhost:$FRONTEND_PORT"
+BACKEND_LOG="/tmp/learnflow-backend.log"
+FRONTEND_LOG="/tmp/learnflow-frontend.log"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -72,10 +75,12 @@ prepare_competition_demo() {
   export GITHUB_RESOURCE_SEARCH_ENABLED=false
   export MEMORY_AUTO_SYNTHESIS_ENABLED=true
   PID_FILE="$DEMO_PID_FILE"
+  BACKEND_LOG="/tmp/learnflow-demo-backend.log"
+  FRONTEND_LOG="/tmp/learnflow-demo-frontend.log"
   BACKEND_PORT="$(next_available_port 8010)"
-  FRONTEND_PORT="$(next_available_port 5173)"
-  export VITE_API_PROXY="http://127.0.0.1:$BACKEND_PORT"
-  OPEN_URL="http://localhost:$FRONTEND_PORT/demo"
+  FRONTEND_PORT="$(next_available_port 4174)"
+  export LEARNFLOW_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
+  OPEN_URL="http://localhost:$FRONTEND_PORT/review"
 
   echo -e "${BLUE}━━━ 初始化离线比赛演示 ━━━${NC}"
   cd "$BACKEND_DIR"
@@ -113,19 +118,63 @@ stop_previous_demo() {
   fi
 }
 
+wait_for_http() {
+  local url="$1"
+  local label="$2"
+  local process_pid="$3"
+  local attempt
+  for attempt in $(seq 1 80); do
+    if ! kill -0 "$process_pid" 2>/dev/null; then
+      echo -e "${RED}❌ $label 进程已退出${NC}"
+      return 1
+    fi
+    if "$VENV_DIR/bin/python" - "$url" >/dev/null 2>&1 <<'PY'
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1], timeout=0.5) as response:
+    if response.status >= 400:
+        raise SystemExit(1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo -e "${RED}❌ $label 在 20 秒内没有就绪${NC}"
+  return 1
+}
+
+show_start_failure() {
+  local label="$1"
+  local log_file="$2"
+  echo -e "${RED}$label 启动日志：${NC}"
+  tail -n 30 "$log_file" 2>/dev/null || true
+  stop_pid_file "$PID_FILE" || true
+  exit 1
+}
+
 start_services() {
   echo -e "${BLUE}━━━ 启动后端 (端口 $BACKEND_PORT) ━━━${NC}"
+  : > "$BACKEND_LOG"
+  : > "$FRONTEND_LOG"
   cd "$BACKEND_DIR"
-  source venv/bin/activate
-  uvicorn app.main:app --host 0.0.0.0 --port "$BACKEND_PORT" --reload &
+  nohup "$VENV_DIR/bin/python" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT" \
+    > "$BACKEND_LOG" 2>&1 < /dev/null &
   BACK_PID=$!
   echo $BACK_PID > "$PID_FILE"
+  wait_for_http "http://127.0.0.1:$BACKEND_PORT/health" "后端" "$BACK_PID" \
+    || show_start_failure "后端" "$BACKEND_LOG"
 
   echo -e "${BLUE}━━━ 启动前端 (端口 $FRONTEND_PORT) ━━━${NC}"
   cd "$FRONTEND_DIR"
-  npm run dev -- --port "$FRONTEND_PORT" --strictPort &
+  nohup env LEARNFLOW_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT" \
+    "$FRONTEND_DIR/node_modules/.bin/vite" --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort \
+    > "$FRONTEND_LOG" 2>&1 < /dev/null &
   FRONT_PID=$!
   echo $FRONT_PID >> "$PID_FILE"
+  wait_for_http "http://127.0.0.1:$FRONTEND_PORT/" "前端" "$FRONT_PID" \
+    || show_start_failure "前端" "$FRONTEND_LOG"
 
   echo ""
   echo -e "${GREEN}✅ LearnFlow 已启动！${NC}"
@@ -136,8 +185,9 @@ start_services() {
   echo -e "   ${YELLOW}停止:${NC}  bash start.sh stop"
   echo ""
 
-  # Auto-open browser after a short delay
-  (sleep 3 && open "$OPEN_URL") &
+  if command -v open >/dev/null 2>&1; then
+    (sleep 1 && open "$OPEN_URL") >/dev/null 2>&1 &
+  fi
 }
 
 stop_services() {
@@ -160,9 +210,37 @@ stop_services() {
   fi
 }
 
+status_services() {
+  local found=false
+  local target_pid_file
+  local label
+  for target_pid_file in "$REGULAR_PID_FILE" "$DEMO_PID_FILE"; do
+    [ "$target_pid_file" = "$DEMO_PID_FILE" ] && label="demo" || label="常规"
+    [ -f "$target_pid_file" ] || continue
+    found=true
+    local running=0
+    local total=0
+    local pid
+    while read -r pid; do
+      case "$pid" in
+        ''|*[!0-9]*) continue ;;
+      esac
+      total=$((total + 1))
+      kill -0 "$pid" 2>/dev/null && running=$((running + 1))
+    done < "$target_pid_file"
+    echo "${label}：$running/$total 个进程运行中（${target_pid_file}）"
+  done
+  if [ "$found" = false ]; then
+    echo "LearnFlow 当前未由 start.sh 管理运行。"
+  fi
+}
+
 case "${1:-}" in
   stop)
     stop_services
+    ;;
+  status)
+    status_services
     ;;
   restart)
     stop_services

@@ -132,16 +132,16 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 项目提案和产物引用经 reducer 投影为可恢复学习动作。讲解段只形成 Knowledge exposure 并固定
 `mastery_unchanged`；只有明确的 learn/plan 目标才形成短期 Value 投影，不能自动巩固长期目标。
 
-普通 vNext 对话的跨浏览器权威是 learner-owned `AgentSession + AgentMessage`。浏览器
+普通 LearnFlow 对话的跨浏览器权威是 learner-owned `AgentSession + AgentMessage`。浏览器
 `localStorage` 只缓存未发送草稿、已开标签、并排布局和纸张工作台等 UI 状态；对话目录、标题和主纸消息
 通过 `vnext_chat_session_store` 幂等归档到正式后端。该 adapter 不运行第二个 Tutor、不产生
 `EvidenceEvent`，也不把聊天持久化视为学习暴露或掌握；需要进入五核的模式、学习动作与评估仍走各自已
 登记的事件入口。旧浏览器本地对话在首次连接时以 `client_conversation_id` 安全迁移，多个浏览器随后读取
 同一正式目录。
 
-### vNext Chat 的工具与选中追问原型
+### LearnFlow Chat 的工具与选中追问
 
-vNext Tutor 回合由 `vnext_agent_turn_runtime` 统一编排为有界 Turn Graph：
+LearnFlow Tutor 回合由稳定 ID `vnext_agent_turn_runtime` 统一编排为有界 Turn Graph：
 
 ```text
 ContextEnvelope
@@ -166,7 +166,12 @@ projection / policy / adapter`。只有 `aci_tool` 可以成为模型工具；`v
 Agent 动作。`SKILLS` 同样区分 `pedagogical_method / playbook / coordination_skill`：学习方法
 定义局部教学转换，Playbook 组合多个能力完成闭环，二者不得用同一职责解释。
 
-Contract impact：注册表版本提升到 `2026-08-26.24`。新增 `vnext_chat_session_store` adapter 与
+Contract impact：注册表版本提升到 `2026-08-26.25`。`frontend/` 成为唯一产品前端，原 vNext 稳定 ID
+只作为 API、事件和持久化兼容标识保留，不代表第二套运行时。Web 与 Tauri 共享同一构建；桌面端通过
+启动时注入的 sidecar 地址和 token 使用同一正式 API。没有数据库迁移、事件 schema 变化或新增
+Kernel writer。
+
+前一版本 `2026-08-26.24` 新增 `vnext_chat_session_store` adapter 与
 向后兼容的 Session 创建/消息同步字段；既有 Session、Tutor turn、SkillRun、项目会话和五核 API 不变，
 无需数据库迁移，没有新增 Kernel writer。普通对话删除继续复用 `workspace_lifecycle`，保留追加式学习证据。
 
@@ -206,7 +211,7 @@ Contract impact：注册表版本提升到 `2026-08-26.16`。扩展既有
 `vnext_learning_workspace_reader` 的只读输出和新增 answer-free 查询端点；稳定工具、Capability、
 事件、数据库 schema、五核 reducer 与 writer 均保持兼容，没有新增模型可调用写工具。
 
-独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
+正式前端 `frontend/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
 

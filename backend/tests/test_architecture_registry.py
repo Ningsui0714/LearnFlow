@@ -34,6 +34,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert "one active version" in manifest["authority"]["module_versioning"]
     assert "startup queue reconciliation" in manifest["authority"]["memory_consolidation"]
     assert "shared Tutor deadline" in manifest["authority"]["interactive_model_latency"]
+    assert manifest["authority"]["frontend_authority"].startswith("frontend/ is the only product frontend")
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [
         "free", "explain", "learn", "plan",

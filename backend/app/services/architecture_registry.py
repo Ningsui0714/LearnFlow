@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.24"
+REGISTRY_VERSION = "2026-08-26.25"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -599,7 +599,7 @@ WORKBENCHES = {
                            "start_skill_verification", "start_micro_learning", "search_projects",
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
-        WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
+        WorkbenchContract("vnext_chat", "LearnFlow Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
                           ("coordinate_vnext_agent_turn", "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
@@ -609,16 +609,16 @@ WORKBENCHES = {
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
                            "read_personal_concept_graph",
                            "record_concept_self_report", "manage_vnext_personal_path_node"), "vnext"),
-        WorkbenchContract("vnext_learning_path", "vNext Learning Path Graph", "/learning-path", "tutor_agent",
+        WorkbenchContract("vnext_learning_path", "LearnFlow Learning Path Graph", "/learning-path", "tutor_agent",
                           ("read_vnext_learning_path_graph", "plan_vnext_learning_path",
                            "manage_vnext_learning_path_plan", "manage_vnext_personal_path_node"), "vnext"),
-        WorkbenchContract("vnext_profile", "vNext Learner Profile", "/learner-profile", "tutor_agent",
+        WorkbenchContract("vnext_profile", "LearnFlow Learner Profile", "/learner-profile", "tutor_agent",
                           ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph",
                            "read_personal_concept_graph", "record_concept_self_report",
                            "manage_learner_memory", "edit_vnext_five_kernel_profile"), "vnext"),
-        WorkbenchContract("vnext_learning_files", "vNext Learning File Library", "/learning-files", "tutor_agent",
+        WorkbenchContract("vnext_learning_files", "LearnFlow Learning File Library", "/learning-files", "tutor_agent",
                           ("generate_learning_files", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
-        WorkbenchContract("vnext_projects", "vNext Project Library", "/projects", "tutor_agent",
+        WorkbenchContract("vnext_projects", "LearnFlow Project Library", "/projects", "tutor_agent",
                           ("create_project", "enter_project", "delete_project"), "vnext"),
         WorkbenchContract("vnext_lecture_file", "vNext Lecture File Workbench", "/files/lecture/:lectureId", "tutor_agent",
                           ("open_learning_file", "attach_learning_file_to_chat", "explain_selection"), "vnext"),
@@ -648,7 +648,7 @@ WORKBENCHES = {
         WorkbenchContract("learner_growth", "Learner Growth", "/growth", "tutor_agent", ()),
         WorkbenchContract("profile", "Learner Profile Legacy Redirect", "/profile", "tutor_agent", ()),
         WorkbenchContract("memory", "Inspectable Memory Legacy Redirect", "/memory", "tutor_agent", ()),
-        WorkbenchContract("competition_demo", "Seeded Demo Entry", "/demo", "tutor_agent",
+        WorkbenchContract("competition_demo", "Seeded Demo Entry", "/review", "tutor_agent",
                           ("plan_review_queue", "evaluate_review_attempt", "manage_review_item",
                            "evaluate_attempt", "request_remediation_explanation", "retry_attempt",
                            "evaluate_transfer_variant"), "fused"),
@@ -1032,6 +1032,7 @@ def registry_manifest() -> dict[str, Any]:
             "vnext_learning_path_projection": "versioned official course DAG + formal learner overlay events -> Structure/Value reference projection; Knowledge only records self-reported exposure and never mastery",
             "vnext_agent_turn_runtime": "typed ContextEnvelope -> bounded model/tool loop -> deterministic final-state verifier -> structured AgentTurnTrace; model receives only registered read/artifact ACI tools",
             "vnext_chat_session_authority": "learner-owned AgentSession + idempotent AgentMessage are the cross-browser ordinary-chat authority; localStorage keeps drafts, tabs and paper layout only; persistence never implies learning evidence",
+            "frontend_authority": "frontend/ is the only product frontend; former vNext stable IDs remain compatibility identifiers, not a second runtime; web and Tauri use the same build and formal API contracts",
             "tool_ontology": "ACI tools are Agent-callable affordances; harness, projection, policy and adapter objects are service-side infrastructure",
             "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
         },

@@ -70,7 +70,7 @@ pub fn run() {
                 .env("MEMORY_AUTO_SYNTHESIS_ENABLED", "true")
                 .env(
                     "CORS_ORIGINS",
-                    "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:5173",
+                    "tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:4174,http://127.0.0.1:4174",
                 );
             let (_events, child) = command.spawn()?;
             app.manage(DesktopRuntimeState {
