@@ -81,6 +81,16 @@ ACTION_BOARD = {
             ("recommend_learning_resources", "run_vnext_learning_plan"),
         ),
         ActionDefinition(
+            "read_project_roadmap", "读取当前项目关卡图", "none", "none",
+            {},
+            ("revise_project_roadmap", "navigate_checkpoint"),
+        ),
+        ActionDefinition(
+            "revise_project_roadmap", "修订当前项目未开始关卡", "write", "explicit_or_click",
+            {"structure": "confirmed_project_roadmap_revision"},
+            ("read_project_roadmap", "navigate_checkpoint"),
+        ),
+        ActionDefinition(
             "recommend_learning_resources", "为学习规划筛选候选资源", "proposal", "explicit_or_auto",
             {},
             ("manage_domain_knowledge_sources", "run_vnext_learning_plan"),

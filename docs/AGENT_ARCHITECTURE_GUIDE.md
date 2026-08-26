@@ -539,7 +539,8 @@ vNext 项目系统把项目作为真实产物导向的学徒旅程，而不是�
 项目 Tutor 的标准 ReAct 观察顺序为：有 scope 的五核 ContextPacket、项目工作台摘要、项目来源
 与受管文件的按需内容，必要时再读取学习路径。模型可见的项目工具分为三类：
 
-- 感知：`project_workspace_reader`、`project_source_reader`、`project_learning_file_reader`；
+- 感知：`project_workspace_reader`、`project_source_reader`、`project_learning_file_reader`，以及仅项目
+  Tutor 可用的 `project_roadmap_reader`；
 - 提案：`project_roadmap_proposer`、`project_learning_file_proposer`；
 - 执行：路线应用、文件生成、来源增删和会话创建只通过 UI 确认后的 Action/API，不暴露给模型。
 
@@ -547,6 +548,13 @@ vNext 项目系统把项目作为真实产物导向的学徒旅程，而不是�
 并携带每关成功标准。确认事务物化 Roadmap/Checkpoint 后，为每关创建唯一 checkpoint Session 与
 formal LearningTask。关卡对话固定为 `guided_learning`；项目 Tutor 固定为 `learning_plan`；显式
 创建的项目自由对话保持 `free`。最近使用的自由对话不能夺取项目 Tutor 身份。
+
+已有关卡图的修订必须先读当前 revision，再提交完整 DAG。服务端用乐观版本检查并锁定所有非
+`not_started` 节点；未开始节点可重排、修改、新增或软归档。模型仍只拥有 proposal，学习者确认后
+才写 `roadmap_revised -> structure`。空图是合法观察，不得因没有关卡而中断项目 Tutor。
+
+项目侧栏和所有项目对话共享正式 `Source/Chunk` 权威；两处上传、URL 添加、处理和移除调用相同
+API。显式选择“项目来源”时调用 `project_source_reader`，而不是个人对话资料库。
 
 项目文件生成仍遵循“提案—确认—物化—打开”的边界。Agent 读取练习时只能看到答案安全投影；
 生成内容、来源覆盖和文件打开均不构成学习证据。详细对象、接口、失败语义和测试矩阵见

@@ -103,6 +103,7 @@ export type AgentFormalScope = {
   sessionId?: number
   projectId?: number
   checkpointId?: number
+  projectRole?: 'tutor' | 'checkpoint' | 'free'
 }
 
 export type AgentTurnRequest = {

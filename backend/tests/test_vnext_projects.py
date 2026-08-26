@@ -40,6 +40,15 @@ def test_project_creation_is_topic_locked_and_does_not_invent_checkpoints(client
     assert workspace["boundaries"]["planning_requires_confirmation"] is True
     assert workspace["boundaries"]["file_generation_is_not_mastery"] is True
 
+    tutor_context = client.get(
+        f"/api/vnext-projects/{workspace['project']['id']}/agent-context",
+        params={"session_id": workspace["project_tutor"]["session_id"], "query": "规划路线"},
+    )
+    assert tutor_context.status_code == 200, tutor_context.text
+    assert tutor_context.json()["roadmap"]["checkpoints"] == []
+    assert tutor_context.json()["roadmap"]["revision"] == 0
+    assert tutor_context.json()["tool_policy"]["roadmap_tool_access"] == "project_tutor"
+
     mismatch = client.post(f"/api/vnext-projects/{workspace['project']['id']}/roadmap/apply", json={
         "project_theme": "无关的操作系统课程",
         "rationale": "错误主题",
@@ -103,6 +112,12 @@ def test_confirmed_roadmap_creates_checkpoint_sessions_and_formal_tasks(client: 
     assert free.status_code == 200, free.text
     refreshed = client.get(f"/api/vnext-projects/{project['id']}").json()
     assert any(item["session_id"] == free.json()["session_id"] for item in refreshed["free_sessions"])
+    free_context = client.get(
+        f"/api/vnext-projects/{project['id']}/agent-context",
+        params={"session_id": free.json()["session_id"], "query": "能否调整路线"},
+    )
+    assert free_context.status_code == 200, free_context.text
+    assert free_context.json()["tool_policy"]["roadmap_tool_access"] == "none"
     resumed_tutor = client.post("/api/agent/sessions", json={
         "session_type": "project", "project_id": project["id"], "create_new": False,
     })
@@ -144,3 +159,101 @@ def test_roadmap_requires_forward_only_prerequisites(client: TestClient):
     })
     assert response.status_code == 422
     assert "DAG" in response.text
+
+
+def test_project_tutor_can_revise_only_unstarted_roadmap_suffix(client: TestClient):
+    workspace = _create(client)
+    project = workspace["project"]
+    applied_response = client.post(f"/api/vnext-projects/{project['id']}/roadmap/apply", json={
+        "project_theme": project["name"], "rationale": "三段初始路线",
+        "checkpoints": [
+            {"key": "foundation", "title": "检索基础", "objective": "完成最小检索链", "prerequisites": [], "success_criteria": ["检索可运行"], "estimated_minutes": 60},
+            {"key": "generation", "title": "生成链", "objective": "接入生成模型", "prerequisites": ["foundation"], "success_criteria": ["回答可追踪"], "estimated_minutes": 70},
+            {"key": "report", "title": "原始报告", "objective": "写初步报告", "prerequisites": ["generation"], "success_criteria": ["报告完成"], "estimated_minutes": 40},
+        ],
+        "client_action_id": f"roadmap-{uuid.uuid4().hex}",
+    })
+    assert applied_response.status_code == 200, applied_response.text
+    applied = applied_response.json()
+    first, second, removed = applied["roadmap"]["checkpoints"]
+
+    async def start_first():
+        async with async_session() as db:
+            checkpoint = await db.get(Checkpoint, first["id"])
+            checkpoint.learning_status = "in_progress"
+            await db.commit()
+
+    asyncio.run(start_first())
+    revision_id = f"revision-{uuid.uuid4().hex}"
+    revised_response = client.put(f"/api/vnext-projects/{project['id']}/roadmap", json={
+        "project_theme": project["name"], "rationale": "保留已开始基础关，只调整后续评测路线",
+        "expected_revision": 1, "client_action_id": revision_id,
+        "checkpoints": [
+            {"id": first["id"], "key": "foundation", "title": "检索基础", "objective": "完成最小检索链", "prerequisites": [], "success_criteria": ["检索可运行"], "estimated_minutes": 60},
+            {"id": second["id"], "key": "generation", "title": "可观测生成链", "objective": "接入生成模型并记录引用", "prerequisites": ["foundation"], "success_criteria": ["引用可追踪"], "estimated_minutes": 90},
+            {"key": "evaluation", "title": "离线评测", "objective": "区分检索与生成误差", "prerequisites": ["generation"], "success_criteria": ["评测可重复"], "estimated_minutes": 120},
+        ],
+    })
+    assert revised_response.status_code == 200, revised_response.text
+    revised = revised_response.json()
+    assert revised["roadmap"]["revision"] == 2
+    assert [item["title"] for item in revised["roadmap"]["checkpoints"]] == ["检索基础", "可观测生成链", "离线评测"]
+    assert revised["roadmap"]["checkpoints"][0]["editable"] is False
+    assert revised["roadmap"]["checkpoints"][1]["editable"] is True
+
+    forbidden = client.put(f"/api/vnext-projects/{project['id']}/roadmap", json={
+        "project_theme": project["name"], "rationale": "错误地修改已开始关卡",
+        "expected_revision": 2, "client_action_id": f"forbidden-{uuid.uuid4().hex}",
+        "checkpoints": [
+            {"id": first["id"], "key": "foundation", "title": "检索基础", "objective": "偷偷改变目标", "prerequisites": [], "success_criteria": ["检索可运行"], "estimated_minutes": 60},
+            *[{"id": item["id"], "key": item["key"], "title": item["title"], "objective": item["objective"], "prerequisites": ["foundation"] if index == 1 else ["generation"], "success_criteria": list(item["learning_contract"]["exit_criteria"]), "estimated_minutes": item["learning_contract"]["estimated_minutes"]} for index, item in enumerate(revised["roadmap"]["checkpoints"][1:], start=1)],
+        ],
+    })
+    assert forbidden.status_code == 409
+
+    async def inspect_revision():
+        async with async_session() as db:
+            removed_checkpoint = await db.get(Checkpoint, removed["id"])
+            removed_task = (await db.execute(select(LearningTask).where(
+                LearningTask.checkpoint_id == removed["id"],
+            ))).scalar_one()
+            event = (await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.project_id == project["id"],
+                EvidenceEvent.event_type == "roadmap_revised",
+            ))).scalar_one()
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id == event.id,
+            ))).scalars())
+            return removed_checkpoint, removed_task, event, mutations
+
+    removed_checkpoint, removed_task, event, mutations = asyncio.run(inspect_revision())
+    assert removed_checkpoint.archived is True
+    assert removed_task.status == "canceled"
+    assert event.payload["revision"] == 2
+    assert {item.kernel_name for item in mutations} == {"structure"}
+
+
+def test_removing_an_entire_unstarted_roadmap_returns_a_safe_empty_graph(client: TestClient):
+    workspace = _create(client)
+    project = workspace["project"]
+    applied = client.post(f"/api/vnext-projects/{project['id']}/roadmap/apply", json={
+        "project_theme": project["name"], "rationale": "临时路线",
+        "checkpoints": [{"key": "draft", "title": "临时关卡", "objective": "验证空图迁移", "prerequisites": [], "success_criteria": ["完成"], "estimated_minutes": 30}],
+        "client_action_id": f"roadmap-{uuid.uuid4().hex}",
+    })
+    assert applied.status_code == 200, applied.text
+    cleared = client.put(f"/api/vnext-projects/{project['id']}/roadmap", json={
+        "project_theme": project["name"], "rationale": "重新规划前清空所有未开始关卡",
+        "checkpoints": [], "expected_revision": 1,
+        "client_action_id": f"revision-{uuid.uuid4().hex}",
+    })
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["roadmap"]["revision"] == 2
+    assert cleared.json()["roadmap"]["checkpoints"] == []
+    context = client.get(
+        f"/api/vnext-projects/{project['id']}/agent-context",
+        params={"session_id": workspace["project_tutor"]["session_id"], "query": "重新规划"},
+    )
+    assert context.status_code == 200, context.text
+    assert context.json()["roadmap"]["checkpoints"] == []
+    assert context.json()["tool_policy"]["roadmap_tool_access"] == "project_tutor"

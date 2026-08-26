@@ -210,6 +210,14 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert TOOL_INTERFACE_ROLES["deterministic_remediation"] == "policy"
     assert TOOL_MODEL_EXPOSURE["vnext_five_kernel_profile_reader"] == "vnext_native"
     assert TOOL_MODEL_EXPOSURE["vnext_learning_workspace_reader"] == "vnext_native"
+    assert TOOL_INTERFACE_ROLES["project_roadmap_reader"] == "aci_tool"
+    assert TOOL_MODEL_EXPOSURE["project_roadmap_reader"] == "vnext_native"
+    assert CAPABILITY_OWNERS["read_project_roadmap"] == (
+        "tutor_agent", "project_roadmap_reader", "project_tutor",
+    )
+    assert CAPABILITY_OWNERS["revise_project_roadmap"] == (
+        "tutor_agent", "project_roadmap_proposer", "project_tutor",
+    )
     assert TOOL_MODEL_EXPOSURE["concept_self_report_gateway"] == "agent_mediated"
     assert SKILL_KINDS["guided_explanation"] == "pedagogical_method"
     assert SKILL_KINDS["atomic_learning_loop"] == "playbook"

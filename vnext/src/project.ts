@@ -1,6 +1,7 @@
 import type { FormalLearningFileRef, FormalLearningTask } from './formal-runtime'
 
 export type ProjectCheckpointProposal = {
+  id?: number
   key: string
   title: string
   objective: string
@@ -10,11 +11,13 @@ export type ProjectCheckpointProposal = {
 }
 
 export type ProjectRoadmapProposal = {
-  schema_version: 'vnext.project-roadmap-proposal.v1'
+  schema_version: 'vnext.project-roadmap-proposal.v1' | 'vnext.project-roadmap-revision-proposal.v1'
+  operation: 'create' | 'revise'
   project_id: number
   project_theme: string
   rationale: string
   checkpoints: ProjectCheckpointProposal[]
+  expected_revision?: number
   confirmation_required: true
 }
 
@@ -39,6 +42,7 @@ export type FormalProjectCheckpoint = {
   prerequisites: number[]
   learning_status: string
   learning_contract: Record<string, unknown>
+  editable: boolean
   session_id: number
   learning_task?: FormalLearningTask | null
 }
@@ -54,7 +58,7 @@ export type FormalProjectWorkspace = {
     created_at?: string | null
   }
   project_tutor: { session_id: number; title: string; mode: 'learning_plan' }
-  roadmap: { id?: number | null; checkpoints: FormalProjectCheckpoint[] }
+  roadmap: { id?: number | null; revision: number; checkpoints: FormalProjectCheckpoint[] }
   sources: Array<{
     id: number
     type: 'file' | 'url' | 'github'
@@ -75,7 +79,7 @@ export type AgentProjectContext = {
   schema_version: 'vnext.project.v1'
   project: FormalProjectWorkspace['project']
   checkpoint_id?: number | null
-  roadmap: { id?: number | null; checkpoints: Array<Record<string, unknown>> }
+  roadmap: { id?: number | null; revision: number; checkpoints: Array<Record<string, unknown>> }
   learning_tasks: FormalLearningTask[]
   sources: FormalProjectWorkspace['sources']
   learning_files: FormalProjectWorkspace['files']

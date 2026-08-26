@@ -359,20 +359,29 @@ Contract impact：注册表版本提升到 `2026-08-25.1`，新增一个零 Kern
 `/projects` 与 `/projects/:projectId` 复用正式 `Project -> Roadmap -> Checkpoint` 权威，不建立
 浏览器本地项目模型。新项目先只固定主题、学习目标和真实产物，并创建唯一的项目 Tutor；空项目
 不得预填假关卡。项目 Tutor 固定处于学习规划态，先读取当前项目的五核投影、来源、关卡、正式
-LearningTask 与受管学习文件，再通过 `project_roadmap_proposer` 返回类型化路线提案。只有学习者
+LearningTask 与受管学习文件。只有 `project_tutor` Session 能通过 `project_roadmap_reader` 读取完整
+关卡 DAG，并通过 `project_roadmap_proposer` 返回类型化创建或修订提案。没有路线时 reader 返回带
+`revision=0` 的空图，不把空状态当异常。只有学习者
 明确点击确认后，`roadmap_applied` 才能一次性物化关卡 DAG、关卡 Session 和对应 LearningTask。
+
+路线修订使用完整图提案和乐观 `expected_revision`。已经进入学习或完成的关卡及其顺序、前置边、
+目标和成功标准全部锁定；只有 `not_started` 关卡可以修改、重排、增加或归档。确认后由
+`roadmap_revised` 写 structure 投影；被归档关卡的活动 LearningTask 通过正式任务事件取消。项目
+自由对话和关卡对话均不暴露路线 reader/proposer，防止一般讨论越权改变项目结构。
 
 每个关卡对话固定绑定 `learner_id + project_id + checkpoint_id + learning_task_id`，自然进入带领
 学习态；项目自由对话只能由学习者显式创建，读取同一项目上下文但不会自动推进关卡。项目 Tutor、
 关卡对话和自由对话都是 `tutor_agent` 的不同 scope，不是新的主 Agent。
 
-项目来源正文属于不可信数据，只能由 `project_source_reader` 返回有 provenance 的有界片段；讲义
+项目来源正文属于不可信数据，只能由 `project_source_reader` 返回有 provenance 的有界片段；项目
+对话输入栏与项目侧栏复用同一 `Source/Chunk` 接口，所有项目会话观察同一来源集合，不建立对话级
+影子附件。讲义
 与练习由 `project_learning_file_proposer` 先形成待确认提案，确认后复用正式文件生成服务。讲义可
 打开为标签页或附加为对话纸张；阅读只形成接触，生成和打开均不形成掌握。练习答案保持服务端
 隔离，只有正式提交产生的 LearningAttempt 才能进入证据链。
 
 项目行为的五核边界如下：`project_created` 可把明确目标写入 value 并建立 structure 项目锚点；
-`roadmap_discussed` 只能写未确认的短期 structure 提案；`roadmap_applied` 只写已确认路线、当前位置
+`roadmap_discussed` 只能写未确认的短期 structure 提案；`roadmap_applied/roadmap_revised` 只写已确认路线、当前位置
 和返回锚点；自由对话创建、来源移除和文件打开是零 kernel target。任何项目模型输出都不能直接
 写 `KernelState`。
 

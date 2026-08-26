@@ -772,7 +772,7 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
-    if et == "roadmap_applied":
+    if et in {"roadmap_applied", "roadmap_revised"}:
         project_id = event.project_id or p.get("project_id")
         state = await _kernel(db, event.learner_id, "structure")
         routes = dict((state.long_term or {}).get("project_roadmaps") or {})
@@ -780,19 +780,23 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             "roadmap_id": p.get("roadmap_id"),
             "project_theme": p.get("project_theme", ""),
             "checkpoints": p.get("checkpoints", []),
+            "revision": p.get("revision", 1),
             "status": "active",
         }
-        first = (p.get("checkpoints") or [{}])[0]
+        checkpoints = list(p.get("checkpoints") or [])
+        current_checkpoint_id = (state.short_term or {}).get("active_checkpoint_id")
+        active = next((item for item in checkpoints if item.get("id") == current_checkpoint_id), None)
+        anchor = active or (checkpoints[0] if checkpoints else {})
         await _apply_patch(
             db, event, "structure",
             {"active_project_id": project_id,
-             "active_checkpoint_id": first.get("id"),
-             "current_task": first.get("title", "按项目路线学习"),
+             "active_checkpoint_id": anchor.get("id"),
+             "current_task": anchor.get("title", "项目路线待继续规划"),
              "resume_anchor": {"project_id": project_id,
-                               "checkpoint_id": first.get("id"),
-                               "checkpoint_title": first.get("title", "")},
-             "proposal_status": "applied"},
-            "学习者确认项目路线，写入结构核；路线本身不证明知识掌握",
+                               "checkpoint_id": anchor.get("id"),
+                               "checkpoint_title": anchor.get("title", "")},
+             "proposal_status": "revised" if et == "roadmap_revised" else "applied"},
+            "学习者确认项目路线或修订，写入结构核；路线本身不证明知识掌握",
             long_patch={"project_roadmaps": routes},
         )
         return

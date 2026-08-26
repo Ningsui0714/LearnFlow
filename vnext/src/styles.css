@@ -1050,6 +1050,8 @@ button { cursor: pointer; }
 .project-folder-toggle{display:grid;width:25px;height:31px;flex:none;place-items:center;border:0;background:transparent;color:#8c9a93;font-size:12px}
 .project-folder-open{display:flex;min-width:0;flex:1;align-items:center;gap:8px;border:0;background:transparent;padding:7px 8px 7px 0;color:#3e5248;text-align:left}
 .project-folder-open span{color:#438067;font-size:13px}.project-folder-open strong{overflow:hidden;font-size:11px;font-weight:670;text-overflow:ellipsis;white-space:nowrap}
+.project-folder-add-chat{display:grid;width:24px;height:24px;flex:0 0 24px;place-items:center;border:0;border-radius:7px;background:transparent;color:#6e8178;font-size:16px;line-height:1}.project-folder-add-chat:hover{background:#e9f3ed;color:#16704d}.project-folder-add-chat:disabled{opacity:.4}
+.project-roadmap-boundary{margin:0 0 8px;color:#7a8b82;font-size:10px;line-height:1.5}.drawer-checkpoint small{display:block;margin-top:4px;color:#7a8b82;font-size:9px}
 .project-chat-list{display:grid;margin:1px 0 5px 31px;border-left:1px solid #d8e2dc;padding-left:5px}
 .project-chat-list button{display:flex;min-width:0;align-items:center;gap:6px;overflow:hidden;border:0;border-radius:6px;background:transparent;padding:6px 7px;color:#74827a;text-align:left;text-overflow:ellipsis;white-space:nowrap;font-size:9px}
 .project-chat-list button:hover,.project-chat-list button.active{background:#e8f3ed;color:#176848}.project-chat-list span{color:#87a295}

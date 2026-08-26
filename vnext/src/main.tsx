@@ -70,6 +70,7 @@ import {
 import {
   actOnFormalLearningSkillRun,
   actOnFormalLearningTask,
+  addFormalProjectUrl,
   addKnowledgeLibraryUrl,
   advanceFormalLearningSkillTurn,
   addFormalPersonalPathNode,
@@ -79,6 +80,7 @@ import {
   confirmFormalValueClaim,
   commitFormalLearningPathPlan,
   createFormalTutorSession,
+  createFormalProjectFreeSession,
   generateFormalLearningFiles,
   learnerPathStateFromFormal,
   listFormalProjects,
@@ -89,6 +91,9 @@ import {
   recordFormalConceptStatement,
   recordLearningFileAccess,
   processKnowledgeLibrarySource,
+  processFormalProjectSource,
+  removeFormalProjectSource,
+  reviseFormalProjectRoadmap,
   setFormalMemoryArchived,
   setFormalPathStatus,
   submitFormalClaimFeedback,
@@ -97,6 +102,7 @@ import {
   syncFormalEvents,
   updateFormalLearnerProfile,
   uploadKnowledgeLibraryFile,
+  uploadFormalProjectFile,
   type FormalLearnerProfilePatch,
   type FormalLearnerSnapshot,
   type FormalLearningTaskAction,
@@ -164,6 +170,7 @@ type Conversation = {
   planningEvents: PlanningEvent[]
   formalSessionId?: number
   domainSources: FormalKnowledgeSource[]
+  projectSources: FormalProjectWorkspace['sources']
   projectId?: number
   checkpointId?: number
   projectRole?: 'tutor' | 'checkpoint' | 'free'
@@ -237,6 +244,7 @@ function createConversation(): Conversation {
     learningPlans: [],
     planningEvents: [],
     domainSources: [],
+    projectSources: [],
     messages: [{
       id: uid('message'),
       role: 'assistant',
@@ -327,6 +335,7 @@ function restoreState(): PersistedState {
       learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
       planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
       domainSources: Array.isArray(conversation.domainSources) ? conversation.domainSources : [],
+      projectSources: Array.isArray(conversation.projectSources) ? conversation.projectSources : [],
       preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
         || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
@@ -567,6 +576,15 @@ function App() {
     setSidebarOpen(false)
   }
 
+  const syncProjectWorkspace = (projectWorkspace: FormalProjectWorkspace) => {
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => conversation.projectId === projectWorkspace.project.id
+        ? { ...conversation, projectSources: projectWorkspace.sources }
+        : conversation),
+    }))
+  }
+
   const openProjectConversation = (
     projectWorkspace: FormalProjectWorkspace,
     role: 'tutor' | 'checkpoint' | 'free',
@@ -581,7 +599,11 @@ function App() {
       && item.projectRole === role
       && (role !== 'checkpoint' || item.checkpointId === checkpoint?.id)
       && item.formalSessionId === formalSessionId)
-    if (existing) { openTab(chatTab(existing)); return }
+    if (existing) {
+      syncProjectWorkspace(projectWorkspace)
+      openTab(chatTab({ ...existing, projectSources: projectWorkspace.sources }))
+      return
+    }
     const now = Date.now()
     const base = createConversation()
     let learningTasks: LearningTask[] = []
@@ -610,6 +632,7 @@ function App() {
       checkpointId: checkpoint?.id,
       projectRole: role,
       formalSessionId,
+      projectSources: projectWorkspace.sources,
       learningTasks,
       learningEvents,
       messages: [{ id: uid('message'), role: 'assistant', content: intro, createdAt: now, tutorMode: mode }],
@@ -626,10 +649,28 @@ function App() {
   const openProjectTutor = async (projectId: number) => {
     try {
       const projectWorkspace = await loadFormalProject(projectId)
+      syncProjectWorkspace(projectWorkspace)
       setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
       openProjectConversation(projectWorkspace, 'tutor')
     } catch (error) {
       setFormalError(error instanceof Error ? error.message : '项目加载失败')
+    }
+  }
+
+  const addProjectFreeConversation = async (projectId: number) => {
+    setFormalBusyKey(`project-free:${projectId}`)
+    setFormalError('')
+    try {
+      const projectWorkspace = await loadFormalProject(projectId)
+      const session = await createFormalProjectFreeSession(projectId, `${projectWorkspace.project.name} · 自由对话`)
+      const refreshed = await loadFormalProject(projectId)
+      syncProjectWorkspace(refreshed)
+      setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
+      openProjectConversation(refreshed, 'free', { session })
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '项目自由对话创建失败')
+    } finally {
+      setFormalBusyKey('')
     }
   }
 
@@ -823,6 +864,14 @@ function App() {
     setSourceBusy(previous => ({ ...previous, [conversationId]: `正在读取 ${file.name}` }))
     setSourceErrors(previous => ({ ...previous, [conversationId]: '' }))
     try {
+      const conversation = workspace.conversations.find(item => item.id === conversationId)
+      if (conversation?.projectId) {
+        const pending = await uploadFormalProjectFile(conversation.projectId, file)
+        setSourceBusy(previous => ({ ...previous, [conversationId]: `正在建立 ${file.name} 的项目索引` }))
+        await processFormalProjectSource(conversation.projectId, pending.id)
+        syncProjectWorkspace(await loadFormalProject(conversation.projectId))
+        return
+      }
       const pending = await uploadKnowledgeLibraryFile(file)
       setSourceBusy(previous => ({ ...previous, [conversationId]: `正在建立 ${file.name} 的领域索引` }))
       const processed = await processKnowledgeLibrarySource(pending.id)
@@ -840,6 +889,15 @@ function App() {
     setSourceBusy(previous => ({ ...previous, [conversationId]: '正在读取 URL' }))
     setSourceErrors(previous => ({ ...previous, [conversationId]: '' }))
     try {
+      const conversation = workspace.conversations.find(item => item.id === conversationId)
+      if (conversation?.projectId) {
+        const pending = await addFormalProjectUrl(conversation.projectId, url)
+        setSourceBusy(previous => ({ ...previous, [conversationId]: '正在建立 URL 的项目索引' }))
+        await processFormalProjectSource(conversation.projectId, pending.id)
+        syncProjectWorkspace(await loadFormalProject(conversation.projectId))
+        setSourceUrls(previous => ({ ...previous, [conversationId]: '' }))
+        return
+      }
       const pending = await addKnowledgeLibraryUrl(url)
       setSourceBusy(previous => ({ ...previous, [conversationId]: '正在建立 URL 的领域索引' }))
       const processed = await processKnowledgeLibrarySource(pending.id)
@@ -852,14 +910,27 @@ function App() {
     }
   }
 
-  const detachDomainSource = (conversationId: string, sourceId: number) => {
-    const removesLastSource = (workspace.conversations.find(item => item.id === conversationId)?.domainSources.length || 0) <= 1
-    setWorkspace(previous => ({
-      ...previous,
-      conversations: previous.conversations.map(conversation => conversation.id === conversationId
-        ? { ...conversation, domainSources: conversation.domainSources.filter(source => source.id !== sourceId), updatedAt: Date.now() }
-        : conversation),
-    }))
+  const detachDomainSource = async (conversationId: string, sourceId: number) => {
+    const target = workspace.conversations.find(item => item.id === conversationId)
+    const removesLastSource = target?.projectId
+      ? target.projectSources.length <= 1
+      : (target?.domainSources.length || 0) <= 1
+    if (target?.projectId) {
+      try {
+        await removeFormalProjectSource(target.projectId, sourceId)
+        syncProjectWorkspace(await loadFormalProject(target.projectId))
+      } catch (error) {
+        setSourceErrors(previous => ({ ...previous, [conversationId]: error instanceof Error ? error.message : '项目来源移除失败' }))
+        return
+      }
+    } else {
+      setWorkspace(previous => ({
+        ...previous,
+        conversations: previous.conversations.map(conversation => conversation.id === conversationId
+          ? { ...conversation, domainSources: conversation.domainSources.filter(source => source.id !== sourceId), updatedAt: Date.now() }
+          : conversation),
+      }))
+    }
     if (removesLastSource) {
       setToolChoices(previous => Object.fromEntries(Object.entries(previous).map(([key, choice]) => (
         key.startsWith(`${conversationId}:`) && choice === 'domain' ? [key, 'auto'] : [key, choice]
@@ -1200,8 +1271,9 @@ function App() {
           sessionId: formalSessionId,
           projectId: conversation.projectId || formalTaskForTurn?.project_id || undefined,
           checkpointId: conversation.checkpointId || formalTaskForTurn?.checkpoint_id || undefined,
+          projectRole: conversation.projectRole,
         },
-        domainSourceIds: conversation.domainSources.map(source => source.id),
+        domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
       })
@@ -1643,7 +1715,10 @@ function App() {
     setFormalBusyKey(`project-roadmap:${proposal.project_id}`)
     setFormalError('')
     try {
-      await applyFormalProjectRoadmap(proposal.project_id, proposal)
+      const projectWorkspace = proposal.operation === 'revise'
+        ? await reviseFormalProjectRoadmap(proposal.project_id, proposal)
+        : await applyFormalProjectRoadmap(proposal.project_id, proposal)
+      syncProjectWorkspace(projectWorkspace)
       await refreshFormalSnapshot(true)
       openTab({ id: `project:${proposal.project_id}`, kind: 'project', title: proposal.project_theme, projectId: proposal.project_id })
     } catch (error) {
@@ -1838,6 +1913,7 @@ function App() {
     const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
     const backPages = pages.filter(page => page.id !== sheetId).slice(-6)
     const messages = activeMessages(conversation)
+    const attachedSources = conversation.projectId ? conversation.projectSources : conversation.domainSources
     const hasWorkbench = conversation.sheets.length > 0
     const paperMode = paperDeskView?.conversationId === conversation.id ? paperDeskView.mode : 'stack'
     const renderPaperTreeNode = (page: typeof pages[number], ancestors: string[] = []): ReactNode => {
@@ -2190,13 +2266,13 @@ function App() {
               </section>
             )}
             {pendingMode && <div className="turn-progress" role="status"><i /> 正在判断工具并由{TUTOR_MODE_LABELS[pendingMode]}组织回复…</div>}
-            {conversation.domainSources.length > 0 && (
-              <div className="conversation-source-chips" aria-label="本对话资料">
-                {conversation.domainSources.map(source => (
-                  <span key={source.id} title={source.knowledge_domains.map(item => item.label).join(' · ') || source.name}>
+            {attachedSources.length > 0 && (
+              <div className="conversation-source-chips" aria-label={conversation.projectId ? '项目来源' : '本对话资料'}>
+                {attachedSources.map(source => (
+                  <span key={source.id} title={source.name}>
                     <i>{source.type === 'file' ? '文' : '链'}</i>
                     <strong>{source.name}</strong>
-                    <button type="button" onClick={() => detachDomainSource(conversation.id, source.id)} aria-label={`移除资料${source.name}`}>×</button>
+                    <button type="button" onClick={() => { void detachDomainSource(conversation.id, source.id) }} aria-label={`移除资料${source.name}`}>×</button>
                   </span>
                 ))}
               </div>
@@ -2218,10 +2294,10 @@ function App() {
               <div className="composer-tools">
                 <details className="source-attachment-menu">
                   <summary role="button" aria-label="给当前对话添加资料" title="添加本地文件或 URL">
-                    ＋资料{conversation.domainSources.length > 0 ? ` ${conversation.domainSources.length}` : ''}
+                    ＋资料{attachedSources.length > 0 ? ` ${attachedSources.length}` : ''}
                   </summary>
                   <div className="source-attachment-popover">
-                    <header><strong>本对话资料</strong><span>资料只作为带来源的上下文，不代表你已经掌握。</span></header>
+                    <header><strong>{conversation.projectId ? '项目来源' : '本对话资料'}</strong><span>资料只作为带来源的上下文，不代表你已经掌握。</span></header>
                     <label className="source-file-picker">
                       <input
                         type="file"
@@ -2247,7 +2323,7 @@ function App() {
                     </div>
                     {sourceBusy[conversation.id] && <p className="source-import-status">{sourceBusy[conversation.id]}</p>}
                     {sourceErrors[conversation.id] && <p className="source-import-error">{sourceErrors[conversation.id]}</p>}
-                    <small>发送问题时可选“对话资料”强制读取；“自动”会在资料与联网搜索之间判断。</small>
+                    <small>{conversation.projectId ? '这里与项目面板完全同步，项目内所有对话共享；发送时可强制读取“项目来源”。' : '发送问题时可选“对话资料”强制读取；“自动”会在资料与联网搜索之间判断。'}</small>
                   </div>
                 </details>
                 <div className="mode-options" aria-label="选择 Tutor 状态">
@@ -2287,7 +2363,7 @@ function App() {
                 <label className="tool-choice">
                   <span>工具</span>
                   <select value={toolChoices[draftKey] || 'auto'} disabled={Boolean(pendingMode)} onChange={event => setToolChoices(previous => ({ ...previous, [draftKey]: event.target.value as TutorToolChoice }))}>
-                    {(Object.keys(TOOL_CHOICE_LABELS) as TutorToolChoice[]).map(choice => <option key={choice} value={choice} disabled={choice === 'domain' && conversation.domainSources.length === 0}>{TOOL_CHOICE_LABELS[choice]}</option>)}
+                    {(Object.keys(TOOL_CHOICE_LABELS) as TutorToolChoice[]).map(choice => <option key={choice} value={choice} disabled={choice === 'domain' && attachedSources.length === 0}>{choice === 'domain' && conversation.projectId ? '项目来源' : TOOL_CHOICE_LABELS[choice]}</option>)}
                   </select>
                 </label>
                 <span>Shift + Enter 换行</span>
@@ -2305,6 +2381,7 @@ function App() {
               onOpenFree={(projectWorkspace, session) => openProjectConversation(projectWorkspace, 'free', { session })}
               onOpenFile={file => openTab(learningFileTab(file))}
               onGenerateFiles={generateTaskFiles}
+              onWorkspaceChange={syncProjectWorkspace}
             />
           </Suspense>
         )}
@@ -2335,6 +2412,7 @@ function App() {
                   <div className="sidebar-project-row">
                     <button type="button" className="project-folder-toggle" onClick={() => setExpandedProjects(previous => ({ ...previous, [project.id]: !expanded }))} aria-label={`${expanded ? '收起' : '展开'}${project.name}`}>{expanded ? '⌄' : '›'}</button>
                     <button type="button" className="project-folder-open" onClick={() => void openProjectTutor(project.id)}><span>▱</span><strong>{project.name}</strong></button>
+                    <button type="button" className="project-folder-add-chat" onClick={event => { event.stopPropagation(); void addProjectFreeConversation(project.id) }} disabled={formalBusyKey === `project-free:${project.id}`} aria-label={`在${project.name}中新建自由对话`} title="新建项目自由对话">＋</button>
                   </div>
                   {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(conversation => <button type="button" key={conversation.id} className={activeConversation?.id === conversation.id ? 'active' : ''} onClick={() => openTab(chatTab(conversation))}><span>{conversation.projectRole === 'checkpoint' ? '◇' : '·'}</span>{conversation.title.replace(`${project.name} · `, '')}</button>)}</div>}
                 </div>
@@ -2491,12 +2569,14 @@ function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, onAcceptProj
       )}
       {run.projectRoadmapProposal && (
         <div className="project-tool-proposal">
-          <span>项目路线提案 · 尚未创建</span>
+          <span>{run.projectRoadmapProposal.operation === 'revise' ? `项目路线修订 · 第 ${(run.projectRoadmapProposal.expected_revision || 1) + 1} 版待确认` : '项目路线提案 · 尚未创建'}</span>
           <strong>{run.projectRoadmapProposal.project_theme}</strong>
           <p>{run.projectRoadmapProposal.rationale}</p>
           <ol>{run.projectRoadmapProposal.checkpoints.map(item => <li key={item.key}><b>{item.title}</b><small>{item.objective}</small></li>)}</ol>
           <button type="button" disabled={projectBusyKey === `project-roadmap:${run.projectRoadmapProposal.project_id}`} onClick={() => onAcceptProjectRoadmap(run.projectRoadmapProposal!)}>
-            {projectBusyKey === `project-roadmap:${run.projectRoadmapProposal.project_id}` ? '正在创建关卡与任务…' : '确认路线，创建关卡对话与学习任务'}
+            {projectBusyKey === `project-roadmap:${run.projectRoadmapProposal.project_id}`
+              ? (run.projectRoadmapProposal.operation === 'revise' ? '正在应用路线修订…' : '正在创建关卡与任务…')
+              : (run.projectRoadmapProposal.operation === 'revise' ? '确认调整未开始关卡' : '确认路线，创建关卡对话与学习任务')}
           </button>
           {projectError && <em>{projectError}</em>}
         </div>

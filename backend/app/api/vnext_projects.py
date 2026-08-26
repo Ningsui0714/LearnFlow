@@ -16,12 +16,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.models.learning import AgentSession, LearningTask
+from app.models.learning import AgentSession, EvidenceEvent, LearningTask
 from app.models.project import Checkpoint, Chunk, ConceptQuestion, Exercise, Lecture, Project, Roadmap, Source
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_project
 from app.services.five_kernel_context import build_five_kernel_context
 from app.services.learning_runtime import record_event
-from app.services.learning_tasks import ensure_all_checkpoint_learning_tasks, learning_task_view
+from app.services.learning_tasks import act_on_learning_task, ensure_all_checkpoint_learning_tasks, learning_task_view
 from app.services.tutor_service import get_or_create_session
 
 
@@ -37,6 +37,7 @@ class ProjectCreateRequest(BaseModel):
 
 
 class CheckpointProposal(BaseModel):
+    id: int | None = Field(default=None, ge=1)
     key: str = Field(min_length=1, max_length=80)
     title: str = Field(min_length=2, max_length=255)
     objective: str = Field(min_length=2, max_length=1200)
@@ -54,6 +55,14 @@ class RoadmapApplyRequest(BaseModel):
     project_theme: str = Field(min_length=2, max_length=255)
     rationale: str = Field(default="", max_length=1600)
     checkpoints: list[CheckpointProposal] = Field(min_length=1, max_length=16)
+    client_action_id: str = Field(min_length=4, max_length=160)
+
+
+class RoadmapRevisionRequest(BaseModel):
+    project_theme: str = Field(min_length=2, max_length=255)
+    rationale: str = Field(default="", max_length=1600)
+    checkpoints: list[CheckpointProposal] = Field(default_factory=list, max_length=16)
+    expected_revision: int = Field(ge=1)
     client_action_id: str = Field(min_length=4, max_length=160)
 
 
@@ -229,11 +238,13 @@ async def _workspace_view(db: AsyncSession, learner_id: int, project: Project) -
                 LearningTask.checkpoint_id == checkpoint.id,
             ))).scalar_one_or_none()
             checkpoints.append({
-                "id": checkpoint.id, "key": f"checkpoint-{checkpoint.order}",
+                "id": checkpoint.id,
+                "key": str((checkpoint.brief or {}).get("checkpoint_key") or f"checkpoint-{checkpoint.order}"),
                 "title": checkpoint.title, "objective": checkpoint.description or "",
                 "order": checkpoint.order, "prerequisites": list(checkpoint.prerequisites or []),
                 "learning_status": checkpoint.learning_status or "not_started",
                 "learning_contract": dict(checkpoint.learning_contract or {}),
+                "editable": (checkpoint.learning_status or "not_started") == "not_started",
                 "session_id": session.id,
                 "learning_task": await learning_task_view(db, task) if task else None,
             })
@@ -243,7 +254,11 @@ async def _workspace_view(db: AsyncSession, learner_id: int, project: Project) -
         "schema_version": SCHEMA_VERSION,
         "project": _project_spec(project),
         "project_tutor": {"session_id": tutor.id, "title": tutor.title, "mode": "learning_plan"},
-        "roadmap": {"id": roadmap.id if roadmap else None, "checkpoints": checkpoints},
+        "roadmap": {
+            "id": roadmap.id if roadmap else None,
+            "revision": int(((roadmap.raw_json or {}).get("revision") or 1) if roadmap else 0),
+            "checkpoints": checkpoints,
+        },
         "sources": await _source_views(db, project.id),
         "files": await _file_views(db, project.id),
         "free_sessions": [{"session_id": item.id, "title": item.title} for item in free_sessions],
@@ -369,7 +384,7 @@ async def apply_vnext_roadmap(
         })
     roadmap.raw_json = {
         "schema_version": SCHEMA_VERSION, "project_theme": project.name,
-        "rationale": data.rationale, "checkpoints": raw_checkpoints,
+        "rationale": data.rationale, "revision": 1, "checkpoints": raw_checkpoints,
     }
     await ensure_all_checkpoint_learning_tasks(db, learner_id=current.learner.id, project_id=project.id)
     await record_event(
@@ -380,6 +395,189 @@ async def apply_vnext_roadmap(
                  "checkpoints": raw_checkpoints, "mastery_unchanged": True},
         provenance={"endpoint": "POST /api/vnext-projects/{id}/roadmap/apply",
                     "explicit_click": True, "proposal_origin": "tutor_tool"},
+        client_event_id=data.client_action_id,
+    )
+    view = await _workspace_view(db, current.learner.id, project)
+    await db.commit()
+    return view
+
+
+@router.put("/{project_id}/roadmap")
+async def revise_vnext_roadmap(
+    project_id: int,
+    data: RoadmapRevisionRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace only the unstarted suffix of a confirmed checkpoint DAG.
+
+    The request is a learner-confirmed Tutor proposal. Started/completed nodes
+    are immutable, removed unstarted nodes are archived, and the complete graph
+    is validated before any revision becomes authoritative.
+    """
+    project = await require_owned_project(db, current.learner.id, project_id)
+    if data.project_theme.strip().casefold() != project.name.strip().casefold():
+        raise HTTPException(422, "规划主题必须与当前项目完全一致")
+    prior_event = (await db.execute(select(EvidenceEvent.id).where(
+        EvidenceEvent.learner_id == current.learner.id,
+        EvidenceEvent.event_type == "roadmap_revised",
+        EvidenceEvent.client_event_id.in_([
+            data.client_action_id,
+            f"{current.learner.id}:{data.client_action_id}",
+        ]),
+    ))).scalar_one_or_none()
+    if prior_event:
+        view = await _workspace_view(db, current.learner.id, project)
+        await db.commit()
+        return view
+
+    roadmap = (await db.execute(select(Roadmap).where(
+        Roadmap.project_id == project.id,
+    ))).scalar_one_or_none()
+    if not roadmap:
+        raise HTTPException(409, "项目还没有关卡图，请先确认初始路线")
+    current_revision = int((roadmap.raw_json or {}).get("revision") or 1)
+    if data.expected_revision != current_revision:
+        raise HTTPException(409, "关卡图已经变化，请重新读取后再确认")
+
+    existing = list((await db.execute(select(Checkpoint).where(
+        Checkpoint.roadmap_id == roadmap.id,
+        Checkpoint.archived.is_(False),
+    ).order_by(Checkpoint.order))).scalars().all())
+    existing_by_id = {item.id: item for item in existing}
+    existing_key_by_id = {
+        item.id: str((item.brief or {}).get("checkpoint_key") or f"checkpoint-{item.order}")
+        for item in existing
+    }
+    keys = [item.key for item in data.checkpoints]
+    if len(set(keys)) != len(keys):
+        raise HTTPException(422, "关卡 key 不能重复")
+    proposed_ids = [item.id for item in data.checkpoints if item.id is not None]
+    if len(set(proposed_ids)) != len(proposed_ids):
+        raise HTTPException(422, "同一个关卡不能在路线中出现两次")
+    if any(item_id not in existing_by_id for item_id in proposed_ids):
+        raise HTTPException(422, "路线包含不属于当前项目的关卡")
+    seen_keys: set[str] = set()
+    for item in data.checkpoints:
+        if any(key not in keys for key in item.prerequisites):
+            raise HTTPException(422, f"关卡 {item.title} 引用了不存在的前置关卡")
+        if any(key not in seen_keys for key in item.prerequisites):
+            raise HTTPException(422, f"关卡 {item.title} 的前置必须出现在它之前，确保路线为 DAG")
+        seen_keys.add(item.key)
+
+    proposal_by_id = {item.id: (index, item) for index, item in enumerate(data.checkpoints, start=1) if item.id}
+    for checkpoint in existing:
+        if (checkpoint.learning_status or "not_started") == "not_started":
+            continue
+        proposed = proposal_by_id.get(checkpoint.id)
+        if not proposed:
+            raise HTTPException(409, f"已开始的关卡“{checkpoint.title}”不能删除")
+        order, item = proposed
+        contract = dict(checkpoint.learning_contract or {})
+        current_prerequisite_keys = [existing_key_by_id.get(item_id, f"checkpoint-{item_id}")
+                                     for item_id in list(checkpoint.prerequisites or [])]
+        if (
+            order != checkpoint.order
+            or item.key != existing_key_by_id[checkpoint.id]
+            or item.title.strip() != checkpoint.title
+            or item.objective.strip() != (checkpoint.description or "")
+            or item.prerequisites != current_prerequisite_keys
+            or list(item.success_criteria) != list(contract.get("exit_criteria") or [])
+            or item.estimated_minutes != int(contract.get("estimated_minutes") or 45)
+        ):
+            raise HTTPException(409, f"已开始的关卡“{checkpoint.title}”及其连线不能修改")
+
+    active_ids = set(proposed_ids)
+    archived_ids: list[int] = []
+    for checkpoint in existing:
+        if checkpoint.id in active_ids:
+            continue
+        if (checkpoint.learning_status or "not_started") != "not_started":
+            raise HTTPException(409, f"已开始的关卡“{checkpoint.title}”不能删除")
+        checkpoint.archived = True
+        archived_ids.append(checkpoint.id)
+        tasks = list((await db.execute(select(LearningTask).where(
+            LearningTask.learner_id == current.learner.id,
+            LearningTask.checkpoint_id == checkpoint.id,
+            LearningTask.status.in_(["proposed", "queued", "active", "paused"]),
+        ))).scalars().all())
+        for task in tasks:
+            await act_on_learning_task(
+                db, task=task, action="cancel", expected_version=int(task.version or 1),
+                client_action_id=f"{data.client_action_id}:archive-checkpoint:{checkpoint.id}:task:{task.id}",
+            )
+
+    key_to_checkpoint: dict[str, Checkpoint] = {}
+    for order, item in enumerate(data.checkpoints, start=1):
+        checkpoint = existing_by_id.get(item.id) if item.id else None
+        if checkpoint is None:
+            checkpoint = Checkpoint(
+                roadmap_id=roadmap.id, title=item.title.strip(), description=item.objective.strip(),
+                order=order, prerequisites=[], learning_status="not_started",
+                learning_contract={}, brief={},
+            )
+            db.add(checkpoint)
+            await db.flush()
+        checkpoint.order = order
+        checkpoint.title = item.title.strip()
+        checkpoint.description = item.objective.strip()
+        checkpoint.learning_contract = {
+            **dict(checkpoint.learning_contract or {}),
+            "project_theme": project.name,
+            "exit_criteria": list(item.success_criteria),
+            "estimated_minutes": item.estimated_minutes,
+            "knowledge_target": {"checkpoint_key": item.key},
+            "practice_target": {"requires_generation": True},
+        }
+        checkpoint.brief = {
+            **dict(checkpoint.brief or {}),
+            "project_theme": project.name, "checkpoint_key": item.key,
+            "objective": item.objective, "source_scope": "project",
+        }
+        existing_task = (await db.execute(select(LearningTask).where(
+            LearningTask.learner_id == current.learner.id,
+            LearningTask.checkpoint_id == checkpoint.id,
+        ))).scalar_one_or_none()
+        if existing_task and existing_task.status in {"proposed", "queued"}:
+            existing_task.title = checkpoint.title
+            existing_task.objective = checkpoint.description or checkpoint.title
+            existing_task.success_criteria = list(item.success_criteria)
+            existing_task.estimated_minutes = item.estimated_minutes
+        key_to_checkpoint[item.key] = checkpoint
+    raw_checkpoints: list[dict[str, Any]] = []
+    for order, item in enumerate(data.checkpoints, start=1):
+        checkpoint = key_to_checkpoint[item.key]
+        checkpoint.prerequisites = [key_to_checkpoint[key].id for key in item.prerequisites]
+        raw_checkpoints.append({
+            "id": checkpoint.id, "key": item.key, "title": item.title,
+            "objective": item.objective, "order": order,
+            "prerequisites": checkpoint.prerequisites,
+            "success_criteria": list(item.success_criteria),
+            "estimated_minutes": item.estimated_minutes,
+            "editable": (checkpoint.learning_status or "not_started") == "not_started",
+        })
+    next_revision = current_revision + 1
+    roadmap.raw_json = {
+        **dict(roadmap.raw_json or {}),
+        "schema_version": SCHEMA_VERSION, "project_theme": project.name,
+        "rationale": data.rationale, "revision": next_revision,
+        "checkpoints": raw_checkpoints,
+    }
+    await ensure_all_checkpoint_learning_tasks(db, learner_id=current.learner.id, project_id=project.id)
+    await record_event(
+        db, learner_id=current.learner.id, project_id=project.id,
+        event_type="roadmap_revised", source="ui",
+        payload={
+            "project_id": project.id, "project_theme": project.name,
+            "roadmap_id": roadmap.id, "previous_revision": current_revision,
+            "revision": next_revision, "rationale": data.rationale,
+            "checkpoints": raw_checkpoints, "archived_checkpoint_ids": archived_ids,
+            "mastery_unchanged": True,
+        },
+        provenance={
+            "endpoint": "PUT /api/vnext-projects/{id}/roadmap",
+            "explicit_click": True, "proposal_origin": "project_tutor_tool",
+        },
         client_event_id=data.client_action_id,
     )
     view = await _workspace_view(db, current.learner.id, project)
@@ -450,6 +648,7 @@ async def remove_project_source(
 async def get_project_agent_context(
     project_id: int,
     checkpoint_id: int | None = None,
+    session_id: int | None = None,
     query: str = "",
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
@@ -461,24 +660,34 @@ async def get_project_agent_context(
         ))).scalar_one_or_none()
         if not owned:
             raise HTTPException(404, "关卡不属于当前项目")
+    session_role = "unscoped_project"
+    if session_id is not None:
+        session = (await db.execute(select(AgentSession).where(
+            AgentSession.id == session_id,
+            AgentSession.learner_id == current.learner.id,
+            AgentSession.project_id == project.id,
+            AgentSession.status == "active",
+        ))).scalar_one_or_none()
+        if session is None:
+            raise HTTPException(404, "项目对话不存在或不属于当前学习者")
+        session_role = str((session.context_summary or {}).get("role") or session.session_type)
     context = await build_five_kernel_context(
         db, learner_id=current.learner.id,
         policy="checkpoint_tutor" if checkpoint_id else "project_tutor",
         project_id=project.id, checkpoint_id=checkpoint_id,
         query=query or project.name,
     )
-    sources = await _source_views(db, project.id)
-    files = await _file_views(db, project.id)
-    roadmap = (await db.execute(select(Roadmap).where(Roadmap.project_id == project.id))).scalar_one_or_none()
-    checkpoints = list((roadmap.raw_json or {}).get("checkpoints") or []) if roadmap else []
+    workspace = await _workspace_view(db, current.learner.id, project)
+    sources = workspace["sources"]
+    files = workspace["files"]
     tasks = list((await db.execute(select(LearningTask).where(
         LearningTask.learner_id == current.learner.id,
         LearningTask.project_id == project.id,
     ).order_by(LearningTask.queue_position, LearningTask.id))).scalars().all())
-    return {
+    response = {
         "schema_version": SCHEMA_VERSION,
         "project": _project_spec(project), "checkpoint_id": checkpoint_id,
-        "roadmap": {"id": roadmap.id if roadmap else None, "checkpoints": checkpoints},
+        "roadmap": workspace["roadmap"],
         "learning_tasks": [await learning_task_view(db, task) for task in tasks],
         "sources": sources, "learning_files": files,
         "source_excerpts": await _project_source_excerpts(db, project.id, query or project.name),
@@ -486,8 +695,13 @@ async def get_project_agent_context(
         "five_kernel_context": context,
         "tool_policy": {
             "read_scope": "current_project_only", "source_content_untrusted": True,
+            "session_role": session_role,
+            "roadmap_tool_access": "project_tutor" if session_role == "project_tutor" else "none",
+            "roadmap_read_requires_project_tutor": True,
             "roadmap_write_requires_user_confirmation": True,
             "learning_file_generation_requires_user_confirmation": True,
             "generated_content_never_implies_mastery": True,
         },
     }
+    await db.commit()
+    return response

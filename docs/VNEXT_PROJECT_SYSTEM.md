@@ -46,9 +46,10 @@
 | 工具 | 类型 | 输入与输出 | 副作用 |
 |---|---|---|---|
 | `read_project_workspace` | 感知 | 当前项目对象与五核有界投影 | 无 |
+| `read_project_roadmap` | 感知 | 项目 Tutor 专属；版本化 DAG、状态、可编辑边界或空图 | 无 |
 | `read_project_sources` | 感知 | 当前项目已处理 Chunk；带 provenance | 无 |
 | `read_project_learning_file` | 感知 | 讲义或练习的答案安全预览 | 无 |
-| `propose_project_roadmap` | 提案 | 主题锁定、前向 DAG、成功标准 | 无；需确认 |
+| `propose_project_roadmap` | 提案 | 项目 Tutor 专属；主题锁定、前向 DAG、创建或未开始后缀修订 | 无；需确认 |
 | `propose_project_learning_files` | 提案 | 当前关卡 LearningTask 的讲义/练习规格 | 无；需确认 |
 
 模型不获得 `apply/write/delete/confirm` 工具。确认按钮调用受 ownership、schema 与幂等键约束的
@@ -59,6 +60,7 @@ API，避免模型把一句自然语言当成授权。
 - 创建项目：structure 建立项目锚点；用户明确目标可进入 value。
 - 讨论路线：structure 只保存未确认提案，不生成长期结论。
 - 确认路线：structure 保存 Roadmap、当前位置和返回锚点。
+- 确认修订：`roadmap_revised` 只更新 structure 的版本化项目图；不写 knowledge/value/practice。
 - 阅读来源、生成/打开讲义：最多是接触或操作事实，不是掌握。
 - 练习：只有正式 LearningAttempt 的确定性判定能形成 knowledge/practice 证据。
 - 项目产物：需后续登记的正式评估事件才能进入 practice；文件存在本身不是能力证据。
@@ -74,12 +76,17 @@ UI / Tool / Agent 行为 -> EvidenceEvent -> reducer -> KernelMutation -> Kernel
 - `GET/POST /api/vnext-projects`
 - `GET /api/vnext-projects/:id`
 - `POST /api/vnext-projects/:id/roadmap/apply`
+- `PUT /api/vnext-projects/:id/roadmap`（完整 DAG 修订，带 `expected_revision`）
 - `POST /api/vnext-projects/:id/sessions`
 - `GET /api/vnext-projects/:id/agent-context`
 - `DELETE /api/vnext-projects/:id/sources/:sourceId`
 
-项目工作台每次从服务端聚合恢复。路线初次确认后不能被同一接口覆盖；未来修订必须增加显式版本、
-迁移与差异确认。
+项目工作台每次从服务端聚合恢复。路线初次确认后不能被 apply 接口覆盖；修订接口按 revision 做
+乐观并发检查。非 `not_started` 节点完全锁定；省略的未开始节点软归档并取消其活动任务。全部未开始
+节点均可被归档，返回带新 revision 的安全空图，项目 Tutor 可据此重新规划。
+
+项目侧栏和项目对话输入栏的来源添加完全等价：都写同一项目 `Source`，立即处理为 `Chunk`，并同步
+到项目 Tutor、关卡和自由对话。一般对话仍使用学习者个人资料库，两类来源不混写。
 
 ## 验收重点
 
@@ -90,3 +97,5 @@ UI / Tool / Agent 行为 -> EvidenceEvent -> reducer -> KernelMutation -> Kernel
 5. 来源越权、跨项目 checkpoint 和跨 learner 访问被拒绝。
 6. 练习答案不进入 Agent 感知包；生成与打开文件不升级掌握。
 7. 工具失败在 ReAct 轨迹中可见，模型可恢复，不伪装成功。
+8. 只有项目 Tutor 暴露路线读取/提案工具；自由对话和关卡对话不能越权。
+9. 空路线可读；已开始关卡不可变；未开始关卡可以在确认后增删改排。

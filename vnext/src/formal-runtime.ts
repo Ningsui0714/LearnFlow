@@ -579,6 +579,21 @@ export async function applyFormalProjectRoadmap(projectId: number, proposal: Pro
   })
 }
 
+export async function reviseFormalProjectRoadmap(projectId: number, proposal: ProjectRoadmapProposal) {
+  await ensureFormalIdentity()
+  if (proposal.operation !== 'revise' || !proposal.expected_revision) throw new Error('缺少正式路线修订版本')
+  return jsonRequest<FormalProjectWorkspace>(`/api/vnext-projects/${projectId}/roadmap`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      project_theme: proposal.project_theme,
+      rationale: proposal.rationale,
+      checkpoints: proposal.checkpoints,
+      expected_revision: proposal.expected_revision,
+      client_action_id: `vnext-project:${projectId}:roadmap-revision:${proposal.expected_revision}:${Date.now()}`,
+    }),
+  })
+}
+
 export async function createFormalProjectFreeSession(projectId: number, title = '项目自由对话') {
   await ensureFormalIdentity()
   return jsonRequest<{ session_id: number; title: string; project_id: number; mode: 'free' }>(`/api/vnext-projects/${projectId}/sessions`, {
@@ -589,7 +604,7 @@ export async function createFormalProjectFreeSession(projectId: number, title = 
 
 export async function addFormalProjectUrl(projectId: number, url: string) {
   await ensureFormalIdentity()
-  return jsonRequest<Record<string, unknown>>(`/api/projects/${projectId}/sources`, {
+  return jsonRequest<{ id: number; status: string }>(`/api/projects/${projectId}/sources`, {
     method: 'POST', body: JSON.stringify({ type: 'url', url }),
   })
 }
@@ -598,7 +613,7 @@ export async function uploadFormalProjectFile(projectId: number, file: File) {
   await ensureFormalIdentity()
   const form = new FormData()
   form.append('file', file)
-  return formRequest<Record<string, unknown>>(`/api/projects/${projectId}/sources/upload`, form)
+  return formRequest<{ id: number; status: string }>(`/api/projects/${projectId}/sources/upload`, form)
 }
 
 export async function processFormalProjectSource(projectId: number, sourceId: number) {

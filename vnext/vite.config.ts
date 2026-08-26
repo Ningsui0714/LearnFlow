@@ -226,6 +226,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         sessionId: positiveInteger(rawFormalScope.sessionId),
         projectId: positiveInteger(rawFormalScope.projectId),
         checkpointId: positiveInteger(rawFormalScope.checkpointId),
+        projectRole: typeof rawFormalScope.projectRole === 'string' ? rawFormalScope.projectRole : undefined,
       }
       const domainSourceIds = Array.isArray(input.domainSourceIds)
         ? [...new Set(input.domainSourceIds.filter(positiveInteger))].slice(0, 12) as number[]
@@ -279,6 +280,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       if (formalScope.projectId) try {
         const projectQuery = new URLSearchParams({ query: latestMessage.slice(0, 1800) })
         if (formalScope.checkpointId) projectQuery.set('checkpoint_id', String(formalScope.checkpointId))
+        if (formalScope.sessionId) projectQuery.set('session_id', String(formalScope.sessionId))
         const projectResponse = await fetch(
           `${backendBase}/api/vnext-projects/${formalScope.projectId}/agent-context?${projectQuery}`,
           {

@@ -276,19 +276,25 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
 }
 
 function availableTools(input: TutorAgentRuntimeInput) {
+  const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
   return TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
     (tool.name !== 'read_learning_path' || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
     && (!tool.name.startsWith('read_project_') || Boolean(input.formalProjectContext))
-    && (tool.name !== 'propose_project_roadmap' || Boolean(input.formalProjectContext) && input.mode === 'learning_plan')
+    && (tool.name !== 'read_project_roadmap' || projectTutor)
+    && (tool.name !== 'propose_project_roadmap' || projectTutor && input.mode === 'learning_plan')
     && (tool.name !== 'propose_project_learning_files' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
   ))
 }
 
-function explicitToolCall(choice: TutorToolChoice, message: string): AgentToolCall | undefined {
+function explicitToolCall(choice: TutorToolChoice, message: string, projectScoped = false): AgentToolCall | undefined {
   if (choice === 'auto') return undefined
-  if (choice === 'domain') return { id: `explicit-domain-${Date.now()}`, name: 'read_domain_knowledge', arguments: { query: message } }
+  if (choice === 'domain') return {
+    id: `explicit-domain-${Date.now()}`,
+    name: projectScoped ? 'read_project_sources' : 'read_domain_knowledge',
+    arguments: { query: message },
+  }
   if (choice === 'search') return { id: `explicit-search-${Date.now()}`, name: 'search_computer_knowledge', arguments: { query: message } }
   return {
     id: `explicit-visual-${Date.now()}`,
@@ -422,6 +428,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'read_learning_path'
         || call.name === 'read_review_context'
         || call.name === 'read_project_workspace'
+        || call.name === 'read_project_roadmap'
         || call.name === 'read_project_sources'
         || call.name === 'read_project_learning_file',
       data: result.observation,
@@ -456,6 +463,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } })
   if (input.formalProjectContext) {
     await execute({ id: `observe-project-${id}`, name: 'read_project_workspace', arguments: { query: latestMessage } })
+    if (input.formalProjectContext.tool_policy?.roadmap_tool_access === 'project_tutor' && input.mode === 'learning_plan') {
+      await execute({ id: `observe-roadmap-${id}`, name: 'read_project_roadmap', arguments: { query: latestMessage } })
+    }
   }
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
     await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
@@ -469,7 +479,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   if (input.formalReviewContext && /复习|错题|遗忘|记不住|熟练度|掌握度|记忆曲线|间隔|回忆|薄弱/i.test(latestMessage)) {
     await execute({ id: `observe-review-${id}`, name: 'read_review_context', arguments: { query: latestMessage } })
   }
-  const explicit = explicitToolCall(input.toolChoice, latestMessage)
+  const explicit = explicitToolCall(input.toolChoice, latestMessage, Boolean(input.formalProjectContext))
   if (explicit) {
     const urls = await execute(explicit)
     if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(urls)

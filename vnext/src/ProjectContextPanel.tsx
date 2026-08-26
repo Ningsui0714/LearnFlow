@@ -12,13 +12,14 @@ import type { FormalProjectCheckpoint, FormalProjectWorkspace } from './project'
 
 type PanelTab = 'checkpoints' | 'sources' | 'files'
 
-export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoint, onOpenFree, onOpenFile, onGenerateFiles }: {
+export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoint, onOpenFree, onOpenFile, onGenerateFiles, onWorkspaceChange }: {
   projectId: number
   onClose: () => void
   onOpenCheckpoint: (workspace: FormalProjectWorkspace, checkpoint: FormalProjectCheckpoint) => void
   onOpenFree: (workspace: FormalProjectWorkspace, session: { session_id: number; title: string }) => void
   onOpenFile: (file: FormalLearningFileRef) => void
   onGenerateFiles: (task: FormalLearningTask) => Promise<void>
+  onWorkspaceChange?: (workspace: FormalProjectWorkspace) => void
 }) {
   const [workspace, setWorkspace] = useState<FormalProjectWorkspace>()
   const [activeTab, setActiveTab] = useState<PanelTab>('checkpoints')
@@ -28,7 +29,13 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
   const fileInput = useRef<HTMLInputElement>(null)
 
   const refresh = async () => {
-    try { setWorkspace(await loadFormalProject(projectId)); setError('') }
+    try {
+      const next = await loadFormalProject(projectId)
+      setWorkspace(next)
+      onWorkspaceChange?.(next)
+      setError('')
+      return next
+    }
     catch (failure) { setError(failure instanceof Error ? failure.message : '项目读取失败') }
   }
   useEffect(() => { void refresh() }, [projectId])
@@ -38,7 +45,12 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
   const addUrl = async () => {
     if (!url.trim()) return
     setBusy('url')
-    try { await addFormalProjectUrl(projectId, url.trim()); setUrl(''); await refresh() }
+    try {
+      const pending = await addFormalProjectUrl(projectId, url.trim())
+      await processFormalProjectSource(projectId, pending.id)
+      setUrl('')
+      await refresh()
+    }
     catch (failure) { setError(failure instanceof Error ? failure.message : '来源添加失败') }
     finally { setBusy('') }
   }
@@ -46,7 +58,11 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
   const upload = async (file?: File) => {
     if (!file) return
     setBusy('upload')
-    try { await uploadFormalProjectFile(projectId, file); await refresh() }
+    try {
+      const pending = await uploadFormalProjectFile(projectId, file)
+      await processFormalProjectSource(projectId, pending.id)
+      await refresh()
+    }
     catch (failure) { setError(failure instanceof Error ? failure.message : '文件上传失败') }
     finally { setBusy(''); if (fileInput.current) fileInput.current.value = '' }
   }
@@ -66,8 +82,8 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
     setBusy('free')
     try {
       const session = await createFormalProjectFreeSession(projectId, `${workspace.project.name} · 自由对话`)
-      await refresh()
-      onOpenFree(workspace, session)
+      const refreshed = await refresh()
+      onOpenFree(refreshed || workspace, session)
     } catch (failure) { setError(failure instanceof Error ? failure.message : '对话创建失败') }
     finally { setBusy('') }
   }
@@ -88,9 +104,10 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
       {workspace && activeTab === 'checkpoints' && (
         <div className="project-drawer-body">
           <div className="project-drawer-section-title"><strong>关卡路线</strong><button type="button" onClick={() => void addFreeChat()} disabled={busy === 'free'}>＋ 自由对话</button></div>
+          <p className="project-roadmap-boundary">未开始关卡可由项目 Tutor 调整；进入学习后即锁定。</p>
           <div className="project-drawer-list">
             {workspace.roadmap.checkpoints.map(checkpoint => <article key={checkpoint.id} className={`drawer-checkpoint drawer-checkpoint-${checkpoint.learning_status}`}>
-              <span>{String(checkpoint.order).padStart(2, '0')}</span><div><strong>{checkpoint.title}</strong><p>{checkpoint.objective}</p></div>
+              <span>{String(checkpoint.order).padStart(2, '0')}</span><div><strong>{checkpoint.title}</strong><p>{checkpoint.objective}</p><small>{checkpoint.editable ? '未开始 · 可调整' : '学习中/已完成 · 已锁定'}</small></div>
               <button type="button" onClick={() => onOpenCheckpoint(workspace, checkpoint)}>进入</button>
               {checkpoint.learning_task && <button type="button" className="drawer-file-action" onClick={() => void onGenerateFiles(checkpoint.learning_task!).then(refresh)}>生成文件</button>}
             </article>)}

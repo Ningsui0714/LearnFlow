@@ -441,7 +441,7 @@ const formalProjectContext = {
     user_level: 'undergraduate',
   },
   checkpoint_id: null,
-  roadmap: { id: null, checkpoints: [] },
+  roadmap: { id: null, revision: 0, checkpoints: [] },
   learning_tasks: [],
   sources: [{
     id: 11, type: 'url' as const, name: 'RAG 教程', url: 'https://example.edu/rag',
@@ -455,7 +455,7 @@ const formalProjectContext = {
     kernel_heads: { value: { summary: '希望学习 Agent 工程并形成真实产物' } },
     items: [],
   },
-  tool_policy: { read_only_observations: true, proposals_require_confirmation: true },
+  tool_policy: { read_only_observations: true, proposals_require_confirmation: true, roadmap_tool_access: 'project_tutor' },
 }
 
 test('project roadmap tool returns an exact-theme proposal without writing project state', async () => {
@@ -478,6 +478,7 @@ test('project roadmap tool returns an exact-theme proposal without writing proje
 
   assert.equal(execution.run.status, 'completed')
   assert.equal(execution.run.projectRoadmapProposal?.project_theme, formalProjectContext.project.name)
+  assert.equal(execution.run.projectRoadmapProposal?.operation, 'create')
   assert.equal(execution.run.projectRoadmapProposal?.confirmation_required, true)
   assert.equal(formalProjectContext.roadmap.checkpoints.length, 0)
 })
@@ -534,12 +535,86 @@ test('project Tutor observes scoped project state and exposes proposals rather t
     },
   })
 
-  assert.deepEqual(result.toolRuns.slice(0, 3).map(run => run.kind), ['memory', 'project', 'workspace'])
+  assert.deepEqual(result.toolRuns.slice(0, 4).map(run => run.kind), ['memory', 'project', 'project', 'workspace'])
   assert.ok(result.toolRuns.some(run => run.projectRoadmapProposal?.confirmation_required))
   assert.match(result.reply, /确认后才会创建/)
   const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
   assert.ok(exposed.includes('read_project_workspace'))
+  assert.ok(exposed.includes('read_project_roadmap'))
   assert.ok(exposed.includes('read_project_sources'))
   assert.ok(exposed.includes('propose_project_roadmap'))
   assert.ok(!exposed.some((name: string) => /apply|write|commit|delete|confirm/.test(name)))
+})
+
+test('project roadmap reader returns an explicit empty graph for the project Tutor', async () => {
+  const execution = await executeTutorAgentTool('read_project_roadmap', { query: '检查路线' }, {
+    message: '检查路线', mode: 'learning_plan', formalProjectContext,
+    generate: async () => 'unused',
+  })
+  assert.equal(execution.run.status, 'completed')
+  assert.equal((execution.observation as any).roadmap.status, 'empty')
+  assert.deepEqual((execution.observation as any).roadmap.checkpoints, [])
+})
+
+test('project free conversations cannot read or propose the project roadmap', async () => {
+  const freeContext = {
+    ...formalProjectContext,
+    tool_policy: { ...formalProjectContext.tool_policy, roadmap_tool_access: 'none', session_role: 'project_free' },
+  }
+  const requests: any[] = []
+  await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
+    messages: [{ role: 'user', content: '帮我改一下关卡图' }], toolChoice: 'auto',
+    formalProjectContext: freeContext, formalLearnerContext: freeContext.five_kernel_context,
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '这个对话可以讨论建议，但关卡图需要回到项目 Tutor 调整。' } }] }
+    },
+  })
+  const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(exposed.includes('read_project_workspace'))
+  assert.ok(!exposed.includes('read_project_roadmap'))
+  assert.ok(!exposed.includes('propose_project_roadmap'))
+})
+
+test('explicit source choice in project scope reads the shared project sources', async () => {
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'free',
+    messages: [{ role: 'user', content: '根据项目资料解释评测设计' }], toolChoice: 'domain',
+    formalProjectContext, formalLearnerContext: formalProjectContext.five_kernel_context,
+    generate: async () => 'unused',
+    invokeProvider: async () => ({ choices: [{ message: { content: '我会依据项目来源中的评测片段说明。' } }] }),
+  })
+  assert.ok(result.toolRuns.some(run => run.toolName === 'read_project_sources' && run.status === 'completed'))
+  assert.ok(!result.toolRuns.some(run => run.toolName === 'read_domain_knowledge'))
+})
+
+test('project Tutor roadmap revision preserves locked checkpoints and emits a revision proposal', async () => {
+  const revisionContext = {
+    ...formalProjectContext,
+    roadmap: {
+      id: 9,
+      revision: 3,
+      checkpoints: [{
+        id: 31, key: 'foundation', title: '检索基础', objective: '完成最小检索链',
+        prerequisites: [], learning_status: 'in_progress', editable: false, session_id: 71,
+        learning_contract: { exit_criteria: ['检索可运行'], estimated_minutes: 60 },
+      }],
+    },
+  }
+  const execution = await executeTutorAgentTool('propose_project_roadmap', {
+    rationale: '保留已开始关卡，补充后续评测。',
+    checkpoints: [
+      { id: 31, key: 'foundation', title: '检索基础', objective: '完成最小检索链', prerequisites: [], success_criteria: ['检索可运行'], estimated_minutes: 60 },
+      { key: 'evaluation', title: '离线评测', objective: '区分检索和生成误差', prerequisites: ['foundation'], success_criteria: ['评测可重复'], estimated_minutes: 120 },
+    ],
+  }, {
+    message: '调整后续路线', mode: 'learning_plan', formalProjectContext: revisionContext,
+    generate: async () => 'unused',
+  })
+  assert.equal(execution.run.status, 'completed')
+  assert.equal(execution.run.projectRoadmapProposal?.operation, 'revise')
+  assert.equal(execution.run.projectRoadmapProposal?.expected_revision, 3)
+  assert.equal(execution.run.projectRoadmapProposal?.checkpoints[0].id, 31)
 })
