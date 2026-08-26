@@ -113,6 +113,7 @@ import {
 } from './formal-runtime'
 import type { AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
+import { projectSidebarChats } from './project-sidebar'
 import './styles.css'
 
 type Message = {
@@ -450,6 +451,7 @@ function App() {
   const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({})
   const [sourceUrls, setSourceUrls] = useState<Record<string, string>>({})
   const [formalProjects, setFormalProjects] = useState<FormalProjectWorkspace['project'][]>([])
+  const [formalProjectWorkspaces, setFormalProjectWorkspaces] = useState<Record<number, FormalProjectWorkspace>>({})
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({})
   const [projectPanelConversationId, setProjectPanelConversationId] = useState('')
 
@@ -476,8 +478,19 @@ function App() {
 
   const refreshFormalProjects = () => {
     void listFormalProjects()
-      .then(result => setFormalProjects(result.projects))
-      .catch(() => setFormalProjects([]))
+      .then(async result => {
+        setFormalProjects(result.projects)
+        const loaded = await Promise.allSettled(result.projects.map(project => loadFormalProject(project.id)))
+        setFormalProjectWorkspaces(previous => Object.fromEntries(result.projects.flatMap((project, index) => {
+          const resolved = loaded[index]
+          if (resolved.status === 'fulfilled') return [[project.id, resolved.value]]
+          return previous[project.id] ? [[project.id, previous[project.id]]] : []
+        })))
+      })
+      .catch(() => {
+        setFormalProjects([])
+        setFormalProjectWorkspaces({})
+      })
   }
 
   useEffect(() => { refreshFormalProjects() }, [])
@@ -577,6 +590,7 @@ function App() {
   }
 
   const syncProjectWorkspace = (projectWorkspace: FormalProjectWorkspace) => {
+    setFormalProjectWorkspaces(previous => ({ ...previous, [projectWorkspace.project.id]: projectWorkspace }))
     setWorkspace(previous => ({
       ...previous,
       conversations: previous.conversations.map(conversation => conversation.projectId === projectWorkspace.project.id
@@ -2406,7 +2420,11 @@ function App() {
             <section className="sidebar-section sidebar-projects">
               <header><strong>项目</strong><button type="button" onClick={() => openTab(PROJECTS_TAB)} aria-label="管理学习项目">＋</button></header>
               {formalProjects.map(project => {
-                const projectChats = workspace.conversations.filter(item => item.projectId === project.id)
+                const projectWorkspace = formalProjectWorkspaces[project.id]
+                const projectChats = projectSidebarChats(
+                  projectWorkspace,
+                  workspace.conversations.filter(item => item.projectId === project.id),
+                )
                 const expanded = expandedProjects[project.id] !== false
                 return <div className="sidebar-project-folder" key={project.id}>
                   <div className="sidebar-project-row">
@@ -2414,7 +2432,21 @@ function App() {
                     <button type="button" className="project-folder-open" onClick={() => void openProjectTutor(project.id)}><span>▱</span><strong>{project.name}</strong></button>
                     <button type="button" className="project-folder-add-chat" onClick={event => { event.stopPropagation(); void addProjectFreeConversation(project.id) }} disabled={formalBusyKey === `project-free:${project.id}`} aria-label={`在${project.name}中新建自由对话`} title="新建项目自由对话">＋</button>
                   </div>
-                  {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(conversation => <button type="button" key={conversation.id} className={activeConversation?.id === conversation.id ? 'active' : ''} onClick={() => openTab(chatTab(conversation))}><span>{conversation.projectRole === 'checkpoint' ? '◇' : '·'}</span>{conversation.title.replace(`${project.name} · `, '')}</button>)}</div>}
+                  {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(entry => <button
+                    type="button"
+                    key={entry.key}
+                    className={entry.conversation && activeConversation?.id === entry.conversation.id ? 'active' : ''}
+                    onClick={() => {
+                      if (entry.conversation) {
+                        openTab(chatTab(entry.conversation))
+                      } else if (projectWorkspace) {
+                        openProjectConversation(projectWorkspace, entry.role, {
+                          checkpoint: entry.checkpoint,
+                          session: entry.session,
+                        })
+                      }
+                    }}
+                  ><span>{entry.role === 'checkpoint' ? '◇' : '·'}</span>{entry.title.replace(`${project.name} · `, '')}</button>)}</div>}
                 </div>
               })}
               {!formalProjects.length && <button type="button" className="sidebar-empty-project" onClick={() => openTab(PROJECTS_TAB)}>＋ 新建学习项目</button>}

@@ -6,6 +6,7 @@
 - 空关卡图安全读取
 - 已开始关卡锁定、未开始关卡版本化修订
 - 项目来源在侧栏与所有项目对话之间共享
+- 项目 Session 跨浏览器可见，本地消息缓存不再充当会话存在性权威
 - 路线修订、任务取消与五核 EvidenceEvent 留痕
 
 ## 契约
@@ -15,6 +16,7 @@
 - 修订携带 `expected_revision`；服务端再次验证完整 DAG 和 locked checkpoint。
 - 删除未开始关卡使用软归档；关联活动 LearningTask 通过 `learning_task_canceled` 留痕。
 - 项目输入栏和项目面板复用正式项目 Source API，不创建 localStorage 来源权威。
+- 项目文件夹从正式工作区恢复 Tutor、关卡和自由 Session，并按 `formalSessionId` 合并本地消息视图。
 
 ## 自动验证
 
