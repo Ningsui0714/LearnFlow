@@ -422,6 +422,13 @@ export async function executeTutorAgentTool(
         labels: (domain.labels || []).slice(0, 12).map(label => compactText(label, 80)),
         sourceIds: (domain.sourceIds || []).slice(0, 8),
       }))
+      const sourceConstraint = domains.length ? {
+        scope: 'current_project_only',
+        coveredDomainIds: domains.map(domain => domain.id),
+        routeRule: '路线节点必须能由当前来源知识领域支持；否则标记为来源缺口，不得假装来源已经覆盖。',
+        lectureRule: '讲解优先使用当前来源覆盖的定义、机制和例子；超出覆盖范围必须显式标注，并先补充外部证据。',
+        masteryBoundary: '来源覆盖只表示资料包含相关内容，不表示学习者已经理解或掌握。',
+      } : null
       return {
         run: {
           ...base, kind: 'workspace', status: 'completed', title: '读取学习工作区',
@@ -436,10 +443,12 @@ export async function executeTutorAgentTool(
           formalTaskQueue: queue,
           knowledgeDomains: domains,
           knowledgeDomainStatus: domains.length ? 'available_in_current_project_scope' : 'unavailable_without_project_scope',
+          sourceConstraint,
           boundaries: [
             '任务生命周期不表示掌握',
             'PlanningDialogue 不是已确认 LearningPathPlan',
             '知识领域来自项目来源，不等同于学习者知识状态',
+            '项目来源只约束当前项目的路线与讲解，不改写官方课程图或个人掌握状态',
           ],
         },
       }

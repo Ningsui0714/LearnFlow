@@ -262,6 +262,8 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '## 工具策略',
     '只有需要外部观察时才调用工具。可以连续调用不同读取工具，但不得重复相同调用。',
     '读取工具可自主调用；当前没有向模型开放任何五核、路径、项目或文件写入工具。',
+    '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
+    '若工作区观察含 sourceConstraint，路线和讲解必须受当前项目来源覆盖范围约束；超出范围只能标为资料缺口，并在检索到新证据后补充。',
     '工具失败时先依据错误类型决定重试、换工具或明确告知缺口。拿到足够证据后直接回答。',
   ].join('\n')
 }
@@ -287,6 +289,7 @@ export function verifyTutorTurnOutcome(options: {
   mode: TutorMode
   toolRuns: TutorToolRun[]
   learningTaskContext?: LearningTaskTutorContext
+  observations?: AgentContextEnvelope['observations']
 }) {
   const violations: string[] = []
   const reply = options.reply.trim()
@@ -312,6 +315,13 @@ export function verifyTutorTurnOutcome(options: {
   if (searched && !options.toolRuns.some(run => run.kind === 'search' && run.sources?.some(source => reply.includes(source.url)))) {
     violations.push('missing_search_citation')
   }
+  const learnerContext = options.observations?.find(observation => observation.source === 'read_learner_context')?.data
+  const learnerConflicts = learnerContext && typeof learnerContext === 'object'
+    ? (learnerContext as Record<string, unknown>).conflicts
+    : undefined
+  const hasLearnerConflict = Array.isArray(learnerConflicts) && learnerConflicts.length > 0
+  const acknowledgesConflict = /(?:冲突|不一致|相互矛盾|需要你确认|请你确认|保留原记录|不会静默覆盖|纠正候选)/i.test(reply)
+  if (hasLearnerConflict && !acknowledgesConflict) violations.push('silent_memory_conflict')
   return { valid: violations.length === 0, violations }
 }
 
@@ -499,6 +509,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         mode: input.mode,
         toolRuns: runs,
         learningTaskContext: input.learningTaskContext,
+        observations,
       })
       if (verification.valid) {
         reply = candidate
@@ -509,7 +520,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       runtimeMessages.push({ role: 'assistant', content: text })
       runtimeMessages.push({
         role: 'user',
-        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明。`,
+        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明；观察到记忆冲突时必须把冲突和确认权告诉学习者。`,
       })
       record({ phase: 'verify', detail: `回复未通过终态校验：${verification.violations.join('、')}`, status: 'failed' })
     }
@@ -538,6 +549,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           mode: input.mode,
           toolRuns: runs,
           learningTaskContext: input.learningTaskContext,
+          observations,
         }).valid) reply = candidate
       }
       if (!reply && fallbackReply) reply = fallbackReply
@@ -557,6 +569,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     mode: input.mode,
     toolRuns: runs,
     learningTaskContext: input.learningTaskContext,
+    observations,
   })
   if (!finalVerification.valid) {
     record({ phase: 'error', detail: `终态校验失败：${finalVerification.violations.join('、')}`, status: 'failed' })

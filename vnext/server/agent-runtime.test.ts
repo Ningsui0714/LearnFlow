@@ -57,6 +57,21 @@ test('final-state verifier rejects unconfirmed writes, mastery overclaims and hi
       id: 'search', kind: 'search', status: 'failed', title: '搜索', detail: '503', durationMs: 1,
     }],
   }).violations, ['hidden_tool_failure'])
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '我已经按新的信息更新画像，下面继续学习。', mode: 'guided_learning', toolRuns: [],
+    observations: [{
+      source: 'read_learner_context', authority: 'formal', answerFree: true,
+      data: { conflicts: [{ subject: 'tool-calling', text: '旧 Claim 与新自述冲突' }] },
+    }],
+  }).violations, ['silent_memory_conflict'])
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '这里有一条新自述和旧 Claim 不一致，需要你确认保留哪一条；本轮不会静默覆盖。',
+    mode: 'guided_learning', toolRuns: [],
+    observations: [{
+      source: 'read_learner_context', authority: 'formal', answerFree: true,
+      data: { conflicts: [{ subject: 'tool-calling', text: '旧 Claim 与新自述冲突' }] },
+    }],
+  }).violations, [])
 })
 
 test('Tutor runs a bounded observe-act-observe loop and preserves tool results', async () => {
@@ -288,6 +303,9 @@ test('learner conflicts and project source domains remain observations, never wr
   const serialized = JSON.stringify(requests[0].body.messages)
   assert.match(serialized, /旧 Claim 与本轮自述冲突/)
   assert.match(serialized, /来源仓库覆盖工具定义/)
+  assert.match(serialized, /sourceConstraint/)
+  assert.match(serialized, /路线节点必须能由当前来源知识领域支持/)
+  assert.match(serialized, /来源覆盖只表示资料包含相关内容/)
   assert.match(result.reply, /不会静默覆盖/)
   const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
   assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
