@@ -1078,6 +1078,16 @@ class LearningDomainStore:
                     now,
                 ),
             )
+        # 机电 KN-M-* 为已移除方向的历史残留（INSERT OR IGNORE 永不删除旧条目）。
+        # 统一标记 rejected：检索/计数/讲解都以 review_status='approved' 为门禁，
+        # 标记后即从结果与 knowledge_count 中剔除，无需物理删除。
+        try:
+            connection.execute(
+                "UPDATE knowledge_entries SET review_status = 'rejected' "
+                "WHERE entry_id LIKE 'KN-M%' AND review_status = 'approved'"
+            )
+        except sqlite3.OperationalError:
+            pass
         try:
             connection.execute(
                 "INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')"
@@ -1577,8 +1587,8 @@ class LearningDomainStore:
                         "SELECT k.* FROM knowledge_entries k "
                         f"WHERE {base_where} AND (k.title LIKE ? OR k.content LIKE ? "
                         "OR k.keywords LIKE ? OR k.source LIKE ?) "
-                        "ORDER BY k.entry_id LIMIT ?",
-                        params + [like, like, like, like, limit],
+                        "ORDER BY (CASE WHEN k.title LIKE ? THEN 0 ELSE 1 END), k.entry_id LIMIT ?",
+                        params + [like, like, like, like, like, limit],
                     ).fetchall()
                 if not rows:
                     # 提问式 query 清洗：先剔除疑问词/停用词，再按标点分词逐 token 检索；
@@ -1598,11 +1608,39 @@ class LearningDomainStore:
                             "SELECT k.* FROM knowledge_entries k "
                             f"WHERE {base_where} AND (k.title LIKE ? OR k.content LIKE ? "
                             "OR k.keywords LIKE ? OR k.source LIKE ?) "
-                            "ORDER BY k.entry_id LIMIT ?",
-                            params + [like, like, like, like, limit],
+                            "ORDER BY (CASE WHEN k.title LIKE ? THEN 0 ELSE 1 END), k.entry_id LIMIT ?",
+                            params + [like, like, like, like, like, limit],
                         ).fetchall()
                         if rows:
                             break
+                    if not rows and cleaned:
+                        # 提问式长句常以"专业/方向/都学/主要学"等通用词结尾：
+                        # 逐层去掉通用后缀取核心主题词（如"计算机网络技术专业都学什么"→"计算机网络技术"），
+                        # 比 2 字滑动窗口更精准命中对应方向条目。
+                        core = cleaned
+                        while True:
+                            stripped = False
+                            for suffix in (
+                                "主要学", "都学", "要学", "怎么学",
+                                "主要", "哪些", "内容", "入门",
+                                "专业", "方向", "包含", "包括",
+                                "都", "学", "要",
+                            ):
+                                if core.endswith(suffix) and len(core) > len(suffix):
+                                    core = core[: -len(suffix)]
+                                    stripped = True
+                                    break
+                            if not stripped:
+                                break
+                        if len(core) >= 2 and core != cleaned:
+                            like = f"%{core}%"
+                            rows = connection.execute(
+                                "SELECT k.* FROM knowledge_entries k "
+                                f"WHERE {base_where} AND (k.title LIKE ? OR k.content LIKE ? "
+                                "OR k.keywords LIKE ? OR k.source LIKE ?) "
+                                "ORDER BY (CASE WHEN k.title LIKE ? THEN 0 ELSE 1 END), k.entry_id LIMIT ?",
+                                params + [like, like, like, like, like, limit],
+                            ).fetchall()
                     if not rows and cleaned:
                         # 2 字滑动窗口（去重、按出现顺序），提高中文长句命中率
                         seen: set[str] = set()
@@ -1618,8 +1656,8 @@ class LearningDomainStore:
                                 "SELECT k.* FROM knowledge_entries k "
                                 f"WHERE {base_where} AND (k.title LIKE ? OR k.content LIKE ? "
                                 "OR k.keywords LIKE ? OR k.source LIKE ?) "
-                                "ORDER BY k.entry_id LIMIT ?",
-                                params + [like, like, like, like, limit],
+                                "ORDER BY (CASE WHEN k.title LIKE ? THEN 0 ELSE 1 END), k.entry_id LIMIT ?",
+                                params + [like, like, like, like, like, limit],
                             ).fetchall()
                             if rows:
                                 break

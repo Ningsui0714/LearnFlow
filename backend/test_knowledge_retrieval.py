@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from backend.knowledge_retrieval import KnowledgeEvidenceRetriever
 from backend.server import LearningApplication
@@ -114,6 +115,39 @@ class KnowledgeEvidenceRetrieverTests(unittest.TestCase):
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["evidence"][0]["url"], fallback_url)
 
+    def test_java_retrieval_rejects_python_and_mdn_pages(self):
+        def search(_query):
+            return [
+                {"title": "Python Classes", "url": "https://docs.python.org/3/tutorial/classes.html"},
+                {"title": "JavaScript Classes", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes"},
+                {"title": "Java Classes and Objects", "url": "https://docs.oracle.com/javase/tutorial/java/javaOO/"},
+            ]
+
+        def fetch(url):
+            if "oracle" in url:
+                return {
+                    "title": "Java Classes and Objects",
+                    "content": "A Java class defines objects and their behavior.",
+                }
+            return {
+                "title": "跨语言页面",
+                "content": "This page explains classes in another language.",
+            }
+
+        result = self.retriever.retrieve(
+            "Java 类与对象",
+            "掌握 Java 应用开发中的面向对象编程",
+            queries=["Java 类与对象 classes objects"],
+            search=search,
+            fetch=fetch,
+        )
+
+        self.assertEqual(result["status"], "ready")
+        self.assertEqual(
+            [item["url"] for item in result["evidence"]],
+            ["https://docs.oracle.com/javase/tutorial/java/javaOO/"],
+        )
+
     def test_audit_requires_traced_sources_and_required_blocks(self):
         evidence_pack = {
             "required_sections": [
@@ -147,11 +181,48 @@ class KnowledgeEvidenceRetrieverTests(unittest.TestCase):
             ]
         }
 
-        audit = LearningApplication._audit_lesson_evidence(
-            LearningApplication.__new__(LearningApplication), result, evidence_pack
-        )
+        app = LearningApplication.__new__(LearningApplication)
+        # 正式讲义必须锚定已审核本地知识库：联网证据只用于补充和交叉核对（本轮收紧）。
+        # 模拟该知识点在本地知识库中有已审核条目，返回其 source/locator 溯源串。
+        with patch.object(
+            app,
+            "_local_kb_references",
+            return_value=["《Java 面向对象程序设计》实训指导书"],
+        ):
+            audit = LearningApplication._audit_lesson_evidence(app, result, evidence_pack)
 
         self.assertEqual(audit["status"], "passed")
+        # 反向：无本地知识库锚点时，仅联网证据不能通过正式来源门禁 → 拒绝
+        audit_no_kb = LearningApplication._audit_lesson_evidence(
+            LearningApplication.__new__(LearningApplication), result, evidence_pack
+        )
+        self.assertEqual(audit_no_kb["status"], "rejected")
+        self.assertEqual(audit_no_kb["kb_reference_count"], 0)
+
+    def test_lesson_source_merge_filters_cross_language_java_sources(self):
+        app = LearningApplication.__new__(LearningApplication)
+        result = {
+            "sources": [
+                {"type": "web", "title": "MDN JavaScript Classes", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes"},
+                {"type": "web", "title": "Java Classes", "url": "https://docs.oracle.com/javase/tutorial/java/javaOO/"},
+                {"type": "document", "title": "本地知识库", "url": ""},
+            ],
+            "resources": [
+                {"type": "document", "title": "Python Classes", "url": "https://docs.python.org/3/tutorial/classes.html"},
+                {"type": "document", "title": "Java Classes", "url": "https://docs.oracle.com/javase/tutorial/java/javaOO/"},
+            ],
+        }
+        context = {
+            "learning_goal": {"goal_name": "掌握 Java 应用开发"},
+            "current_knowledge_point": {"knowledge_point_name": "类与对象"},
+        }
+
+        app._filter_external_lesson_sources(result, context)
+
+        urls = [item["url"] for item in result["sources"] + result["resources"]]
+        self.assertNotIn("https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes", urls)
+        self.assertNotIn("https://docs.python.org/3/tutorial/classes.html", urls)
+        self.assertIn("https://docs.oracle.com/javase/tutorial/java/javaOO/", urls)
 
 
 if __name__ == "__main__":

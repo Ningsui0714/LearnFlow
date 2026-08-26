@@ -441,6 +441,10 @@
     .lesson-action-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 8px; padding: 6px 10px; font-size: 11.5px; }
     .lesson-action-btn:hover { border-color: var(--green); color: var(--green-strong); background: var(--green-soft); }
     .lesson-action-btn svg { width: 14px; height: 14px; }
+    .lesson-generation-progress { margin-top: 18px; }
+    .lesson-generation-progress-track { height: 4px; background: var(--line); border-radius: 999px; overflow: hidden; }
+    .lesson-generation-progress-bar { height: 100%; width: 0; background: var(--blue); transition: width .25s; }
+    .lesson-generation-progress-label { margin-top: 8px; font-size: 12px; color: var(--muted); }
     .lesson-body { margin-top: 24px; background: transparent; border: 0; border-radius: 0; padding: 0; box-shadow: none; }
     .lesson-card { position: relative; margin: 0; padding: 0; border: 0; background: transparent; scroll-margin-top: 18px; }
     .lesson-provenance { margin: 0 0 22px; padding: 12px 14px; border-left: 3px solid var(--green); border-radius: 0 6px 6px 0; background: var(--surface-soft); color: var(--muted); font-size: 12px; line-height: 1.7; }
@@ -467,6 +471,18 @@
     .lesson-vditor .vditor-reset h2 { border-bottom: 1px solid var(--line); }
     .lesson-user-edit-eye { position: absolute; z-index: 3; right: -24px; width: 18px; height: 18px; color: var(--muted-soft); opacity: .58; pointer-events: none; }
     .lesson-user-edit-eye svg { width: 14px; height: 14px; }
+    .lesson-check-form { margin-top: 12px; }
+    .lesson-check-option { display: flex; align-items: flex-start; gap: 9px; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 9px; margin-bottom: 8px; font-size: 13px; line-height: 1.6; cursor: pointer; }
+    .lesson-check-option:hover { border-color: var(--blue); }
+    .lesson-check-option input { margin-top: 3px; }
+    .lesson-check-submit { margin-top: 4px; border: 1.5px solid var(--blue); background: var(--blue); color: #fff; border-radius: 8px; padding: 7px 16px; font-size: 12.5px; cursor: pointer; }
+    .lesson-check-submit:disabled { opacity: .55; cursor: default; }
+    .lesson-check-result { margin-top: 10px; padding: 10px 12px; border-radius: 9px; font-size: 13px; line-height: 1.7; }
+    .lesson-check-result.is-correct { background: var(--green-soft); color: var(--green-strong); }
+    .lesson-check-result.is-wrong { background: #fff1f1; color: #a33; }
+    .lesson-check-result p { margin: 6px 0 0; }
+    .lesson-check-error { color: var(--red); font-size: 12px; }
+    .lesson-replay-hint { margin-top: 14px; padding: 16px; border: 1.5px dashed var(--line); border-radius: 9px; color: var(--ink-soft); font-size: 13px; text-align: center; }
     .markdown-body { color: var(--ink-soft); font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
     .markdown-body > :first-child { margin-top: 0; }
     .markdown-body > :last-child { margin-bottom: 0; }
@@ -564,6 +580,31 @@
     .msg .bubble p:last-child { margin-bottom: 0; }
     .msg .bubble strong { color: var(--ink); }
     .msg.user .bubble strong { color: #fff; }
+
+    .follow-up-workspace { flex: none; display: flex; flex-direction: column; height: 36vh; max-height: 360px; min-height: 0; background: var(--surface); border-top: 1px solid var(--line); }
+    .follow-up-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 13px; font-weight: 600; }
+    .follow-up-title { display: inline-flex; align-items: center; gap: 6px; }
+    .follow-up-title i { width: 15px; color: var(--green); }
+    .follow-up-close { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 6px; }
+    .follow-up-close:hover { background: var(--surface-soft); color: var(--ink); }
+    .follow-up-close i { width: 15px; }
+    .follow-up-context { padding: 8px 14px; border-bottom: 1px dashed var(--line); }
+    .follow-up-context blockquote { margin: 0; padding: 6px 10px; border-left: 3px solid var(--green); background: var(--surface-soft); color: var(--muted); font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .follow-up-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+    .follow-up-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; text-align: center; }
+    .follow-up-bubble { max-width: 82%; padding: 8px 11px; border-radius: 12px; font-size: 12.5px; line-height: 1.55; word-break: break-word; }
+    .follow-up-bubble.user { align-self: flex-end; background: var(--green); color: #fff; border-bottom-right-radius: 4px; }
+    .follow-up-bubble.assistant { align-self: flex-start; background: var(--surface-soft); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .follow-up-bubble .bubble-source { display: block; margin-top: 5px; color: var(--muted-soft); font-size: 10.5px; }
+    .follow-up-bubble .markdown-body { font-size: 12.5px; }
+    .follow-up-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 14px; border-top: 1px dashed var(--line); }
+    .suggest-label { color: var(--muted); font-size: 11px; }
+    .suggest-chip { padding: 4px 9px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--green); font-size: 11.5px; cursor: pointer; }
+    .suggest-chip:hover { background: var(--green-soft); border-color: var(--green); }
+    .follow-up-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 8px 14px 10px; border-top: 1px solid var(--line); }
+    .follow-up-form textarea { resize: none; border: 1px solid var(--line-strong); border-radius: 9px; padding: 8px 10px; font-size: 12.5px; background: var(--surface); color: var(--ink); }
+    .follow-up-form textarea:focus { outline: 3px solid rgba(40, 89, 197, 0.18); border-color: var(--blue); }
+    .follow-up-form .send-btn { border: 1.5px solid var(--blue); background: var(--blue); color: #fff; border-radius: 8px; width: 36px; height: 36px; padding: 0; }
 
     .suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px 0; }
     .suggestion-chip { font-size: 11.5px; background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 11px; color: var(--muted); }
@@ -817,6 +858,22 @@
     .lm-candidate-list { display: grid; gap: 6px; }
     .lm-hint { margin: 10px 0 0; color: var(--muted-soft); font-size: 11.5px; line-height: 1.6; }
     .lm-disclaimer { margin: 18px 0 0; color: var(--muted-soft); font-size: 11px; line-height: 1.6; }
+    .lm-graph-scroll { overflow: auto; }
+    .lm-graph-svg { display: block; max-width: none; }
+    .lm-graph-node { cursor: pointer; }
+    .lm-graph-node:hover rect { filter: brightness(.96); }
+    .lm-graph-name { font-size: 12.5px; font-weight: 600; fill: #1f2937; }
+    .lm-graph-status { font-size: 10px; fill: #6b7280; }
+    .lm-graph-lock { font-size: 11px; }
+    .lm-graph-legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+    .lm-legend-item { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 99px; padding: 2px 9px; font-size: 10.5px; color: var(--muted); background: var(--surface-soft); }
+    .lm-legend-item::before { content: ""; width: 9px; height: 9px; border-radius: 2px; }
+    .lm-legend-recommended::before { background: #eab308; }
+    .lm-legend-active::before { background: repeating-linear-gradient(90deg, #16a34a 0 4px, transparent 4px 7px); }
+    .lm-legend-candidate::before { background: repeating-linear-gradient(90deg, #2563eb 0 2px, transparent 2px 5px); }
+    .lm-legend-locked::before { background: #9ca3af; }
+    .lm-legend-mastered::before { background: #16a34a; }
+    .lm-legend-learning::before { background: #2563eb; }
 
     @media (max-width: 620px) {
       .assessment-levels, .assessment-knowledge-list, .assessment-catalog, .practice-sheet-list { grid-template-columns: 1fr; }
@@ -1012,7 +1069,14 @@
                 <div class="lesson-meta" id="lesson-meta" data-lesson-role="meta"></div>
                 <div class="lesson-actions">
                   <button class="lesson-action-btn" id="lesson-view-notes" data-lesson-action="view-notes" type="button"><i data-lucide="notebook-tabs"></i>本章笔记 <span id="lesson-note-count" data-lesson-role="note-count">0</span></button>
+                  <button class="lesson-action-btn" data-lesson-action="edit" type="button"><i data-lucide="pencil-line"></i>编辑讲义</button>
+                  <button class="lesson-action-btn" data-lesson-action="save" type="button" hidden><i data-lucide="save"></i>保存</button>
+                  <button class="lesson-action-btn" data-lesson-action="reset" type="button" hidden><i data-lucide="rotate-ccw"></i>重置</button>
                 </div>
+              </div>
+              <div class="lesson-generation-progress" data-lesson-role="generation-progress" hidden>
+                <div class="lesson-generation-progress-track"><div class="lesson-generation-progress-bar" data-lesson-role="progress-bar"></div></div>
+                <div class="lesson-generation-progress-label" data-lesson-role="progress-label"></div>
               </div>
               <div class="lesson-body" id="lesson-body" data-lesson-role="body"></div>
             </article>
@@ -1205,6 +1269,25 @@
         </div>
         <div class="chat-messages" id="chat-messages"></div>
         <div class="suggestions" id="suggestions" hidden></div>
+        <div class="follow-up-workspace" id="follow-up-workspace" hidden aria-label="选区追问工作区">
+          <div class="follow-up-header">
+            <span class="follow-up-title"><i data-lucide="text-quote"></i>选区追问</span>
+            <button class="follow-up-close" id="follow-up-close" type="button" title="收起追问工作区" aria-label="收起追问工作区"><i data-lucide="x"></i></button>
+          </div>
+          <div class="follow-up-context" id="follow-up-context" hidden>
+            <blockquote id="follow-up-quote"></blockquote>
+          </div>
+          <div class="follow-up-messages" id="follow-up-messages">
+            <div class="follow-up-empty" id="follow-up-empty">
+              <p>选中讲解中的文字，点「询问导师」后在这里继续追问。</p>
+            </div>
+          </div>
+          <div class="follow-up-suggestions" id="follow-up-suggestions" hidden></div>
+          <form class="follow-up-form" id="follow-up-form">
+            <textarea id="follow-up-input" rows="1" placeholder="基于选中内容继续追问…"></textarea>
+            <button class="send-btn" id="follow-up-send" type="submit" title="发送追问"><i data-lucide="send"></i></button>
+          </form>
+        </div>
         <div class="chat-input-box">
           <div class="selection-context-card" id="selection-context-card" hidden>
             <div class="selection-context-head"><span><i data-lucide="text-quote"></i>正在询问选中内容</span><button id="selection-context-clear" type="button" title="移除选区"><i data-lucide="x"></i></button></div>
@@ -1337,6 +1420,10 @@
       assessmentStartingProjects: new Set(), // 正在生成测评题目的项目（防重复发起长请求）
       contentGenerationMonitors: new Map(),
       contentGenerationNotified: new Set(),
+      lessonCheckResults: {},   // "tabId::blockId" → { correct, explanation, response, error }
+      lessonEditStates: new Map(), // tabId → boolean（该章节是否处于讲义编辑态）
+      lessonEditHosts: new Map(),  // tabId → 正在承载编辑器的 surface 元素
+      lessonEditDrafts: new Map(), // tabId → 编辑中的 Markdown 草稿（重渲染防丢）
       currentView: "welcome",
       tabs: [{ id: "home", view: "welcome", title: "学习工作台", scrollTop: 0 }],
       activeTabId: "home",
@@ -1368,6 +1455,35 @@
     };
 
     function icons() { if (window.lucide) lucide.createIcons(); }
+
+    // 全局错误陷阱：任何未捕获异常不再“白屏无声”，而是变成可见红色提示 + 控制台日志，
+    // 便于定位真实崩溃点（正常运行时永不触发，不影响交付演示）。
+    function surfaceUncaughtError(message, source = "") {
+      const key = "error-strip-" + message + source;
+      if (document.querySelector('[data-error-strip="' + key + '"]')) return;
+      const strip = document.createElement("div");
+      strip.dataset.errorStrip = key;
+      strip.style.cssText =
+        "position:fixed;left:12px;right:12px;top:10px;z-index:9999;background:#fee2e2;" +
+        "border:1px solid #dc2626;color:#7f1d1d;padding:10px 14px;border-radius:10px;" +
+        "font-size:12.5px;line-height:1.6;box-shadow:0 6px 20px rgba(0,0,0,.18);max-height:40vh;overflow:auto;";
+      strip.innerHTML = "<strong>页面遇到运行错误</strong>：<code>" + escapeHtml(message) + "</code>" +
+        (source ? " <small>（" + escapeHtml(source) + "）</small>" : "") +
+        '<div style="margin-top:6px;display:flex;gap:8px"><button type="button" data-error-strip-close>关闭</button><button type="button" data-error-strip-reload>刷新页面</button></div>';
+      strip.querySelector("[data-error-strip-close]").onclick = () => strip.remove();
+      strip.querySelector("[data-error-strip-reload]").onclick = () => window.location.reload();
+      document.body.appendChild(strip);
+    }
+    window.addEventListener("error", (event) => {
+      console.error("[未捕获错误]", event.error || event.message);
+      surfaceUncaughtError(event.message || String(event.error || "未知错误"), event.filename || "");
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      const reason = event.reason || {};
+      console.error("[未捕获 Promise 拒绝]", reason);
+      surfaceUncaughtError(String(reason.message || reason), "Promise");
+    });
+
     function setMobilePanel(panel) {
       const nextPanel = ["projects", "workspace", "chat"].includes(panel) ? panel : "workspace";
       layoutEl.dataset.mobilePanel = nextPanel;
@@ -1759,6 +1875,155 @@
       $("selection-toolbar").hidden = true;
       renderProjectTree();
       $("chat-textarea").focus();
+    }
+
+    /* ================= 选区追问工作区（LearnFlow 范式②） ================= */
+    function followUpWorkspaceEl() {
+      return $("follow-up-workspace");
+    }
+
+    async function openFollowUpWorkspace() {
+      const context = state.selectionContext;
+      if (!context || !context.tab) return;
+      const project = state.projects.find((item) => item.project_id === context.tab.projectId);
+      const conversation = switchConversation(projectConversationKey(context.tab.projectId), project || {
+        project_id: context.tab.projectId,
+        goal_name: context.tab.projectName || "当前项目",
+      });
+      if (project) {
+        try { await loadConversationHistory(conversation, project); } catch (_) {}
+      }
+      state.current = project || state.current;
+      const selectionText = context.selected_text || "";
+      state.followUp = {
+        open: true,
+        projectId: context.tab.projectId,
+        knowledgePointId: context.tab.knowledgePointId,
+        selection: selectionText,
+        payload: selectionPayload(context),
+        history: [],
+      };
+      clearSelectionContext(true);
+      const contextCard = $("follow-up-context");
+      contextCard.hidden = !selectionText;
+      $("follow-up-quote").textContent = selectionText;
+      const messages = $("follow-up-messages");
+      messages.replaceChildren();
+      const empty = $("follow-up-empty");
+      empty.hidden = false;
+      messages.appendChild(empty);
+      $("follow-up-suggestions").hidden = true;
+      const input = $("follow-up-input");
+      input.value = "";
+      followUpWorkspaceEl().hidden = false;
+      setMobilePanel("chat");
+      renderProjectTree();
+      icons();
+      input.focus();
+      submitFollowUp("请解释我选中的内容：" + selectionText);
+    }
+
+    function closeFollowUpWorkspace() {
+      followUpWorkspaceEl().hidden = true;
+      if (state.followUp) state.followUp.open = false;
+    }
+
+    function renderFollowUpSuggestions(result) {
+      const container = $("follow-up-suggestions");
+      const custom = Array.isArray(result.follow_up_questions)
+        ? result.follow_up_questions.filter((q) => q && String(q).trim())
+        : [];
+      const fallback = [
+        "为什么这节的内容要这样安排？",
+        "用一个具体例子说明选中的概念",
+        "它与我已经掌握的知识有什么关系？",
+      ];
+      const label = result.clarification ? "您想问的是？" : "继续追问：";
+      const chips = (custom.length ? custom : fallback).slice(0, 4);
+      container.replaceChildren();
+      const labelEl = document.createElement("span");
+      labelEl.className = "suggest-label";
+      labelEl.textContent = label;
+      container.appendChild(labelEl);
+      chips.forEach((q) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "suggest-chip";
+        chip.textContent = String(q).slice(0, 40);
+        chip.onclick = () => {
+          $("follow-up-input").value = String(q);
+          $("follow-up-input").focus();
+        };
+        container.appendChild(chip);
+      });
+      container.hidden = false;
+    }
+
+    async function submitFollowUp(questionOverride) {
+      const fu = state.followUp;
+      const question = String(questionOverride != null ? questionOverride : $("follow-up-input").value).trim();
+      if (!fu || !fu.open || !question) return;
+      const input = $("follow-up-input");
+      input.value = "";
+      const messages = $("follow-up-messages");
+      const empty = messages.querySelector(".follow-up-empty");
+      if (empty) empty.remove();
+      const userBubble = document.createElement("div");
+      userBubble.className = "follow-up-bubble user";
+      userBubble.textContent = question;
+      messages.appendChild(userBubble);
+      messages.scrollTop = messages.scrollHeight;
+      const pending = document.createElement("div");
+      pending.className = "follow-up-bubble assistant";
+      pending.textContent = "正在结合讲解内容与知识库思考…";
+      messages.appendChild(pending);
+      messages.scrollTop = messages.scrollHeight;
+      fu.history.push({ question });
+      try {
+        const result = await api(
+          "/api/projects/" + encodeURIComponent(fu.projectId) + "/ask-follow-up",
+          {
+            method: "POST",
+            body: {
+              student_id: STUDENT_ID,
+              knowledge_point_id: fu.knowledgePointId,
+              selection: fu.selection || "",
+              question,
+              history: fu.history,
+            },
+            timeoutMs: 15_000,
+          }
+        );
+        pending.remove();
+        const answer = String(result.answer || "");
+        const bubble = document.createElement("div");
+        bubble.className = "follow-up-bubble assistant";
+        const markdown = document.createElement("div");
+        markdown.className = "markdown-body";
+        markdown.innerHTML = renderMarkdown(answer);
+        bubble.appendChild(markdown);
+        const sources = Array.isArray(result.kb_sources) ? result.kb_sources : [];
+        const sourceNames = sources.map((s) => {
+          if (typeof s === "string") return s;
+          return s.title || s.name || s.source || s.filename || "";
+        }).filter(Boolean);
+        if (sourceNames.length) {
+          const source = document.createElement("small");
+          source.className = "bubble-source";
+          source.textContent = "依据：" + sourceNames.join(" · ");
+          bubble.appendChild(source);
+        }
+        messages.appendChild(bubble);
+        renderFollowUpSuggestions(result);
+        messages.scrollTop = messages.scrollHeight;
+      } catch (error) {
+        pending.remove();
+        const bubble = document.createElement("div");
+        bubble.className = "follow-up-bubble assistant";
+        bubble.textContent = "追问失败：" + error.message;
+        messages.appendChild(bubble);
+        messages.scrollTop = messages.scrollHeight;
+      }
     }
 
     function removeInlineNotePanels(surface = document) {
@@ -2241,11 +2506,19 @@
       });
     }
 
+    function cleanupLessonEditState(tabId) {
+      state.lessonEditStates.delete(tabId);
+      state.lessonEditHosts.delete(tabId);
+      state.lessonEditDrafts.delete(tabId);
+    }
+
     function closeWorkspaceTab(tabId = state.activeTabId) {
       const index = state.tabs.findIndex((tab) => tab.id === tabId);
       if (index < 0) return;
+      stopLessonReplay(state.tabs[index]);
       const wasActive = state.activeTabId === tabId;
       state.tabs.splice(index, 1);
+      cleanupLessonEditState(tabId);
       if (wasActive) {
         const next = state.tabs[index] || state.tabs[index - 1];
         activateWorkspaceTab(next ? next.id : null);
@@ -2717,17 +2990,21 @@
       const submitButton = intakeCard.querySelector(".submit-assessment-intake");
       const errorEl = intakeCard.querySelector(".assessment-intake-error");
       const syncIntake = () => {
-        const selectedLevel = levelInputs.find((input) => input.checked);
-        const isZero = selectedLevel && selectedLevel.value === "zero_foundation";
-        knowledgePanel.hidden = !selectedLevel || isZero;
-        knowledgeInputs.forEach((input) => { input.disabled = Boolean(isZero); });
-        submitButton.disabled = !selectedLevel;
-        submitButton.innerHTML = isZero
-          ? '<i data-lucide="book-open"></i> 按零基础开始学习'
-          : assessmentReady
-            ? '<i data-lucide="play"></i> 生成初始测评'
-            : '<i data-lucide="save"></i> 保存基础情况';
-        icons();
+        try {
+          const selectedLevel = levelInputs.find((input) => input.checked);
+          const isZero = selectedLevel && selectedLevel.value === "zero_foundation";
+          knowledgePanel.hidden = !selectedLevel || isZero;
+          knowledgeInputs.forEach((input) => { input.disabled = Boolean(isZero); });
+          submitButton.disabled = !selectedLevel;
+          submitButton.innerHTML = isZero
+            ? '<i data-lucide="book-open"></i> 按零基础开始学习'
+            : assessmentReady
+              ? '<i data-lucide="play"></i> 生成初始测评'
+              : '<i data-lucide="save"></i> 保存基础情况';
+          icons();
+        } catch (error) {
+          console.error("[掌握度选择同步失败]", error);
+        }
       };
       levelInputs.forEach((input) => { input.onchange = syncIntake; });
       submitButton.onclick = async () => {
@@ -2748,14 +3025,27 @@
             },
           });
           addMsg("bot", "<p>" + escapeHtml(intake.message) + "</p>", conversation.key);
+          const generationStatusMessage = addMsg(
+            "bot",
+            "<p>正在生成学习路径、讲义和题目，请稍候。</p>",
+            conversation.key,
+          );
           levelInputs.forEach((input) => { input.disabled = true; });
           knowledgeInputs.forEach((input) => { input.disabled = true; });
           submitButton.innerHTML = '<i data-lucide="check"></i> 基础情况已保存';
           await refreshProjects();
           renderProjectTree();
-          const updatedProject = state.projects.find((item) => item.project_id === project.project_id);
+          const updatedProject = state.projects.find((item) => item.project_id === project.project_id) || {
+            ...project,
+            project_id: project.project_id,
+            planning_state: intake.planning_state || "ready",
+          };
           if (updatedProject && updatedProject.planning_state === "ready") {
-            monitorProjectContentGeneration(updatedProject, conversation.key);
+            monitorProjectContentGeneration(
+              updatedProject,
+              conversation.key,
+              generationStatusMessage,
+            );
           }
           if (selectedLevel.value === "zero_foundation") {
             addMsg(
@@ -2880,7 +3170,7 @@
       const projectCreatedMessage = addMsg("bot",
         "<p><strong>目标已创建为项目：</strong>" + escapeHtml(project.goal_name) + "</p>" +
         constraintHtml + nextCard, conversation.key);
-      addMsg(
+      const statusMessage = addMsg(
         "bot",
         awaitingLearnerProfile
           ? "<p>请先完成当前基础和熟悉知识点的选择。提交后系统才会生成首版学习路径、学习计划和后续测评。</p>"
@@ -2892,10 +3182,63 @@
       if (pathButton) pathButton.onclick = () => sendGoal("查看学习路径");
       bindAssessmentIntakeCard(intakeCard, project, projectDetail, conversation);
       icons();
-      if (!awaitingLearnerProfile) monitorProjectContentGeneration(project, conversation.key);
+      if (!awaitingLearnerProfile) monitorProjectContentGeneration(project, conversation.key, statusMessage);
     }
 
-    function monitorProjectContentGeneration(project, conversationKey) {
+    function renderContentGenerationProgress(messageEl, generation) {
+      if (!messageEl) return;
+      const bubble = messageEl.querySelector(".bubble") || messageEl;
+      let slot = bubble.querySelector("[data-content-progress]");
+      if (generation.generation_complete) {
+        if (slot) slot.remove();
+        return;
+      }
+      if (!slot) {
+        slot = document.createElement("div");
+        slot.dataset.contentProgress = "";
+        slot.style.cssText = "margin-top:10px";
+        slot.innerHTML =
+          '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--ink);margin-bottom:6px"><strong>整体生成进度</strong><span data-content-progress-percent>0%</span></div>' +
+          '<div style="height:5px;background:var(--line);border-radius:999px;overflow:hidden">' +
+            '<div data-content-progress-bar style="height:100%;width:0;background:var(--blue);transition:width .25s"></div>' +
+          "</div>" +
+          '<div data-content-progress-steps style="display:grid;gap:4px;margin-top:8px;font-size:11.5px;color:var(--muted)"></div>' +
+          '<div data-content-progress-label style="margin-top:6px;font-size:11.5px;color:var(--muted)"></div>';
+        bubble.appendChild(slot);
+      }
+      const steps = generation.steps || {};
+      const path = steps.learning_path || {};
+      const lessons = steps.lessons || {};
+      const assessments = steps.assessments || generation.assessment || {};
+      const pct = Number(generation.overall_percent || 0);
+      const bar = slot.querySelector("[data-content-progress-bar]");
+      const percent = slot.querySelector("[data-content-progress-percent]");
+      const stepsEl = slot.querySelector("[data-content-progress-steps]");
+      const label = slot.querySelector("[data-content-progress-label]");
+      if (bar) bar.style.width = pct + "%";
+      if (percent) percent.textContent = pct + "%";
+      if (stepsEl) {
+        const stepText = (step, fallbackLabel) => {
+          const ready = Number(step.ready || 0);
+          const total = Number(step.total || 0);
+          if (step.status === "ready" && total <= 1) return fallbackLabel + " 已完成";
+          if (step.status === "failed") return fallbackLabel + "生成失败";
+          return fallbackLabel + " " + ready + "/" + total;
+        };
+        stepsEl.innerHTML = [
+          stepText(path, "学习路径"),
+          stepText(lessons, "讲义"),
+          stepText(assessments, "题目"),
+        ].map((text) => "<span>• " + escapeHtml(text) + "</span>").join("");
+      }
+      const awaitingReview = Number(generation.lesson_awaiting_review || 0);
+      const knowledgeUnavailable = Number(generation.lesson_knowledge_unavailable || 0);
+      if (label) label.textContent = (awaitingReview || knowledgeUnavailable)
+        ? "内容生成完成后，还需审核 " + (awaitingReview + knowledgeUnavailable) + " 节讲义来源"
+        : "三项内容正在后台生成，完成后项目才会出现在左侧项目栏";
+    }
+
+    function monitorProjectContentGeneration(project, conversationKey, statusMessage) {
       const projectId = project && project.project_id;
       if (!projectId || state.contentGenerationMonitors.has(projectId)) return;
       const monitor = (async () => {
@@ -2906,12 +3249,15 @@
               "/assessments?student_id=" + encodeURIComponent(STUDENT_ID),
             );
             const generation = center.content_generation || {};
-            if (generation.status === "ready") {
+            renderContentGenerationProgress(statusMessage, generation);
+            if (generation.generation_complete) {
               if (!state.contentGenerationNotified.has(projectId)) {
                 state.contentGenerationNotified.add(projectId);
                 addMsg(
                   "bot",
-                  "<p>适合你的学习路径、知识点讲解和题目已经生成完毕，可以直接打开章节或题单。</p>",
+                  generation.status === "awaiting_review"
+                    ? "<p>学习路径、讲义和题目已经生成完毕，项目已加入左侧项目栏；部分讲义仍待来源审核，暂不作为正式教学结论。</p>"
+                    : "<p>学习路径、讲义和题目已经生成完毕，项目已加入左侧项目栏，可以开始学习。</p>",
                   conversationKey,
                 );
               }
@@ -2919,6 +3265,17 @@
               const activeTab = workspaceTab(state.activeTabId);
               if (activeTab && activeTab.view === "assessment_center" && activeTab.projectId === projectId) {
                 await loadAssessmentCenter(projectId);
+              }
+              return;
+            }
+            if (generation.status === "failed") {
+              if (!state.contentGenerationNotified.has(projectId)) {
+                state.contentGenerationNotified.add(projectId);
+                addMsg(
+                  "bot",
+                  "<p>部分内容生成失败，项目暂不会加入左侧项目栏。请稍后重试，失败内容不会冒充已生成。</p>",
+                  conversationKey,
+                );
               }
               return;
             }
@@ -3540,6 +3897,148 @@
         "</div>";
     }
 
+    function splitKnowledgeLabel(label) {
+      const text = String(label || "").trim();
+      if (!text) return [text];
+      if (text.length <= 6) return [text];
+      const separators = ["与", "和", "及", "、"];
+      const positions = separators
+        .map((sep) => text.indexOf(sep))
+        .filter((index) => index > 0 && index < 6);
+      if (positions.length) {
+        const cut = Math.min(...positions) + 1;
+        return [text.slice(0, cut), ...splitKnowledgeLabel(text.slice(cut))].slice(0, 3);
+      }
+      return (text.match(/.{1,6}/g) || [text]).slice(0, 3);
+    }
+
+    function masteryColor(mastery) {
+      if (mastery >= 80) return "#16a34a";
+      if (mastery >= 60) return "#2563eb";
+      if (mastery >= 40) return "#f59e0b";
+      return "#dc2626";
+    }
+
+    function learningMapStatusTier(status) {
+      return { mastered: 5, unknown: 4, learning: 3, candidate: 2, weak: 1 }[status] || 4;
+    }
+
+    function learningMapDepth(nodes) {
+      const nodesById = {};
+      nodes.forEach((n) => { nodesById[n.id] = n; });
+      const memo = new Map();
+      const visiting = new Set();
+      const depthOf = (id) => {
+        if (memo.has(id)) return memo.get(id);
+        if (visiting.has(id)) return 0;
+        visiting.add(id);
+        const prereqs = Array.isArray(nodesById[id] && nodesById[id].prerequisites) ? nodesById[id].prerequisites : [];
+        let depth = 1;
+        prereqs.forEach((pid) => {
+          if (nodesById[pid]) depth = Math.max(depth, 1 + depthOf(pid));
+        });
+        visiting.delete(id);
+        memo.set(id, depth);
+        return depth;
+      };
+      const depthById = {};
+      nodes.forEach((n) => { depthById[n.id] = depthOf(n.id); });
+      return depthById;
+    }
+
+    function learningMapGraphLegend(map) {
+      const entries = [];
+      if (map.current_recommended_kc) entries.push('<span class="lm-legend-item lm-legend-recommended">当前推荐</span>');
+      if ((map.active_path || []).length) entries.push('<span class="lm-legend-item lm-legend-active">建议推进路径</span>');
+      if ((map.recommended_candidates || []).length) entries.push('<span class="lm-legend-item lm-legend-candidate">备选推荐</span>');
+      if ((map.locked_nodes || []).length) entries.push('<span class="lm-legend-item lm-legend-locked">前置未稳定（锁定）</span>');
+      entries.push('<span class="lm-legend-item lm-legend-mastered">已掌握</span>');
+      entries.push('<span class="lm-legend-item lm-legend-learning">进行中</span>');
+      return entries.length ? '<div class="lm-graph-legend">' + entries.join("") + "</div>" : "";
+    }
+
+    function learningMapSvgMarkup(map, nodes, stepById) {
+      const NODE_W = 156, NODE_H = 66, COL_GAP = 64, ROW_GAP = 20, M = 28;
+      const depthById = learningMapDepth(nodes);
+      const layers = [];
+      nodes.forEach((n) => {
+        const d = (depthById[n.id] || 1) - 1;
+        if (!layers[d]) layers[d] = [];
+        layers[d].push(n);
+      });
+      const pos = {};
+      layers.forEach((layer, d) => {
+        layer.sort((a, b) => {
+          const tierA = learningMapStatusTier(a.status);
+          const tierB = learningMapStatusTier(b.status);
+          if (tierA !== tierB) return tierB - tierA;
+          const oa = a.recommended_order == null ? Number.MAX_SAFE_INTEGER : Number(a.recommended_order);
+          const ob = b.recommended_order == null ? Number.MAX_SAFE_INTEGER : Number(b.recommended_order);
+          if (oa !== ob) return oa - ob;
+          return String(a.name || "").localeCompare(String(b.name || ""));
+        });
+        layer.forEach((n, i) => {
+          pos[n.id] = { x: M + d * (NODE_W + COL_GAP), y: M + i * (NODE_H + ROW_GAP) };
+        });
+      });
+      const maxDepth = Math.max(1, layers.length);
+      const maxCols = layers.reduce((maxCount, layer) => Math.max(maxCount, layer.length), 1);
+      const width = M * 2 + (maxDepth - 1) * (NODE_W + COL_GAP) + NODE_W;
+      const height = M * 2 + (maxCols - 1) * (NODE_H + ROW_GAP) + NODE_H;
+      const parts = [];
+      parts.push('<svg class="lm-graph-svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="学习路径依赖图">');
+      parts.push('<defs><marker id="lm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#c2cad4"></path></marker></defs>');
+      nodes.forEach((n) => {
+        const p = pos[n.id];
+        if (!p) return;
+        (Array.isArray(n.prerequisites) ? n.prerequisites : []).forEach((pid) => {
+          const pp = pos[pid];
+          if (!pp) return;
+          const x1 = pp.x + NODE_W, y1 = pp.y + NODE_H / 2;
+          const x2 = p.x, y2 = p.y + NODE_H / 2;
+          const xm = (x1 + x2) / 2;
+          parts.push('<path d="M' + x1 + " " + y1 + " H" + xm + " V" + y2 + " H" + x2 + '" fill="none" stroke="#c2cad4" stroke-width="1.4" marker-end="url(#lm-arrow)"></path>');
+        });
+      });
+      nodes.forEach((n) => {
+        const p = pos[n.id];
+        if (!p) return;
+        const locked = (map.locked_nodes || []).includes(n.id);
+        const recommended = map.current_recommended_kc === n.id;
+        const active = (map.active_path || []).includes(n.id);
+        const candidate = (map.recommended_candidates || []).includes(n.id);
+        const hasMastery = n.mastery !== null && n.mastery !== undefined;
+        const fill = locked
+          ? "#f3f4f6"
+          : { mastered: "#f0fdf4", learning: "#eff6ff", candidate: "#fffbeb", weak: "#fef2f2" }[n.status] || "#fafafa";
+        const stroke = locked
+          ? "#9ca3af"
+          : { mastered: "#16a34a", learning: "#2563eb", candidate: "#d97706", weak: "#dc2626" }[n.status] || "#d1d5db";
+        const border = recommended ? "#eab308" : stroke;
+        const dash = locked ? ' stroke-dasharray="5 4"' : active ? ' stroke-dasharray="6 4"' : candidate ? ' stroke-dasharray="2 4"' : "";
+        const sw = recommended ? 3 : 2;
+        const labelLines = splitKnowledgeLabel(n.name).slice(0, 2);
+        const nameY1 = labelLines.length === 2 ? p.y + 24 : p.y + 32;
+        const texts = labelLines.map((line, li) =>
+          '<text x="' + (p.x + NODE_W / 2) + '" y="' + (li === 0 ? nameY1 : p.y + 41) + '" text-anchor="middle" class="lm-graph-name">' + escapeHtml(line) + "</text>"
+        ).join("");
+        const statusText = escapeHtml(learningMapStatusLabel(n.status)) + (hasMastery ? '<tspan fill="' + masteryColor(n.mastery) + '"> · ' + n.mastery + "%</tspan>" : "");
+        const title = escapeHtml((n.name || n.id) + " · " + learningMapStatusLabel(n.status) + (hasMastery ? " · 掌握度 " + n.mastery + "%" : ""));
+        const lockText = locked ? '<text x="' + (p.x + NODE_W - 8) + '" y="' + (p.y + 15) + '" text-anchor="end" class="lm-graph-lock">🔒</text>' : "";
+        parts.push(
+          '<g class="lm-graph-node" data-map-node="' + escapeAttr(n.id) + '" data-map-name="' + escapeAttr(n.name || n.id) + '">' +
+            "<title>" + title + "</title>" +
+            '<rect x="' + p.x + '" y="' + p.y + '" width="' + NODE_W + '" height="' + NODE_H + '" rx="10" fill="' + fill + '" stroke="' + border + '" stroke-width="' + sw + '"' + dash + "></rect>" +
+            texts +
+            '<text x="' + (p.x + NODE_W / 2) + '" y="' + (p.y + NODE_H - 10) + '" text-anchor="middle" class="lm-graph-status">' + statusText + "</text>" +
+            lockText +
+          "</g>"
+        );
+      });
+      parts.push("</svg>");
+      return parts.join("");
+    }
+
     function renderLearningMapGraph(container, projectId, map, stepById) {
       const nodes = (map.nodes || []).reduce((acc, node) => { acc[node.id] = node; return acc; }, {});
       const statusLabel = learningMapStatusLabel;
@@ -3564,7 +4063,6 @@
           (prereqs ? '<div class="lm-node-prereqs">前置：' + prereqs + '</div>' : "") +
         "</div>";
       };
-      const ordered = (map.nodes || []).slice();
       const recommended = map.current_recommended_kc && nodes[map.current_recommended_kc];
       const recommendedHtml = recommended
         ? '<section class="lm-block lm-recommend"><h2><i data-lucide="target"></i>当前推荐</h2>' + nodeCard(recommended) + "</section>"
@@ -3583,15 +4081,29 @@
           map.locked_nodes.map((id) => '<span class="lm-chip locked">' + escapeHtml((nodes[id] || {}).name || id) + "</span>").join("") +
           '</div></div><p class="lm-hint">这些知识点依赖的前置内容尚未达到已掌握，先完成前置节点再开始。</p></section>'
         : "";
-      const nodeListHtml = '<section class="lm-block lm-nodes"><h2><i data-lucide="network"></i>全部知识点</h2>' +
-        ordered.map(nodeCard).join("") + "</section>";
-      container.innerHTML = recommendedHtml + candidatesHtml + activeHtml + lockedHtml + nodeListHtml +
+      const graphHtml = (map.nodes || []).length
+        ? '<section class="lm-block lm-nodes"><h2><i data-lucide="network"></i>全部知识点</h2>' +
+          learningMapGraphLegend(map) +
+          '<div class="lm-graph-scroll">' + learningMapSvgMarkup(map, map.nodes || [], stepById) + "</div></section>"
+        : '<section class="lm-block lm-nodes"><h2><i data-lucide="network"></i>全部知识点</h2><div class="assessment-empty">暂无知识点数据</div></section>';
+      container.innerHTML = recommendedHtml + candidatesHtml + activeHtml + lockedHtml + graphHtml +
         '<p class="lm-disclaimer">掌握度仅来自正式测评证据；未评估知识点显示为“未评估”，不等于 0 分。</p>';
       container.querySelectorAll("[data-map-start]").forEach((button) => {
         button.onclick = () => {
           const step = stepById[button.dataset.mapStart] || {};
           if (step.step_id) updateLearningPlanStep(projectId, step.step_id, "in_progress");
           openLesson(projectId, button.dataset.mapStart, button.dataset.mapName, null, {
+            step_id: step.step_id || "",
+            learning_objective: step.learning_objective || "",
+          });
+        };
+      });
+      container.querySelectorAll("[data-map-node]").forEach((node) => {
+        node.onclick = () => {
+          const id = node.dataset.mapNode;
+          const step = stepById[id] || {};
+          if (step.step_id) updateLearningPlanStep(projectId, step.step_id, "in_progress");
+          openLesson(projectId, id, node.dataset.mapName || id, null, {
             step_id: step.step_id || "",
             learning_objective: step.learning_objective || "",
           });
@@ -4376,7 +4888,28 @@
       const type = String(block && block.type || "").trim().toLowerCase();
       const title = String(block && block.title || "").trim();
       if (["source_notice", "weakness_connection"].includes(type)) return false;
+      // 可判分的自测题块（choice/fill_blank）单独渲染为可作答卡片，不重复进讲义正文
+      if (type === "check" && ["choice", "fill_blank"].includes(String(block && block.question_type || "").toLowerCase())) return false;
       return !/(来源状态|服务状态|内容状态说明|本节在路径中的位置|完成标准|验收标准)/.test(title);
+    }
+
+    function isGradableLessonCheckBlock(block) {
+      return Boolean(block && block.type === "check" &&
+        ["choice", "fill_blank"].includes(String(block.question_type || "").toLowerCase()) &&
+        (block.options || block.accepted_answers || block.answer));
+    }
+
+    function lessonCheckResultKey(tabId, blockId) {
+      return tabId + "::" + (blockId || "");
+    }
+
+    function lessonCheckResultsGet(tab, blockId) {
+      return (state.lessonCheckResults || {})[lessonCheckResultKey(tab.id, blockId)] || null;
+    }
+
+    function lessonCheckResultsSet(tab, blockId, value) {
+      if (!state.lessonCheckResults) state.lessonCheckResults = {};
+      state.lessonCheckResults[lessonCheckResultKey(tab.id, blockId)] = value;
     }
 
     function lessonBlockTitle(block) {
@@ -4659,6 +5192,82 @@
         });
     }
 
+    function renderLessonGenerationProgress(surface, tab) {
+      const slot = surface.querySelector('[data-lesson-role="generation-progress"]');
+      if (!slot) return;
+      const progress = tab.generationProgress;
+      if (!progress || typeof progress !== "object") {
+        slot.hidden = true;
+        return;
+      }
+      const total = Number(progress.total || 0);
+      const current = Number(progress.current || 0);
+      const label = String(progress.label || "");
+      const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+      const bar = slot.querySelector('[data-lesson-role="progress-bar"]');
+      const labelEl = slot.querySelector('[data-lesson-role="progress-label"]');
+      if (bar) bar.style.width = pct + "%";
+      if (labelEl) {
+        labelEl.textContent =
+          current > 0 && total > 0 ? "第 " + current + "/" + total + " 节 · " + label : label;
+      }
+      slot.hidden = false;
+    }
+
+    function knowledgeBlocks(result) {
+      return (result && Array.isArray(result.content_blocks) ? result.content_blocks : []).filter(isKnowledgeExplanationBlock);
+    }
+
+    function lessonReplayActive(tab) {
+      return Boolean(tab && tab.replayMode === "progressive" && !tab.replayDone);
+    }
+
+    function startLessonReplay(tab) {
+      if (!tab || tab.view !== "lesson" || !tab.result) return;
+      if (tab.replayTimer) clearTimeout(tab.replayTimer);
+      if (allLessonNotes(tab).some((note) => note.block_id === "LESSON-DOCUMENT")) {
+        tab.renderMode = "document";
+        stopLessonReplay(tab);
+        return;
+      }
+      tab.renderMode = "blocks";
+      tab.replayMode = "progressive";
+      tab.replayDone = false;
+      tab.revealedCount = 1;
+      const step = () => {
+        const total = knowledgeBlocks(tab.result).length;
+        if (tab.revealedCount >= total) {
+          tab.replayDone = true;
+          tab.replayTimer = null;
+          tab.generationProgress = null;
+          renderLessonTab(tab);
+          return;
+        }
+        tab.revealedCount += 1;
+        tab.generationProgress = {
+          phase: "replay",
+          current: tab.revealedCount,
+          total,
+          label: "正在逐节呈现内容",
+        };
+        renderLessonTab(tab);
+        tab.replayTimer = window.setTimeout(step, 300);
+      };
+      tab.replayTimer = window.setTimeout(step, 300);
+    }
+
+    function stopLessonReplay(tab) {
+      if (!tab) return;
+      if (tab.replayTimer) {
+        clearTimeout(tab.replayTimer);
+        tab.replayTimer = null;
+      }
+      tab.replayMode = null;
+      tab.replayDone = true;
+      tab.revealedCount = Number.MAX_SAFE_INTEGER;
+      tab.generationProgress = null;
+    }
+
     function renderLessonDocument(surface, tab) {
       const project = state.projects.find((item) => item.project_id === tab.projectId);
       const projectName = project ? project.goal_name : (tab.projectName || "项目");
@@ -4685,6 +5294,7 @@
         if (editorHost._vditor) editorHost._vditor.destroy();
       });
       body.replaceChildren();
+      renderLessonGenerationProgress(surface, tab);
 
       const notes = lessonNotes(tab);
       lessonRole(surface, "note-count").textContent = String(notes.length);
@@ -4696,11 +5306,19 @@
       };
 
       if (tab.loading) {
+        ["edit", "save", "reset"].forEach((name) => {
+          const button = surface.querySelector('[data-lesson-action="' + name + '"]');
+          if (button) button.hidden = true;
+        });
         body.innerHTML = '<div class="markdown-body"><p>正在检索知识依据并生成讲解…</p></div>';
         icons();
         return;
       }
       if (tab.error) {
+        ["edit", "save", "reset"].forEach((name) => {
+          const button = surface.querySelector('[data-lesson-action="' + name + '"]');
+          if (button) button.hidden = true;
+        });
         body.innerHTML = '<div class="markdown-body"><p>' + escapeHtml(tab.error) + "</p></div>";
         icons();
         return;
@@ -4727,11 +5345,24 @@
           ? '<span><i data-lucide="sparkles"></i>AI 生成讲解，关键结论需结合来源核验</span>'
           : '<span><i data-lucide="shield-check"></i>内容带来源标注</span>';
       meta.hidden = false;
+      const isEditHost = state.lessonEditStates.get(tab.id) === true && state.lessonEditHosts.get(tab.id) === surface;
+      const editButton = surface.querySelector('[data-lesson-action="edit"]');
+      const saveButton = surface.querySelector('[data-lesson-action="save"]');
+      const resetButton = surface.querySelector('[data-lesson-action="reset"]');
+      if (editButton) editButton.hidden = isEditHost;
+      if (saveButton) saveButton.hidden = !isEditHost;
+      if (resetButton) resetButton.hidden = !isEditHost;
+      if (editButton) editButton.onclick = () => enterLessonEditMode(tab, surface);
+      if (saveButton) saveButton.onclick = () => saveLessonEdit(tab, surface);
+      if (resetButton) resetButton.onclick = () => resetLessonEdit(tab, surface);
       renderLessonProvenance(body, result);
       renderLessonContract(body, result);
-      renderLessonEditor(body, tab, result);
-      renderLessonVisuals(body, result.resources || [], result);
-      renderLessonVideos(body, result.resources || []);
+      renderLessonEditor(body, tab, result, isEditHost);
+      if (!lessonReplayActive(tab)) {
+        renderLessonCheckBlocks(body, tab, result);
+        renderLessonVisuals(body, result.resources || [], result);
+        renderLessonVideos(body, result.resources || []);
+      }
       icons();
     }
 
@@ -4767,20 +5398,231 @@
       container.appendChild(card);
     }
 
-    function renderLessonEditor(container, tab, result) {
+    function renderLessonEditor(container, tab, result, editMode) {
       const sourceMarkdown = lessonSourceMarkdown(result);
       const override = lessonDocumentOverride(tab);
-      const initialMarkdown = override ? override.note_markdown : sourceMarkdown;
-      const card = document.createElement("section");
-      card.className = "lesson-card";
-      card.dataset.blockId = "LESSON-DOCUMENT";
-      card.dataset.blockTitle = "知识点讲解";
-      const documentBody = document.createElement("div");
-      documentBody.className = "markdown-body";
-      documentBody.innerHTML = renderMarkdown(initialMarkdown);
-      card.appendChild(documentBody);
-      container.appendChild(card);
+      const baseMarkdown = override ? override.note_markdown : sourceMarkdown;
+      const renderWholeDocument = (markdown) => {
+        const card = document.createElement("section");
+        card.className = "lesson-card";
+        card.dataset.blockId = "LESSON-DOCUMENT";
+        card.dataset.blockTitle = "知识点讲解";
+        const documentBody = document.createElement("div");
+        documentBody.className = "markdown-body";
+        documentBody.innerHTML = renderMarkdown(markdown);
+        card.appendChild(documentBody);
+        container.appendChild(card);
+      };
+      if (editMode) {
+        const card = document.createElement("section");
+        card.className = "lesson-card";
+        card.dataset.blockId = "LESSON-DOCUMENT";
+        card.dataset.blockTitle = "知识点讲解";
+        const host = document.createElement("div");
+        host.className = "lesson-vditor";
+        host.style.minHeight = "420px";
+        card.appendChild(host);
+        container.appendChild(card);
+        const draft = state.lessonEditDrafts.get(tab.id) || baseMarkdown;
+        host._vditor = new Vditor(host, {
+          value: draft,
+          mode: "ir",
+          cache: { enable: false },
+          height: "100%",
+          input: (value) => {
+            state.lessonEditDrafts.set(tab.id, value);
+            queueLessonDocumentSave(tab, sourceMarkdown, value);
+          },
+        });
+        icons();
+        return;
+      }
+      const blocks = knowledgeBlocks(result);
+      if (override || tab.renderMode !== "blocks" || !blocks.length) {
+        renderWholeDocument(baseMarkdown);
+        icons();
+        return;
+      }
+      const total = blocks.length;
+      const shown = Math.min(Number(tab.revealedCount) || total, total);
+      const notes = lessonNotes(tab);
+      blocks.slice(0, shown).forEach((block) => renderLessonBlock(container, block, tab, notes));
+      if (lessonReplayActive(tab) && shown < total) {
+        const hint = document.createElement("div");
+        hint.className = "lesson-replay-hint";
+        hint.textContent = "正在逐节呈现内容…";
+        container.appendChild(hint);
+      }
       icons();
+    }
+
+    function enterLessonEditMode(tab, surface) {
+      if (!tab.result) return;
+      stopLessonReplay(tab);
+      state.lessonEditStates.set(tab.id, true);
+      state.lessonEditHosts.set(tab.id, surface);
+      renderLessonDocument(surface, tab);
+    }
+
+    function exitLessonEditMode(tab) {
+      state.lessonEditStates.delete(tab.id);
+      state.lessonEditHosts.delete(tab.id);
+      state.lessonEditDrafts.delete(tab.id);
+    }
+
+    async function saveLessonEdit(tab, surface) {
+      const host = surface.querySelector(".lesson-vditor");
+      const vditor = host && host._vditor;
+      if (!vditor) return;
+      const sourceMarkdown = lessonSourceMarkdown(tab.result || {});
+      try {
+        await saveLessonDocument(tab, sourceMarkdown, vditor.getValue());
+      } catch (error) {
+        window.alert("保存失败：" + error.message);
+        return;
+      }
+      exitLessonEditMode(tab);
+      renderLessonDocument(surface, tab);
+    }
+
+    async function resetLessonEdit(tab, surface) {
+      if (!window.confirm("放弃当前对讲义内容的修改，恢复为系统原始讲解？")) return;
+      const sourceMarkdown = lessonSourceMarkdown(tab.result || {});
+      try {
+        await persistLessonDocument(tab, sourceMarkdown, sourceMarkdown);
+      } catch (error) {
+        window.alert("重置失败：" + error.message);
+        return;
+      }
+      exitLessonEditMode(tab);
+      renderLessonDocument(surface, tab);
+    }
+
+    function renderLessonCheckBlocks(container, tab, result) {
+      const blocks = (result.content_blocks || []).filter(isGradableLessonCheckBlock);
+      if (!blocks.length) return;
+      blocks.forEach((block, index) => {
+        const blockId = String(block.block_id || ("BLOCK-CHECK-" + index));
+        const questionType = String(block.question_type || "").toLowerCase();
+        const card = document.createElement("section");
+        card.className = "lesson-card";
+        card.dataset.blockId = blockId;
+        card.dataset.blockTitle = block.title || "自测题";
+        const heading = document.createElement("div");
+        heading.className = "markdown-body";
+        heading.innerHTML = "<h2>" + escapeHtml(block.title || "自测题") + "</h2>" +
+          "<p>" + escapeHtml(String(block.content || "")) + "</p>";
+        card.appendChild(heading);
+        const form = document.createElement("div");
+        form.className = "lesson-check-form";
+        const name = "lesson-check-" + blockId;
+        if (questionType === "choice") {
+          const options = block.options || {};
+          Object.keys(options).forEach((key) => {
+            const label = document.createElement("label");
+            label.className = "lesson-check-option";
+            const input = document.createElement("input");
+            input.type = "radio";
+            input.name = name;
+            input.value = key;
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(key + ". " + String(options[key])));
+            form.appendChild(label);
+          });
+        } else {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "quiz-text-answer";
+          input.placeholder = "请输入你的答案";
+          input.dataset.lessonCheckFill = "";
+          form.appendChild(input);
+        }
+        const submit = document.createElement("button");
+        submit.type = "button";
+        submit.className = "lesson-check-submit";
+        submit.textContent = "提交答案";
+        const resultBox = document.createElement("div");
+        resultBox.className = "lesson-check-result";
+        form.appendChild(submit);
+        form.appendChild(resultBox);
+        card.appendChild(form);
+        container.appendChild(card);
+
+        const renderStored = (stored) => {
+          if (!stored) return;
+          resultBox.className = "lesson-check-result " + (stored.correct ? "is-correct" : "is-wrong");
+          resultBox.innerHTML = (stored.correct ? "✓ 回答正确" : "✗ 回答错误") +
+            (stored.error ? "<p class='lesson-check-error'>" + escapeHtml(String(stored.message || stored.error)) + "</p>" : "") +
+            (stored.explanation ? "<p>" + escapeHtml(String(stored.explanation)) + "</p>" : "");
+          submit.disabled = true;
+          submit.textContent = "已提交";
+          if (questionType === "choice") {
+            form.querySelectorAll("input[type=radio]").forEach((radio) => {
+              radio.disabled = true;
+              if (radio.value === stored.response) radio.checked = true;
+            });
+          } else {
+            const fill = form.querySelector("[data-lesson-check-fill]");
+            if (fill) {
+              fill.value = stored.response || "";
+              fill.disabled = true;
+            }
+          }
+        };
+        renderStored(lessonCheckResultsGet(tab, blockId));
+        submit.onclick = async () => {
+          let response = "";
+          if (questionType === "choice") {
+            const checked = form.querySelector("input[type=radio]:checked");
+            if (!checked) {
+              resultBox.className = "lesson-check-result is-wrong";
+              resultBox.textContent = "请先选择一个选项";
+              return;
+            }
+            response = checked.value;
+          } else {
+            const fill = form.querySelector("[data-lesson-check-fill]");
+            response = String(fill && fill.value || "").trim();
+            if (!response) {
+              resultBox.className = "lesson-check-result is-wrong";
+              resultBox.textContent = "请先填写答案";
+              return;
+            }
+          }
+          submit.disabled = true;
+          submit.textContent = "判分中…";
+          try {
+            const outcome = await api(
+              "/api/projects/" + encodeURIComponent(tab.projectId) + "/lesson-check",
+              {
+                method: "POST",
+                body: {
+                  student_id: STUDENT_ID,
+                  knowledge_point_id: tab.knowledgePointId,
+                  answers: [{ block_id: blockId, response: response }],
+                },
+                timeoutMs: 15_000,
+              },
+            );
+            const item = (outcome.results || []).find((entry) => entry.block_id === blockId) || {};
+            const stored = {
+              correct: Boolean(item.correct),
+              gradable: Boolean(item.gradable),
+              explanation: item.explanation || "",
+              error: item.error || "",
+              message: item.message || "",
+              response: response,
+            };
+            lessonCheckResultsSet(tab, blockId, stored);
+            renderStored(stored);
+          } catch (error) {
+            resultBox.className = "lesson-check-result is-wrong";
+            resultBox.textContent = "提交失败：" + error.message;
+            submit.disabled = false;
+            submit.textContent = "提交答案";
+          }
+        };
+      });
     }
 
     function renderLessonBlock(container, block, tab, notes) {
@@ -4881,8 +5723,8 @@
       const initialTitle = knowledgePointName || knowledgePointId;
       const tabId = lessonTabId(projectId, knowledgePointId);
       const prefetchedPreparing = shouldPollLessonResult(prefetchedResult);
-      let tab = workspaceTab(tabId);
-      if (tab && !prefetchedResult && tab.result) {
+      const existingTab = workspaceTab(tabId);
+      if (existingTab && !prefetchedResult && existingTab.result) {
         activateWorkspaceTab(tabId);
         return;
       }
@@ -4898,8 +5740,13 @@
         error: "",
         result: prefetchedPreparing ? null : (prefetchedResult || null),
       });
+      if (!existingTab) tab.generationProgress = null;
       loadLessonNotes(tab).then(() => {
         if (!tab.loading && !tab.error && tab.result && workspaceTab(tabId) === tab) {
+          if (allLessonNotes(tab).some((note) => note.block_id === "LESSON-DOCUMENT")) {
+            tab.renderMode = "document";
+            stopLessonReplay(tab);
+          }
           if (state.activeTabId === tabId) renderLessonTab(tab);
         }
       });
@@ -4907,14 +5754,17 @@
 
       if (prefetchedResult) {
         if (prefetchedPreparing) {
-          if (pollAttempt >= 30) {
+          tab.justGenerated = true;
+          if (pollAttempt >= 120) {
             tab.loading = false;
             tab.error = "章节生成等待时间过长，请稍后重新打开。";
+            tab.generationProgress = null;
             renderEditorTabs();
             renderLessonTab(tab);
             return;
           }
           tab.loading = true;
+          tab.generationProgress = prefetchedResult.generation_progress || null;
           renderEditorTabs();
           renderLessonTab(tab);
           await waitForLessonRetry(prefetchedResult.retry_after_ms);
@@ -4922,6 +5772,7 @@
         }
         tab.title = prefetchedResult.lesson_title || initialTitle;
         tab.loading = false;
+        tab.generationProgress = null;
         renderEditorTabs();
         renderLessonTab(tab);
         await refreshProjects();
@@ -4940,15 +5791,19 @@
           timeoutMs: 30_000,
         });
         if (shouldPollLessonResult(result)) {
-          if (pollAttempt >= 30) {
+          tab.justGenerated = true;
+          if (pollAttempt >= 120) {
             tab.loading = false;
             tab.error = "章节生成等待时间过长，请稍后重新打开。";
+            tab.generationProgress = null;
             if (state.activeTabId === tabId) renderLessonTab(tab);
             renderEditorTabs();
             return;
           }
           tab.loading = true;
           tab.error = "";
+          tab.generationProgress = result.generation_progress || null;
+          setInputEnabled(true);
           if (state.activeTabId === tabId) renderLessonTab(tab);
           renderEditorTabs();
           await waitForLessonRetry(result.retry_after_ms);
@@ -4957,6 +5812,7 @@
         if (result.status === "preparing") {
           tab.loading = false;
           tab.error = result.message || "章节尚未满足生成条件，请先完成前置步骤。";
+          tab.generationProgress = null;
           if (state.activeTabId === tabId) renderLessonTab(tab);
           renderEditorTabs();
           return;
@@ -4964,6 +5820,11 @@
         tab.title = result.lesson_title || initialTitle;
         tab.result = result;
         tab.loading = false;
+        tab.generationProgress = null;
+        if (tab.justGenerated) {
+          tab.justGenerated = false;
+          startLessonReplay(tab);
+        }
         if (state.activeTabId === tabId) renderLessonTab(tab);
         renderEditorTabs();
         await refreshProjects();
@@ -5028,11 +5889,21 @@
           '<div class="lesson-meta" data-lesson-role="meta"></div>' +
           '<div class="lesson-actions">' +
             '<button class="lesson-action-btn" data-lesson-action="view-notes" type="button"><i data-lucide="notebook-tabs"></i>本章笔记 <span data-lesson-role="note-count">0</span></button>' +
+            '<button class="lesson-action-btn" data-lesson-action="edit" type="button"><i data-lucide="pencil-line"></i>编辑讲义</button>' +
+            '<button class="lesson-action-btn" data-lesson-action="save" type="button" hidden><i data-lucide="save"></i>保存</button>' +
+            '<button class="lesson-action-btn" data-lesson-action="reset" type="button" hidden><i data-lucide="rotate-ccw"></i>重置</button>' +
           '</div>' +
+        '</div>' +
+        '<div class="lesson-generation-progress" data-lesson-role="generation-progress" hidden>' +
+          '<div class="lesson-generation-progress-track"><div class="lesson-generation-progress-bar" data-lesson-role="progress-bar"></div></div>' +
+          '<div class="lesson-generation-progress-label" data-lesson-role="progress-label"></div>' +
         '</div>' +
         '<div class="lesson-body" data-lesson-role="body"></div>';
       pane.querySelector(".detached-content").appendChild(detachedLesson);
-      pane.querySelector(".editor-tab-close").onclick = () => pane.remove();
+      pane.querySelector(".editor-tab-close").onclick = () => {
+        if (state.lessonEditHosts.get(tabId) === detachedLesson) cleanupLessonEditState(tabId);
+        pane.remove();
+      };
       stageEl.appendChild(pane);
       renderLessonDocument(detachedLesson, tab);
       icons();
@@ -5712,7 +6583,12 @@
 
     /* ================= 输入与新建 ================= */
     $("send-btn").onclick = () => sendGoal();
-    $("selection-ask").onclick = prepareSelectionQuestion;
+    $("selection-ask").onclick = openFollowUpWorkspace;
+    $("follow-up-close").onclick = closeFollowUpWorkspace;
+    $("follow-up-form").onsubmit = (event) => {
+      event.preventDefault();
+      submitFollowUp();
+    };
     $("selection-context-clear").onclick = () => clearSelectionContext(true);
     document.addEventListener("mouseup", (event) => {
       if (event.target.closest(".lesson-vditor")) return;

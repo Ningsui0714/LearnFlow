@@ -74,26 +74,38 @@ class LocalExplanationEngine:
         return self.spark is not None and self.spark.configured
 
     def has_local_kb_coverage(self, knowledge_point_id: str) -> bool:
-        """本地课程知识库是否覆盖该知识点（concept/steps/example 至少一类命中）。
+        """本地课程知识库是否覆盖正式讲义的三个核心知识块。
 
-        作为 LLM 路径的来源门禁：星火可用但没有网页证据且知识库无覆盖时，
-        服务器不会让模型用无来源内容生成讲解。
+        作为正式讲义来源门禁：必须有已审核的定义、步骤和示例条目。联网
+        资料只能补充，不能替代任何一个本地审核知识块。
         """
         if not str(knowledge_point_id or "").strip():
             return False
-        for category in ("concept", "steps", "example"):
-            if self._kb_entry(str(knowledge_point_id), category):
-                return True
-        return False
+        return all(
+            self._kb_entry(str(knowledge_point_id), category)
+            for category in ("concept", "steps", "example")
+        )
 
     # ------------------------------------------------------------------
     # 公开生成入口
     # ------------------------------------------------------------------
 
     def generate_learning_lesson(
-        self, workflow_payload: dict[str, Any], context: dict[str, Any]
+        self,
+        workflow_payload: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        sectioned: bool = False,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        """正式章节讲解：LLM 优先，失败/未配置回退确定性模板。"""
+        """正式章节讲解：LLM 优先，失败/未配置回退确定性模板。
+
+        ``sectioned=True`` 时走「大纲先行 + 分节生成」（LearnFlow 两阶段模式）：
+        先确定性推导大纲，再逐节调用 LLM 生成，逐节通过 ``progress_callback``
+        报告 ``{phase, current, total, label}``；内容仍全部生成完才一次性返回，
+        由上层在 ready 时统一落库。默认 ``sectioned=False`` 保持单次调用行为，
+        run_learning / run_review 与既有测试零改动。
+        """
         template = self._template_learning(workflow_payload)
         if not self.llm_available:
             template["fallback_used"] = True
@@ -111,6 +123,10 @@ class LocalExplanationEngine:
             _as_dict(context.get("web_evidence_pack"))
         )
         try:
+            if sectioned:
+                return self._generate_sectioned_lesson(
+                    workflow_payload, context, template, progress_callback
+                )
             messages = self._learning_prompt(
                 context, kb_text, evidence_text, capability_pool
             )
@@ -132,6 +148,157 @@ class LocalExplanationEngine:
                 "本次已自动改用本地课程知识库组织讲解；配置正确的星火 API 后可恢复 AI 生成。"
             )
             return template
+
+    def _build_lesson_outline(
+        self, context: dict[str, Any], template: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """确定性大纲：不调 LLM，从教学契约 + 能力池推导分节顺序。
+
+        输出 ``[{section_title, section_focus, requested_blocks}]``，节序固定为
+        概念逐节 → 应用示例与步骤 → 常见误区 → 自查要点；上限 6 节。无契约时
+        回落到模板的非 route 块类型做一节。每节 requested_blocks ⊆ 能力池。
+
+        概念节按预算截断（6 - 固定节数），确保固定节（尤其"自查要点"自测题）
+        不被最终 [:6] 截掉；契约概念再多也不挤占固定节。
+        """
+        contract = _as_dict(context.get("teaching_contract"))
+        pool = {str(item).strip().lower() for item in self._capability_pool(context)}
+        outline: list[dict[str, Any]] = []
+        fixed_count = 0
+        if pool & {"steps", "example", "workplace"}:
+            fixed_count += 1
+        if "warning" in pool:
+            fixed_count += 1
+        if "check" in pool:
+            fixed_count += 1
+        concept_cap = max(1, 6 - fixed_count)
+        for concept in _as_list(contract.get("concepts")):
+            if not isinstance(concept, dict):
+                continue
+            title = str(
+                concept.get("title") or concept.get("concept_name") or ""
+            ).strip()
+            if not title:
+                continue
+            outline.append(
+                {
+                    "section_title": f"概念 · {title}",
+                    "section_focus": title,
+                    "requested_blocks": ["concept"],
+                }
+            )
+            if len(outline) >= concept_cap:
+                break
+        if pool & {"steps", "example", "workplace"}:
+            outline.append(
+                {
+                    "section_title": "应用示例与步骤",
+                    "section_focus": "岗位场景、实施步骤与示例",
+                    "requested_blocks": [
+                        block_type
+                        for block_type in ("workplace", "steps", "example")
+                        if block_type in pool
+                    ],
+                }
+            )
+        if "warning" in pool:
+            outline.append(
+                {
+                    "section_title": "常见误区",
+                    "section_focus": "易错点与边界",
+                    "requested_blocks": ["warning"],
+                }
+            )
+        if "check" in pool:
+            outline.append(
+                {
+                    "section_title": "自查要点",
+                    "section_focus": "自查题",
+                    "requested_blocks": ["check"],
+                }
+            )
+        if not outline:
+            fallback_types = [
+                block_type
+                for block_type in (
+                    "concept",
+                    "steps",
+                    "example",
+                    "workplace",
+                    "warning",
+                    "standard",
+                    "safety",
+                    "check",
+                )
+                if block_type in pool
+            ]
+            if not fallback_types:
+                fallback_types = ["concept"]
+            outline.append(
+                {
+                    "section_title": "核心讲解",
+                    "section_focus": "本节核心内容",
+                    "requested_blocks": fallback_types,
+                }
+            )
+        return outline[:6]
+
+    def _generate_sectioned_lesson(
+        self,
+        workflow_payload: dict[str, Any],
+        context: dict[str, Any],
+        template: dict[str, Any],
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> dict[str, Any]:
+        """大纲先行 + 分节生成：逐节调 LLM，空节跳过，全空抛 parse。
+
+        任一 SparkError 都沿整篇模板回退（fallback 语义保持整篇级）；
+        仅"本节的 LLM 输出是合法空数组"时跳过该节不失败，防单节无来源拖垮全篇。
+        """
+        capability_pool = self._capability_pool(context)
+        kb_text = str(workflow_payload.get("kb_text") or "").strip()
+        evidence_text = self._web_evidence_text(
+            _as_dict(context.get("web_evidence_pack"))
+        )
+        outline = self._build_lesson_outline(context, template)
+        total = len(outline)
+        if progress_callback:
+            progress_callback(
+                {"phase": "generating", "current": 0, "total": total, "label": "正在整理大纲"}
+            )
+        section_blocks: list[dict[str, Any]] = []
+        for index, section in enumerate(outline, start=1):
+            messages = self._learning_prompt(
+                context,
+                kb_text,
+                evidence_text,
+                capability_pool,
+                section_scope=section,
+            )
+            text = self._llm_text(messages)
+            blocks = self._parse_lesson_blocks(
+                text, capability_pool=capability_pool, allow_empty=True
+            )
+            section_blocks.extend(blocks)
+            if progress_callback:
+                progress_callback(
+                    {
+                        "phase": "generating",
+                        "current": index,
+                        "total": total,
+                        "label": f"正在生成 {section['section_title']}",
+                    }
+                )
+        if not section_blocks:
+            raise SparkError("parse", "分节生成未产出任何内容块")
+        result = dict(template)
+        result["content_blocks"] = section_blocks
+        result["generation_mode"] = "local_llm"
+        result["source_status"] = "llm_generated"
+        result["fallback_used"] = False
+        result["lesson_outline"] = outline
+        result["section_count"] = total
+        return result
 
     def generate_candidate_lesson(
         self,
@@ -204,12 +371,14 @@ class LocalExplanationEngine:
         kb_text: str,
         evidence_text: str,
         capability_pool: list[str],
+        *,
+        section_scope: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         target = _as_dict(context.get("current_knowledge_point"))
         contract = _as_dict(context.get("teaching_contract"))
         objective = str(context.get("learning_objective") or "").strip()
         system = (
-            "你是“知行课径”Java 专业方向的章节讲解生成器，只输出结构化讲解正文。\n"
+            "你是“知行课径”计算机信息技术专业群的章节讲解生成器，只输出结构化讲解正文。\n"
             "约束：\n"
             "1. 仅可依据输入中的“本地知识库条目”与“联网证据包”组织内容；"
             "输入未提供的结论一律不编造，写“该点暂无可靠依据”。\n"
@@ -219,7 +388,12 @@ class LocalExplanationEngine:
             "{\"type\", \"title\", \"content\" 或 {\"items\"}, \"source\"}，"
             "type 只能从能力池中选择。\n"
             "5. 使用简体中文；代码类知识点必须给出带说明的最小可运行示例。\n"
-            "6. 不要输出练习题、判题、评分或要求用户作答的内容。"
+            "6. 仅“check”类型的区块可输出结构化自测题：携带 question_type（只取 "
+            "choice 或 fill_blank），choice 附 options（选项键值对）与 answer，"
+            "fill_blank 附 accepted_answers；答案必须来自输入资料、不得编造；"
+            "无法给出确定正确答案时输出不带 question_type 的纯思考题。\n"
+            "7. 其余类型的区块不得携带 question_type、options、answer、accepted_answers "
+            "等判题字段。"
         )
         parts: list[str] = []
         parts.append("## 当前知识点\n" + _json_text(target))
@@ -233,12 +407,31 @@ class LocalExplanationEngine:
         parts.append("## 可用能力池\n" + (", ".join(capability_pool) if capability_pool else "concept, steps, example, warning, check"))
         parts.append("## 本地知识库条目\n" + (kb_text or "（无本地知识库条目）"))
         parts.append("## 联网证据包\n" + (evidence_text or "（无联网证据）"))
-        parts.append(
-            "## 结构提示\n"
-            "请参考以下教学顺序组织区块：连接目标 → 概念 → 岗位场景 → 步骤 → 示例 → "
-            "常见误区 → 自查要点。每个区块必须标注可溯源的来源（教材/标准/网页 URL），"
-            "不得虚构来源；某一块无可靠依据时不要强行生成该块。"
-        )
+        if section_scope is not None:
+            requested = ", ".join(
+                str(item)
+                for item in _as_list(section_scope.get("requested_blocks"))
+                if str(item).strip()
+            ) or "concept"
+            parts.append(
+                "## 本节范围（覆盖下面的结构提示，本次只生成这一小节）\n"
+                f"小节标题：{section_scope.get('section_title') or ''}\n"
+                f"本节重点：{section_scope.get('section_focus') or ''}\n"
+                f"允许输出的区块类型：{requested}\n"
+                "不要输出属于其他小节的内容；本节无可靠依据时返回空数组 []。"
+            )
+            parts.append(
+                "## 结构提示\n"
+                "每个区块必须标注可溯源的来源（教材/标准/网页 URL），不得虚构来源；"
+                "某一块无可靠依据时不要强行生成该块。"
+            )
+        else:
+            parts.append(
+                "## 结构提示\n"
+                "请参考以下教学顺序组织区块：连接目标 → 概念 → 岗位场景 → 步骤 → 示例 → "
+                "常见误区 → 自查要点。每个区块必须标注可溯源的来源（教材/标准/网页 URL），"
+                "不得虚构来源；某一块无可靠依据时不要强行生成该块。"
+            )
         return [
             {"role": "system", "content": system},
             {"role": "user", "content": "\n\n".join(parts)},
@@ -305,7 +498,11 @@ class LocalExplanationEngine:
     # ------------------------------------------------------------------
 
     def _parse_lesson_blocks(
-        self, text: str, *, capability_pool: list[str] | None = None
+        self,
+        text: str,
+        *,
+        capability_pool: list[str] | None = None,
+        allow_empty: bool = False,
     ) -> list[dict[str, Any]]:
         array = self._extract_json_array(text)
         if array is None:
@@ -320,6 +517,8 @@ class LocalExplanationEngine:
             raise SparkError("parse", "讲解输出不是 JSON 数组")
         blocks = normalize_explanation_blocks(parsed)
         if not blocks:
+            if allow_empty:
+                return []
             raise SparkError("parse", "讲解输出为空数组")
         pool = {str(item).strip().lower() for item in (capability_pool or []) if str(item).strip()}
         if pool:
@@ -334,7 +533,44 @@ class LocalExplanationEngine:
             block_type = str(block.get("block_type") or "").lower()
             if block_type == "code" and not str(block.get("code") or "").strip():
                 raise SparkError("parse", "代码块缺少 code 字段")
+            self._validate_check_block(block)
         return blocks
+
+    def _validate_check_block(self, block: dict[str, Any]) -> None:
+        """校验 check 块的结构化自测字段；不合法则原地降级为展示型思考题。
+
+        合法判定：choice 需非空 options 且 answer ∈ 选项键；fill_blank 需非空
+        accepted_answers。校验失败原地移除判题字段（question_type/options/answer/
+        accepted_answers/explanation），让块作为纯思考题展示，避免误导判分。
+        """
+        if str(block.get("block_type") or "").lower() != "check":
+            return
+        question_type = str(block.get("question_type") or "").strip().lower()
+        if not question_type:
+            return
+        valid = False
+        if question_type == "choice":
+            options = block.get("options")
+            answer = str(block.get("answer") or "").strip()
+            if isinstance(options, dict) and options:
+                valid = bool(answer) and answer in {
+                    str(key).strip() for key in options.keys()
+                }
+        elif question_type == "fill_blank":
+            accepted = block.get("accepted_answers")
+            accepted_items = accepted if isinstance(accepted, list) else [accepted]
+            valid = any(
+                str(item or "").strip() for item in accepted_items
+            )
+        if not valid:
+            for key in (
+                "question_type",
+                "options",
+                "answer",
+                "accepted_answers",
+                "explanation",
+            ):
+                block.pop(key, None)
 
     def _parse_review_steps(
         self, text: str, context: dict[str, Any]

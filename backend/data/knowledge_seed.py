@@ -11,9 +11,20 @@
 - 待办（《专业群定位》第 8.4 节）：确定《Java 面向对象程序设计》实训指导书
   书名/版本后回填页码；当前 source 以《Java 核心技术·卷I》权威教材为准，未臆造页码。
 
+方向概览知识层（KN_GROUP_*，见《专业群定位》第 8.6 节方向定位口径）：
+- 专业群是宽口径岗位群（软件技术 / 计算机应用技术 / 计算机网络技术 / 大数据技术 /
+  人工智能技术应用），Java 应用开发只是软件技术方向的岗位之一，不得窄化为"只学 Java"。
+- KN_GROUP_* 共 31 条（5 方向各 4 条 + 总览/云计算 6 条 + 跨方向共享基础 5 条：
+  数据库/Web前端/软件测试/操作系统/网络安全入门），来源为教育部《职业教育专业目录
+  （2021年）》专业简介与公开课程大纲；仅服务对话问答的知识检索（FTS/LIKE），
+  不进入测评、画像与掌握度口径。
+- 检索约定：KN_GROUP_* 条目标题/正文/关键词刻意避开 Java 面向对象专属词（类、对象、
+  继承、封装、多态、集合、异常、接口、数组、线程、面向对象、Java 等），使"继承是
+  什么"等 Java 概念题仍命中 KN_JAVA_*，而"软件技术学什么"等方向题命中方向词。
+
 字段说明：entry_id / knowledge_point_id / title / category / content / source / source_type /
 document_id / locator / safety / job_role / action / keywords。
-命名规则：KN-JAVA-{序号}；safety=1 表示该条含安全/规范要点。
+命名规则：KN-JAVA-{序号}、KN-GROUP-{序号}；safety=1 表示该条含安全/规范要点。
 """
 KNOWLEDGE_ENTRIES: list[dict] = [
     {
@@ -856,6 +867,491 @@ KNOWLEDGE_ENTRIES: list[dict] = [
         "safety": 0,
         "job_role": "Java 应用开发工程师",
         "keywords": "io Java"
+    },
+
+    # ============================================================
+    # 方向概览知识层 KN_GROUP_*（专业群宽口径，仅服务对话问答检索）
+    # 来源：教育部《职业教育专业目录（2021年）》专业简介 + 公开课程大纲。
+    # 约定：正文/关键词避开 Java 面向对象专属词，避免抢答 Java 概念题。
+    # ============================================================
+
+    # ---- 专业群总览 ----
+    {
+        "entry_id": "KN-GROUP-01",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "计算机信息技术专业群包含哪些专业方向",
+        "category": "concept",
+        "action": "concept",
+        "content": "计算机信息技术专业群对接软件和信息技术服务产业链，通常覆盖五个专业方向：软件技术、计算机应用技术、计算机网络技术、大数据技术、人工智能技术应用。它们共享计算机基础，又各有专长：软件技术偏应用开发，计算机应用偏系统使用与维护，计算机网络偏网络构建与运维，大数据偏数据处理与分析，人工智能偏智能应用落地。专业群内课程互选、实训互认，学习者在掌握共性基础后可向任一方向成长，没有哪一个方向可以代表整个专业群。",
+        "source": "教育部《职业教育专业目录（2021年）》专业简介；专业群建设公开资料",
+        "source_type": "directory",
+        "document_id": "GROUP-OVERVIEW-01",
+        "locator": "方向概览知识层 · 专业群总览",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群 · 多方向岗位群",
+        "keywords": "专业群 计算机信息技术 专业方向 软件技术 计算机应用 计算机网络 大数据 人工智能 有哪些"
+    },
+    {
+        "entry_id": "KN-GROUP-02",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "从产业链到岗位群：专业群对接哪些岗位",
+        "category": "concept",
+        "action": "concept",
+        "content": "专业群建设的逻辑是\"产业链→专业群→岗位群\"：软件和信息技术服务业有应用开发、系统运维、网络运维、数据处理、智能化应用等岗位需求，专业群按这些岗位群反推课程与实训。对应到具体岗位群——软件开发岗群（应用开发工程师、前端开发、软件测试）、系统运维岗群（运维、技术支持）、网络运维岗群（网络工程师、安全运维）、数据岗群（数据分析师、大数据开发）、智能应用岗群（AI 应用开发、算法助理）。学哪个方向，本质是选进入哪个岗位群的入口。",
+        "source": "教育部《职业教育专业目录（2021年）》专业简介；《专业群定位与场景说明_计算机信息技术.md》",
+        "source_type": "directory",
+        "document_id": "GROUP-OVERVIEW-02",
+        "locator": "方向概览知识层 · 专业群总览",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群 · 多方向岗位群",
+        "keywords": "产业链 岗位群 就业 对口岗位 应用开发 系统运维 网络运维 数据分析 智能应用"
+    },
+    {
+        "entry_id": "KN-GROUP-03",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "零基础怎么选专业方向",
+        "category": "steps",
+        "action": "steps",
+        "content": "按四步选：1) 问兴趣——喜欢写程序、造功能，优先软件技术或人工智能；喜欢摆弄设备、建网络，看计算机网络；喜欢处理数据、找规律，看大数据或计算机应用。2) 问特长——逻辑思维强选软件/人工智能，动手操作强选网络/计算机应用。3) 问目标岗位——想进开发岗选软件技术，想进运维岗选计算机应用或网络，想做数据岗选大数据，想碰智能化选人工智能。4) 先修共性基础——不论选哪个方向，都从计算机基础、操作系统、程序设计入门课开始，可先学一学期再定方向。",
+        "source": "教育部《职业教育专业目录（2021年）》专业简介；专业群建设公开资料",
+        "source_type": "directory",
+        "document_id": "GROUP-OVERVIEW-03",
+        "locator": "方向概览知识层 · 专业群总览",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群 · 多方向岗位群",
+        "keywords": "选方向 零基础 入门 兴趣 特长 就业目标 怎么选"
+    },
+    {
+        "entry_id": "KN-GROUP-04",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "零基础入门专业群先学什么",
+        "category": "steps",
+        "action": "steps",
+        "content": "专业群各方向共享同一套基础，零基础按这个顺序走：第一阶段计算机基础（硬件、操作系统、文件管理）与网络基础（IP 地址、局域网、协议）；第二阶段程序设计入门（用一门语言学会变量、分支、循环、函数）；第三阶段数据库基础（SQL 增删改查）；第四阶段根据所选方向进入专业核心。一学期内完成前两阶段即可形成方向判断力，再选方向不迟。",
+        "source": "教育部《职业教育专业目录（2021年）》专业简介；公开课程大纲",
+        "source_type": "curriculum",
+        "document_id": "GROUP-OVERVIEW-04",
+        "locator": "方向概览知识层 · 专业群总览",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群 · 多方向岗位群",
+        "keywords": "零基础 入门路径 计算机基础 网络基础 程序设计 数据库 SQL 先学什么"
+    },
+    {
+        "entry_id": "KN-GROUP-05",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "选方向的三个常见误区",
+        "category": "warning",
+        "action": "warning",
+        "content": "误区一\"只学某一个开发语言才算就业\"——专业群是岗位群整体，网络、数据、智能方向都有真实岗位需求，方向间还可以互认课程。误区二\"等学完基础再选方向\"——基础永远学不完，建议一边学基础一边了解方向，第一学期末就定方向。误区三\"现在最热的一定适合自己\"——热门方向竞争也大，结合特长与实习机会选，而不是只看热度。",
+        "source": "教育部《职业教育专业目录（2021年）》专业简介；专业群建设公开资料",
+        "source_type": "directory",
+        "document_id": "GROUP-OVERVIEW-05",
+        "locator": "方向概览知识层 · 专业群总览",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群 · 多方向岗位群",
+        "keywords": "误区 选方向 就业 热门 专业群 常见错误"
+    },
+    {
+        "entry_id": "KN-GROUP-06",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "云计算是什么：专业群里的底层能力",
+        "category": "concept",
+        "action": "concept",
+        "content": "云计算是把计算、存储、网络资源按需提供和使用的服务模式，分为基础设施层（IaaS，提供服务器与虚拟机）、平台层（PaaS，提供开发运行环境）、软件层（SaaS，直接用应用）。它是专业群各方向都要用的底层基础设施：开发岗把应用部署到云上，网络岗管云上网络与安全，数据岗用云上的数据仓库，AI 岗在云端跑模型。专业群通常不把云计算单独设为主方向，而是作为贯穿各方向的底层能力，结合实训内容带入学习。",
+        "source": "云计算服务模式公开定义（IaaS/PaaS/SaaS）；专业群建设公开资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-OVERVIEW-06",
+        "locator": "方向概览知识层 · 专业群总览",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群 · 多方向岗位群",
+        "keywords": "云计算 云服务 IaaS PaaS SaaS 部署 基础设施 是什么"
+    },
+
+    # ---- 软件技术方向 ----
+    {
+        "entry_id": "KN-GROUP-07",
+        "knowledge_point_id": "KN_GROUP_SOFTWARE",
+        "title": "软件技术方向学什么",
+        "category": "concept",
+        "action": "concept",
+        "content": "软件技术方向培养软件开发、测试与维护能力。核心课程包括：程序设计基础、数据结构与算法、数据库应用、Web 前端与后端开发、软件工程、软件测试、项目管理等。实训以完整业务系统开发为主线，从需求分析、设计、编码、测试到交付全流程走一遍。这个方向重逻辑与编码，需要多敲代码积累手感；具体的开发语言与框架由各校依据行业用人需求设置（常见以后端开发语言为主线）。",
+        "source": "教育部《职业教育专业目录（2021年）》软件技术专业简介；公开课程大纲",
+        "source_type": "curriculum",
+        "document_id": "GROUP-SOFTWARE-01",
+        "locator": "方向概览知识层 · 软件技术方向",
+        "safety": 0,
+        "job_role": "软件技术方向（应用开发/测试/实施岗位群）",
+        "keywords": "软件技术 学什么 核心课程 开发 数据结构 数据库 Web 软件工程 软件测试"
+    },
+    {
+        "entry_id": "KN-GROUP-08",
+        "knowledge_point_id": "KN_GROUP_SOFTWARE",
+        "title": "软件技术方向对口岗位与就业",
+        "category": "workplace",
+        "action": "workplace",
+        "content": "软件技术方向的对口岗位群集中在三大岗位群：应用开发岗位群（应用开发工程师、后端开发、前端开发）、质量保障岗位群（软件测试工程师、测试开发）、交付运维岗位群（实施工程师、技术支持）。就业主线一般是先做开发或测试岗积累项目经验，再向高级开发、技术管理或架构方向进阶。程序设计赛事与竞赛也是本方向常见的提升路径。",
+        "source": "公开岗位需求与就业方向资料；专业群建设公开资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-SOFTWARE-02",
+        "locator": "方向概览知识层 · 软件技术方向",
+        "safety": 0,
+        "job_role": "软件技术方向（应用开发/测试/实施岗位群）",
+        "keywords": "软件技术 对口岗位 就业 应用开发工程师 前端 软件测试 实施 技术支持"
+    },
+    {
+        "entry_id": "KN-GROUP-09",
+        "knowledge_point_id": "KN_GROUP_SOFTWARE",
+        "title": "软件技术方向常见疑问",
+        "category": "warning",
+        "action": "warning",
+        "content": "常见疑问：一、\"是不是只写代码\"——不只写代码，还包括需求沟通、设计、测试、文档与交付，编码约占一半。二、\"数学差能不能学\"——软件技术对数学的要求是够用即可，重点是逻辑清晰。三、\"要不要会英语\"——能看懂变量命名和官方文档关键词即可，不需要通过等级考试才能学。四、\"和计算机应用方向的区别\"——软件技术重\"从零造系统\"，计算机应用重\"用好和维护系统\"。",
+        "source": "公开课程大纲与就业问答资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-SOFTWARE-03",
+        "locator": "方向概览知识层 · 软件技术方向",
+        "safety": 0,
+        "job_role": "软件技术方向（应用开发/测试/实施岗位群）",
+        "keywords": "软件技术 常见问题 数学 英语 代码 区别 计算机应用"
+    },
+    {
+        "entry_id": "KN-GROUP-10",
+        "knowledge_point_id": "KN_GROUP_SOFTWARE",
+        "title": "软件技术方向往深走学什么",
+        "category": "steps",
+        "action": "steps",
+        "content": "软件技术从入门到进阶一般经历三个阶段：第一阶段打好语言与数据结构基本功；第二阶段做完整业务系统实训，掌握数据库设计与 Web 应用开发；第三阶段按岗位方向进阶——偏开发的可学微服务、容器化部署、自动化测试与持续集成，偏数据可持续向大数据方向延伸。职业成长上，从初级开发逐步积累项目经验，向资深开发或技术管理发展。",
+        "source": "公开课程大纲与职业发展资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-SOFTWARE-04",
+        "locator": "方向概览知识层 · 软件技术方向",
+        "safety": 0,
+        "job_role": "软件技术方向（应用开发/测试/实施岗位群）",
+        "keywords": "软件技术 进阶 微服务 容器化 持续集成 职业发展 怎么学"
+    },
+
+    # ---- 计算机应用技术方向 ----
+    {
+        "entry_id": "KN-GROUP-11",
+        "knowledge_point_id": "KN_GROUP_COMPUTER_APPLICATION",
+        "title": "计算机应用技术方向学什么",
+        "category": "concept",
+        "action": "concept",
+        "content": "计算机应用技术方向培养懂系统、会维护、能支持的业务与系统应用能力。核心课程包括计算机硬件与组装维护、操作系统管理、办公应用与信息化文档、数据库应用、信息系统使用与维护、网络基础、信息安全基础等。这个方向更强调\"用好、管好、修好\"计算机系统，是企事业单位信息化日常运转离不开的支撑力量。",
+        "source": "教育部《职业教育专业目录（2021年）》计算机应用技术专业简介；公开课程大纲",
+        "source_type": "curriculum",
+        "document_id": "GROUP-CA-01",
+        "locator": "方向概览知识层 · 计算机应用技术方向",
+        "safety": 0,
+        "job_role": "计算机应用技术方向（系统与业务支持岗位群）",
+        "keywords": "计算机应用技术 学什么 系统维护 硬件 操作系统 数据库 信息系统 信息安全"
+    },
+    {
+        "entry_id": "KN-GROUP-12",
+        "knowledge_point_id": "KN_GROUP_COMPUTER_APPLICATION",
+        "title": "计算机应用技术方向对口岗位",
+        "category": "workplace",
+        "action": "workplace",
+        "content": "计算机应用技术方向对口岗位集中在系统与业务支持岗位：桌面运维与技术支持工程师、信息系统管理员、办公信息化实施顾问、设备与弱电管理、初级数据库管理等。晋升路线是从一线支持向系统管理、项目管理或某个业务领域的 IT 主管发展。就业面宽、门槛相对友好，是专业群内\"稳就业\"的方向。",
+        "source": "公开岗位需求与就业方向资料；专业群建设公开资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-CA-02",
+        "locator": "方向概览知识层 · 计算机应用技术方向",
+        "safety": 0,
+        "job_role": "计算机应用技术方向（系统与业务支持岗位群）",
+        "keywords": "计算机应用技术 对口岗位 就业 桌面运维 技术支持 信息管理员 实施顾问"
+    },
+    {
+        "entry_id": "KN-GROUP-13",
+        "knowledge_point_id": "KN_GROUP_COMPUTER_APPLICATION",
+        "title": "计算机应用技术和软件技术的区别",
+        "category": "warning",
+        "action": "warning",
+        "content": "两者最大的区别在\"造系统\"还是\"用系统\"：软件技术方向以开发为主，学习从需求到编码再到交付，产出的是一套新系统；计算机应用技术方向以使用和维护为主，学习怎么部署、配置、排障、支持用户用好现有系统。对口的岗位一个偏开发、一个偏运维与业务支持。两者共享数据库、网络等基础课，专业群内可以互相补充学习。",
+        "source": "公开课程大纲与专业简介资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-CA-03",
+        "locator": "方向概览知识层 · 计算机应用技术方向",
+        "safety": 0,
+        "job_role": "计算机应用技术方向（系统与业务支持岗位群）",
+        "keywords": "区别 计算机应用 软件技术 开发 运维 用系统 造系统 有什么不同"
+    },
+    {
+        "entry_id": "KN-GROUP-14",
+        "knowledge_point_id": "KN_GROUP_COMPUTER_APPLICATION",
+        "title": "计算机应用技术方向怎么发展",
+        "category": "steps",
+        "action": "steps",
+        "content": "计算机应用技术方向的发展路径：前期把计算机维护、操作系统、数据库基础打牢，能独立完成电脑装配、系统安装、常见故障排查；中期结合信息系统运维和办公信息化，把业务理解做深，能独立支持一个部门的信息化运转；后期可向云运维、安全运维或某一行业的 IT 管理岗发展，也可以补学自动化脚本把重复维护工作脚本化。职业上从一线支持逐步走向管理或专家岗。",
+        "source": "公开课程大纲与职业发展资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-CA-04",
+        "locator": "方向概览知识层 · 计算机应用技术方向",
+        "safety": 0,
+        "job_role": "计算机应用技术方向（系统与业务支持岗位群）",
+        "keywords": "计算机应用 发展路径 维护 运维 脚本化 职业发展 怎么发展"
+    },
+
+    # ---- 计算机网络技术方向 ----
+    {
+        "entry_id": "KN-GROUP-15",
+        "knowledge_point_id": "KN_GROUP_NETWORK",
+        "title": "计算机网络技术方向学什么",
+        "category": "concept",
+        "action": "concept",
+        "content": "计算机网络技术方向培养网络构建、配置、管理与安全运维能力。核心课程包括计算机网络基础、路由与交换技术、网络设备配置（交换机与路由器）、网络布线、网络安全基础、网络操作系统、无线网络、云网络基础等。这个方向重动手：搭网线、配设备、排障是基本功，理解数据在网络里怎么转发是核心。",
+        "source": "教育部《职业教育专业目录（2021年）》计算机网络技术专业简介；公开课程大纲",
+        "source_type": "curriculum",
+        "document_id": "GROUP-NETWORK-01",
+        "locator": "方向概览知识层 · 计算机网络技术方向",
+        "safety": 0,
+        "job_role": "计算机网络技术方向（网络构建与运维岗位群）",
+        "keywords": "计算机网络 学什么 路由 交换 网络设备 布线 网络安全 无线网络"
+    },
+    {
+        "entry_id": "KN-GROUP-16",
+        "knowledge_point_id": "KN_GROUP_NETWORK",
+        "title": "网络技术方向对口岗位与证书",
+        "category": "workplace",
+        "action": "workplace",
+        "content": "网络方向对口岗位包括网络工程师、网络运维工程师、安全运维工程师、综合布线与弱电工程实施、售前与售后技术支持等。常见考证路径：软考（如网络工程师）对就业和职称评定都有帮助；厂商认证（路由交换、网络安全方向）对进入设备厂商或集成商体系有帮助。起步可以从网络运维或实施岗做起，向资深网络工程师或安全方向进阶。",
+        "source": "公开岗位需求与认证资料；专业群建设公开资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-NETWORK-02",
+        "locator": "方向概览知识层 · 计算机网络技术方向",
+        "safety": 0,
+        "job_role": "计算机网络技术方向（网络构建与运维岗位群）",
+        "keywords": "计算机网络 对口岗位 就业 网络工程师 网络运维 安全运维 证书 软考"
+    },
+    {
+        "entry_id": "KN-GROUP-17",
+        "knowledge_point_id": "KN_GROUP_NETWORK",
+        "title": "网络方向常见疑问",
+        "category": "warning",
+        "action": "warning",
+        "content": "常见疑问：一、\"是不是天天拉网线\"——布线只是入门环节，更核心的是网络规划、设备配置、故障排查与安全防护。二、\"要不要数学很好\"——网络方向更看重空间感、耐心和排障思路，数学要求不高。三、\"需要考认证吗\"——认证是加分项不是前提，先考软考网络工程师性价比高，厂商认证等就业后再定。四、\"和软件技术谁好就业\"——就业方向不同，网络方向稳定、重运维经验积累。",
+        "source": "公开课程大纲与就业问答资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-NETWORK-03",
+        "locator": "方向概览知识层 · 计算机网络技术方向",
+        "safety": 0,
+        "job_role": "计算机网络技术方向（网络构建与运维岗位群）",
+        "keywords": "计算机网络 常见问题 布线 数学 认证 就业"
+    },
+    {
+        "entry_id": "KN-GROUP-18",
+        "knowledge_point_id": "KN_GROUP_NETWORK",
+        "title": "网络方向怎么往深走",
+        "category": "steps",
+        "action": "steps",
+        "content": "网络方向进阶路径：第一阶段打牢网络基础（OSI 分层、IP 编址、子网划分）；第二阶段练设备实操（交换机与路由器配置、VLAN、静态与动态路由）；第三阶段上安全与自动化（防火墙、访问控制、网络安全攻防、脚本自动化）；更高阶可向云网络、软件定义网络或安全攻防专家方向发展。学习建议是理论配设备模拟器，动手重于背书，每学一个协议就上设备验证一遍。",
+        "source": "公开课程大纲与职业发展资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-NETWORK-04",
+        "locator": "方向概览知识层 · 计算机网络技术方向",
+        "safety": 0,
+        "job_role": "计算机网络技术方向（网络构建与运维岗位群）",
+        "keywords": "计算机网络 进阶 设备实操 VLAN 路由 安全 自动化 职业发展"
+    },
+
+    # ---- 大数据技术方向 ----
+    {
+        "entry_id": "KN-GROUP-19",
+        "knowledge_point_id": "KN_GROUP_BIG_DATA",
+        "title": "大数据技术方向学什么",
+        "category": "concept",
+        "action": "concept",
+        "content": "大数据技术方向培养海量数据的采集、清洗、存储、分析与应用能力。核心课程包括数据库与 SQL、Python 数据分析、数据采集与清洗、数据仓库、大数据平台（分布式存储与计算）、数据可视化、数据分析报告写作等。这个方向的链条是\"数据从哪来、怎么存、怎么算、怎么用\"，重 SQL 与数据处理逻辑。",
+        "source": "教育部《职业教育专业目录（2021年）》大数据技术专业简介；公开课程大纲",
+        "source_type": "curriculum",
+        "document_id": "GROUP-BIGDATA-01",
+        "locator": "方向概览知识层 · 大数据技术方向",
+        "safety": 0,
+        "job_role": "大数据技术方向（数据开发与分析岗位群）",
+        "keywords": "大数据 学什么 数据采集 数据清洗 SQL Python 数据仓库 数据可视化"
+    },
+    {
+        "entry_id": "KN-GROUP-20",
+        "knowledge_point_id": "KN_GROUP_BIG_DATA",
+        "title": "大数据方向对口岗位",
+        "category": "workplace",
+        "action": "workplace",
+        "content": "大数据方向对口岗位分两大方向：技术开发方向——大数据开发工程师、数据仓库工程师、ETL 工程师（负责数据抽取、转换、加载）；业务分析方向——数据分析师、商业分析助理、数据可视化工程师。起步常见路径是从 SQL 取数、报表与数据清洗做起，向平台开发或业务分析两个方向分别深耕。",
+        "source": "公开岗位需求与就业方向资料；专业群建设公开资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-BIGDATA-02",
+        "locator": "方向概览知识层 · 大数据技术方向",
+        "safety": 0,
+        "job_role": "大数据技术方向（数据开发与分析岗位群）",
+        "keywords": "大数据 对口岗位 就业 大数据开发 数据分析师 数据仓库 ETL 数据可视化"
+    },
+    {
+        "entry_id": "KN-GROUP-21",
+        "knowledge_point_id": "KN_GROUP_BIG_DATA",
+        "title": "大数据方向常见疑问",
+        "category": "warning",
+        "action": "warning",
+        "content": "常见疑问：一、\"是不是要很高数学\"——数据分析岗用到的多是描述统计与业务理解，高中数学够用；算法研发岗才要求更高数学。二、\"和计算机应用方向的数据库课什么关系\"——数据库是共同基础，大数据方向在此基础上再学分布式平台与数据工程，属于延伸。三、\"没有海量数据怎么练\"——竞赛与实训平台都提供行业公开数据集，也可以从整理自己感兴趣的数据开始。四、\"只会 SQL 能找到工作吗\"——能，很多数据岗位从 SQL 与报表起步。",
+        "source": "公开课程大纲与就业问答资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-BIGDATA-03",
+        "locator": "方向概览知识层 · 大数据技术方向",
+        "safety": 0,
+        "job_role": "大数据技术方向（数据开发与分析岗位群）",
+        "keywords": "大数据 常见问题 数学 SQL 数据量 就业 数据分析"
+    },
+    {
+        "entry_id": "KN-GROUP-22",
+        "knowledge_point_id": "KN_GROUP_BIG_DATA",
+        "title": "大数据方向怎么发展",
+        "category": "steps",
+        "action": "steps",
+        "content": "大数据方向进阶路径：第一阶段把 SQL 与数据可视化练到熟练，能独立完成取数、清洗、出报表；第二阶段学数据分析流程与报告写作，掌握一个分析工具链；第三阶段按方向选择——偏开发的学习分布式计算与数据仓库建设，偏业务的深入行业分析与指标体系设计。赛事与项目经历对数据方向尤其重要，多攒真实数据集上的项目。",
+        "source": "公开课程大纲与职业发展资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-BIGDATA-04",
+        "locator": "方向概览知识层 · 大数据技术方向",
+        "safety": 0,
+        "job_role": "大数据技术方向（数据开发与分析岗位群）",
+        "keywords": "大数据 进阶 发展路径 SQL 数据分析 分布式 职业发展"
+    },
+
+    # ---- 人工智能技术应用方向 ----
+    {
+        "entry_id": "KN-GROUP-23",
+        "knowledge_point_id": "KN_GROUP_AI",
+        "title": "人工智能技术应用方向学什么",
+        "category": "concept",
+        "action": "concept",
+        "content": "人工智能技术应用方向培养把 AI 模型用起来、部署下去的能力。核心课程包括 Python 程序设计、机器学习基础、深度学习基础、计算机视觉应用、自然语言处理应用、模型训练与部署、数据标注与评测等。这个方向重\"应用落地\"：不追求从零发明算法，而是会选模型、会调数据、会评估效果、会把它接到业务里。",
+        "source": "教育部《职业教育专业目录（2021年）》人工智能技术应用专业简介；公开课程大纲",
+        "source_type": "curriculum",
+        "document_id": "GROUP-AI-01",
+        "locator": "方向概览知识层 · 人工智能技术应用方向",
+        "safety": 0,
+        "job_role": "人工智能技术应用方向（智能应用与模型工程岗位群）",
+        "keywords": "人工智能 学什么 Python 机器学习 深度学习 计算机视觉 自然语言处理 模型部署"
+    },
+    {
+        "entry_id": "KN-GROUP-24",
+        "knowledge_point_id": "KN_GROUP_AI",
+        "title": "人工智能方向对口岗位",
+        "category": "workplace",
+        "action": "workplace",
+        "content": "人工智能技术应用方向对口岗位包括 AI 应用开发工程师、模型部署与运维工程师、算法助理与训练工程师、数据标注与评测工程师、智能客服与机器人实施等。入门岗位常见从数据标注、模型评测、AI 应用开发助理做起，积累项目后向算法应用或工程化方向进阶。这个方向更新快，持续跟开源模型与社区很重要。",
+        "source": "公开岗位需求与就业方向资料；专业群建设公开资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-AI-02",
+        "locator": "方向概览知识层 · 人工智能技术应用方向",
+        "safety": 0,
+        "job_role": "人工智能技术应用方向（智能应用与模型工程岗位群）",
+        "keywords": "人工智能 对口岗位 就业 AI 应用开发 模型部署 数据标注 算法助理"
+    },
+    {
+        "entry_id": "KN-GROUP-25",
+        "knowledge_point_id": "KN_GROUP_AI",
+        "title": "人工智能方向常见疑问",
+        "category": "warning",
+        "action": "warning",
+        "content": "常见疑问：一、\"是不是要会很高深的数学\"——做应用落地主要用现成模型与工具，核心是数据处理和工程能力，高等数学是基础但不是门槛，只有算法研发岗才需要深数学。二、\"和软件技术什么关系\"——软件技术是共性开发能力，人工智能是在此之上叠加模型应用的专项，先有开发基础再学 AI 更顺。三、\"大模型这么火我能学吗\"——可以，现在主流路径是学会调用、评测与微调模型，再结合具体业务场景做应用，正对应本方向的课程。",
+        "source": "公开课程大纲与就业问答资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-AI-03",
+        "locator": "方向概览知识层 · 人工智能技术应用方向",
+        "safety": 0,
+        "job_role": "人工智能技术应用方向（智能应用与模型工程岗位群）",
+        "keywords": "人工智能 常见问题 数学 大模型 微调 开发基础 区别"
+    },
+    {
+        "entry_id": "KN-GROUP-26",
+        "knowledge_point_id": "KN_GROUP_AI",
+        "title": "人工智能方向怎么发展",
+        "category": "steps",
+        "action": "steps",
+        "content": "人工智能方向进阶路径：第一阶段打牢 Python 与数据处理基础，能自己完成数据清洗和特征观察；第二阶段掌握机器学习和深度学习的经典模型与评估方法，能独立完成一个\"训练—评估—部署\"闭环；第三阶段按方向深耕——偏工程的学习模型部署与推理优化，偏应用的深入计算机视觉或自然语言处理的具体业务，也可以面向大模型做提示工程与检索增强应用。持续跟进开源模型迭代是基本素养。",
+        "source": "公开课程大纲与职业发展资料",
+        "source_type": "curriculum",
+        "document_id": "GROUP-AI-04",
+        "locator": "方向概览知识层 · 人工智能技术应用方向",
+        "safety": 0,
+        "job_role": "人工智能技术应用方向（智能应用与模型工程岗位群）",
+        "keywords": "人工智能 进阶 Python 训练 评估 部署 大模型 提示工程 职业发展"
+    },
+
+    # ---- 跨方向共享基础能力（2026-08-26 补充，供"问哪块都有回答"） ----
+    {
+        "entry_id": "KN-GROUP-27",
+        "knowledge_point_id": "KN_GROUP_OVERVIEW",
+        "title": "数据库MySQL怎么学",
+        "category": "steps",
+        "action": "steps",
+        "content": "数据库是专业群各方向共享的基础能力，几乎所有方向都要会用数据库存数据、查数据。入门路径三步走：第一步学 SQL 基础语法，掌握建表、增删改查（CRUD）和简单的聚合统计，这是门槛最低、也最常用的一步；第二步学表设计和索引的基本概念，理解为什么要拆表、什么字段建索引；第三步结合一门课程实践，比如用 Python 写一个小系统时把数据存进 MySQL，理解连接、事务和备份。对大数据方向，数据库是数据仓库的前置基础。",
+        "source": "公开数据库课程大纲；《职业教育专业目录（2021年）》专业基础课",
+        "source_type": "curriculum",
+        "document_id": "GROUP-DB-01",
+        "locator": "方向概览知识层 · 跨方向共享基础能力（数据库）",
+        "safety": 0,
+        "job_role": "计算机信息技术专业群（共享基础能力）",
+        "keywords": "数据库 MySQL SQL 怎么学 入门 CRUD 数据存储"
+    },
+    {
+        "entry_id": "KN-GROUP-28",
+        "knowledge_point_id": "KN_GROUP_SOFTWARE",
+        "title": "Web前端开发要学什么",
+        "category": "concept",
+        "action": "concept",
+        "content": "Web 前端开发属于软件技术方向的核心能力之一，负责把页面做出来并让用户用起来。入门主线：HTML 负责页面结构，CSS 负责样式布局，JS 负责交互逻辑，这三件是前端基本功；进阶再学工程化工具（模块化、打包）、框架（Vue、React 之一）和跨端开发（小程序、移动端适配）。前端岗位需求量大、上手门槛相对友好，适合喜欢\"做完马上能看到效果\"的学习者。",
+        "source": "公开课程大纲（Web 前端开发课程）",
+        "source_type": "curriculum",
+        "document_id": "GROUP-SW-05",
+        "locator": "方向概览知识层 · 软件技术方向（Web 前端）",
+        "safety": 0,
+        "job_role": "软件技术方向（Web 前端岗位群）",
+        "keywords": "Web前端 HTML CSS JS 学什么 前端开发 框架"
+    },
+    {
+        "entry_id": "KN-GROUP-29",
+        "knowledge_point_id": "KN_GROUP_SOFTWARE",
+        "title": "软件测试怎么入门",
+        "category": "steps",
+        "action": "steps",
+        "content": "软件测试方向从\"找错、验证功能符合要求\"入手，是软件技术方向的对口岗位之一。入门三步：第一步理解测试的核心流程——需求分析、写测试用例、执行、记录缺陷、回归验证；第二步掌握功能测试（手工测试）的基本功，会用边界值、等价划分等思路设计用例；第三步补自动化基础，学会用脚本把重复回归变成自动执行，进阶可学习性能测试、安全测试。测试岗位入门门槛不高，但很吃细心和逻辑。",
+        "source": "公开课程大纲（软件测试课程）",
+        "source_type": "curriculum",
+        "document_id": "GROUP-SW-06",
+        "locator": "方向概览知识层 · 软件技术方向（软件测试）",
+        "safety": 0,
+        "job_role": "软件技术方向（软件测试岗位群）",
+        "keywords": "软件测试 测试用例 自动化 怎么入门 功能测试 回归"
+    },
+    {
+        "entry_id": "KN-GROUP-30",
+        "knowledge_point_id": "KN_GROUP_COMPUTER_APPLICATION",
+        "title": "操作系统怎么学",
+        "category": "steps",
+        "action": "steps",
+        "content": "操作系统是计算机应用技术方向的核心基础课。入门路线：先掌握操作系统的基本组成——进程、内存管理、文件系统、设备管理，能说清\"程序运行起来系统做了什么\"；再动手实践，学会常用操作系统的安装、配置、命令行基本操作和日常维护，Windows 和 Linux 都要会用；进阶理解进程调度、并发原理，并能为后续运维、服务器管理打基础。学操作系统的关键是\"边学边装边配\"，纯看书很难入门。",
+        "source": "公开课程大纲（计算机操作系统课程）",
+        "source_type": "curriculum",
+        "document_id": "GROUP-CA-05",
+        "locator": "方向概览知识层 · 计算机应用技术方向（操作系统）",
+        "safety": 0,
+        "job_role": "计算机应用技术方向（系统与业务支持岗位群）",
+        "keywords": "操作系统 怎么学 Linux Windows 计算机应用 系统维护 入门"
+    },
+    {
+        "entry_id": "KN-GROUP-31",
+        "knowledge_point_id": "KN_GROUP_NETWORK",
+        "title": "网络安全怎么入门",
+        "category": "steps",
+        "action": "steps",
+        "content": "网络安全方向从\"让网络和系统更安全\"入手，是计算机网络技术方向的重要延伸。入门路线：先补安全基础——理解常见威胁（病毒、木马、钓鱼、弱口令）和防护手段（防火墙、杀毒软件、补丁管理、权限最小化）；再学会排查和加固，能检查一台设备的安全配置、发现常见漏洞并及时打补丁；进阶方向有安全运维、渗透测试（攻防）、安全合规等，需要持续学习和考证。入门建议先做好\"防御\"再看\"攻击\"，安全和开发不同，更讲规范与责任。",
+        "source": "公开课程大纲（网络安全基础课程）",
+        "source_type": "curriculum",
+        "document_id": "GROUP-NW-05",
+        "locator": "方向概览知识层 · 计算机网络技术方向（网络安全）",
+        "safety": 0,
+        "job_role": "计算机网络技术方向（网络安全与安全运维岗位群）",
+        "keywords": "网络安全 怎么入门 防火墙 渗透测试 安全运维 加固"
     },
 
 ]

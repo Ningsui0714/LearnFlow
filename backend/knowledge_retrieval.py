@@ -149,6 +149,14 @@ class KnowledgeEvidenceRetriever:
             )
             if relevance <= 0 or not content:
                 continue
+            if not self._source_matches_technology(
+                url,
+                f"{title} {content}",
+                knowledge_point_name,
+                learning_goal,
+                planned_query_terms,
+            ):
+                continue
             source_type, source_name = source
             evidence.append(
                 {
@@ -281,6 +289,40 @@ class KnowledgeEvidenceRetriever:
             if capability in planned_query_terms:
                 candidates.extend(fallback_urls)
         return candidates
+
+    @staticmethod
+    def _source_matches_technology(
+        url: str,
+        text: str,
+        knowledge_point_name: str,
+        learning_goal: str,
+        planned_query_terms: list[str] | None = None,
+    ) -> bool:
+        """Reject cross-language pages when the lesson has an explicit language context."""
+        context = " ".join(
+            [knowledge_point_name, learning_goal, *(planned_query_terms or [])]
+        ).casefold()
+        page = str(text or "").casefold()
+        java_context = bool(
+            re.search(r"(?<![a-z])java(?!script|[a-z])", context)
+            or re.search(r"\b(?:jdk|jvm|spring(?:\s+boot)?)\b", context)
+        )
+        if not java_context:
+            return True
+        host = (urlparse(str(url or "")).hostname or "").casefold()
+        incompatible_hosts = (
+            "docs.python.org",
+            "python.org",
+            "developer.mozilla.org",
+        )
+        if any(host == domain or host.endswith("." + domain) for domain in incompatible_hosts):
+            return False
+        return not bool(
+            re.search(
+                r"\b(?:python|javascript|typescript|node(?:\.js|js)?)\b",
+                page,
+            )
+        )
 
     @staticmethod
     def _relevance_score(
