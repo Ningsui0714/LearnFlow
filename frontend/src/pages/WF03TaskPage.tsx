@@ -206,10 +206,10 @@ export default function WF03TaskPage() {
   if (!bundle) {
     return (
       <div className="flex h-full items-center justify-center bg-slate-50 p-8">
-        <div className="max-w-md border border-red-200 bg-white p-6 text-center shadow-sm">
+        <div className="max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
           <p className="text-sm font-semibold text-slate-900">任务网页暂时无法打开</p>
           <p className="mt-2 text-xs leading-5 text-red-600">{error}</p>
-          <button type="button" onClick={load} className="mt-4 inline-flex h-9 items-center gap-1.5 bg-slate-900 px-4 text-xs font-semibold text-white">
+          <button type="button" onClick={load} className="mt-4 inline-flex h-9 items-center gap-1.5 rounded-md bg-emerald-700 px-4 text-xs font-semibold text-white hover:bg-emerald-800">
             <RefreshCw size={13} /> 重新加载
           </button>
         </div>
@@ -239,7 +239,7 @@ export default function WF03TaskPage() {
         <div
           ref={contentRef}
           onMouseUp={captureSelection}
-          className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,#ecfdf5_0,transparent_32rem)] px-4 py-6 selection:bg-amber-200 selection:text-slate-950 sm:px-7 xl:pr-[417px] 2xl:pr-7"
+          className="min-h-0 flex-1 overflow-y-auto bg-[#f4f6f3] px-4 py-6 selection:bg-amber-200 selection:text-slate-950 sm:px-7 xl:pr-[417px] 2xl:pr-7"
         >
           <WF03TaskDocument
             bundle={bundle}

@@ -96,7 +96,7 @@ export default function WF03AnnotationPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {selection && (
-          <section className="mb-3 border border-emerald-200 bg-emerald-50/60 p-3 shadow-sm">
+          <section className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 shadow-sm">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-800">当前选区</p>
@@ -113,7 +113,7 @@ export default function WF03AnnotationPanel({
               <select
                 value={feedbackCode}
                 onChange={event => setFeedbackCode(event.target.value as WF03FeedbackCode)}
-                className="mt-1 h-9 w-full border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-emerald-500"
+                className="mt-1 h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-emerald-500"
               >
                 {feedbackOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
@@ -126,7 +126,7 @@ export default function WF03AnnotationPanel({
                 onChange={event => setMessage(event.target.value)}
                 rows={3}
                 placeholder="说明这里为什么需要调整（至少 4 个字）"
-                className="mt-1 w-full resize-none border border-slate-200 bg-white px-2.5 py-2 text-xs leading-5 text-slate-800 outline-none focus:border-emerald-500"
+                className="mt-1 w-full resize-none rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs leading-5 text-slate-800 outline-none focus:border-emerald-500"
               />
             </label>
             <label className="mt-2 block text-[10px] font-medium text-slate-500">
@@ -136,14 +136,14 @@ export default function WF03AnnotationPanel({
                 onChange={event => setSuggestion(event.target.value)}
                 rows={2}
                 placeholder="写下建议的替换或补充内容"
-                className="mt-1 w-full resize-none border border-slate-200 bg-white px-2.5 py-2 text-xs leading-5 text-slate-800 outline-none focus:border-emerald-500"
+                className="mt-1 w-full resize-none rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs leading-5 text-slate-800 outline-none focus:border-emerald-500"
               />
             </label>
             <button
               type="button"
               onClick={add}
               disabled={!canAdd}
-              className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 bg-emerald-700 text-xs font-semibold text-white hover:bg-emerald-800 disabled:bg-slate-300"
+              className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-emerald-700 text-xs font-semibold text-white hover:bg-emerald-800 disabled:bg-slate-300"
             >
               <MessageSquarePlus size={14} /> 保存为待提交批注
             </button>
@@ -151,7 +151,7 @@ export default function WF03AnnotationPanel({
         )}
 
         {!selection && annotations.length === 0 && (
-          <div className="border border-dashed border-slate-300 px-4 py-8 text-center">
+          <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center">
             <MessageSquarePlus size={22} className="mx-auto text-slate-300" />
             <p className="mt-2 text-xs font-medium text-slate-600">拖选中间网页里的文字</p>
             <p className="mt-1 text-[10px] leading-4 text-slate-400">松开左键后点击“添加批注”，意见只进入复核，不会直接改写任务事实。</p>
@@ -160,9 +160,9 @@ export default function WF03AnnotationPanel({
 
         <div className="space-y-2">
           {annotations.map((annotation, index) => (
-            <article key={annotation.id} className="border border-slate-200 bg-slate-50 p-3">
+            <article key={annotation.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-start gap-2">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center bg-amber-100 text-[10px] font-bold text-amber-800">{index + 1}</span>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-amber-100 text-[10px] font-bold text-amber-800">{index + 1}</span>
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 text-[10px] leading-4 text-slate-500">“{annotation.selectedText}”</p>
                   <p className="mt-1.5 text-xs leading-5 text-slate-800">{annotation.message}</p>
@@ -186,7 +186,7 @@ export default function WF03AnnotationPanel({
           type="button"
           onClick={onSubmit}
           disabled={!annotations.length || submitting}
-          className="flex h-9 w-full items-center justify-center gap-1.5 bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300"
+          className="flex h-9 w-full items-center justify-center gap-1.5 rounded-md bg-emerald-700 text-xs font-semibold text-white hover:bg-emerald-800 disabled:bg-slate-300"
         >
           <Send size={13} /> {submitting ? '正在提交复核…' : `提交 ${annotations.length || ''} 条复核意见`}
         </button>

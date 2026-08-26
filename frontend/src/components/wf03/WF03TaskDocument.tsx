@@ -125,33 +125,32 @@ export default function WF03TaskDocument({
   )
 
   return (
-    <article className="mx-auto w-full max-w-[1040px] pb-16" data-task-document>
-      <header className="relative overflow-hidden rounded-xl bg-slate-950 px-6 py-7 text-white shadow-[0_18px_55px_rgba(15,23,42,0.2)] sm:px-9 sm:py-9">
-        <div className="pointer-events-none absolute -right-12 -top-20 h-64 w-64 rounded-full border border-emerald-300/20 bg-emerald-400/10 blur-2xl" />
-        <div className="pointer-events-none absolute bottom-0 left-0 h-px w-full bg-gradient-to-r from-emerald-400 via-cyan-300 to-transparent" />
-        <div className="relative">
-          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold tracking-[0.12em]">
-            <span className="rounded bg-emerald-400 px-2.5 py-1 text-slate-950">学习型工作任务</span>
-            <span className="rounded border border-white/15 bg-white/5 px-2.5 py-1 text-slate-300">
+    <article className="mx-auto w-full max-w-[980px] pb-16" data-task-document>
+      <header className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="h-1 bg-emerald-700" />
+        <div className="px-6 py-6 sm:px-8 sm:py-8">
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold tracking-[0.1em]">
+            <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-emerald-800">学习型工作任务</span>
+            <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-500">
               {bundle.verification_status === 'verified' ? '内容已校验' : '等待事实补证'}
             </span>
             <span className="ml-auto text-slate-400">{task.task_steps.length} 个作业阶段</span>
           </div>
-          <h1 className="mt-5 max-w-4xl text-2xl font-bold leading-tight tracking-tight sm:text-[32px]">
+          <h1 className="mt-5 max-w-4xl text-2xl font-bold leading-tight tracking-tight text-slate-950 sm:text-[30px]">
             {task.teaching_task_name || task.enterprise_task_name}
           </h1>
-          <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
+          <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
             {task.teaching_task_description || task.enterprise_task_description || '按真实工作过程完成任务并提交可检查成果。'}
           </p>
-          <div className="mt-7 grid gap-px overflow-hidden rounded-lg bg-white/10 lg:grid-cols-[1.25fr_0.75fr]">
-            <div className="bg-white/[0.045] p-4 sm:p-5">
-              <p className="text-[10px] font-semibold tracking-[0.12em] text-emerald-300">企业任务</p>
-              <p className="mt-1.5 text-sm font-semibold text-white">{task.enterprise_task_name}</p>
-              {task.enterprise_task_description && <p className="mt-1.5 text-xs leading-5 text-slate-400">{task.enterprise_task_description}</p>}
+          <div className="mt-6 grid overflow-hidden rounded-lg border border-slate-200 bg-slate-50 md:grid-cols-[1.25fr_0.75fr]">
+            <div className="border-b border-slate-200 p-4 md:border-b-0 md:border-r sm:p-5">
+              <p className="text-[10px] font-semibold tracking-[0.12em] text-emerald-700">企业任务</p>
+              <p className="mt-1.5 text-sm font-semibold text-slate-900">{task.enterprise_task_name}</p>
+              {task.enterprise_task_description && <p className="mt-1.5 text-xs leading-5 text-slate-500">{task.enterprise_task_description}</p>}
             </div>
-            <div className="bg-white/[0.045] p-4 sm:p-5">
-              <p className="text-[10px] font-semibold tracking-[0.12em] text-cyan-300">最终验收</p>
-              <p className="mt-1.5 text-xs leading-5 text-slate-300">
+            <div className="bg-emerald-50/50 p-4 sm:p-5">
+              <p className="text-[10px] font-semibold tracking-[0.12em] text-emerald-700">最终验收</p>
+              <p className="mt-1.5 text-xs leading-5 text-slate-700">
                 {expectedArtifacts[0] || finalStep?.deliverable || '完成全部步骤并提交可检查成果'}
               </p>
             </div>
@@ -225,15 +224,15 @@ export default function WF03TaskDocument({
         </div>
 
         <div className="relative mt-5">
-          <div className="absolute bottom-8 left-[26px] top-8 w-px bg-gradient-to-b from-emerald-500 via-slate-300 to-slate-200 sm:left-[35px]" />
+          <div className="absolute bottom-8 left-[22px] top-8 w-px bg-emerald-200 sm:left-[27px]" />
           <div className="space-y-4">
             {task.task_steps.map((step, index) => (
               <section
                 key={step.step_id}
-                className="group relative grid gap-3 pl-[70px] sm:pl-[90px] 2xl:grid-cols-[minmax(0,1fr)_235px]"
+                className="group relative grid gap-3 pl-[58px] sm:pl-[72px] 2xl:grid-cols-[minmax(0,1fr)_235px]"
                 data-step-id={step.step_id}
               >
-                <div className="absolute left-0 top-5 z-10 flex h-[54px] w-[54px] items-center justify-center rounded-xl border-4 border-slate-100 bg-slate-950 text-sm font-black text-white shadow-sm sm:left-2 sm:h-[58px] sm:w-[58px]">
+                <div className="absolute left-0 top-5 z-10 flex h-11 w-11 items-center justify-center rounded-xl border-4 border-slate-100 bg-emerald-700 text-xs font-black text-white shadow-sm sm:left-1 sm:h-12 sm:w-12">
                   {String(step.step || index + 1).padStart(2, '0')}
                 </div>
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition group-hover:-translate-y-0.5 group-hover:border-emerald-300 group-hover:shadow-md">
@@ -278,10 +277,10 @@ export default function WF03TaskDocument({
                       const knowledge = knowledgeById.get(id)
                       const relations = relationsForStep(step.name, id)
                       return (
-                        <div key={`${id}-${mappingIndex}`} className="rounded-lg border border-indigo-100 bg-white p-3" data-knowledge-id={id}>
+                        <div key={`${id}-${mappingIndex}`} className="rounded-lg border border-emerald-100 bg-white p-3" data-knowledge-id={id}>
                           <div className="flex w-full items-start gap-2 text-left">
-                            <Sparkles size={13} className="mt-0.5 shrink-0 text-indigo-600" />
-                            <span className="min-w-0 flex-1 text-[11px] font-semibold leading-4 text-slate-800 group-hover/knowledge:text-indigo-700">
+                            <Sparkles size={13} className="mt-0.5 shrink-0 text-emerald-700" />
+                            <span className="min-w-0 flex-1 text-[11px] font-semibold leading-4 text-slate-800">
                               {knowledge?.name || id}
                             </span>
                           </div>
@@ -291,7 +290,7 @@ export default function WF03TaskDocument({
                             </p>
                           )}
                           {relations.map(relation => relation.reason ? (
-                            <p key={String(relation.relation_id || relation.reason)} className="mt-2 rounded-md bg-indigo-50 px-2.5 py-2 text-[9px] leading-4 text-indigo-900">
+                            <p key={String(relation.relation_id || relation.reason)} className="mt-2 rounded-md bg-emerald-50 px-2.5 py-2 text-[9px] leading-4 text-emerald-900">
                               <span className="font-bold">关联理由：</span>{String(relation.reason)}
                             </p>
                           ) : null)}
@@ -301,7 +300,7 @@ export default function WF03TaskDocument({
                             onClick={() => onOpenPersonalizedLearning(id)}
                             disabled={openingKnowledgeId === id}
                             title="携带本知识点、当前任务步骤和强关联技能进入个性化学习"
-                            className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-indigo-600 px-3 text-[10px] font-bold text-white transition hover:bg-indigo-700 disabled:cursor-wait disabled:bg-indigo-300"
+                            className="mt-3 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md bg-emerald-700 px-3 text-[10px] font-bold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:bg-emerald-300"
                           >
                             <Sparkles size={11} />
                             {openingKnowledgeId === id ? '正在生成个性化学习…' : '进入本步个性化学习'}
@@ -344,16 +343,16 @@ export default function WF03TaskDocument({
         </div>
         <div className="grid lg:grid-cols-2">
           <div className="border-b border-slate-200 p-5 sm:p-6 lg:border-b-0 lg:border-r">
-            <p className="text-[10px] font-bold tracking-[0.12em] text-indigo-700">支撑知识</p>
+            <p className="text-[10px] font-bold tracking-[0.12em] text-emerald-700">支撑知识</p>
             <div className="mt-3 divide-y divide-slate-100">
               {task.knowledge_points.map((item, index) => (
                 <article key={item.knowledge_id} className="py-4 first:pt-1" data-knowledge-id={item.knowledge_id}>
                   <div className="flex items-start gap-3">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-indigo-50 text-[10px] font-black text-indigo-700">K{index + 1}</span>
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-emerald-50 text-[10px] font-black text-emerald-700">K{index + 1}</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start gap-2">
                         <h3 className="min-w-0 flex-1 text-xs font-bold text-slate-900">{item.name}</h3>
-                        <button type="button" onClick={() => onAnnotate(annotationTarget('knowledge', item.knowledge_id, item.name))} className="text-slate-300 transition hover:text-indigo-700" title="批注知识点">
+                        <button type="button" onClick={() => onAnnotate(annotationTarget('knowledge', item.knowledge_id, item.name))} className="text-slate-300 transition hover:text-emerald-700" title="批注知识点">
                           <MessageSquarePlus size={13} />
                         </button>
                       </div>
@@ -366,7 +365,7 @@ export default function WF03TaskDocument({
                           type="button"
                           onClick={() => onOpenPersonalizedLearning(item.knowledge_id)}
                           disabled={openingKnowledgeId === item.knowledge_id}
-                          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 text-[10px] font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-wait disabled:bg-indigo-300"
+                          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-emerald-700 px-2.5 text-[10px] font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-wait disabled:bg-emerald-300"
                         >
                           <Sparkles size={11} /> {openingKnowledgeId === item.knowledge_id ? '正在进入…' : '个性化学习'}
                         </button>

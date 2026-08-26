@@ -16,7 +16,7 @@ export default function WF03SelectionToolbar({
 
   return (
     <div
-      className="fixed z-[80] flex items-center border border-slate-700 bg-slate-900 p-1 text-white shadow-2xl"
+      className="fixed z-[80] flex items-center rounded-lg border border-slate-200 bg-white p-1 text-slate-700 shadow-xl"
       style={{ left, top }}
       role="toolbar"
       aria-label="选区操作"
@@ -28,9 +28,9 @@ export default function WF03SelectionToolbar({
           event.stopPropagation()
           onAnnotate()
         }}
-        className="flex h-8 items-center gap-1.5 px-2.5 text-xs font-medium hover:bg-slate-700"
+        className="flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium hover:bg-emerald-50 hover:text-emerald-800"
       >
-        <MessageSquarePlus size={14} className="text-emerald-300" />
+        <MessageSquarePlus size={14} className="text-emerald-700" />
         添加批注
       </button>
     </div>
