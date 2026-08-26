@@ -83,6 +83,11 @@ CONTEXT_POLICIES = {
             10, 4, 2600, "project",
         ),
         ContextPolicy(
+            "learning_plan", ("structure", "knowledge", "human", "value"),
+            ("structure", "knowledge", "human", "value"),
+            14, 6, 3200, "portfolio_reference",
+        ),
+        ContextPolicy(
             "practice_validation", KERNEL_NAMES, ("knowledge", "practice"),
             10, 5, 2500, "checkpoint",
         ),
@@ -99,6 +104,10 @@ CAPABILITY_CONTEXT_POLICIES = {
     "draft_learning_project": "global_tutor",
     "create_project": "global_tutor",
     "plan_learning_path": "learning_design",
+    "plan_vnext_learning_path": "learning_plan",
+    "manage_vnext_learning_path_plan": "learning_plan",
+    "run_vnext_learning_plan": "learning_plan",
+    "read_vnext_learning_path_graph": "learning_plan",
     "generate_lecture": "learning_design",
     "generate_assessment": "learning_design",
     "evaluate_attempt": "practice_validation",
@@ -212,7 +221,7 @@ def _head_summary(kernel_name: str, state: KernelState) -> str:
     short = dict(state.short_term or {})
     long = dict(state.long_term or {})
     preferred = {
-        "structure": ("path_position", "current_task", "current_blocker", "resume_anchor"),
+        "structure": ("active_learning_path_plan", "path_position", "current_task", "current_blocker", "resume_anchor"),
         "knowledge": ("pending_question", "knowledge_gap", "active_concepts", "retention_status"),
         "human": ("affect", "cognitive_load", "support_need", "preferred_modes"),
         "value": ("current_priority", "goal_candidate", "current_motivation", "interest_signal"),
@@ -238,7 +247,7 @@ def _head_summary(kernel_name: str, state: KernelState) -> str:
 def _facet_states(kernel_name: str, state: KernelState) -> dict[str, Any]:
     short = dict(state.short_term or {})
     keys = {
-        "structure": ("active_project_id", "active_checkpoint_id", "current_blocker"),
+        "structure": ("active_learning_path_plan", "active_project_id", "active_checkpoint_id", "current_blocker"),
         "knowledge": ("pending_question", "recent_errors", "active_concepts"),
         "human": ("affect", "cognitive_load", "support_need"),
         "value": ("current_priority", "current_motivation", "goal_status"),

@@ -218,3 +218,74 @@ def test_personal_path_gateway_rejects_invalid_edges_and_cycles(client: TestClie
     ])
     assert cycle.status_code == 422
     assert "形成环" in cycle.json()["detail"]
+
+
+def test_confirmed_long_term_path_enters_structure_value_and_planning_context(client: TestClient):
+    plan_id = f"plan-{uuid.uuid4().hex[:10]}"
+    plan = {
+        "plan_id": plan_id,
+        "title": "通向 Agent 工程的长期路径",
+        "objective": "用半年系统学习 Agent 工程，并完成一个可评测的项目",
+        "horizon": "6 个月",
+        "target_node_ids": ["agent-engineering"],
+        "route_node_ids": ["python-programming", "machine-learning", "agent-engineering"],
+        "milestone_node_ids": ["python-programming", "machine-learning", "agent-engineering"],
+        "rationale": "从编程与机器学习基础进入 Agent 工程；自报状态只调整验证顺序。",
+        "evidence_quote": "我想用半年系统学习 Agent 工程",
+        "client_event_id": eid("path-plan"),
+    }
+    committed = client.post("/api/learner-state/learning-path/plans", json=plan)
+    assert committed.status_code == 200, committed.text
+    overlay = committed.json()["learning_path"]
+    assert overlay["active_plan_id"] == plan_id
+    assert overlay["plans"][0]["target_node_ids"] == ["agent-engineering"]
+
+    replay = client.post("/api/learner-state/learning-path/plans", json=plan)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["event_id"] == committed.json()["event_id"]
+    assert replay.json()["learning_path"]["plans"][0]["revision"] == 1
+
+    snapshot = client.get("/api/learner-state/snapshot").json()
+    structure = snapshot["kernels"]["structure"]
+    value = snapshot["kernels"]["value"]
+    assert structure["short_term"]["active_learning_path_plan"]["id"] == plan_id
+    assert structure["long_term"]["learning_path_plans"][plan_id]["status"] == "active"
+    assert value["long_term"]["confirmed_goals"][f"path-plan:{plan_id}"]["status"] == "confirmed"
+
+    packet = client.get("/api/learner-state/context", params={
+        "query": "接下来怎样推进 Agent 工程长期学习",
+        "purpose": "learning_plan",
+    })
+    assert packet.status_code == 200, packet.text
+    packet_text = str(packet.json())
+    assert plan_id in packet_text
+    assert "Agent 工程" in packet_text
+    assert packet.json()["manifest"]["policy"]["id"] == "learning_plan"
+
+    archived = client.delete(
+        f"/api/learner-state/learning-path/plans/{plan_id}",
+        params={"client_event_id": eid("path-plan-archive")},
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["learning_path"]["active_plan_id"] is None
+    archived_snapshot = client.get("/api/learner-state/snapshot").json()
+    assert archived_snapshot["kernels"]["structure"]["long_term"]["learning_path_plans"][plan_id]["status"] == "archived"
+    assert archived_snapshot["kernels"]["value"]["long_term"]["confirmed_goals"][f"path-plan:{plan_id}"]["status"] == "archived"
+
+
+def test_explicit_profile_edit_routes_human_and_value_through_reducer(client: TestClient):
+    updated = client.patch("/api/profile", json={
+        "weekly_hours": 11,
+        "preferred_modes": ["可视化", "定义后直接举例", "代码"],
+        "focus_areas": ["机器学习", "Agent", "强化学习"],
+        "career_goal": "优先探索 Agent 工程，同时保留机器学习科研方向",
+        "career_goal_status": "confirmed",
+    })
+    assert updated.status_code == 200, updated.text
+    snapshot = client.get("/api/learner-state/snapshot").json()
+    human = snapshot["kernels"]["human"]
+    value = snapshot["kernels"]["value"]
+    assert human["long_term"]["learning_preferences"]["weekly_hours"] == 11
+    assert human["long_term"]["learning_preferences"]["preferred_modes"] == ["可视化", "定义后直接举例", "代码"]
+    assert value["long_term"]["focus_areas"] == ["机器学习", "Agent", "强化学习"]
+    assert value["long_term"]["career_goal"].startswith("优先探索 Agent 工程")

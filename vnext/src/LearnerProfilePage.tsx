@@ -1,7 +1,8 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type {
   FormalConceptEdge,
   FormalConceptNode,
+  FormalLearnerProfilePatch,
   FormalLearnerSnapshot,
   FormalRuntimeConnection,
   KernelName,
@@ -32,6 +33,7 @@ type Props = {
   onMemoryArchive: (memoryId: string, archived: boolean) => void
   onClaimAction: (claimId: number, action: 'confirm' | 'correct' | 'retract', correction?: string) => void
   onRecordSelfReport: (rawText: string) => Promise<boolean>
+  onUpdateProfile: (patch: FormalLearnerProfilePatch) => Promise<boolean>
 }
 
 type ConceptPosition = {
@@ -288,11 +290,17 @@ function PersonalConceptGraph({ snapshot, kernel }: { snapshot: FormalLearnerSna
 }
 
 export default function LearnerProfilePage({
-  connection, snapshot, busyKey, error, onRefresh, onOpenPath, onMemoryArchive, onClaimAction, onRecordSelfReport,
+  connection, snapshot, busyKey, error, onRefresh, onOpenPath, onMemoryArchive, onClaimAction, onRecordSelfReport, onUpdateProfile,
 }: Props) {
   const [activeKernel, setActiveKernel] = useState<KernelName>('structure')
   const [corrections, setCorrections] = useState<Record<number, string>>({})
   const [selfReport, setSelfReport] = useState('')
+  const [background, setBackground] = useState('')
+  const [weeklyHours, setWeeklyHours] = useState(8)
+  const [preferredModes, setPreferredModes] = useState('')
+  const [focusAreas, setFocusAreas] = useState('')
+  const [careerGoal, setCareerGoal] = useState('')
+  const [careerGoalConfirmed, setCareerGoalConfirmed] = useState(false)
   const meta = KERNELS.find(item => item.id === activeKernel) || KERNELS[0]
   const area = snapshot?.growth.areas.find(item => item.id === activeKernel)
   const modules = useMemo(
@@ -300,6 +308,18 @@ export default function LearnerProfilePage({
     [activeKernel, snapshot],
   )
   const rawKernel = snapshot?.kernels[activeKernel]
+
+  useEffect(() => {
+    if (!snapshot) return
+    setBackground(snapshot.profile.background || '')
+    setWeeklyHours(snapshot.profile.weekly_hours || 8)
+    setPreferredModes(snapshot.profile.preferred_modes.join('、'))
+    setFocusAreas(snapshot.profile.focus_areas.join('、'))
+    setCareerGoal(snapshot.profile.career_goal || '')
+    setCareerGoalConfirmed(snapshot.profile.career_goal_status === 'confirmed')
+  }, [snapshot])
+
+  const splitItems = (value: string) => [...new Set(value.split(/[，,、\n]/).map(item => item.trim()).filter(Boolean))]
 
   if (!snapshot) {
     return (
@@ -372,6 +392,55 @@ export default function LearnerProfilePage({
         <div><span>{meta.name}</span><p>{meta.description}</p></div>
         <small>短期键 {Object.keys(rawKernel?.short_term || {}).length} · 长期键 {Object.keys(rawKernel?.long_term || {}).length} · 置信度 {Math.round((rawKernel?.confidence || 0) * 100)}%</small>
       </div>
+
+      <section className={`kernel-explicit-editor kernel-explicit-editor-${activeKernel}`}>
+        <header>
+          <div><span>LEARNER-CONTROLLED EDIT</span><h2>{meta.name}如何明确改写</h2></div>
+          <small>所有操作先形成 EvidenceEvent，再由 reducer 更新投影；不会覆盖历史。</small>
+        </header>
+        {activeKernel === 'knowledge' && (
+          <form onSubmit={event => { event.preventDefault(); if (background.trim()) void onUpdateProfile({ background: background.trim() }) }}>
+            <p>知识背景只作为“用户自述、待验证”写入；具体概念的认识、误解和题目历程请使用上方“补充到个人概念图”。</p>
+            <label><span>我的知识背景原文</span><textarea value={background} onChange={event => setBackground(event.target.value)} maxLength={500} /></label>
+            <button type="submit" disabled={!background.trim() || busyKey === 'profile-edit'}>更新知识背景自述</button>
+          </form>
+        )}
+        {activeKernel === 'structure' && (
+          <div className="kernel-edit-guidance">
+            <p>结构核不接受一个模糊的“掌握度”开关。用上方自述记录“谁阻碍谁、谁推动谁、联想到什么”；用学习路径页确认、修订或归档长期路线。</p>
+            <button type="button" onClick={onOpenPath}>打开学习路径与目标</button>
+          </div>
+        )}
+        {activeKernel === 'human' && (
+          <form onSubmit={event => {
+            event.preventDefault()
+            const modes = splitItems(preferredModes).slice(0, 6)
+            if (modes.length) void onUpdateProfile({ weekly_hours: weeklyHours, preferred_modes: modes })
+          }}>
+            <p>只记录能改善教学的节奏、负荷和形式偏好。它们是明确偏好，不会被解释成人格或固定学习风格。</p>
+            <div className="kernel-edit-row"><label><span>每周可投入小时</span><input type="number" min="1" max="80" value={weeklyHours} onChange={event => setWeeklyHours(Number(event.target.value) || 1)} /></label><label><span>偏好形式（用顿号分隔）</span><input value={preferredModes} onChange={event => setPreferredModes(event.target.value)} placeholder="可视化、定义后直接举例、代码" /></label></div>
+            <button type="submit" disabled={!splitItems(preferredModes).length || busyKey === 'profile-edit'}>更新人因偏好</button>
+          </form>
+        )}
+        {activeKernel === 'value' && (
+          <form onSubmit={event => {
+            event.preventDefault()
+            const areas = splitItems(focusAreas).slice(0, 5)
+            if (!areas.length || careerGoalConfirmed && !careerGoal.trim()) return
+            void onUpdateProfile({ focus_areas: areas, career_goal: careerGoal.trim(), career_goal_status: careerGoalConfirmed ? 'confirmed' : 'exploring' })
+          }}>
+            <p>兴趣与方向可以随时修订；只有勾选确认的长期方向才进入 Value 长期记忆。规划 Agent 可以提议，但不能替你确认。</p>
+            <div className="kernel-edit-row"><label><span>关注方向</span><input value={focusAreas} onChange={event => setFocusAreas(event.target.value)} placeholder="机器学习、Agent、强化学习" /></label><label><span>职业或研究方向</span><input value={careerGoal} onChange={event => setCareerGoal(event.target.value)} placeholder="例如：Agent 工程或机器学习科研" /></label></div>
+            <label className="kernel-edit-confirm"><input type="checkbox" checked={careerGoalConfirmed} onChange={event => setCareerGoalConfirmed(event.target.checked)} /><span>这是我当前明确确认的长期方向（以后仍可修订或撤回）</span></label>
+            <button type="submit" disabled={!splitItems(focusAreas).length || careerGoalConfirmed && !careerGoal.trim() || busyKey === 'profile-edit'}>更新价值目标</button>
+          </form>
+        )}
+        {activeKernel === 'practice' && (
+          <div className="kernel-edit-guidance kernel-edit-boundary">
+            <p>实践核不能靠自述把自己升级为“会做”。你可以在下方纠正或撤回已有 Claim；新的正向结论只能来自做题、代码、项目产物、独立重做或迁移验证。</p>
+          </div>
+        )}
+      </section>
 
       {(activeKernel === 'knowledge' || activeKernel === 'structure') && <PersonalConceptGraph snapshot={snapshot} kernel={activeKernel} />}
 

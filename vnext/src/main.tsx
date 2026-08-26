@@ -53,20 +53,25 @@ import {
 } from './planning'
 import {
   addPersonalPathNode,
+  archiveLearningPathPlan,
+  commitLearningPathPlan,
   createInitialLearnerPathState,
   projectLearnerPath,
   removePersonalPathNode,
   sanitizeLearnerPathState,
   setLearnerPathStatus,
   type LearnerPathState,
+  type LearningPathPlanProposal,
   type LearnerPathStatus,
   type PersonalPathNodeProposal,
 } from './learning-path-graph'
 import {
   actOnFormalLearningTask,
   addFormalPersonalPathNode,
+  archiveFormalLearningPathPlan,
   bootstrapFormalRuntime,
   confirmFormalValueClaim,
+  commitFormalLearningPathPlan,
   createFormalLearningTask,
   learnerPathStateFromFormal,
   loadFormalLearnerSnapshot,
@@ -77,6 +82,8 @@ import {
   submitFormalClaimFeedback,
   syncFormalEvent,
   syncFormalEvents,
+  updateFormalLearnerProfile,
+  type FormalLearnerProfilePatch,
   type FormalLearnerSnapshot,
   type FormalRuntimeConnection,
 } from './formal-runtime'
@@ -338,6 +345,7 @@ function App() {
   const [formalSnapshot, setFormalSnapshot] = useState<FormalLearnerSnapshot>()
   const [formalBusyKey, setFormalBusyKey] = useState('')
   const [formalError, setFormalError] = useState('')
+  const [pathPlanWriteErrors, setPathPlanWriteErrors] = useState<Record<string, string>>({})
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -1081,6 +1089,49 @@ function App() {
     }
   }
 
+  const acceptLearningPathPlan = async (proposal: LearningPathPlanProposal) => {
+    setPathPlanWriteErrors(previous => ({ ...previous, [proposal.id]: '' }))
+    if (formalConnection.status !== 'connected') {
+      setWorkspace(previous => ({ ...previous, learningPath: commitLearningPathPlan(previous.learningPath, proposal) }))
+      const detail = '正式事件链离线：长期学习路径仅保存在本机，尚未进入五核上下文。'
+      setFormalError(detail)
+      setPathPlanWriteErrors(previous => ({ ...previous, [proposal.id]: detail }))
+      return
+    }
+    setFormalBusyKey(`path-plan:${proposal.id}`)
+    setFormalError('')
+    try {
+      const result = await commitFormalLearningPathPlan(proposal, `path-plan:${proposal.id}:confirm`)
+      setWorkspace(previous => ({ ...previous, learningPath: learnerPathStateFromFormal(result.learning_path) }))
+      await refreshFormalSnapshot(true)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '长期学习路径写入失败'
+      setFormalError(detail)
+      setPathPlanWriteErrors(previous => ({ ...previous, [proposal.id]: detail }))
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
+  const archivePathPlan = async (planId: string) => {
+    if (formalConnection.status !== 'connected') {
+      setWorkspace(previous => ({ ...previous, learningPath: archiveLearningPathPlan(previous.learningPath, planId) }))
+      setFormalError('正式事件链离线：归档只保存在本机。')
+      return
+    }
+    setFormalBusyKey(`path-plan:${planId}`)
+    setFormalError('')
+    try {
+      const result = await archiveFormalLearningPathPlan(planId, `path-plan:${planId}:archive`)
+      setWorkspace(previous => ({ ...previous, learningPath: learnerPathStateFromFormal(result.learning_path) }))
+      await refreshFormalSnapshot(true)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '长期学习路径归档失败')
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
   const deletePersonalPathNode = async (nodeId: string) => {
     const nodeTitle = projectLearnerPath(workspace.learningPath).nodes.find(node => node.id === nodeId)?.title || nodeId
     if (formalConnection.status !== 'connected') {
@@ -1145,6 +1196,22 @@ function App() {
     }
   }
 
+  const updateExplicitLearnerProfile = async (patch: FormalLearnerProfilePatch) => {
+    setFormalBusyKey('profile-edit')
+    setFormalError('')
+    try {
+      const result = await updateFormalLearnerProfile(patch)
+      setFormalSnapshot(previous => previous ? { ...previous, profile: result.profile } : previous)
+      await refreshFormalSnapshot(true)
+      return true
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '五核明确资料更新失败')
+      return false
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
   const updateFormalTask = async (task: NonNullable<FormalLearnerSnapshot['learning_tasks'][number]>, action: 'start' | 'pause' | 'resume' | 'cancel' | 'reopen') => {
     setFormalBusyKey(`task:${task.id}`)
     setFormalError('')
@@ -1171,6 +1238,7 @@ function App() {
             onStatusChange={updatePathStatus}
             onAddPersonalNode={acceptPersonalPathNode}
             onRemovePersonalNode={deletePersonalPathNode}
+            onArchivePlan={archivePathPlan}
           />
         </Suspense>
       )
@@ -1188,6 +1256,7 @@ function App() {
             onMemoryArchive={(memoryId, archived) => { void updateFormalMemoryArchive(memoryId, archived) }}
             onClaimAction={(claimId, action, correction) => { void updateFormalClaim(claimId, action, correction) }}
             onRecordSelfReport={recordConceptSelfReport}
+            onUpdateProfile={updateExplicitLearnerProfile}
           />
         </Suspense>
       )
@@ -1453,6 +1522,10 @@ function App() {
                     messages={messages}
                     onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
                     onAcceptPathProposal={acceptPersonalPathNode}
+                    onAcceptPathPlan={acceptLearningPathPlan}
+                    activePathPlanId={projectLearnerPath(workspace.learningPath).activePlan?.id}
+                    pathPlanBusyId={formalBusyKey.startsWith('path-plan:') ? formalBusyKey.slice('path-plan:'.length) : undefined}
+                    pathPlanWriteErrors={pathPlanWriteErrors}
                   />
                   {sheet && messages.length === 0 && (
                     <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
@@ -1802,8 +1875,17 @@ function App() {
   )
 }
 
-function ToolRunCard({ run, onAcceptPathProposal }: { run: TutorToolRun; onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void }) {
+function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, activePathPlanId, pathPlanBusyId, pathPlanWriteError }: {
+  run: TutorToolRun
+  onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
+  onAcceptPathPlan: (proposal: LearningPathPlanProposal) => void
+  activePathPlanId?: string
+  pathPlanBusyId?: string
+  pathPlanWriteError?: string
+}) {
   const icon = run.kind === 'memory' ? '◇' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+  const pathPlanConfirmed = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === activePathPlanId)
+  const pathPlanBusy = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === pathPlanBusyId)
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
     standard: '规范', reference: '参考', textbook: '教材', course: '课程',
     definition: '定义', research: '研究', example: '实例', discussion: '讨论',
@@ -1825,6 +1907,18 @@ function ToolRunCard({ run, onAcceptPathProposal }: { run: TutorToolRun; onAccep
           <button type="button" onClick={() => onAcceptPathProposal(run.pathProposal!)}>确认加入我的学习路径</button>
         </div>
       )}
+      {run.pathPlanProposal && (
+        <div className={`path-plan-proposal-card${pathPlanConfirmed ? ' path-plan-proposal-confirmed' : ''}`}>
+          <span>{pathPlanConfirmed ? '长期路径 · 已写入当前规划' : '长期路径提案 · 尚未写入'}</span>
+          <strong>{run.pathPlanProposal.title}</strong>
+          <p>{run.pathPlanProposal.rationale}</p>
+          <small>{run.pathPlanProposal.horizon} · {run.pathPlanProposal.routeNodeIds.length} 个路线节点 · {run.pathPlanProposal.milestoneNodeIds.length} 个里程碑</small>
+          <button type="button" disabled={pathPlanConfirmed || pathPlanBusy} onClick={() => onAcceptPathPlan(run.pathPlanProposal!)}>
+            {pathPlanConfirmed ? '已写入当前长期路径' : pathPlanBusy ? '正在写入五核…' : '确认目标与路线，写入五核'}
+          </button>
+          {pathPlanWriteError && <em className="path-plan-write-error">{pathPlanWriteError}</em>}
+        </div>
+      )}
       {run.sources && run.sources.length > 0 && (
         <div className="tool-sources">
           {run.sources.map(source => (
@@ -1842,10 +1936,14 @@ function ToolRunCard({ run, onAcceptPathProposal }: { run: TutorToolRun; onAccep
   )
 }
 
-function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal }: {
+function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAcceptPathPlan, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors }: {
   messages: Message[]
   onQuoteFollowUp: (messageId: string, quote: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
+  onAcceptPathPlan: (proposal: LearningPathPlanProposal) => void
+  activePathPlanId?: string
+  pathPlanBusyId?: string
+  pathPlanWriteErrors: Record<string, string>
 }) {
   const endRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -1931,7 +2029,17 @@ function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal }: {
                   >选中文字追问</button>
                 )}
               </div>
-              {message.toolRuns?.map(run => <ToolRunCard key={run.id} run={run} onAcceptPathProposal={onAcceptPathProposal} />)}
+              {message.toolRuns?.map(run => (
+                <ToolRunCard
+                  key={run.id}
+                  run={run}
+                  onAcceptPathProposal={onAcceptPathProposal}
+                  onAcceptPathPlan={onAcceptPathPlan}
+                  activePathPlanId={activePathPlanId}
+                  pathPlanBusyId={pathPlanBusyId}
+                  pathPlanWriteError={run.pathPlanProposal ? pathPlanWriteErrors[run.pathPlanProposal.id] : undefined}
+                />
+              ))}
               {message.learningActionLabel ? (
                 <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
               ) : (

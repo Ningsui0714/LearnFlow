@@ -1,5 +1,7 @@
 import type { LearningEvent, LearningSkillId, LearningTask as LocalLearningTask } from './learning'
 import type {
+  LearningPathPlan,
+  LearningPathPlanProposal,
   LearnerPathState,
   LearnerPathStatus,
   PersonalPathNodeProposal,
@@ -77,9 +79,11 @@ export type FormalLearningTask = {
 }
 
 export type FormalPathOverlay = {
-  version: 1
+  version: 1 | 2
   statuses: Record<string, { status?: LearnerPathStatus; node_title?: string } | LearnerPathStatus>
   personal_nodes: Array<Record<string, unknown>>
+  plans?: Array<Record<string, unknown>>
+  active_plan_id?: string | null
   event_backed: true
   knowledge_mastery_inference: false
 }
@@ -190,6 +194,8 @@ export type FormalLearnerSnapshot = {
   learning_tasks: FormalLearningTask[]
 }
 
+export type FormalLearnerProfilePatch = Partial<FormalLearnerSnapshot['profile']>
+
 export type FormalRuntimeConnection = {
   status: FormalRuntimeStatus
   detail: string
@@ -256,6 +262,13 @@ async function ensureFormalIdentity() {
 export async function loadFormalLearnerSnapshot(includeTerminalTasks = false): Promise<FormalLearnerSnapshot> {
   await ensureFormalIdentity()
   return jsonRequest<FormalLearnerSnapshot>(`/api/learner-state/snapshot?include_terminal_tasks=${includeTerminalTasks ? 'true' : 'false'}`)
+}
+
+export async function updateFormalLearnerProfile(patch: FormalLearnerProfilePatch) {
+  return jsonRequest<{ profile: FormalLearnerSnapshot['profile']; evidence_id: number }>('/api/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
 }
 
 export async function bootstrapFormalRuntime(): Promise<{ connection: FormalRuntimeConnection; snapshot?: FormalLearnerSnapshot }> {
@@ -346,6 +359,32 @@ export async function addFormalPersonalPathNode(proposal: PersonalPathNodePropos
 export async function removeFormalPersonalPathNode(nodeId: string, nodeTitle: string, clientEventId: string) {
   const query = new URLSearchParams({ client_event_id: clientEventId, node_title: nodeTitle })
   return jsonRequest<{ learning_path: FormalPathOverlay }>(`/api/learner-state/learning-path/personal-nodes/${encodeURIComponent(nodeId)}?${query}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function commitFormalLearningPathPlan(proposal: LearningPathPlanProposal, clientEventId: string) {
+  return jsonRequest<{ learning_path: FormalPathOverlay }>('/api/learner-state/learning-path/plans', {
+    method: 'POST',
+    body: JSON.stringify({
+      plan_id: proposal.id,
+      title: proposal.title,
+      objective: proposal.objective,
+      horizon: proposal.horizon,
+      target_node_ids: proposal.targetNodeIds,
+      route_node_ids: proposal.routeNodeIds,
+      milestone_node_ids: proposal.milestoneNodeIds,
+      rationale: proposal.rationale,
+      evidence_quote: proposal.evidenceQuote,
+      source_plan_id: proposal.sourcePlanId || '',
+      client_event_id: clientEventId,
+    }),
+  })
+}
+
+export async function archiveFormalLearningPathPlan(planId: string, clientEventId: string) {
+  const query = new URLSearchParams({ client_event_id: clientEventId })
+  return jsonRequest<{ learning_path: FormalPathOverlay }>(`/api/learner-state/learning-path/plans/${encodeURIComponent(planId)}?${query}`, {
     method: 'DELETE',
   })
 }
@@ -468,6 +507,34 @@ export function learnerPathStateFromFormal(overlay: FormalPathOverlay): LearnerP
         sourceRefs,
       },
       edges,
+    })
+  }
+  for (const raw of overlay.plans || []) {
+    const id = String(raw.id || '')
+    const targetNodeIds = Array.isArray(raw.target_node_ids) ? raw.target_node_ids.map(String).slice(0, 8) : []
+    const routeNodeIds = Array.isArray(raw.route_node_ids) ? raw.route_node_ids.map(String).slice(0, 40) : []
+    if (!id || !targetNodeIds.length || !targetNodeIds.every(nodeId => routeNodeIds.includes(nodeId))) continue
+    const plan: LearningPathPlan = {
+      id,
+      title: String(raw.title || raw.objective || id),
+      objective: String(raw.objective || ''),
+      horizon: String(raw.horizon || '长期'),
+      targetNodeIds,
+      routeNodeIds,
+      milestoneNodeIds: Array.isArray(raw.milestone_node_ids) ? raw.milestone_node_ids.map(String).slice(0, 16) : [],
+      rationale: String(raw.rationale || ''),
+      evidenceQuote: String(raw.evidence_quote || ''),
+      sourcePlanId: raw.source_plan_id ? String(raw.source_plan_id) : undefined,
+      status: 'active',
+      revision: Math.max(1, Number(raw.revision) || 1),
+    }
+    events.push({
+      id: `formal-path-plan:${id}:${plan.revision}`,
+      sequence: ++sequence,
+      at: sequence,
+      type: 'vnext_learning_path_plan_committed',
+      detail: '从正式结构核恢复的长期学习路径',
+      plan,
     })
   }
   return { version: 1, events }

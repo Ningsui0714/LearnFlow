@@ -47,16 +47,39 @@ export type PersonalPathNodeProposal = {
   connections: Array<{ nodeId: string; kind: PathEdgeKind; rationale: string }>
 }
 
+export type LearningPathPlan = {
+  id: string
+  title: string
+  objective: string
+  horizon: string
+  targetNodeIds: string[]
+  routeNodeIds: string[]
+  milestoneNodeIds: string[]
+  rationale: string
+  evidenceQuote: string
+  sourcePlanId?: string
+  status: 'active' | 'archived'
+  revision: number
+}
+
+export type LearningPathPlanProposal = Omit<LearningPathPlan, 'status' | 'revision'> & {
+  policyId: 'vnext-learning-path-planner-v1'
+  generatedFromSnapshotId: string
+}
+
 export type LearningPathEvent = {
   id: string
   sequence: number
   at: number
   type: 'vnext_learning_path_node_status_set' | 'vnext_personal_path_node_added' | 'vnext_personal_path_node_removed'
+    | 'vnext_learning_path_plan_committed' | 'vnext_learning_path_plan_revised' | 'vnext_learning_path_plan_archived'
   detail: string
   nodeId?: string
   status?: LearnerPathStatus
   node?: LearningPathNode
   edges?: LearningPathEdge[]
+  plan?: LearningPathPlan
+  planId?: string
 }
 
 export type LearnerPathState = {
@@ -69,6 +92,8 @@ export type LearnerPathProjection = {
   edges: LearningPathEdge[]
   statuses: Record<string, LearnerPathStatus>
   personalNodeIds: string[]
+  plans: LearningPathPlan[]
+  activePlan?: LearningPathPlan
   eventCount: number
 }
 
@@ -461,6 +486,8 @@ export function projectLearnerPath(state: LearnerPathState): LearnerPathProjecti
   const personalNodes = new Map<string, LearningPathNode>()
   const personalEdges = new Map<string, LearningPathEdge>()
   const removed = new Set<string>()
+  const plans = new Map<string, LearningPathPlan>()
+  let activePlanId = ''
   const events = [...state.events].sort((a, b) => a.sequence - b.sequence)
   events.forEach(event => {
     if (event.type === 'vnext_personal_path_node_added' && event.node) {
@@ -479,11 +506,26 @@ export function projectLearnerPath(state: LearnerPathState): LearnerPathProjecti
     if (event.type === 'vnext_learning_path_node_status_set' && event.nodeId && event.status && !removed.has(event.nodeId)) {
       statuses[event.nodeId] = event.status
     }
+    if ((event.type === 'vnext_learning_path_plan_committed' || event.type === 'vnext_learning_path_plan_revised') && event.plan) {
+      plans.set(event.plan.id, { ...event.plan, status: 'active' })
+      activePlanId = event.plan.id
+    }
+    if (event.type === 'vnext_learning_path_plan_archived' && event.planId) {
+      const previous = plans.get(event.planId)
+      if (previous) plans.set(event.planId, { ...previous, status: 'archived' })
+      if (activePlanId === event.planId) activePlanId = ''
+    }
   })
   const nodes = [...OFFICIAL_PATH_NODES, ...personalNodes.values()]
   const nodeIds = new Set(nodes.map(node => node.id))
   const edges = [...OFFICIAL_PATH_EDGES, ...personalEdges.values()].filter(edge => nodeIds.has(edge.from) && nodeIds.has(edge.to))
-  return { nodes, edges, statuses, personalNodeIds: [...personalNodes.keys()], eventCount: events.length }
+  const projectedPlans = [...plans.values()]
+  return {
+    nodes, edges, statuses, personalNodeIds: [...personalNodes.keys()],
+    plans: projectedPlans,
+    activePlan: projectedPlans.find(plan => plan.id === activePlanId && plan.status === 'active'),
+    eventCount: events.length,
+  }
 }
 
 export function setLearnerPathStatus(state: LearnerPathState, nodeId: string, status: LearnerPathStatus) {
@@ -637,6 +679,133 @@ export function readLearningPathGraph(message: string, state: LearnerPathState, 
   }
 }
 
+function planningHorizon(message: string) {
+  if (/半年/.test(message)) return '6 个月'
+  const match = message.match(/(?:用|在|计划)?\s*(\d{1,2}|一|两|三|四|五|六|七|八|九|十)\s*(周|个月|月|年)/)
+  if (match) return `${match[1]} ${match[2] === '月' ? '个月' : match[2]}`
+  if (/本学期|这学期/.test(message)) return '本学期'
+  if (/暑假|寒假/.test(message)) return message.match(/暑假|寒假/)?.[0] || '阶段性'
+  return '长期滚动规划'
+}
+
+export function buildLearningPathPlanProposal(
+  message: string,
+  state: LearnerPathState,
+  packet = readLearningPathGraph(message, state, 14),
+): LearningPathPlanProposal | undefined {
+  if (packet.needsExternalResearch || packet.matchedNodeIds.length === 0) return undefined
+  const projection = projectLearnerPath(state)
+  const nodeMap = new Map(projection.nodes.map(node => [node.id, node]))
+  const targets = packet.matchedNodeIds.filter(nodeId => nodeMap.has(nodeId)).slice(0, 3)
+  if (!targets.length) return undefined
+
+  const reverse = new Map<string, LearningPathEdge[]>()
+  projection.edges.forEach(edge => {
+    if (edge.kind === 'co_learning') return
+    reverse.set(edge.to, [...(reverse.get(edge.to) || []), edge])
+  })
+  const distance = new Map<string, number>(targets.map(nodeId => [nodeId, 0]))
+  const approachKind = new Map<string, PathEdgeKind>()
+  const queue = [...targets]
+  while (queue.length) {
+    const current = queue.shift()!
+    const currentDistance = distance.get(current) || 0
+    if (currentDistance >= 5) continue
+    for (const edge of reverse.get(current) || []) {
+      const step = edge.kind === 'hard_prerequisite' ? 1 : 1.6
+      const nextDistance = currentDistance + step
+      if (nextDistance > 5.4 || (distance.has(edge.from) && distance.get(edge.from)! <= nextDistance)) continue
+      distance.set(edge.from, nextDistance)
+      approachKind.set(edge.from, edge.kind)
+      queue.push(edge.from)
+    }
+  }
+  const targetDomains = new Set(targets.flatMap(nodeId => nodeMap.get(nodeId)?.domains || []))
+  const selected = [...distance.entries()]
+    .sort((left, right) => {
+      const leftNode = nodeMap.get(left[0])!, rightNode = nodeMap.get(right[0])!
+      const leftStatus = projection.statuses[left[0]] || 'unmarked'
+      const rightStatus = projection.statuses[right[0]] || 'unmarked'
+      const score = (node: LearningPathNode, nodeId: string, nodeDistance: number, status: LearnerPathStatus) => {
+        const targetBonus = targets.includes(nodeId) ? 100 : 0
+        const domainBonus = node.domains.filter(domain => targetDomains.has(domain)).length * 7
+        const distanceBonus = Math.max(0, 28 - nodeDistance * 4.5)
+        const hardBonus = approachKind.get(nodeId) === 'hard_prerequisite' ? 6 : 0
+        const foundationBonus = node.stage === 'foundation' ? 4 : node.stage === 'core' ? 2 : 0
+        const selfReportAdjustment = status === 'self_reported_mastered' ? -3 : 0
+        return targetBonus + domainBonus + distanceBonus + hardBonus + foundationBonus + selfReportAdjustment
+      }
+      const scoreDifference = score(rightNode, right[0], right[1], rightStatus) - score(leftNode, left[0], left[1], leftStatus)
+      return scoreDifference || left[1] - right[1] || leftNode.order - rightNode.order || leftNode.id.localeCompare(rightNode.id)
+    })
+    .slice(0, 18)
+    .map(([nodeId]) => nodeId)
+  const routeNodeIds = [...new Set([...selected, ...targets])]
+    .sort((left, right) => (nodeMap.get(left)?.order || 0) - (nodeMap.get(right)?.order || 0) || left.localeCompare(right))
+  const milestones: string[] = []
+  for (const nodeId of routeNodeIds) {
+    const node = nodeMap.get(nodeId)
+    if (!node) continue
+    const previousMilestoneId = milestones.length ? milestones[milestones.length - 1] : undefined
+    const previous = previousMilestoneId ? nodeMap.get(previousMilestoneId) : undefined
+    if (!previous || previous.stage !== node.stage) milestones.push(nodeId)
+  }
+  targets.forEach(nodeId => { if (!milestones.includes(nodeId)) milestones.push(nodeId) })
+  const targetTitles = targets.map(nodeId => nodeMap.get(nodeId)?.title || nodeId)
+  const routeTitles = routeNodeIds.map(nodeId => nodeMap.get(nodeId)?.title || nodeId)
+  const objective = message.replace(/\s+/g, ' ').trim().slice(0, 500)
+  const snapshotSignature = `${packet.snapshotId}:${objective}:${routeNodeIds.join('|')}`
+  return {
+    id: `path-plan-${stableHash(snapshotSignature)}`,
+    policyId: 'vnext-learning-path-planner-v1',
+    generatedFromSnapshotId: packet.snapshotId,
+    title: `通向${targetTitles.join('与')}的长期路径`.slice(0, 100),
+    objective,
+    horizon: planningHorizon(message),
+    targetNodeIds: targets,
+    routeNodeIds,
+    milestoneNodeIds: milestones.slice(0, 10),
+    rationale: `根据学习者明确目标，把官方/个人课程图中的前置关系压缩为 ${routeNodeIds.length} 个路线节点。自报学过只影响验证顺序，不会被当作已经掌握。建议路线：${routeTitles.join(' → ')}。`.slice(0, 1500),
+    evidenceQuote: objective.slice(0, 500),
+  }
+}
+
+export function commitLearningPathPlan(state: LearnerPathState, proposal: LearningPathPlanProposal) {
+  const projection = projectLearnerPath(state)
+  const nodeIds = new Set(projection.nodes.map(node => node.id))
+  if (!proposal.targetNodeIds.length || proposal.targetNodeIds.some(nodeId => !nodeIds.has(nodeId))) return state
+  const previous = projection.plans.find(plan => plan.id === proposal.id)
+  const plan: LearningPathPlan = {
+    id: proposal.id,
+    title: proposal.title,
+    objective: proposal.objective,
+    horizon: proposal.horizon,
+    targetNodeIds: proposal.targetNodeIds.filter(nodeId => nodeIds.has(nodeId)),
+    routeNodeIds: proposal.routeNodeIds.filter(nodeId => nodeIds.has(nodeId)),
+    milestoneNodeIds: proposal.milestoneNodeIds.filter(nodeId => nodeIds.has(nodeId)),
+    rationale: proposal.rationale,
+    evidenceQuote: proposal.evidenceQuote,
+    sourcePlanId: proposal.sourcePlanId,
+    status: 'active',
+    revision: (previous?.revision || 0) + 1,
+  }
+  return appendLearningPathEvent(state, {
+    type: previous ? 'vnext_learning_path_plan_revised' : 'vnext_learning_path_plan_committed',
+    plan,
+    detail: `学习者确认长期学习路径“${plan.title}”；路线用于导航，不代表节点掌握`,
+  })
+}
+
+export function archiveLearningPathPlan(state: LearnerPathState, planId: string) {
+  const plan = projectLearnerPath(state).plans.find(item => item.id === planId && item.status === 'active')
+  if (!plan) return state
+  return appendLearningPathEvent(state, {
+    type: 'vnext_learning_path_plan_archived',
+    planId,
+    detail: `学习者归档长期学习路径“${plan.title}”；历史确认继续保留`,
+  })
+}
+
 export function learningPathPacketToTutorContext(packet: LearningPathReadPacket) {
   const nodeLines = packet.nodes.map(node => {
     const prerequisites = node.prerequisites.map(item => `${item.title}(${PATH_EDGE_LABELS[item.kind]})`).join('、') || '无已载入前置'
@@ -725,7 +894,10 @@ export function sanitizeLearnerPathState(value: unknown): LearnerPathState {
   rawEvents.forEach((raw, index) => {
     if (!raw || typeof raw !== 'object') return
     const item = raw as Partial<LearningPathEvent>
-    if (!['vnext_learning_path_node_status_set', 'vnext_personal_path_node_added', 'vnext_personal_path_node_removed'].includes(String(item.type))) return
+    if (![
+      'vnext_learning_path_node_status_set', 'vnext_personal_path_node_added', 'vnext_personal_path_node_removed',
+      'vnext_learning_path_plan_committed', 'vnext_learning_path_plan_revised', 'vnext_learning_path_plan_archived',
+    ].includes(String(item.type))) return
     const base = {
       id: typeof item.id === 'string' ? item.id.slice(0, 120) : `restored-${index}`,
       sequence: Number.isFinite(item.sequence) ? Number(item.sequence) : index + 1,
@@ -738,6 +910,30 @@ export function sanitizeLearnerPathState(value: unknown): LearnerPathState {
     }
     if (item.type === 'vnext_personal_path_node_removed' && typeof item.nodeId === 'string') {
       events.push({ ...base, nodeId: item.nodeId.slice(0, 120) })
+    }
+    if (item.type === 'vnext_learning_path_plan_archived' && typeof item.planId === 'string') {
+      events.push({ ...base, planId: item.planId.slice(0, 160) })
+    }
+    if ((item.type === 'vnext_learning_path_plan_committed' || item.type === 'vnext_learning_path_plan_revised') && item.plan) {
+      const plan = item.plan
+      const targetNodeIds = Array.isArray(plan.targetNodeIds) ? plan.targetNodeIds.slice(0, 8).map(value => String(value).slice(0, 160)) : []
+      const routeNodeIds = Array.isArray(plan.routeNodeIds) ? plan.routeNodeIds.slice(0, 40).map(value => String(value).slice(0, 160)) : []
+      if (typeof plan.id === 'string' && targetNodeIds.length && targetNodeIds.every(nodeId => routeNodeIds.includes(nodeId))) {
+        events.push({ ...base, plan: {
+          id: plan.id.slice(0, 160),
+          title: String(plan.title || '').slice(0, 200),
+          objective: String(plan.objective || '').slice(0, 1000),
+          horizon: String(plan.horizon || '长期').slice(0, 120),
+          targetNodeIds,
+          routeNodeIds,
+          milestoneNodeIds: Array.isArray(plan.milestoneNodeIds) ? plan.milestoneNodeIds.slice(0, 16).map(value => String(value).slice(0, 160)) : [],
+          rationale: String(plan.rationale || '').slice(0, 1600),
+          evidenceQuote: String(plan.evidenceQuote || '').slice(0, 500),
+          sourcePlanId: typeof plan.sourcePlanId === 'string' ? plan.sourcePlanId.slice(0, 160) : undefined,
+          status: 'active',
+          revision: Math.max(1, Number(plan.revision) || 1),
+        } })
+      }
     }
     if (item.type === 'vnext_personal_path_node_added' && item.node?.origin === 'personal' && typeof item.node.id === 'string') {
       const node: LearningPathNode = {

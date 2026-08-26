@@ -8,7 +8,8 @@
 
 - `LearningPathNode`：一门广为人知的课程或稳定技能域，分官方节点和个人节点。
 - `LearningPathEdge`：从前置指向后继，类型为硬前置、软前置或建议共学；所有边都必须保持 DAG。
-- `LearnerPathState`：正式 Structure 投影，记录节点状态、个人节点加入和个人节点移除；浏览器只保留离线缓存。
+- `LearnerPathState`：正式 Structure/Value 覆盖投影，记录节点状态、个人节点和版本化长期路线；浏览器只保留离线缓存。
+- `LearningPathPlan`：学习者确认的长期目标、时间范围、目标节点、路线节点和里程碑；可修订、可归档，历史保留。
 - `LearningPathReadPacket`：规划态的有界只读上下文，包含匹配节点、前后关系、来源边界和图谱缺口判断。
 
 官方图当前有 96 个节点和 155 条边，按入门与基础、计算机核心、专业方向、高阶与新兴、研究与产出五层组织。节点覆盖高职、本科、研究生与自主学习，不等同于某个学校的完整培养方案。高职计算机信息技术专业群显式覆盖计算机应用、软件、网络、云计算、大数据、信息安全、人工智能和移动应用开发的稳定专业基础课与核心课。
@@ -47,6 +48,9 @@
 - `vnext_learning_path_node_status_set`
 - `vnext_personal_path_node_added`
 - `vnext_personal_path_node_removed`
+- `vnext_learning_path_plan_committed`
+- `vnext_learning_path_plan_revised`
+- `vnext_learning_path_plan_archived`
 
 这些事件已经通过正式学习者状态网关进入 `EvidenceEvent`，由 `five_kernel_reducer` 归约为
 Structure 路径投影。节点“自报学过/掌握”只允许在 Knowledge 记录 self-reported exposure，固定
@@ -60,3 +64,9 @@ Structure 路径投影。节点“自报学过/掌握”只允许在 Knowledge �
 - 自报掌握：只表示学习者主观判断。
 
 四种状态都不能直接生成 mastery、misconception 或 transfer claim。
+
+## 长期路线在图上的表达
+
+规划态读取 `learning_plan` ContextPacket 和当前图，生成可检查的 route proposal。确认前不写图；确认后页面同时显示活动路径摘要，并用独立样式标出规划目标、阶段里程碑、路线节点和路线内部边。归档会撤出活动标记，但不会删除历史计划和当时的学习者确认。
+
+长期路线只是一层个人规划覆盖：它不删除官方边，不隐藏个人节点，也不把目标节点标成已掌握。

@@ -61,7 +61,17 @@ ACTION_BOARD = {
         ActionDefinition(
             "read_vnext_learning_path_graph", "为规划态读取官方与个人学习路径图", "none", "none",
             {},
-            ("search_computer_knowledge", "manage_vnext_personal_path_node"),
+            ("search_computer_knowledge", "plan_vnext_learning_path", "manage_vnext_personal_path_node"),
+        ),
+        ActionDefinition(
+            "plan_vnext_learning_path", "根据目标与五核上下文生成长期学习路径提案", "proposal", "explicit_or_auto",
+            {},
+            ("manage_vnext_learning_path_plan",),
+        ),
+        ActionDefinition(
+            "manage_vnext_learning_path_plan", "确认、修订或归档个人长期学习路径", "write", "explicit_or_click",
+            {"structure": "confirmed_learning_path_plan", "value": "confirmed_long_term_goal"},
+            ("read_vnext_learning_path_graph", "run_vnext_learning_plan"),
         ),
         ActionDefinition(
             "read_personal_concept_graph", "读取个人概念学习图", "none", "none",
@@ -84,6 +94,12 @@ ACTION_BOARD = {
              "human": "learner_correction", "value": "learner_confirmation",
              "practice": "learner_correction"},
             ("read_vnext_five_kernel_profile",),
+        ),
+        ActionDefinition(
+            "edit_vnext_five_kernel_profile", "按核更新学习者明确资料与长期方向", "write", "explicit_or_click",
+            {"knowledge": "declared_background_only", "human": "explicit_learning_preferences",
+             "value": "explicit_focus_or_confirmed_direction"},
+            ("read_vnext_five_kernel_profile", "manage_learner_memory"),
         ),
         ActionDefinition(
             "delete_conversation", "从工作区删除独立学习对话", "write", "explicit_or_click",

@@ -32,6 +32,7 @@ type Props = {
   onStatusChange: (nodeId: string, status: LearnerPathStatus) => void
   onAddPersonalNode: (proposal: PersonalPathNodeProposal) => void
   onRemovePersonalNode: (nodeId: string) => void
+  onArchivePlan: (planId: string) => void
 }
 
 const STATUS_ORDER: LearnerPathStatus[] = ['unmarked', 'exploring', 'self_reported_exposed', 'self_reported_mastered']
@@ -40,7 +41,7 @@ function compact(value: string) {
   return value.toLowerCase().replace(/[\s·（）()_\-/]+/g, '')
 }
 
-export default function LearningPathPage({ state, onStatusChange, onAddPersonalNode, onRemovePersonalNode }: Props) {
+export default function LearningPathPage({ state, onStatusChange, onAddPersonalNode, onRemovePersonalNode, onArchivePlan }: Props) {
   const projection = useMemo(() => projectLearnerPath(state), [state])
   const canvasScrollRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
@@ -91,6 +92,14 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   const selectedSuccessors = selected
     ? projection.edges.filter(edge => edge.from === selected.id).map(edge => ({ edge, node: nodeMap.get(edge.to) })).filter(item => item.node)
     : []
+  const activePlan = projection.activePlan
+  const planRouteNodeIds = useMemo(() => new Set(activePlan?.routeNodeIds || []), [activePlan])
+  const planMilestoneNodeIds = useMemo(() => new Set(activePlan?.milestoneNodeIds || []), [activePlan])
+  const planTargetNodeIds = useMemo(() => new Set(activePlan?.targetNodeIds || []), [activePlan])
+  const planEdgeIds = useMemo(() => new Set(activePlan
+    ? projection.edges.filter(edge => planRouteNodeIds.has(edge.from) && planRouteNodeIds.has(edge.to)).map(edge => edge.id)
+    : []), [activePlan, planRouteNodeIds, projection.edges])
+  const planTargetTitles = activePlan?.targetNodeIds.map(nodeId => nodeMap.get(nodeId)?.title || nodeId) || []
 
   useEffect(() => {
     if (!selected || !canvasScrollRef.current) return
@@ -141,6 +150,22 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
         <span>证据边界</span>
         <p>“学过 / 掌握”是你的自报标记，只用于路线导航；正式 Knowledge 核掌握仍需练习、项目或迁移证据。</p>
       </div>
+
+      {activePlan && (
+        <section className="path-active-plan" aria-label="当前长期学习路径">
+          <div>
+            <span>ACTIVE LEARNING PLAN · v{activePlan.revision}</span>
+            <strong>{activePlan.title}</strong>
+            <p>{activePlan.objective}</p>
+          </div>
+          <dl>
+            <div><dt>周期</dt><dd>{activePlan.horizon}</dd></div>
+            <div><dt>目标</dt><dd>{planTargetTitles.join('、')}</dd></div>
+            <div><dt>路线</dt><dd>{activePlan.routeNodeIds.length} 节点 · {activePlan.milestoneNodeIds.length} 里程碑</dd></div>
+          </dl>
+          <button type="button" onClick={() => { if (globalThis.confirm(`归档长期路径“${activePlan.title}”？历史记录会保留。`)) onArchivePlan(activePlan.id) }}>归档这条路径</button>
+        </section>
+      )}
 
       <div className="path-layout">
         <main className="path-main">
@@ -204,7 +229,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                   const marker = edge.kind === 'hard_prerequisite' ? 'hard' : edge.kind === 'soft_prerequisite' ? 'soft' : 'co'
                   return <path
                     key={edge.id}
-                    className={`path-edge path-edge-${edge.kind}${(focusTrace?.edgeIds.has(edge.id) || !focusId && selectedEdgeIds.has(edge.id)) ? ' path-edge-focused' : ''}${focusId && !focusTrace?.edgeIds.has(edge.id) ? ' path-edge-dimmed' : ''}`}
+                    className={`path-edge path-edge-${edge.kind}${planEdgeIds.has(edge.id) ? ' path-edge-plan' : ''}${(focusTrace?.edgeIds.has(edge.id) || !focusId && selectedEdgeIds.has(edge.id)) ? ' path-edge-focused' : ''}${focusId && !focusTrace?.edgeIds.has(edge.id) && !planEdgeIds.has(edge.id) ? ' path-edge-dimmed' : ''}`}
                     d={nebulaEdgePath(from, to, edge.id)}
                     markerEnd={`url(#path-arrow-${marker})`}
                   />
@@ -214,19 +239,20 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                 const position = nebulaPositions.get(node.id)!
                 const cluster = knowledgeCluster(position.clusterId)
                 const status = projection.statuses[node.id] || 'unmarked'
+                const planRole = planTargetNodeIds.has(node.id) ? 'target' : planMilestoneNodeIds.has(node.id) ? 'milestone' : planRouteNodeIds.has(node.id) ? 'route' : ''
                 return (
                   <button
                     type="button"
                     key={node.id}
-                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${focusId && !focusTrace?.nodes.has(node.id) ? ' path-node-muted' : ''}${focusTrace?.upstream.has(node.id) && node.id !== focusId ? ' path-node-upstream' : ''}${focusTrace?.downstream.has(node.id) && node.id !== focusId ? ' path-node-downstream' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
+                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${planRole ? ` path-node-plan-${planRole}` : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${focusId && !focusTrace?.nodes.has(node.id) && !planRole ? ' path-node-muted' : ''}${focusTrace?.upstream.has(node.id) && node.id !== focusId ? ' path-node-upstream' : ''}${focusTrace?.downstream.has(node.id) && node.id !== focusId ? ' path-node-downstream' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
                     style={{ left: position.x, top: position.y, width: position.width, height: position.height, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
                     onClick={() => selectAndFocus(node.id)}
                     onMouseEnter={() => setHoveredId(node.id)}
                     onMouseLeave={() => setHoveredId(undefined)}
-                    title={`${node.title} · ${cluster.label} · ${PATH_STATUS_LABELS[status]}`}
+                    title={`${node.title} · ${cluster.label} · ${planRole === 'target' ? '规划目标' : planRole === 'milestone' ? '路线里程碑' : planRole === 'route' ? '规划路线' : PATH_STATUS_LABELS[status]}`}
                   >
                     <strong>{node.title}</strong>
-                    <small>{node.origin === 'personal' ? '个人节点' : PATH_STATUS_LABELS[status]}</small>
+                    <small>{planRole === 'target' ? '◎ 规划目标' : planRole === 'milestone' ? '◆ 路线里程碑' : planRole === 'route' ? '· 规划路线' : node.origin === 'personal' ? '个人节点' : PATH_STATUS_LABELS[status]}</small>
                   </button>
                 )
               })}
@@ -234,7 +260,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
             </div>
           </div>
           <div className="path-legend">
-            <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span><em>聚焦时：蓝色是来到这里的前置，绿色是从这里继续的后继。</em>
+            <span><i className="legend-hard" />硬前置</span><span><i className="legend-soft" />软前置</span><span><i className="legend-co" />建议共学</span><span><i className="legend-plan" />我的长期路线</span><em>聚焦时：蓝色是来到这里的前置，绿色是从这里继续的后继。</em>
           </div>
         </main>
 
@@ -245,6 +271,12 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
               <h2>{selected.title}</h2>
               <p>{selected.summary}</p>
               <div className="path-node-tags"><span className="path-cluster-tag" style={{ '--cluster-color': knowledgeCluster(clusterLearningPathNode(selected)).color, '--cluster-rgb': knowledgeCluster(clusterLearningPathNode(selected)).rgb } as CSSProperties}>{knowledgeCluster(clusterLearningPathNode(selected)).label}</span>{selected.domains.map(item => <span key={item}>{item}</span>)}</div>
+              {activePlan && planRouteNodeIds.has(selected.id) && (
+                <div className={`path-plan-role path-plan-role-${planTargetNodeIds.has(selected.id) ? 'target' : planMilestoneNodeIds.has(selected.id) ? 'milestone' : 'route'}`}>
+                  <span>{planTargetNodeIds.has(selected.id) ? '长期规划目标' : planMilestoneNodeIds.has(selected.id) ? '长期路线里程碑' : '长期规划路线节点'}</span>
+                  <p>属于“{activePlan.title}”。路线是规划导航，不代表已经掌握。</p>
+                </div>
+              )}
               <div className="path-status-picker">
                 <label>我的状态</label>
                 <div>{STATUS_ORDER.map(status => <button type="button" key={status} className={(projection.statuses[selected.id] || 'unmarked') === status ? 'active' : ''} onClick={() => onStatusChange(selected.id, status)}>{PATH_STATUS_LABELS[status]}</button>)}</div>

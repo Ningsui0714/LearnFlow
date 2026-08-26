@@ -5,7 +5,10 @@ import {
   OFFICIAL_PATH_EDGES,
   OFFICIAL_PATH_NODES,
   addPersonalPathNode,
+  archiveLearningPathPlan,
+  buildLearningPathPlanProposal,
   buildPersonalNodeProposal,
+  commitLearningPathPlan,
   createInitialLearnerPathState,
   projectLearnerPath,
   readLearningPathGraph,
@@ -109,6 +112,32 @@ test('planning mode invokes the path reader without asking the model to decide s
   assert.match(pathRun?.detail || '', /智能体工程/)
   assert.match(result.context, /结构核参考投影/)
   assert.match(result.context, /不能替代题目、项目或迁移证据/)
+  assert.ok(pathRun?.pathPlanProposal)
+  assert.ok(pathRun!.pathPlanProposal!.targetNodeIds.includes('agent-engineering'))
+  assert.match(result.context, /长期学习路径提案/)
+  assert.match(result.context, /尚未确认/)
+})
+
+test('long-term route proposal becomes an inspectable learner-owned plan and remains archivable', () => {
+  const initial = createInitialLearnerPathState()
+  const proposal = buildLearningPathPlanProposal('我想用半年系统学习 Agent 开发并做一个项目', initial)
+  assert.ok(proposal)
+  assert.equal(proposal!.horizon, '6 个月')
+  assert.ok(proposal!.targetNodeIds.includes('agent-engineering'))
+  assert.ok(proposal!.routeNodeIds.includes('agent-engineering'))
+  assert.ok(proposal!.routeNodeIds.some(nodeId => ['python-programming', 'machine-learning', 'deep-learning'].includes(nodeId)))
+  assert.ok(proposal!.milestoneNodeIds.length >= 2)
+
+  const committed = commitLearningPathPlan(initial, proposal!)
+  const projection = projectLearnerPath(committed)
+  assert.equal(projection.activePlan?.id, proposal!.id)
+  assert.equal(projection.activePlan?.status, 'active')
+  assert.equal(projection.activePlan?.revision, 1)
+
+  const archived = archiveLearningPathPlan(committed, proposal!.id)
+  const archivedProjection = projectLearnerPath(archived)
+  assert.equal(archivedProjection.activePlan, undefined)
+  assert.equal(archivedProjection.plans.find(plan => plan.id === proposal!.id)?.status, 'archived')
 })
 
 test('knowledge nebula gives every course one bounded thematic position', () => {

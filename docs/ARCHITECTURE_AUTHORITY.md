@@ -212,6 +212,22 @@ Contract impact：注册表版本提升到 `2026-08-26.12`。新增两个工具�
 Knowledge + Human + Value。现有 EvidenceEvent、KernelState、Memory Graph schema 与旧 API 保持兼容，
 没有新增 Agent、Kernel writer 或掌握推断路径。
 
+vNext 的规划态现已把正式五核、官方/个人学习路径和长期目标收敛为一个闭环。Tutor 每轮先通过
+`vnext_five_kernel_profile_reader` 按 mode 请求 ContextPacket；`learning_plan` policy 会优先读取
+Structure、Knowledge、Human、Value 以及当前活动路线。`vnext_learning_path_planner` 只生成可检查
+proposal，学习者点击确认后才由 `vnext_learning_path_plan_manager` 追加 commit/revise/archive 事件。
+Reducer 把活动路线投影到 Structure，把明确目标投影到 Value；路径页只显示这份正式投影。
+
+五核同时增加学习者明确修订入口 `vnext_five_kernel_explicit_editor`。它不是第二个 writer，而是按核
+把操作路由到既有 profile、concept、path plan 与 memory gateway：Knowledge 接受待验证背景/概念
+自述，Structure 接受关系与路线，Human 接受明确节奏偏好，Value 接受经确认方向，Practice 只允许
+纠正已有认识或提交可验证产物，不能靠自述升级能力。
+
+Contract impact：注册表版本提升到 `2026-08-26.13`。新增长期路径 planner/manager 和五核明确修订
+工具登记，新增三个长期路径事件，并为 ContextPacket 增加 `learning_plan` policy。`profile_updated` 与
+`career_goal_confirmed` 的 capability owner 收敛到显式画像编辑入口；事件 ID、API schema、三类 Agent、
+五核唯一 writer 和既有数据均向后兼容。长期路线使用既有 JSON 投影，不需要数据库 schema 迁移。
+
 五核内容策略由注册表公开，避免“所有核都长成同一种摘要”：Structure 使用稀疏锚点 Claim，
 Knowledge 使用证据声明，Human 使用交互指令，Value 使用经同意的目标声明，Practice 使用带产物、
 辅助等级和迁移证据的表现声明。每个策略分别声明 Fact/Module/Claim 的对象角色、共享主题和硬边界；

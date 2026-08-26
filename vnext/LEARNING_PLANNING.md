@@ -30,10 +30,12 @@
 - 学生原话依据。
 - 推断边界与正式写入状态。
 
-学生可以接受为候选、要求修改或拒绝。三个决定都只写浏览器本地零 target 事件；`formalWriteCompleted` 固定为 `false`。后续正式接入必须把学生确认与 scope 送入 `EvidenceEvent -> reducer`，由 Value 长期巩固规则裁决，不能直接修改 `KernelState`。
+学生可以接受为候选、要求修改或拒绝。拒绝和修改请求是零 target 运行事件；接受会通过正式 Value Claim gateway 写入带 scope 的确认事件，再由 reducer 裁决，不能直接修改 `KernelState`。
+
+规划态还会调用正式学习路径 Reader。已知课程或技能由确定性 Path Planner 形成长期路线 proposal；页面必须明确标记“尚未写入”。学习者点击确认后，`vnext_learning_path_plan_manager` 追加正式事件，同时更新 Structure 的活动路线与 Value 的确认目标。后续规划态使用 `learning_plan` ContextPolicy 读取该活动路线，不再把每轮建议当成无状态文本。
 
 ## 当前事件
 
 `vnext_learning_plan_started`、`vnext_learning_plan_note_captured`、`vnext_project_seed_ready`、`vnext_direction_plan_ready`、`vnext_value_claim_proposed`、`vnext_value_claim_proposal_accepted/rejected/revision_requested`、`vnext_learning_plan_closed`。
 
-这些事件全部是运行与知情决定记录，不是掌握、能力或正式长期目标证据。
+前述运行事件不是掌握或能力证据。正式 Value Claim 与长期路线确认事件只证明学习者确认了目标，不证明路线节点已经掌握。

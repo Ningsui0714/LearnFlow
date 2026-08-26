@@ -75,15 +75,17 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
-        "vnext_learning_path_graph_reader", "personal_concept_graph_reader",
+        "vnext_learning_path_graph_reader", "vnext_learning_path_planner",
+        "vnext_learning_path_plan_manager", "personal_concept_graph_reader",
         "concept_self_report_gateway", "vnext_personal_path_node_runtime",
+        "vnext_five_kernel_explicit_editor",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-        "read_vnext_learning_path_graph", "read_personal_concept_graph",
-        "record_concept_self_report", "manage_vnext_personal_path_node",
+        "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
+        "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
@@ -101,13 +103,20 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     )
     assert WORKBENCHES["vnext_learning_path"].surface == "/learning-path"
     assert WORKBENCHES["vnext_profile"].surface == "/learner-profile"
+    assert "edit_vnext_five_kernel_profile" in WORKBENCHES["vnext_profile"].capabilities
+    assert CAPABILITY_OWNERS["edit_vnext_five_kernel_profile"] == (
+        "tutor_agent", "vnext_five_kernel_explicit_editor", "vnext_profile",
+    )
+    assert EVENTS["profile_updated"].capability == "edit_vnext_five_kernel_profile"
+    assert EVENTS["career_goal_confirmed"].capability == "edit_vnext_five_kernel_profile"
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
-            "vnext_learning_path_graph_reader", "personal_concept_graph_reader",
-            "concept_self_report_gateway", "vnext_personal_path_node_runtime",
+            "vnext_learning_path_graph_reader", "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
+            "personal_concept_graph_reader", "concept_self_report_gateway", "vnext_personal_path_node_runtime",
+            "vnext_five_kernel_explicit_editor",
         }
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path

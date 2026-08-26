@@ -15,8 +15,10 @@ import {
   readFiveKernelProfile,
 } from '../src/five-kernel-profile.ts'
 import {
+  buildLearningPathPlanProposal,
   buildPersonalNodeProposal,
   learningPathPacketToTutorContext,
+  projectLearnerPath,
   readLearningPathGraph,
   type LearnerPathState,
 } from '../src/learning-path-graph.ts'
@@ -260,6 +262,25 @@ export async function runTutorTools(options: {
     }
     runs.push(pathRun)
     context.push(learningPathPacketToTutorContext(pathPacket))
+    if (!pathPacket.needsExternalResearch && options.learnerPathState && shouldReadPath) {
+      const planProposal = buildLearningPathPlanProposal(options.message, options.learnerPathState, pathPacket)
+      if (planProposal) {
+        pathRun.pathPlanProposal = planProposal
+        const routeProjection = projectLearnerPath(options.learnerPathState)
+        const titleById = new Map(routeProjection.nodes.map(node => [node.id, node.title]))
+        pathRun.detail += ` 已生成“${planProposal.title}”长期路线提案，包含 ${planProposal.routeNodeIds.length} 个节点；只有学习者确认后才写入 Structure 与 Value。`
+        context.push([
+          '长期学习路径提案（确定性规划器输出，尚未确认）：',
+          `目标：${planProposal.objective}`,
+          `时间范围：${planProposal.horizon}`,
+          `目标节点：${planProposal.targetNodeIds.map(nodeId => titleById.get(nodeId) || nodeId).join('、')}`,
+          `推荐路线：${planProposal.routeNodeIds.map(nodeId => titleById.get(nodeId) || nodeId).join(' → ')}`,
+          `里程碑：${planProposal.milestoneNodeIds.map(nodeId => titleById.get(nodeId) || nodeId).join('、')}`,
+          `规划依据：${planProposal.rationale}`,
+          'Tutor 应解释路线取舍和可调整点；不得声称路线已保存、节点已掌握或学生必须照单全收。界面会单独提供确认按钮。',
+        ].join('\n'))
+      }
+    }
   }
 
   let searchSourceUrls: string[] = []

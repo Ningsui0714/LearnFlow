@@ -116,6 +116,34 @@ class ValueClaimConfirmationRequest(BaseModel):
     client_event_id: str = Field(min_length=4, max_length=160)
 
 
+class LearningPathPlanRequest(BaseModel):
+    plan_id: str = Field(min_length=4, max_length=160)
+    title: str = Field(min_length=2, max_length=200)
+    objective: str = Field(min_length=2, max_length=1000)
+    horizon: str = Field(default="长期", max_length=120)
+    target_node_ids: list[str] = Field(min_length=1, max_length=8)
+    route_node_ids: list[str] = Field(min_length=1, max_length=40)
+    milestone_node_ids: list[str] = Field(default_factory=list, max_length=16)
+    rationale: str = Field(default="", max_length=1600)
+    evidence_quote: str = Field(min_length=1, max_length=500)
+    source_plan_id: str = Field(default="", max_length=160)
+    client_event_id: str = Field(min_length=4, max_length=160)
+
+    @field_validator("target_node_ids", "route_node_ids", "milestone_node_ids")
+    @classmethod
+    def clean_plan_node_ids(cls, values: list[str]) -> list[str]:
+        cleaned = list(dict.fromkeys(str(value).strip()[:160] for value in values if str(value).strip()))
+        return cleaned
+
+    @field_validator("route_node_ids")
+    @classmethod
+    def route_contains_targets(cls, values: list[str], info) -> list[str]:
+        targets = list((info.data or {}).get("target_node_ids") or [])
+        if any(target not in values for target in targets):
+            raise ValueError("长期路径必须包含全部目标节点")
+        return values
+
+
 class ConceptStatementRequest(BaseModel):
     raw_text: str = Field(min_length=2, max_length=12000)
     concepts: list[dict[str, Any]] = Field(default_factory=list, max_length=40)
@@ -132,10 +160,17 @@ def _path_overlay(projection: dict[str, Any]) -> dict[str, Any]:
         value for value in raw_nodes.values()
         if isinstance(value, dict) and value.get("status", "active") == "active"
     ]
+    raw_plans = dict(structure.get("learning_path_plans") or {})
+    plans = [
+        value for value in raw_plans.values()
+        if isinstance(value, dict) and value.get("status", "active") == "active"
+    ]
     return {
-        "version": 1,
+        "version": 2,
         "statuses": statuses,
         "personal_nodes": nodes,
+        "plans": plans,
+        "active_plan_id": structure.get("active_learning_path_plan_id"),
         "event_backed": True,
         "knowledge_mastery_inference": False,
     }
@@ -286,13 +321,15 @@ async def get_learner_state_snapshot(
 @router.get("/context")
 async def get_learner_context(
     query: str = Query(default="", max_length=2000),
+    purpose: Literal["global_tutor", "learning_plan", "learning_task"] = Query(default="global_tutor"),
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
+    policy = "learning_plan" if purpose == "learning_plan" else "global_tutor"
     packet = await build_five_kernel_context(
         db,
         learner_id=current.learner.id,
-        policy="global_tutor",
+        policy=policy,
         query=query,
     )
     return packet
@@ -538,6 +575,87 @@ async def remove_personal_learning_path_node(
     updated = await get_kernel_projection(db, current.learner.id)
     await db.commit()
     return {"event_id": event.id, "learning_path": _path_overlay(updated)}
+
+
+@router.post("/learning-path/plans")
+async def commit_learning_path_plan(
+    request: LearningPathPlanRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    projection = await get_kernel_projection(db, current.learner.id)
+    plans = dict((projection.get("structure") or {}).get("long_term") or {}).get(
+        "learning_path_plans", {},
+    )
+    existing = dict(plans.get(request.plan_id) or {})
+    event_type = "vnext_learning_path_plan_revised" if existing else "vnext_learning_path_plan_committed"
+    revision = int(existing.get("revision") or 0) + 1
+    payload = {
+        "plan_id": request.plan_id,
+        "title": request.title,
+        "objective": request.objective,
+        "horizon": request.horizon,
+        "target_node_ids": request.target_node_ids,
+        "route_node_ids": request.route_node_ids,
+        "milestone_node_ids": request.milestone_node_ids,
+        "rationale": request.rationale,
+        "evidence_quote": request.evidence_quote,
+        "source_plan_id": request.source_plan_id,
+        "revision": revision,
+        "memory_subject_key": f"goal:{request.plan_id}",
+    }
+    event = await record_event(
+        db,
+        learner_id=current.learner.id,
+        event_type=event_type,
+        source="user",
+        payload=payload,
+        confidence=1.0,
+        provenance={
+            "explicit_click": True,
+            "learner_confirmed": True,
+            "route_generated_by": "vnext_learning_path_planner",
+            "mastery_unchanged": True,
+        },
+        client_event_id=request.client_event_id,
+    )
+    updated = await get_kernel_projection(db, current.learner.id)
+    await db.commit()
+    return {"event_id": event.id, "status": "confirmed", "learning_path": _path_overlay(updated)}
+
+
+@router.delete("/learning-path/plans/{plan_id}")
+async def archive_learning_path_plan(
+    plan_id: str,
+    client_event_id: str = Query(min_length=4, max_length=160),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    projection = await get_kernel_projection(db, current.learner.id)
+    plans = dict((projection.get("structure") or {}).get("long_term") or {}).get(
+        "learning_path_plans", {},
+    )
+    plan = dict(plans.get(plan_id) or {})
+    if not plan or plan.get("status", "active") != "active":
+        raise HTTPException(404, "长期学习路径不存在或已经归档")
+    event = await record_event(
+        db,
+        learner_id=current.learner.id,
+        event_type="vnext_learning_path_plan_archived",
+        source="user",
+        payload={
+            "plan_id": plan_id,
+            "title": str(plan.get("title") or plan_id)[:200],
+            "objective": str(plan.get("objective") or "")[:1000],
+            "memory_subject_key": f"goal:{plan_id}",
+        },
+        confidence=1.0,
+        provenance={"explicit_click": True, "learner_confirmed": True, "mastery_unchanged": True},
+        client_event_id=client_event_id,
+    )
+    updated = await get_kernel_projection(db, current.learner.id)
+    await db.commit()
+    return {"event_id": event.id, "status": "archived", "learning_path": _path_overlay(updated)}
 
 
 @router.post("/value-claims/confirm")

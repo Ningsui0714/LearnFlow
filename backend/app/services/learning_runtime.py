@@ -265,6 +265,124 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
+    if et in {"vnext_learning_path_plan_committed", "vnext_learning_path_plan_revised"}:
+        plan_id = str(p.get("plan_id") or "").strip()[:160]
+        objective = str(p.get("objective") or "").strip()[:1000]
+        target_ids = list(dict.fromkeys(
+            str(item).strip()[:160] for item in list(p.get("target_node_ids") or [])
+            if str(item).strip()
+        ))[:8]
+        route_ids = list(dict.fromkeys(
+            str(item).strip()[:160] for item in list(p.get("route_node_ids") or [])
+            if str(item).strip()
+        ))[:40]
+        milestone_ids = list(dict.fromkeys(
+            str(item).strip()[:160] for item in list(p.get("milestone_node_ids") or [])
+            if str(item).strip()
+        ))[:16]
+        if not plan_id or not objective or not target_ids or any(item not in route_ids for item in target_ids):
+            return
+        structure = await _kernel(db, event.learner_id, "structure")
+        plans = dict((structure.long_term or {}).get("learning_path_plans") or {})
+        previous = dict(plans.get(plan_id) or {})
+        plan = {
+            "id": plan_id,
+            "title": str(p.get("title") or objective)[:200],
+            "objective": objective,
+            "horizon": str(p.get("horizon") or "长期")[:120],
+            "target_node_ids": target_ids,
+            "route_node_ids": route_ids,
+            "milestone_node_ids": milestone_ids,
+            "rationale": str(p.get("rationale") or "")[:1600],
+            "evidence_quote": str(p.get("evidence_quote") or "")[:500],
+            "source_plan_id": str(p.get("source_plan_id") or "")[:160],
+            "status": "active",
+            "revision": max(int(previous.get("revision") or 0) + 1, int(p.get("revision") or 1)),
+            "evidence_id": event.id,
+        }
+        plans[plan_id] = plan
+        await _apply_patch(
+            db, event, "structure",
+            {
+                "active_learning_path_plan": plan,
+                "path_position": {
+                    "level": "long_term_learning_path",
+                    "plan_id": plan_id,
+                    "target_node_ids": target_ids,
+                    "milestone_node_ids": milestone_ids,
+                },
+                "resume_anchor": {
+                    "plan_id": plan_id,
+                    "node_id": milestone_ids[0] if milestone_ids else route_ids[0],
+                    "note": f"返回长期学习路径「{plan['title']}」继续",
+                },
+            },
+            "学习者确认了可检查、可修订的长期学习路径；路线是导航结构而不是掌握结论",
+            long_patch={
+                "learning_path_plans": plans,
+                "active_learning_path_plan_id": plan_id,
+            },
+        )
+
+        value = await _kernel(db, event.learner_id, "value")
+        confirmed_goals = dict((value.long_term or {}).get("confirmed_goals") or {})
+        confirmed_goals[f"path-plan:{plan_id}"] = {
+            "statement": objective,
+            "evidence_quote": plan["evidence_quote"],
+            "scope": "long_term_learning_path",
+            "status": "confirmed",
+            "route_plan_id": plan_id,
+            "evidence_id": event.id,
+        }
+        await _apply_patch(
+            db, event, "value",
+            {
+                "current_priority": objective,
+                "goal_candidate": objective,
+                "goal_status": "confirmed",
+                "active_learning_path_plan_id": plan_id,
+            },
+            "学习者确认长期路线时同步确认其目标；路线本身仍由 Structure 负责",
+            long_patch={"confirmed_goals": confirmed_goals},
+        )
+        return
+
+    if et == "vnext_learning_path_plan_archived":
+        plan_id = str(p.get("plan_id") or "").strip()[:160]
+        if not plan_id:
+            return
+        structure = await _kernel(db, event.learner_id, "structure")
+        plans = dict((structure.long_term or {}).get("learning_path_plans") or {})
+        plan = dict(plans.get(plan_id) or {})
+        if plan:
+            plan.update({"status": "archived", "archived_by_event_id": event.id})
+            plans[plan_id] = plan
+        long_patch: dict[str, Any] = {"learning_path_plans": plans}
+        short_patch: dict[str, Any] = {"learning_path_last_edit": plan_id}
+        if (structure.long_term or {}).get("active_learning_path_plan_id") == plan_id:
+            long_patch["active_learning_path_plan_id"] = None
+            short_patch["active_learning_path_plan"] = None
+        await _apply_patch(
+            db, event, "structure", short_patch,
+            "学习者归档当前长期学习路径；历史路线与确认事件继续保留",
+            long_patch=long_patch,
+        )
+
+        value = await _kernel(db, event.learner_id, "value")
+        confirmed_goals = dict((value.long_term or {}).get("confirmed_goals") or {})
+        goal_key = f"path-plan:{plan_id}"
+        if goal_key in confirmed_goals:
+            archived_goal = dict(confirmed_goals[goal_key])
+            archived_goal.update({"status": "archived", "archived_by_event_id": event.id})
+            confirmed_goals[goal_key] = archived_goal
+        await _apply_patch(
+            db, event, "value",
+            {"goal_status": "archived", "active_learning_path_plan_id": None},
+            "归档路线同步结束当前目标优先级，但不删除历史目标",
+            long_patch={"confirmed_goals": confirmed_goals},
+        )
+        return
+
     if et == "vnext_learning_path_node_status_set":
         node_id = str(p.get("node_id") or "").strip()[:160]
         status = str(p.get("status") or "unmarked")

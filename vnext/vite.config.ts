@@ -210,7 +210,14 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
       let formalLearnerContext = ''
       try {
-        const contextResponse = await fetch(`${backendBase}/api/learner-state/context?query=${encodeURIComponent(latestMessage.slice(0, 1800))}`, {
+        const contextPurpose = modeValue === 'learning_plan'
+          ? 'learning_plan'
+          : modeValue === 'guided_learning' ? 'learning_task' : 'global_tutor'
+        const contextQuery = new URLSearchParams({
+          query: latestMessage.slice(0, 1800),
+          purpose: contextPurpose,
+        })
+        const contextResponse = await fetch(`${backendBase}/api/learner-state/context?${contextQuery}`, {
           headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
           signal: AbortSignal.timeout(4_000),
         })
