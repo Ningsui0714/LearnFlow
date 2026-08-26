@@ -196,6 +196,9 @@ button { cursor: pointer; }
 .paper-stack::before, .paper-stack::after { position: absolute; inset: 8px -8px -8px 8px; border: 1px solid #d9ded8; border-radius: 4px 4px 0 0; background: #fafbf8; content: ''; box-shadow: 0 7px 18px rgba(35,49,40,.08); }
 .paper-stack::after { inset: 4px -4px -4px 4px; background: #fdfefb; }
 .paper-sheet { position: relative; z-index: 3; display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; border: 1px solid #d7ddd7; border-radius: 4px 4px 0 0; background: #fff; box-shadow: 0 10px 30px rgba(35,49,40,.09); }
+.paper-sheet-artifact { overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.paper-sheet-artifact > .learning-file-embedded { min-height: 100%; flex: none; }
+.paper-sheet-artifact > .messages { min-height: 0; flex: none; overflow: visible; }
 .paper-sheet .messages { padding-top: 22px; }
 .paper-edge-deck { position: absolute; z-index: 2; top: 8px; right: -10px; bottom: 0; width: 18px; transition: width .24s cubic-bezier(.2,.75,.25,1); }
 .paper-edge-deck:hover, .paper-edge-deck:focus-within { z-index: 5; width: min(48%, 310px); }

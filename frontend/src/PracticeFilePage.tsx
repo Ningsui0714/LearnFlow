@@ -70,7 +70,6 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
   return (
     <section className={`practice-file-workbench${embedded ? ' learning-file-embedded' : ''}`}>
       <header className="learning-file-workbench-heading"><div><span>PRACTICE · ANSWER SAFE</span><h1>{file.title}</h1><code>{file.logical_filename}</code></div>{onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'practice', ref: file.ref, title: file.title })}>作为对话纸张打开</button>}</header>
-      <div className="learning-evidence-notice">答案与解释在提交前隔离。正式提交会建立 Attempt，经确定性判题后才写入 Knowledge / Practice 证据。</div>
       {file.practice_kind !== 'exercise' ? <div className="practice-question-list">{(file.questions || []).map((question, index) => {
         const selected = answers[question.id] || []
         const result = results[question.id]

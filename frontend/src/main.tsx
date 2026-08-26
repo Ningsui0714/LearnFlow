@@ -2447,7 +2447,7 @@ function App() {
                     {pages.length - 1 > backPages.length && <span className="paper-edge-more">+{pages.length - 1 - backPages.length}</span>}
                   </div>
                 )}
-                <div className={hasWorkbench ? 'paper-sheet' : 'conversation-page-content'}>
+                <div className={hasWorkbench ? `paper-sheet${sheet?.artifact ? ' paper-sheet-artifact' : ''}` : 'conversation-page-content'}>
                   {sheet?.artifact?.kind === 'lecture' && (
                     <Suspense fallback={<div className="page-loading">正在打开讲义纸张…</div>}>
                       <LectureFilePage lectureId={Number(sheet.artifact.ref)} embedded conversationId={conversation.id} sheetId={sheet.id} />
