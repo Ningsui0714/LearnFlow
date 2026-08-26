@@ -85,6 +85,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "vnext_five_kernel_explicit_editor", "review_context_reader",
         "review_proficiency_projector", "review_reflection_gateway",
     } <= set(TOOLS)
+    assert TOOL_INTERFACE_ROLES["vnext_chat_session_store"] == "adapter"
+    assert TOOLS["vnext_chat_session_store"].writes_kernels == ()
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "coordinate_vnext_agent_turn",

@@ -204,6 +204,68 @@ def test_independent_global_chats_invoke_registered_session_skills(client: TestC
     assert invalid.status_code == 400
 
 
+def test_vnext_global_chat_is_cross_browser_authority_without_kernel_evidence(client: TestClient):
+    conversation_id = f"chat-{uuid.uuid4()}"
+    create_payload = {
+        "session_type": "global",
+        "create_new": True,
+        "title": "解释一下 CNN",
+        "client_conversation_id": conversation_id,
+    }
+    first = client.post("/api/agent/sessions", json=create_payload)
+    replay = client.post("/api/agent/sessions", json=create_payload)
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["id"] == replay.json()["id"]
+    session_id = first.json()["id"]
+
+    sync_payload = {
+        "client_conversation_id": conversation_id,
+        "title": "解释一下 CNN",
+        "mode": "simple_explain",
+        "messages": [
+            {
+                "client_message_id": f"message-{uuid.uuid4()}",
+                "role": "user",
+                "content": "解释一下 CNN",
+                "created_at_ms": 1_700_000_000_000,
+                "meta_data": {"tutorMode": "simple_explain"},
+            },
+            {
+                "client_message_id": f"message-{uuid.uuid4()}",
+                "role": "assistant",
+                "content": "CNN 会用卷积核提取局部模式。",
+                "created_at_ms": 1_700_000_001_000,
+                "meta_data": {"tutorMode": "simple_explain"},
+            },
+        ],
+    }
+    synced = client.put(f"/api/agent/sessions/{session_id}/vnext", json=sync_payload)
+    repeated = client.put(f"/api/agent/sessions/{session_id}/vnext", json=sync_payload)
+    assert synced.status_code == repeated.status_code == 200
+    assert len(repeated.json()["messages"]) == 2
+    assert repeated.json()["client_conversation_id"] == conversation_id
+    assert repeated.json()["vnext_mode"] == "simple_explain"
+
+    listed = client.get("/api/agent/sessions", params={"session_type": "global"})
+    listed_item = next(item for item in listed.json() if item["id"] == session_id)
+    assert listed_item["vnext_managed"] is True
+    assert listed_item["client_conversation_id"] == conversation_id
+
+    async def stored_projection():
+        async with async_session() as db:
+            messages = list((await db.execute(select(AgentMessage).where(
+                AgentMessage.session_id == session_id,
+            ))).scalars().all())
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+            ))).scalars().all())
+            return messages, events
+
+    messages, events = asyncio.run(stored_projection())
+    assert len(messages) == 2
+    assert events == []
+
+
 def test_deleting_global_chat_removes_workspace_and_cancels_open_task(client: TestClient):
     session_id = new_session(client)
     turn = client.post(f"/api/agent/sessions/{session_id}/turns", json={

@@ -132,6 +132,13 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 项目提案和产物引用经 reducer 投影为可恢复学习动作。讲解段只形成 Knowledge exposure 并固定
 `mastery_unchanged`；只有明确的 learn/plan 目标才形成短期 Value 投影，不能自动巩固长期目标。
 
+普通 vNext 对话的跨浏览器权威是 learner-owned `AgentSession + AgentMessage`。浏览器
+`localStorage` 只缓存未发送草稿、已开标签、并排布局和纸张工作台等 UI 状态；对话目录、标题和主纸消息
+通过 `vnext_chat_session_store` 幂等归档到正式后端。该 adapter 不运行第二个 Tutor、不产生
+`EvidenceEvent`，也不把聊天持久化视为学习暴露或掌握；需要进入五核的模式、学习动作与评估仍走各自已
+登记的事件入口。旧浏览器本地对话在首次连接时以 `client_conversation_id` 安全迁移，多个浏览器随后读取
+同一正式目录。
+
 ### vNext Chat 的工具与选中追问原型
 
 vNext Tutor 回合由 `vnext_agent_turn_runtime` 统一编排为有界 Turn Graph：
@@ -158,6 +165,10 @@ projection / policy / adapter`。只有 `aci_tool` 可以成为模型工具；`v
 任务/规划 runtime 是 Harness，`five_kernel_reducer` 和 Memory Graph 是投影基础设施，不得冒充
 Agent 动作。`SKILLS` 同样区分 `pedagogical_method / playbook / coordination_skill`：学习方法
 定义局部教学转换，Playbook 组合多个能力完成闭环，二者不得用同一职责解释。
+
+Contract impact：注册表版本提升到 `2026-08-26.24`。新增 `vnext_chat_session_store` adapter 与
+向后兼容的 Session 创建/消息同步字段；既有 Session、Tutor turn、SkillRun、项目会话和五核 API 不变，
+无需数据库迁移，没有新增 Kernel writer。普通对话删除继续复用 `workspace_lifecycle`，保留追加式学习证据。
 
 Contract impact：注册表版本提升到 `2026-08-26.14`。新增只编排上下文的
 `coordinate_vnext_agent_turn` capability 和 Harness 登记；所有既有稳定工具、Skill、事件与 API

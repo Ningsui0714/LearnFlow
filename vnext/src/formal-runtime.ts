@@ -160,9 +160,34 @@ export type FormalTutorSession = {
   session_type: 'global' | 'project' | 'checkpoint'
   project_id?: number | null
   checkpoint_id?: number | null
+  client_conversation_id?: string
+  vnext_managed?: boolean
+  vnext_mode?: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
+  chat_mode?: { id?: 'free' | 'explain' | 'learn' | 'plan'; status?: string }
+  messages?: FormalTutorMessage[]
+  created_at?: string | null
+  updated_at?: string | null
   active_skill_run?: FormalLearningSkillRun | null
   learning_tasks: FormalLearningTask[]
 }
+
+export type FormalTutorMessage = {
+  id: number
+  role: 'assistant' | 'user' | 'system'
+  content: string
+  meta_data?: {
+    client_message_id?: string
+    vnext?: Record<string, unknown>
+    [key: string]: unknown
+  }
+  created_at?: string | null
+}
+
+export type FormalTutorSessionSummary = Pick<FormalTutorSession,
+  'id' | 'title' | 'session_type' | 'project_id' | 'checkpoint_id' |
+  'client_conversation_id' | 'vnext_managed' | 'vnext_mode' | 'chat_mode' |
+  'created_at' | 'updated_at'
+> & { last_message?: string }
 
 export type FormalPathOverlay = {
   version: 1 | 2
@@ -523,7 +548,12 @@ export async function recordFormalConceptStatement(rawText: string, clientEventI
 
 export async function createFormalTutorSession(
   createNew = true,
-  scope: { projectId?: number; checkpointId?: number } = {},
+  scope: {
+    projectId?: number
+    checkpointId?: number
+    title?: string
+    clientConversationId?: string
+  } = {},
 ) {
   return jsonRequest<FormalTutorSession>('/api/agent/sessions', {
     method: 'POST',
@@ -532,7 +562,52 @@ export async function createFormalTutorSession(
       project_id: scope.projectId,
       checkpoint_id: scope.checkpointId,
       create_new: createNew,
+      title: scope.title,
+      client_conversation_id: scope.clientConversationId,
     }),
+  })
+}
+
+export async function listFormalGlobalChatSessions() {
+  return jsonRequest<FormalTutorSessionSummary[]>('/api/agent/sessions?session_type=global&limit=100')
+    .then(items => items.filter(item => item.vnext_managed && item.client_conversation_id))
+}
+
+export async function syncFormalGlobalChat(
+  sessionId: number,
+  conversation: {
+    id: string
+    title: string
+    mode: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
+    messages: Array<{
+      id: string
+      role: 'assistant' | 'user' | 'system'
+      content: string
+      createdAt: number
+      metaData?: Record<string, unknown>
+    }>
+  },
+) {
+  return jsonRequest<FormalTutorSession>(`/api/agent/sessions/${sessionId}/vnext`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      client_conversation_id: conversation.id,
+      title: conversation.title,
+      mode: conversation.mode,
+      messages: conversation.messages.map(message => ({
+        client_message_id: message.id,
+        role: message.role,
+        content: message.content,
+        created_at_ms: message.createdAt,
+        meta_data: message.metaData || {},
+      })),
+    }),
+  })
+}
+
+export async function deleteFormalTutorSession(sessionId: number) {
+  return jsonRequest<{ status: string; id: number }>(`/api/agent/sessions/${sessionId}`, {
+    method: 'DELETE',
   })
 }
 

@@ -8,6 +8,38 @@ class AgentSessionCreate(BaseModel):
     project_id: Optional[int] = None
     checkpoint_id: Optional[int] = None
     create_new: bool = False
+    title: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    client_conversation_id: Optional[str] = Field(default=None, min_length=8, max_length=120)
+
+    @field_validator("title", "client_conversation_id", mode="before")
+    @classmethod
+    def normalize_session_identity(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
+class VNextSessionMessage(BaseModel):
+    client_message_id: str = Field(min_length=8, max_length=120)
+    role: Literal["assistant", "user", "system"]
+    content: str = Field(min_length=1, max_length=120_000)
+    created_at_ms: int = Field(ge=0)
+    meta_data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("client_message_id", "content", mode="before")
+    @classmethod
+    def normalize_vnext_message(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
+class VNextSessionSyncRequest(BaseModel):
+    client_conversation_id: str = Field(min_length=8, max_length=120)
+    title: str = Field(min_length=1, max_length=255)
+    mode: Literal["free", "simple_explain", "guided_learning", "learning_plan"] = "free"
+    messages: list[VNextSessionMessage] = Field(default_factory=list, max_length=500)
+
+    @field_validator("client_conversation_id", "title", mode="before")
+    @classmethod
+    def normalize_vnext_session(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class TutorTurnRequest(BaseModel):

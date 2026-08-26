@@ -81,10 +81,13 @@ import {
   commitFormalLearningPathPlan,
   createFormalTutorSession,
   createFormalProjectFreeSession,
+  deleteFormalTutorSession,
   generateFormalLearningFiles,
   learnerPathStateFromFormal,
+  listFormalGlobalChatSessions,
   listFormalProjects,
   loadFormalProject,
+  loadFormalTutorSession,
   loadFormalLearnerSnapshot,
   loadLearningFiles,
   removeFormalPersonalPathNode,
@@ -98,6 +101,7 @@ import {
   setFormalPathStatus,
   submitFormalClaimFeedback,
   startFormalLearningSkillRun,
+  syncFormalGlobalChat,
   syncFormalEvent,
   syncFormalEvents,
   updateFormalLearnerProfile,
@@ -110,6 +114,8 @@ import {
   type FormalLearningSkillRun,
   type FormalKnowledgeSource,
   type FormalRuntimeConnection,
+  type FormalTutorMessage,
+  type FormalTutorSession,
 } from './formal-runtime'
 import type { AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
@@ -255,6 +261,76 @@ function createConversation(): Conversation {
       tutorMode: 'free',
     }],
   }
+}
+
+function tutorModeFromFormal(session: FormalTutorSession): TutorMode {
+  if (isTutorMode(session.vnext_mode)) return session.vnext_mode
+  const mode = session.chat_mode?.id
+  if (mode === 'explain') return 'simple_explain'
+  if (mode === 'learn') return 'guided_learning'
+  if (mode === 'plan') return 'learning_plan'
+  return 'free'
+}
+
+function messageFromFormal(message: FormalTutorMessage): Message {
+  const vnext = message.meta_data?.vnext || {}
+  const tutorMode = isTutorMode(vnext.tutorMode) ? vnext.tutorMode : undefined
+  return {
+    id: String(message.meta_data?.client_message_id || `formal-message-${message.id}`),
+    role: message.role,
+    content: message.content,
+    createdAt: message.created_at ? Date.parse(message.created_at) || Date.now() : Date.now(),
+    tutorMode,
+    toolRuns: Array.isArray(vnext.toolRuns) ? vnext.toolRuns as TutorToolRun[] : undefined,
+    agentTrace: vnext.agentTrace && typeof vnext.agentTrace === 'object'
+      ? vnext.agentTrace as AgentTurnTrace
+      : undefined,
+    learningActionLabel: typeof vnext.learningActionLabel === 'string' ? vnext.learningActionLabel : undefined,
+    learningSkillId: isLearningSkillId(vnext.learningSkillId) ? vnext.learningSkillId : undefined,
+    learningSubstateId: typeof vnext.learningSubstateId === 'string' ? vnext.learningSubstateId as LearningSubstateId : undefined,
+    learningSubstateLabel: typeof vnext.learningSubstateLabel === 'string' ? vnext.learningSubstateLabel : undefined,
+    learningTaskId: typeof vnext.learningTaskId === 'string' ? vnext.learningTaskId : undefined,
+    formalTaskId: typeof vnext.formalTaskId === 'number' ? vnext.formalTaskId : undefined,
+    learningGoal: typeof vnext.learningGoal === 'string' ? vnext.learningGoal : undefined,
+  }
+}
+
+function syncMessageMetaData(message: Message): Record<string, unknown> {
+  return {
+    tutorMode: message.tutorMode,
+    toolRuns: message.toolRuns,
+    agentTrace: message.agentTrace,
+    learningActionLabel: message.learningActionLabel,
+    learningSkillId: message.learningSkillId,
+    learningSubstateId: message.learningSubstateId,
+    learningSubstateLabel: message.learningSubstateLabel,
+    learningTaskId: message.learningTaskId,
+    formalTaskId: message.formalTaskId,
+    learningGoal: message.learningGoal,
+  }
+}
+
+function conversationFromFormal(session: FormalTutorSession, existing?: Conversation): Conversation {
+  const base = existing || createConversation()
+  const messages = (session.messages || []).map(messageFromFormal)
+  return {
+    ...base,
+    id: session.client_conversation_id || base.id,
+    title: session.title || base.title,
+    mode: tutorModeFromFormal(session),
+    messages: messages.length > 0 ? messages : base.messages,
+    formalSessionId: session.id,
+    updatedAt: session.updated_at ? Date.parse(session.updated_at) || base.updatedAt : base.updatedAt,
+  }
+}
+
+function formalChatFingerprint(conversation: Conversation) {
+  return JSON.stringify({
+    sessionId: conversation.formalSessionId || null,
+    title: conversation.title,
+    mode: conversation.mode,
+    messages: conversation.messages.map(message => [message.id, message.role, message.content]),
+  })
 }
 
 function chatTab(conversation: Conversation): WorkspaceTab {
@@ -455,6 +531,8 @@ function App() {
   const [formalProjectWorkspaces, setFormalProjectWorkspaces] = useState<Record<number, FormalProjectWorkspace>>({})
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({})
   const [projectPanelConversationId, setProjectPanelConversationId] = useState('')
+  const formalChatHydrated = useRef(false)
+  const formalChatFingerprints = useRef<Record<string, string>>({})
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -494,6 +572,79 @@ function App() {
       })
   }
 
+  const persistGlobalConversation = async (conversation: Conversation) => {
+    if (conversation.projectId) return undefined
+    let sessionId = conversation.formalSessionId
+    if (!sessionId) {
+      const created = await createFormalTutorSession(true, {
+        title: conversation.title,
+        clientConversationId: conversation.id,
+      })
+      sessionId = created.id
+    }
+    const synced = await syncFormalGlobalChat(sessionId, {
+      id: conversation.id,
+      title: conversation.title,
+      mode: conversation.mode,
+      messages: conversation.messages.map(message => ({
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        createdAt: message.createdAt,
+        metaData: syncMessageMetaData(message),
+      })),
+    })
+    return synced
+  }
+
+  const hydrateFormalGlobalConversations = async (seed: Conversation[]) => {
+    const localGlobal = seed.filter(conversation => !conversation.projectId)
+    const migrations = await Promise.allSettled(localGlobal.map(persistGlobalConversation))
+    const migratedSessionIds = new Map<string, number>()
+    migrations.forEach((result, index) => {
+      if (result.status === 'fulfilled' && result.value) {
+        migratedSessionIds.set(localGlobal[index].id, result.value.id)
+      }
+    })
+
+    const summaries = await listFormalGlobalChatSessions()
+    const loaded = await Promise.allSettled(summaries.map(summary => loadFormalTutorSession(summary.id)))
+    const remoteSessions = loaded.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+    setWorkspace(previous => {
+      const localById = new Map(previous.conversations.filter(item => !item.projectId).map(item => [item.id, item]))
+      const localBySession = new Map(previous.conversations.filter(item => !item.projectId && item.formalSessionId)
+        .map(item => [item.formalSessionId!, item]))
+      migratedSessionIds.forEach((sessionId, conversationId) => {
+        const local = localById.get(conversationId)
+        if (local) localBySession.set(sessionId, { ...local, formalSessionId: sessionId })
+      })
+
+      const canonical = remoteSessions.map(session => {
+        const existing = localById.get(session.client_conversation_id || '') || localBySession.get(session.id)
+        const merged = conversationFromFormal(session, existing)
+        localById.delete(merged.id)
+        if (existing && existing.id !== merged.id) localById.delete(existing.id)
+        return merged
+      })
+      const remainingLocal = [...localById.values()].map(conversation => {
+        const formalSessionId = migratedSessionIds.get(conversation.id) || conversation.formalSessionId
+        return formalSessionId ? { ...conversation, formalSessionId } : conversation
+      })
+      const conversations = [
+        ...previous.conversations.filter(item => item.projectId),
+        ...canonical,
+        ...remainingLocal,
+      ]
+      const byId = new Map(conversations.map(item => [item.id, item]))
+      const tabs = previous.tabs.map(tab => {
+        const conversation = tab.conversationId ? byId.get(tab.conversationId) : undefined
+        return conversation ? { ...tab, title: conversation.title } : tab
+      })
+      return { ...previous, conversations, tabs }
+    })
+    formalChatHydrated.current = true
+  }
+
   useEffect(() => { refreshFormalProjects() }, [])
 
   useEffect(() => {
@@ -507,10 +658,38 @@ function App() {
           ...previous,
           learningPath: learnerPathStateFromFormal(result.snapshot!.learning_path),
         }))
+        void hydrateFormalGlobalConversations(workspace.conversations).catch(error => {
+          setFormalError(error instanceof Error ? error.message : '普通对话同步失败')
+          formalChatHydrated.current = true
+        })
       }
     })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    if (formalConnection.status !== 'connected' || !formalChatHydrated.current) return
+    const timer = window.setTimeout(() => {
+      workspace.conversations.filter(conversation => !conversation.projectId).forEach(conversation => {
+        const fingerprint = formalChatFingerprint(conversation)
+        if (formalChatFingerprints.current[conversation.id] === fingerprint) return
+        formalChatFingerprints.current[conversation.id] = fingerprint
+        void persistGlobalConversation(conversation).then(session => {
+          if (!session || conversation.formalSessionId === session.id) return
+          setWorkspace(previous => ({
+            ...previous,
+            conversations: previous.conversations.map(item => item.id === conversation.id
+              ? { ...item, formalSessionId: session.id }
+              : item),
+          }))
+        }).catch(error => {
+          delete formalChatFingerprints.current[conversation.id]
+          setFormalError(error instanceof Error ? error.message : '普通对话保存失败')
+        })
+      })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [formalConnection.status, workspace.conversations])
 
   useEffect(() => {
     if (!activeTab) return
@@ -733,7 +912,16 @@ function App() {
     setWorkspace(previous => ({ ...previous, splitTabId: '' }))
   }
 
-  const deleteConversation = (conversationId: string) => {
+  const deleteConversation = async (conversationId: string) => {
+    const target = workspace.conversations.find(conversation => conversation.id === conversationId)
+    if (target?.formalSessionId && !target.projectId && formalConnection.status === 'connected') {
+      try {
+        await deleteFormalTutorSession(target.formalSessionId)
+      } catch (error) {
+        setFormalError(error instanceof Error ? error.message : '正式对话删除失败')
+        return
+      }
+    }
     setWorkspace(previous => {
       let conversations = previous.conversations.filter(conversation => conversation.id !== conversationId)
       let tabs = previous.tabs.filter(tab => tab.conversationId !== conversationId)
@@ -770,6 +958,7 @@ function App() {
       return next
     })
     setPaperDeskView(current => current?.conversationId === conversationId ? null : current)
+    delete formalChatFingerprints.current[conversationId]
     setPendingDelete(null)
   }
 
@@ -1154,6 +1343,13 @@ function App() {
 
     if (!replayInterruptedTurn && formalConnection.status === 'connected' && !configurationIssue) {
       try {
+        if (!formalSessionId && !conversation.projectId) {
+          const session = await createFormalTutorSession(true, {
+            title: conversation.title,
+            clientConversationId: conversation.id,
+          })
+          formalSessionId = session.id
+        }
         if (mode === 'guided_learning' && learningProjection) {
           if (!formalSessionId) {
             const session = await createFormalTutorSession(true, {

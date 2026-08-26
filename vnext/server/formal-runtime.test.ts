@@ -4,8 +4,11 @@ import test from 'node:test'
 import {
   advanceFormalLearningSkillTurn,
   createFormalTutorSession,
+  deleteFormalTutorSession,
   learnerPathStateFromFormal,
+  listFormalGlobalChatSessions,
   startFormalLearningSkillRun,
+  syncFormalGlobalChat,
 } from '../src/formal-runtime.ts'
 import { projectLearnerPath } from '../src/learning-path-graph.ts'
 
@@ -85,6 +88,43 @@ test('vNext formal skill binding uses a session, a SkillRun and a deterministic 
     ])
     assert.equal(calls[2].body.expected_version, 1)
     assert.equal(calls[2].body.client_turn_id, 'vnext-turn:test')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('vNext ordinary chats use idempotent formal session and message projection endpoints', async () => {
+  const originalFetch = globalThis.fetch
+  const calls: Array<{ url: string; method: string; body?: any }> = []
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const target = String(url)
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    calls.push({ url: target, method: String(init?.method || 'GET'), body })
+    if (target.includes('?session_type=global')) return new Response(JSON.stringify([
+      { id: 91, title: 'CNN', session_type: 'global', vnext_managed: true, client_conversation_id: 'chat-cnn' },
+      { id: 92, title: 'legacy', session_type: 'global', vnext_managed: false },
+    ]), { status: 200 })
+    if (target.endsWith('/vnext')) return new Response(JSON.stringify({
+      id: 91, title: 'CNN', session_type: 'global', client_conversation_id: 'chat-cnn',
+      vnext_managed: true, vnext_mode: 'simple_explain', messages: [], learning_tasks: [],
+    }), { status: 200 })
+    if (init?.method === 'DELETE') return new Response(JSON.stringify({ status: 'deleted', id: 91 }), { status: 200 })
+    return new Response(JSON.stringify({ id: 91, title: 'CNN', session_type: 'global', learning_tasks: [] }), { status: 200 })
+  }) as typeof fetch
+  try {
+    const session = await createFormalTutorSession(true, { title: 'CNN', clientConversationId: 'chat-cnn' })
+    const synced = await syncFormalGlobalChat(session.id, {
+      id: 'chat-cnn', title: 'CNN', mode: 'simple_explain',
+      messages: [{ id: 'message-cnn', role: 'user', content: '解释 CNN', createdAt: 1700000000000 }],
+    })
+    const listed = await listFormalGlobalChatSessions()
+    await deleteFormalTutorSession(session.id)
+    assert.equal(synced.client_conversation_id, 'chat-cnn')
+    assert.deepEqual(listed.map(item => item.id), [91])
+    assert.equal(calls[0].body.client_conversation_id, 'chat-cnn')
+    assert.equal(calls[1].url, '/api/agent/sessions/91/vnext')
+    assert.equal(calls[1].body.messages[0].client_message_id, 'message-cnn')
+    assert.equal(calls.at(-1)?.method, 'DELETE')
   } finally {
     globalThis.fetch = originalFetch
   }

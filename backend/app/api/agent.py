@@ -2,6 +2,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
@@ -10,7 +11,7 @@ from app.models.learning import (
 )
 from app.models.project import Project, Roadmap, Checkpoint, Task
 from app.schemas.agent import (
-    AgentSessionCreate, TutorTurnRequest, LearningEventRequest,
+    AgentSessionCreate, TutorTurnRequest, LearningEventRequest, VNextSessionSyncRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
     LearningSkillRunCreateRequest, LearningSkillRunActionRequest,
     LearningSkillRunTurnRequest,
@@ -58,6 +59,19 @@ def _message_out(message: AgentMessage) -> dict:
         "content": message.content,
         "meta_data": message.meta_data or {},
         "created_at": message.created_at.isoformat() if message.created_at else None,
+    }
+
+
+def _vnext_conversation_id(session: AgentSession) -> str:
+    return str(dict((session.context_summary or {}).get("vnext") or {}).get("conversation_id") or "")
+
+
+def _vnext_session_summary(session: AgentSession) -> dict:
+    vnext = dict((session.context_summary or {}).get("vnext") or {})
+    return {
+        "client_conversation_id": str(vnext.get("conversation_id") or ""),
+        "vnext_managed": bool(vnext.get("conversation_id")),
+        "vnext_mode": str(vnext.get("mode") or "free"),
     }
 
 
@@ -172,6 +186,7 @@ async def _session_payload(db: AsyncSession, session: AgentSession) -> dict:
         "learning_tasks": learning_task_views,
         "created_at": session.created_at.isoformat() if session.created_at else None,
         "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        **_vnext_session_summary(session),
     }
 
 
@@ -227,6 +242,7 @@ async def list_sessions(
             "last_message": last_message.content[:120] if last_message else "",
             "created_at": session.created_at.isoformat() if session.created_at else None,
             "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+            **_vnext_session_summary(session),
         })
     return result
 
@@ -474,6 +490,41 @@ async def create_or_resume_session(
         session_type = "checkpoint"
     elif session_type == "checkpoint":
         raise HTTPException(400, "checkpoint session requires checkpoint_id")
+    if data.client_conversation_id:
+        if session_type != "global" or project_id is not None or data.checkpoint_id is not None:
+            raise HTTPException(400, "vNext conversation identity is only valid for global sessions")
+        candidates = list((await db.execute(select(AgentSession).where(
+            AgentSession.learner_id == current.learner.id,
+            AgentSession.session_type == "global",
+            AgentSession.project_id.is_(None),
+            AgentSession.status == "active",
+        ).order_by(AgentSession.updated_at.desc()))).scalars().all())
+        session = next(
+            (item for item in candidates if _vnext_conversation_id(item) == data.client_conversation_id),
+            None,
+        )
+        if session is None:
+            session = AgentSession(
+                learner_id=current.learner.id,
+                session_type="global",
+                title=data.title or "新对话",
+                status="active",
+                context_summary={
+                    "role": "vnext_global_chat",
+                    "vnext": {
+                        "schema_version": "vnext-chat.v1",
+                        "conversation_id": data.client_conversation_id,
+                        "mode": "free",
+                    },
+                },
+            )
+            db.add(session)
+            await db.flush()
+        elif data.title:
+            session.title = data.title
+            session.updated_at = datetime.utcnow()
+        await db.commit()
+        return await _session_payload(db, session)
     session = await get_or_create_session(
         db,
         learner_id=current.learner.id,
@@ -482,6 +533,61 @@ async def create_or_resume_session(
         checkpoint_id=data.checkpoint_id,
         create_new=data.create_new,
     )
+    if data.title:
+        session.title = data.title
+    await db.commit()
+    return await _session_payload(db, session)
+
+
+@router.put("/sessions/{session_id}/vnext")
+async def sync_vnext_session(
+    session_id: int,
+    data: VNextSessionSyncRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """Persist the vNext chat projection without creating learning evidence.
+
+    AgentSession and AgentMessage are the cross-browser conversation authority.
+    This adapter never calls the Tutor pipeline and never writes KernelState or
+    EvidenceEvent; registered chat-mode and learning events remain separate.
+    """
+    session = await _owned_session(db, current.learner.id, session_id)
+    if session.session_type != "global" or session.project_id is not None:
+        raise HTTPException(409, "Project conversations are managed by the project workspace")
+    existing_identity = _vnext_conversation_id(session)
+    if existing_identity and existing_identity != data.client_conversation_id:
+        raise HTTPException(409, "Conversation identity does not match this Tutor session")
+
+    summary = dict(session.context_summary or {})
+    summary["role"] = "vnext_global_chat"
+    summary["vnext"] = {
+        **dict(summary.get("vnext") or {}),
+        "schema_version": "vnext-chat.v1",
+        "conversation_id": data.client_conversation_id,
+        "mode": data.mode,
+        "synced_at": datetime.utcnow().isoformat(),
+    }
+    session.context_summary = summary
+    session.title = data.title
+    session.updated_at = datetime.utcnow()
+
+    for message in data.messages:
+        idempotency_key = f"vnext-chat:{session.id}:{message.client_message_id}"[:160]
+        statement = sqlite_insert(AgentMessage).values(
+            session_id=session.id,
+            role=message.role,
+            content=message.content,
+            meta_data={
+                "source": "vnext_chat_session_store",
+                "client_message_id": message.client_message_id,
+                "vnext": message.meta_data,
+            },
+            idempotency_key=idempotency_key,
+            created_at=datetime.utcfromtimestamp(message.created_at_ms / 1000),
+        ).on_conflict_do_nothing(index_elements=["idempotency_key"])
+        await db.execute(statement)
+
     await db.commit()
     return await _session_payload(db, session)
 
