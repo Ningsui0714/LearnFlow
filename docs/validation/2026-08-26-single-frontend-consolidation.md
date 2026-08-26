@@ -36,6 +36,7 @@ LearnFlow/
 - 桌面端 Tutor 回退到正式 Agent session API，避免调用仅由 Vite 开发代理提供的 `/api/tutor`。
 - 修复桌面 Tutor 已由后端持久化后又被全局对话接口重复写入的问题。
 - 新增只读 `GET /api/auth/status`，消除应用初始化时把预期的未登录状态表现为 401 控制台错误；身份初始化改为单例，避免多个标签页并发重复登录。
+- 浏览器保存的正式 session 绑定若已经失效，普通对话会自动创建替代 session 并重新同步，避免旧对话持续 404 或跨浏览器缺失。
 - seeded demo 统一进入 `/review`，并自动建立隔离 demo 身份；核心演示继续保持离线可用。
 - 更新 Vite 与 React 插件依赖，收紧开发代理和桌面 CSP；保留本地 API Key 文件且继续忽略提交。
 - 清理仓库根部的临时 `output/` 层，将应长期留存的报告资产归档到 `docs/assets/reports/`。
@@ -54,7 +55,7 @@ Contract impact：
 | 检查 | 结果 |
 | --- | --- |
 | 后端全量测试 | `189 passed` |
-| 前端单元测试 | `75 passed` |
+| 前端单元测试 | `76 passed` |
 | 前端生产构建 | 通过，Vite 8.2.2，320 modules transformed |
 | 架构注册与用户隔离定向测试 | `17 passed` |
 | Tauri `cargo check` | 通过 |

@@ -330,6 +330,16 @@ function errorText(payload: unknown, fallback: string) {
   return fallback
 }
 
+export class FormalRequestError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'FormalRequestError'
+    this.status = status
+  }
+}
+
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await runtimeFetch(url, {
     ...init,
@@ -343,7 +353,7 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let payload: unknown = null
   try { payload = text ? JSON.parse(text) : null } catch { payload = text }
   captureRuntimeAuth(payload)
-  if (!response.ok) throw new Error(errorText(payload, `请求失败（${response.status}）`))
+  if (!response.ok) throw new FormalRequestError(response.status, errorText(payload, `请求失败（${response.status}）`))
   return payload as T
 }
 
@@ -353,7 +363,7 @@ async function formRequest<T>(url: string, form: FormData): Promise<T> {
   let payload: unknown = null
   try { payload = text ? JSON.parse(text) : null } catch { payload = text }
   captureRuntimeAuth(payload)
-  if (!response.ok) throw new Error(errorText(payload, `请求失败（${response.status}）`))
+  if (!response.ok) throw new FormalRequestError(response.status, errorText(payload, `请求失败（${response.status}）`))
   return payload as T
 }
 
@@ -624,6 +634,30 @@ export async function syncFormalGlobalChat(
       })),
     }),
   })
+}
+
+export async function syncFormalGlobalChatWithRecovery(
+  sessionId: number | undefined,
+  conversation: Parameters<typeof syncFormalGlobalChat>[1],
+) {
+  let activeSessionId = sessionId
+  if (!activeSessionId) {
+    const created = await createFormalTutorSession(true, {
+      title: conversation.title,
+      clientConversationId: conversation.id,
+    })
+    activeSessionId = created.id
+  }
+  try {
+    return await syncFormalGlobalChat(activeSessionId, conversation)
+  } catch (error) {
+    if (!(error instanceof FormalRequestError) || error.status !== 404) throw error
+    const replacement = await createFormalTutorSession(true, {
+      title: conversation.title,
+      clientConversationId: conversation.id,
+    })
+    return syncFormalGlobalChat(replacement.id, conversation)
+  }
 }
 
 export async function deleteFormalTutorSession(sessionId: number) {

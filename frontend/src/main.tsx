@@ -102,7 +102,7 @@ import {
   setFormalPathStatus,
   submitFormalClaimFeedback,
   startFormalLearningSkillRun,
-  syncFormalGlobalChat,
+  syncFormalGlobalChatWithRecovery,
   syncFormalEvent,
   syncFormalEvents,
   updateFormalLearnerProfile,
@@ -577,15 +577,7 @@ function App() {
 
   const persistGlobalConversation = async (conversation: Conversation) => {
     if (conversation.projectId) return undefined
-    let sessionId = conversation.formalSessionId
-    if (!sessionId) {
-      const created = await createFormalTutorSession(true, {
-        title: conversation.title,
-        clientConversationId: conversation.id,
-      })
-      sessionId = created.id
-    }
-    const synced = await syncFormalGlobalChat(sessionId, {
+    return syncFormalGlobalChatWithRecovery(conversation.formalSessionId, {
       id: conversation.id,
       title: conversation.title,
       mode: conversation.mode,
@@ -597,7 +589,6 @@ function App() {
         metaData: syncMessageMetaData(message),
       })),
     })
-    return synced
   }
 
   const hydrateFormalGlobalConversations = async (seed: Conversation[]) => {
@@ -1346,12 +1337,9 @@ function App() {
 
     if (!replayInterruptedTurn && formalConnection.status === 'connected' && !configurationIssue) {
       try {
-        if (!formalSessionId && !conversation.projectId) {
-          const session = await createFormalTutorSession(true, {
-            title: conversation.title,
-            clientConversationId: conversation.id,
-          })
-          formalSessionId = session.id
+        if (!conversation.projectId) {
+          const session = await persistGlobalConversation(conversation)
+          formalSessionId = session?.id
         }
         if (mode === 'guided_learning' && learningProjection) {
           if (!formalSessionId) {

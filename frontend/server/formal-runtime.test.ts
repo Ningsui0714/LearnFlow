@@ -9,6 +9,7 @@ import {
   listFormalGlobalChatSessions,
   startFormalLearningSkillRun,
   syncFormalGlobalChat,
+  syncFormalGlobalChatWithRecovery,
 } from '../src/formal-runtime.ts'
 import { projectLearnerPath } from '../src/learning-path-graph.ts'
 
@@ -125,6 +126,40 @@ test('vNext ordinary chats use idempotent formal session and message projection 
     assert.equal(calls[1].url, '/api/agent/sessions/91/vnext')
     assert.equal(calls[1].body.messages[0].client_message_id, 'message-cnn')
     assert.equal(calls.at(-1)?.method, 'DELETE')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('a stale browser session binding is replaced before the conversation is synchronized', async () => {
+  const originalFetch = globalThis.fetch
+  const calls: Array<{ url: string; method: string; body?: any }> = []
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const target = String(url)
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    calls.push({ url: target, method: String(init?.method || 'GET'), body })
+    if (target === '/api/agent/sessions/4/vnext') {
+      return new Response(JSON.stringify({ detail: '会话不存在' }), { status: 404 })
+    }
+    if (target === '/api/agent/sessions') {
+      return new Response(JSON.stringify({ id: 204, title: '旧对话', session_type: 'global', learning_tasks: [] }), { status: 200 })
+    }
+    return new Response(JSON.stringify({
+      id: 204, title: '旧对话', session_type: 'global', client_conversation_id: 'chat-stale',
+      vnext_managed: true, vnext_mode: 'free', messages: [], learning_tasks: [],
+    }), { status: 200 })
+  }) as typeof fetch
+  try {
+    const synchronized = await syncFormalGlobalChatWithRecovery(4, {
+      id: 'chat-stale', title: '旧对话', mode: 'free', messages: [],
+    })
+    assert.equal(synchronized.id, 204)
+    assert.deepEqual(calls.map(call => call.url), [
+      '/api/agent/sessions/4/vnext',
+      '/api/agent/sessions',
+      '/api/agent/sessions/204/vnext',
+    ])
+    assert.equal(calls[1].body.client_conversation_id, 'chat-stale')
   } finally {
     globalThis.fetch = originalFetch
   }
