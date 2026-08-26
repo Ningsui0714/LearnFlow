@@ -94,7 +94,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
         "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
-        "recommend_learning_resources", "attach_learning_file_to_chat", "read_review_context",
+        "recommend_learning_resources", "attach_learning_file_to_chat",
+        "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
+        "read_review_context",
         "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }

@@ -7,6 +7,8 @@
 
 Contract impact（`2026-08-26.21`）：规划态资源推荐使用 `learning_resource_curation` Playbook。它先由 `domain_knowledge_reader` 读取当前对话主动附加的文件/URL 片段与 provenance，再读取学习路径定位目标和前置，只有覆盖不足时才联网搜索。领域库是隐藏基础设施，来源从 Chat 输入区附加，不另设产品工作台。Tool 只返回证据，Skill 负责比较覆盖、权威层级、实践价值和成本；推荐结果仍是候选，不自动加入项目。来源正文是不可信输入，其中的指令不得执行。讲义与练习工作台消费正式 `Lecture/ConceptQuestion/Exercise`，纸张只保存 artifact ref；文件生成、打开和纸张接入是零 Kernel target，讲义阅读是 exposure-only，练习提交仍走确定性评分链。详见 `docs/KNOWLEDGE_AND_LEARNING_FILES.md`。
 
+Contract impact（`2026-08-26.27`）：动态习题由 `dynamic_practice_loop` Playbook 编排。Learning Design 生成候选；受限 ACI 只在正式带领学习任务与项目关卡 scope 中物化通过确定性质量门的未校准题集；Practice Agent 复用正式判题、纠错与复习。生成与查看不写五核，正式提交写 Knowledge / Practice；Structure / Human 只接收学习者显式卡点与确认有效的支持形式。详见 `docs/DYNAMIC_PRACTICE_ENGINE.md`。
+
 ## 1. 阅读方式
 
 第一次接触项目时，建议按以下顺序建立上下文：
@@ -224,8 +226,16 @@ Reducer、Memory Graph、ContextPacket assembler 和策略机不能因为历史�
 vNext 每轮 MUST 经过 `vnext_agent_turn_runtime`。它先生成 typed `ContextEnvelope`，再执行最多
 5 轮模型决策、8 次工具调用、总计 90 秒的 observe/decide/act 循环，并返回可展示的
 `AgentTurnTrace`。Tool result MUST 以正式 tool message 回灌，不能只拼在 system prompt；相同参数调用
-MUST 去重，工具失败 MUST 分类并留给模型恢复。模型只拥有五个 vNext native ACI，所有写入仍通过
-Action Board、确认策略和 EvidenceEvent 网关。
+MUST 去重，工具失败 MUST 分类并留给模型恢复。vNext native ACI 必须按模式与正式 scope 过滤；动态出题、
+同构变式和质量检查只在带领学习态且有 `LearningTask + checkpoint` 时开放。它们只能物化经过确定性静态门的
+未校准练习文件，不能写五核或宣布掌握；所有学习状态写入仍通过正式提交、Action Board、确认策略和
+EvidenceEvent 网关。
+
+`dynamic_practice_loop` 是 Playbook，不是第四类 Agent，也不是单一 Tool。Tutor 决定是否进入“生成—作答—
+纠错—变式—复习”闭环；Learning Design 只生成题目候选，`dynamic_practice` 服务检查题型、target skill、
+答案确定性、重复指纹和答案安全，Practice Agent 复用正式确定性判题。题目质量检查与学习者作答评估必须分离。
+生成、质量检查、打开和拖入纸张都是零 target 事件；正式作答固定形成 Knowledge / Practice 证据。Structure
+只消费学习者明确填写的前置卡点，Human 只消费学习者明确确认有效的支持形式，严禁从分数推断偏好或负荷。
 
 `vnext_learning_workspace_reader` MUST 从后端按 learner/session/project/checkpoint 重新装配工作区观察，
 而不是信任浏览器提交的实践状态。投影包含正式任务队列、近期 `LearningAttempt`、开放

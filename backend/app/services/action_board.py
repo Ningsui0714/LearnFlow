@@ -101,6 +101,21 @@ ACTION_BOARD = {
             ("open_learning_file", "attach_learning_file_to_chat"),
         ),
         ActionDefinition(
+            "generate_dynamic_practice", "按能力蓝图生成动态练习文件", "artifact", "explicit_or_auto",
+            {},
+            ("inspect_practice_quality", "open_learning_file", "attach_learning_file_to_chat", "evaluate_attempt"),
+        ),
+        ActionDefinition(
+            "generate_similar_practice", "生成保持目标能力的同构变式", "artifact", "explicit_or_auto",
+            {},
+            ("inspect_practice_quality", "open_learning_file", "attach_learning_file_to_chat", "evaluate_attempt"),
+        ),
+        ActionDefinition(
+            "inspect_practice_quality", "检查生成习题的静态质量", "none", "none",
+            {},
+            ("open_learning_file", "evaluate_attempt"),
+        ),
+        ActionDefinition(
             "open_learning_file", "打开正式讲义或练习文件", "context", "explicit_or_click",
             {},
             ("attach_learning_file_to_chat", "evaluate_attempt"),

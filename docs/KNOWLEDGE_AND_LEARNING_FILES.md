@@ -28,7 +28,9 @@ LearningTask
 
 - `domain_knowledge_reader` 是 ACI Tool：按当前对话附件和问题返回有界领域索引、来源片段和 provenance，不做资源选择。输入区可以显式选择“对话资料”，也可由 Tutor 在“自动”模式中与联网搜索比较。
 - `learning_resource_curation` 是规划态 Playbook Skill：先比较个人来源和学习路径覆盖，再用计算机知识搜索补缺；从目标匹配、来源层级、实践价值和成本说明推荐理由。
-- `learning_file_service` 管理正式讲义/练习的生成、列表、打开和纸张接入。模型没有文件写工具；生成由显式 UI 动作与确定性 LearningTask runtime 发起。
+- `learning_file_service` 管理正式讲义/练习的列表、打开和纸张接入。模型没有通用文件写权限；仅在带领学习态、正式 `LearningTask + checkpoint` scope 下，`dynamic_practice_generator` / `similar_practice_generator` 可以提交题目候选，服务端通过静态质量门后物化为正式练习文件。
+- `practice_quality_inspector` 只检查 schema、测量目标声明、答案确定性和重复指纹；它不评价学生，也不产生掌握证据。
+- `dynamic_practice_loop` 是 Tutor Playbook：组合出题、质量检查、正式提交、确定性判题、纠错、变式和复习。Tool 生产或读取对象，Skill 编排闭环，二者不互相冒充。
 
 ## 五核与证据
 
@@ -36,8 +38,10 @@ LearningTask
 |---|---:|---|
 | `knowledge_source_added/processed` | 无 | 资料进入上下文空间 |
 | `learning_file_generated/opened/attached_to_chat` | 无 | 产物与 UI 审计 |
+| `practice_file_generated/practice_variant_generated` | 无 | 已通过静态门但尚未校准的练习产物 |
+| `practice_quality_inspected` | 无 | 题目质量观察，不是学生表现 |
 | `lecture_viewed` | Knowledge exposure | 明确读过，`mastery_unchanged=true` |
-| `concept_attempt_evaluated` | Knowledge + Practice | 确定性评分后的概念题证据 |
+| `concept_attempt_evaluated` | Knowledge + Practice；显式反馈时可到 Structure / Human | 确定性评分后的概念题证据；只有学生明确填写的卡点或有效帮助才进入后两核 |
 | `exercise_attempt_evaluated` | Knowledge + Practice | 沙箱/测试后的实践证据 |
 
 任何文件内容中的指令都被当作不可信数据，不能改变 Agent 目标、安全边界、路径或五核。练习读取接口在提交前隐藏答案、解释、solution 和私有测试预期。

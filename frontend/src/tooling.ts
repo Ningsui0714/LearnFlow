@@ -29,10 +29,11 @@ export type VisualArtifact = {
 export type TutorToolRun = {
   id: string
   kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'file' | 'search' | 'image' | 'animation'
-  status: 'completed' | 'failed'
+  status: 'running' | 'completed' | 'failed'
   title: string
   detail: string
   durationMs: number
+  startedAt?: number
   sequence?: number
   toolName?: string
   toolCallId?: string
@@ -45,6 +46,14 @@ export type TutorToolRun = {
   pathPlanProposal?: LearningPathPlanProposal
   projectRoadmapProposal?: ProjectRoadmapProposal
   projectLearningFileProposal?: ProjectLearningFileProposal
+  learningFile?: {
+    kind: 'lecture' | 'practice'
+    ref: string
+    title: string
+    checkpointId?: number
+    questionCount?: number
+    qualityStatus?: string
+  }
 }
 
 export const TOOL_CHOICE_LABELS: Record<TutorToolChoice, string> = {

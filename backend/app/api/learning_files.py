@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import select
@@ -14,6 +15,10 @@ from app.models.project import Checkpoint, ConceptQuestion, Exercise, Lecture, P
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_checkpoint, require_owned_exercise
 from app.services.learning_runtime import record_event
 from app.services.learning_tasks import learning_task_view, materialize_learning_task
+from app.services.dynamic_practice import (
+    create_practice_set,
+    validate_practice_candidate,
+)
 
 
 router = APIRouter(prefix="/learning-files", tags=["learning-files"])
@@ -66,6 +71,25 @@ def _exercise_ref(exercise: Exercise, checkpoint: Checkpoint, project: Project) 
     }
 
 
+def _practice_set_ref(items: list[ConceptQuestion], checkpoint: Checkpoint, project: Project) -> dict:
+    meta = dict(items[0].assessment_meta or {})
+    practice_set_id = str(meta.get("practice_set_id") or "")
+    title = str(meta.get("practice_title") or f"{checkpoint.title} · 动态练习")
+    return {
+        "kind": "practice",
+        "practice_kind": "dynamic_question_set",
+        "ref": f"practice-set-{practice_set_id}",
+        "ids": [item.id for item in items],
+        "title": title,
+        "logical_filename": f"{checkpoint.title}-{title}.lfexercise",
+        "project_id": project.id,
+        "checkpoint_id": checkpoint.id,
+        "question_count": len(items),
+        "quality_status": "validated_static_uncalibrated",
+        "path": f"/files/practice/practice-set-{practice_set_id}",
+    }
+
+
 @router.get("")
 async def list_learning_files(
     current: CurrentLearner = Depends(get_current_learner),
@@ -92,8 +116,13 @@ async def list_learning_files(
         ConceptQuestion.checkpoint_id.in_(checkpoint_ids),
     ).order_by(ConceptQuestion.checkpoint_id, ConceptQuestion.order))).scalars().all())
     question_groups: dict[int, list[ConceptQuestion]] = defaultdict(list)
+    dynamic_groups: dict[tuple[int, str], list[ConceptQuestion]] = defaultdict(list)
     for question in questions:
-        question_groups[question.checkpoint_id].append(question)
+        practice_set_id = str((question.assessment_meta or {}).get("practice_set_id") or "")
+        if practice_set_id:
+            dynamic_groups[(question.checkpoint_id, practice_set_id)].append(question)
+        else:
+            question_groups[question.checkpoint_id].append(question)
     practice_refs = [
         _exercise_ref(exercise, *checkpoint_map[exercise.checkpoint_id])
         for exercise in exercises
@@ -112,6 +141,8 @@ async def list_learning_files(
             "question_count": len(items),
             "path": f"/files/practice/questions-{checkpoint_id}",
         })
+    for (checkpoint_id, _practice_set_id), items in dynamic_groups.items():
+        practice_refs.append(_practice_set_ref(items, *checkpoint_map[checkpoint_id]))
     return {
         "lectures": [_lecture_ref(item, *checkpoint_map[item.checkpoint_id]) for item in lectures],
         "practices": practice_refs,
@@ -179,24 +210,40 @@ async def get_practice_file(
             "answers_hidden": True,
             "mastery_inference": False,
         }
-    if practice_ref.startswith("questions-"):
+    if practice_ref.startswith("questions-") or practice_ref.startswith("practice-set-"):
+        dynamic_set_id = practice_ref.removeprefix("practice-set-") if practice_ref.startswith("practice-set-") else ""
         try:
-            checkpoint_id = int(practice_ref.removeprefix("questions-"))
+            checkpoint_id = int(practice_ref.removeprefix("questions-")) if not dynamic_set_id else 0
         except ValueError as error:
             raise HTTPException(400, "练习引用无效") from error
-        checkpoint = await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
-        roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
-        questions = list((await db.execute(select(ConceptQuestion).where(
-            ConceptQuestion.checkpoint_id == checkpoint.id,
-        ).order_by(ConceptQuestion.order, ConceptQuestion.id))).scalars().all())
+        if dynamic_set_id:
+            owned_rows = (await db.execute(
+                select(ConceptQuestion, Checkpoint, Roadmap, Project)
+                .join(Checkpoint, Checkpoint.id == ConceptQuestion.checkpoint_id)
+                .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
+                .join(Project, Project.id == Roadmap.project_id)
+                .where(Project.learner_id == current.learner.id, Project.visibility != "deleted")
+            )).all()
+            questions = [row[0] for row in owned_rows if str((row[0].assessment_meta or {}).get("practice_set_id") or "") == dynamic_set_id]
+            if not questions:
+                raise HTTPException(404, "动态练习文件不存在")
+            checkpoint = next(row[1] for row in owned_rows if row[0].id == questions[0].id)
+            roadmap = next(row[2] for row in owned_rows if row[0].id == questions[0].id)
+        else:
+            checkpoint = await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
+            roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
+            questions = list((await db.execute(select(ConceptQuestion).where(
+                ConceptQuestion.checkpoint_id == checkpoint.id,
+            ).order_by(ConceptQuestion.order, ConceptQuestion.id))).scalars().all())
+        title = str((questions[0].assessment_meta or {}).get("practice_title") or f"{checkpoint.title} · 概念验证") if questions else f"{checkpoint.title} · 概念验证"
         return {
             "kind": "practice",
-            "practice_kind": "concept_question_set",
+            "practice_kind": "dynamic_question_set" if dynamic_set_id else "concept_question_set",
             "ref": practice_ref,
-            "title": f"{checkpoint.title} · 概念验证",
+            "title": title,
             "checkpoint_id": checkpoint.id,
             "project_id": roadmap.project_id if roadmap else None,
-            "logical_filename": f"{str(checkpoint.order).zfill(2)}-{checkpoint.title}-概念验证.lfexercise",
+            "logical_filename": f"{checkpoint.title}-{title}.lfexercise",
             "questions": [{
                 "id": item.id,
                 "question": item.question,
@@ -205,12 +252,131 @@ async def get_practice_file(
                 "difficulty": item.difficulty,
                 "code": item.code or "",
                 "order": item.order,
+                "response_schema": (item.assessment_meta or {}).get("response_schema", item.q_type),
+                "target_skill": (item.assessment_meta or {}).get("target_skill", ""),
+                "quality": (item.assessment_meta or {}).get("quality", {}),
             } for item in questions],
             "provenance": {"artifact_type": "ConceptQuestionSet", "checkpoint_id": checkpoint.id},
             "answers_hidden": True,
             "mastery_inference": False,
         }
     raise HTTPException(400, "不支持的练习引用")
+
+
+async def _owned_learning_task(db: AsyncSession, learner_id: int, task_id: int) -> LearningTask:
+    task = (await db.execute(select(LearningTask).where(
+        LearningTask.id == task_id,
+        LearningTask.learner_id == learner_id,
+    ))).scalar_one_or_none()
+    if not task or not task.checkpoint_id:
+        raise HTTPException(404, "学习任务不存在或未绑定关卡")
+    await require_owned_checkpoint(db, learner_id, task.checkpoint_id)
+    return task
+
+
+@router.post("/practice/generate")
+async def generate_dynamic_practice_file(
+    data: dict = Body(default={}),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist learning-design candidates only after deterministic validation."""
+    task = await _owned_learning_task(db, current.learner.id, int(data.get("learning_task_id") or 0))
+    candidates = [item for item in (data.get("candidates") or []) if isinstance(item, dict)][:12]
+    if not candidates:
+        raise HTTPException(400, "没有可验证的候选题")
+    client_request_id = str(data.get("client_request_id") or "")[:160]
+    if not client_request_id:
+        raise HTTPException(400, "缺少 client_request_id")
+    set_hash = hashlib.sha256(f"{current.learner.id}:{task.id}:{client_request_id}".encode()).hexdigest()[:20]
+    practice_set_id = f"ps-{set_hash}"
+    generation_kind = "similar" if data.get("generation_kind") == "similar" else "dynamic"
+    reports = [validate_practice_candidate(item) for item in candidates]
+    invalid = [report for report in reports if not report.valid]
+    if invalid:
+        raise HTTPException(422, {
+            "message": "候选题未通过静态质量检查",
+            "errors": [list(report.errors) for report in invalid],
+        })
+    try:
+        questions = await create_practice_set(
+            db,
+            checkpoint_id=task.checkpoint_id,
+            practice_set_id=practice_set_id,
+            title=str(data.get("title") or f"{task.title} · 动态练习")[:255],
+            candidates=candidates,
+        )
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    checkpoint = await require_owned_checkpoint(db, current.learner.id, task.checkpoint_id)
+    roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
+    project = await db.get(Project, roadmap.project_id) if roadmap else None
+    if not project:
+        raise HTTPException(404, "学习任务所属项目不存在")
+    ref = _practice_set_ref(questions, checkpoint, project)
+    refs = list(task.artifact_refs or [])
+    artifact = {"kind": "practice", "ref": ref["ref"], "title": ref["title"]}
+    if artifact not in refs:
+        task.artifact_refs = [*refs, artifact]
+        task.version = int(task.version or 1) + 1
+    event_type = "practice_variant_generated" if generation_kind == "similar" else "practice_file_generated"
+    tool_id = "similar_practice_generator" if generation_kind == "similar" else "dynamic_practice_generator"
+    await record_event(
+        db, event_type=event_type, source="dynamic_practice",
+        learner_id=current.learner.id, session_id=task.session_id,
+        project_id=task.project_id, checkpoint_id=task.checkpoint_id,
+        payload={
+            "learning_task_id": task.id, "practice_ref": ref["ref"],
+            "item_count": len(questions), "quality_status": "validated_static_uncalibrated",
+            "generation_kind": generation_kind,
+            "source_practice_ref": str(data.get("source_practice_ref") or "")[:180],
+            "mastery_unchanged": True,
+        },
+        artifact_refs=[artifact],
+        provenance={"tool": tool_id, "client_request_id": client_request_id},
+        client_event_id=f"{event_type}:{current.learner.id}:{practice_set_id}",
+    )
+    await db.commit()
+    return {**ref, "quality_reports": [report.quality for report in reports], "mastery_inference": False}
+
+
+@router.post("/practice/{practice_ref}/quality")
+async def inspect_dynamic_practice_quality(
+    practice_ref: str,
+    data: dict = Body(default={}),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    file = await get_practice_file(practice_ref, current, db)
+    reports = [
+        {
+            "item_id": item["id"],
+            "schema_valid": bool(item.get("quality", {}).get("schema_valid")),
+            "construct_declared": bool(item.get("quality", {}).get("construct_declared")),
+            "answer_deterministic": bool(item.get("quality", {}).get("answer_deterministic")),
+            "psychometric_status": item.get("quality", {}).get("psychometric_status", "uncalibrated"),
+        }
+        for item in file.get("questions", [])
+    ]
+    result = {
+        "practice_ref": practice_ref,
+        "valid": bool(reports) and all(item["schema_valid"] and item["construct_declared"] and item["answer_deterministic"] for item in reports),
+        "reports": reports,
+        "boundary": "静态质量检查不是学生作答评分，也不产生掌握证据。",
+    }
+    await record_event(
+        db, event_type="practice_quality_inspected", source="practice_quality_inspector",
+        learner_id=current.learner.id,
+        project_id=file.get("project_id"), checkpoint_id=file.get("checkpoint_id"),
+        payload={
+            "practice_ref": practice_ref, "valid": result["valid"],
+            "item_count": len(reports), "mastery_unchanged": True,
+        },
+        provenance={"tool": "practice_quality_inspector"},
+        client_event_id=str(data.get("client_event_id") or f"practice-quality:{current.learner.id}:{practice_ref}")[:160],
+    )
+    await db.commit()
+    return result
 
 
 @router.post("/tasks/{task_id}/generate")

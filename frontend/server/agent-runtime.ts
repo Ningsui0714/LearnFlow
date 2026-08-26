@@ -6,6 +6,7 @@ import type {
   AgentToolDefinition,
   AgentTrajectoryEvent,
   AgentTurnResponse,
+  AgentTurnStreamEvent,
 } from '../src/agent-contracts.ts'
 import type { TutorContextMessage, TutorMode } from '../src/tutor.ts'
 import {
@@ -61,6 +62,8 @@ export type TutorAgentRuntimeInput = {
   formalProjectContext?: AgentProjectContext
   conversationId?: string
   sheetId?: string
+  backendBase?: string
+  requestCookie?: string
   generate: TutorAgentToolRuntimeOptions['generate']
   searchConfiguration?: SearchProviderConfiguration
   invokeProvider: ProviderInvoke
@@ -70,6 +73,7 @@ export type TutorAgentRuntimeInput = {
     options: TutorAgentToolRuntimeOptions,
     meta?: { callId?: string; sequence?: number; sourceUrls?: string[] },
   ) => Promise<TutorAgentToolExecution>
+  observe?: (event: AgentTurnStreamEvent) => void
 }
 
 function turnId() {
@@ -267,6 +271,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '## 工具策略',
     '只有需要外部观察时才调用工具。可以连续调用不同读取工具，但不得重复相同调用。',
     '读取工具可自主调用；项目路线和文件工具只产生 learner-visible proposal，绝不直接写入。',
+    '动态习题工具只可在带领学习态且绑定正式 LearningTask/Checkpoint 时调用；生成题目是零目标 artifact 事件，不得声称形成掌握。需要动态练习、诊断或变式验证时，可生成正式练习文件，再让学习者在答案安全工作台提交。',
     '处于项目 scope 时，所有规划、来源选择、讲义与练习都必须锚定 envelope.scope.projectId 对应的项目主题；不得偷换为通用课程规划。',
     '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
     '若工作区观察含 sourceConstraint，路线和讲解必须受当前项目来源覆盖范围约束；超出范围只能标为资料缺口，并在检索到新证据后补充。',
@@ -285,6 +290,9 @@ function availableTools(input: TutorAgentRuntimeInput) {
     && (tool.name !== 'read_project_roadmap' || projectTutor)
     && (tool.name !== 'propose_project_roadmap' || projectTutor && input.mode === 'learning_plan')
     && (tool.name !== 'propose_project_learning_files' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
+    && (!['generate_dynamic_practice', 'generate_similar_practice'].includes(tool.name)
+      || Boolean(input.formalProjectContext?.checkpoint_id) && input.mode === 'guided_learning' && Boolean(input.learningTaskContext))
+    && (tool.name !== 'inspect_practice_quality' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
   ))
 }
 
@@ -370,7 +378,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let pathGapPending = false
 
   const record = (event: Omit<AgentTrajectoryEvent, 'sequence' | 'at'>) => {
-    trajectory.push({ ...event, sequence: ++sequence, at: Date.now() })
+    const recorded = { ...event, sequence: ++sequence, at: Date.now() }
+    trajectory.push(recorded)
+    input.observe?.({ type: 'trajectory', event: recorded })
   }
   const toolOptions: TutorAgentToolRuntimeOptions = {
     message: latestMessage,
@@ -387,6 +397,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     formalDomainKnowledgeContext: input.formalDomainKnowledgeContext,
     formalReviewContext: input.formalReviewContext,
     formalProjectContext: input.formalProjectContext,
+    backendBase: input.backendBase,
+    requestCookie: input.requestCookie,
   }
 
   const execute = async (call: AgentToolCall, sourceUrls: string[] = []) => {
@@ -407,6 +419,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     }
     signatures.add(signature)
     toolCalls += 1
+    input.observe?.({
+      type: 'tool_started', toolCallId: call.id, toolName: call.name,
+      title: TUTOR_AGENT_TOOL_DEFINITIONS.find(tool => tool.name === call.name)?.title || call.name,
+      startedAt: Date.now(),
+    })
     record({ phase: 'act', detail: `调用 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'started' })
     runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
     const result = await (input.executeTool || executeTutorAgentTool)(call.name, call.arguments, toolOptions, {
@@ -415,6 +432,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       sourceUrls,
     })
     runs.push(result.run)
+    input.observe?.({ type: 'tool_completed', run: result.run })
     if (call.name === 'read_learning_path') {
       pathGapPending = Boolean((result.observation as any)?.needsExternalResearch)
         && !(result.observation as any)?.personalNodeProposal
@@ -627,6 +645,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   if (!finalVerification.valid) {
     record({ phase: 'error', detail: `终态校验失败：${finalVerification.violations.join('、')}`, status: 'failed' })
     throw new Error(`模型回复未通过终态安全校验：${finalVerification.violations.join('、')}`)
+  }
+  if (input.observe) {
+    const chunks = reply.match(/.{1,18}(?:\s+|$)|.{1,18}/gs) || [reply]
+    for (const delta of chunks) {
+      input.observe({ type: 'text_delta', delta })
+      await new Promise(resolve => setTimeout(resolve, 8))
+    }
   }
   return {
     reply,

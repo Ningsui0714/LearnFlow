@@ -141,3 +141,97 @@ def test_task_files_are_persisted_answer_safe_and_audited():
                 ))).scalars().all())) if event_ids else 0
 
         assert asyncio.run(access_mutations()) == 0
+
+
+def test_dynamic_practice_is_answer_safe_and_only_formal_attempt_reaches_kernels():
+    with TestClient(app) as client:
+        learner_id = _register(client)
+        created = client.post("/api/learning-tasks", json={
+            "title": "理解队列与执行轨迹",
+            "objective": "能解释 FIFO 并追踪一次队列状态变化",
+            "estimated_minutes": 20,
+            "client_request_id": f"dynamic-task-{uuid.uuid4().hex}",
+        })
+        assert created.status_code == 200, created.text
+        task = created.json()
+        materialized = client.post(f"/api/learning-files/tasks/{task['id']}/generate", json={
+            "source_text": "队列遵循先进先出；入队写入队尾，出队读取队首。",
+            "expected_version": task["version"],
+            "client_request_id": f"dynamic-base-{uuid.uuid4().hex}",
+        })
+        assert materialized.status_code == 200, materialized.text
+        checkpoint_id = materialized.json()["checkpoint_id"]
+        generated = client.post("/api/learning-files/practice/generate", json={
+            "learning_task_id": task["id"],
+            "title": "队列动态检测",
+            "client_request_id": f"dynamic-set-{uuid.uuid4().hex}",
+            "generation_kind": "dynamic",
+            "candidates": [{
+                "question": "队列当前为 [A, B]，执行 enqueue(C) 后再 dequeue()，返回什么？",
+                "q_type": "single",
+                "difficulty": "easy",
+                "purpose": "diagnostic",
+                "target_skill": "追踪 FIFO 队列状态",
+                "concept_key": "queue-fifo",
+                "options": ["A", "B", "C"],
+                "answer_indexes": [0],
+                "explanation": "先入队得到 [A,B,C]，随后从队首移除并返回 A。",
+                "radical_features": ["FIFO", "先入队后出队"],
+                "incidental_features": ["元素名称"],
+            }],
+        })
+        assert generated.status_code == 200, generated.text
+        practice_ref = generated.json()["ref"]
+        assert generated.json()["mastery_inference"] is False
+
+        practice = client.get(f"/api/learning-files/practice/{practice_ref}")
+        assert practice.status_code == 200, practice.text
+        question = practice.json()["questions"][0]
+        assert "answer_indexes" not in question
+        assert question["quality"]["psychometric_status"] == "uncalibrated"
+
+        quality = client.post(f"/api/learning-files/practice/{practice_ref}/quality", json={
+            "client_event_id": f"quality-{uuid.uuid4().hex}",
+        })
+        assert quality.status_code == 200, quality.text
+        assert quality.json()["valid"] is True
+
+        async def generation_kernel_count() -> int:
+            async with async_session() as db:
+                event_ids = list((await db.execute(select(EvidenceEvent.id).where(
+                    EvidenceEvent.learner_id == learner_id,
+                    EvidenceEvent.event_type.in_({"practice_file_generated", "practice_quality_inspected"}),
+                ))).scalars().all())
+                return len(list((await db.execute(select(KernelMutation.id).where(
+                    KernelMutation.event_id.in_(event_ids),
+                ))).scalars().all())) if event_ids else 0
+
+        assert asyncio.run(generation_kernel_count()) == 0
+
+        submitted = client.post(
+            f"/api/checkpoints/{checkpoint_id}/concepts/{question['id']}/submit",
+            json={
+                "answer_indexes": [0],
+                "assistance_level": "none",
+                "attempt_role": "original",
+                "client_submission_id": f"dynamic-answer-{uuid.uuid4().hex}",
+                "blocker_concept_key": "array-indexing",
+                "helpful_format": "trace_table",
+                "support_effective": True,
+            },
+        )
+        assert submitted.status_code == 200, submitted.text
+        assert submitted.json()["correct"] is True
+
+        async def attempt_kernels() -> set[str]:
+            async with async_session() as db:
+                event = (await db.execute(select(EvidenceEvent).where(
+                    EvidenceEvent.learner_id == learner_id,
+                    EvidenceEvent.event_type == "concept_attempt_evaluated",
+                    EvidenceEvent.payload["item_id"].as_integer() == question["id"],
+                ))).scalars().one()
+                return set((await db.execute(select(KernelMutation.kernel_name).where(
+                    KernelMutation.event_id == event.id,
+                ))).scalars().all())
+
+        assert asyncio.run(attempt_kernels()) == {"knowledge", "practice", "structure", "human"}

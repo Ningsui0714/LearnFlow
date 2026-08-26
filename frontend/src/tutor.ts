@@ -8,7 +8,7 @@ import {
   type LearningPlanTutorContext,
 } from './planning.ts'
 import type { LearnerPathState } from './learning-path-graph.ts'
-import type { AgentFormalScope, AgentKnowledgeDomain, AgentTaskQueueItem, AgentTurnTrace } from './agent-contracts.ts'
+import type { AgentFormalScope, AgentKnowledgeDomain, AgentTaskQueueItem, AgentTurnResponse, AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts.ts'
 import { isDesktopRuntime, runtimeFetch } from './runtime-client.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
@@ -266,6 +266,7 @@ export async function requestTutorReply(options: {
   domainSourceIds?: number[]
   conversationId?: string
   sheetId?: string
+  onEvent?: (event: AgentTurnStreamEvent) => void
 }) {
   const controller = new AbortController()
   const timeout = globalThis.setTimeout(() => controller.abort(), 105_000)
@@ -303,12 +304,35 @@ export async function requestTutorReply(options: {
         } satisfies AgentTurnTrace,
       }
     }
-    const response = await runtimeFetch('/api/tutor', {
+    const response = await runtimeFetch(options.onEvent ? '/api/tutor/stream' : '/api/tutor', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(options),
+      body: JSON.stringify({ ...options, onEvent: undefined }),
       signal: controller.signal,
     })
+    if (options.onEvent) {
+      if (!response.ok || !response.body) throw new Error(`本地 Tutor 流式服务返回 HTTP ${response.status}`)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let result: AgentTurnResponse | undefined
+      while (true) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          const event = JSON.parse(line) as AgentTurnStreamEvent
+          options.onEvent(event)
+          if (event.type === 'done') result = event.result
+          if (event.type === 'error') throw new Error(event.error)
+        }
+        if (done) break
+      }
+      if (!result) throw new Error('本地 Tutor 流式服务没有返回终态')
+      return result
+    }
     const payload = await response.json().catch(() => null) as { reply?: unknown; error?: unknown; requestId?: unknown; toolRuns?: unknown; trace?: unknown } | null
     if (!response.ok) {
       const message = typeof payload?.error === 'string' ? payload.error : `本地 Tutor 服务返回 HTTP ${response.status}`

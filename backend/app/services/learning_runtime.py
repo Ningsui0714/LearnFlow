@@ -1290,6 +1290,45 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
                 concept_understanding[item_key]["status"] = "stable"
                 long_patch = {"mastery": mastery}
         await _apply_patch(db, event, "knowledge", patch, "概念评估结果", long_patch=long_patch)
+        await _apply_patch(
+            db, event, "practice",
+            {
+                "current_attempt": p.get("attempt_id"),
+                "assistance_level": p.get("assistance_level", "none"),
+                "artifact_state": "passed" if correct else "failed",
+                "recent_feedback": "concept_correct" if correct else "concept_needs_review",
+            },
+            "概念题正式作答",
+        )
+        blocker = str(p.get("blocker_concept_key") or "").strip()
+        if blocker:
+            await _apply_patch(
+                db, event, "structure",
+                {
+                    "navigation_blocker": {
+                        "concept_key": blocker,
+                        "blocks": p.get("concept_key") or p.get("target_skill") or f"item:{p.get('item_id')}",
+                        "source": "learner_explicit_attempt_reflection",
+                        "evidence_id": event.id,
+                    },
+                },
+                "学习者明确指出的概念卡点",
+            )
+        helpful_format = str(p.get("helpful_format") or "").strip()
+        if helpful_format and bool(p.get("support_effective")):
+            await _apply_patch(
+                db, event, "human",
+                {
+                    "format_preference": helpful_format,
+                    "support_need": {
+                        "effective_format": helpful_format,
+                        "scope": p.get("concept_key") or p.get("target_skill") or "current_practice",
+                        "source": "learner_explicit_attempt_reflection",
+                        "evidence_id": event.id,
+                    },
+                },
+                "学习者确认有效的支持形式",
+            )
         return
 
     if et == "exercise_attempt_evaluated":

@@ -118,7 +118,7 @@ import {
   type FormalTutorMessage,
   type FormalTutorSession,
 } from './formal-runtime'
-import type { AgentTurnTrace } from './agent-contracts'
+import type { AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
 import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
@@ -140,6 +140,17 @@ type Message = {
   formalTaskId?: number
   learningGoal?: string
   persistedByTutor?: boolean
+  streaming?: boolean
+  streamingPhase?: string
+}
+
+type LiveTurn = {
+  sheetId: string
+  messageId: string
+  content: string
+  toolRuns: TutorToolRun[]
+  phase: string
+  startedAt: number
 }
 
 type FollowUpSheet = {
@@ -521,6 +532,7 @@ function App() {
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
   const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
+  const [liveTurns, setLiveTurns] = useState<Record<string, LiveTurn>>({})
   const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
   const [formalConnection, setFormalConnection] = useState<FormalRuntimeConnection>({ status: 'connecting', detail: '正在连接正式五核事件链' })
   const [formalSnapshot, setFormalSnapshot] = useState<FormalLearnerSnapshot>()
@@ -1139,6 +1151,7 @@ function App() {
   const attachLearningFileToConversation = (
     file: { kind: 'lecture' | 'practice'; ref: string; title: string },
     preferredConversationId?: string,
+    anchor?: { sourceMessageId?: string; parentSheetId?: string },
   ) => {
     const activeConversationId = workspace.tabs.find(tab => tab.id === workspace.activeTabId)?.conversationId
     const conversation = workspace.conversations.find(item => item.id === preferredConversationId)
@@ -1149,8 +1162,8 @@ function App() {
       id: uid('sheet'),
       title: file.title.slice(0, 28),
       quote: `${file.kind === 'lecture' ? '讲义' : '练习'}：${file.title}`,
-      sourceMessageId: '',
-      parentSheetId: 'main',
+      sourceMessageId: anchor?.sourceMessageId || '',
+      parentSheetId: anchor?.parentSheetId || conversation.activeSheetId || 'main',
       messages: [],
       createdAt: Date.now(),
       artifact: file,
@@ -1174,6 +1187,11 @@ function App() {
     }).catch(() => undefined)
   }
 
+  const openLearningFile = (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => {
+    openTab(learningFileTab(file))
+    void recordLearningFileAccess(file.kind, file.ref, 'opened').catch(() => undefined)
+  }
+
   const finishTurn = (
     conversationId: string,
     sheetId: string,
@@ -1181,6 +1199,11 @@ function App() {
     message: Omit<Message, 'id' | 'createdAt'>,
     formalSessionIdOverride?: number,
   ) => {
+    setLiveTurns(previous => {
+      const next = { ...previous }
+      delete next[conversationId]
+      return next
+    })
     const formalSessionId = formalSessionIdOverride
       || workspace.conversations.find(item => item.id === conversationId)?.formalSessionId
     const finishedMessage = { ...message, id: uid('message'), createdAt: Date.now(), tutorMode: message.role === 'assistant' ? mode : undefined }
@@ -1225,6 +1248,42 @@ function App() {
         },
       }).catch(error => setFormalError(error instanceof Error ? error.message : '学习片段事件同步失败'))
     }
+  }
+
+  const updateLiveTurn = (conversationId: string, event: AgentTurnStreamEvent) => {
+    setLiveTurns(previous => {
+      const current = previous[conversationId]
+      if (!current || event.type === 'done' || event.type === 'error') return previous
+      if (event.type === 'text_delta') {
+        return { ...previous, [conversationId]: { ...current, content: current.content + event.delta, phase: '正在回答' } }
+      }
+      if (event.type === 'trajectory') {
+        return { ...previous, [conversationId]: { ...current, phase: event.event.detail } }
+      }
+      if (event.type === 'tool_started') {
+        const running: TutorToolRun = {
+          id: event.toolCallId,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          kind: /practice|learning_file/i.test(event.toolName) ? 'file' : event.toolName.includes('search') ? 'search' : 'workspace',
+          status: 'running', title: event.title, detail: '正在调用工具并等待结构化观察…',
+          durationMs: 0, startedAt: event.startedAt,
+        }
+        return { ...previous, [conversationId]: { ...current, toolRuns: [...current.toolRuns, running], phase: `正在使用 ${event.title}` } }
+      }
+      const completed = event.run
+      const exists = current.toolRuns.some(run => run.toolCallId === completed.toolCallId)
+      return {
+        ...previous,
+        [conversationId]: {
+          ...current,
+          toolRuns: exists
+            ? current.toolRuns.map(run => run.toolCallId === completed.toolCallId ? completed : run)
+            : [...current.toolRuns, completed],
+          phase: completed.status === 'completed' ? `${completed.title}完成，正在决定下一步` : `${completed.title}失败，正在调整`,
+        },
+      }
+    })
   }
 
   const runTutorTurn = async (
@@ -1463,6 +1522,18 @@ function App() {
       return
     }
 
+    setLiveTurns(previous => ({
+      ...previous,
+      [conversationId]: {
+        sheetId,
+        messageId: uid('stream'),
+        content: '',
+        toolRuns: [],
+        phase: '正在理解问题',
+        startedAt: Date.now(),
+      },
+    }))
+
     try {
       const formalTaskForTurn = learningProjection?.task.formalTaskId
         ? formalSnapshotForTurn?.learning_tasks.find(task => task.id === learningProjection.task.formalTaskId)
@@ -1497,6 +1568,7 @@ function App() {
         domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
+        onEvent: event => updateLiveTurn(conversationId, event),
       })
       finishTurn(conversationId, sheetId, mode, {
         role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns, agentTrace: reply.trace,
@@ -2123,19 +2195,33 @@ function App() {
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
     const pages = [
-      { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '' },
+      { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '', sourceMessageId: '' },
       ...conversation.sheets.map((item, index) => ({
         id: item.id,
         title: `${index + 1}. ${item.title}`,
         quote: item.quote,
         messages: item.messages,
         parentSheetId: item.parentSheetId,
+        sourceMessageId: item.sourceMessageId,
       })),
     ]
     const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
     const backPages = pages.filter(page => page.id !== sheetId).slice(-6)
-    const messages = activeMessages(conversation)
-    const interruptedTurn = recoverableTutorTurn(messages, Boolean(pendingMode))
+    const persistedMessages = activeMessages(conversation)
+    const liveTurn = liveTurns[conversation.id]
+    const messages: Message[] = liveTurn?.sheetId === sheetId
+      ? [...persistedMessages, {
+          id: liveTurn.messageId,
+          role: 'assistant',
+          content: liveTurn.content,
+          createdAt: liveTurn.startedAt,
+          tutorMode: visibleMode,
+          toolRuns: liveTurn.toolRuns,
+          streaming: true,
+          streamingPhase: liveTurn.phase,
+        }]
+      : persistedMessages
+    const interruptedTurn = recoverableTutorTurn(persistedMessages, Boolean(pendingMode))
     const attachedSources = conversation.projectId ? conversation.projectSources : conversation.domainSources
     const hasWorkbench = conversation.sheets.length > 0
     const paperMode = paperDeskView?.conversationId === conversation.id ? paperDeskView.mode : 'stack'
@@ -2147,7 +2233,7 @@ function App() {
         <li key={page.id}>
           <div className={`paper-tree-card-wrap${page.id === sheetId ? ' paper-tree-card-active' : ''}`}>
             <button type="button" className="paper-tree-card" onClick={() => setActiveSheet(conversation.id, page.id)}>
-              <span>{page.id === 'main' ? 'ROOT' : 'FOLLOW-UP'}</span>
+              <span>{page.parentSheetId === 'main' ? 'FROM CONVERSATION' : 'FROM PAPER'}</span>
               <strong>{page.title}</strong>
               <p>{page.quote || paperPreview(page.messages)}</p>
               <small>{page.messages.length} 条内容{page.id === sheetId ? ' · 当前纸张' : ''}</small>
@@ -2161,6 +2247,13 @@ function App() {
           )}
         </li>
       )
+    }
+    const topLevelPages = pages.slice(1).filter(page => page.parentSheetId === 'main')
+    const focusMainMessage = (messageId: string) => {
+      setActiveSheet(conversation.id, 'main')
+      window.setTimeout(() => {
+        document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      }, 30)
     }
     return (
       <section className={`chat-page${conversation.projectId ? ' project-chat-page' : ''}`}>
@@ -2207,6 +2300,23 @@ function App() {
           )}
           <div
             className={hasWorkbench ? `paper-stage${paperMode !== 'stack' ? ' paper-stage-overview' : ''}` : 'conversation-surface'}
+            onDragOver={event => {
+              if (event.dataTransfer.types.includes('application/x-learnflow-learning-file')) event.preventDefault()
+            }}
+            onDrop={event => {
+              const raw = event.dataTransfer.getData('application/x-learnflow-learning-file')
+              if (!raw) return
+              event.preventDefault()
+              try {
+                const file = JSON.parse(raw) as { kind: 'lecture' | 'practice'; ref: string; title: string; sourceMessageId?: string }
+                if ((file.kind === 'lecture' || file.kind === 'practice') && file.ref) {
+                  attachLearningFileToConversation(file, conversation.id, {
+                    sourceMessageId: file.sourceMessageId,
+                    parentSheetId: conversation.activeSheetId,
+                  })
+                }
+              } catch { /* Ignore foreign drag payloads. */ }
+            }}
             onClick={hasWorkbench && paperMode === 'stack' && !pendingMode ? event => {
               if (event.target === event.currentTarget) setPaperDeskView({ conversationId: conversation.id, mode: 'overview' })
             } : undefined}
@@ -2224,7 +2334,37 @@ function App() {
                   <div><span>PAPER TREE</span><strong>追问关系</strong></div>
                   <p>从主对话沿选中原文向下展开 · 点击空白回到纸堆</p>
                 </header>
-                <ul className="paper-tree-root">{renderPaperTreeNode(pages[0])}</ul>
+                <div className="paper-tree-map">
+                  <ol className="paper-tree-timeline" aria-label="主对话输入输出缩略">
+                    {conversation.messages.map((message, index) => (
+                      <li key={message.id}>
+                        <button type="button" onClick={() => focusMainMessage(message.id)}>
+                          <span>{message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'} · {String(index + 1).padStart(2, '0')}</span>
+                          <p>{message.content.replace(/\s+/g, ' ').trim().slice(0, 150) || '空内容'}</p>
+                          <small>{topLevelPages.filter(page => page.sourceMessageId === message.id).length} 个分支</small>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="paper-tree-branches" aria-label="从对话消息或纸张展开的分支">
+                    {conversation.messages.map((message, index) => {
+                      const roots = topLevelPages.filter(page => page.sourceMessageId === message.id)
+                      if (!roots.length) return null
+                      return (
+                        <section key={message.id} style={{ gridRow: index + 1 }}>
+                          <span>从第 {index + 1} 条展开</span>
+                          <ul>{roots.map(page => renderPaperTreeNode(page, ['main']))}</ul>
+                        </section>
+                      )
+                    })}
+                    {topLevelPages.some(page => !page.sourceMessageId) && (
+                      <section className="paper-tree-unanchored" style={{ gridRow: conversation.messages.length + 1 }}>
+                        <span>工作台文件与未定位纸张</span>
+                        <ul>{topLevelPages.filter(page => !page.sourceMessageId).map(page => renderPaperTreeNode(page, ['main']))}</ul>
+                      </section>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : hasWorkbench && paperMode === 'overview' ? (
               <div
@@ -2321,6 +2461,11 @@ function App() {
                     onAcceptProjectLearningFile={proposal => { void acceptProjectLearningFileProposal(proposal, conversation.id) }}
                     projectBusyKey={formalBusyKey}
                     projectError={formalError}
+                    onOpenLearningFile={openLearningFile}
+                    onAttachLearningFile={(file, sourceMessageId) => attachLearningFileToConversation(file, conversation.id, {
+                      sourceMessageId,
+                      parentSheetId: conversation.activeSheetId,
+                    })}
                   />
                   {sheet && messages.length === 0 && !sheet.artifact && (
                     <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
@@ -2766,8 +2911,11 @@ function App() {
   )
 }
 
-function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError }: {
+function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError }: {
   run: TutorToolRun
+  sourceMessageId: string
+  onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
+  onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
   onAcceptPathPlan: (proposal: LearningPathPlanProposal) => void
   activePathPlanId?: string
@@ -2778,6 +2926,12 @@ function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, onAcceptProj
   projectBusyKey?: string
   projectError?: string
 }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (run.status !== 'running') return
+    const timer = window.setInterval(() => setNow(Date.now()), 250)
+    return () => window.clearInterval(timer)
+  }, [run.status])
   const icon = run.kind === 'memory' ? '◇' : run.kind === 'domain' || run.kind === 'file' ? '▤' : run.kind === 'project' ? '◈' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const pathPlanConfirmed = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === activePathPlanId)
   const pathPlanBusy = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === pathPlanBusyId)
@@ -2786,13 +2940,25 @@ function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, onAcceptProj
     definition: '定义', research: '研究', example: '实例', discussion: '讨论',
   }
   return (
-    <section className={`tool-run tool-run-${run.status}`} aria-label={`${run.title}${run.status === 'completed' ? '已完成' : '失败'}`}>
+    <section
+      className={`tool-run tool-run-${run.status}${run.learningFile ? ' tool-run-learning-file' : ''}`}
+      aria-label={`${run.title}${run.status === 'running' ? '正在运行' : run.status === 'completed' ? '已完成' : '失败'}`}
+      draggable={Boolean(run.learningFile)}
+      onDragStart={run.learningFile ? event => event.dataTransfer.setData('application/x-learnflow-learning-file', JSON.stringify({ ...run.learningFile, sourceMessageId })) : undefined}
+    >
       <header>
         <span className="tool-run-icon">{icon}</span>
-        <div><strong>{run.title}</strong><small>{run.status === 'completed' ? '调用完成' : '调用失败'} · {(run.durationMs / 1000).toFixed(1)}s</small></div>
-        <i>{run.status === 'completed' ? '✓' : '!'}</i>
+        <div><strong>{run.title}</strong><small>{run.status === 'running' ? '正在使用工具' : run.status === 'completed' ? '调用完成' : '调用失败'} · {((run.status === 'running' ? Math.max(0, now - (run.startedAt || now)) : run.durationMs) / 1000).toFixed(1)}s</small></div>
+        <i>{run.status === 'running' ? '…' : run.status === 'completed' ? '✓' : '!'}</i>
       </header>
       <p>{run.detail}</p>
+      {run.learningFile && (
+        <div className="tool-learning-file-actions">
+          <button type="button" onClick={() => onOpenLearningFile(run.learningFile!)}>打开{run.learningFile.kind === 'practice' ? '练习' : '讲义'}</button>
+          <button type="button" onClick={() => onAttachLearningFile(run.learningFile!, sourceMessageId)}>放到新纸上</button>
+          <small>也可以拖到纸张桌面</small>
+        </div>
+      )}
       {run.pathProposal && (
         <div className="path-proposal-card">
           <span>个人节点提案</span>
@@ -2882,9 +3048,11 @@ function AgentTraceSummary({ trace }: { trace: AgentTurnTrace }) {
   )
 }
 
-function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
+function MessageList({ messages, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
   messages: Message[]
   onQuoteFollowUp: (messageId: string, quote: string) => void
+  onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
+  onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
   onAcceptPathPlan: (proposal: LearningPathPlanProposal) => void
   activePathPlanId?: string
@@ -2983,6 +3151,9 @@ function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAccept
                 <ToolRunCard
                   key={run.id}
                   run={run}
+                  sourceMessageId={message.id}
+                  onOpenLearningFile={onOpenLearningFile}
+                  onAttachLearningFile={onAttachLearningFile}
                   onAcceptPathProposal={onAcceptPathProposal}
                   onAcceptPathPlan={onAcceptPathPlan}
                   activePathPlanId={activePathPlanId}
@@ -2995,6 +3166,7 @@ function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAccept
                 />
               ))}
               {message.agentTrace && <AgentTraceSummary trace={message.agentTrace} />}
+              {message.streaming && <div className="streaming-phase"><i />{message.streamingPhase || '正在形成回答'}</div>}
               {message.learningActionLabel ? (
                 <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
               ) : (

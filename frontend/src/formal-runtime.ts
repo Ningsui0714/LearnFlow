@@ -879,11 +879,11 @@ export async function loadLectureFile(lectureId: number) {
 export async function loadPracticeFile(ref: string) {
   await ensureFormalIdentity()
   return jsonRequest<FormalLearningFileRef & {
-    practice_kind: 'exercise' | 'concept_question_set'
+    practice_kind: 'exercise' | 'concept_question_set' | 'dynamic_question_set'
     description?: string
     starter_code?: string
     hints?: string[]
-    questions?: Array<{ id: number; question: string; options: string[]; q_type: string; difficulty: string }>
+    questions?: Array<{ id: number; question: string; options: string[]; q_type: string; difficulty: string; code?: string; response_schema?: string; target_skill?: string; quality?: Record<string, unknown> }>
     answers_hidden: true
   }>(`/api/learning-files/practice/${encodeURIComponent(ref)}`)
 }
@@ -921,12 +921,22 @@ export async function markFormalLectureRead(lectureId: number) {
   })
 }
 
-export async function submitFormalConceptAnswer(checkpointId: number, questionId: number, answerIndexes: number[]) {
+export async function submitFormalConceptAnswer(
+  checkpointId: number,
+  questionId: number,
+  submission: {
+    answer_indexes?: number[]
+    response?: unknown
+    blocker_concept_key?: string
+    helpful_format?: string
+    support_effective?: boolean
+  },
+) {
   await ensureFormalIdentity()
   return jsonRequest<{ correct: boolean; answer_indexes: number[]; explanation?: string; attempt_id: number }>(`/api/checkpoints/${checkpointId}/concepts/${questionId}/submit`, {
     method: 'POST',
     body: JSON.stringify({
-      answer_indexes: answerIndexes,
+      ...submission,
       assistance_level: 'none',
       attempt_role: 'original',
       client_submission_id: `vnext-practice:${questionId}:${Date.now()}`,

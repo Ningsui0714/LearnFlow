@@ -183,6 +183,127 @@ test('guided turns observe the formal task queue and never expose write tools', 
   assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
 })
 
+test('dynamic practice tools are scoped to a formal guided checkpoint and stream observable progress', async () => {
+  const guidedProjectContext = {
+    ...formalProjectContext,
+    checkpoint_id: 45,
+  }
+  const learningTaskContext = {
+    objectType: 'learning_task_binding',
+    authority: 'formal_learning_task',
+    formalTaskId: 81,
+    taskId: 'formal-task-81',
+    objective: '用执行轨迹检测 Python 循环边界理解',
+    skillId: 'worked_example_fading',
+    skillName: '例题渐隐',
+    substateId: 'practice',
+    substateLabel: '练习态',
+    stepId: 'independent_attempt',
+    stepTitle: '独立尝试',
+    stepIndex: 2,
+    stepCount: 4,
+    stepInstruction: '独立完成一组短题。',
+    nextAction: '检查迁移',
+    loopCount: 0,
+    loopInstruction: '换一组表面不同但技能相同的题。',
+  } as const
+  const requests: any[] = []
+  const events: any[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'guided_learning',
+    messages: [{ role: 'user', content: '给我两道循环执行轨迹题动态检测一下' }],
+    toolChoice: 'auto',
+    formalProjectContext: guidedProjectContext,
+    formalLearnerContext: guidedProjectContext.five_kernel_context,
+    learningTaskContext: learningTaskContext as any,
+    generate: async () => 'unused',
+    observe: event => events.push(event),
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'generate_dynamic_practice') {
+        return {
+          run: {
+            id: 'dynamic-practice-run',
+            kind: 'file',
+            toolName: name,
+            toolCallId: meta?.callId,
+            status: 'completed',
+            title: '生成动态练习文件',
+            detail: '已生成 2 道题并通过静态质量检查。',
+            observationSummary: '2 题 · validated_static_uncalibrated',
+            durationMs: 12,
+            learningFile: {
+              kind: 'practice', ref: 'practice-set-test', title: '循环执行轨迹动态检测',
+              checkpointId: 45, questionCount: 2, qualityStatus: 'validated_static_uncalibrated',
+            },
+          },
+          observation: {
+            authority: 'formal_dynamic_practice_file',
+            evidence_boundary: '正式提交并确定性判题后才形成证据。',
+          },
+        }
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) {
+        return { choices: [{ message: { tool_calls: [{
+          id: 'generate-practice',
+          function: {
+            name: 'generate_dynamic_practice',
+            arguments: JSON.stringify({
+              learning_task_id: 81,
+              title: '循环执行轨迹动态检测',
+              concept: 'Python 循环边界',
+              purpose: 'diagnostic',
+              difficulty: 'medium',
+              item_types: ['code_output', 'trace_table'],
+              count: 2,
+            }),
+          },
+        }] } }] }
+      }
+      return { choices: [{ message: { content: '练习文件已经生成。打开后先独立作答；提交后系统才会形成可检查的学习证据。' } }] }
+    },
+  })
+
+  const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(exposed.includes('generate_dynamic_practice'))
+  assert.ok(exposed.includes('generate_similar_practice'))
+  assert.ok(exposed.includes('inspect_practice_quality'))
+  assert.equal(result.toolRuns.at(-1)?.learningFile?.ref, 'practice-set-test')
+  const started = events.findIndex(event => event.type === 'tool_started' && event.toolName === 'generate_dynamic_practice')
+  const completed = events.findIndex(event => event.type === 'tool_completed' && event.run.toolName === 'generate_dynamic_practice')
+  const firstDelta = events.findIndex(event => event.type === 'text_delta')
+  assert.ok(started >= 0 && completed > started && firstDelta > completed)
+  assert.equal(events.filter(event => event.type === 'text_delta').map(event => event.delta).join(''), result.reply)
+
+  const freeRequests: any[] = []
+  await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'free',
+    messages: [{ role: 'user', content: '随便生成两道题' }],
+    toolChoice: 'auto',
+    formalProjectContext: guidedProjectContext,
+    formalLearnerContext: guidedProjectContext.five_kernel_context,
+    learningTaskContext: learningTaskContext as any,
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      freeRequests.push(request)
+      return { choices: [{ message: { content: '先进入正式关卡学习任务，再生成会留下提交证据的动态练习。' } }] }
+    },
+  })
+  const freeExposed = freeRequests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(!freeExposed.includes('generate_dynamic_practice'))
+  assert.ok(!freeExposed.includes('generate_similar_practice'))
+  assert.ok(!freeExposed.includes('inspect_practice_quality'))
+})
+
 test('planning reads the learner source library before recommending resource gaps', async () => {
   const requests: any[] = []
   const result = await runTutorAgentTurn({

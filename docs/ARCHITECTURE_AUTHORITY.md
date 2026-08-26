@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-26.27`）：新增 `dynamic_practice_generator`、`similar_practice_generator`、`practice_quality_inspector` 三个受限 ACI 与 `dynamic_practice_loop` Playbook。它们只在正式带领学习任务和项目关卡 scope 内生成经过确定性校验、答案安全、心理测量状态为 `uncalibrated` 的 `ConceptQuestion` 集合；生成、检查、打开和纸张接入均为零 Kernel target。正式提交继续复用 `LearningAttempt -> concept_attempt_evaluated -> five_kernel_reducer`，固定写 Knowledge / Practice；仅学习者显式声明的前置卡点或已确认有效帮助可分别补充 Structure / Human。没有新增 Kernel writer 或数据库表，旧练习引用保持兼容。
+
 Contract impact（`2026-08-26.21`）：新增 learner-owned 领域知识底座的只读 ACI、规划态资源策展 Playbook 和 vNext 正式学习文件工作台。领域来源从 Chat 输入区附加，隐藏存储 Project 不形成独立用户工作台；Tutor 请求携带当前对话 source id，从而在对话资料与联网检索之间选择。它们复用现有 `Source/Chunk`、`LearningTask`、`Lecture`、`ConceptQuestion` 与 `Exercise`，不新增长期画像权威或 Kernel writer。来源加入/处理以及学习文件生成/打开/接入纸张均为零 target 审计事件；显式讲义阅读继续是 exposure-only，正式练习提交继续走既有确定性评分与 EvidenceEvent 链。旧项目来源、旧讲义/评估 API 和数据库 schema 保持兼容。详细契约见 `docs/KNOWLEDGE_AND_LEARNING_FILES.md`。
 
 ## 1. 权威层级
@@ -156,9 +158,10 @@ ContextEnvelope
 
 单回合最多 5 次模型决策、8 次工具调用并共享 90 秒 deadline；重复调用被阻断，暂时性模型错误
 只允许在剩余 deadline 内重试一次。正式五核读取不再把 JSON 截断片段塞进提示，而是形成有 scope、
-有预算、答案隔离的语义投影；历史工具观察以有界摘要进入下一回合。模型当前只获得五个原生
-ACI：五核读取、学习工作区读取、学习路径读取、计算机知识搜索和安全视觉产物生成；任何五核、个人节点、长期路线、
-任务或文件写入能力仍由确定性 runtime 和显式确认控制。
+有预算、答案隔离的语义投影；历史工具观察以有界摘要进入下一回合。原生 ACI 按对话状态和 scope
+动态过滤：基础观察包含五核、学习工作区、学习路径、计算机知识搜索和安全视觉产物；带领学习态且存在正式
+`LearningTask + checkpoint` 时才额外开放动态出题、同构变式和题目质量检查。任何五核、个人节点、长期路线、
+通用任务或任意文件写入能力仍由确定性 runtime 和显式确认控制。
 
 注册表中的 `TOOLS` 保留稳定 ID 以兼容既有 API，同时增加正交分类：`aci_tool / harness /
 projection / policy / adapter`。只有 `aci_tool` 可以成为模型工具；`vnext_agent_turn_runtime`、

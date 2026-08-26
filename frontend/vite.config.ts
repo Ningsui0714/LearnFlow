@@ -110,6 +110,10 @@ function sendJson(response: any, status: number, payload: unknown) {
   response.end(JSON.stringify(payload))
 }
 
+function sendStreamEvent(response: any, payload: unknown) {
+  response.write(`${JSON.stringify(payload)}\n`)
+}
+
 function tutorProxy(mode: string, backendBase: string): Plugin {
   const keyConfiguration = loadTutorKey(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
@@ -173,7 +177,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       return
     }
 
-    if (requestUrl.pathname !== '/api/tutor') {
+    const streamResponse = requestUrl.pathname === '/api/tutor/stream'
+    if (requestUrl.pathname !== '/api/tutor' && !streamResponse) {
       next()
       return
     }
@@ -190,6 +195,13 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
 
     const requestId = `tutor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     const startedAt = Date.now()
+    if (streamResponse) {
+      response.statusCode = 200
+      response.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8')
+      response.setHeader('Cache-Control', 'no-store, no-transform')
+      response.setHeader('X-Accel-Buffering', 'no')
+      response.flushHeaders?.()
+    }
     try {
       const payload = await readJsonBody(request)
       if (!payload || typeof payload !== 'object') throw new Error('请求内容无效')
@@ -378,11 +390,14 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         formalDomainKnowledgeContext,
         formalReviewContext,
         formalProjectContext: formalProjectContext as any,
+        backendBase,
+        requestCookie: typeof request.headers.cookie === 'string' ? request.headers.cookie : undefined,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
         generate,
         searchConfiguration,
         invokeProvider: callProvider,
+        observe: streamResponse ? event => sendStreamEvent(response, event) : undefined,
       })
       console.info('[tutor] turn completed', {
         requestId,
@@ -390,7 +405,12 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         replyLength: result.reply.length,
         toolRunCount: result.toolRuns.length,
       })
-      sendJson(response, 200, { ...result, requestId })
+      if (streamResponse) {
+        sendStreamEvent(response, { type: 'done', result, requestId })
+        response.end()
+      } else {
+        sendJson(response, 200, { ...result, requestId })
+      }
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError'
         ? '模型请求超过当前时间预算，已停止等待'
@@ -403,7 +423,12 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         errorName: error instanceof Error ? error.name : typeof error,
         message,
       })
-      sendJson(response, 400, { error: message, requestId })
+      if (streamResponse) {
+        sendStreamEvent(response, { type: 'error', error: message, requestId })
+        response.end()
+      } else {
+        sendJson(response, 400, { error: message, requestId })
+      }
     }
   }
 
@@ -421,7 +446,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
 function backendApiProxy(backendBase: string): Plugin {
   const middleware = async (request: any, response: any, next: () => void) => {
     const requestUrl = new URL(request.url || '/', 'http://127.0.0.1:4174')
-    if (!requestUrl.pathname.startsWith('/api/') || requestUrl.pathname === '/api/tutor' || requestUrl.pathname === '/api/tutor/status') {
+    if (!requestUrl.pathname.startsWith('/api/') || requestUrl.pathname === '/api/tutor' || requestUrl.pathname === '/api/tutor/stream' || requestUrl.pathname === '/api/tutor/status') {
       next()
       return
     }

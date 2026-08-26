@@ -414,6 +414,59 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'generate_dynamic_practice',
+    title: '生成动态练习文件',
+    description: '按能力蓝图生成计算机学习题目，经过后端静态质量检查后保存为正式答案安全练习文件。生成不等于掌握；只有正式提交与确定性判题才形成证据。',
+    toolClass: 'execution',
+    risk: 'artifact',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        learning_task_id: { type: 'integer', description: '当前关卡绑定的正式 LearningTask ID' },
+        title: { type: 'string', description: '练习文件标题' },
+        concept: { type: 'string', description: '要练习或检测的概念' },
+        purpose: { type: 'string', enum: ['practice', 'diagnostic', 'transfer'] },
+        difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+        item_types: { type: 'array', maxItems: 6, items: { type: 'string', enum: ['single', 'multi', 'judge', 'ordered_blocks', 'exact_text', 'numeric', 'code_output', 'trace_table'] } },
+        count: { type: 'integer', minimum: 1, maximum: 8 },
+      },
+      required: ['learning_task_id', 'title', 'concept', 'purpose', 'difficulty', 'item_types', 'count'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'generate_similar_practice',
+    title: '生成同构变式练习',
+    description: '保持 target_skill 与关键解题结构，改变情境、数据或表面形式，生成可验证的同构变式文件。用于迁移前的变式练习，不自动升级掌握。',
+    toolClass: 'execution',
+    risk: 'artifact',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        learning_task_id: { type: 'integer' },
+        source_practice_ref: { type: 'string', description: '原练习文件 ref' },
+        concept: { type: 'string' },
+        title: { type: 'string' },
+        count: { type: 'integer', minimum: 1, maximum: 6 },
+      },
+      required: ['learning_task_id', 'source_practice_ref', 'concept', 'title', 'count'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'inspect_practice_quality',
+    title: '检查习题质量',
+    description: '读取正式练习文件的静态质量报告，检查题目结构、目标能力声明和答案确定性。它不是学生作答评分，不产生五核证据。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: { practice_ref: { type: 'string' } },
+      required: ['practice_ref'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 export type TutorAgentToolRuntimeOptions = {
@@ -431,6 +484,8 @@ export type TutorAgentToolRuntimeOptions = {
   formalDomainKnowledgeContext?: unknown
   formalReviewContext?: unknown
   formalProjectContext?: AgentProjectContext
+  backendBase?: string
+  requestCookie?: string
 }
 
 export type TutorAgentToolExecution = {
@@ -594,6 +649,82 @@ function classifyToolError(error: unknown): NonNullable<TutorToolRun['errorType'
   if (/timeout|超时|429|rate|network|fetch|ECONN|暂时/i.test(message)) return 'transient'
   if (/参数|必须|缺少|无效|不支持/i.test(message)) return 'model_recoverable'
   return 'unexpected'
+}
+
+async function generatePracticeCandidates(
+  args: Record<string, unknown>,
+  options: TutorAgentToolRuntimeOptions,
+  similar: boolean,
+) {
+  const count = Math.max(1, Math.min(similar ? 6 : 8, Number(args.count) || 3))
+  const concept = compactText(args.concept || options.message, 300)
+  const purpose = similar ? 'practice' : compactText(args.purpose || 'practice', 24)
+  const difficulty = compactText(args.difficulty || 'medium', 16)
+  const requestedTypes = similar
+    ? ['single', 'ordered_blocks', 'exact_text']
+    : (Array.isArray(args.item_types) ? args.item_types : ['single'])
+  const allowed = new Set(['single', 'multi', 'judge', 'ordered_blocks', 'exact_text', 'numeric', 'code_output', 'trace_table'])
+  const itemTypes = requestedTypes.map(item => String(item)).filter(item => allowed.has(item)).slice(0, 6)
+  if (!itemTypes.length) throw new Error('至少需要一个受支持的计算机题型')
+  const instructions = [
+    '你是 learning_design_agent 的计算机习题设计器。只输出 JSON 对象，不要代码围栏。',
+    `输出 {"candidates":[...]}，恰好 ${count} 题。每题字段：question、q_type、difficulty、purpose、target_skill、concept_key、options、answer_indexes、expected_response、numeric_tolerance、explanation、radical_features、incidental_features、source_refs。`,
+    `q_type 只可从 ${itemTypes.join('、')} 选择。`,
+    'single/multi/judge/ordered_blocks 使用 options 与 answer_indexes；ordered_blocks 的 answer_indexes 是完整正确排列。',
+    'exact_text/numeric/code_output/trace_table 使用 expected_response；numeric 可给 numeric_tolerance；trace_table 的答案是二维数组。',
+    '题目必须能确定性判分；不生成依赖主观作文评分的题。解释要指出关键机制与常见误解。',
+    '计算机题型优先覆盖：代码执行轨迹、Parsons 代码排序、数据结构状态跟踪、算法复杂度、SQL 结果、网络协议时序、操作系统调度/分页、并发交错、安全漏洞判断、测试用例设计。',
+    similar
+      ? '这是同构变式：保持 target_skill、关键步骤和认知要求，改变数字、变量名、代码情境或表面叙述；radical_features 写保持项，incidental_features 写变化项。'
+      : '先声明每题测量的 target_skill；各题尽量互补，避免只改数字的重复题。',
+    'source_refs 只能引用输入中实际可见的来源；没有来源时填空数组，不能编造。',
+  ].join('\n')
+  const context = {
+    concept,
+    purpose,
+    difficulty,
+    item_types: itemTypes,
+    source_practice_ref: similar ? compactText(args.source_practice_ref, 160) : undefined,
+    learner_request: compactText(options.message, 1200),
+    project: options.formalProjectContext?.project,
+    checkpoint_id: options.formalProjectContext?.checkpoint_id,
+  }
+  const raw = await options.generate(instructions, JSON.stringify(context), 58_000)
+  const payload = extractJson(raw)
+  const candidates = Array.isArray(payload.candidates) ? payload.candidates.slice(0, count) : []
+  if (candidates.length !== count) throw new Error(`模型只返回 ${candidates.length}/${count} 道可解析候选题`)
+  return candidates.map((candidate: any, index: number) => ({
+    ...candidate,
+    difficulty: candidate.difficulty || difficulty,
+    purpose,
+    target_skill: compactText(candidate.target_skill || concept, 240),
+    concept_key: compactText(candidate.concept_key || concept, 160),
+    family_id: similar ? `${compactText(args.source_practice_ref, 80)}:${index + 1}` : undefined,
+    generator: similar ? 'learning_design_agent.similar_item.v1' : 'learning_design_agent.dynamic_practice.v1',
+  }))
+}
+
+async function callFormalPracticeApi(
+  options: TutorAgentToolRuntimeOptions,
+  path: string,
+  init: RequestInit,
+) {
+  if (!options.backendBase) throw new Error('正式习题后端未连接')
+  const response = await fetch(`${options.backendBase}/api/learning-files${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.requestCookie ? { Cookie: options.requestCookie } : {}),
+      ...(init.headers || {}),
+    },
+    signal: AbortSignal.timeout(20_000),
+  })
+  const payload = await response.json().catch(() => ({})) as any
+  if (!response.ok) {
+    const detail = typeof payload.detail === 'string' ? payload.detail : payload.detail?.message || payload.error
+    throw new Error(compactText(detail || `正式习题服务返回 ${response.status}`, 500))
+  }
+  return payload
 }
 
 export async function executeTutorAgentTool(
@@ -1006,6 +1137,68 @@ export async function executeTutorAgentTool(
         directReply: visual.explanation,
       }
     }
+    if (name === 'generate_dynamic_practice' || name === 'generate_similar_practice') {
+      if (options.mode !== 'guided_learning') throw new Error('动态习题只能在带领学习态的正式学习任务中生成')
+      if (!options.formalProjectContext?.checkpoint_id) throw new Error('动态习题必须绑定当前项目关卡')
+      const learningTaskId = Number(args.learning_task_id)
+      if (!Number.isInteger(learningTaskId) || learningTaskId <= 0) throw new Error('缺少正式 LearningTask ID')
+      const similar = name === 'generate_similar_practice'
+      const candidates = await generatePracticeCandidates(args, options, similar)
+      const clientRequestId = `${similar ? 'similar' : 'dynamic'}-practice:${learningTaskId}:${meta.callId || Date.now()}`.slice(0, 160)
+      const file = await callFormalPracticeApi(options, '/practice/generate', {
+        method: 'POST',
+        body: JSON.stringify({
+          learning_task_id: learningTaskId,
+          title: compactText(args.title || `${compactText(args.concept, 120)} · 动态练习`, 255),
+          candidates,
+          client_request_id: clientRequestId,
+          generation_kind: similar ? 'similar' : 'dynamic',
+          source_practice_ref: similar ? compactText(args.source_practice_ref, 180) : '',
+        }),
+      })
+      const learningFile = {
+        kind: 'practice' as const,
+        ref: String(file.ref),
+        title: compactText(file.title, 255),
+        checkpointId: Number(file.checkpoint_id),
+        questionCount: Number(file.question_count || candidates.length),
+        qualityStatus: String(file.quality_status || 'validated_static_uncalibrated'),
+      }
+      return {
+        run: {
+          ...base,
+          kind: 'file',
+          status: 'completed',
+          title: similar ? '生成同构变式练习' : '生成动态练习文件',
+          detail: `已生成 ${learningFile.questionCount} 道题并通过静态质量检查；题目尚未做心理测量校准，生成与打开均不代表掌握。`,
+          observationSummary: `${learningFile.questionCount} 题 · ${learningFile.qualityStatus}`,
+          durationMs: Date.now() - startedAt,
+          learningFile,
+        },
+        observation: {
+          authority: 'formal_dynamic_practice_file',
+          file: learningFile,
+          quality_reports: file.quality_reports,
+          evidence_boundary: '只有学习者正式提交且经确定性判题后，才建立 Knowledge / Practice 证据。',
+        },
+      }
+    }
+    if (name === 'inspect_practice_quality') {
+      const practiceRef = compactText(args.practice_ref, 180)
+      if (!practiceRef) throw new Error('缺少练习文件 ref')
+      const report = await callFormalPracticeApi(options, `/practice/${encodeURIComponent(practiceRef)}/quality`, { method: 'POST' })
+      return {
+        run: {
+          ...base, kind: 'file', status: 'completed', title: '检查习题质量',
+          detail: report.valid
+            ? `已检查 ${report.reports?.length || 0} 道题：结构、测量目标和确定性答案均可用；心理测量状态仍为未校准。`
+            : '练习文件未通过静态质量检查，不应用于正式检测。',
+          observationSummary: report.valid ? '静态检查通过 · 未校准' : '静态检查未通过',
+          durationMs: Date.now() - startedAt,
+        },
+        observation: { authority: 'deterministic_practice_quality_inspector', ...report },
+      }
+    }
     throw new Error(`未知工具 ${name}`)
   } catch (error) {
     const message = compactText(error instanceof Error ? error.message : '工具调用失败', 300)
@@ -1015,6 +1208,7 @@ export async function executeTutorAgentTool(
       : name === 'read_review_context' ? 'review'
       : name === 'read_learning_path' ? 'path'
         : name === 'search_computer_knowledge' ? 'search'
+          : /practice/i.test(name) ? 'file'
           : args.kind === 'animation' ? 'animation' : 'image'
     return {
       run: {

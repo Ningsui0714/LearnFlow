@@ -535,9 +535,10 @@ async def submit_concept(
                 "attempt_id": replay.id,
                 "idempotent_replay": True,
             }
-    correct = sorted(q.answer_indexes or [])
-    user = sorted(int(i) for i in (data or {}).get("answer_indexes", []))
-    is_correct = user == correct and len(user) > 0
+    from app.services.dynamic_practice import grade_structured_response
+    is_correct, submitted_response, expected_response = grade_structured_response(q, data or {})
+    correct = list(expected_response.get("answer_indexes") or [])
+    user = list(submitted_response.get("answer_indexes") or [])
     from app.services.progress import record_concept_answer
     await record_concept_answer(checkpoint_id, question_id, is_correct, db=db)
     assistance_level = str((data or {}).get("assistance_level") or "none")
@@ -550,8 +551,8 @@ async def submit_concept(
         checkpoint_id=checkpoint_id,
         item_type="concept",
         item_id=question_id,
-        submission={"answer_indexes": user},
-        result={"correct": is_correct, "answer_indexes": correct},
+        submission=submitted_response,
+        result={"correct": is_correct, **expected_response},
         assistance_level=assistance_level,
         attempt_role=str((data or {}).get("attempt_role") or "original"),
         client_submission_id=submission_key,
@@ -572,10 +573,18 @@ async def submit_concept(
             "learning_task_id": learning_task_id,
             "item_id": question_id,
             "question": q.question,
+            "q_type": q.q_type,
+            "target_skill": (q.assessment_meta or {}).get("target_skill", ""),
+            "concept_key": (q.assessment_meta or {}).get("concept_key", ""),
+            "practice_set_id": (q.assessment_meta or {}).get("practice_set_id", ""),
+            "family_id": (q.assessment_meta or {}).get("family_id", ""),
             "correct": is_correct,
             "independent": assistance_level == "none",
             "assistance_level": assistance_level,
             "assessment_mode": (q.assessment_meta or {}).get("mode", ""),
+            "blocker_concept_key": str((data or {}).get("blocker_concept_key") or "")[:160],
+            "helpful_format": str((data or {}).get("helpful_format") or "")[:80],
+            "support_effective": bool((data or {}).get("support_effective", False)),
         },
         provenance={"grader": "exact_match", "question_type": q.q_type},
         client_event_id=f"attempt:{attempt.id}:evaluated",
@@ -611,8 +620,8 @@ async def submit_concept(
                 "assessment_meta": q.assessment_meta or {},
             },
             evaluation={
-                "answer_indexes": correct,
-                "user_answer_indexes": user,
+            **expected_response,
+            "submitted_response": submitted_response,
             },
         )
         remediation_payload = serialize_case(remediation)
@@ -635,6 +644,8 @@ async def submit_concept(
         "correct": is_correct,
         "answer_indexes": correct,
         "user_answer_indexes": user,
+        "expected_response": expected_response.get("response"),
+        "submitted_response": submitted_response.get("response"),
         "explanation": q.explanation or "",
         "attempt_id": attempt.id,
         "assistance_level": assistance_level,

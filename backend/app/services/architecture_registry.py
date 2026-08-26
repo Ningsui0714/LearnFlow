@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.25"
+REGISTRY_VERSION = "2026-08-26.27"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -273,6 +273,12 @@ TOOLS = {
                      (), (), "learner-owned processed Source/Chunk library -> relevance-ranked, provenance-bearing, bounded untrusted context; never learner knowledge evidence"),
         ToolContract("learning_file_service", "Managed Lecture and Practice File Service", "tutor_agent", "vnext", "artifact",
                      (), (), "learner-owned Lecture/Exercise/ConceptQuestion refs -> answer-safe file views, explicit open/attach audit events; generation and opening never imply mastery"),
+        ToolContract("dynamic_practice_generator", "Blueprint-bound Dynamic Practice Generator", "learning_design_agent", "vnext", "artifact",
+                     ("knowledge", "structure", "human"), (), "formal LearningTask + checkpoint scope + target-skill blueprint -> model candidates -> deterministic schema/answer/duplicate gate -> answer-safe ConceptQuestion set; generation is zero-target and psychometrically uncalibrated"),
+        ToolContract("similar_practice_generator", "Construct-preserving Similar Practice Generator", "learning_design_agent", "vnext", "artifact",
+                     ("knowledge", "structure"), (), "source practice family + invariant radical features -> changed incidental features -> deterministic validation -> formal variant set; no mastery inference"),
+        ToolContract("practice_quality_inspector", "Deterministic Practice Item Quality Inspector", "learning_design_agent", "vnext", "read",
+                     (), (), "formal practice ref -> schema/construct/answer determinism/duplicate report; item quality is not learner performance evidence"),
         ToolContract("project_workspace_reader", "Scoped Project Workspace Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "human", "value", "practice"), (), "owned Project/Roadmap/Checkpoint/Session/LearningTask/Source/File refs + scoped ContextPacket -> bounded project observation"),
         ToolContract("project_source_reader", "Project General Source Reader", "tutor_agent", "vnext", "read",
@@ -379,6 +385,7 @@ TOOL_INTERFACE_ROLES = {
         "teach_back_analyzer", "process_animation", "code_executor",
         "deterministic_assessment", "evidence_ledger", "five_kernel_retriever",
         "workspace_file_service", "managed_artifact_service", "learning_file_service", "local_agent_broker",
+        "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         "project_workspace_reader", "project_source_reader", "project_learning_file_reader",
         "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
     }},
@@ -409,6 +416,7 @@ TOOL_MODEL_EXPOSURE = {
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
+            "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         }
         else "agent_mediated"
         if TOOL_INTERFACE_ROLES.get(tool_id) == "aci_tool"
@@ -545,6 +553,19 @@ SKILLS = {
         SkillContract("practice_verification", "代码实践与确定性验证", "practice_agent",
                       ("code_executor", "deterministic_assessment", "evidence_ledger"),
                       "graded LearningAttempt + evidence", "test/grading rules"),
+        SkillContract(
+            "dynamic_practice_loop", "动态练习与检测编排", "tutor_agent",
+            ("dynamic_practice_generator", "similar_practice_generator",
+             "practice_quality_inspector", "deterministic_assessment",
+             "deterministic_remediation", "review_scheduler", "evidence_ledger"),
+            "target-skill blueprint -> validated uncalibrated set -> formal attempt -> remediation/variant/review handoff",
+            "Tutor selects the bounded loop; Learning Design proposes items; deterministic validators and Practice Agent own quality and grading; reducer alone owns learner-state mutation",
+            "vnext",
+            description="围绕当前原子学习任务动态生成练习、诊断或同构变式，并把正式作答送入确定性判题、纠错与复习。",
+            best_for=("概念检测", "程序执行追踪", "算法与代码变式", "迁移前练习"),
+            avoid_when=("没有正式学习任务或项目关卡", "只需静态讲解", "题目答案无法确定性验证"),
+            atomic_task_capable=True,
+        ),
         SkillContract("remediation_loop", "答错—纠错—重做—变式—回写", "practice_agent",
                       ("deterministic_remediation", "deterministic_assessment", "evidence_ledger"),
                       "RemediationCase + ordered evidence chain", "RemediationStrategy", "fused"),
@@ -604,7 +625,7 @@ WORKBENCHES = {
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
                            "manage_domain_knowledge_sources", "read_domain_knowledge", "recommend_learning_resources",
-                           "attach_learning_file_to_chat",
+                           "attach_learning_file_to_chat", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
                            "read_review_context",
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
                            "read_personal_concept_graph",
@@ -617,13 +638,13 @@ WORKBENCHES = {
                            "read_personal_concept_graph", "record_concept_self_report",
                            "manage_learner_memory", "edit_vnext_five_kernel_profile"), "vnext"),
         WorkbenchContract("vnext_learning_files", "LearnFlow Learning File Library", "/learning-files", "tutor_agent",
-                          ("generate_learning_files", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
+                          ("generate_learning_files", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
         WorkbenchContract("vnext_projects", "LearnFlow Project Library", "/projects", "tutor_agent",
                           ("create_project", "enter_project", "delete_project"), "vnext"),
         WorkbenchContract("vnext_lecture_file", "vNext Lecture File Workbench", "/files/lecture/:lectureId", "tutor_agent",
                           ("open_learning_file", "attach_learning_file_to_chat", "explain_selection"), "vnext"),
         WorkbenchContract("vnext_practice_file", "vNext Practice File Workbench", "/files/practice/:practiceRef", "tutor_agent",
-                          ("open_learning_file", "attach_learning_file_to_chat", "evaluate_attempt"), "vnext"),
+                          ("open_learning_file", "attach_learning_file_to_chat", "inspect_practice_quality", "generate_similar_practice", "evaluate_attempt"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -674,6 +695,9 @@ CAPABILITY_OWNERS = {
     "read_domain_knowledge": ("tutor_agent", "domain_knowledge_reader", "vnext_chat"),
     "recommend_learning_resources": ("learning_design_agent", "domain_knowledge_reader", "vnext_chat"),
     "generate_learning_files": ("learning_design_agent", "learning_file_service", "vnext_learning_files"),
+    "generate_dynamic_practice": ("learning_design_agent", "dynamic_practice_generator", "vnext_chat"),
+    "generate_similar_practice": ("learning_design_agent", "similar_practice_generator", "vnext_chat"),
+    "inspect_practice_quality": ("learning_design_agent", "practice_quality_inspector", "vnext_practice_file"),
     "open_learning_file": ("tutor_agent", "learning_file_service", "vnext_learning_files"),
     "attach_learning_file_to_chat": ("tutor_agent", "learning_file_service", "vnext_chat"),
     "read_review_context": ("tutor_agent", "review_context_reader", "vnext_chat"),
@@ -796,6 +820,9 @@ EVENTS = {
         _event("knowledge_source_added", "manage_domain_knowledge_sources", (), "artifact_ingest", origin="vnext"),
         _event("knowledge_source_processed", "manage_domain_knowledge_sources", (), "artifact_indexed", origin="vnext"),
         _event("learning_file_generated", "generate_learning_files", (), "artifact", origin="vnext"),
+        _event("practice_file_generated", "generate_dynamic_practice", (), "validated_uncalibrated_artifact", tool="dynamic_practice_generator", workbench="vnext_chat", origin="vnext"),
+        _event("practice_variant_generated", "generate_similar_practice", (), "validated_uncalibrated_artifact", tool="similar_practice_generator", workbench="vnext_chat", origin="vnext"),
+        _event("practice_quality_inspected", "inspect_practice_quality", (), "artifact_quality_observation", tool="practice_quality_inspector", workbench="vnext_practice_file", origin="vnext"),
         _event("learning_file_opened", "open_learning_file", (), "artifact_access", origin="vnext"),
         _event("learning_file_attached_to_chat", "attach_learning_file_to_chat", (), "context_attachment", origin="vnext"),
         _event("learning_task_completed", "run_learning_task", (), "operational_milestone"),
@@ -838,7 +865,7 @@ EVENTS = {
         _event("assessment_generated", "generate_assessment", (), "artifact"),
         _event("explanation_requested", "explain_selection", ("knowledge", "human"), "assistance"),
         _event("code_review_requested", "explain_selection", ("practice", "human"), "assistance", workbench="assessment"),
-        _event("concept_attempt_evaluated", "evaluate_attempt", ("knowledge", "practice"), "graded_attempt"),
+        _event("concept_attempt_evaluated", "evaluate_attempt", ("knowledge", "practice", "structure", "human"), "graded_attempt_with_optional_explicit_reflection"),
         _event("exercise_attempt_evaluated", "evaluate_attempt", ("knowledge", "practice"), "graded_attempt"),
         _event("remediation_started", "request_remediation_explanation", ("knowledge", "human", "practice"), "diagnosis", origin="fused"),
         _event("remediation_mode_rejected", "request_remediation_explanation", ("human", "knowledge"), "preference_evidence", origin="fused"),

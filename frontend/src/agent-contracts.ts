@@ -129,3 +129,11 @@ export type AgentTurnResponse = {
   toolRuns: TutorToolRun[]
   trace: AgentTurnTrace
 }
+
+export type AgentTurnStreamEvent =
+  | { type: 'trajectory'; event: AgentTrajectoryEvent }
+  | { type: 'tool_started'; toolCallId: string; toolName: string; title: string; startedAt: number }
+  | { type: 'tool_completed'; run: TutorToolRun }
+  | { type: 'text_delta'; delta: string }
+  | { type: 'done'; result: AgentTurnResponse; requestId?: string }
+  | { type: 'error'; error: string; requestId?: string }
