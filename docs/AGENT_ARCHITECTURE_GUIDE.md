@@ -530,6 +530,28 @@ Agent 文件提案 MUST 绑定 `learner_id + project_id + checkpoint_id + sessio
 
 文件关联与变更事件的 kernel target 为空。编辑成功、保存草稿和练习“运行”都不是掌握证据；只有播放器内的正式练习提交可进入评估链。本地代码 Agent 只能通过 Tutor 所有的 Broker 工具在隔离副本中工作，不新增第四类主 Agent。Tutor 只表达任务语义，Broker 按 Profile 能力/优先级确定性选择；首次确认启动，第二次确认并通过 hash 校验后写回，删除和移动逐项确认。安全细节以 `docs/DESKTOP_WORKSPACE_SECURITY.md` 为准。
 
+### 8.6 vNext 项目 Tutor、关卡与项目自由对话
+
+vNext 项目系统把项目作为真实产物导向的学徒旅程，而不是课程文件夹。其运行对象只有既有
+`Project`、`Roadmap`、`Checkpoint`、`AgentSession`、`LearningTask`、`Source`、`Lecture` 和
+`Exercise`；页面和 Agent 都不得维护第二套项目权威。
+
+项目 Tutor 的标准 ReAct 观察顺序为：有 scope 的五核 ContextPacket、项目工作台摘要、项目来源
+与受管文件的按需内容，必要时再读取学习路径。模型可见的项目工具分为三类：
+
+- 感知：`project_workspace_reader`、`project_source_reader`、`project_learning_file_reader`；
+- 提案：`project_roadmap_proposer`、`project_learning_file_proposer`；
+- 执行：路线应用、文件生成、来源增删和会话创建只通过 UI 确认后的 Action/API，不暴露给模型。
+
+路线提案必须锁定当前项目主题、使用稳定 checkpoint key、只允许指向更早节点的 prerequisite，
+并携带每关成功标准。确认事务物化 Roadmap/Checkpoint 后，为每关创建唯一 checkpoint Session 与
+formal LearningTask。关卡对话固定为 `guided_learning`；项目 Tutor 固定为 `learning_plan`；显式
+创建的项目自由对话保持 `free`。最近使用的自由对话不能夺取项目 Tutor 身份。
+
+项目文件生成仍遵循“提案—确认—物化—打开”的边界。Agent 读取练习时只能看到答案安全投影；
+生成内容、来源覆盖和文件打开均不构成学习证据。详细对象、接口、失败语义和测试矩阵见
+`docs/VNEXT_PROJECT_SYSTEM.md`。
+
 ## 9. 五核学习者模型
 
 五核是学习者状态的五个互补维度，不是五个聊天 Agent，也不是五份可以互相覆盖的长期画像。它们分别服务于五个不同的教学决策：走哪儿、学什么、怎么教、为什么现在学、如何验证能否做出来。
@@ -877,6 +899,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 责任 | 主要文件 |
 |---|---|
 | Tutor 角色、上下文装配、回合编排 | `backend/app/services/tutor_service.py` |
+| vNext 项目聚合、路线确认与项目上下文 | `backend/app/api/vnext_projects.py` |
 | 对话 Skill 推荐、状态机与验证交接 | `backend/app/services/learning_skill_runtime.py` |
 | Tutor 结构化输入输出 | `backend/app/schemas/agent.py` |
 | Action 能力与确认策略 | `backend/app/services/action_board.py` |
@@ -902,6 +925,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | Agent API 与 owner resolver | `backend/app/api/agent.py` |
 | 学习者与 Agent 持久化模型 | `backend/app/models/learning.py` |
 | 前端路由与空间划分 | `frontend/src/App.tsx` |
+| vNext 项目列表、工作台与对话联动 | `vnext/src/ProjectsPage.tsx`、`vnext/src/ProjectWorkspacePage.tsx`、`vnext/src/main.tsx` |
 | Tutor UI 与提案轨道 | `frontend/src/components/tutor/` |
 | 学习任务工作台 | `frontend/src/pages/LearningTasksPage.tsx` |
 | 项目、关卡、练习与复习页面 | `frontend/src/pages/ProjectPage.tsx`、`CheckpointPage.tsx`、`ExercisePage.tsx`、`ReviewPage.tsx` |

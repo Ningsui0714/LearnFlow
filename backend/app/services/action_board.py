@@ -246,6 +246,11 @@ ACTION_BOARD = {
             ("navigate_checkpoint",),
         ),
         ActionDefinition(
+            "manage_project_conversations", "管理项目 Tutor、关卡与自由对话", "context", "explicit_or_click",
+            {},
+            ("plan_learning_path", "navigate_checkpoint", "run_learning_task"),
+        ),
+        ActionDefinition(
             "navigate_checkpoint", "进入检查点", "context", "click_or_explicit",
             {"structure": "checkpoint_entered"},
             ("generate_lecture", "generate_assessment"),

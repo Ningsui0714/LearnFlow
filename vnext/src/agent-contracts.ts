@@ -3,6 +3,7 @@ import type { LearningTaskTutorContext } from './learning.ts'
 import type { LearnerPathState } from './learning-path-graph.ts'
 import type { TutorMode, TutorContextMessage } from './tutor.ts'
 import type { TutorToolChoice, TutorToolRun } from './tooling.ts'
+import type { AgentProjectContext } from './project.ts'
 
 export type AgentToolClass =
   | 'perception'
@@ -49,6 +50,8 @@ export type AgentContextEnvelope = {
     mode: TutorMode
     conversationId?: string
     sheetId?: string
+    projectId?: number
+    checkpointId?: number
   }
   current: {
     userMessage: string
@@ -115,6 +118,7 @@ export type AgentTurnRequest = {
   taskQueue?: AgentTaskQueueItem[]
   knowledgeDomains?: AgentKnowledgeDomain[]
   formalScope?: AgentFormalScope
+  formalProjectContext?: AgentProjectContext
   conversationId?: string
   sheetId?: string
 }

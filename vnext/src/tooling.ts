@@ -1,4 +1,5 @@
 import type { LearningPathPlanProposal, PersonalPathNodeProposal } from './learning-path-graph.ts'
+import type { ProjectLearningFileProposal, ProjectRoadmapProposal } from './project.ts'
 
 export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation'
 
@@ -27,7 +28,7 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'search' | 'image' | 'animation'
+  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'file' | 'search' | 'image' | 'animation'
   status: 'completed' | 'failed'
   title: string
   detail: string
@@ -42,6 +43,8 @@ export type TutorToolRun = {
   artifact?: VisualArtifact
   pathProposal?: PersonalPathNodeProposal
   pathPlanProposal?: LearningPathPlanProposal
+  projectRoadmapProposal?: ProjectRoadmapProposal
+  projectLearningFileProposal?: ProjectLearningFileProposal
 }
 
 export const TOOL_CHOICE_LABELS: Record<TutorToolChoice, string> = {

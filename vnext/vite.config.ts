@@ -254,6 +254,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       let formalWorkspaceContext: unknown = null
       let formalDomainKnowledgeContext: unknown = null
       let formalReviewContext: unknown = null
+      let formalProjectContext: unknown = null
       try {
         const contextPurpose = modeValue === 'learning_plan'
           ? 'learning_plan'
@@ -262,6 +263,9 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           query: latestMessage.slice(0, 1800),
           purpose: contextPurpose,
         })
+        if (formalScope.projectId) contextQuery.set('project_id', String(formalScope.projectId))
+        if (formalScope.checkpointId) contextQuery.set('checkpoint_id', String(formalScope.checkpointId))
+        if (formalScope.sessionId) contextQuery.set('session_id', String(formalScope.sessionId))
         const contextResponse = await fetch(`${backendBase}/api/learner-state/context?${contextQuery}`, {
           headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
           signal: AbortSignal.timeout(4_000),
@@ -271,6 +275,20 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         }
       } catch {
         formalLearnerContext = null
+      }
+      if (formalScope.projectId) try {
+        const projectQuery = new URLSearchParams({ query: latestMessage.slice(0, 1800) })
+        if (formalScope.checkpointId) projectQuery.set('checkpoint_id', String(formalScope.checkpointId))
+        const projectResponse = await fetch(
+          `${backendBase}/api/vnext-projects/${formalScope.projectId}/agent-context?${projectQuery}`,
+          {
+            headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
+            signal: AbortSignal.timeout(5_000),
+          },
+        )
+        if (projectResponse.ok) formalProjectContext = await projectResponse.json()
+      } catch {
+        formalProjectContext = null
       }
       if (modeValue === 'guided_learning' || modeValue === 'learning_plan') {
         try {
@@ -343,6 +361,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         formalWorkspaceContext,
         formalDomainKnowledgeContext,
         formalReviewContext,
+        formalProjectContext: formalProjectContext as any,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
         generate,

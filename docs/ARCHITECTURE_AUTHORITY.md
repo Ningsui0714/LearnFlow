@@ -354,6 +354,28 @@ Contract impact：注册表版本提升到 `2026-08-25.1`，新增一个零 Kern
 两个 capability 与两个运行事件。既有 `DELETE /api/projects/{id}` 路径保持兼容，但语义从物理
 级联删除收敛为证据安全的工作区删除；列表与所有受保护读取接口继续把已删除对象视为不存在。
 
+### vNext 项目学徒旅程
+
+`/projects` 与 `/projects/:projectId` 复用正式 `Project -> Roadmap -> Checkpoint` 权威，不建立
+浏览器本地项目模型。新项目先只固定主题、学习目标和真实产物，并创建唯一的项目 Tutor；空项目
+不得预填假关卡。项目 Tutor 固定处于学习规划态，先读取当前项目的五核投影、来源、关卡、正式
+LearningTask 与受管学习文件，再通过 `project_roadmap_proposer` 返回类型化路线提案。只有学习者
+明确点击确认后，`roadmap_applied` 才能一次性物化关卡 DAG、关卡 Session 和对应 LearningTask。
+
+每个关卡对话固定绑定 `learner_id + project_id + checkpoint_id + learning_task_id`，自然进入带领
+学习态；项目自由对话只能由学习者显式创建，读取同一项目上下文但不会自动推进关卡。项目 Tutor、
+关卡对话和自由对话都是 `tutor_agent` 的不同 scope，不是新的主 Agent。
+
+项目来源正文属于不可信数据，只能由 `project_source_reader` 返回有 provenance 的有界片段；讲义
+与练习由 `project_learning_file_proposer` 先形成待确认提案，确认后复用正式文件生成服务。讲义可
+打开为标签页或附加为对话纸张；阅读只形成接触，生成和打开均不形成掌握。练习答案保持服务端
+隔离，只有正式提交产生的 LearningAttempt 才能进入证据链。
+
+项目行为的五核边界如下：`project_created` 可把明确目标写入 value 并建立 structure 项目锚点；
+`roadmap_discussed` 只能写未确认的短期 structure 提案；`roadmap_applied` 只写已确认路线、当前位置
+和返回锚点；自由对话创建、来源移除和文件打开是零 kernel target。任何项目模型输出都不能直接
+写 `KernelState`。
+
 `learning-task-runtime-v2` 在每次读取时从受管产物、同 scope Attempt 和 ReviewSchedule
 确定性重建 `materials / current_phase / next_action / evidence`。讲义或题目生成只建立材料，
 查看材料只形成接触证据，复述形成诊断证据，只有判题成功的独立 Attempt 才能通过 verify，

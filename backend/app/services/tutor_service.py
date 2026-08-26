@@ -716,9 +716,24 @@ async def get_or_create_session(
         query = query.where(AgentSession.project_id == project_id)
     else:
         query = query.where(AgentSession.project_id.is_(None))
-    session = None if create_new else (await db.execute(
-        query.order_by(AgentSession.updated_at.desc()).limit(1)
-    )).scalar_one_or_none()
+    session = None
+    if not create_new:
+        if session_type == "project":
+            # A project owns one planning Tutor plus any number of learner-created
+            # free conversations.  The generic lookup must never let a recently
+            # used free conversation steal the project Tutor identity.
+            candidates = list((await db.execute(
+                query.order_by(AgentSession.updated_at.desc())
+            )).scalars().all())
+            session = next((item for item in candidates if
+                            (item.context_summary or {}).get("role") == "project_tutor"), None)
+            if session is None:
+                session = next((item for item in candidates if
+                                (item.context_summary or {}).get("role") != "project_free"), None)
+        else:
+            session = (await db.execute(
+                query.order_by(AgentSession.updated_at.desc()).limit(1)
+            )).scalar_one_or_none()
     if not session:
         context_summary = {}
         if session_type == "project" and project_id:
@@ -741,6 +756,7 @@ async def get_or_create_session(
                         ).order_by(AgentMessage.id.desc()).limit(12)
                     )).scalars().all()))
                 context_summary = {
+                    "role": "project_tutor",
                     "handoff": {
                         **handoff,
                         "from_session_id": global_session.id,
@@ -749,6 +765,8 @@ async def get_or_create_session(
                         "project_id": project_id,
                     }
                 }
+            else:
+                context_summary = {"role": "project_tutor"}
         session = AgentSession(
             learner_id=learner_id,
             session_type=session_type,

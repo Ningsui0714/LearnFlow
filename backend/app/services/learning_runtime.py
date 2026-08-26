@@ -751,6 +751,50 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
              }},
             "项目上下文发生变化", long_patch=long_patch,
         )
+        if et == "project_created" and p.get("learning_goal"):
+            await _apply_patch(
+                db, event, "value",
+                {"current_priority": p.get("learning_goal"),
+                 "goal_candidate": p.get("learning_goal"),
+                 "relevance_reason": p.get("expected_outcome", "")},
+                "学习者明确创建项目，目标进入价值核；不推断掌握",
+            )
+        return
+
+    if et == "roadmap_discussed":
+        await _apply_patch(
+            db, event, "structure",
+            {"active_project_id": event.project_id,
+             "current_task": "协商项目关卡路线",
+             "roadmap_proposal": p.get("checkpoints", []),
+             "proposal_status": "unconfirmed"},
+            "路线仍是候选方案，不创建掌握或长期结构结论",
+        )
+        return
+
+    if et == "roadmap_applied":
+        project_id = event.project_id or p.get("project_id")
+        state = await _kernel(db, event.learner_id, "structure")
+        routes = dict((state.long_term or {}).get("project_roadmaps") or {})
+        routes[str(project_id)] = {
+            "roadmap_id": p.get("roadmap_id"),
+            "project_theme": p.get("project_theme", ""),
+            "checkpoints": p.get("checkpoints", []),
+            "status": "active",
+        }
+        first = (p.get("checkpoints") or [{}])[0]
+        await _apply_patch(
+            db, event, "structure",
+            {"active_project_id": project_id,
+             "active_checkpoint_id": first.get("id"),
+             "current_task": first.get("title", "按项目路线学习"),
+             "resume_anchor": {"project_id": project_id,
+                               "checkpoint_id": first.get("id"),
+                               "checkpoint_title": first.get("title", "")},
+             "proposal_status": "applied"},
+            "学习者确认项目路线，写入结构核；路线本身不证明知识掌握",
+            long_patch={"project_roadmaps": routes},
+        )
         return
 
     if et in {"source_added", "source_processing", "source_processed", "source_failed"}:

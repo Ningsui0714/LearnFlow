@@ -7,6 +7,7 @@ import type {
   PersonalPathNodeProposal,
 } from './learning-path-graph'
 import type { PlanningEvent, ValueClaimProposal } from './planning'
+import type { FormalProjectWorkspace, ProjectRoadmapProposal } from './project'
 
 export type KernelName = 'structure' | 'knowledge' | 'human' | 'value' | 'practice'
 export type FormalRuntimeStatus = 'connecting' | 'connected' | 'offline' | 'auth_required'
@@ -520,11 +521,94 @@ export async function recordFormalConceptStatement(rawText: string, clientEventI
   })
 }
 
-export async function createFormalTutorSession(createNew = true) {
+export async function createFormalTutorSession(
+  createNew = true,
+  scope: { projectId?: number; checkpointId?: number } = {},
+) {
   return jsonRequest<FormalTutorSession>('/api/agent/sessions', {
     method: 'POST',
-    body: JSON.stringify({ session_type: 'global', create_new: createNew }),
+    body: JSON.stringify({
+      session_type: scope.checkpointId ? 'checkpoint' : scope.projectId ? 'project' : 'global',
+      project_id: scope.projectId,
+      checkpoint_id: scope.checkpointId,
+      create_new: createNew,
+    }),
   })
+}
+
+export async function listFormalProjects() {
+  await ensureFormalIdentity()
+  return jsonRequest<{ schema_version: string; projects: FormalProjectWorkspace['project'][] }>('/api/vnext-projects')
+}
+
+export async function createFormalProject(input: {
+  name: string; objective: string; expectedOutcome: string; userLevel?: string
+}) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalProjectWorkspace>('/api/vnext-projects', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: input.name,
+      objective: input.objective,
+      expected_outcome: input.expectedOutcome,
+      user_level: input.userLevel || 'beginner',
+    }),
+  })
+}
+
+export async function loadFormalProject(projectId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalProjectWorkspace>(`/api/vnext-projects/${projectId}`)
+}
+
+export async function deleteFormalProject(projectId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ status: string; project_id: number }>(`/api/projects/${projectId}`, { method: 'DELETE' })
+}
+
+export async function applyFormalProjectRoadmap(projectId: number, proposal: ProjectRoadmapProposal) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalProjectWorkspace>(`/api/vnext-projects/${projectId}/roadmap/apply`, {
+    method: 'POST',
+    body: JSON.stringify({
+      project_theme: proposal.project_theme,
+      rationale: proposal.rationale,
+      checkpoints: proposal.checkpoints,
+      client_action_id: `vnext-project:${projectId}:roadmap:${Date.now()}`,
+    }),
+  })
+}
+
+export async function createFormalProjectFreeSession(projectId: number, title = '项目自由对话') {
+  await ensureFormalIdentity()
+  return jsonRequest<{ session_id: number; title: string; project_id: number; mode: 'free' }>(`/api/vnext-projects/${projectId}/sessions`, {
+    method: 'POST',
+    body: JSON.stringify({ kind: 'free', title, client_action_id: `vnext-project:${projectId}:free:${Date.now()}` }),
+  })
+}
+
+export async function addFormalProjectUrl(projectId: number, url: string) {
+  await ensureFormalIdentity()
+  return jsonRequest<Record<string, unknown>>(`/api/projects/${projectId}/sources`, {
+    method: 'POST', body: JSON.stringify({ type: 'url', url }),
+  })
+}
+
+export async function uploadFormalProjectFile(projectId: number, file: File) {
+  await ensureFormalIdentity()
+  const form = new FormData()
+  form.append('file', file)
+  return formRequest<Record<string, unknown>>(`/api/projects/${projectId}/sources/upload`, form)
+}
+
+export async function processFormalProjectSource(projectId: number, sourceId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<Record<string, unknown>>(`/api/projects/${projectId}/sources/${sourceId}/process`, { method: 'POST' })
+}
+
+export async function removeFormalProjectSource(projectId: number, sourceId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ status: string }>(`/api/vnext-projects/${projectId}/sources/${sourceId}`, { method: 'DELETE' })
 }
 
 export async function loadFormalTutorSession(sessionId: number) {

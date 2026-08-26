@@ -74,6 +74,7 @@ import {
   advanceFormalLearningSkillTurn,
   addFormalPersonalPathNode,
   archiveFormalLearningPathPlan,
+  applyFormalProjectRoadmap,
   bootstrapFormalRuntime,
   confirmFormalValueClaim,
   commitFormalLearningPathPlan,
@@ -81,6 +82,7 @@ import {
   generateFormalLearningFiles,
   learnerPathStateFromFormal,
   loadFormalLearnerSnapshot,
+  loadLearningFiles,
   removeFormalPersonalPathNode,
   recordFormalConceptStatement,
   recordLearningFileAccess,
@@ -102,6 +104,7 @@ import {
   type FormalRuntimeConnection,
 } from './formal-runtime'
 import type { AgentTurnTrace } from './agent-contracts'
+import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import './styles.css'
 
 type Message = {
@@ -159,14 +162,18 @@ type Conversation = {
   planningEvents: PlanningEvent[]
   formalSessionId?: number
   domainSources: FormalKnowledgeSource[]
+  projectId?: number
+  checkpointId?: number
+  projectRole?: 'tutor' | 'checkpoint' | 'free'
 }
 
 type WorkspaceTab = {
   id: string
-  kind: 'chat' | 'settings' | 'learning-path' | 'profile' | 'tasks' | 'review' | 'learning-files' | 'lecture-file' | 'practice-file'
+  kind: 'chat' | 'settings' | 'projects' | 'project' | 'learning-path' | 'profile' | 'tasks' | 'review' | 'learning-files' | 'lecture-file' | 'practice-file'
   title: string
   conversationId?: string
   fileRef?: string
+  projectId?: number
 }
 
 type SettingsState = {
@@ -185,6 +192,7 @@ type PersistedState = {
 
 const STORAGE_KEY = 'learnflow.vnext.workspace.v1'
 const SETTINGS_TAB: WorkspaceTab = { id: 'settings', kind: 'settings', title: '设置' }
+const PROJECTS_TAB: WorkspaceTab = { id: 'projects', kind: 'projects', title: '学习项目' }
 const LEARNING_PATH_TAB: WorkspaceTab = { id: 'learning-path', kind: 'learning-path', title: '学习路径' }
 const PROFILE_TAB: WorkspaceTab = { id: 'profile', kind: 'profile', title: '我的画像' }
 const TASKS_TAB: WorkspaceTab = { id: 'tasks', kind: 'tasks', title: '学习任务' }
@@ -198,6 +206,8 @@ const ReviewWorkbenchPage = lazy(() => import('./ReviewWorkbenchPage'))
 const LearningFilesPage = lazy(() => import('./LearningFilesPage'))
 const LectureFilePage = lazy(() => import('./LectureFilePage'))
 const PracticeFilePage = lazy(() => import('./PracticeFilePage'))
+const ProjectsPage = lazy(() => import('./ProjectsPage'))
+const ProjectWorkspacePage = lazy(() => import('./ProjectWorkspacePage'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -243,6 +253,10 @@ function chatTab(conversation: Conversation): WorkspaceTab {
   }
 }
 
+function projectTab(project: Pick<FormalProjectWorkspace['project'], 'id' | 'name'>): WorkspaceTab {
+  return { id: `project:${project.id}`, kind: 'project', title: project.name, projectId: project.id }
+}
+
 function learningFileTab(file: Pick<FormalLearningFileRef, 'kind' | 'ref' | 'title'>): WorkspaceTab {
   return {
     id: `${file.kind}-file:${file.ref}`,
@@ -255,6 +269,11 @@ function learningFileTab(file: Pick<FormalLearningFileRef, 'kind' | 'ref' | 'tit
 function tabFromCurrentPath(conversations: Conversation[]): WorkspaceTab | undefined {
   const path = window.location.pathname
   if (path === '/settings') return SETTINGS_TAB
+  if (path === '/projects') return PROJECTS_TAB
+  if (path.startsWith('/projects/')) {
+    const projectId = Number(path.slice('/projects/'.length))
+    if (Number.isInteger(projectId) && projectId > 0) return { id: `project:${projectId}`, kind: 'project', title: `项目 #${projectId}`, projectId }
+  }
   if (path === '/learning-path') return LEARNING_PATH_TAB
   if (path === '/learner-profile') return PROFILE_TAB
   if (path === '/tasks') return TASKS_TAB
@@ -313,7 +332,7 @@ function restoreState(): PersistedState {
     }))
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
-      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
+      ? value.tabs.filter(tab => ['settings', 'projects', 'project', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
     let safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
     const routeTab = tabFromCurrentPath(conversations)
@@ -343,6 +362,8 @@ function restoreState(): PersistedState {
 
 function pathForTab(tab: WorkspaceTab) {
   if (tab.kind === 'settings') return '/settings'
+  if (tab.kind === 'projects') return '/projects'
+  if (tab.kind === 'project') return `/projects/${tab.projectId}`
   if (tab.kind === 'learning-path') return '/learning-path'
   if (tab.kind === 'profile') return '/learner-profile'
   if (tab.kind === 'tasks') return '/tasks'
@@ -393,7 +414,7 @@ function inheritedContextMessages(conversation: Conversation) {
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
-  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : ['learning-files', 'lecture-file', 'practice-file'].includes(kind) ? '▤' : '□'
+  const icon = kind === 'settings' ? '⚙' : ['projects', 'project'].includes(kind) ? '◇' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : ['learning-files', 'lecture-file', 'practice-file'].includes(kind) ? '▤' : '□'
   return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
@@ -530,6 +551,62 @@ function App() {
       }
     })
     setSidebarOpen(false)
+  }
+
+  const openProjectConversation = (
+    projectWorkspace: FormalProjectWorkspace,
+    role: 'tutor' | 'checkpoint' | 'free',
+    options: { checkpoint?: FormalProjectCheckpoint; session?: { session_id: number; title: string } } = {},
+  ) => {
+    const checkpoint = options.checkpoint
+    const formalSessionId = role === 'tutor'
+      ? projectWorkspace.project_tutor.session_id
+      : role === 'checkpoint' ? checkpoint?.session_id : options.session?.session_id
+    const existing = workspace.conversations.find(item =>
+      item.projectId === projectWorkspace.project.id
+      && item.projectRole === role
+      && (role !== 'checkpoint' || item.checkpointId === checkpoint?.id)
+      && item.formalSessionId === formalSessionId)
+    if (existing) { openTab(chatTab(existing)); return }
+    const now = Date.now()
+    const base = createConversation()
+    let learningTasks: LearningTask[] = []
+    let learningEvents: LearningEvent[] = []
+    if (role === 'checkpoint' && checkpoint) {
+      const created = createLearningTask(checkpoint.objective || checkpoint.title, now, [], undefined)
+      learningTasks = [{
+        ...created.task,
+        objective: checkpoint.objective || checkpoint.title,
+        formalTaskId: checkpoint.learning_task?.id,
+      }]
+      learningEvents = created.events
+    }
+    const mode: TutorMode = role === 'tutor' ? 'learning_plan' : role === 'checkpoint' ? 'guided_learning' : 'free'
+    const title = role === 'tutor'
+      ? `${projectWorkspace.project.name} · 项目 Tutor`
+      : role === 'checkpoint' ? checkpoint!.title : options.session?.title || `${projectWorkspace.project.name} · 自由对话`
+    const intro = role === 'tutor'
+      ? `这是“${projectWorkspace.project.name}”的项目 Tutor。规划必须围绕项目目标“${projectWorkspace.project.objective}”与真实产物展开；我会先读取项目来源和五核，再给出需要你确认的关卡路线。`
+      : role === 'checkpoint'
+        ? `现在进入关卡“${checkpoint!.title}”。本对话绑定正式学习任务，会自然使用带领学习态；讲义与练习可以生成、留存并在对话纸张或独立标签页中打开。`
+        : `这是“${projectWorkspace.project.name}”的项目自由对话。它共享项目来源与五核 scope，但不会自动推进关卡。`
+    const conversation: Conversation = {
+      ...base, id: uid('chat'), title, updatedAt: now, mode,
+      projectId: projectWorkspace.project.id,
+      checkpointId: checkpoint?.id,
+      projectRole: role,
+      formalSessionId,
+      learningTasks,
+      learningEvents,
+      messages: [{ id: uid('message'), role: 'assistant', content: intro, createdAt: now, tutorMode: mode }],
+    }
+    const tab = chatTab(conversation)
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: [conversation, ...previous.conversations],
+      tabs: [...previous.tabs, tab].slice(-12),
+      activeTabId: tab.id,
+    }))
   }
 
   const closeTab = (tabId: string) => {
@@ -883,7 +960,11 @@ function App() {
     let formalSkillRun: FormalLearningSkillRun | undefined
     let formalSnapshotForTurn = formalSnapshot
     const clientTurnId = `vnext-turn:${conversationId}:${now}`.slice(0, 120)
-    const mode = resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
+    const mode = conversation.projectRole === 'tutor'
+      ? 'learning_plan'
+      : conversation.projectRole === 'checkpoint'
+        ? 'guided_learning'
+        : resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
 
     if (mode === 'guided_learning') {
       if (!learningProjection) {
@@ -946,7 +1027,10 @@ function App() {
       try {
         if (mode === 'guided_learning' && learningProjection) {
           if (!formalSessionId) {
-            const session = await createFormalTutorSession(true)
+            const session = await createFormalTutorSession(true, {
+              projectId: conversation.projectId,
+              checkpointId: conversation.checkpointId,
+            })
             formalSessionId = session.id
           }
           const binding = learningProjection.task
@@ -999,6 +1083,7 @@ function App() {
             payload: {
               mode: formalModeId(mode), previous_mode: formalModeId(conversation.mode),
               conversation_id: conversationId, session_id: formalSessionId,
+              project_id: conversation.projectId, checkpoint_id: conversation.checkpointId,
             },
           }),
           syncFormalEvents(atomicEvents),
@@ -1089,8 +1174,8 @@ function App() {
         knowledgeDomains: [],
         formalScope: {
           sessionId: formalSessionId,
-          projectId: formalTaskForTurn?.project_id || undefined,
-          checkpointId: formalTaskForTurn?.checkpoint_id || undefined,
+          projectId: conversation.projectId || formalTaskForTurn?.project_id || undefined,
+          checkpointId: conversation.checkpointId || formalTaskForTurn?.checkpoint_id || undefined,
         },
         domainSourceIds: conversation.domainSources.map(source => source.id),
         conversationId,
@@ -1530,8 +1615,59 @@ function App() {
     }
   }
 
+  const acceptProjectRoadmap = async (proposal: ProjectRoadmapProposal) => {
+    setFormalBusyKey(`project-roadmap:${proposal.project_id}`)
+    setFormalError('')
+    try {
+      await applyFormalProjectRoadmap(proposal.project_id, proposal)
+      await refreshFormalSnapshot(true)
+      openTab({ id: `project:${proposal.project_id}`, kind: 'project', title: proposal.project_theme, projectId: proposal.project_id })
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '项目路线应用失败')
+    } finally { setFormalBusyKey('') }
+  }
+
+  const acceptProjectLearningFileProposal = async (proposal: ProjectLearningFileProposal, conversationId?: string) => {
+    setFormalBusyKey(`project-file:${proposal.learning_task_id}`)
+    setFormalError('')
+    try {
+      const snapshot = await loadFormalLearnerSnapshot(true)
+      const task = snapshot.learning_tasks.find(item => item.id === proposal.learning_task_id)
+      if (!task) throw new Error('正式学习任务已经变化，请刷新项目后重试')
+      await generateFormalLearningFiles(task)
+      const library = await loadLearningFiles()
+      const matching = [...library.lectures, ...library.practices]
+        .filter(item => item.checkpoint_id === proposal.checkpoint_id)
+      const preferred = matching.find(item => item.kind === 'lecture') || matching[0]
+      await refreshFormalSnapshot(true)
+      if (preferred) {
+        openTab(learningFileTab(preferred))
+        if (conversationId) attachLearningFileToConversation(preferred, conversationId)
+      } else openTab(LEARNING_FILES_TAB)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '学习文件生成失败')
+    } finally { setFormalBusyKey('') }
+  }
+
   const renderTab = (tab: WorkspaceTab | undefined) => {
     if (!tab) return null
+    if (tab.kind === 'projects') {
+      return <Suspense fallback={<div className="page-loading">正在载入学习项目…</div>}><ProjectsPage onOpen={project => openTab(projectTab(project))} /></Suspense>
+    }
+    if (tab.kind === 'project' && tab.projectId) {
+      return (
+        <Suspense fallback={<div className="page-loading">正在载入项目工作台…</div>}>
+          <ProjectWorkspacePage
+            projectId={tab.projectId}
+            onOpenTutor={projectWorkspace => openProjectConversation(projectWorkspace, 'tutor')}
+            onOpenCheckpoint={(projectWorkspace, checkpoint) => openProjectConversation(projectWorkspace, 'checkpoint', { checkpoint })}
+            onOpenFree={(projectWorkspace, session) => openProjectConversation(projectWorkspace, 'free', { session })}
+            onOpenFile={file => openTab(learningFileTab(file))}
+            onGenerateFiles={generateTaskFiles}
+          />
+        </Suspense>
+      )
+    }
     if (tab.kind === 'learning-path') {
       return (
         <Suspense fallback={<div className="page-loading">正在载入学习路径…</div>}>
@@ -1857,6 +1993,10 @@ function App() {
                     activePathPlanId={projectLearnerPath(workspace.learningPath).activePlan?.id}
                     pathPlanBusyId={formalBusyKey.startsWith('path-plan:') ? formalBusyKey.slice('path-plan:'.length) : undefined}
                     pathPlanWriteErrors={pathPlanWriteErrors}
+                    onAcceptProjectRoadmap={proposal => { void acceptProjectRoadmap(proposal) }}
+                    onAcceptProjectLearningFile={proposal => { void acceptProjectLearningFileProposal(proposal, conversation.id) }}
+                    projectBusyKey={formalBusyKey}
+                    projectError={formalError}
                   />
                   {sheet && messages.length === 0 && !sheet.artifact && (
                     <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
@@ -2146,6 +2286,7 @@ function App() {
         <div className="topbar-spacer" />
         <span className={`prototype-badge formal-status-badge formal-status-${formalConnection.status}`}><i /> {formalConnection.status === 'connected' ? '正式五核已连接' : '五核离线'}</span>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_FILES_TAB)}><span>▤</span><strong>学习文件</strong></button>
+        <button className="topbar-profile-button" type="button" onClick={() => openTab(PROJECTS_TAB)}><span>◇</span><strong>项目</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(TASKS_TAB)}><span>☷</span><strong>学习任务</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(REVIEW_TAB)}><span>↺</span><strong>复习</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span><strong>学习路径</strong></button>
@@ -2174,6 +2315,11 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
+            <button type="button" className="sidebar-profile-button sidebar-project-button" onClick={() => openTab(PROJECTS_TAB)}>
+              <span className="sidebar-profile-avatar">◇</span>
+              <span><strong>学习项目</strong><small>真实产物 · 关卡旅程</small></span>
+              <i>›</i>
+            </button>
             <button type="button" className="sidebar-profile-button" onClick={() => openTab(LEARNING_FILES_TAB)}>
               <span className="sidebar-profile-avatar">▤</span>
               <span><strong>讲义与练习</strong><small>正式文件 · 独立工作台</small></span>
@@ -2199,7 +2345,7 @@ function App() {
               <span><strong>{formalSnapshot?.learner.display_name || '学习者画像'}</strong><small>{formalConnection.status === 'connected' ? `${formalSnapshot?.learner.education_stage || ''} · 五核正式接入` : '正式五核未连接'}</small></span>
               <i>›</i>
             </button>
-            <small className="sidebar-logic-note">Chat · 文件 · 任务 · 复习 · 路径 · 五核画像 · 设置</small>
+            <small className="sidebar-logic-note">Chat · 项目 · 文件 · 任务 · 复习 · 路径 · 五核画像 · 设置</small>
           </div>
         </aside>
 
@@ -2275,15 +2421,19 @@ function App() {
   )
 }
 
-function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, activePathPlanId, pathPlanBusyId, pathPlanWriteError }: {
+function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError }: {
   run: TutorToolRun
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
   onAcceptPathPlan: (proposal: LearningPathPlanProposal) => void
   activePathPlanId?: string
   pathPlanBusyId?: string
   pathPlanWriteError?: string
+  onAcceptProjectRoadmap: (proposal: ProjectRoadmapProposal) => void
+  onAcceptProjectLearningFile: (proposal: ProjectLearningFileProposal) => void
+  projectBusyKey?: string
+  projectError?: string
 }) {
-  const icon = run.kind === 'memory' ? '◇' : run.kind === 'domain' ? '▤' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+  const icon = run.kind === 'memory' ? '◇' : run.kind === 'domain' || run.kind === 'file' ? '▤' : run.kind === 'project' ? '◈' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const pathPlanConfirmed = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === activePathPlanId)
   const pathPlanBusy = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === pathPlanBusyId)
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
@@ -2317,6 +2467,29 @@ function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, activePathPl
             {pathPlanConfirmed ? '已写入当前长期路径' : pathPlanBusy ? '正在写入五核…' : '确认目标与路线，写入五核'}
           </button>
           {pathPlanWriteError && <em className="path-plan-write-error">{pathPlanWriteError}</em>}
+        </div>
+      )}
+      {run.projectRoadmapProposal && (
+        <div className="project-tool-proposal">
+          <span>项目路线提案 · 尚未创建</span>
+          <strong>{run.projectRoadmapProposal.project_theme}</strong>
+          <p>{run.projectRoadmapProposal.rationale}</p>
+          <ol>{run.projectRoadmapProposal.checkpoints.map(item => <li key={item.key}><b>{item.title}</b><small>{item.objective}</small></li>)}</ol>
+          <button type="button" disabled={projectBusyKey === `project-roadmap:${run.projectRoadmapProposal.project_id}`} onClick={() => onAcceptProjectRoadmap(run.projectRoadmapProposal!)}>
+            {projectBusyKey === `project-roadmap:${run.projectRoadmapProposal.project_id}` ? '正在创建关卡与任务…' : '确认路线，创建关卡对话与学习任务'}
+          </button>
+          {projectError && <em>{projectError}</em>}
+        </div>
+      )}
+      {run.projectLearningFileProposal && (
+        <div className="project-tool-proposal project-file-proposal">
+          <span>学习文件提案 · 尚未生成</span>
+          <strong>{run.projectLearningFileProposal.checkpoint_title}</strong>
+          <p>{run.projectLearningFileProposal.file_kinds.join(' + ')} · 优先使用当前项目来源 · 生成不等于掌握</p>
+          <button type="button" disabled={projectBusyKey === `project-file:${run.projectLearningFileProposal.learning_task_id}`} onClick={() => onAcceptProjectLearningFile(run.projectLearningFileProposal!)}>
+            {projectBusyKey === `project-file:${run.projectLearningFileProposal.learning_task_id}` ? '正在生成并保存…' : '确认生成，并作为纸张加入对话'}
+          </button>
+          {projectError && <em>{projectError}</em>}
         </div>
       )}
       {run.sources && run.sources.length > 0 && (
@@ -2362,7 +2535,7 @@ function AgentTraceSummary({ trace }: { trace: AgentTurnTrace }) {
   )
 }
 
-function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAcceptPathPlan, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors }: {
+function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
   messages: Message[]
   onQuoteFollowUp: (messageId: string, quote: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
@@ -2370,6 +2543,10 @@ function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAccept
   activePathPlanId?: string
   pathPlanBusyId?: string
   pathPlanWriteErrors: Record<string, string>
+  onAcceptProjectRoadmap: (proposal: ProjectRoadmapProposal) => void
+  onAcceptProjectLearningFile: (proposal: ProjectLearningFileProposal) => void
+  projectBusyKey?: string
+  projectError?: string
 }) {
   const endRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -2464,6 +2641,10 @@ function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAccept
                   activePathPlanId={activePathPlanId}
                   pathPlanBusyId={pathPlanBusyId}
                   pathPlanWriteError={run.pathPlanProposal ? pathPlanWriteErrors[run.pathPlanProposal.id] : undefined}
+                  onAcceptProjectRoadmap={onAcceptProjectRoadmap}
+                  onAcceptProjectLearningFile={onAcceptProjectLearningFile}
+                  projectBusyKey={projectBusyKey}
+                  projectError={projectError}
                 />
               ))}
               {message.agentTrace && <AgentTraceSummary trace={message.agentTrace} />}

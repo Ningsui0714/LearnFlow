@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.21"
+REGISTRY_VERSION = "2026-08-26.22"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -271,6 +271,16 @@ TOOLS = {
                      (), (), "learner-owned processed Source/Chunk library -> relevance-ranked, provenance-bearing, bounded untrusted context; never learner knowledge evidence"),
         ToolContract("learning_file_service", "Managed Lecture and Practice File Service", "tutor_agent", "vnext", "artifact",
                      (), (), "learner-owned Lecture/Exercise/ConceptQuestion refs -> answer-safe file views, explicit open/attach audit events; generation and opening never imply mastery"),
+        ToolContract("project_workspace_reader", "Scoped Project Workspace Reader", "tutor_agent", "vnext", "read",
+                     ("structure", "knowledge", "human", "value", "practice"), (), "owned Project/Roadmap/Checkpoint/Session/LearningTask/Source/File refs + scoped ContextPacket -> bounded project observation"),
+        ToolContract("project_source_reader", "Project General Source Reader", "tutor_agent", "vnext", "read",
+                     (), (), "current-project processed Source/Chunk only -> bounded untrusted excerpts with provenance; never learner evidence"),
+        ToolContract("project_learning_file_reader", "Project Managed Learning File Reader", "tutor_agent", "vnext", "read",
+                     (), (), "current-project Lecture/Exercise refs -> answer-safe content; hidden answers remain server-side"),
+        ToolContract("project_roadmap_proposer", "Project Roadmap Proposal Tool", "learning_design_agent", "vnext", "proposal",
+                     ("structure", "knowledge", "human", "value"), (), "exact project theme + scoped sources/context -> typed checkpoint proposal; explicit learner confirmation required before apply"),
+        ToolContract("project_learning_file_proposer", "Project Learning File Generation Proposal Tool", "learning_design_agent", "vnext", "proposal",
+                     ("knowledge", "human"), (), "checkpoint LearningTask + available sources -> lecture/practice generation proposal; user-triggered materialization and no mastery inference"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
         ToolContract("vnext_learning_path_planner", "vNext Personalized Long-term Learning Path Planner", "learning_design_agent", "vnext", "proposal",
@@ -365,6 +375,8 @@ TOOL_INTERFACE_ROLES = {
         "teach_back_analyzer", "process_animation", "code_executor",
         "deterministic_assessment", "evidence_ledger", "five_kernel_retriever",
         "workspace_file_service", "managed_artifact_service", "learning_file_service", "local_agent_broker",
+        "project_workspace_reader", "project_source_reader", "project_learning_file_reader",
+        "project_roadmap_proposer", "project_learning_file_proposer",
     }},
     **{tool_id: "harness" for tool_id in {
         "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime",
@@ -390,7 +402,8 @@ TOOL_MODEL_EXPOSURE = {
         if tool_id in {
             "computer_knowledge_search", "safe_visual_generation",
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader", "domain_knowledge_reader",
-            "review_context_reader",
+            "review_context_reader", "project_workspace_reader", "project_source_reader",
+            "project_learning_file_reader", "project_roadmap_proposer", "project_learning_file_proposer",
         }
         else "agent_mediated"
         if TOOL_INTERFACE_ROLES.get(tool_id) == "aci_tool"
@@ -515,6 +528,12 @@ SKILLS = {
                        "vnext_learning_path_graph_reader", "source_ingestion"),
                       "goal-aligned resource proposal with coverage, authority tier, provenance and identified gaps",
                       "Skill chooses the comparison workflow; read/search tools only supply evidence"),
+        SkillContract("project_apprenticeship_orchestration", "真实产物导向的项目学徒旅程", "tutor_agent",
+                      ("project_workspace_reader", "project_source_reader", "project_learning_file_reader",
+                       "project_roadmap_proposer", "project_learning_file_proposer",
+                       "learning_task_runtime", "learning_file_service", "five_kernel_retriever"),
+                      "topic-locked project Tutor -> confirmed checkpoint DAG -> checkpoint LearningTasks -> managed files and evidence-safe practice",
+                      "Tutor owns orchestration; Learning Design proposes; user confirms structure/artifacts; reducer alone owns five-kernel mutations"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
                       ("hierarchical_rag", "content_generation", "process_animation"),
                       "structured teaching artifact; never mastery evidence", "artifact contract"),
@@ -594,6 +613,8 @@ WORKBENCHES = {
                            "manage_learner_memory", "edit_vnext_five_kernel_profile"), "vnext"),
         WorkbenchContract("vnext_learning_files", "vNext Learning File Library", "/learning-files", "tutor_agent",
                           ("generate_learning_files", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
+        WorkbenchContract("vnext_projects", "vNext Project Library", "/projects", "tutor_agent",
+                          ("create_project", "enter_project", "delete_project"), "vnext"),
         WorkbenchContract("vnext_lecture_file", "vNext Lecture File Workbench", "/files/lecture/:lectureId", "tutor_agent",
                           ("open_learning_file", "attach_learning_file_to_chat", "explain_selection"), "vnext"),
         WorkbenchContract("vnext_practice_file", "vNext Practice File Workbench", "/files/practice/:practiceRef", "tutor_agent",
@@ -606,7 +627,9 @@ WORKBENCHES = {
                            "evaluate_transfer_variant", "plan_review_queue")),
         WorkbenchContract("project_tutor", "Project Tutor", "/projects/:projectId", "tutor_agent",
                           ("add_source", "plan_learning_path", "apply_learning_path", "navigate_checkpoint",
-                           "manage_learning_tasks", "plan_learning_task", "run_learning_task", "delete_project")),
+                           "manage_project_conversations", "manage_learning_tasks", "plan_learning_task",
+                           "run_learning_task", "generate_learning_files", "open_learning_file",
+                           "attach_learning_file_to_chat", "delete_project"), "vnext"),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
         WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
@@ -681,6 +704,7 @@ CAPABILITY_OWNERS = {
     "plan_learning_path": ("learning_design_agent", "content_generation", "project_tutor"),
     "apply_learning_path": ("tutor_agent", "action_board", "project_tutor"),
     "navigate_checkpoint": ("tutor_agent", "action_board", "project_tutor"),
+    "manage_project_conversations": ("tutor_agent", "project_workspace_reader", "project_tutor"),
     "generate_lecture": ("learning_design_agent", "content_generation", "lecture"),
     "generate_assessment": ("learning_design_agent", "content_generation", "assessment"),
     "evaluate_attempt": ("practice_agent", "deterministic_assessment", "assessment"),
@@ -796,8 +820,10 @@ EVENTS = {
         _event("project_selected", "enter_project", ("structure",), "navigation"),
         _event("source_added", "add_source", ("structure", "practice"), "artifact"),
         _event("source_processed", "add_source", ("structure", "practice"), "artifact"),
+        _event("project_source_removed", "add_source", (), "confirmed_source_removal", origin="vnext"),
         _event("roadmap_discussed", "plan_learning_path", ("structure",), "proposal"),
         _event("roadmap_applied", "apply_learning_path", ("structure",), "confirmed_action"),
+        _event("project_free_conversation_created", "manage_project_conversations", (), "operational_context", origin="vnext"),
         _event("checkpoint_entered", "navigate_checkpoint", ("structure",), "navigation"),
         _event("lecture_generated", "generate_lecture", ("knowledge",), "exposure"),
         _event("lecture_viewed", "generate_lecture", ("knowledge",), "exposure"),

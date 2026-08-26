@@ -430,3 +430,116 @@ test('learner conflicts and project source domains remain observations, never wr
   const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
   assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
 })
+
+const formalProjectContext = {
+  schema_version: 'vnext.project.v1' as const,
+  project: {
+    id: 7,
+    name: '实现一个可评测的 RAG Agent',
+    objective: '理解检索、生成与评测，并完成可运行原型',
+    expected_outcome: '可运行仓库与评测报告',
+    user_level: 'undergraduate',
+  },
+  checkpoint_id: null,
+  roadmap: { id: null, checkpoints: [] },
+  learning_tasks: [],
+  sources: [{
+    id: 11, type: 'url' as const, name: 'RAG 教程', url: 'https://example.edu/rag',
+    role: 'main', status: 'processed', error: '', chunk_count: 4, mastery_inference: false as const,
+  }],
+  learning_files: { lectures: [], practices: [] },
+  source_excerpts: [{ source_id: 11, excerpt: 'RAG 系统需要分别评估检索与生成。' }],
+  learning_file_previews: [],
+  five_kernel_context: {
+    snapshot_id: 'project-snapshot',
+    kernel_heads: { value: { summary: '希望学习 Agent 工程并形成真实产物' } },
+    items: [],
+  },
+  tool_policy: { read_only_observations: true, proposals_require_confirmation: true },
+}
+
+test('project roadmap tool returns an exact-theme proposal without writing project state', async () => {
+  const execution = await executeTutorAgentTool('propose_project_roadmap', {
+    rationale: '先验证最小检索链，再建立评测闭环。',
+    checkpoints: [
+      {
+        key: 'retrieval-baseline', title: '检索基线', objective: '实现并评估最小检索器',
+        prerequisites: [], success_criteria: ['能运行检索评测'], estimated_minutes: 90,
+      },
+      {
+        key: 'generation-eval', title: '生成与联合评测', objective: '接入生成并分析端到端误差',
+        prerequisites: ['retrieval-baseline'], success_criteria: ['提交评测报告'], estimated_minutes: 120,
+      },
+    ],
+  }, {
+    message: '请规划这个项目', mode: 'learning_plan', formalProjectContext,
+    generate: async () => 'unused',
+  })
+
+  assert.equal(execution.run.status, 'completed')
+  assert.equal(execution.run.projectRoadmapProposal?.project_theme, formalProjectContext.project.name)
+  assert.equal(execution.run.projectRoadmapProposal?.confirmation_required, true)
+  assert.equal(formalProjectContext.roadmap.checkpoints.length, 0)
+})
+
+test('project roadmap tool rejects prerequisites that do not point backward', async () => {
+  const execution = await executeTutorAgentTool('propose_project_roadmap', {
+    rationale: '非法路线',
+    checkpoints: [
+      {
+        key: 'first', title: '第一关', objective: '验证顺序', prerequisites: ['second'],
+        success_criteria: ['完成'], estimated_minutes: 30,
+      },
+      {
+        key: 'second', title: '第二关', objective: '后继', prerequisites: [],
+        success_criteria: ['完成'], estimated_minutes: 30,
+      },
+    ],
+  }, {
+    message: '规划', mode: 'learning_plan', formalProjectContext,
+    generate: async () => 'unused',
+  })
+  assert.equal(execution.run.status, 'failed')
+  assert.match(execution.run.detail, /前置必须指向更早的关卡/)
+})
+
+test('project Tutor observes scoped project state and exposes proposals rather than write tools', async () => {
+  const requests: any[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'learning_plan',
+    messages: [{ role: 'user', content: '按这个 RAG 项目和已有来源规划关卡' }],
+    toolChoice: 'auto',
+    formalProjectContext,
+    formalLearnerContext: formalProjectContext.five_kernel_context,
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'roadmap-proposal', function: {
+          name: 'propose_project_roadmap',
+          arguments: JSON.stringify({
+            rationale: '先做检索基线，再完成联合评测。',
+            checkpoints: [
+              { key: 'retrieval', title: '检索基线', objective: '实现检索器', prerequisites: [], success_criteria: ['检索评测可运行'], estimated_minutes: 90 },
+              { key: 'evaluation', title: '联合评测', objective: '完成端到端评测', prerequisites: ['retrieval'], success_criteria: ['形成评测报告'], estimated_minutes: 120 },
+            ],
+          }),
+        },
+      }] } }] }
+      return { choices: [{ message: { content: '我已形成两关路线提案；确认后才会创建关卡、对话和学习任务。' } }] }
+    },
+  })
+
+  assert.deepEqual(result.toolRuns.slice(0, 3).map(run => run.kind), ['memory', 'project', 'workspace'])
+  assert.ok(result.toolRuns.some(run => run.projectRoadmapProposal?.confirmation_required))
+  assert.match(result.reply, /确认后才会创建/)
+  const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(exposed.includes('read_project_workspace'))
+  assert.ok(exposed.includes('read_project_sources'))
+  assert.ok(exposed.includes('propose_project_roadmap'))
+  assert.ok(!exposed.some((name: string) => /apply|write|commit|delete|confirm/.test(name)))
+})

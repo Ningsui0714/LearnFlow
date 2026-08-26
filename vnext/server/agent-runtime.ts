@@ -26,6 +26,7 @@ import {
   type TutorAgentToolRuntimeOptions,
 } from './tool-runtime.ts'
 import type { SearchProviderConfiguration } from './computer-knowledge-search.ts'
+import type { AgentProjectContext } from '../src/project.ts'
 
 const MAX_MODEL_ROUNDS = 5
 const MAX_TOOL_CALLS = 8
@@ -57,6 +58,7 @@ export type TutorAgentRuntimeInput = {
   formalWorkspaceContext?: unknown
   formalDomainKnowledgeContext?: unknown
   formalReviewContext?: unknown
+  formalProjectContext?: AgentProjectContext
   conversationId?: string
   sheetId?: string
   generate: TutorAgentToolRuntimeOptions['generate']
@@ -264,7 +266,8 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '',
     '## 工具策略',
     '只有需要外部观察时才调用工具。可以连续调用不同读取工具，但不得重复相同调用。',
-    '读取工具可自主调用；当前没有向模型开放任何五核、路径、项目或文件写入工具。',
+    '读取工具可自主调用；项目路线和文件工具只产生 learner-visible proposal，绝不直接写入。',
+    '处于项目 scope 时，所有规划、来源选择、讲义与练习都必须锚定 envelope.scope.projectId 对应的项目主题；不得偷换为通用课程规划。',
     '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
     '若工作区观察含 sourceConstraint，路线和讲解必须受当前项目来源覆盖范围约束；超出范围只能标为资料缺口，并在检索到新证据后补充。',
     '工作区中没有 Attempt 只表示当前作用域没有可见记录，不能推断学生第一次学习、从未练习或没有相关经历。',
@@ -277,6 +280,9 @@ function availableTools(input: TutorAgentRuntimeInput) {
     (tool.name !== 'read_learning_path' || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
+    && (!tool.name.startsWith('read_project_') || Boolean(input.formalProjectContext))
+    && (tool.name !== 'propose_project_roadmap' || Boolean(input.formalProjectContext) && input.mode === 'learning_plan')
+    && (tool.name !== 'propose_project_learning_files' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
   ))
 }
 
@@ -301,7 +307,7 @@ export function verifyTutorTurnOutcome(options: {
   const violations: string[] = []
   const reply = options.reply.trim()
   if (!isDisplayableTutorReply(reply)) violations.push('display_protocol')
-  const hasUncommittedProposal = options.toolRuns.some(run => run.pathProposal || run.pathPlanProposal)
+  const hasUncommittedProposal = options.toolRuns.some(run => run.pathProposal || run.pathPlanProposal || run.projectRoadmapProposal || run.projectLearningFileProposal)
   if (
     hasUncommittedProposal
     && /(?:已经|已)[^。！!？?\n]{0,24}(?:保存|加入|写入|更新|创建)(?:了)?[^。！!？?\n]{0,20}(?:路径|节点|规划)/i.test(reply)
@@ -374,6 +380,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     formalWorkspaceContext: input.formalWorkspaceContext,
     formalDomainKnowledgeContext: input.formalDomainKnowledgeContext,
     formalReviewContext: input.formalReviewContext,
+    formalProjectContext: input.formalProjectContext,
   }
 
   const execute = async (call: AgentToolCall, sourceUrls: string[] = []) => {
@@ -413,7 +420,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'read_learning_workspace'
         || call.name === 'read_domain_knowledge'
         || call.name === 'read_learning_path'
-        || call.name === 'read_review_context',
+        || call.name === 'read_review_context'
+        || call.name === 'read_project_workspace'
+        || call.name === 'read_project_sources'
+        || call.name === 'read_project_learning_file',
       data: result.observation,
     })
     runtimeMessages.push({
@@ -444,6 +454,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
 
   record({ phase: 'observe', detail: '开始组装本轮观察空间', status: 'started' })
   await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } })
+  if (input.formalProjectContext) {
+    await execute({ id: `observe-project-${id}`, name: 'read_project_workspace', arguments: { query: latestMessage } })
+  }
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
     await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
   }
@@ -465,7 +478,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
 
   const envelope: AgentContextEnvelope = {
     version: 'vnext-agent-context.v1',
-    scope: { mode: input.mode, conversationId: input.conversationId, sheetId: input.sheetId },
+    scope: {
+      mode: input.mode, conversationId: input.conversationId, sheetId: input.sheetId,
+      projectId: input.formalProjectContext?.project?.id,
+      checkpointId: input.formalProjectContext?.checkpoint_id || undefined,
+    },
     current: {
       userMessage: latestMessage,
       selection: input.selectionContext,

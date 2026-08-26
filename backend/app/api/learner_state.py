@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.models.learning import LearningTask, MemoryClaim, MemoryModule, MemoryNode
+from app.models.project import Roadmap
 from app.services.auth import CurrentLearner, get_current_learner
 from app.services.agent_observations import build_learning_workspace_observation
 from app.services.five_kernel_context import build_five_kernel_context
@@ -322,15 +323,35 @@ async def get_learner_state_snapshot(
 @router.get("/context")
 async def get_learner_context(
     query: str = Query(default="", max_length=2000),
-    purpose: Literal["global_tutor", "learning_plan", "learning_task"] = Query(default="global_tutor"),
+    purpose: Literal["global_tutor", "learning_plan", "learning_task", "project_tutor", "checkpoint_tutor"] = Query(default="global_tutor"),
+    project_id: int | None = Query(default=None, ge=1),
+    checkpoint_id: int | None = Query(default=None, ge=1),
+    session_id: int | None = Query(default=None, ge=1),
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    policy = "learning_plan" if purpose == "learning_plan" else "global_tutor"
+    if project_id is not None:
+        from app.services.auth import require_owned_project
+        await require_owned_project(db, current.learner.id, project_id)
+    if checkpoint_id is not None:
+        from app.services.auth import require_owned_checkpoint
+        checkpoint = await require_owned_checkpoint(db, current.learner.id, checkpoint_id)
+        roadmap = await db.get(Roadmap, checkpoint.roadmap_id)
+        if not roadmap or (project_id is not None and roadmap.project_id != project_id):
+            raise HTTPException(404, "关卡不属于当前项目")
+        project_id = roadmap.project_id
+    policy = "project_tutor" if purpose == "project_tutor" else (
+        "checkpoint_tutor" if purpose == "checkpoint_tutor" or (purpose == "learning_task" and checkpoint_id) else (
+            "learning_plan" if purpose == "learning_plan" else "global_tutor"
+        )
+    )
     packet = await build_five_kernel_context(
         db,
         learner_id=current.learner.id,
         policy=policy,
+        project_id=project_id,
+        checkpoint_id=checkpoint_id,
+        session_id=session_id,
         query=query,
     )
     return packet
