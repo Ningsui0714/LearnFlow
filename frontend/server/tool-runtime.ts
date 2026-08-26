@@ -26,7 +26,12 @@ import {
   type LearnerPathState,
 } from '../src/learning-path-graph.ts'
 
-type GenerateText = (instructions: string, input: string, timeoutMs?: number) => Promise<string>
+type GenerateText = (
+  instructions: string,
+  input: string,
+  timeoutMs?: number,
+  maxTokens?: number,
+) => Promise<string>
 
 const SAFE_SVG_TAGS = new Set([
   'svg', 'g', 'circle', 'rect', 'line', 'path', 'text', 'polygon', 'polyline',
@@ -99,7 +104,7 @@ function extractJson(raw: string) {
   const source = (fenced || raw).trim()
   const start = source.indexOf('{')
   const end = source.lastIndexOf('}')
-  if (start < 0 || end <= start) throw new Error('模型没有返回视觉 JSON')
+  if (start < 0 || end <= start) throw new Error('模型没有返回可解析的 JSON 对象')
   return JSON.parse(source.slice(start, end + 1)) as any
 }
 
@@ -689,7 +694,12 @@ async function generatePracticeCandidates(
     project: options.formalProjectContext?.project,
     checkpoint_id: options.formalProjectContext?.checkpoint_id,
   }
-  const raw = await options.generate(instructions, JSON.stringify(context), 58_000)
+  // Reasoning models may spend a meaningful part of the output budget before
+  // emitting the JSON artifact. A fixed 1,200-token ceiling was enough for a
+  // diagram, but could yield an empty/truncated four-item practice set. Keep
+  // the budget bounded while sizing it to the requested artifact.
+  const maxTokens = Math.min(7_000, 2_200 + count * 900)
+  const raw = await options.generate(instructions, JSON.stringify(context), 58_000, maxTokens)
   const payload = extractJson(raw)
   const candidates = Array.isArray(payload.candidates) ? payload.candidates.slice(0, count) : []
   if (candidates.length !== count) throw new Error(`模型只返回 ${candidates.length}/${count} 道可解析候选题`)

@@ -50,6 +50,8 @@ Tutor 识别当前原子学习任务需要练习或检测
 
 三个 Tool 都有稳定 schema、scope、幂等键和可展示 ToolRun。生成工具只有在 `guided_learning + formal LearningTask + checkpoint` 同时成立时才暴露。后端重新验证 learner ownership，不能信任前端或模型提交的 scope。
 
+习题候选的模型输出预算按题量有界增长（当前上限 7,000 tokens），避免推理模型在固定的小配额内只完成推理而没有产出完整 JSON。同一正式学习任务在一个 Tutor 回合内只允许执行一次同类昂贵生成；模型仅修改标题、难度等表面参数重复调用时，Harness 会确定性拦截并要求它使用已有观察或透明结束。这两个约束同时保证产物完整性和回合时间预算。
+
 ## 事件与五核
 
 | 行为 | 事件 | 核 |

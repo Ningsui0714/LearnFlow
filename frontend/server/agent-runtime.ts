@@ -402,7 +402,15 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
 
   const execute = async (call: AgentToolCall, sourceUrls: string[] = []) => {
-    const signature = `${call.name}:${JSON.stringify(call.arguments)}`
+    // Artifact generators are expensive and have side effects. Treat a second
+    // request for the same formal task as a duplicate even when the model only
+    // changes a title or difficulty after a failure. Recovery must use the
+    // existing observation or end transparently, not burn the whole turn on
+    // near-identical generation attempts.
+    const practiceGenerationKey = ['generate_dynamic_practice', 'generate_similar_practice'].includes(call.name)
+      ? `${call.name}:learning-task:${String(call.arguments.learning_task_id || '')}`
+      : ''
+    const signature = practiceGenerationKey || `${call.name}:${JSON.stringify(call.arguments)}`
     if (signatures.has(signature)) {
       const duplicate = {
         error: 'duplicate_tool_call',

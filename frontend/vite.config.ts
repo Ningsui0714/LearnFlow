@@ -362,15 +362,20 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           formalReviewContext = null
         }
       }
-      const generate = async (instructions: string, inputText: string, timeoutMs?: number) => {
+      const generate = async (
+        instructions: string,
+        inputText: string,
+        timeoutMs?: number,
+        maxTokens?: number,
+      ) => {
         const request = buildProviderRequest({
           baseUrl, model, instructions,
           messages: [{ role: 'user', content: inputText }],
-          maxTokens: 1200,
+          maxTokens: Math.max(400, Math.min(7_000, Number(maxTokens) || 1_200)),
         })
         const payload = await callProvider({ ...request, timeoutMs: timeoutMs || 32_000 })
         const text = textFromTutorProviderResponse(payload)
-        if (!text) throw new Error('模型没有返回视觉生成文本')
+        if (!text) throw new Error('模型没有返回可用的生成内容')
         return text
       }
       const result = await runTutorAgentTurn({

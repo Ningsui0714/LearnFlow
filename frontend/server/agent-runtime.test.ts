@@ -304,6 +304,107 @@ test('dynamic practice tools are scoped to a formal guided checkpoint and stream
   assert.ok(!freeExposed.includes('inspect_practice_quality'))
 })
 
+test('dynamic practice generation receives an item-sized output budget', async () => {
+  const originalFetch = globalThis.fetch
+  let observedTimeout = 0
+  let observedMaxTokens = 0
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    ref: 'practice-set-budget-test',
+    title: 'QKV 动态检测',
+    checkpoint_id: 45,
+    question_count: 4,
+    quality_status: 'validated_static_uncalibrated',
+    quality_reports: [],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  try {
+    const result = await executeTutorAgentTool('generate_dynamic_practice', {
+      learning_task_id: 81,
+      title: 'QKV 动态检测',
+      concept: '自注意力 QKV 与张量形状',
+      purpose: 'diagnostic',
+      difficulty: 'medium',
+      item_types: ['single', 'ordered_blocks', 'numeric', 'code_output'],
+      count: 4,
+    }, {
+      message: '生成四道 QKV 检测题',
+      mode: 'guided_learning',
+      formalProjectContext: { checkpoint_id: 45 } as any,
+      backendBase: 'http://formal.example.test',
+      generate: async (_instructions, _input, timeoutMs, maxTokens) => {
+        observedTimeout = Number(timeoutMs)
+        observedMaxTokens = Number(maxTokens)
+        return JSON.stringify({ candidates: [
+          { question: 'Q、K 点积除以 sqrt(d_k) 的主要目的是什么？', q_type: 'single', options: ['控制数值尺度', '增加 token 数'], answer_indexes: [0], target_skill: '缩放点积注意力', explanation: '避免维度增大时点积方差过大。' },
+          { question: '将注意力计算步骤排成正确顺序。', q_type: 'ordered_blocks', options: ['QK^T', '缩放', 'softmax', '乘 V'], answer_indexes: [0, 1, 2, 3], target_skill: '注意力计算顺序', explanation: '先得到分数，再归一化并聚合 V。' },
+          { question: 'batch=2、heads=4、tokens=8 时，每个 head 的注意力矩阵元素总数是多少？', q_type: 'numeric', expected_response: 512, target_skill: '注意力张量形状', explanation: '2×4×8×8=512。' },
+          { question: '下列代码输出的 shape 是什么？', q_type: 'code_output', code: 'q = torch.randn(2,4,8,16)\nk = torch.randn(2,4,8,16)\nprint((q @ k.transpose(-2,-1)).shape)', expected_response: 'torch.Size([2, 4, 8, 8])', target_skill: 'QK 转置与矩阵乘', explanation: '最后两维 8×16 与 16×8 相乘。' },
+        ] })
+      },
+    })
+    assert.equal(result.run.status, 'completed')
+    assert.equal(observedTimeout, 58_000)
+    assert.equal(observedMaxTokens, 5_800)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('an expensive practice generator cannot be retried with cosmetic argument changes in one turn', async () => {
+  let modelRound = 0
+  let generatorCalls = 0
+  const events: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'guided_learning',
+    messages: [{ role: 'user', content: '生成一组 QKV 检测题' }],
+    toolChoice: 'auto',
+    formalProjectContext: { ...formalProjectContext, checkpoint_id: 45 },
+    learningTaskContext: {
+      objectType: 'learning_task_binding', authority: 'formal_learning_task', formalTaskId: 81,
+      taskId: 'formal-task-81', objective: '检测 QKV 形状理解', skillId: 'worked_example_fading',
+      skillName: '例题渐隐', substateId: 'practice', substateLabel: '练习态', stepId: 'attempt',
+      stepTitle: '独立尝试', stepIndex: 1, stepCount: 3, stepInstruction: '完成短题。',
+      nextAction: '提交检测', loopCount: 0, loopInstruction: '',
+    } as any,
+    generate: async () => 'unused',
+    observe: event => events.push(event),
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'generate_dynamic_practice') {
+        generatorCalls += 1
+        return {
+          run: {
+            id: 'failed-generation', kind: 'file', toolName: name, toolCallId: meta?.callId,
+            status: 'failed', title: '生成动态练习文件', detail: '模型没有返回可用的生成内容',
+            observationSummary: '工具失败，未产生可信观察', errorType: 'unexpected', durationMs: 10,
+          },
+          observation: { error: '模型没有返回可用的生成内容', recoverableByModel: false },
+        }
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async () => {
+      modelRound += 1
+      if (modelRound <= 2) return { choices: [{ message: { tool_calls: [{
+        id: `practice-${modelRound}`,
+        function: {
+          name: 'generate_dynamic_practice',
+          arguments: JSON.stringify({
+            learning_task_id: 81,
+            title: modelRound === 1 ? 'QKV 检测' : 'QKV 检测（重试）',
+            concept: 'QKV 张量形状', purpose: 'diagnostic', difficulty: 'medium',
+            item_types: ['single'], count: 2,
+          }),
+        },
+      }] } }] }
+      return { choices: [{ message: { content: '动态习题生成失败，本轮没有创建练习文件；请稍后重试。' } }] }
+    },
+  })
+  assert.equal(generatorCalls, 1)
+  assert.match(result.reply, /生成失败/)
+  assert.ok(events.some(event => event.type === 'trajectory' && event.event.status === 'blocked' && /重复/.test(event.event.detail)))
+})
+
 test('planning reads the learner source library before recommending resource gaps', async () => {
   const requests: any[] = []
   const result = await runTutorAgentTurn({
