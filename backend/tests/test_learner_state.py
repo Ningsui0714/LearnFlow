@@ -1,9 +1,15 @@
+import asyncio
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.db.database import async_session
 from app.main import app
+from app.models.learning import Learner, LearningAttempt, RemediationCase, ReviewSchedule
+from app.models.project import Checkpoint, Project, Roadmap, Source
 from app.services.personal_concept_graph import extract_self_report
 from app.services.personal_concept_graph import concept_client_event_id
 
@@ -20,6 +26,16 @@ def client():
 
 def eid(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
+
+
+def _contains_answer_material(value):
+    if isinstance(value, dict):
+        if any(key in value for key in {"submission", "solution", "answer_indexes", "test_cases"}):
+            return True
+        return any(_contains_answer_material(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_answer_material(item) for item in value)
+    return False
 
 
 def test_profile_background_extraction_is_conservative_and_canonical():
@@ -123,6 +139,107 @@ def test_context_packet_is_answer_free_and_authoritative(client: TestClient):
     packet = response.json()
     assert packet["manifest"]["answer_free"] is True
     assert packet["manifest"]["authority"] == "read_only_projection_from_evidence_and_memory_graph"
+
+
+def test_agent_workspace_context_exposes_scoped_practice_review_and_source_domains(client: TestClient):
+    async def seed():
+        async with async_session() as db:
+            learner_id = (await db.execute(select(Learner.id).where(
+                Learner.key == "local-default",
+            ))).scalar_one()
+            suffix = uuid.uuid4().hex[:8]
+            project = Project(learner_id=learner_id, name=f"agent-observation-{suffix}")
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={})
+            db.add(roadmap)
+            await db.flush()
+            checkpoint = Checkpoint(
+                roadmap_id=roadmap.id,
+                title="Agent Tool Calling",
+                order=1,
+                learning_status="in_progress",
+            )
+            db.add(checkpoint)
+            await db.flush()
+            source = Source(
+                project_id=project.id,
+                type="github",
+                role="main",
+                status="processed",
+                meta_data={"repo_analysis": {
+                    "structure_logic": "tutorial-progression",
+                    "readme_toc": [{"title": "工具定义与失败恢复"}],
+                }},
+            )
+            db.add(source)
+            attempt = LearningAttempt(
+                learner_id=learner_id,
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+                item_type="exercise",
+                item_id=900_000 + int(suffix[:4], 16),
+                status="evaluated",
+                submission={"hidden": "must not leave backend"},
+                result={"passed": 1, "total": 2, "feedback": "private grader detail"},
+                assistance_level="hint",
+                attempt_role="original",
+                evaluated_at=datetime.utcnow(),
+            )
+            db.add(attempt)
+            await db.flush()
+            remediation = RemediationCase(
+                learner_id=learner_id,
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+                source_attempt_id=attempt.id,
+                item_type="exercise",
+                item_id=attempt.item_id,
+                status="explaining",
+                error_fingerprint=f"workspace-{suffix}",
+                error_class="boundary_update",
+                misconception_tag="tool_result_handling",
+                current_delivery_mode="contrast",
+                ineffective_modes=["definition_only"],
+            )
+            db.add(remediation)
+            review = ReviewSchedule(
+                learner_id=learner_id,
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+                item_type="exercise",
+                item_id=attempt.item_id,
+                subject_key="agent.tool-calling",
+                phase="active",
+                due_at=datetime.utcnow() - timedelta(days=1),
+                lapse_count=1,
+                last_grade="failed",
+                last_attempt_id=attempt.id,
+            )
+            db.add(review)
+            await db.commit()
+            return project.id, checkpoint.id
+
+    project_id, checkpoint_id = asyncio.run(seed())
+    response = client.get("/api/learner-state/agent-workspace-context", params={
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+    })
+    assert response.status_code == 200, response.text
+    packet = response.json()
+    assert packet["manifest"]["answer_free"] is True
+    assert packet["manifest"]["read_only"] is True
+    assert packet["scope"]["project_id"] == project_id
+    assert packet["recent_attempts"][0]["outcome"] == "failed"
+    assert packet["recent_attempts"][0]["independent"] is False
+    assert packet["open_remediations"][0]["misconception_tag"] == "tool_result_handling"
+    assert packet["review"]["summary"]["due"] >= 1
+    assert packet["knowledge_domains"][0]["title"] == "工具定义与失败恢复"
+    assert packet["knowledge_domains"][0]["source_ids"]
+    assert not _contains_answer_material(packet)
+
+    missing = client.get("/api/learner-state/agent-workspace-context", params={"project_id": 999_999_999})
+    assert missing.status_code == 404
 
 
 def test_personal_concept_graph_separates_knowledge_history_and_structure_edges(client: TestClient):

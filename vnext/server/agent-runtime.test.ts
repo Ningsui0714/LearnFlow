@@ -72,6 +72,18 @@ test('final-state verifier rejects unconfirmed writes, mastery overclaims and hi
       data: { conflicts: [{ subject: 'tool-calling', text: '旧 Claim 与新自述冲突' }] },
     }],
   }).violations, [])
+  const emptyEvidenceObservation: any = [{
+    source: 'read_learning_workspace', authority: 'formal', answerFree: true,
+    data: { learningEvidence: { manifest: { attempt_count: 0 } } },
+  }]
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '这说明你是第一次正式学习贝叶斯公式。', mode: 'guided_learning', toolRuns: [],
+    observations: emptyEvidenceObservation,
+  }).violations, ['unsupported_learning_history_claim'])
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '当前作用域没有可见的练习记录，所以我不会假设你以前是否学过。',
+    mode: 'guided_learning', toolRuns: [], observations: emptyEvidenceObservation,
+  }).violations, [])
 })
 
 test('Tutor runs a bounded observe-act-observe loop and preserves tool results', async () => {
@@ -290,10 +302,29 @@ test('learner conflicts and project source domains remain observations, never wr
       conflicts: [{ subject: 'tool-calling', text: '旧 Claim 与本轮自述冲突，等待学习者确认' }],
     },
     taskQueue: [{ id: 8, objective: '完成 Agent 工具调用章节', status: 'active' }],
-    knowledgeDomains: [{
-      id: 'repo-agent-tools', title: 'Agent 工具调用', labels: ['tool calling', 'function calling'],
-      summary: '来源仓库覆盖工具定义、调用结果和失败恢复。', sourceIds: ['source-8'],
-    }],
+    formalWorkspaceContext: {
+      authority: 'LearningAttempt + scoped project sources',
+      scope: { learner_id: 1, project_id: 8, checkpoint_id: 12 },
+      recent_attempts: [{
+        id: 91, item_type: 'exercise', item_id: 17, attempt_role: 'original',
+        status: 'evaluated', outcome: 'failed', assistance_level: 'hint', independent: false,
+      }],
+      open_remediations: [{
+        id: 32, item_type: 'exercise', item_id: 17, status: 'explaining',
+        error_class: 'tool_result_handling', misconception_tag: 'ignored_tool_failure',
+      }],
+      review: {
+        summary: { total: 1, due: 1, policy_version: 'review-policy-v1' },
+        items: [{ id: 44, item_type: 'exercise', item_id: 17, bucket: 'due' }],
+      },
+      project_sources: [{ id: 8, type: 'github', role: 'main', status: 'processed' }],
+      knowledge_domains: [{
+        id: 'repo-agent-tools', title: 'Agent 工具调用', labels: ['tool calling', 'function calling'],
+        summary: '来源仓库覆盖工具定义、调用结果和失败恢复。', source_ids: ['source-8'],
+      }],
+      boundaries: ['有提示成功与独立成功必须区分'],
+      manifest: { answer_free: true, read_only: true },
+    },
     generate: async () => 'unused',
     invokeProvider: async request => {
       requests.push(request)
@@ -303,6 +334,9 @@ test('learner conflicts and project source domains remain observations, never wr
   const serialized = JSON.stringify(requests[0].body.messages)
   assert.match(serialized, /旧 Claim 与本轮自述冲突/)
   assert.match(serialized, /来源仓库覆盖工具定义/)
+  assert.match(serialized, /ignored_tool_failure/)
+  assert.match(serialized, /review-policy-v1/)
+  assert.match(serialized, /有提示成功与独立成功必须区分/)
   assert.match(serialized, /sourceConstraint/)
   assert.match(serialized, /路线节点必须能由当前来源知识领域支持/)
   assert.match(serialized, /来源覆盖只表示资料包含相关内容/)

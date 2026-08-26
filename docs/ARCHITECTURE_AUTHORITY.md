@@ -177,6 +177,16 @@ Contract impact：注册表版本提升到 `2026-08-26.15`。新增 SkillRun 确
 只读投影，收紧 vNext 浏览器绑定语义和终态校验；既有稳定 Agent、Skill、Event ID、LearningTask API
 与五核写入链保持兼容，无数据库迁移、无新增 Kernel writer。
 
+vNext 的 `read_learning_workspace` ACI 现在消费正式的学习工作区观察投影。后端按
+learner/session/project/checkpoint 验证作用域，结构化返回近期 `LearningAttempt`、开放
+`RemediationCase`、`ReviewSchedule` 队列和当前项目已处理来源的知识领域；投影过滤提交正文、答案、
+solution 与测试用例。项目知识领域产生显式 `sourceConstraint`，只约束当前项目路线与讲解；Attempt
+仍是 Practice/Knowledge 证据，ReviewSchedule 仍只是可重建调度，二者不会被来源覆盖或任务完成替代。
+
+Contract impact：注册表版本提升到 `2026-08-26.16`。扩展既有
+`vnext_learning_workspace_reader` 的只读输出和新增 answer-free 查询端点；稳定工具、Capability、
+事件、数据库 schema、五核 reducer 与 writer 均保持兼容，没有新增模型可调用写工具。
+
 独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。

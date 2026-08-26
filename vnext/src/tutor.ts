@@ -8,7 +8,7 @@ import {
   type LearningPlanTutorContext,
 } from './planning.ts'
 import type { LearnerPathState } from './learning-path-graph.ts'
-import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentTurnTrace } from './agent-contracts.ts'
+import type { AgentFormalScope, AgentKnowledgeDomain, AgentTaskQueueItem, AgentTurnTrace } from './agent-contracts.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -261,6 +261,7 @@ export async function requestTutorReply(options: {
   learnerPathState?: LearnerPathState
   taskQueue?: AgentTaskQueueItem[]
   knowledgeDomains?: AgentKnowledgeDomain[]
+  formalScope?: AgentFormalScope
   conversationId?: string
   sheetId?: string
 }) {

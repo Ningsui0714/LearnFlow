@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.15"
+REGISTRY_VERSION = "2026-08-26.16"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -266,7 +266,7 @@ TOOLS = {
         ToolContract("vnext_five_kernel_profile_reader", "vNext Formal Five-kernel Context Reader", "tutor_agent", "vnext", "read",
                      KERNEL_NAMES, (), "ContextPolicy -> KernelHead + scoped Memory Graph -> bounded read-only Tutor context; local simulation is offline fallback only"),
         ToolContract("vnext_learning_workspace_reader", "vNext Scoped Learning Workspace Reader", "tutor_agent", "vnext", "read",
-                     KERNEL_NAMES, (), "formal LearningTask queue + in-chat task binding + PlanningDialogue + project-scoped repository knowledge domains -> bounded read-only observation"),
+                     KERNEL_NAMES, (), "learner/session/project/checkpoint-scoped LearningTask queue + answer-free LearningAttempt/RemediationCase/ReviewSchedule projection + project source knowledge domains -> bounded read-only observation"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
         ToolContract("vnext_learning_path_planner", "vNext Personalized Long-term Learning Path Planner", "learning_design_agent", "vnext", "proposal",

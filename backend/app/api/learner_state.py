@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.models.learning import LearningTask, MemoryClaim, MemoryModule, MemoryNode
 from app.services.auth import CurrentLearner, get_current_learner
+from app.services.agent_observations import build_learning_workspace_observation
 from app.services.five_kernel_context import build_five_kernel_context
 from app.services.learning_runtime import get_kernel_projection, record_event
 from app.services.learning_tasks import (
@@ -333,6 +334,31 @@ async def get_learner_context(
         query=query,
     )
     return packet
+
+
+@router.get("/agent-workspace-context")
+async def get_agent_workspace_context(
+    session_id: int | None = Query(default=None, ge=1),
+    project_id: int | None = Query(default=None, ge=1),
+    checkpoint_id: int | None = Query(default=None, ge=1),
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return answer-free task, practice, review and source observations.
+
+    Scope is resolved server-side and every supplied object must belong to the
+    current learner.  This endpoint never writes EvidenceEvent or KernelState.
+    """
+    try:
+        return await build_learning_workspace_observation(
+            db,
+            learner_id=current.learner.id,
+            session_id=session_id,
+            project_id=project_id,
+            checkpoint_id=checkpoint_id,
+        )
+    except ValueError as error:
+        raise HTTPException(404, str(error)) from error
 
 
 @router.get("/concept-graph")

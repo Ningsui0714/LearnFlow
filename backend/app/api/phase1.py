@@ -21,6 +21,7 @@ from app.schemas.project import (
 from app.services.chunker import SourceProcessor
 from app.services.roadmap_agent import RoadmapAgent
 from app.services.learning_runtime import get_kernel_projection
+from app.services.source_knowledge import repository_knowledge_domains
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_project,
     require_owned_source,
@@ -28,55 +29,6 @@ from app.services.auth import (
 
 router = APIRouter()
 chunker = SourceProcessor()
-
-
-def _repository_knowledge_domains(sources: list[Source]) -> list[dict]:
-    """Return compact, source-grounded topic context for roadmap planning.
-
-    These labels describe what a repository contains.  They intentionally stay
-    outside the five-kernel projection: a source outline is course context, not
-    a claim about what the learner knows or should be scored on.
-    """
-    result = []
-    for source in sources:
-        meta = source.meta_data or {}
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except json.JSONDecodeError:
-                meta = {}
-        analysis = dict(meta.get("repo_analysis") or {})
-        seen: set[str] = set()
-        domains = []
-
-        def add(label: object, evidence: str) -> None:
-            value = " ".join(str(label or "").split())[:160]
-            key = value.casefold()
-            if value and key not in seen and len(domains) < 12:
-                seen.add(key)
-                domains.append({"label": value, "evidence": evidence})
-
-        for item in analysis.get("readme_toc") or []:
-            if isinstance(item, dict):
-                add(item.get("title"), "README 目录")
-        for group in analysis.get("dir_groups") or []:
-            if isinstance(group, dict) and group.get("is_chapter"):
-                add(group.get("name") or group.get("dir"), "章节目录")
-        # Some repositories do not have a usable TOC or chapter folders.  File
-        # summaries still provide an inspectable, non-LLM-invented fallback.
-        if not domains:
-            for path in (analysis.get("file_summaries") or {}).keys():
-                add(path, "文件摘要路径")
-
-        if domains:
-            result.append({
-                "source_id": source.id,
-                "role": source.role or "main",
-                "type": source.type,
-                "structure_logic": analysis.get("structure_logic", "mixed"),
-                "domains": domains,
-            })
-    return result
 
 
 async def _roadmap_planning_context(
@@ -129,7 +81,7 @@ async def _roadmap_planning_context(
             "career_goal_status": profile.career_goal_status,
         } if profile else {},
         "five_kernel_memory": await get_kernel_projection(db, current.learner.id),
-        "repository_knowledge_domains": _repository_knowledge_domains(sources),
+        "repository_knowledge_domains": repository_knowledge_domains(sources),
         "session_handoff": dict(project_session.context_summary or {}) if project_session else {},
         "proposal_reference": {
             "proposal_id": proposal.id,

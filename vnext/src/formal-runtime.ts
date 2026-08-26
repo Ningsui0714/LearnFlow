@@ -65,6 +65,9 @@ export type FormalLearningTask = {
   objective: string
   status: 'proposed' | 'queued' | 'active' | 'paused' | 'completed' | 'canceled'
   origin_kind: string
+  session_id?: number | null
+  project_id?: number | null
+  checkpoint_id?: number | null
   priority: number
   queue_position: number
   estimated_minutes: number

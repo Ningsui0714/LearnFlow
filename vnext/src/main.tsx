@@ -903,6 +903,9 @@ function App() {
     }
 
     try {
+      const formalTaskForTurn = learningProjection?.task.formalTaskId
+        ? formalSnapshotForTurn?.learning_tasks.find(task => task.id === learningProjection.task.formalTaskId)
+        : undefined
       const reply = await requestTutorReply({
         baseUrl: workspace.settings.baseUrl,
         model: workspace.settings.model,
@@ -924,6 +927,11 @@ function App() {
           updatedAt: task.updated_at || undefined,
         })),
         knowledgeDomains: [],
+        formalScope: {
+          sessionId: formalSessionId,
+          projectId: formalTaskForTurn?.project_id || undefined,
+          checkpointId: formalTaskForTurn?.checkpoint_id || undefined,
+        },
         conversationId,
         sheetId,
       })

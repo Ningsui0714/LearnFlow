@@ -297,6 +297,7 @@ export type TutorAgentToolRuntimeOptions = {
   knowledgeDomains?: AgentKnowledgeDomain[]
   learnerPathState?: LearnerPathState
   formalLearnerContext?: unknown
+  formalWorkspaceContext?: unknown
 }
 
 export type TutorAgentToolExecution = {
@@ -354,6 +355,26 @@ function compactFormalLearnerContext(value: unknown) {
   }
 }
 
+function compactFormalWorkspaceContext(value: unknown) {
+  if (!value || typeof value !== 'object') return null
+  const packet = value as Record<string, any>
+  const review = packet.review && typeof packet.review === 'object' ? packet.review : {}
+  return {
+    authority: compactText(packet.authority, 240),
+    scope: packet.scope || {},
+    recent_attempts: (Array.isArray(packet.recent_attempts) ? packet.recent_attempts : []).slice(0, 12),
+    open_remediations: (Array.isArray(packet.open_remediations) ? packet.open_remediations : []).slice(0, 8),
+    review: {
+      summary: review.summary || {},
+      items: (Array.isArray(review.items) ? review.items : []).slice(0, 8),
+    },
+    project_sources: (Array.isArray(packet.project_sources) ? packet.project_sources : []).slice(0, 12),
+    knowledge_domains: (Array.isArray(packet.knowledge_domains) ? packet.knowledge_domains : []).slice(0, 30),
+    boundaries: (Array.isArray(packet.boundaries) ? packet.boundaries : []).slice(0, 8),
+    manifest: packet.manifest || {},
+  }
+}
+
 function classifyToolError(error: unknown): NonNullable<TutorToolRun['errorType']> {
   const message = error instanceof Error ? error.message : String(error || '')
   if (/timeout|超时|429|rate|network|fetch|ECONN|暂时/i.test(message)) return 'transient'
@@ -408,6 +429,7 @@ export async function executeTutorAgentTool(
     }
 
     if (name === 'read_learning_workspace') {
+      const formal = compactFormalWorkspaceContext(options.formalWorkspaceContext)
       const queue = (options.taskQueue || []).slice(0, 12).map(task => ({
         id: task.id,
         objective: compactText(task.objective, 220),
@@ -415,7 +437,14 @@ export async function executeTutorAgentTool(
         sourceType: compactText(task.sourceType, 60),
         updatedAt: task.updatedAt,
       }))
-      const domains = (options.knowledgeDomains || []).slice(0, 12).map(domain => ({
+      const formalDomains = (formal?.knowledge_domains || []).map((domain: any) => ({
+        id: String(domain.id || '').slice(0, 120),
+        title: compactText(domain.title, 100),
+        summary: compactText(domain.summary, 260),
+        labels: (Array.isArray(domain.labels) ? domain.labels : []).slice(0, 12).map((label: unknown) => compactText(label, 80)),
+        sourceIds: (Array.isArray(domain.source_ids) ? domain.source_ids : []).slice(0, 8).map(String),
+      })).filter((domain: any) => domain.id && domain.title)
+      const domains = (formalDomains.length ? formalDomains : options.knowledgeDomains || []).slice(0, 12).map((domain: any) => ({
         id: domain.id,
         title: compactText(domain.title, 100),
         summary: compactText(domain.summary, 260),
@@ -432,23 +461,33 @@ export async function executeTutorAgentTool(
       return {
         run: {
           ...base, kind: 'workspace', status: 'completed', title: '读取学习工作区',
-          detail: `已读取当前任务/规划绑定与 ${queue.length} 个正式队列任务；${domains.length ? `当前项目有 ${domains.length} 个来源知识领域` : '当前对话未绑定项目知识领域'}。`,
-          observationSummary: `${queue.length} 个正式任务 / ${domains.length} 个项目知识领域`,
+          detail: `已读取当前任务/规划绑定与 ${queue.length} 个正式队列任务；${formal ? `${formal.recent_attempts.length} 次近期尝试、${formal.open_remediations.length} 个开放纠错` : '实践/复习投影暂不可用'}；${domains.length ? `当前项目有 ${domains.length} 个来源知识领域` : '当前对话未绑定项目知识领域'}。`,
+          observationSummary: `${queue.length} 个正式任务 / ${formal?.recent_attempts.length || 0} 次尝试 / ${domains.length} 个项目知识领域`,
           durationMs: Date.now() - startedAt,
         },
         observation: {
-          authority: 'formal_task_queue_plus_scoped_workspace_projection',
+          authority: formal?.authority || 'formal_task_queue_plus_scoped_workspace_projection',
           currentTaskBinding: options.learningTaskContext,
           planningDialogue: options.learningPlanContext,
           formalTaskQueue: queue,
+          learningEvidence: formal ? {
+            scope: formal.scope,
+            recentAttempts: formal.recent_attempts,
+            openRemediations: formal.open_remediations,
+            review: formal.review,
+            manifest: formal.manifest,
+          } : null,
+          projectSources: formal?.project_sources || [],
           knowledgeDomains: domains,
           knowledgeDomainStatus: domains.length ? 'available_in_current_project_scope' : 'unavailable_without_project_scope',
           sourceConstraint,
           boundaries: [
             '任务生命周期不表示掌握',
+            '没有可见 Attempt 只表示当前作用域暂无记录，不能推断学习者第一次学习或从未练习',
             'PlanningDialogue 不是已确认 LearningPathPlan',
             '知识领域来自项目来源，不等同于学习者知识状态',
             '项目来源只约束当前项目的路线与讲解，不改写官方课程图或个人掌握状态',
+            ...(formal?.boundaries || []),
           ],
         },
       }

@@ -54,6 +54,7 @@ export type TutorAgentRuntimeInput = {
   taskQueue?: AgentTaskQueueItem[]
   knowledgeDomains?: AgentKnowledgeDomain[]
   formalLearnerContext?: unknown
+  formalWorkspaceContext?: unknown
   conversationId?: string
   sheetId?: string
   generate: TutorAgentToolRuntimeOptions['generate']
@@ -264,6 +265,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '读取工具可自主调用；当前没有向模型开放任何五核、路径、项目或文件写入工具。',
     '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
     '若工作区观察含 sourceConstraint，路线和讲解必须受当前项目来源覆盖范围约束；超出范围只能标为资料缺口，并在检索到新证据后补充。',
+    '工作区中没有 Attempt 只表示当前作用域没有可见记录，不能推断学生第一次学习、从未练习或没有相关经历。',
     '工具失败时先依据错误类型决定重试、换工具或明确告知缺口。拿到足够证据后直接回答。',
   ].join('\n')
 }
@@ -322,6 +324,14 @@ export function verifyTutorTurnOutcome(options: {
   const hasLearnerConflict = Array.isArray(learnerConflicts) && learnerConflicts.length > 0
   const acknowledgesConflict = /(?:冲突|不一致|相互矛盾|需要你确认|请你确认|保留原记录|不会静默覆盖|纠正候选)/i.test(reply)
   if (hasLearnerConflict && !acknowledgesConflict) violations.push('silent_memory_conflict')
+  const workspaceContext = options.observations?.find(observation => observation.source === 'read_learning_workspace')?.data
+  const evidenceManifest = workspaceContext && typeof workspaceContext === 'object'
+    ? ((workspaceContext as Record<string, any>).learningEvidence?.manifest || {})
+    : {}
+  const noScopedAttempts = evidenceManifest && Number(evidenceManifest.attempt_count) === 0
+  const unsupportedHistoryInference = /(?:说明|所以|因此|可见)?[^。！!？?\n]{0,18}(?:你(?:是|这)?[^。！!？?\n]{0,8})?(?:第一次(?:正式)?学|从未(?:学|练习)|没有(?:学过|练习过))/i.test(reply)
+    && !/(?:记录|数据|当前作用域|这里)[^。！!？?\n]{0,18}(?:没有|暂无|未找到|不可见)/i.test(reply)
+  if (noScopedAttempts && unsupportedHistoryInference) violations.push('unsupported_learning_history_claim')
   return { valid: violations.length === 0, violations }
 }
 
@@ -356,6 +366,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     knowledgeDomains: input.knowledgeDomains,
     learnerPathState: input.learnerPathState,
     formalLearnerContext: input.formalLearnerContext,
+    formalWorkspaceContext: input.formalWorkspaceContext,
   }
 
   const execute = async (call: AgentToolCall, sourceUrls: string[] = []) => {
@@ -520,7 +531,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       runtimeMessages.push({ role: 'assistant', content: text })
       runtimeMessages.push({
         role: 'user',
-        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明；观察到记忆冲突时必须把冲突和确认权告诉学习者。`,
+        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明；观察到记忆冲突时必须把冲突和确认权告诉学习者；没有可见 Attempt 只能说暂无记录，不能推断学生第一次学习或从未练习。`,
       })
       record({ phase: 'verify', detail: `回复未通过终态校验：${verification.violations.join('、')}`, status: 'failed' })
     }

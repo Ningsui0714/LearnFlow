@@ -192,6 +192,15 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         labels: Array.isArray(item.labels) ? item.labels.filter((value: unknown) => typeof value === 'string').slice(0, 16) : [],
         sourceIds: Array.isArray(item.sourceIds) ? item.sourceIds.filter((value: unknown) => typeof value === 'string').slice(0, 12) : [],
       })) : []
+      const rawFormalScope = input.formalScope && typeof input.formalScope === 'object'
+        ? input.formalScope as Record<string, unknown> : {}
+      const positiveInteger = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value > 0
+        ? value : undefined
+      const formalScope = {
+        sessionId: positiveInteger(rawFormalScope.sessionId),
+        projectId: positiveInteger(rawFormalScope.projectId),
+        checkpointId: positiveInteger(rawFormalScope.checkpointId),
+      }
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -213,6 +222,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
 
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
       let formalLearnerContext: unknown = null
+      let formalWorkspaceContext: unknown = null
       try {
         const contextPurpose = modeValue === 'learning_plan'
           ? 'learning_plan'
@@ -230,6 +240,24 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         }
       } catch {
         formalLearnerContext = null
+      }
+      if (modeValue === 'guided_learning' || modeValue === 'learning_plan') {
+        try {
+          const workspaceQuery = new URLSearchParams()
+          if (formalScope.sessionId) workspaceQuery.set('session_id', String(formalScope.sessionId))
+          if (formalScope.projectId) workspaceQuery.set('project_id', String(formalScope.projectId))
+          if (formalScope.checkpointId) workspaceQuery.set('checkpoint_id', String(formalScope.checkpointId))
+          const workspaceResponse = await fetch(
+            `${backendBase}/api/learner-state/agent-workspace-context?${workspaceQuery}`,
+            {
+              headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
+              signal: AbortSignal.timeout(4_000),
+            },
+          )
+          if (workspaceResponse.ok) formalWorkspaceContext = await workspaceResponse.json()
+        } catch {
+          formalWorkspaceContext = null
+        }
       }
       const generate = async (instructions: string, inputText: string, timeoutMs?: number) => {
         const request = buildProviderRequest({
@@ -255,6 +283,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         taskQueue,
         knowledgeDomains,
         formalLearnerContext,
+        formalWorkspaceContext,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
         generate,

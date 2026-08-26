@@ -225,6 +225,12 @@ vNext 每轮 MUST 经过 `vnext_agent_turn_runtime`。它先生成 typed `Contex
 MUST 去重，工具失败 MUST 分类并留给模型恢复。模型只拥有五个 vNext native ACI，所有写入仍通过
 Action Board、确认策略和 EvidenceEvent 网关。
 
+`vnext_learning_workspace_reader` MUST 从后端按 learner/session/project/checkpoint 重新装配工作区观察，
+而不是信任浏览器提交的实践状态。投影包含正式任务队列、近期 `LearningAttempt`、开放
+`RemediationCase`、`ReviewSchedule` 摘要和当前项目已处理来源的知识领域；不得包含提交正文、答案、
+solution 或测试用例。有提示与独立成功、原题与变式、任务完成与掌握必须保持可区分。项目来源领域
+只能约束当前项目的路线与讲解，不能写入 Knowledge 或替代 Practice 证据。
+
 生产路径 MUST 只有这一个模型/工具循环；历史预调用工具函数不得参与 Tutor 回合。模型提出最终回答后，
 确定性 verifier MUST 检查展示协议、未确认写入声明、无证据掌握声明、未解释的工具失败和搜索引用。
 不合格回答只可在同一预算内要求模型纠正；预算耗尽且仍不合格时必须失败，不得向 UI 泄漏伪终态。

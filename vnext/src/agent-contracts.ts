@@ -96,6 +96,12 @@ export type AgentKnowledgeDomain = {
   sourceIds?: string[]
 }
 
+export type AgentFormalScope = {
+  sessionId?: number
+  projectId?: number
+  checkpointId?: number
+}
+
 export type AgentTurnRequest = {
   baseUrl: string
   model: string
@@ -108,6 +114,7 @@ export type AgentTurnRequest = {
   learnerPathState?: LearnerPathState
   taskQueue?: AgentTaskQueueItem[]
   knowledgeDomains?: AgentKnowledgeDomain[]
+  formalScope?: AgentFormalScope
   conversationId?: string
   sheetId?: string
 }
