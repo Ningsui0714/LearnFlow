@@ -55,6 +55,7 @@ export type TutorAgentRuntimeInput = {
   knowledgeDomains?: AgentKnowledgeDomain[]
   formalLearnerContext?: unknown
   formalWorkspaceContext?: unknown
+  formalReviewContext?: unknown
   conversationId?: string
   sheetId?: string
   generate: TutorAgentToolRuntimeOptions['generate']
@@ -272,7 +273,8 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
 
 function availableTools(input: TutorAgentRuntimeInput) {
   return TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
-    tool.name !== 'read_learning_path' || Boolean(input.learnerPathState)
+    (tool.name !== 'read_learning_path' || Boolean(input.learnerPathState))
+    && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
   ))
 }
 
@@ -367,6 +369,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     learnerPathState: input.learnerPathState,
     formalLearnerContext: input.formalLearnerContext,
     formalWorkspaceContext: input.formalWorkspaceContext,
+    formalReviewContext: input.formalReviewContext,
   }
 
   const execute = async (call: AgentToolCall, sourceUrls: string[] = []) => {
@@ -404,7 +407,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       authority: String((result.observation as any)?.authority || 'tool_observation'),
       answerFree: call.name === 'read_learner_context'
         || call.name === 'read_learning_workspace'
-        || call.name === 'read_learning_path',
+        || call.name === 'read_learning_path'
+        || call.name === 'read_review_context',
       data: result.observation,
     })
     runtimeMessages.push({
@@ -440,6 +444,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
   if (input.mode === 'learning_plan' && input.learnerPathState) {
     await execute({ id: `observe-path-${id}`, name: 'read_learning_path', arguments: { query: latestMessage } })
+  }
+  if (input.formalReviewContext && /复习|错题|遗忘|记不住|熟练度|掌握度|记忆曲线|间隔|回忆|薄弱/i.test(latestMessage)) {
+    await execute({ id: `observe-review-${id}`, name: 'read_review_context', arguments: { query: latestMessage } })
   }
   const explicit = explicitToolCall(input.toolChoice, latestMessage)
   if (explicit) {

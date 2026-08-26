@@ -193,6 +193,59 @@ def test_all_assessed_items_are_scheduled_and_answers_are_hidden(client: TestCli
     assert summary["interval_days"] == [1, 3, 7, 14, 30, 60]
 
 
+def test_review_reflection_is_answer_free_correctable_knowledge_evidence(client: TestClient):
+    learner_id, _, checkpoint_id, question_id = asyncio.run(_seed_question())
+    submitted = client.post(
+        f"/api/checkpoints/{checkpoint_id}/concepts/{question_id}/submit",
+        json={
+            "answer_indexes": [1],
+            "assistance_level": "none",
+            "client_submission_id": f"reflection-seed-{uuid.uuid4()}",
+        },
+    )
+    assert submitted.status_code == 200
+    listing = client.get("/api/review/items?bucket=all&limit=100")
+    assert listing.status_code == 200
+    item = next(value for value in listing.json()["items"] if value["item_id"] == question_id)
+
+    text = "我原来把空列表和只包含零的列表混在了一起"
+    saved = client.post(
+        f"/api/review/items/{item['id']}/reflections",
+        json={
+            "reflection_kind": "misconception",
+            "text": text,
+            "client_event_id": f"reflection-{uuid.uuid4()}",
+        },
+    )
+    assert saved.status_code == 200
+    note = next(value for value in saved.json()["item"]["memory_notes"] if value["text"] == text)
+    assert note["status"] == "self_reported_unverified"
+    assert note["mastery_inference"] is False
+    assert note["correctable"] is True
+
+    context = client.get(f"/api/review/agent-context?query={item['subject_key']}")
+    assert context.status_code == 200
+    assert not _contains_hidden_answers(context.json())
+    assert context.json()["policy_versions"]["proficiency"] == "concept-proficiency-v1"
+    assert any(
+        note["text"] == text
+        for context_item in context.json()["items"]
+        if context_item["schedule_id"] == item["id"]
+        for note in context_item["memory_notes"]
+    )
+
+    async def read_kernel():
+        async with async_session() as db:
+            return (await db.execute(select(KernelState).where(
+                KernelState.learner_id == learner_id,
+                KernelState.kernel_name == "knowledge",
+            ))).scalar_one()
+
+    kernel = asyncio.run(read_kernel())
+    reflections = (kernel.short_term.get("concept_understanding") or {}).get(item["subject_key"], {}).get("learner_reflections") or []
+    assert any(value["text"] == text and value["verification"] == "unverified" for value in reflections)
+
+
 def test_review_wrong_reuses_remediation_and_schedules_next_day(client: TestClient):
     _, _, checkpoint_id, question_id = asyncio.run(_seed_question())
     initial = client.post(

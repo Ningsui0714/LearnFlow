@@ -12,7 +12,7 @@ from app.models.learning import (
     EvidenceEvent, KernelState, LearningAttempt, LearningTask, RemediationCase, ReviewSchedule,
 )
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Project
-from app.schemas.review import ReviewActionRequest, ReviewSubmitRequest
+from app.schemas.review import ReviewActionRequest, ReviewReflectionRequest, ReviewSubmitRequest
 from app.services.auth import CurrentLearner, get_current_learner
 from app.services.learning_runtime import create_attempt, record_event
 from app.services.remediation import (
@@ -22,6 +22,9 @@ from app.services.review import (
     ACTIVE_PHASE, REMEDIATION_PHASE, SUSPENDED_PHASE,
     apply_assessment_result, load_owned_schedule, review_presentation,
     review_submission_key, schedule_bucket, serialize_schedule,
+)
+from app.services.review_proficiency import (
+    PROFICIENCY_POLICY_VERSION, build_concept_proficiency, build_review_memory_notes,
 )
 
 
@@ -83,6 +86,47 @@ async def _all_attempts(
     )).scalars().all())
 
 
+async def _review_events(
+    db: AsyncSession,
+    schedule: ReviewSchedule,
+    attempts: list[LearningAttempt],
+    cases: list[RemediationCase],
+) -> list[EvidenceEvent]:
+    attempt_ids = {item.id for item in attempts}
+    case_event_ids = {value for case in cases for value in list(case.evidence_event_ids or [])}
+    if schedule.last_event_id:
+        case_event_ids.add(schedule.last_event_id)
+    candidates = list((await db.execute(
+        select(EvidenceEvent)
+        .where(
+            EvidenceEvent.learner_id == schedule.learner_id,
+            EvidenceEvent.checkpoint_id == schedule.checkpoint_id,
+            EvidenceEvent.event_type.in_((
+                "concept_attempt_evaluated", "exercise_attempt_evaluated",
+                "remediation_retry_evaluated", "remediation_variant_evaluated",
+                "remediation_completed", "review_attempt_evaluated",
+                "review_reflection_recorded",
+            )),
+        )
+        .order_by(EvidenceEvent.occurred_at.desc(), EvidenceEvent.id.desc())
+        .limit(500)
+    )).scalars().all())
+    result = []
+    for event in candidates:
+        payload = dict(event.payload or {})
+        same_schedule = int(payload.get("review_schedule_id") or 0) == schedule.id
+        same_attempt = payload.get("attempt_id") in attempt_ids
+        same_item = (
+            payload.get("item_id") == schedule.item_id
+            and str(payload.get("source_item_type") or payload.get("item_type") or schedule.item_type)
+            == schedule.item_type
+            and event.checkpoint_id == schedule.checkpoint_id
+        )
+        if event.id in case_event_ids or same_schedule or same_attempt or same_item:
+            result.append(event)
+    return result
+
+
 async def _question_state(
     db: AsyncSession,
     schedule: ReviewSchedule,
@@ -103,6 +147,7 @@ async def _question_state(
     open_case = next((case for case in cases if case.status != "completed"), None)
     completed_case = next((case for case in cases if case.status == "completed"), None)
     wrong_count = sum(1 for attempt in attempts if not _attempt_passed(attempt))
+    events = await _review_events(db, schedule, attempts, cases)
 
     if not latest:
         attempt_state = "unseen"
@@ -166,6 +211,10 @@ async def _question_state(
 
     project = await db.get(Project, schedule.project_id) if schedule.project_id else None
     checkpoint = await db.get(Checkpoint, schedule.checkpoint_id)
+    learning_task = (await db.execute(select(LearningTask).where(
+        LearningTask.learner_id == schedule.learner_id,
+        LearningTask.checkpoint_id == schedule.checkpoint_id,
+    ).limit(1))).scalar_one_or_none()
     if schedule.item_type == "concept":
         source = await db.get(ConceptQuestion, schedule.item_id)
         title = (source.question if source else "概念题")[:180]
@@ -206,6 +255,15 @@ async def _question_state(
             "knowledge": retention,
             "practice": practice_review,
         },
+        "proficiency": build_concept_proficiency(schedule, attempts, events),
+        "memory_notes": build_review_memory_notes(schedule, attempts, cases, events),
+        "learning_task": ({
+            "id": learning_task.id,
+            "title": learning_task.title,
+            "status": learning_task.status,
+            "current_phase_id": learning_task.current_phase_id,
+            "review_handoff": dict(learning_task.review_handoff or {}),
+        } if learning_task else None),
         "remediation": serialize_case(open_case) if open_case else None,
     }
     if include_presentation:
@@ -261,6 +319,7 @@ async def review_summary(
         "stable": buckets.count("stable"),
         "suspended": buckets.count("suspended"),
         "policy_version": "review-policy-v1",
+        "proficiency_policy_version": PROFICIENCY_POLICY_VERSION,
         "interval_days": [1, 3, 7, 14, 30, 60],
     }
 
@@ -303,7 +362,12 @@ async def list_review_items(
     rows = [row for row in rows if included(row)]
     items = []
     for row in rows:
-        item = await _question_state(db, row)
+        try:
+            item = await _question_state(db, row)
+        except ValueError:
+            # Historical schedules can outlive a deleted source item. They
+            # remain auditable projections but are not runnable queue items.
+            continue
         if remediation_status and item["remediation_state"] != remediation_status:
             continue
         items.append(item)
@@ -328,6 +392,70 @@ async def list_review_items(
 
     items.sort(key=queue_priority)
     return {"items": items[:limit], "total": len(items), "bucket": bucket}
+
+
+@router.get("/agent-context")
+async def review_agent_context(
+    query: str = Query(default="", max_length=300),
+    limit: int = Query(default=8, ge=1, le=12),
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """Answer-free, bounded review observation for the Tutor ACI."""
+    rows = list((await db.execute(select(ReviewSchedule).where(
+        ReviewSchedule.learner_id == current.learner.id,
+    ))).scalars().all())
+    normalized = "".join(query.casefold().split())
+    if normalized:
+        matched = [row for row in rows if normalized in "".join((row.subject_key or "").casefold().split())]
+        if matched:
+            rows = matched
+    rows.sort(key=lambda row: (
+        0 if schedule_bucket(row) in {"wrong", "overdue", "due"} else 1,
+        row.due_at,
+        -int(row.lapse_count or 0),
+        -int(row.id),
+    ))
+    items = []
+    for row in rows:
+        try:
+            items.append(await _question_state(db, row, include_presentation=False))
+        except ValueError:
+            continue
+        if len(items) >= limit:
+            break
+    bucket_values = [item["bucket"] for item in items]
+    return {
+        "authority": "answer_free_review_evidence_projection",
+        "query": query,
+        "summary": {
+            "visible": len(items),
+            "due": sum(value in {"due", "overdue", "wrong"} for value in bucket_values),
+            "stable": bucket_values.count("stable"),
+        },
+        "items": [{
+            "schedule_id": item["id"],
+            "subject_key": item["subject_key"],
+            "title": item["title"],
+            "bucket": item["bucket"],
+            "due_at": item["due_at"],
+            "proficiency": item["proficiency"],
+            "memory_notes": item["memory_notes"][:8],
+            "learning_task": item["learning_task"],
+            "kernel_projection": item["kernel_projection"],
+            "reason_codes": item["reason_codes"],
+        } for item in items],
+        "boundaries": [
+            "不包含答案、solution 或测试用例",
+            "熟练度是由已判分证据重建的复习决策读模型，不是第二套掌握权威",
+            "学习任务完成不会直接提高熟练度，只有已判分 Attempt 与已登记事件参与计算",
+            "学习者反思按自述保存且可纠正，不会自动升级掌握",
+        ],
+        "policy_versions": {
+            "review": "review-policy-v1",
+            "proficiency": PROFICIENCY_POLICY_VERSION,
+        },
+    }
 
 
 @router.get("/items/{schedule_id}")
@@ -375,17 +503,11 @@ async def get_review_history(
             key=lambda attempt: attempt.evaluated_at or attempt.submitted_at or datetime.min,
             reverse=True,
         )
-    event_ids = {value for case in cases for value in list(case.evidence_event_ids or [])}
-    if schedule.last_event_id:
-        event_ids.add(schedule.last_event_id)
-    events = []
-    if event_ids:
-        events = list((await db.execute(select(EvidenceEvent).where(
-            EvidenceEvent.learner_id == current.learner.id,
-            EvidenceEvent.id.in_(event_ids),
-        ).order_by(EvidenceEvent.occurred_at.desc()))).scalars().all())
+    events = await _review_events(db, schedule, attempts, cases)
     return {
         "schedule": serialize_schedule(schedule),
+        "proficiency": build_concept_proficiency(schedule, attempts, events),
+        "memory_notes": build_review_memory_notes(schedule, attempts, cases, events),
         "attempts": [{
             "id": item.id,
             "status": item.status,
@@ -403,6 +525,47 @@ async def get_review_history(
             "occurred_at": item.occurred_at.isoformat() if item.occurred_at else None,
         } for item in events],
     }
+
+
+@router.post("/items/{schedule_id}/reflections")
+async def record_review_reflection(
+    schedule_id: int,
+    request: ReviewReflectionRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    schedule = await _owned_schedule_or_404(db, current.learner.id, schedule_id)
+    event = await record_event(
+        db,
+        learner_id=current.learner.id,
+        project_id=schedule.project_id,
+        checkpoint_id=schedule.checkpoint_id,
+        event_type="review_reflection_recorded",
+        source="user",
+        payload={
+            "review_schedule_id": schedule.id,
+            "source_item_type": schedule.item_type,
+            "item_id": schedule.item_id,
+            "subject_key": schedule.subject_key,
+            "memory_subject_key": schedule.subject_key or f"concept-item:{schedule.item_id}",
+            "reflection_kind": request.reflection_kind,
+            "text": " ".join(request.text.split()),
+            "source_tag": "user_self_input",
+            "verification": "unverified",
+            "mastery_inference": False,
+            "correctable": True,
+        },
+        confidence=1.0,
+        provenance={
+            "self_report": True,
+            "learner_visible": True,
+            "mastery_inference": False,
+        },
+        client_event_id=request.client_event_id,
+        actor_type="learner",
+    )
+    await db.commit()
+    return {"event_id": event.id, "item": await _question_state(db, schedule)}
 
 
 def _normalize_text(value: str) -> str:

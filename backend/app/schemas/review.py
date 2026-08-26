@@ -18,3 +18,9 @@ class ReviewSubmitRequest(BaseModel):
 class ReviewActionRequest(BaseModel):
     expected_version: int = Field(ge=1)
     client_event_id: str = Field(min_length=1, max_length=160)
+
+
+class ReviewReflectionRequest(BaseModel):
+    reflection_kind: Literal["insight", "misconception", "strength", "question"]
+    text: str = Field(min_length=2, max_length=1000)
+    client_event_id: str = Field(min_length=1, max_length=160)

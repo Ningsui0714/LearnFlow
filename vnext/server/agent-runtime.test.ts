@@ -183,6 +183,40 @@ test('guided turns observe the formal task queue and never expose write tools', 
   assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
 })
 
+test('review questions receive answer-free proficiency and memory observations', async () => {
+  const requests: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'free',
+    messages: [{ role: 'user', content: '我为什么今天要复习贝叶斯公式，熟练度怎么样？' }],
+    toolChoice: 'auto',
+    formalReviewContext: {
+      authority: 'answer_free_review_evidence_projection',
+      summary: { visible: 1, due: 1, stable: 0 },
+      items: [{
+        schedule_id: 9,
+        subject_key: 'bayes-rule',
+        due_at: '2026-08-26T00:00:00',
+        proficiency: { score: 61, memory_state: { difficulty: 5, stability_days: 3, retrievability: 0.83 } },
+        memory_notes: [{ kind: 'misconception', text: '容易混淆条件概率方向' }],
+      }],
+      boundaries: ['不包含答案', '熟练度不是第二套掌握权威'],
+    },
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '今天复习是因为已到提取窗口；当前证据仍缺少稳定的变式迁移。' } }] }
+    },
+  })
+
+  assert.deepEqual(result.toolRuns.map(run => run.kind), ['memory', 'review'])
+  assert.match(result.toolRuns[1].detail, /1 个相关复习项/)
+  const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(exposed.includes('read_review_context'))
+  assert.ok(!exposed.includes('record_review_reflection'))
+})
+
 test('planning final state observes five-kernel, workspace and path without upgrading self report', async () => {
   const requests: any[] = []
   const result = await runTutorAgentTurn({

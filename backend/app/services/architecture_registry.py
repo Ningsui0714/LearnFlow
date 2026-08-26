@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.16"
+REGISTRY_VERSION = "2026-08-26.17"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -311,6 +311,12 @@ TOOLS = {
                      ("knowledge", "human", "practice"), (), "EvidenceEvent"),
         ToolContract("review_scheduler", "Deterministic Spaced Review Scheduler", "practice_agent", "learnflow", "projection",
                      ("knowledge", "practice"), (), "LearningAttempt/Event -> ReviewSchedule"),
+        ToolContract("review_proficiency_projector", "Evidence-bound DSR Review Proficiency Projector", "practice_agent", "learnflow", "projection",
+                     ("knowledge", "practice"), (), "LearningAttempt/Event/ReviewSchedule -> rebuildable proficiency + D/S/R cold-start projection; never mastery authority"),
+        ToolContract("review_context_reader", "Answer-free Review Evidence Reader", "tutor_agent", "vnext", "read",
+                     ("knowledge", "practice"), (), "scoped schedules + graded evidence + correctable memories -> bounded answer-free Agent observation"),
+        ToolContract("review_reflection_gateway", "Learner Review Reflection Gateway", "tutor_agent", "vnext", "event_gateway",
+                     ("knowledge",), (), "explicit learner reflection -> EvidenceEvent -> five_kernel_reducer; unverified and no mastery inference"),
         ToolContract("evidence_ledger", "Evidence Ledger Gateway", "tutor_agent", "learnflow", "event_gateway",
                      (), (), "append-only EvidenceEvent"),
         ToolContract("five_kernel_reducer", "Five-kernel Deterministic Reducer", "tutor_agent", "learnflow", "projection",
@@ -346,6 +352,7 @@ TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
         "action_board", "computer_knowledge_search", "safe_visual_generation",
         "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader",
+        "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
         "personal_concept_graph_reader", "concept_self_report_gateway",
         "vnext_personal_path_node_runtime", "learner_memory_manager",
@@ -363,7 +370,7 @@ TOOL_INTERFACE_ROLES = {
         "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
     }},
     **{tool_id: "projection" for tool_id in {
-        "review_scheduler", "five_kernel_reducer", "memory_graph", "kernel_head_projector",
+        "review_scheduler", "review_proficiency_projector", "five_kernel_reducer", "memory_graph", "kernel_head_projector",
     }},
     "deterministic_remediation": "policy",
     "workflow_gateway": "adapter",
@@ -379,6 +386,7 @@ TOOL_MODEL_EXPOSURE = {
         if tool_id in {
             "computer_knowledge_search", "safe_visual_generation",
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader",
+            "review_context_reader",
         }
         else "agent_mediated"
         if TOOL_INTERFACE_ROLES.get(tool_id) == "aci_tool"
@@ -508,9 +516,10 @@ SKILLS = {
                       ("deterministic_remediation", "deterministic_assessment", "evidence_ledger"),
                       "RemediationCase + ordered evidence chain", "RemediationStrategy", "fused"),
         SkillContract("spaced_review", "检索练习与可解释间隔复习", "practice_agent",
-                      ("review_scheduler", "deterministic_assessment", "deterministic_remediation", "evidence_ledger"),
-                      "QuestionLearningState + ReviewSchedule + graded review evidence",
-                      "review-policy-v1"),
+                      ("review_scheduler", "review_proficiency_projector", "review_context_reader",
+                       "review_reflection_gateway", "deterministic_assessment", "deterministic_remediation", "evidence_ledger"),
+                      "LearningTask review handoff + ReviewSchedule + graded retrieval evidence + inspectable D/S/R projection + concrete memory notes",
+                      "review-policy-v1 + concept-proficiency-v1; deterministic evidence caps"),
         SkillContract("learner_memory_synthesis", "五核画像与可检查记忆", "tutor_agent",
                       ("five_kernel_reducer", "memory_graph", "kernel_head_projector",
                        "five_kernel_retriever", "context_packet_assembler"),
@@ -561,6 +570,7 @@ WORKBENCHES = {
                           ("coordinate_vnext_agent_turn", "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
+                           "read_review_context",
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
                            "read_personal_concept_graph",
                            "record_concept_self_report", "manage_vnext_personal_path_node"), "vnext"),
@@ -587,7 +597,8 @@ WORKBENCHES = {
         WorkbenchContract("remediation", "Remediation Panel", "RemediationPanel", "practice_agent",
                           ("request_remediation_explanation", "retry_attempt", "evaluate_transfer_variant"), "fused"),
         WorkbenchContract("review", "Global Review Workbench", "/review", "tutor_agent",
-                          ("plan_review_queue", "evaluate_review_attempt", "manage_review_item")),
+                          ("plan_review_queue", "read_review_context", "evaluate_review_attempt",
+                           "manage_review_item", "record_review_reflection"), "vnext"),
         WorkbenchContract("learner_growth", "Learner Growth", "/growth", "tutor_agent", ()),
         WorkbenchContract("profile", "Learner Profile Legacy Redirect", "/profile", "tutor_agent", ()),
         WorkbenchContract("memory", "Inspectable Memory Legacy Redirect", "/memory", "tutor_agent", ()),
@@ -613,6 +624,8 @@ CAPABILITY_OWNERS = {
     "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
     "read_vnext_learning_workspace": ("tutor_agent", "vnext_learning_workspace_reader", "vnext_chat"),
+    "read_review_context": ("tutor_agent", "review_context_reader", "vnext_chat"),
+    "record_review_reflection": ("tutor_agent", "review_reflection_gateway", "review"),
     "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
     "plan_vnext_learning_path": ("learning_design_agent", "vnext_learning_path_planner", "vnext_chat"),
     "manage_vnext_learning_path_plan": ("tutor_agent", "vnext_learning_path_plan_manager", "vnext_learning_path"),
@@ -771,6 +784,7 @@ EVENTS = {
         _event("remediation_variant_evaluated", "evaluate_transfer_variant", ("knowledge", "practice"), "transfer_evidence", origin="fused"),
         _event("remediation_completed", "evaluate_transfer_variant", ("knowledge", "human", "practice"), "evidence_writeback", origin="fused"),
         _event("review_attempt_evaluated", "evaluate_review_attempt", ("knowledge", "practice"), "spaced_retrieval"),
+        _event("review_reflection_recorded", "record_review_reflection", ("knowledge",), "learner_self_report"),
         _event("review_item_skipped", "manage_review_item", (), "operational"),
         _event("review_item_deferred", "manage_review_item", (), "operational"),
         _event("review_item_suspended", "manage_review_item", (), "operational"),

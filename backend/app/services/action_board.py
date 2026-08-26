@@ -32,7 +32,7 @@ ACTION_BOARD = {
             "coordinate_vnext_agent_turn", "编排 vNext 有界观察—行动—观察循环", "context", "none",
             {},
             ("read_vnext_five_kernel_profile", "read_vnext_learning_workspace",
-             "read_vnext_learning_path_graph",
+             "read_vnext_learning_path_graph", "read_review_context",
              "search_computer_knowledge", "generate_learning_visual"),
         ),
         ActionDefinition(
@@ -253,7 +253,17 @@ ACTION_BOARD = {
         ActionDefinition(
             "plan_review_queue", "读取并编排复习队列", "none", "none",
             {},
-            ("evaluate_review_attempt", "manage_review_item"),
+            ("read_review_context", "evaluate_review_attempt", "manage_review_item"),
+        ),
+        ActionDefinition(
+            "read_review_context", "读取复习证据与可解释熟练度", "none", "none",
+            {},
+            ("evaluate_review_attempt", "manage_review_item", "record_review_reflection"),
+        ),
+        ActionDefinition(
+            "record_review_reflection", "记录学习者的复习反思", "write", "explicit_or_click",
+            {"knowledge": "unverified_correctable_reflection"},
+            ("read_review_context", "manage_learner_memory"),
         ),
         ActionDefinition(
             "evaluate_review_attempt", "评估间隔复习尝试", "evidence", "explicit",

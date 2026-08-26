@@ -82,14 +82,15 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "vnext_learning_path_graph_reader", "vnext_learning_path_planner",
         "vnext_learning_path_plan_manager", "personal_concept_graph_reader",
         "concept_self_report_gateway", "vnext_personal_path_node_runtime",
-        "vnext_five_kernel_explicit_editor",
+        "vnext_five_kernel_explicit_editor", "review_context_reader",
+        "review_proficiency_projector", "review_reflection_gateway",
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "coordinate_vnext_agent_turn",
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-        "read_vnext_learning_workspace",
+        "read_vnext_learning_workspace", "read_review_context",
         "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }
@@ -126,7 +127,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
-            "vnext_learning_workspace_reader",
+            "vnext_learning_workspace_reader", "review_context_reader",
+            "review_proficiency_projector", "review_reflection_gateway",
             "vnext_learning_path_graph_reader", "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
             "personal_concept_graph_reader", "concept_self_report_gateway", "vnext_personal_path_node_runtime",
             "vnext_five_kernel_explicit_editor",

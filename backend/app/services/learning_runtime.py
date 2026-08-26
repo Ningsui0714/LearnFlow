@@ -1048,6 +1048,35 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
+    if et == "review_reflection_recorded":
+        subject_key = str(p.get("subject_key") or p.get("memory_subject_key") or "global")
+        knowledge = await _kernel(db, event.learner_id, "knowledge")
+        understanding = dict((knowledge.short_term or {}).get("concept_understanding") or {})
+        current = dict(understanding.get(subject_key) or {})
+        reflections = list(current.get("learner_reflections") or [])
+        entry = {
+            "event_id": event.id,
+            "review_schedule_id": p.get("review_schedule_id"),
+            "kind": p.get("reflection_kind"),
+            "text": str(p.get("text") or "")[:1000],
+            "source": "learner_self_report",
+            "verification": "unverified",
+            "mastery_inference": False,
+            "correctable": True,
+        }
+        if not any(item.get("event_id") == event.id for item in reflections):
+            reflections.append(entry)
+        current["learner_reflections"] = reflections[-12:]
+        understanding[subject_key] = current
+        await _apply_patch(
+            db,
+            event,
+            "knowledge",
+            {"concept_understanding": understanding},
+            "学习者为复习主题补充可纠正的自我反思；不据此升级掌握",
+        )
+        return
+
     if et == "review_attempt_evaluated":
         passed = bool(p.get("passed"))
         outcome = str(p.get("outcome") or ("correct" if passed else "incorrect"))

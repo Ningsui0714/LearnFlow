@@ -223,6 +223,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
       let formalLearnerContext: unknown = null
       let formalWorkspaceContext: unknown = null
+      let formalReviewContext: unknown = null
       try {
         const contextPurpose = modeValue === 'learning_plan'
           ? 'learning_plan'
@@ -259,6 +260,18 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           formalWorkspaceContext = null
         }
       }
+      if (/复习|错题|遗忘|记不住|熟练度|掌握度|记忆曲线|间隔|回忆|薄弱/i.test(latestMessage)) {
+        try {
+          const reviewQuery = new URLSearchParams({ query: latestMessage.slice(0, 1800), limit: '8' })
+          const reviewResponse = await fetch(`${backendBase}/api/review/agent-context?${reviewQuery}`, {
+            headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
+            signal: AbortSignal.timeout(4_000),
+          })
+          if (reviewResponse.ok) formalReviewContext = await reviewResponse.json()
+        } catch {
+          formalReviewContext = null
+        }
+      }
       const generate = async (instructions: string, inputText: string, timeoutMs?: number) => {
         const request = buildProviderRequest({
           baseUrl, model, instructions,
@@ -284,6 +297,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         knowledgeDomains,
         formalLearnerContext,
         formalWorkspaceContext,
+        formalReviewContext,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
         generate,

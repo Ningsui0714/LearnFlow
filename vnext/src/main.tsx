@@ -153,7 +153,7 @@ type Conversation = {
 
 type WorkspaceTab = {
   id: string
-  kind: 'chat' | 'settings' | 'learning-path' | 'profile' | 'tasks'
+  kind: 'chat' | 'settings' | 'learning-path' | 'profile' | 'tasks' | 'review'
   title: string
   conversationId?: string
 }
@@ -177,10 +177,12 @@ const SETTINGS_TAB: WorkspaceTab = { id: 'settings', kind: 'settings', title: '�
 const LEARNING_PATH_TAB: WorkspaceTab = { id: 'learning-path', kind: 'learning-path', title: '学习路径' }
 const PROFILE_TAB: WorkspaceTab = { id: 'profile', kind: 'profile', title: '我的画像' }
 const TASKS_TAB: WorkspaceTab = { id: 'tasks', kind: 'tasks', title: '学习任务' }
+const REVIEW_TAB: WorkspaceTab = { id: 'review', kind: 'review', title: '复习' }
 const MarkdownContent = lazy(() => import('./MarkdownContent'))
 const LearningPathPage = lazy(() => import('./LearningPathPage'))
 const LearnerProfilePage = lazy(() => import('./LearnerProfilePage'))
 const LearningTasksPage = lazy(() => import('./LearningTasksPage'))
+const ReviewWorkbenchPage = lazy(() => import('./ReviewWorkbenchPage'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -225,9 +227,24 @@ function chatTab(conversation: Conversation): WorkspaceTab {
   }
 }
 
+function tabFromCurrentPath(conversations: Conversation[]): WorkspaceTab | undefined {
+  const path = window.location.pathname
+  if (path === '/settings') return SETTINGS_TAB
+  if (path === '/learning-path') return LEARNING_PATH_TAB
+  if (path === '/learner-profile') return PROFILE_TAB
+  if (path === '/tasks') return TASKS_TAB
+  if (path === '/review') return REVIEW_TAB
+  if (path.startsWith('/chat/')) {
+    const conversationId = decodeURIComponent(path.slice('/chat/'.length))
+    const conversation = conversations.find(item => item.id === conversationId)
+    if (conversation) return chatTab(conversation)
+  }
+  return undefined
+}
+
 function initialState(): PersistedState {
   const conversation = createConversation()
-  const tab = chatTab(conversation)
+  const tab = tabFromCurrentPath([conversation]) || chatTab(conversation)
   return {
     conversations: [conversation],
     tabs: [tab],
@@ -261,12 +278,14 @@ function restoreState(): PersistedState {
     }))
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
-      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile', 'tasks'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
+      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile', 'tasks', 'review'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
-    const safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
-    const activeTabId = safeTabs.some(tab => tab.id === value.activeTabId)
+    let safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
+    const routeTab = tabFromCurrentPath(conversations)
+    if (routeTab && !safeTabs.some(tab => tab.id === routeTab.id)) safeTabs = [...safeTabs, routeTab].slice(-12)
+    const activeTabId = routeTab?.id || (safeTabs.some(tab => tab.id === value.activeTabId)
       ? String(value.activeTabId)
-      : safeTabs[0].id
+      : safeTabs[0].id)
     const splitTabId = safeTabs.some(tab => tab.id === value.splitTabId)
       && value.splitTabId !== activeTabId
       ? String(value.splitTabId)
@@ -292,6 +311,7 @@ function pathForTab(tab: WorkspaceTab) {
   if (tab.kind === 'learning-path') return '/learning-path'
   if (tab.kind === 'profile') return '/learner-profile'
   if (tab.kind === 'tasks') return '/tasks'
+  if (tab.kind === 'review') return '/review'
   return `/chat/${tab.conversationId}`
 }
 
@@ -335,7 +355,7 @@ function inheritedContextMessages(conversation: Conversation) {
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
-  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : '□'
+  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : '□'
   return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
@@ -1399,6 +1419,13 @@ function App() {
         </Suspense>
       )
     }
+    if (tab.kind === 'review') {
+      return (
+        <Suspense fallback={<div className="page-loading">正在载入复习队列…</div>}>
+          <ReviewWorkbenchPage connection={formalConnection} />
+        </Suspense>
+      )
+    }
     if (tab.kind === 'settings') {
       return (
         <section className="settings-page">
@@ -1895,6 +1922,7 @@ function App() {
         <div className="topbar-spacer" />
         <span className={`prototype-badge formal-status-badge formal-status-${formalConnection.status}`}><i /> {formalConnection.status === 'connected' ? '正式五核已连接' : '五核离线'}</span>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(TASKS_TAB)}><span>☷</span><strong>学习任务</strong></button>
+        <button className="topbar-profile-button" type="button" onClick={() => openTab(REVIEW_TAB)}><span>↺</span><strong>复习</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span><strong>学习路径</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(PROFILE_TAB)}><span>现</span><strong>我的画像</strong></button>
         <button className="icon-button" type="button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
@@ -1921,6 +1949,11 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
+            <button type="button" className="sidebar-profile-button sidebar-review-button" onClick={() => openTab(REVIEW_TAB)}>
+              <span className="sidebar-profile-avatar">↺</span>
+              <span><strong>复习与错题</strong><small>检索 · 纠错 · 间隔</small></span>
+              <i>›</i>
+            </button>
             <button type="button" className="sidebar-profile-button sidebar-task-button" onClick={() => openTab(TASKS_TAB)}>
               <span className="sidebar-profile-avatar">☷</span>
               <span><strong>学习任务</strong><small>{formalSnapshot?.learning_tasks.filter(task => !['completed', 'canceled'].includes(task.status)).length || 0} 个待完成</small></span>
@@ -1936,7 +1969,7 @@ function App() {
               <span><strong>{formalSnapshot?.learner.display_name || '学习者画像'}</strong><small>{formalConnection.status === 'connected' ? `${formalSnapshot?.learner.education_stage || ''} · 五核正式接入` : '正式五核未连接'}</small></span>
               <i>›</i>
             </button>
-            <small className="sidebar-logic-note">Chat · 任务 · 路径 · 五核画像 · 设置</small>
+            <small className="sidebar-logic-note">Chat · 任务 · 复习 · 路径 · 五核画像 · 设置</small>
           </div>
         </aside>
 
