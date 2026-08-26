@@ -73,6 +73,7 @@ export type FormalLearningTask = {
   estimated_minutes: number
   preferred_skills?: string[]
   source_refs: Array<Record<string, unknown>>
+  artifact_refs: Array<Record<string, unknown>>
   success_criteria: string[]
   plan: {
     schema_version?: string
@@ -86,6 +87,32 @@ export type FormalLearningTask = {
   version: number
   created_at?: string | null
   updated_at?: string | null
+}
+
+export type FormalKnowledgeSource = {
+  id: number
+  type: 'file' | 'url' | 'github'
+  name: string
+  url: string
+  status: 'pending' | 'processing' | 'processed' | 'failed'
+  error: string
+  chunk_count: number
+  knowledge_domains: Array<{ label: string; evidence: string; summary?: string }>
+  created_at?: string | null
+  mastery_inference: false
+}
+
+export type FormalLearningFileRef = {
+  kind: 'lecture' | 'practice'
+  practice_kind?: 'exercise' | 'concept_question_set'
+  ref: string
+  id?: number
+  title: string
+  logical_filename: string
+  project_id?: number
+  checkpoint_id: number
+  path: string
+  question_count?: number
 }
 
 export type FormalLearningSkillRun = {
@@ -285,6 +312,15 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
       ...(init.headers || {}),
     },
   })
+  const text = await response.text()
+  let payload: unknown = null
+  try { payload = text ? JSON.parse(text) : null } catch { payload = text }
+  if (!response.ok) throw new Error(errorText(payload, `请求失败（${response.status}）`))
+  return payload as T
+}
+
+async function formRequest<T>(url: string, form: FormData): Promise<T> {
+  const response = await fetch(url, { method: 'POST', body: form, credentials: 'include' })
   const text = await response.text()
   let payload: unknown = null
   try { payload = text ? JSON.parse(text) : null } catch { payload = text }
@@ -567,6 +603,118 @@ export async function actOnFormalLearningTask(task: FormalLearningTask, action: 
       client_action_id: `vnext-task-action:${task.id}:${action}:${Date.now()}`,
       phase_id: action === 'complete_phase' ? task.current_phase_id : '',
       evidence_refs: [],
+    }),
+  })
+}
+
+export async function loadKnowledgeLibrary() {
+  await ensureFormalIdentity()
+  return jsonRequest<{ library_id: number; sources: FormalKnowledgeSource[]; boundary: string }>('/api/knowledge-library/sources')
+}
+
+export async function addKnowledgeLibraryUrl(url: string) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalKnowledgeSource>('/api/knowledge-library/sources/url', {
+    method: 'POST', body: JSON.stringify({ url }),
+  })
+}
+
+export async function uploadKnowledgeLibraryFile(file: File) {
+  await ensureFormalIdentity()
+  const form = new FormData()
+  form.append('file', file)
+  return formRequest<FormalKnowledgeSource>('/api/knowledge-library/sources/upload', form)
+}
+
+export async function processKnowledgeLibrarySource(sourceId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ status: string; source: FormalKnowledgeSource }>(`/api/knowledge-library/sources/${sourceId}/process`, { method: 'POST' })
+}
+
+export async function loadLearningFiles() {
+  await ensureFormalIdentity()
+  return jsonRequest<{ lectures: FormalLearningFileRef[]; practices: FormalLearningFileRef[]; boundary: string }>('/api/learning-files')
+}
+
+export async function loadLectureFile(lectureId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalLearningFileRef & {
+    id: number; version: number; status: string
+    sections: Array<{ title?: string; content?: string; keywords?: string[] }>
+    concept_graph: Record<string, unknown>
+    provenance: Record<string, unknown>
+    mastery_inference: false
+  }>(`/api/learning-files/lecture/${lectureId}`)
+}
+
+export async function loadPracticeFile(ref: string) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalLearningFileRef & {
+    practice_kind: 'exercise' | 'concept_question_set'
+    description?: string
+    starter_code?: string
+    hints?: string[]
+    questions?: Array<{ id: number; question: string; options: string[]; q_type: string; difficulty: string }>
+    answers_hidden: true
+  }>(`/api/learning-files/practice/${encodeURIComponent(ref)}`)
+}
+
+export async function generateFormalLearningFiles(task: FormalLearningTask, sourceText = '') {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalLearningTask>(`/api/learning-files/tasks/${task.id}/generate`, {
+    method: 'POST',
+    body: JSON.stringify({
+      source_text: sourceText,
+      expected_version: task.version,
+      client_request_id: `vnext-learning-files:${task.id}:${task.version}:${Date.now()}`,
+    }),
+  })
+}
+
+export async function recordLearningFileAccess(
+  kind: 'lecture' | 'practice',
+  ref: string,
+  action: 'opened' | 'attached',
+  context: { conversation_id?: string; sheet_id?: string } = {},
+) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ status: string; mastery_unchanged: true }>(`/api/learning-files/${kind}/${encodeURIComponent(ref)}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify({ ...context, client_event_id: `vnext-file:${action}:${kind}:${ref}:${Date.now()}` }),
+  })
+}
+
+export async function markFormalLectureRead(lectureId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ status: string; evidence_role: 'exposure'; mastery_unchanged: true }>(`/api/learning-files/lecture/${lectureId}/read`, {
+    method: 'POST',
+    body: JSON.stringify({ explicit_completion: true, client_event_id: `vnext-lecture-read:${lectureId}:${Date.now()}` }),
+  })
+}
+
+export async function submitFormalConceptAnswer(checkpointId: number, questionId: number, answerIndexes: number[]) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ correct: boolean; answer_indexes: number[]; explanation?: string; attempt_id: number }>(`/api/checkpoints/${checkpointId}/concepts/${questionId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({
+      answer_indexes: answerIndexes,
+      assistance_level: 'none',
+      attempt_role: 'original',
+      client_submission_id: `vnext-practice:${questionId}:${Date.now()}`,
+    }),
+  })
+}
+
+export async function submitFormalExercise(exerciseId: number, code: string) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ passed: boolean; stdout?: string; stderr?: string; results?: Array<Record<string, unknown>>; attempt_id: number }>(`/api/exercises/${exerciseId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({
+      code,
+      files: [],
+      assistance_level: 'none',
+      attempt_role: 'original',
+      client_submission_id: `vnext-exercise:${exerciseId}:${Date.now()}`,
     }),
   })
 }

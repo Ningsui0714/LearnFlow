@@ -90,7 +90,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "coordinate_vnext_agent_turn",
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-        "read_vnext_learning_workspace", "read_review_context",
+        "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
+        "recommend_learning_resources", "attach_learning_file_to_chat", "read_review_context",
         "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }
@@ -111,6 +112,15 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert CAPABILITY_OWNERS["read_vnext_learning_workspace"] == (
         "tutor_agent", "vnext_learning_workspace_reader", "vnext_chat",
     )
+    assert CAPABILITY_OWNERS["manage_domain_knowledge_sources"] == (
+        "tutor_agent", "source_ingestion", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["read_domain_knowledge"] == (
+        "tutor_agent", "domain_knowledge_reader", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["recommend_learning_resources"] == (
+        "learning_design_agent", "domain_knowledge_reader", "vnext_chat",
+    )
     assert CAPABILITY_OWNERS["read_vnext_learning_path_graph"] == (
         "tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat",
     )
@@ -128,6 +138,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
             "vnext_learning_workspace_reader", "review_context_reader",
+            "domain_knowledge_reader", "learning_file_service",
             "review_proficiency_projector", "review_reflection_gateway",
             "vnext_learning_path_graph_reader", "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
             "personal_concept_graph_reader", "concept_self_report_gateway", "vnext_personal_path_node_runtime",
@@ -147,6 +158,11 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "structure", "knowledge", "human", "value", "practice",
     )
     assert "bounded read-only Tutor context" in TOOLS["vnext_five_kernel_profile_reader"].write_path
+    assert EVENTS["knowledge_source_added"].kernel_targets == ()
+    assert EVENTS["knowledge_source_processed"].kernel_targets == ()
+    assert EVENTS["learning_file_generated"].kernel_targets == ()
+    assert EVENTS["learning_file_opened"].kernel_targets == ()
+    assert EVENTS["learning_file_attached_to_chat"].kernel_targets == ()
     assert all(EVENTS[event_id].kernel_targets == () for event_id in {
             "vnext_learning_task_created", "vnext_learning_task_started",
             "vnext_learning_task_phase_entered",

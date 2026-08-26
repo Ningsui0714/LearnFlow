@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.19"
+REGISTRY_VERSION = "2026-08-26.21"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -267,6 +267,10 @@ TOOLS = {
                      KERNEL_NAMES, (), "ContextPolicy -> KernelHead + scoped Memory Graph -> bounded read-only Tutor context; local simulation is offline fallback only"),
         ToolContract("vnext_learning_workspace_reader", "vNext Scoped Learning Workspace Reader", "tutor_agent", "vnext", "read",
                      KERNEL_NAMES, (), "learner/session/project/checkpoint-scoped LearningTask queue + answer-free LearningAttempt/RemediationCase/ReviewSchedule projection + project source knowledge domains -> bounded read-only observation"),
+        ToolContract("domain_knowledge_reader", "Learner Domain Knowledge Library Reader", "tutor_agent", "vnext", "read",
+                     (), (), "learner-owned processed Source/Chunk library -> relevance-ranked, provenance-bearing, bounded untrusted context; never learner knowledge evidence"),
+        ToolContract("learning_file_service", "Managed Lecture and Practice File Service", "tutor_agent", "vnext", "artifact",
+                     (), (), "learner-owned Lecture/Exercise/ConceptQuestion refs -> answer-safe file views, explicit open/attach audit events; generation and opening never imply mastery"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
         ToolContract("vnext_learning_path_planner", "vNext Personalized Long-term Learning Path Planner", "learning_design_agent", "vnext", "proposal",
@@ -351,7 +355,7 @@ TOOLS = {
 TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
         "action_board", "computer_knowledge_search", "safe_visual_generation",
-        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader",
+        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader", "domain_knowledge_reader",
         "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
         "personal_concept_graph_reader", "concept_self_report_gateway",
@@ -360,7 +364,7 @@ TOOL_INTERFACE_ROLES = {
         "repository_knowledge_domains", "hierarchical_rag", "content_generation",
         "teach_back_analyzer", "process_animation", "code_executor",
         "deterministic_assessment", "evidence_ledger", "five_kernel_retriever",
-        "workspace_file_service", "managed_artifact_service", "local_agent_broker",
+        "workspace_file_service", "managed_artifact_service", "learning_file_service", "local_agent_broker",
     }},
     **{tool_id: "harness" for tool_id in {
         "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime",
@@ -385,7 +389,7 @@ TOOL_MODEL_EXPOSURE = {
         "vnext_native"
         if tool_id in {
             "computer_knowledge_search", "safe_visual_generation",
-            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader",
+            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader", "domain_knowledge_reader",
             "review_context_reader",
         }
         else "agent_mediated"
@@ -506,6 +510,11 @@ SKILLS = {
                        "repository_knowledge_domains", "hierarchical_rag", "content_generation"),
                       "inspectable long-term route proposal or project roadmap with goal, prerequisites, milestones and provenance",
                       "deterministic route proposal + explicit learner confirmation"),
+        SkillContract("learning_resource_curation", "规划态学习资源策展", "learning_design_agent",
+                      ("domain_knowledge_reader", "computer_knowledge_search",
+                       "vnext_learning_path_graph_reader", "source_ingestion"),
+                      "goal-aligned resource proposal with coverage, authority tier, provenance and identified gaps",
+                      "Skill chooses the comparison workflow; read/search tools only supply evidence"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
                       ("hierarchical_rag", "content_generation", "process_animation"),
                       "structured teaching artifact; never mastery evidence", "artifact contract"),
@@ -570,6 +579,8 @@ WORKBENCHES = {
                           ("coordinate_vnext_agent_turn", "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
+                           "manage_domain_knowledge_sources", "read_domain_knowledge", "recommend_learning_resources",
+                           "attach_learning_file_to_chat",
                            "read_review_context",
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
                            "read_personal_concept_graph",
@@ -581,6 +592,12 @@ WORKBENCHES = {
                           ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph",
                            "read_personal_concept_graph", "record_concept_self_report",
                            "manage_learner_memory", "edit_vnext_five_kernel_profile"), "vnext"),
+        WorkbenchContract("vnext_learning_files", "vNext Learning File Library", "/learning-files", "tutor_agent",
+                          ("generate_learning_files", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
+        WorkbenchContract("vnext_lecture_file", "vNext Lecture File Workbench", "/files/lecture/:lectureId", "tutor_agent",
+                          ("open_learning_file", "attach_learning_file_to_chat", "explain_selection"), "vnext"),
+        WorkbenchContract("vnext_practice_file", "vNext Practice File Workbench", "/files/practice/:practiceRef", "tutor_agent",
+                          ("open_learning_file", "attach_learning_file_to_chat", "evaluate_attempt"), "vnext"),
         WorkbenchContract("learning_tasks", "Learning Task Queue", "/tasks", "tutor_agent",
                           ("manage_learning_tasks",)),
         WorkbenchContract("focused_learning", "Learning Artifact Workbench", "/learn/:runId", "tutor_agent",
@@ -625,6 +642,12 @@ CAPABILITY_OWNERS = {
     "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
     "read_vnext_learning_workspace": ("tutor_agent", "vnext_learning_workspace_reader", "vnext_chat"),
+    "manage_domain_knowledge_sources": ("tutor_agent", "source_ingestion", "vnext_chat"),
+    "read_domain_knowledge": ("tutor_agent", "domain_knowledge_reader", "vnext_chat"),
+    "recommend_learning_resources": ("learning_design_agent", "domain_knowledge_reader", "vnext_chat"),
+    "generate_learning_files": ("learning_design_agent", "learning_file_service", "vnext_learning_files"),
+    "open_learning_file": ("tutor_agent", "learning_file_service", "vnext_learning_files"),
+    "attach_learning_file_to_chat": ("tutor_agent", "learning_file_service", "vnext_chat"),
     "read_review_context": ("tutor_agent", "review_context_reader", "vnext_chat"),
     "record_review_reflection": ("tutor_agent", "review_reflection_gateway", "review"),
     "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
@@ -739,6 +762,11 @@ EVENTS = {
         _event("learning_task_resumed", "run_learning_task", (), "operational"),
         _event("learning_task_phase_completed", "run_learning_task", (), "operational_milestone"),
         _event("learning_task_materialized", "run_learning_task", (), "artifact_handoff"),
+        _event("knowledge_source_added", "manage_domain_knowledge_sources", (), "artifact_ingest", origin="vnext"),
+        _event("knowledge_source_processed", "manage_domain_knowledge_sources", (), "artifact_indexed", origin="vnext"),
+        _event("learning_file_generated", "generate_learning_files", (), "artifact", origin="vnext"),
+        _event("learning_file_opened", "open_learning_file", (), "artifact_access", origin="vnext"),
+        _event("learning_file_attached_to_chat", "attach_learning_file_to_chat", (), "context_attachment", origin="vnext"),
         _event("learning_task_completed", "run_learning_task", (), "operational_milestone"),
         _event("learning_task_canceled", "manage_learning_tasks", (), "operational"),
         _event("learning_skill_selected", "use_learning_skill", (), "operational"),

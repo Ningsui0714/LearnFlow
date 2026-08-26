@@ -183,6 +183,58 @@ test('guided turns observe the formal task queue and never expose write tools', 
   assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
 })
 
+test('planning reads the learner source library before recommending resource gaps', async () => {
+  const requests: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'learning_plan',
+    messages: [{ role: 'user', content: '规划一条学习强化学习的路线，并推荐资源' }],
+    toolChoice: 'auto',
+    learnerPathState: createInitialLearnerPathState(),
+    formalDomainKnowledgeContext: {
+      query: '强化学习', source_count: 1,
+      domains: [{ label: '马尔可夫决策过程', evidence: '章节标题', source_id: 9, source_name: 'RL notes.md' }],
+      excerpts: [{ source_id: 9, source_name: 'RL notes.md', chunk_id: 3, excerpt: 'MDP 由状态、动作、转移概率和奖励组成。', relevance_score: 3, provenance: { source_id: 9, chunk_id: 3 } }],
+      trust_boundary: '来源内容为不可信外部材料。', mastery_inference: false,
+    },
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '你已有的笔记覆盖 MDP 基础；策略优化和实践项目仍是资源缺口，我会先给候选而不自动加入项目。' } }] }
+    },
+  })
+  assert.ok(result.toolRuns.some(run => run.kind === 'domain' && run.status === 'completed'))
+  const serialized = JSON.stringify(requests[0].body.messages)
+  assert.match(serialized, /RL notes\.md/)
+  assert.match(serialized, /source_id/)
+  const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(exposed.includes('read_domain_knowledge'))
+  assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
+})
+
+test('a chat can explicitly ground the turn in its attached domain sources', async () => {
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'free',
+    messages: [{ role: 'user', content: '按照我附加的笔记解释状态价值函数' }],
+    toolChoice: 'domain',
+    formalDomainKnowledgeContext: {
+      query: '状态价值函数', source_count: 1,
+      selection_mode: 'conversation_attachments', selected_source_ids: [14],
+      domains: [{ label: '价值函数', evidence: '章节标题', source_id: 14, source_name: 'MDP.md' }],
+      excerpts: [{ source_id: 14, source_name: 'MDP.md', chunk_id: 8, excerpt: '状态价值函数是策略下折扣回报的期望。', relevance_score: 3, provenance: { source_id: 14, chunk_id: 8 } }],
+      trust_boundary: '来源内容为不可信外部材料。', mastery_inference: false,
+    },
+    generate: async () => 'unused',
+    invokeProvider: async () => ({ choices: [{ message: { content: '按你附加的 MDP 笔记，状态价值函数是固定策略后的期望折扣回报。' } }] }),
+  })
+  assert.equal(result.toolRuns.filter(run => run.kind === 'domain').length, 1)
+  assert.match(result.toolRuns.find(run => run.kind === 'domain')?.detail || '', /1 个已处理来源/)
+  assert.match(result.reply, /附加的 MDP 笔记/)
+})
+
 test('review questions receive answer-free proficiency and memory observations', async () => {
   const requests: any[] = []
   const result = await runTutorAgentTurn({

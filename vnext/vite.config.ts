@@ -75,6 +75,32 @@ function readJsonBody(request: any): Promise<unknown> {
   })
 }
 
+function readRawBody(request: any, maxBytes = 30_000_000): Promise<Uint8Array> {
+  return new Promise((resolveBody, rejectBody) => {
+    const chunks: Uint8Array[] = []
+    let total = 0
+    request.on('data', (chunk: Uint8Array) => {
+      total += chunk.length
+      if (total > maxBytes) {
+        rejectBody(new Error('请求内容过大'))
+        request.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    request.on('end', () => {
+      const body = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) {
+        body.set(chunk, offset)
+        offset += chunk.length
+      }
+      resolveBody(body)
+    })
+    request.on('error', rejectBody)
+  })
+}
+
 function sendJson(response: any, status: number, payload: unknown) {
   response.statusCode = status
   response.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -201,6 +227,9 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         projectId: positiveInteger(rawFormalScope.projectId),
         checkpointId: positiveInteger(rawFormalScope.checkpointId),
       }
+      const domainSourceIds = Array.isArray(input.domainSourceIds)
+        ? [...new Set(input.domainSourceIds.filter(positiveInteger))].slice(0, 12) as number[]
+        : []
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -223,6 +252,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
       let formalLearnerContext: unknown = null
       let formalWorkspaceContext: unknown = null
+      let formalDomainKnowledgeContext: unknown = null
       let formalReviewContext: unknown = null
       try {
         const contextPurpose = modeValue === 'learning_plan'
@@ -259,6 +289,20 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         } catch {
           formalWorkspaceContext = null
         }
+      }
+      if (domainSourceIds.length > 0) try {
+        const domainQuery = new URLSearchParams({
+          query: latestMessage.slice(0, 1800),
+          limit: '8',
+          source_ids: domainSourceIds.join(','),
+        })
+        const domainResponse = await fetch(`${backendBase}/api/knowledge-library/context?${domainQuery}`, {
+          headers: request.headers.cookie ? { Cookie: request.headers.cookie } : {},
+          signal: AbortSignal.timeout(4_000),
+        })
+        if (domainResponse.ok) formalDomainKnowledgeContext = await domainResponse.json()
+      } catch {
+        formalDomainKnowledgeContext = null
       }
       if (/复习|错题|遗忘|记不住|熟练度|掌握度|记忆曲线|间隔|回忆|薄弱/i.test(latestMessage)) {
         try {
@@ -297,6 +341,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         knowledgeDomains,
         formalLearnerContext,
         formalWorkspaceContext,
+        formalDomainKnowledgeContext,
         formalReviewContext,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
@@ -335,13 +380,15 @@ function backendApiProxy(backendBase: string): Plugin {
     }
     try {
       const method = String(request.method || 'GET').toUpperCase()
+      const incomingContentType = String(request.headers['content-type'] || '')
+      const multipart = incomingContentType.toLowerCase().startsWith('multipart/form-data')
       const body = method === 'GET' || method === 'HEAD'
         ? undefined
-        : JSON.stringify(await readJsonBody(request))
+        : multipart ? await readRawBody(request) : JSON.stringify(await readJsonBody(request))
       const upstream = await fetch(`${backendBase}${requestUrl.pathname}${requestUrl.search}`, {
         method,
         headers: {
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(body ? { 'Content-Type': multipart ? incomingContentType : 'application/json' } : {}),
           ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
           ...(request.headers.authorization ? { Authorization: request.headers.authorization } : {}),
         },

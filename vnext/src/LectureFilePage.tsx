@@ -1,0 +1,41 @@
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { loadLectureFile, markFormalLectureRead, recordLearningFileAccess } from './formal-runtime'
+
+const MarkdownContent = lazy(() => import('./MarkdownContent'))
+
+type Props = {
+  lectureId: number
+  embedded?: boolean
+  conversationId?: string
+  sheetId?: string
+  onAttach?: (file: { kind: 'lecture'; ref: string; title: string }) => void
+}
+
+export default function LectureFilePage({ lectureId, embedded, conversationId, sheetId, onAttach }: Props) {
+  const [file, setFile] = useState<Awaited<ReturnType<typeof loadLectureFile>>>()
+  const [active, setActive] = useState(0)
+  const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let alive = true
+    void loadLectureFile(lectureId).then(result => {
+      if (!alive) return
+      setFile(result)
+      void recordLearningFileAccess('lecture', String(lectureId), 'opened', { conversation_id: conversationId, sheet_id: sheetId }).catch(() => undefined)
+    }).catch(failure => alive && setError(failure instanceof Error ? failure.message : '讲义读取失败'))
+    return () => { alive = false }
+  }, [lectureId, conversationId, sheetId])
+  if (error) return <div className="formal-inline-error">{error}</div>
+  if (!file) return <div className="page-loading">正在打开正式讲义…</div>
+  return (
+    <section className={`lecture-file-workbench${embedded ? ' learning-file-embedded' : ''}`}>
+      <header className="learning-file-workbench-heading"><div><span>LECTURE · V{file.version}</span><h1>{file.title}</h1><code>{file.logical_filename}</code></div><div>{onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'lecture', ref: String(file.id), title: file.title })}>作为对话纸张打开</button>}<button type="button" onClick={() => void markFormalLectureRead(file.id).then(() => setNotice('已记录为讲义接触；掌握状态没有改变。')).catch(failure => setError(failure instanceof Error ? failure.message : '讲义阅读事件记录失败'))}>标记已读</button></div></header>
+      {notice && <div className="learning-evidence-notice">{notice}</div>}
+      <div className="lecture-file-layout">
+        <nav aria-label="讲义目录">{file.sections.map((section, index) => <button type="button" className={index === active ? 'active' : ''} key={`${section.title}-${index}`} onClick={() => setActive(index)}><i>{String(index + 1).padStart(2, '0')}</i><span>{section.title || `第 ${index + 1} 节`}</span></button>)}</nav>
+        <article><Suspense fallback={<div className="page-loading">渲染讲义…</div>}><MarkdownContent content={`# ${file.sections[active]?.title || file.title}\n\n${file.sections[active]?.content || '本节暂无内容。'}`} /></Suspense></article>
+      </div>
+      <footer>来源定位：Project #{file.project_id} · Checkpoint #{file.checkpoint_id} · Lecture #{file.id} · 阅读只表示接触，不表示掌握。</footer>
+    </section>
+  )
+}

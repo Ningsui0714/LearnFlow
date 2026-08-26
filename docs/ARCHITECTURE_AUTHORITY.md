@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-26.21`）：新增 learner-owned 领域知识底座的只读 ACI、规划态资源策展 Playbook 和 vNext 正式学习文件工作台。领域来源从 Chat 输入区附加，隐藏存储 Project 不形成独立用户工作台；Tutor 请求携带当前对话 source id，从而在对话资料与联网检索之间选择。它们复用现有 `Source/Chunk`、`LearningTask`、`Lecture`、`ConceptQuestion` 与 `Exercise`，不新增长期画像权威或 Kernel writer。来源加入/处理以及学习文件生成/打开/接入纸张均为零 target 审计事件；显式讲义阅读继续是 exposure-only，正式练习提交继续走既有确定性评分与 EvidenceEvent 链。旧项目来源、旧讲义/评估 API 和数据库 schema 保持兼容。详细契约见 `docs/KNOWLEDGE_AND_LEARNING_FILES.md`。
+
 ## 1. 权威层级
 
 1. `architecture_registry.py`：三类主 Agent、五核、能力、工具、产品技能、工作台和重要事件的机器可读清单。

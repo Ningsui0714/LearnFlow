@@ -55,6 +55,7 @@ export type TutorAgentRuntimeInput = {
   knowledgeDomains?: AgentKnowledgeDomain[]
   formalLearnerContext?: unknown
   formalWorkspaceContext?: unknown
+  formalDomainKnowledgeContext?: unknown
   formalReviewContext?: unknown
   conversationId?: string
   sheetId?: string
@@ -274,12 +275,14 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
 function availableTools(input: TutorAgentRuntimeInput) {
   return TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
     (tool.name !== 'read_learning_path' || Boolean(input.learnerPathState))
+    && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
   ))
 }
 
 function explicitToolCall(choice: TutorToolChoice, message: string): AgentToolCall | undefined {
   if (choice === 'auto') return undefined
+  if (choice === 'domain') return { id: `explicit-domain-${Date.now()}`, name: 'read_domain_knowledge', arguments: { query: message } }
   if (choice === 'search') return { id: `explicit-search-${Date.now()}`, name: 'search_computer_knowledge', arguments: { query: message } }
   return {
     id: `explicit-visual-${Date.now()}`,
@@ -369,6 +372,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     learnerPathState: input.learnerPathState,
     formalLearnerContext: input.formalLearnerContext,
     formalWorkspaceContext: input.formalWorkspaceContext,
+    formalDomainKnowledgeContext: input.formalDomainKnowledgeContext,
     formalReviewContext: input.formalReviewContext,
   }
 
@@ -407,6 +411,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       authority: String((result.observation as any)?.authority || 'tool_observation'),
       answerFree: call.name === 'read_learner_context'
         || call.name === 'read_learning_workspace'
+        || call.name === 'read_domain_knowledge'
         || call.name === 'read_learning_path'
         || call.name === 'read_review_context',
       data: result.observation,
@@ -441,6 +446,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } })
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
     await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
+  }
+  if (input.formalDomainKnowledgeContext && input.mode === 'learning_plan' && input.toolChoice === 'auto') {
+    await execute({ id: `observe-domain-${id}`, name: 'read_domain_knowledge', arguments: { query: latestMessage } })
   }
   if (input.mode === 'learning_plan' && input.learnerPathState) {
     await execute({ id: `observe-path-${id}`, name: 'read_learning_path', arguments: { query: latestMessage } })

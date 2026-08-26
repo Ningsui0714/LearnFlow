@@ -7,9 +7,70 @@ for route and content decisions, never learner-state or mastery evidence.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
-from app.models.project import Source
+from app.models.project import Chunk, Source
+
+
+_MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,4}\s+(.+?)\s*$")
+
+
+def derive_source_knowledge_domains(
+    source: Source,
+    chunks: list[Chunk],
+) -> list[dict[str, str]]:
+    """Derive a bounded, inspectable domain index for every source type.
+
+    This is intentionally deterministic.  It indexes headings and source
+    structure for retrieval, but never turns source contents into learner
+    knowledge or mastery evidence.
+    """
+    meta = source.meta_data or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except json.JSONDecodeError:
+            meta = {}
+    analysis = dict(meta.get("repo_analysis") or {})
+    domains: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(label: object, evidence: str, summary: object = "") -> None:
+        value = " ".join(str(label or "").split())[:160]
+        key = value.casefold()
+        if not value or key in seen or len(domains) >= 18:
+            return
+        seen.add(key)
+        domains.append({
+            "label": value,
+            "evidence": evidence,
+            "summary": " ".join(str(summary or "").split())[:360],
+        })
+
+    for item in analysis.get("readme_toc") or []:
+        if isinstance(item, dict):
+            add(item.get("title"), "README 目录")
+    for group in analysis.get("dir_groups") or []:
+        if isinstance(group, dict) and group.get("is_chapter"):
+            add(group.get("name") or group.get("dir"), "章节目录")
+
+    for chunk in sorted(chunks, key=lambda item: item.index):
+        chunk_meta = chunk.meta_data or {}
+        for key in ("heading", "title", "section", "chapter"):
+            add(chunk_meta.get(key), f"内容块 {chunk.index + 1} 元数据")
+        for line in str(chunk.content or "").splitlines()[:80]:
+            match = _MARKDOWN_HEADING.match(line)
+            if match:
+                add(match.group(1), f"内容块 {chunk.index + 1} 标题")
+        if len(domains) >= 18:
+            break
+
+    if not domains:
+        upload = dict(meta.get("upload") or {})
+        source_name = upload.get("original_filename") or source.url
+        add(source_name, "来源名称", str(chunks[0].content if chunks else "")[:240])
+    return domains
 
 
 def repository_knowledge_domains(sources: list[Source]) -> list[dict[str, Any]]:
@@ -33,6 +94,9 @@ def repository_knowledge_domains(sources: list[Source]) -> list[dict[str, Any]]:
                 seen.add(key)
                 domains.append({"label": value, "evidence": evidence})
 
+        for item in meta.get("knowledge_domains") or []:
+            if isinstance(item, dict):
+                add(item.get("label"), str(item.get("evidence") or "来源索引"))
         for item in analysis.get("readme_toc") or []:
             if isinstance(item, dict):
                 add(item.get("title"), "README 目录")
@@ -48,7 +112,7 @@ def repository_knowledge_domains(sources: list[Source]) -> list[dict[str, Any]]:
                 "source_id": source.id,
                 "role": source.role or "main",
                 "type": source.type,
-                "structure_logic": analysis.get("structure_logic", "mixed"),
+                "structure_logic": analysis.get("structure_logic", "document"),
                 "domains": domains,
             })
     return result

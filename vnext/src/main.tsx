@@ -70,6 +70,7 @@ import {
 import {
   actOnFormalLearningSkillRun,
   actOnFormalLearningTask,
+  addKnowledgeLibraryUrl,
   advanceFormalLearningSkillTurn,
   addFormalPersonalPathNode,
   archiveFormalLearningPathPlan,
@@ -77,10 +78,13 @@ import {
   confirmFormalValueClaim,
   commitFormalLearningPathPlan,
   createFormalTutorSession,
+  generateFormalLearningFiles,
   learnerPathStateFromFormal,
   loadFormalLearnerSnapshot,
   removeFormalPersonalPathNode,
   recordFormalConceptStatement,
+  recordLearningFileAccess,
+  processKnowledgeLibrarySource,
   setFormalMemoryArchived,
   setFormalPathStatus,
   submitFormalClaimFeedback,
@@ -88,10 +92,13 @@ import {
   syncFormalEvent,
   syncFormalEvents,
   updateFormalLearnerProfile,
+  uploadKnowledgeLibraryFile,
   type FormalLearnerProfilePatch,
   type FormalLearnerSnapshot,
   type FormalLearningTaskAction,
+  type FormalLearningFileRef,
   type FormalLearningSkillRun,
+  type FormalKnowledgeSource,
   type FormalRuntimeConnection,
 } from './formal-runtime'
 import type { AgentTurnTrace } from './agent-contracts'
@@ -122,6 +129,7 @@ type FollowUpSheet = {
   parentSheetId: string
   messages: Message[]
   createdAt: number
+  artifact?: { kind: 'lecture' | 'practice'; ref: string; title: string }
 }
 
 type PendingSheetDelete = {
@@ -150,13 +158,15 @@ type Conversation = {
   learningPlans: LearningPlan[]
   planningEvents: PlanningEvent[]
   formalSessionId?: number
+  domainSources: FormalKnowledgeSource[]
 }
 
 type WorkspaceTab = {
   id: string
-  kind: 'chat' | 'settings' | 'learning-path' | 'profile' | 'tasks' | 'review'
+  kind: 'chat' | 'settings' | 'learning-path' | 'profile' | 'tasks' | 'review' | 'learning-files' | 'lecture-file' | 'practice-file'
   title: string
   conversationId?: string
+  fileRef?: string
 }
 
 type SettingsState = {
@@ -179,11 +189,15 @@ const LEARNING_PATH_TAB: WorkspaceTab = { id: 'learning-path', kind: 'learning-p
 const PROFILE_TAB: WorkspaceTab = { id: 'profile', kind: 'profile', title: '我的画像' }
 const TASKS_TAB: WorkspaceTab = { id: 'tasks', kind: 'tasks', title: '学习任务' }
 const REVIEW_TAB: WorkspaceTab = { id: 'review', kind: 'review', title: '复习' }
+const LEARNING_FILES_TAB: WorkspaceTab = { id: 'learning-files', kind: 'learning-files', title: '讲义与练习' }
 const MarkdownContent = lazy(() => import('./MarkdownContent'))
 const LearningPathPage = lazy(() => import('./LearningPathPage'))
 const LearnerProfilePage = lazy(() => import('./LearnerProfilePage'))
 const LearningTasksPage = lazy(() => import('./LearningTasksPage'))
 const ReviewWorkbenchPage = lazy(() => import('./ReviewWorkbenchPage'))
+const LearningFilesPage = lazy(() => import('./LearningFilesPage'))
+const LectureFilePage = lazy(() => import('./LectureFilePage'))
+const PracticeFilePage = lazy(() => import('./PracticeFilePage'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -209,6 +223,7 @@ function createConversation(): Conversation {
     learningEvents: [],
     learningPlans: [],
     planningEvents: [],
+    domainSources: [],
     messages: [{
       id: uid('message'),
       role: 'assistant',
@@ -228,6 +243,15 @@ function chatTab(conversation: Conversation): WorkspaceTab {
   }
 }
 
+function learningFileTab(file: Pick<FormalLearningFileRef, 'kind' | 'ref' | 'title'>): WorkspaceTab {
+  return {
+    id: `${file.kind}-file:${file.ref}`,
+    kind: file.kind === 'lecture' ? 'lecture-file' : 'practice-file',
+    title: file.title,
+    fileRef: file.ref,
+  }
+}
+
 function tabFromCurrentPath(conversations: Conversation[]): WorkspaceTab | undefined {
   const path = window.location.pathname
   if (path === '/settings') return SETTINGS_TAB
@@ -235,6 +259,15 @@ function tabFromCurrentPath(conversations: Conversation[]): WorkspaceTab | undef
   if (path === '/learner-profile') return PROFILE_TAB
   if (path === '/tasks') return TASKS_TAB
   if (path === '/review') return REVIEW_TAB
+  if (path === '/learning-files') return LEARNING_FILES_TAB
+  if (path.startsWith('/files/lecture/')) {
+    const ref = decodeURIComponent(path.slice('/files/lecture/'.length))
+    return { id: `lecture-file:${ref}`, kind: 'lecture-file', title: `讲义 #${ref}`, fileRef: ref }
+  }
+  if (path.startsWith('/files/practice/')) {
+    const ref = decodeURIComponent(path.slice('/files/practice/'.length))
+    return { id: `practice-file:${ref}`, kind: 'practice-file', title: '练习', fileRef: ref }
+  }
   if (path.startsWith('/chat/')) {
     const conversationId = decodeURIComponent(path.slice('/chat/'.length))
     const conversation = conversations.find(item => item.id === conversationId)
@@ -271,6 +304,7 @@ function restoreState(): PersistedState {
       learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
       learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
       planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
+      domainSources: Array.isArray(conversation.domainSources) ? conversation.domainSources : [],
       preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
         || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
@@ -279,7 +313,7 @@ function restoreState(): PersistedState {
     }))
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
-      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile', 'tasks', 'review'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
+      ? value.tabs.filter(tab => ['settings', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
     let safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
     const routeTab = tabFromCurrentPath(conversations)
@@ -313,6 +347,9 @@ function pathForTab(tab: WorkspaceTab) {
   if (tab.kind === 'profile') return '/learner-profile'
   if (tab.kind === 'tasks') return '/tasks'
   if (tab.kind === 'review') return '/review'
+  if (tab.kind === 'learning-files') return '/learning-files'
+  if (tab.kind === 'lecture-file') return `/files/lecture/${encodeURIComponent(tab.fileRef || '')}`
+  if (tab.kind === 'practice-file') return `/files/practice/${encodeURIComponent(tab.fileRef || '')}`
   return `/chat/${tab.conversationId}`
 }
 
@@ -356,7 +393,7 @@ function inheritedContextMessages(conversation: Conversation) {
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
-  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : '□'
+  const icon = kind === 'settings' ? '⚙' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : ['learning-files', 'lecture-file', 'practice-file'].includes(kind) ? '▤' : '□'
   return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
@@ -376,6 +413,9 @@ function App() {
   const [formalBusyKey, setFormalBusyKey] = useState('')
   const [formalError, setFormalError] = useState('')
   const [pathPlanWriteErrors, setPathPlanWriteErrors] = useState<Record<string, string>>({})
+  const [sourceBusy, setSourceBusy] = useState<Record<string, string>>({})
+  const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({})
+  const [sourceUrls, setSourceUrls] = useState<Record<string, string>>({})
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -663,6 +703,105 @@ function App() {
           : conversation
       )),
     }))
+  }
+
+  const attachDomainSource = (conversationId: string, source: FormalKnowledgeSource) => {
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => conversation.id === conversationId
+        ? {
+            ...conversation,
+            domainSources: [...conversation.domainSources.filter(item => item.id !== source.id), source],
+            updatedAt: Date.now(),
+          }
+        : conversation),
+    }))
+  }
+
+  const importDomainFile = async (conversationId: string, file: File) => {
+    setSourceBusy(previous => ({ ...previous, [conversationId]: `正在读取 ${file.name}` }))
+    setSourceErrors(previous => ({ ...previous, [conversationId]: '' }))
+    try {
+      const pending = await uploadKnowledgeLibraryFile(file)
+      setSourceBusy(previous => ({ ...previous, [conversationId]: `正在建立 ${file.name} 的领域索引` }))
+      const processed = await processKnowledgeLibrarySource(pending.id)
+      attachDomainSource(conversationId, processed.source)
+    } catch (error) {
+      setSourceErrors(previous => ({ ...previous, [conversationId]: error instanceof Error ? error.message : '资料导入失败' }))
+    } finally {
+      setSourceBusy(previous => ({ ...previous, [conversationId]: '' }))
+    }
+  }
+
+  const importDomainUrl = async (conversationId: string) => {
+    const url = (sourceUrls[conversationId] || '').trim()
+    if (!url) return
+    setSourceBusy(previous => ({ ...previous, [conversationId]: '正在读取 URL' }))
+    setSourceErrors(previous => ({ ...previous, [conversationId]: '' }))
+    try {
+      const pending = await addKnowledgeLibraryUrl(url)
+      setSourceBusy(previous => ({ ...previous, [conversationId]: '正在建立 URL 的领域索引' }))
+      const processed = await processKnowledgeLibrarySource(pending.id)
+      attachDomainSource(conversationId, processed.source)
+      setSourceUrls(previous => ({ ...previous, [conversationId]: '' }))
+    } catch (error) {
+      setSourceErrors(previous => ({ ...previous, [conversationId]: error instanceof Error ? error.message : 'URL 导入失败' }))
+    } finally {
+      setSourceBusy(previous => ({ ...previous, [conversationId]: '' }))
+    }
+  }
+
+  const detachDomainSource = (conversationId: string, sourceId: number) => {
+    const removesLastSource = (workspace.conversations.find(item => item.id === conversationId)?.domainSources.length || 0) <= 1
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => conversation.id === conversationId
+        ? { ...conversation, domainSources: conversation.domainSources.filter(source => source.id !== sourceId), updatedAt: Date.now() }
+        : conversation),
+    }))
+    if (removesLastSource) {
+      setToolChoices(previous => Object.fromEntries(Object.entries(previous).map(([key, choice]) => (
+        key.startsWith(`${conversationId}:`) && choice === 'domain' ? [key, 'auto'] : [key, choice]
+      ))) as Record<string, TutorToolChoice>)
+    }
+  }
+
+  const attachLearningFileToConversation = (
+    file: { kind: 'lecture' | 'practice'; ref: string; title: string },
+    preferredConversationId?: string,
+  ) => {
+    const activeConversationId = workspace.tabs.find(tab => tab.id === workspace.activeTabId)?.conversationId
+    const conversation = workspace.conversations.find(item => item.id === preferredConversationId)
+      || workspace.conversations.find(item => item.id === activeConversationId)
+      || workspace.conversations[0]
+    if (!conversation) return
+    const sheet: FollowUpSheet = {
+      id: uid('sheet'),
+      title: file.title.slice(0, 28),
+      quote: `${file.kind === 'lecture' ? '讲义' : '练习'}：${file.title}`,
+      sourceMessageId: '',
+      parentSheetId: 'main',
+      messages: [],
+      createdAt: Date.now(),
+      artifact: file,
+    }
+    setWorkspace(previous => {
+      const target = previous.conversations.find(item => item.id === conversation.id) || conversation
+      const tab = chatTab(target)
+      const tabs = previous.tabs.some(item => item.id === tab.id) ? previous.tabs : [...previous.tabs, tab].slice(-12)
+      return {
+        ...previous,
+        conversations: previous.conversations.map(item => item.id === conversation.id
+          ? { ...item, sheets: [...item.sheets, sheet], activeSheetId: sheet.id, updatedAt: Date.now() }
+          : item),
+        tabs,
+        activeTabId: tab.id,
+      }
+    })
+    void recordLearningFileAccess(file.kind, file.ref, 'attached', {
+      conversation_id: conversation.id,
+      sheet_id: sheet.id,
+    }).catch(() => undefined)
   }
 
   const finishTurn = (
@@ -953,6 +1092,7 @@ function App() {
           projectId: formalTaskForTurn?.project_id || undefined,
           checkpointId: formalTaskForTurn?.checkpoint_id || undefined,
         },
+        domainSourceIds: conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
       })
@@ -1373,6 +1513,23 @@ function App() {
     }
   }
 
+  const generateTaskFiles = async (task: NonNullable<FormalLearnerSnapshot['learning_tasks'][number]>) => {
+    setFormalBusyKey(`task:${task.id}`)
+    setFormalError('')
+    try {
+      const updated = await generateFormalLearningFiles(task)
+      setFormalSnapshot(previous => previous ? {
+        ...previous,
+        learning_tasks: previous.learning_tasks.map(item => item.id === updated.id ? updated : item),
+      } : previous)
+      openTab(LEARNING_FILES_TAB)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '讲义与练习生成失败')
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
   const renderTab = (tab: WorkspaceTab | undefined) => {
     if (!tab) return null
     if (tab.kind === 'learning-path') {
@@ -1416,6 +1573,8 @@ function App() {
             error={formalError}
             onRefresh={() => { void refreshFormalSnapshot(true) }}
             onAction={(task, action) => { void updateFormalTask(task, action) }}
+            onGenerateFiles={task => { void generateTaskFiles(task) }}
+            onOpenFiles={() => openTab(LEARNING_FILES_TAB)}
           />
         </Suspense>
       )
@@ -1426,6 +1585,15 @@ function App() {
           <ReviewWorkbenchPage connection={formalConnection} />
         </Suspense>
       )
+    }
+    if (tab.kind === 'learning-files') {
+      return <Suspense fallback={<div className="page-loading">正在载入学习文件…</div>}><LearningFilesPage onOpen={file => openTab(learningFileTab(file))} /></Suspense>
+    }
+    if (tab.kind === 'lecture-file' && tab.fileRef) {
+      return <Suspense fallback={<div className="page-loading">正在打开讲义…</div>}><LectureFilePage lectureId={Number(tab.fileRef)} onAttach={attachLearningFileToConversation} /></Suspense>
+    }
+    if (tab.kind === 'practice-file' && tab.fileRef) {
+      return <Suspense fallback={<div className="page-loading">正在打开练习…</div>}><PracticeFilePage practiceRef={tab.fileRef} onAttach={attachLearningFileToConversation} /></Suspense>
     }
     if (tab.kind === 'settings') {
       return (
@@ -1665,7 +1833,17 @@ function App() {
                   </div>
                 )}
                 <div className={hasWorkbench ? 'paper-sheet' : 'conversation-page-content'}>
-                  {sheet && (
+                  {sheet?.artifact?.kind === 'lecture' && (
+                    <Suspense fallback={<div className="page-loading">正在打开讲义纸张…</div>}>
+                      <LectureFilePage lectureId={Number(sheet.artifact.ref)} embedded conversationId={conversation.id} sheetId={sheet.id} />
+                    </Suspense>
+                  )}
+                  {sheet?.artifact?.kind === 'practice' && (
+                    <Suspense fallback={<div className="page-loading">正在打开练习纸张…</div>}>
+                      <PracticeFilePage practiceRef={sheet.artifact.ref} embedded conversationId={conversation.id} sheetId={sheet.id} />
+                    </Suspense>
+                  )}
+                  {sheet && !sheet.artifact && (
                     <blockquote className="selected-quote">
                       <span>本页从这段原文展开</span>
                       <p>{sheet.quote}</p>
@@ -1680,7 +1858,7 @@ function App() {
                     pathPlanBusyId={formalBusyKey.startsWith('path-plan:') ? formalBusyKey.slice('path-plan:'.length) : undefined}
                     pathPlanWriteErrors={pathPlanWriteErrors}
                   />
-                  {sheet && messages.length === 0 && (
+                  {sheet && messages.length === 0 && !sheet.artifact && (
                     <div className="empty-sheet-hint">这张纸已经继承原对话。直接在下方追问选中的句子。</div>
                   )}
                 </div>
@@ -1847,6 +2025,17 @@ function App() {
               </section>
             )}
             {pendingMode && <div className="turn-progress" role="status"><i /> 正在判断工具并由{TUTOR_MODE_LABELS[pendingMode]}组织回复…</div>}
+            {conversation.domainSources.length > 0 && (
+              <div className="conversation-source-chips" aria-label="本对话资料">
+                {conversation.domainSources.map(source => (
+                  <span key={source.id} title={source.knowledge_domains.map(item => item.label).join(' · ') || source.name}>
+                    <i>{source.type === 'file' ? '文' : '链'}</i>
+                    <strong>{source.name}</strong>
+                    <button type="button" onClick={() => detachDomainSource(conversation.id, source.id)} aria-label={`移除资料${source.name}`}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               value={drafts[draftKey] || ''}
               onChange={event => setDrafts(previous => ({ ...previous, [draftKey]: event.target.value }))}
@@ -1862,6 +2051,40 @@ function App() {
             />
             <div className="composer-footer">
               <div className="composer-tools">
+                <details className="source-attachment-menu">
+                  <summary role="button" aria-label="给当前对话添加资料" title="添加本地文件或 URL">
+                    ＋资料{conversation.domainSources.length > 0 ? ` ${conversation.domainSources.length}` : ''}
+                  </summary>
+                  <div className="source-attachment-popover">
+                    <header><strong>本对话资料</strong><span>资料只作为带来源的上下文，不代表你已经掌握。</span></header>
+                    <label className="source-file-picker">
+                      <input
+                        type="file"
+                        accept=".md,.txt,.pdf,.docx,.py,.json,.js,.ts,.tsx,.jsx,.c,.cpp,.h,.java,.go,.rs"
+                        disabled={Boolean(sourceBusy[conversation.id]) || Boolean(pendingMode)}
+                        onChange={event => {
+                          const file = event.target.files?.[0]
+                          event.currentTarget.value = ''
+                          if (file) void importDomainFile(conversation.id, file)
+                        }}
+                      />
+                      <span>上传本地文件</span>
+                    </label>
+                    <div className="source-url-row">
+                      <input
+                        type="url"
+                        value={sourceUrls[conversation.id] || ''}
+                        onChange={event => setSourceUrls(previous => ({ ...previous, [conversation.id]: event.target.value }))}
+                        placeholder="https://…"
+                        disabled={Boolean(sourceBusy[conversation.id]) || Boolean(pendingMode)}
+                      />
+                      <button type="button" onClick={() => { void importDomainUrl(conversation.id) }} disabled={Boolean(sourceBusy[conversation.id]) || !(sourceUrls[conversation.id] || '').trim()}>加入 URL</button>
+                    </div>
+                    {sourceBusy[conversation.id] && <p className="source-import-status">{sourceBusy[conversation.id]}</p>}
+                    {sourceErrors[conversation.id] && <p className="source-import-error">{sourceErrors[conversation.id]}</p>}
+                    <small>发送问题时可选“对话资料”强制读取；“自动”会在资料与联网搜索之间判断。</small>
+                  </div>
+                </details>
                 <div className="mode-options" aria-label="选择 Tutor 状态">
                   <button type="button" title="自由讨论；解释请求仍可自动进入简单讲解" aria-pressed={!activeTaskProjection && conversation.mode === 'free'} disabled={Boolean(pendingMode) || Boolean(activeTaskProjection)} onClick={() => setConversationMode(conversation.id, 'free')}>自由态</button>
                   <button type="button" title="下一轮使用简单讲解，完成后回到自由态" aria-pressed={!activeTaskProjection && conversation.mode === 'simple_explain'} disabled={Boolean(pendingMode) || Boolean(activeTaskProjection)} onClick={() => setConversationMode(conversation.id, 'simple_explain')}>简单讲解</button>
@@ -1899,7 +2122,7 @@ function App() {
                 <label className="tool-choice">
                   <span>工具</span>
                   <select value={toolChoices[draftKey] || 'auto'} disabled={Boolean(pendingMode)} onChange={event => setToolChoices(previous => ({ ...previous, [draftKey]: event.target.value as TutorToolChoice }))}>
-                    {(Object.keys(TOOL_CHOICE_LABELS) as TutorToolChoice[]).map(choice => <option key={choice} value={choice}>{TOOL_CHOICE_LABELS[choice]}</option>)}
+                    {(Object.keys(TOOL_CHOICE_LABELS) as TutorToolChoice[]).map(choice => <option key={choice} value={choice} disabled={choice === 'domain' && conversation.domainSources.length === 0}>{TOOL_CHOICE_LABELS[choice]}</option>)}
                   </select>
                 </label>
                 <span>Shift + Enter 换行</span>
@@ -1922,6 +2145,7 @@ function App() {
         </button>
         <div className="topbar-spacer" />
         <span className={`prototype-badge formal-status-badge formal-status-${formalConnection.status}`}><i /> {formalConnection.status === 'connected' ? '正式五核已连接' : '五核离线'}</span>
+        <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_FILES_TAB)}><span>▤</span><strong>学习文件</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(TASKS_TAB)}><span>☷</span><strong>学习任务</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(REVIEW_TAB)}><span>↺</span><strong>复习</strong></button>
         <button className="topbar-profile-button" type="button" onClick={() => openTab(LEARNING_PATH_TAB)}><span>⌁</span><strong>学习路径</strong></button>
@@ -1950,6 +2174,11 @@ function App() {
             ))}
           </nav>
           <div className="sidebar-footer">
+            <button type="button" className="sidebar-profile-button" onClick={() => openTab(LEARNING_FILES_TAB)}>
+              <span className="sidebar-profile-avatar">▤</span>
+              <span><strong>讲义与练习</strong><small>正式文件 · 独立工作台</small></span>
+              <i>›</i>
+            </button>
             <button type="button" className="sidebar-profile-button sidebar-review-button" onClick={() => openTab(REVIEW_TAB)}>
               <span className="sidebar-profile-avatar">↺</span>
               <span><strong>复习与错题</strong><small>检索 · 纠错 · 间隔</small></span>
@@ -1970,7 +2199,7 @@ function App() {
               <span><strong>{formalSnapshot?.learner.display_name || '学习者画像'}</strong><small>{formalConnection.status === 'connected' ? `${formalSnapshot?.learner.education_stage || ''} · 五核正式接入` : '正式五核未连接'}</small></span>
               <i>›</i>
             </button>
-            <small className="sidebar-logic-note">Chat · 任务 · 复习 · 路径 · 五核画像 · 设置</small>
+            <small className="sidebar-logic-note">Chat · 文件 · 任务 · 复习 · 路径 · 五核画像 · 设置</small>
           </div>
         </aside>
 
@@ -2054,7 +2283,7 @@ function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, activePathPl
   pathPlanBusyId?: string
   pathPlanWriteError?: string
 }) {
-  const icon = run.kind === 'memory' ? '◇' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
+  const icon = run.kind === 'memory' ? '◇' : run.kind === 'domain' ? '▤' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const pathPlanConfirmed = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === activePathPlanId)
   const pathPlanBusy = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === pathPlanBusyId)
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {

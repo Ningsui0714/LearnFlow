@@ -1,6 +1,6 @@
 import type { LearningPathPlanProposal, PersonalPathNodeProposal } from './learning-path-graph.ts'
 
-export type TutorToolChoice = 'auto' | 'search' | 'image' | 'animation'
+export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation'
 
 export type SearchSource = {
   title: string
@@ -27,7 +27,7 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'workspace' | 'review' | 'path' | 'search' | 'image' | 'animation'
+  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'search' | 'image' | 'animation'
   status: 'completed' | 'failed'
   title: string
   detail: string
@@ -46,11 +46,12 @@ export type TutorToolRun = {
 
 export const TOOL_CHOICE_LABELS: Record<TutorToolChoice, string> = {
   auto: '自动',
+  domain: '对话资料',
   search: '联网搜索',
   image: '生成图解',
   animation: '生成动画',
 }
 
 export function isTutorToolChoice(value: unknown): value is TutorToolChoice {
-  return value === 'auto' || value === 'search' || value === 'image' || value === 'animation'
+  return value === 'auto' || value === 'domain' || value === 'search' || value === 'image' || value === 'animation'
 }

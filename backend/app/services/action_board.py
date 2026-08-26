@@ -71,6 +71,36 @@ ACTION_BOARD = {
             ("run_vnext_learning_task", "run_vnext_learning_plan"),
         ),
         ActionDefinition(
+            "manage_domain_knowledge_sources", "维护当前对话资料来源", "write", "explicit_or_click",
+            {},
+            ("read_domain_knowledge", "recommend_learning_resources"),
+        ),
+        ActionDefinition(
+            "read_domain_knowledge", "读取当前对话附加资料", "none", "none",
+            {},
+            ("recommend_learning_resources", "run_vnext_learning_plan"),
+        ),
+        ActionDefinition(
+            "recommend_learning_resources", "为学习规划筛选候选资源", "proposal", "explicit_or_auto",
+            {},
+            ("manage_domain_knowledge_sources", "run_vnext_learning_plan"),
+        ),
+        ActionDefinition(
+            "generate_learning_files", "为学习任务生成正式讲义与练习文件", "artifact", "explicit_or_click",
+            {},
+            ("open_learning_file", "attach_learning_file_to_chat"),
+        ),
+        ActionDefinition(
+            "open_learning_file", "打开正式讲义或练习文件", "context", "explicit_or_click",
+            {},
+            ("attach_learning_file_to_chat", "evaluate_attempt"),
+        ),
+        ActionDefinition(
+            "attach_learning_file_to_chat", "把正式学习文件接入对话纸张", "context", "explicit_or_click",
+            {},
+            ("open_selection_followup", "evaluate_attempt"),
+        ),
+        ActionDefinition(
             "read_vnext_learning_path_graph", "为规划态读取官方与个人学习路径图", "none", "none",
             {},
             ("search_computer_knowledge", "plan_vnext_learning_path", "manage_vnext_personal_path_node"),
