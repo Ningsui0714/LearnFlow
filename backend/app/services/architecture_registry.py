@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.27"
+REGISTRY_VERSION = "2026-08-27.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -292,7 +292,13 @@ TOOLS = {
         ToolContract("project_learning_file_proposer", "Project Learning File Generation Proposal Tool", "learning_design_agent", "vnext", "proposal",
                      ("knowledge", "human"), (), "checkpoint LearningTask + available sources -> lecture/practice generation proposal; user-triggered materialization and no mastery inference"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
-                     ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
+                     ("structure", "knowledge", "value"), (), "compatibility dispatcher over exact then conditional fuzzy retrieval; not model-visible; self-report is never Knowledge mastery"),
+        ToolContract("vnext_learning_path_exact_reader", "vNext Exact Learning Path Node Reader", "tutor_agent", "vnext", "read",
+                     ("structure", "knowledge", "value"), (), "normalized id/title/alias equality over versioned official + personal nodes -> bounded candidates with match reasons; miss explicitly requests fuzzy retrieval"),
+        ToolContract("vnext_learning_path_fuzzy_reader", "vNext Fuzzy Learning Path Graph Search", "tutor_agent", "vnext", "read",
+                     ("structure", "knowledge", "value"), (), "exact-miss query -> deterministic lexical/spelling/topical rank fusion -> resolved, ambiguous, or graph-gap observation; ambiguity cannot become a route"),
+        ToolContract("vnext_personal_path_node_proposer", "vNext Evidence-backed Personal Path Node Proposer", "tutor_agent", "vnext", "proposal",
+                     ("structure", "knowledge", "value"), (), "confirmed graph gap + provenance URLs + duplicate guard -> learner-visible node proposal; zero kernel target until explicit learner confirmation"),
         ToolContract("vnext_learning_path_planner", "vNext Personalized Long-term Learning Path Planner", "learning_design_agent", "vnext", "proposal",
                      ("structure", "knowledge", "human", "value"), (), "goal + official/personal DAG + scoped ContextPacket -> deterministic inspectable route proposal; model may explain but cannot choose mastery or commit"),
         ToolContract("vnext_learning_path_plan_manager", "vNext Confirmed Learning Path Plan Manager", "tutor_agent", "vnext", "orchestration",
@@ -375,7 +381,7 @@ TOOLS = {
 TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
         "action_board", "computer_knowledge_search", "safe_visual_generation",
-        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader", "domain_knowledge_reader",
+        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
         "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
         "personal_concept_graph_reader", "concept_self_report_gateway",
@@ -390,7 +396,7 @@ TOOL_INTERFACE_ROLES = {
         "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
     }},
     **{tool_id: "harness" for tool_id in {
-        "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime",
+        "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime", "vnext_learning_path_graph_reader",
         "selection_followup_context", "vnext_learning_task_runtime",
         "vnext_learning_plan_runtime", "micro_learning_orchestrator",
         "learning_skill_runtime", "learning_task_runtime", "learning_task_planner",
@@ -413,7 +419,7 @@ TOOL_MODEL_EXPOSURE = {
         "vnext_native"
         if tool_id in {
             "computer_knowledge_search", "safe_visual_generation",
-            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader", "domain_knowledge_reader",
+            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
             "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
@@ -531,14 +537,14 @@ SKILLS = {
                       "diagnostic coverage feedback; never a mastery upgrade",
                       "deterministic diagnostic threshold"),
         SkillContract("learning_path_planning", "来源约束的学习路线规划", "learning_design_agent",
-                      ("vnext_learning_path_graph_reader", "vnext_learning_path_planner",
+                      ("vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "vnext_learning_path_planner",
                        "vnext_learning_path_plan_manager", "source_ingestion",
                        "repository_knowledge_domains", "hierarchical_rag", "content_generation"),
                       "inspectable long-term route proposal or project roadmap with goal, prerequisites, milestones and provenance",
                       "deterministic route proposal + explicit learner confirmation"),
         SkillContract("learning_resource_curation", "规划态学习资源策展", "learning_design_agent",
                       ("domain_knowledge_reader", "computer_knowledge_search",
-                       "vnext_learning_path_graph_reader", "source_ingestion"),
+                       "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "source_ingestion"),
                       "goal-aligned resource proposal with coverage, authority tier, provenance and identified gaps",
                       "Skill chooses the comparison workflow; read/search tools only supply evidence"),
         SkillContract("project_apprenticeship_orchestration", "真实产物导向的项目学徒旅程", "tutor_agent",
@@ -627,11 +633,13 @@ WORKBENCHES = {
                            "manage_domain_knowledge_sources", "read_domain_knowledge", "recommend_learning_resources",
                            "attach_learning_file_to_chat", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
                            "read_review_context",
+                           "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "propose_vnext_personal_path_node",
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
                            "read_personal_concept_graph",
                            "record_concept_self_report", "manage_vnext_personal_path_node"), "vnext"),
         WorkbenchContract("vnext_learning_path", "LearnFlow Learning Path Graph", "/learning-path", "tutor_agent",
-                          ("read_vnext_learning_path_graph", "plan_vnext_learning_path",
+                          ("lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "propose_vnext_personal_path_node",
+                           "read_vnext_learning_path_graph", "plan_vnext_learning_path",
                            "manage_vnext_learning_path_plan", "manage_vnext_personal_path_node"), "vnext"),
         WorkbenchContract("vnext_profile", "LearnFlow Learner Profile", "/learner-profile", "tutor_agent",
                           ("read_vnext_five_kernel_profile", "read_vnext_learning_path_graph",
@@ -703,6 +711,9 @@ CAPABILITY_OWNERS = {
     "read_review_context": ("tutor_agent", "review_context_reader", "vnext_chat"),
     "record_review_reflection": ("tutor_agent", "review_reflection_gateway", "review"),
     "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
+    "lookup_vnext_learning_path_node": ("tutor_agent", "vnext_learning_path_exact_reader", "vnext_chat"),
+    "search_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_fuzzy_reader", "vnext_chat"),
+    "propose_vnext_personal_path_node": ("tutor_agent", "vnext_personal_path_node_proposer", "vnext_chat"),
     "plan_vnext_learning_path": ("learning_design_agent", "vnext_learning_path_planner", "vnext_chat"),
     "manage_vnext_learning_path_plan": ("tutor_agent", "vnext_learning_path_plan_manager", "vnext_learning_path"),
     "read_personal_concept_graph": ("tutor_agent", "personal_concept_graph_reader", "vnext_chat"),
@@ -1057,6 +1068,7 @@ def registry_manifest() -> dict[str, Any]:
             "vnext_learning_graph_alignment": "official course graph + personal course overlay + personal concept graph + source knowledge domains + confirmed path plan are joined only by explicit non-mastery alignment records",
             "vnext_learning_plan_projection": "planning intent -> proposal -> explicit learner decision; accepted Value changes enter the formal EvidenceEvent reducer",
             "vnext_learning_path_projection": "versioned official course DAG + formal learner overlay events -> Structure/Value reference projection; Knowledge only records self-reported exposure and never mastery",
+            "vnext_learning_path_retrieval": "exact id/title/alias lookup -> conditional deterministic fuzzy rank fusion -> ambiguity clarification or evidence-backed personal-node proposal; proposal remains zero-target until learner confirmation",
             "vnext_agent_turn_runtime": "typed ContextEnvelope -> bounded model/tool loop -> deterministic final-state verifier -> structured AgentTurnTrace; model receives only registered read/artifact ACI tools",
             "vnext_chat_session_authority": "learner-owned AgentSession + idempotent AgentMessage are the cross-browser ordinary-chat authority; localStorage keeps drafts, tabs and paper layout only; persistence never implies learning evidence",
             "frontend_authority": "frontend/ is the only product frontend; former vNext stable IDs remain compatibility identifiers, not a second runtime; web and Tauri use the same build and formal API contracts",

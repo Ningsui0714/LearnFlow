@@ -22,7 +22,9 @@ import {
   buildLearningPathPlanProposal,
   buildPersonalNodeProposal,
   learningPathPacketToTutorContext,
+  lookupLearningPathGraph,
   readLearningPathGraph,
+  searchLearningPathGraph,
   type LearnerPathState,
 } from '../src/learning-path-graph.ts'
 
@@ -359,15 +361,47 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
-    name: 'read_learning_path',
-    title: '读取学习路径图',
-    description: '在官方课程 DAG、个人课程覆盖层和已确认长期规划中定位目标、前置关系和路径缺口。自述状态不等同于掌握。',
+    name: 'lookup_learning_path_node',
+    title: '精确读取学习路径节点',
+    description: '当问题明确给出课程 ID、标准名称、别名或缩写时，低成本精确读取官方课程 DAG 与个人覆盖层。未命中时只返回“应模糊检索”，不得据此联网或创建个人节点；自述状态不等同于掌握。',
     toolClass: 'perception',
     risk: 'read_only',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '要定位的课程、技能、方向或学习目标' },
+        query: { type: 'string', description: '明确的课程 ID、名称、别名、缩写或包含它的学习目标' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_learning_path_graph',
+    title: '模糊检索学习路径图',
+    description: '仅在精确读取未命中、输入有错别字/近义表达，或目标可能对应多个课程时调用。融合名称、别名、拼写和领域信号，返回有理由的排序候选与歧义状态；歧义时必须让学习者选择，不能直接规划或造节点。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '需要近似定位或消歧的课程、技能、方向或学习目标' },
+        limit: { type: 'integer', minimum: 1, maximum: 10, description: '最多返回多少个可解释候选，默认 6' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'propose_personal_path_node',
+    title: '提出个人学习路径节点',
+    description: '仅当模糊检索明确返回 graph_gap，且联网搜索已取得外部来源时调用。它会复查重复节点和候选前置，只生成学习者可检查的提案；不得直接写图，也不得用于歧义候选。',
+    toolClass: 'collaboration',
+    risk: 'proposal',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '已确认不在官方/个人图中的学习主题' },
+        source_urls: { type: 'array', items: { type: 'string' }, description: '支持该主题与图谱关系的来源 URL；运行时还会合并本轮搜索结果' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -1054,9 +1088,43 @@ export async function executeTutorAgentTool(
       }
     }
 
-    if (name === 'read_learning_path') {
+    if (name === 'propose_personal_path_node') {
       if (!options.learnerPathState) throw new Error('当前没有可读取的学习路径状态')
-      const packet = readLearningPathGraph(query, options.learnerPathState)
+      const packet = searchLearningPathGraph(query, options.learnerPathState, 10)
+      const argumentUrls = Array.isArray(args.source_urls) ? args.source_urls.map(String) : []
+      const sourceUrls = [...new Set([...(meta.sourceUrls || []), ...argumentUrls])]
+      const proposal = buildPersonalNodeProposal(packet, sourceUrls, options.learnerPathState)
+      if (!proposal) {
+        if (packet.resolution === 'ambiguous') throw new Error('当前是候选歧义，不允许创建个人节点；请先让学习者选择')
+        if (!packet.needsExternalResearch) throw new Error('图中已有可靠相似节点，不允许重复创建个人节点')
+        if (!sourceUrls.length) throw new Error('个人节点提案缺少外部来源；请先联网搜索')
+        throw new Error('个人节点提案未通过重复与关系校验')
+      }
+      return {
+        run: {
+          ...base, kind: 'path', status: 'completed', title: '个人节点待确认',
+          detail: `已形成“${proposal.title}”个人节点提案；含 ${proposal.connections.length} 条候选连接，只有学习者确认后才能写入。`,
+          observationSummary: `${proposal.sourceUrls.length} 个来源 · ${proposal.connections.length} 条候选关系 · mastery unchanged`,
+          durationMs: Date.now() - startedAt,
+          pathProposal: proposal,
+        },
+        observation: {
+          authority: 'validated_personal_path_node_proposal',
+          personalNodeProposal: proposal,
+          confirmationRequired: true,
+          masteryUnchanged: true,
+        },
+      }
+    }
+
+    if (['lookup_learning_path_node', 'search_learning_path_graph', 'read_learning_path'].includes(name)) {
+      if (!options.learnerPathState) throw new Error('当前没有可读取的学习路径状态')
+      const limit = Math.max(1, Math.min(10, Number(args.limit) || 6))
+      const packet = name === 'lookup_learning_path_node'
+        ? lookupLearningPathGraph(query, options.learnerPathState, limit)
+        : name === 'search_learning_path_graph'
+          ? searchLearningPathGraph(query, options.learnerPathState, limit)
+          : readLearningPathGraph(query, options.learnerPathState, limit)
       const formal = compactFormalLearnerContext(options.formalLearnerContext) as Record<string, any> | undefined
       const conceptNodes = Array.isArray(formal?.personal_concept_graph?.nodes)
         ? formal!.personal_concept_graph.nodes : []
@@ -1065,17 +1133,17 @@ export async function executeTutorAgentTool(
         conceptNodes,
         options.knowledgeDomains || [],
       )
-      const selected = packet.nodes.slice(0, 4).map(node => node.title).join('、') || '尚无可靠匹配'
+      const selected = packet.candidates.slice(0, 4).map(node => `${node.title} ${Math.round(node.confidence * 100)}%`).join('、') || '尚无可靠匹配'
+      const title = packet.retrievalMode === 'exact' ? '精确读取学习路径节点'
+        : packet.retrievalMode === 'fuzzy' ? '模糊检索学习路径图' : '读取学习路径概览'
       const run: TutorToolRun = {
-        ...base, kind: 'path', status: 'completed', title: '读取学习路径图',
-        detail: `${packet.matchKind === 'graph_gap' ? '发现图谱缺口' : '完成结构定位'} · ${selected}。节点自述状态只用于导航，不等同于掌握。`,
-        observationSummary: `${packet.manifest.officialNodeCount} 官方节点 / ${packet.manifest.personalNodeCount} 个人节点`,
+        ...base, kind: 'path', status: 'completed', title,
+        detail: `${packet.resolution === 'resolved' ? '可靠定位' : packet.resolution === 'ambiguous' ? '需要消歧' : packet.needsFuzzySearch ? '精确读取未命中' : packet.matchKind === 'graph_gap' ? '确认图谱缺口' : '路径概览'} · ${selected}。节点自述状态只用于导航，不等同于掌握。`,
+        observationSummary: `${packet.retrievalMode} · ${packet.resolution} · ${packet.manifest.officialNodeCount} 官方 / ${packet.manifest.personalNodeCount} 个人`,
         durationMs: Date.now() - startedAt,
       }
-      if (!packet.needsExternalResearch) {
+      if (packet.resolution === 'resolved') {
         run.pathPlanProposal = buildLearningPathPlanProposal(query, options.learnerPathState, packet)
-      } else if (meta.sourceUrls?.length) {
-        run.pathProposal = buildPersonalNodeProposal(packet, meta.sourceUrls)
       }
       return {
         run,
@@ -1084,9 +1152,16 @@ export async function executeTutorAgentTool(
           context: learningPathPacketToTutorContext(packet),
           conceptPathAlignments: alignPersonalConceptsToLearningPath(conceptNodes),
           graphAlignment,
+          retrieval: {
+            mode: packet.retrievalMode,
+            resolution: packet.resolution,
+            candidates: packet.candidates,
+            omittedCandidateCount: packet.omittedCandidateCount,
+            recommendedNextAction: packet.recommendedNextAction,
+          },
+          needsFuzzySearch: packet.needsFuzzySearch,
           needsExternalResearch: packet.needsExternalResearch,
           pathPlanProposal: run.pathPlanProposal,
-          personalNodeProposal: run.pathProposal,
         },
       }
     }
@@ -1216,7 +1291,7 @@ export async function executeTutorAgentTool(
       : name === 'read_learning_workspace' ? 'workspace'
       : name === 'read_domain_knowledge' ? 'domain'
       : name === 'read_review_context' ? 'review'
-      : name === 'read_learning_path' ? 'path'
+      : ['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node', 'read_learning_path'].includes(name) ? 'path'
         : name === 'search_computer_knowledge' ? 'search'
           : /practice/i.test(name) ? 'file'
           : args.kind === 'animation' ? 'animation' : 'image'

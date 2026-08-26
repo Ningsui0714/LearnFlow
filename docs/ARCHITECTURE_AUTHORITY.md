@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.1`）：学习路径读取拆分为 `vnext_learning_path_exact_reader`、`vnext_learning_path_fuzzy_reader` 与 `vnext_personal_path_node_proposer` 三个正交 ACI；旧 `vnext_learning_path_graph_reader` 只保留为非模型可见的兼容调度器。精确读取只比较稳定 ID、标题和别名；只有未命中才允许确定性模糊排序；歧义必须交还学习者确认；只有明确图谱缺口且存在带 provenance 的外部来源时才能形成个人节点提案。提案为零 Kernel target，正式节点仍须学习者确认并通过既有事件网关写入，没有新增 Kernel writer、事件 schema 或数据库迁移。
+
 Contract impact（`2026-08-26.27`）：新增 `dynamic_practice_generator`、`similar_practice_generator`、`practice_quality_inspector` 三个受限 ACI 与 `dynamic_practice_loop` Playbook。它们只在正式带领学习任务和项目关卡 scope 内生成经过确定性校验、答案安全、心理测量状态为 `uncalibrated` 的 `ConceptQuestion` 集合；生成、检查、打开和纸张接入均为零 Kernel target。正式提交继续复用 `LearningAttempt -> concept_attempt_evaluated -> five_kernel_reducer`，固定写 Knowledge / Practice；仅学习者显式声明的前置卡点或已确认有效帮助可分别补充 Structure / Human。没有新增 Kernel writer 或数据库表，旧练习引用保持兼容。
 
 Contract impact（`2026-08-26.21`）：新增 learner-owned 领域知识底座的只读 ACI、规划态资源策展 Playbook 和 vNext 正式学习文件工作台。领域来源从 Chat 输入区附加，隐藏存储 Project 不形成独立用户工作台；Tutor 请求携带当前对话 source id，从而在对话资料与联网检索之间选择。它们复用现有 `Source/Chunk`、`LearningTask`、`Lecture`、`ConceptQuestion` 与 `Exercise`，不新增长期画像权威或 Kernel writer。来源加入/处理以及学习文件生成/打开/接入纸张均为零 target 审计事件；显式讲义阅读继续是 exposure-only，正式练习提交继续走既有确定性评分与 EvidenceEvent 链。旧项目来源、旧讲义/评估 API 和数据库 schema 保持兼容。详细契约见 `docs/KNOWLEDGE_AND_LEARNING_FILES.md`。
@@ -263,10 +265,17 @@ Contract impact：注册表版本提升到 `2026-08-25.8`，新增 `vnext_learni
 LearningTask、Value reducer、模型 API 和 Skill ID 均向后兼容；当前没有新增 Kernel writer，
 也没有把本地候选确认视为正式 Value Claim 写入。
 
-vNext 使用 `vnext_learning_path_graph_reader` 与 `vnext_personal_path_node_runtime`。前者读取版本化
-官方课程 DAG 和正式个人覆盖层，为学习规划态提供有界 Structure 参考；后者只接受
-学习者点击确认后的自报状态或个人节点变更。官方节点不是强制培养方案，匹配失败时先由已登记的
-计算机知识搜索确认主题与已有节点关系，再生成可拒绝的个人节点提案。
+vNext 使用三段式路径检索。`vnext_learning_path_exact_reader` 先对版本化官方课程 DAG 与正式个人
+覆盖层做稳定 ID、标题和别名等值匹配；只有未命中时，`vnext_learning_path_fuzzy_reader` 才做
+拼写、词法、主题三个独立排序并进行确定性 rank fusion。结果必须显式区分 `resolved`、`ambiguous`
+和 `not_found`：歧义只能请求学习者选择，不能生成路线；复合主题也不能因为包含较短课程名而被
+错误折叠。`vnext_learning_path_graph_reader` 仅作为兼容调度器存在，不向模型暴露。
+
+只有 `not_found` 被判为图谱缺口后，Tutor 才能搜索外部来源，并调用
+`vnext_personal_path_node_proposer` 生成带来源、重复检查和快照 ID 的可拒绝提案。提案不改图、不改
+掌握度、不写五核。`vnext_personal_path_node_runtime` 只接受学习者点击确认后的自报状态或个人节点
+变更，并通过正式事件网关落盘。完整检索契约、阈值和评测矩阵见
+`docs/LEARNING_PATH_RETRIEVAL.md`。
 
 `/learning-path` 负责图谱查看、筛选、自报标记和个人节点管理，`/learner-profile` 负责分核展示
 正式 KernelState、MemoryFact、Module/Claim 及路径摘要，`/tasks` 负责正式原子任务队列。三者

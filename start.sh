@@ -96,6 +96,43 @@ next_available_port() {
   printf '%s' "$candidate"
 }
 
+listener_pid() {
+  local port="$1"
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n 1
+}
+
+listener_cwd() {
+  local pid="$1"
+  command -v lsof >/dev/null 2>&1 || return 1
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
+}
+
+ensure_port_available() {
+  local port="$1"
+  local label="$2"
+  local pid
+  pid="$(listener_pid "$port" || true)"
+  if [ -n "$pid" ]; then
+    echo -e "${RED}❌ $label 端口 $port 已被进程 $pid 占用${NC}"
+    echo -e "${YELLOW}请先运行 bash start.sh stop，或检查该端口上的其他服务。${NC}"
+    exit 1
+  fi
+}
+
+stop_repo_listener() {
+  local port="$1"
+  local expected_cwd="$2"
+  local pid
+  local cwd
+  pid="$(listener_pid "$port" || true)"
+  [ -n "$pid" ] || return 1
+  cwd="$(listener_cwd "$pid" || true)"
+  [ "$cwd" = "$expected_cwd" ] || return 1
+  kill "$pid" 2>/dev/null || true
+  return 0
+}
+
 stop_pid_file() {
   local target_pid_file="$1"
   [ -f "$target_pid_file" ] || return 1
@@ -155,6 +192,8 @@ show_start_failure() {
 }
 
 start_services() {
+  ensure_port_available "$BACKEND_PORT" "后端"
+  ensure_port_available "$FRONTEND_PORT" "前端"
   echo -e "${BLUE}━━━ 启动后端 (端口 $BACKEND_PORT) ━━━${NC}"
   : > "$BACKEND_LOG"
   : > "$FRONTEND_LOG"
@@ -201,12 +240,16 @@ stop_services() {
     echo -e "${YELLOW}正在停止 LearnFlow...${NC}"
     stop_pid_file "$target_pid_file"
   done
+  if stop_repo_listener 8010 "$BACKEND_DIR"; then
+    found=true
+  fi
+  if stop_repo_listener 4174 "$FRONTEND_DIR"; then
+    found=true
+  fi
   if [ "$found" = true ]; then
     echo -e "${GREEN}✅ 已停止${NC}"
   else
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "vite" 2>/dev/null || true
-    echo -e "${GREEN}✅ 已停止 (清理模式)${NC}"
+    echo "LearnFlow 当前未由 start.sh 管理运行。"
   fi
 }
 
@@ -228,7 +271,12 @@ status_services() {
       total=$((total + 1))
       kill -0 "$pid" 2>/dev/null && running=$((running + 1))
     done < "$target_pid_file"
-    echo "${label}：$running/$total 个进程运行中（${target_pid_file}）"
+    if [ "$running" -eq 0 ]; then
+      rm -f "$target_pid_file"
+      echo "${label}：未运行（已清理陈旧状态 ${target_pid_file}）"
+    else
+      echo "${label}：$running/$total 个进程运行中（${target_pid_file}）"
+    fi
   done
   if [ "$found" = false ]; then
     echo "LearnFlow 当前未由 start.sh 管理运行。"

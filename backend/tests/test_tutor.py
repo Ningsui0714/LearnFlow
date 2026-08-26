@@ -306,6 +306,26 @@ def test_deleting_global_chat_removes_workspace_and_cancels_open_task(client: Te
     assert mutations == []
 
 
+def test_global_chat_listing_supports_stable_pagination(client: TestClient):
+    created_ids = [new_session(client) for _ in range(3)]
+
+    first = client.get(
+        "/api/agent/sessions",
+        params={"session_type": "global", "limit": 2, "offset": 0},
+    )
+    second = client.get(
+        "/api/agent/sessions",
+        params={"session_type": "global", "limit": 2, "offset": 2},
+    )
+
+    assert first.status_code == second.status_code == 200
+    first_ids = [item["id"] for item in first.json()]
+    second_ids = [item["id"] for item in second.json()]
+    assert len(first_ids) == 2
+    assert not set(first_ids).intersection(second_ids)
+    assert set(created_ids).issubset(set(first_ids + second_ids))
+
+
 def test_deleting_project_removes_all_project_surfaces_but_retains_evidence(client: TestClient):
     project_response = client.post("/api/projects", json={
         "name": f"待删除项目 {uuid.uuid4().hex[:8]}",

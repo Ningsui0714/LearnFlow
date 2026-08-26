@@ -276,6 +276,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
     '若工作区观察含 sourceConstraint，路线和讲解必须受当前项目来源覆盖范围约束；超出范围只能标为资料缺口，并在检索到新证据后补充。',
     '工作区中没有 Attempt 只表示当前作用域没有可见记录，不能推断学生第一次学习、从未练习或没有相关经历。',
+    '学习路径必须先调用 lookup_learning_path_node 做精确读取；只有它未命中、存在错别字/近义表达或候选歧义时才调用 search_learning_path_graph。模糊结果为 ambiguous 时应呈现候选让学习者选择，不能直接形成路线。只有模糊检索明确返回 graph_gap 且联网来源已取得后，才可调用 propose_personal_path_node；提案绝不等于已写入。',
     '工具失败时先依据错误类型决定重试、换工具或明确告知缺口。拿到足够证据后直接回答。',
   ].join('\n')
 }
@@ -283,7 +284,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
 function availableTools(input: TutorAgentRuntimeInput) {
   const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
   return TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
-    (tool.name !== 'read_learning_path' || Boolean(input.learnerPathState))
+    (!['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node'].includes(tool.name) || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
     && (!tool.name.startsWith('read_project_') || Boolean(input.formalProjectContext))
@@ -376,6 +377,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let stopReason: AgentTurnResponse['trace']['stopReason'] = 'error'
   let fallbackReply = ''
   let pathGapPending = false
+  let pathFuzzyPending = false
+  let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
+  const explicitlyRequestsExternalResources = input.toolChoice !== 'auto'
+    || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|来源|论文|文档|仓库|官网|最新)/i.test(latestMessage)
 
   const record = (event: Omit<AgentTrajectoryEvent, 'sequence' | 'at'>) => {
     const recorded = { ...event, sequence: ++sequence, at: Date.now() }
@@ -441,9 +446,17 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     })
     runs.push(result.run)
     input.observe?.({ type: 'tool_completed', run: result.run })
-    if (call.name === 'read_learning_path') {
+    if (call.name === 'lookup_learning_path_node') {
+      pathFuzzyPending = Boolean((result.observation as any)?.needsFuzzySearch)
+      pathResolution = ((result.observation as any)?.retrieval?.resolution || pathResolution) as typeof pathResolution
+    }
+    if (call.name === 'search_learning_path_graph') {
+      pathFuzzyPending = false
       pathGapPending = Boolean((result.observation as any)?.needsExternalResearch)
-        && !(result.observation as any)?.personalNodeProposal
+      pathResolution = ((result.observation as any)?.retrieval?.resolution || pathResolution) as typeof pathResolution
+    }
+    if (call.name === 'propose_personal_path_node' && result.run.status === 'completed') {
+      pathGapPending = false
     }
     observations.push({
       source: call.name,
@@ -451,7 +464,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       answerFree: call.name === 'read_learner_context'
         || call.name === 'read_learning_workspace'
         || call.name === 'read_domain_knowledge'
-        || call.name === 'read_learning_path'
+        || call.name === 'lookup_learning_path_node'
+        || call.name === 'search_learning_path_graph'
         || call.name === 'read_review_context'
         || call.name === 'read_project_workspace'
         || call.name === 'read_project_roadmap'
@@ -480,8 +494,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     if (!pathGapPending || !urls.length || !input.learnerPathState) return
     await execute({
       id: `path-evidence-refresh-${id}-${toolCalls + 1}`,
-      name: 'read_learning_path',
-      arguments: { query: latestMessage, evidence_refresh: true },
+      name: 'propose_personal_path_node',
+      arguments: { query: latestMessage, source_urls: urls },
     }, urls)
   }
 
@@ -500,7 +514,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     await execute({ id: `observe-domain-${id}`, name: 'read_domain_knowledge', arguments: { query: latestMessage } })
   }
   if (input.mode === 'learning_plan' && input.learnerPathState) {
-    await execute({ id: `observe-path-${id}`, name: 'read_learning_path', arguments: { query: latestMessage } })
+    await execute({ id: `observe-path-exact-${id}`, name: 'lookup_learning_path_node', arguments: { query: latestMessage } })
+    if (pathFuzzyPending) {
+      await execute({ id: `observe-path-fuzzy-${id}`, name: 'search_learning_path_graph', arguments: { query: latestMessage, limit: 6 } })
+    }
   }
   if (input.formalReviewContext && /复习|错题|遗忘|记不住|熟练度|掌握度|记忆曲线|间隔|回忆|薄弱/i.test(latestMessage)) {
     await execute({ id: `observe-review-${id}`, name: 'read_review_context', arguments: { query: latestMessage } })
@@ -530,6 +547,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     budgets: { maxModelRounds: MAX_MODEL_ROUNDS, maxToolCalls: MAX_TOOL_CALLS, maxWallTimeMs: MAX_WALL_TIME_MS },
   }
   const tools = availableTools(input)
+  const modelVisibleToolNames = new Set(tools.map(tool => tool.name))
   const instructions = buildTutorInstructions({
     mode: input.mode,
     selectionContext: input.selectionContext,
@@ -576,6 +594,46 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       if (calls.length) {
         record({ phase: 'decide', detail: `模型选择 ${calls.length} 个工具`, status: 'completed' })
         for (const call of calls.slice(0, MAX_TOOL_CALLS - toolCalls)) {
+          if (!modelVisibleToolNames.has(call.name)) {
+            const observation = {
+              error: 'tool_not_available',
+              requestedTool: call.name,
+              guidance: '该工具没有向当前状态或作用域开放。请只使用本轮 tools 列表中的工具。',
+            }
+            runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
+            runtimeMessages.push({
+              role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(observation),
+            })
+            record({
+              phase: 'act', detail: `阻止未开放工具 ${call.name}`,
+              toolCallId: call.id, toolName: call.name, status: 'blocked',
+            })
+            continue
+          }
+          if (
+            call.name === 'search_computer_knowledge'
+            && input.mode === 'learning_plan'
+            && input.toolChoice === 'auto'
+            && !explicitlyRequestsExternalResources
+            && (pathResolution === 'resolved' || pathResolution === 'ambiguous')
+          ) {
+            const observation = {
+              error: 'path_retrieval_already_sufficient',
+              pathResolution,
+              guidance: pathResolution === 'resolved'
+                ? '学习路径目标已经由正式图谱可靠定位。请直接基于已有图谱回答，不要为补充一般背景重复联网。'
+                : '当前目标存在多个正式图谱候选。请先让学习者消歧，不要用联网结果替学习者选择方向。',
+            }
+            runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
+            runtimeMessages.push({
+              role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(observation),
+            })
+            record({
+              phase: 'act', detail: `阻止路径已${pathResolution === 'resolved' ? '定位' : '进入消歧'}后的冗余联网`,
+              toolCallId: call.id, toolName: call.name, status: 'blocked',
+            })
+            continue
+          }
           const urls = await execute(call, sourceUrls)
           if (urls.length) sourceUrls = [...new Set([...sourceUrls, ...urls])]
           if (call.name === 'search_computer_knowledge') await refreshPathAfterSearch(urls)

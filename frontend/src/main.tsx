@@ -85,7 +85,7 @@ import {
   deleteFormalTutorSession,
   generateFormalLearningFiles,
   learnerPathStateFromFormal,
-  listFormalGlobalChatSessions,
+  loadFormalGlobalChatsForHydration,
   listFormalProjects,
   loadFormalProject,
   loadFormalTutorSession,
@@ -380,6 +380,7 @@ function tabFromCurrentPath(conversations: Conversation[]): WorkspaceTab | undef
   if (path === '/learning-path') return LEARNING_PATH_TAB
   if (path === '/learner-profile') return PROFILE_TAB
   if (path === '/tasks') return TASKS_TAB
+  if (path === '/demo') return REVIEW_TAB
   if (path === '/review') return REVIEW_TAB
   if (path === '/learning-files') return LEARNING_FILES_TAB
   if (path.startsWith('/files/lecture/')) {
@@ -605,17 +606,23 @@ function App() {
 
   const hydrateFormalGlobalConversations = async (seed: Conversation[]) => {
     const localGlobal = seed.filter(conversation => !conversation.projectId)
-    const migrations = await Promise.allSettled(localGlobal.map(persistGlobalConversation))
+    // Only browser-only conversations are migration candidates. Replaying a
+    // conversation that already has a formal session id would resurrect it
+    // after another browser deliberately deleted the authoritative session.
+    const migrationCandidates = localGlobal.filter(conversation => !conversation.formalSessionId)
+    const migrations = await Promise.allSettled(migrationCandidates.map(persistGlobalConversation))
     const migratedSessionIds = new Map<string, number>()
     migrations.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value) {
-        migratedSessionIds.set(localGlobal[index].id, result.value.id)
+        migratedSessionIds.set(migrationCandidates[index].id, result.value.id)
       }
     })
 
-    const summaries = await listFormalGlobalChatSessions()
-    const loaded = await Promise.allSettled(summaries.map(summary => loadFormalTutorSession(summary.id)))
-    const remoteSessions = loaded.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+    const hydration = await loadFormalGlobalChatsForHydration(
+      localGlobal.flatMap(conversation => conversation.formalSessionId ? [conversation.formalSessionId] : []),
+    )
+    const remoteSessions = hydration.sessions
+    const missingSessionIds = new Set(hydration.missingSessionIds)
     setWorkspace(previous => {
       const localById = new Map(previous.conversations.filter(item => !item.projectId).map(item => [item.id, item]))
       const localBySession = new Map(previous.conversations.filter(item => !item.projectId && item.formalSessionId)
@@ -632,9 +639,10 @@ function App() {
         if (existing && existing.id !== merged.id) localById.delete(existing.id)
         return merged
       })
-      const remainingLocal = [...localById.values()].map(conversation => {
+      const remainingLocal = [...localById.values()].flatMap(conversation => {
         const formalSessionId = migratedSessionIds.get(conversation.id) || conversation.formalSessionId
-        return formalSessionId ? { ...conversation, formalSessionId } : conversation
+        if (formalSessionId && missingSessionIds.has(formalSessionId)) return []
+        return [formalSessionId ? { ...conversation, formalSessionId } : conversation]
       })
       const conversations = [
         ...previous.conversations.filter(item => item.projectId),
@@ -642,11 +650,20 @@ function App() {
         ...remainingLocal,
       ]
       const byId = new Map(conversations.map(item => [item.id, item]))
-      const tabs = previous.tabs.map(tab => {
+      let tabs = previous.tabs.flatMap(tab => {
+        if (!tab.conversationId) return [tab]
         const conversation = tab.conversationId ? byId.get(tab.conversationId) : undefined
-        return conversation ? { ...tab, title: conversation.title } : tab
+        return conversation ? [{ ...tab, title: conversation.title }] : []
       })
-      return { ...previous, conversations, tabs }
+      if (tabs.length === 0 && conversations[0]) tabs = [chatTab(conversations[0])]
+      const activeTabId = tabs.some(tab => tab.id === previous.activeTabId)
+        ? previous.activeTabId
+        : tabs[0]?.id || ''
+      const splitTabId = tabs.some(tab => tab.id === previous.splitTabId)
+        && previous.splitTabId !== activeTabId
+        ? previous.splitTabId
+        : ''
+      return { ...previous, conversations, tabs, activeTabId, splitTabId }
     })
     formalChatHydrated.current = true
   }
@@ -1449,20 +1466,18 @@ function App() {
           ...learningEvents.filter(item => !priorLearningEventIds.has(item.id) && !formalSkillRun),
           ...planningEvents.filter(item => !priorPlanningEventIds.has(item.id)),
         ]
-        await Promise.all([
-          syncFormalEvent({
-            id: `chat-mode:${conversationId}:${now}`,
-            type: 'chat_mode_entered',
-            at: now,
-            detail: `对话进入${TUTOR_MODE_LABELS[mode]}`,
-            payload: {
-              mode: formalModeId(mode), previous_mode: formalModeId(conversation.mode),
-              conversation_id: conversationId, session_id: formalSessionId,
-              project_id: conversation.projectId, checkpoint_id: conversation.checkpointId,
-            },
-          }),
-          syncFormalEvents(atomicEvents),
-        ])
+        await syncFormalEvent({
+          id: `chat-mode:${conversationId}:${now}`,
+          type: 'chat_mode_entered',
+          at: now,
+          detail: `对话进入${TUTOR_MODE_LABELS[mode]}`,
+          payload: {
+            mode: formalModeId(mode), previous_mode: formalModeId(conversation.mode),
+            conversation_id: conversationId, session_id: formalSessionId,
+            project_id: conversation.projectId, checkpoint_id: conversation.checkpointId,
+          },
+        })
+        await syncFormalEvents(atomicEvents)
       } catch (error) {
         setFormalError(error instanceof Error ? error.message : '原子事件同步失败')
       }
@@ -2880,7 +2895,7 @@ function App() {
           <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-dialog-title">
             <span className="dialog-eyebrow">DELETE CONVERSATION</span>
             <h2 id="delete-dialog-title">删除“{pendingDelete.title}”？</h2>
-            <p>只会删除 vNext 当前浏览器中的这段对话和对应页签。此操作无法撤销。</p>
+            <p>将从 LearnFlow 删除这段对话，并同步到其他浏览器；学习证据会保留。此操作无法撤销。</p>
             <div className="dialog-actions">
               <button type="button" className="button-secondary" onClick={() => setPendingDelete(null)}>取消</button>
               <button type="button" className="button-danger" onClick={() => deleteConversation(pendingDelete.id)}>删除对话</button>

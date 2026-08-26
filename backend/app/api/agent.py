@@ -210,6 +210,7 @@ async def list_chat_modes(
 async def list_sessions(
     session_type: str | None = None,
     limit: int = 30,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
@@ -223,6 +224,7 @@ async def list_sessions(
         query = query.where(AgentSession.session_type == session_type)
     sessions = (await db.execute(
         query.order_by(AgentSession.updated_at.desc(), AgentSession.id.desc())
+        .offset(max(0, offset))
         .limit(max(1, min(limit, 100)))
     )).scalars().all()
     result = []

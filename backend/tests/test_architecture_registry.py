@@ -80,7 +80,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
         "vnext_learning_workspace_reader",
-        "vnext_learning_path_graph_reader", "vnext_learning_path_planner",
+        "vnext_learning_path_graph_reader", "vnext_learning_path_exact_reader",
+        "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer",
+        "vnext_learning_path_planner",
         "vnext_learning_path_plan_manager", "personal_concept_graph_reader",
         "concept_self_report_gateway", "vnext_personal_path_node_runtime",
         "vnext_five_kernel_explicit_editor", "review_context_reader",
@@ -97,6 +99,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "recommend_learning_resources", "attach_learning_file_to_chat",
         "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
         "read_review_context",
+        "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph",
+        "propose_vnext_personal_path_node",
         "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }
@@ -129,6 +133,15 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert CAPABILITY_OWNERS["read_vnext_learning_path_graph"] == (
         "tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat",
     )
+    assert CAPABILITY_OWNERS["lookup_vnext_learning_path_node"] == (
+        "tutor_agent", "vnext_learning_path_exact_reader", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["search_vnext_learning_path_graph"] == (
+        "tutor_agent", "vnext_learning_path_fuzzy_reader", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["propose_vnext_personal_path_node"] == (
+        "tutor_agent", "vnext_personal_path_node_proposer", "vnext_chat",
+    )
     assert WORKBENCHES["vnext_learning_path"].surface == "/learning-path"
     assert WORKBENCHES["vnext_profile"].surface == "/learner-profile"
     assert "edit_vnext_five_kernel_profile" in WORKBENCHES["vnext_profile"].capabilities
@@ -145,7 +158,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
             "vnext_learning_workspace_reader", "review_context_reader",
             "domain_knowledge_reader", "learning_file_service",
             "review_proficiency_projector", "review_reflection_gateway",
-            "vnext_learning_path_graph_reader", "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
+            "vnext_learning_path_graph_reader", "vnext_learning_path_exact_reader",
+            "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer",
+            "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
             "personal_concept_graph_reader", "concept_self_report_gateway", "vnext_personal_path_node_runtime",
             "vnext_five_kernel_explicit_editor",
         }
@@ -215,6 +230,11 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert TOOL_INTERFACE_ROLES["deterministic_remediation"] == "policy"
     assert TOOL_MODEL_EXPOSURE["vnext_five_kernel_profile_reader"] == "vnext_native"
     assert TOOL_MODEL_EXPOSURE["vnext_learning_workspace_reader"] == "vnext_native"
+    assert TOOL_INTERFACE_ROLES["vnext_learning_path_graph_reader"] == "harness"
+    assert TOOL_MODEL_EXPOSURE["vnext_learning_path_graph_reader"] == "not_model_callable"
+    assert TOOL_MODEL_EXPOSURE["vnext_learning_path_exact_reader"] == "vnext_native"
+    assert TOOL_MODEL_EXPOSURE["vnext_learning_path_fuzzy_reader"] == "vnext_native"
+    assert TOOL_MODEL_EXPOSURE["vnext_personal_path_node_proposer"] == "vnext_native"
     assert TOOL_INTERFACE_ROLES["project_roadmap_reader"] == "aci_tool"
     assert TOOL_MODEL_EXPOSURE["project_roadmap_reader"] == "vnext_native"
     assert CAPABILITY_OWNERS["read_project_roadmap"] == (

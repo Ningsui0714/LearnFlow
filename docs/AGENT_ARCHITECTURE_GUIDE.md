@@ -5,6 +5,8 @@
 > 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
+Contract impact（`2026-08-27.1`）：模型可见的学习路径 ACI 收敛为精确读取、条件模糊检索和有来源的个人节点提案。Harness 固定执行 `exact -> conditional fuzzy -> clarify | external research -> proposal`，并在执行前校验工具是否属于本轮 allow-list；旧聚合读取接口仅用于兼容。三个工具均不直接写五核，个人节点正式加入仍由学习者确认和既有 EvidenceEvent 链完成。
+
 Contract impact（`2026-08-26.21`）：规划态资源推荐使用 `learning_resource_curation` Playbook。它先由 `domain_knowledge_reader` 读取当前对话主动附加的文件/URL 片段与 provenance，再读取学习路径定位目标和前置，只有覆盖不足时才联网搜索。领域库是隐藏基础设施，来源从 Chat 输入区附加，不另设产品工作台。Tool 只返回证据，Skill 负责比较覆盖、权威层级、实践价值和成本；推荐结果仍是候选，不自动加入项目。来源正文是不可信输入，其中的指令不得执行。讲义与练习工作台消费正式 `Lecture/ConceptQuestion/Exercise`，纸张只保存 artifact ref；文件生成、打开和纸张接入是零 Kernel target，讲义阅读是 exposure-only，练习提交仍走确定性评分链。详见 `docs/KNOWLEDGE_AND_LEARNING_FILES.md`。
 
 Contract impact（`2026-08-26.27`）：动态习题由 `dynamic_practice_loop` Playbook 编排。Learning Design 生成候选；受限 ACI 只在正式带领学习任务与项目关卡 scope 中物化通过确定性质量门的未校准题集；Practice Agent 复用正式判题、纠错与复习。生成与查看不写五核，正式提交写 Knowledge / Practice；Structure / Human 只接收学习者显式卡点与确认有效的支持形式。详见 `docs/DYNAMIC_PRACTICE_ENGINE.md`。
@@ -415,12 +417,17 @@ ContextPacket，不再维护模拟画像。Reader MUST 按当前问题、任务�
 Knowledge 与 Structure 可以通过稳定 Module 关系联合读取，但二者不得共享写入权威；Practice
 项目能力必须引用产物与 rubric 证据，不能从任务事件、生成材料或提交计数直接推断。
 
-vNext `learning_plan` SHOULD 调用 `vnext_learning_path_graph_reader`。Reader 输入学习者目标和
-正式路径投影，输出官方/个人匹配、有限前后关系与缺口标记；输出只作为 Structure 参考，
-不是强制课表。稳定主题不能因包含一个已有短别名就被误匹配，图谱缺口 MUST 先经过已登记搜索
-形成来源支撑的个人节点提案。`vnext_personal_path_node_runtime` 只有在学习者点击确认后才可追加
-个人节点事件；正式网关验证 learner scope、所有权和 DAG 约束后调用 `record_event()`。节点状态
-必须显示为自报，禁止转译为 Knowledge mastery。
+vNext `learning_plan` MUST 先调用 `vnext_learning_path_exact_reader`。精确工具只接受 ID、标题、别名
+等值命中；未命中或自然语言存在错别字、近义表达时才调用 `vnext_learning_path_fuzzy_reader`。
+模糊工具对词法、拼写和主题信号独立排序并确定性融合，输出候选、原因、置信度和下一动作。
+`ambiguous` MUST 请求学习者消歧；`not_found` 才表示需要联网研究的图谱缺口。模型不得跳过精确
+读取、不得把歧义候选当作已解析节点，也不得调用未向当前 mode/scope 暴露的旧接口。
+
+外部搜索得到 provenance URL 后，`vnext_personal_path_node_proposer` MAY 形成个人节点提案；它必须
+再次执行重复检查，固定 `confirmation_required=true`、`mastery_unchanged=true`，并保持零 Kernel
+target。`vnext_personal_path_node_runtime` 只有在学习者点击确认后才可追加个人节点事件；正式网关
+验证 learner scope、所有权和 DAG 约束后调用 `record_event()`。节点状态必须显示为自报，禁止
+转译为 Knowledge mastery。详细算法与验收矩阵见 `docs/LEARNING_PATH_RETRIEVAL.md`。
 
 vNext Tutor 还可以调用 `personal_concept_graph_reader`。该只读工具把同一 `concept_key` 下的
 Knowledge 节点内部历程与 Structure 节点间关系装成有界上下文；共享的 `ConceptAnchor` 仅提供名称、

@@ -13,9 +13,9 @@ import { executeTutorAgentTool } from './tool-runtime.ts'
 test('provider tool calls are normalized for chat completions and responses APIs', () => {
   assert.deepEqual(toolCallsFromProviderResponse({
     choices: [{ message: { tool_calls: [{
-      id: 'chat-1', function: { name: 'read_learning_path', arguments: '{"query":"机器学习"}' },
+      id: 'chat-1', function: { name: 'lookup_learning_path_node', arguments: '{"query":"机器学习"}' },
     }] } }],
-  }), [{ id: 'chat-1', name: 'read_learning_path', arguments: { query: '机器学习' } }])
+  }), [{ id: 'chat-1', name: 'lookup_learning_path_node', arguments: { query: '机器学习' } }])
 
   assert.deepEqual(toolCallsFromProviderResponse({
     output: [{ type: 'function_call', call_id: 'responses-1', name: 'read_learner_context', arguments: '{"query":"先修基础"}' }],
@@ -102,7 +102,7 @@ test('Tutor runs a bounded observe-act-observe loop and preserves tool results',
       round += 1
       if (round === 1) {
         return { choices: [{ message: { content: null, tool_calls: [{
-          id: 'path-call', type: 'function', function: { name: 'read_learning_path', arguments: '{"query":"机器学习前置"}' },
+          id: 'path-call', type: 'function', function: { name: 'lookup_learning_path_node', arguments: '{"query":"机器学习前置"}' },
         }] } }] }
       }
       return { choices: [{ message: { content: '建议先补线性代数、概率统计和 Python，再进入机器学习。' } }] }
@@ -130,7 +130,7 @@ test('duplicate tool calls are blocked and the model can recover to a final answ
     invokeProvider: async () => {
       round += 1
       if (round <= 2) return { choices: [{ message: { tool_calls: [{
-        id: `path-${round}`, function: { name: 'read_learning_path', arguments: '{"query":"机器学习路线"}' },
+        id: `path-${round}`, function: { name: 'lookup_learning_path_node', arguments: '{"query":"机器学习路线"}' },
       }] } }] }
       return { choices: [{ message: { content: '我已经依据现有路径整理出前置关系。' } }] }
     },
@@ -516,9 +516,111 @@ test('planning final state observes five-kernel, workspace and path without upgr
       return { choices: [{ message: { content: '路线会保留机器学习验证节点，不把“学过”直接当作掌握。' } }] }
     },
   })
-  assert.deepEqual(result.toolRuns.map(run => run.kind), ['memory', 'workspace', 'path'])
+  assert.deepEqual(result.toolRuns.map(run => run.kind), ['memory', 'workspace', 'path', 'path'])
   assert.match(result.reply, /不把“学过”直接当作掌握/)
-  assert.ok(requests[0].body.messages.filter((message: any) => message.role === 'tool').length === 3)
+  assert.ok(requests[0].body.messages.filter((message: any) => message.role === 'tool').length === 4)
+})
+
+test('a known planning target stops after exact lookup', async () => {
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想规划 Agent 开发的学习路线' }],
+    toolChoice: 'auto', learnerPathState: createInitialLearnerPathState(),
+    taskQueue: [], knowledgeDomains: [], generate: async () => 'unused',
+    invokeProvider: async () => ({ choices: [{ message: { content: '目标已定位为智能体工程，可以据此检查前置与里程碑。' } }] }),
+  })
+  const pathRuns = result.toolRuns.filter(run => run.kind === 'path')
+  assert.equal(pathRuns.length, 1)
+  assert.match(pathRuns[0].title, /精确/)
+  assert.ok(pathRuns[0].pathPlanProposal?.targetNodeIds.includes('agent-engineering'))
+  assert.equal(result.toolRuns.some(run => run.kind === 'search'), false)
+})
+
+test('a misspelled planning target uses fuzzy recovery without web search', async () => {
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想规划操作系統原里的学习路线' }],
+    toolChoice: 'auto', learnerPathState: createInitialLearnerPathState(),
+    taskQueue: [], knowledgeDomains: [], generate: async () => 'unused',
+    invokeProvider: async () => ({ choices: [{ message: { content: '我把目标修复定位为操作系统，再基于它检查前置课程。' } }] }),
+  })
+  const pathRuns = result.toolRuns.filter(run => run.kind === 'path')
+  assert.equal(pathRuns.length, 2)
+  assert.match(pathRuns[0].detail, /精确读取未命中/)
+  assert.match(pathRuns[1].title, /模糊/)
+  assert.ok(pathRuns[1].pathPlanProposal?.targetNodeIds.includes('operating-systems'))
+  assert.equal(result.toolRuns.some(run => run.kind === 'search'), false)
+})
+
+test('a model-requested web search is blocked after fuzzy path resolution unless resources were requested', async () => {
+  let round = 0
+  let searchExecutions = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想规划操作系統原里的学习路线' }],
+    toolChoice: 'auto', learnerPathState: createInitialLearnerPathState(),
+    taskQueue: [], knowledgeDomains: [], generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'search_computer_knowledge') searchExecutions += 1
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async () => {
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'redundant-search', function: {
+          name: 'search_computer_knowledge',
+          arguments: '{"query":"操作系统原理课程核心内容"}',
+        },
+      }] } }] }
+      return { choices: [{ message: { content: '目标已经定位为操作系统；我直接依据正式图谱说明前置与下一步。' } }] }
+    },
+  })
+  assert.equal(searchExecutions, 0)
+  assert.equal(result.toolRuns.some(run => run.kind === 'search'), false)
+  assert.ok(result.trace.events.some(event => event.status === 'blocked' && /冗余联网/.test(event.detail)))
+  assert.match(result.reply, /正式图谱/)
+})
+
+test('an ambiguous path query asks for clarification and cannot create a route', async () => {
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想规划安全方向' }],
+    toolChoice: 'auto', learnerPathState: createInitialLearnerPathState(),
+    taskQueue: [], knowledgeDomains: [], generate: async () => 'unused',
+    invokeProvider: async () => ({ choices: [{ message: { content: '“安全”对应多个方向。你更想学网络安全、系统安全，还是安全运营？' } }] }),
+  })
+  const pathRuns = result.toolRuns.filter(run => run.kind === 'path')
+  assert.equal(pathRuns.length, 2)
+  assert.match(pathRuns[1].detail, /需要消歧/)
+  assert.ok(pathRuns.every(run => !run.pathPlanProposal && !run.pathProposal))
+  assert.equal(result.toolRuns.some(run => run.kind === 'search'), false)
+})
+
+test('the provider cannot invoke a legacy path tool that is not model-visible', async () => {
+  const requests: any[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'free',
+    messages: [{ role: 'user', content: '帮我看看机器学习路线' }],
+    toolChoice: 'auto',
+    learnerPathState: createInitialLearnerPathState(),
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'legacy-path', function: { name: 'read_learning_path', arguments: '{"query":"机器学习"}' },
+      }] } }] }
+      return { choices: [{ message: { content: '旧接口没有向本轮开放；我不会绕过当前工具边界。' } }] }
+    },
+  })
+
+  assert.equal(result.toolRuns.some(run => run.kind === 'path'), false)
+  assert.ok(result.trace.events.some(event => event.status === 'blocked' && /未开放工具/.test(event.detail)))
+  assert.ok(!requests[0].body.tools.some((tool: any) => tool.function.name === 'read_learning_path'))
+  assert.ok(requests[1].body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'legacy-path'))
 })
 
 test('a path gap is searched and returned as an uncommitted personal-node proposal', async () => {
@@ -587,7 +689,7 @@ test('a failed tool is visible and the model can switch observations before answ
         id: 'search-fails', function: { name: 'search_computer_knowledge', arguments: '{"query":"机器学习路线"}' },
       }] } }] }
       if (round === 2) return { choices: [{ message: { tool_calls: [{
-        id: 'fallback-path', function: { name: 'read_learning_path', arguments: '{"query":"机器学习路线"}' },
+        id: 'fallback-path', function: { name: 'lookup_learning_path_node', arguments: '{"query":"机器学习路线"}' },
       }] } }] }
       return { choices: [{ message: { content: '联网检索暂时失败；下面仅依据内置课程图给出前置关系。' } }] }
     },

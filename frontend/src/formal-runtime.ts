@@ -475,9 +475,10 @@ export async function syncFormalEvent(event: LearningEvent | PlanningEvent | {
 }
 
 export async function syncFormalEvents(events: Array<LearningEvent | PlanningEvent>) {
-  const results = await Promise.allSettled(events.map(syncFormalEvent))
-  const failed = results.find(result => result.status === 'rejected')
-  if (failed?.status === 'rejected') throw failed.reason
+  // EvidenceEvent.learner_seq is monotonic per learner. Serializing a local
+  // batch avoids racing two `max(sequence) + 1` writes against the same
+  // learner while preserving the exact event order for deterministic replay.
+  for (const event of events) await syncFormalEvent(event)
 }
 
 export async function setFormalPathStatus(nodeId: string, nodeTitle: string, status: LearnerPathStatus, clientEventId: string) {
@@ -600,8 +601,51 @@ export async function createFormalTutorSession(
 }
 
 export async function listFormalGlobalChatSessions() {
-  return jsonRequest<FormalTutorSessionSummary[]>('/api/agent/sessions?session_type=global&limit=100')
-    .then(items => items.filter(item => item.vnext_managed && item.client_conversation_id))
+  const pageSize = 100
+  const sessions: FormalTutorSessionSummary[] = []
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await jsonRequest<FormalTutorSessionSummary[]>(
+      `/api/agent/sessions?session_type=global&limit=${pageSize}&offset=${offset}`,
+    )
+    sessions.push(...page)
+    if (page.length < pageSize) break
+  }
+  return sessions.filter(item => item.vnext_managed && item.client_conversation_id)
+}
+
+export type FormalGlobalChatHydration = {
+  sessions: FormalTutorSession[]
+  missingSessionIds: number[]
+  unavailableSessionIds: number[]
+}
+
+/**
+ * Load the complete server-authoritative global chat set. Browser-known ids that
+ * are absent from the paginated active-session listing are deletion tombstones.
+ * Individual load failures remain unavailable rather than being misclassified
+ * as deletions, so the caller can preserve its local projection and retry later.
+ */
+export async function loadFormalGlobalChatsForHydration(
+  knownSessionIds: number[] = [],
+): Promise<FormalGlobalChatHydration> {
+  const summaries = await listFormalGlobalChatSessions()
+  const sessionIds = [...new Set(summaries.map(item => item.id))]
+  const activeSessionIds = new Set(sessionIds)
+  const loaded = await Promise.allSettled(sessionIds.map(loadFormalTutorSession))
+  const sessions: FormalTutorSession[] = []
+  const missingSessionIds = [...new Set(
+    knownSessionIds.filter(item => Number.isInteger(item) && item > 0 && !activeSessionIds.has(item)),
+  )]
+  const unavailableSessionIds: number[] = []
+  loaded.forEach((result, index) => {
+    const sessionId = sessionIds[index]
+    if (result.status === 'fulfilled') {
+      if (result.value.vnext_managed && result.value.client_conversation_id) sessions.push(result.value)
+      return
+    }
+    unavailableSessionIds.push(sessionId)
+  })
+  return { sessions, missingSessionIds, unavailableSessionIds }
 }
 
 export async function syncFormalGlobalChat(

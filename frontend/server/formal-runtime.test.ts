@@ -7,7 +7,9 @@ import {
   deleteFormalTutorSession,
   learnerPathStateFromFormal,
   listFormalGlobalChatSessions,
+  loadFormalGlobalChatsForHydration,
   startFormalLearningSkillRun,
+  syncFormalEvents,
   syncFormalGlobalChat,
   syncFormalGlobalChatWithRecovery,
 } from '../src/formal-runtime.ts'
@@ -53,6 +55,32 @@ test('formal learning-path overlay restores self-report and personal nodes witho
   assert.ok(projection.edges.some(edge => edge.to === 'personal-agent-eval'))
   assert.equal(projection.activePlan?.id, 'path-plan-agent')
   assert.ok(projection.activePlan?.targetNodeIds.includes('agent-engineering'))
+})
+
+test('formal event batches are posted sequentially to preserve learner evidence order', async () => {
+  const originalFetch = globalThis.fetch
+  const calls: string[] = []
+  let inFlight = 0
+  let concurrent = false
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    inFlight += 1
+    if (inFlight > 1) concurrent = true
+    const body = JSON.parse(String(init?.body || '{}'))
+    calls.push(body.client_event_id)
+    await new Promise(resolve => setTimeout(resolve, 2))
+    inFlight -= 1
+    return new Response(JSON.stringify({ event_id: calls.length, learner_seq: calls.length }), { status: 200 })
+  }) as typeof fetch
+  try {
+    await syncFormalEvents([
+      { id: 'plan-event-1', type: 'vnext_learning_plan_started', at: 1, detail: '开始规划', planId: 'plan-1' },
+      { id: 'plan-event-2', type: 'vnext_learning_plan_note_captured', at: 2, detail: '记录目标', planId: 'plan-1' },
+    ])
+    assert.equal(concurrent, false)
+    assert.deepEqual(calls, ['plan-event-1', 'plan-event-2'])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('vNext formal skill binding uses a session, a SkillRun and a deterministic turn endpoint', async () => {
@@ -126,6 +154,73 @@ test('vNext ordinary chats use idempotent formal session and message projection 
     assert.equal(calls[1].url, '/api/agent/sessions/91/vnext')
     assert.equal(calls[1].body.messages[0].client_message_id, 'message-cnn')
     assert.equal(calls.at(-1)?.method, 'DELETE')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('formal global chat listing follows every server page', async () => {
+  const originalFetch = globalThis.fetch
+  const calls: string[] = []
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const target = String(url)
+    calls.push(target)
+    const offset = Number(new URL(target, 'http://learnflow.local').searchParams.get('offset') || 0)
+    const items = offset === 0
+      ? Array.from({ length: 100 }, (_, index) => ({
+          id: index + 1,
+          title: `chat-${index + 1}`,
+          session_type: 'global',
+          vnext_managed: true,
+          client_conversation_id: `chat-${index + 1}`,
+        }))
+      : [{
+          id: 101,
+          title: 'chat-101',
+          session_type: 'global',
+          vnext_managed: true,
+          client_conversation_id: 'chat-101',
+        }]
+    return new Response(JSON.stringify(items), { status: 200 })
+  }) as typeof fetch
+  try {
+    const listed = await listFormalGlobalChatSessions()
+    assert.equal(listed.length, 101)
+    assert.deepEqual(calls, [
+      '/api/agent/sessions?session_type=global&limit=100&offset=0',
+      '/api/agent/sessions?session_type=global&limit=100&offset=100',
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('formal chat hydration treats sessions absent from the active listing as tombstones', async () => {
+  const originalFetch = globalThis.fetch
+  const calls: string[] = []
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const target = String(url)
+    calls.push(target)
+    if (target.includes('?session_type=global')) return new Response(JSON.stringify([
+      { id: 91, title: 'active', session_type: 'global', vnext_managed: true, client_conversation_id: 'chat-active' },
+      { id: 93, title: 'unavailable', session_type: 'global', vnext_managed: true, client_conversation_id: 'chat-unavailable' },
+    ]), { status: 200 })
+    if (target === '/api/agent/sessions/91') return new Response(JSON.stringify({
+      id: 91, title: 'active', session_type: 'global', vnext_managed: true,
+      client_conversation_id: 'chat-active', messages: [], learning_tasks: [],
+    }), { status: 200 })
+    return new Response(JSON.stringify({ detail: 'temporarily unavailable' }), { status: 503 })
+  }) as typeof fetch
+  try {
+    const hydration = await loadFormalGlobalChatsForHydration([92, 93, 91])
+    assert.deepEqual(hydration.sessions.map(item => item.id), [91])
+    assert.deepEqual(hydration.missingSessionIds, [92])
+    assert.deepEqual(hydration.unavailableSessionIds, [93])
+    assert.deepEqual(calls, [
+      '/api/agent/sessions?session_type=global&limit=100&offset=0',
+      '/api/agent/sessions/91',
+      '/api/agent/sessions/93',
+    ])
   } finally {
     globalThis.fetch = originalFetch
   }

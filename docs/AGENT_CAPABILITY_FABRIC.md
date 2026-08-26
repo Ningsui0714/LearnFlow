@@ -21,7 +21,9 @@ LearnFlow 只有三类主责任接口：Tutor 控制交互；Learning Design 生
 | 感知对象 | 正式入口 | 进入什么上下文 | 当前状态 |
 |---|---|---|---|
 | 五核状态与长期记忆 | `vnext_five_kernel_profile_reader` -> `/api/learner-state/context` | 每轮按 `global_tutor / learning_task / learning_plan` 选择有预算 ContextPolicy | 已接入；正式后端不可用时才显示离线演示回退 |
-| 四类学习图对齐 | `vnext_learning_path_graph_reader` | 显式连接课程路径图（含个人覆盖层）、个人概念图、来源知识领域和已确认路线；保留 gap，永不携带 mastery | 已接入 |
+| 精确路径定位 | `vnext_learning_path_exact_reader` | 先按稳定 ID、标题、别名读取官方/个人节点；未命中时只返回进入模糊检索的指示 | 已接入 |
+| 模糊路径检索 | `vnext_learning_path_fuzzy_reader` | 仅在精确未命中后做确定性混合排序；保留歧义和 graph gap，永不携带 mastery | 已接入 |
+| 四类学习图对齐 | 非模型可见兼容调度器 + Alignment Projection | 显式连接课程路径图（含个人覆盖层）、个人概念图、来源知识领域和已确认路线；保留 gap | 已接入 |
 | 已确认长期路径 | `active_learning_path_plan` | `learning_plan` ContextPacket 的 Structure 热头与 Value 目标 | 已接入 |
 | 个人概念学习图 | `personal_concept_graph_reader` | Knowledge 节点内部历程 + Structure 节点间关系 | 已接入 |
 | 原子学习任务与 Skill 子状态 | `vnext_learning_task_runtime` | 正式 AgentSession、SkillRun、LearningTask、当前步骤、循环次数和 learner-reply 边界 | 已接入；浏览器只保留投影/离线回退 |
@@ -38,6 +40,7 @@ ContextPacket 是只读投影，不是第二份记忆。它必须公开 scope、
 | 生成图解或动画 | `safe_visual_generation` | Learning Design | 只生成受管产物，无掌握证据 |
 | 执行原子学习任务 | `vnext_learning_task_runtime` | Tutor + 确定性 Skill runtime | 流程事件可恢复；完成不等于掌握 |
 | 形成长期路线提案 | `vnext_learning_path_planner` | Learning Design 的确定性图规划器 | 只生成 proposal，LLM 只解释 |
+| 形成个人路径节点候选 | `vnext_personal_path_node_proposer` | Tutor 在确认 graph gap 且取得来源后调用 | 只生成 proposal；重复检查；不改 mastery |
 | 确认、修订或归档长期路线 | `vnext_learning_path_plan_manager` | 学习者 | 点击确认后写 Structure + Value 事件，保留版本历史 |
 | 添加个人路径节点 | `vnext_personal_path_node_runtime` | Tutor 提案，学习者确认 | 图谱缺口先联网研究，确认后写个人覆盖层 |
 | 记录概念自述与关系 | `concept_self_report_gateway` | 学习者明确原文 | 写 Knowledge/Structure 的 unverified 事件，禁止 mastery inference |
@@ -68,7 +71,7 @@ guided_learning
 
 1. Tutor 识别跨多个任务、阶段、真实产物或发展方向的目标，进入 `learning_plan`。
 2. Context API 使用 `learning_plan` policy，优先读取 Structure、Knowledge、Human、Value，并带入活动长期路线。
-3. 路径 Reader 在官方节点和个人节点中确定性匹配目标；无法承载的主题先调用联网搜索，形成个人节点 proposal。
+3. 精确 Reader 先查稳定 ID、标题和别名；只有未命中才进入模糊 Reader。歧义交给学习者选择；明确 graph gap 才联网搜索并形成个人节点 proposal。
 4. Path Planner 沿硬/软前置关系生成目标、路线、阶段里程碑和时间范围；自报掌握只调整以后验证顺序，不删除前置。
 5. Tutor 解释取舍，页面展示“尚未写入”卡片。
 6. 学习者点击确认后，Plan Manager 写入：

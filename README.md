@@ -46,10 +46,11 @@ docs/       架构、产品逻辑、运行手册与验证记录
 ## 验证
 
 ```bash
-cd frontend && npm test && npm run build
-cd ../backend && venv/bin/python -m pytest -q
-cd .. && cargo check --manifest-path desktop/src-tauri/Cargo.toml
+make verify
 ```
+
+`make verify-layout` 会单独检查唯一前端边界：受 Git 管理的旧 `vnext/`、
+`legacy-frontend/`、`frontend-old/`、旧 5173 运行入口或缺失的正式入口都会使检查失败。
 
 架构权威见 [docs/ARCHITECTURE_AUTHORITY.md](docs/ARCHITECTURE_AUTHORITY.md)，Agent 工程约束见
 [docs/AGENT_ARCHITECTURE_GUIDE.md](docs/AGENT_ARCHITECTURE_GUIDE.md)，一分钟产品逻辑见

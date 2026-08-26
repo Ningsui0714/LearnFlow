@@ -32,7 +32,7 @@ ACTION_BOARD = {
             "coordinate_vnext_agent_turn", "编排 vNext 有界观察—行动—观察循环", "context", "none",
             {},
             ("read_vnext_five_kernel_profile", "read_vnext_learning_workspace",
-             "read_vnext_learning_path_graph", "read_review_context",
+             "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "read_review_context",
              "search_computer_knowledge", "generate_learning_visual"),
         ),
         ActionDefinition(
@@ -128,7 +128,22 @@ ACTION_BOARD = {
         ActionDefinition(
             "read_vnext_learning_path_graph", "为规划态读取官方与个人学习路径图", "none", "none",
             {},
-            ("search_computer_knowledge", "plan_vnext_learning_path", "manage_vnext_personal_path_node"),
+            ("lookup_vnext_learning_path_node",),
+        ),
+        ActionDefinition(
+            "lookup_vnext_learning_path_node", "精确读取学习路径节点", "none", "none",
+            {},
+            ("search_vnext_learning_path_graph", "plan_vnext_learning_path"),
+        ),
+        ActionDefinition(
+            "search_vnext_learning_path_graph", "在精确未命中后模糊检索学习路径", "none", "none",
+            {},
+            ("search_computer_knowledge", "plan_vnext_learning_path", "propose_vnext_personal_path_node"),
+        ),
+        ActionDefinition(
+            "propose_vnext_personal_path_node", "形成有来源的个人路径节点提案", "proposal", "explicit_or_auto",
+            {},
+            ("manage_vnext_personal_path_node",),
         ),
         ActionDefinition(
             "plan_vnext_learning_path", "根据目标与五核上下文生成长期学习路径提案", "proposal", "explicit_or_auto",

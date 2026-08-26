@@ -1,3 +1,11 @@
+import {
+  extractLearningPathTopic,
+  lookupExactLearningPath,
+  searchFuzzyLearningPath,
+  type LearningPathRetrievalCandidate,
+  type LearningPathRetrievalResult,
+} from './learning-path-retrieval.ts'
+
 export type PathNodeOrigin = 'official' | 'personal'
 export type PathEdgeKind = 'hard_prerequisite' | 'soft_prerequisite' | 'co_learning'
 export type LearnerPathStatus = 'unmarked' | 'exploring' | 'self_reported_exposed' | 'self_reported_mastered'
@@ -37,6 +45,8 @@ export type LearningPathEdge = {
 
 export type PersonalPathNodeProposal = {
   id: string
+  policyId: 'vnext-personal-path-node-proposer-v2'
+  generatedFromSnapshotId: string
   title: string
   summary: string
   aliases: string[]
@@ -45,6 +55,8 @@ export type PersonalPathNodeProposal = {
   order: number
   sourceUrls: string[]
   connections: Array<{ nodeId: string; kind: PathEdgeKind; rationale: string }>
+  requiresLearnerConfirmation: true
+  masteryUnchanged: true
 }
 
 export type LearningPathPlan = {
@@ -162,13 +174,19 @@ export type LearningGraphAlignmentProjection = {
 
 export type LearningPathReadPacket = {
   snapshotId: string
-  policyId: 'vnext-learning-path-reader-v1'
+  policyId: 'vnext-learning-path-reader-v2'
   query: string
   topicCandidate: string
-  matchKind: 'official_match' | 'personal_match' | 'graph_gap' | 'overview'
+  matchKind: 'official_match' | 'personal_match' | 'graph_gap' | 'unresolved' | 'overview'
+  retrievalMode: 'exact' | 'fuzzy' | 'overview'
+  resolution: 'resolved' | 'ambiguous' | 'not_found' | 'overview'
+  candidates: LearningPathRetrievalCandidate[]
+  omittedCandidateCount: number
+  recommendedNextAction: LearningPathRetrievalResult['recommendedNextAction'] | 'show_overview'
   matchedNodeIds: string[]
   contextNodeIds: string[]
   suggestedAnchorIds: string[]
+  needsFuzzySearch: boolean
   needsExternalResearch: boolean
   nodes: Array<{
     id: string
@@ -793,44 +811,28 @@ export function removePersonalPathNode(state: LearnerPathState, nodeId: string) 
   })
 }
 
-function topicCandidate(message: string) {
-  const compact = message.replace(/\s+/g, ' ').trim().slice(0, 180)
-  const routeCaptured = compact.match(/(?:规划|制定)([A-Za-z0-9+#.\u4e00-\u9fff ]{2,48}?)(?:的)?(?:学习)?(?:路线|路径|规划)/i)?.[1]
-  const captured = routeCaptured || compact.match(/(?:系统(?:地)?学习|深入学习|学习|学会|掌握|了解|研究|规划|做一个|开发)([A-Za-z0-9+#.\u4e00-\u9fff ]{2,48}?)(?:并|，|。|、|怎么|如何|路线|路径|项目|$)/i)?.[1]
-  const value = (captured || '').replace(/^(?:一下|关于)/, '').trim()
-  if (!value || /^(?:计算机|课程|方向|未来|知识|技能)$/.test(value)) return ''
-  return value
-}
-
-function nodeScore(node: LearningPathNode, query: string) {
-  const normalizedQuery = normalize(query)
-  const names = [node.title, ...node.aliases].map(normalize)
-  if (names.some(name => name === normalizedQuery)) return 100
-  const nameScores = names.map(name => {
-    if (!name || name.length < 2) return 0
-    if (name.includes(normalizedQuery)) return 82
-    if (!normalizedQuery.includes(name)) return 0
-    const coverage = name.length / Math.max(1, normalizedQuery.length)
-    // “量子机器学习”不能因为包含“机器学习”就被当成同一课程；额外修饰词可能代表图谱缺口。
-    return coverage >= 0.75 ? 82 : 48 + Math.round(coverage * 12)
-  })
-  const domainScore = node.domains.some(domain => normalizedQuery.includes(normalize(domain))) ? 24 : 0
-  return Math.max(domainScore, ...nameScores)
-}
-
-export function readLearningPathGraph(message: string, state: LearnerPathState, maxNodes = 10): LearningPathReadPacket {
+function packetFromRetrieval(
+  message: string,
+  state: LearnerPathState,
+  retrieval: LearningPathRetrievalResult | undefined,
+  maxNodes = 10,
+): LearningPathReadPacket {
   const projection = projectLearnerPath(state)
-  const candidate = topicCandidate(message)
+  const candidate = extractLearningPathTopic(message)
   const query = candidate || message.replace(/\s+/g, ' ').trim().slice(0, 180)
-  const scored = projection.nodes.map(node => ({ node, score: nodeScore(node, query) }))
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.node.order - b.node.order || a.node.id.localeCompare(b.node.id))
-  const strongest = scored[0]
-  const matched = scored.filter(item => item.score >= Math.max(36, (strongest?.score || 0) - 18)).slice(0, 3).map(item => item.node)
-  const gap = Boolean(candidate) && (!strongest || strongest.score < 70)
-  const overview = !candidate && matched.length === 0
+  const overview = !candidate
+  const resolution = overview ? 'overview' : retrieval?.resolution || 'not_found'
+  const candidateNodes = (retrieval?.candidates || []).flatMap(item => {
+    const node = projection.nodes.find(candidateNode => candidateNode.id === item.nodeId)
+    return node ? [node] : []
+  })
+  const matched = resolution === 'resolved' ? candidateNodes.slice(0, 1) : []
+  const gap = retrieval?.mode === 'fuzzy' && resolution === 'not_found'
+  const unresolved = !overview && retrieval?.mode === 'exact' && resolution !== 'resolved'
   const seedNodes = matched.length
     ? matched
+    : candidateNodes.length
+      ? candidateNodes.slice(0, 3)
     : projection.nodes.filter(node => projection.statuses[node.id] && projection.statuses[node.id] !== 'unmarked').slice(0, 5)
   const relatedIds = new Set(seedNodes.map(node => node.id))
   projection.edges.forEach(edge => {
@@ -843,7 +845,7 @@ export function readLearningPathGraph(message: string, state: LearnerPathState, 
     ...seedNodes,
     ...projection.nodes.filter(node => relatedIds.has(node.id) && !seedNodes.some(seed => seed.id === node.id)),
   ].slice(0, Math.max(3, Math.min(maxNodes, 14)))
-  const anchorPool = scored.filter(item => item.node.origin === 'official').slice(0, 3).map(item => item.node.id)
+  const anchorPool = candidateNodes.filter(node => node.origin === 'official').slice(0, 3).map(node => node.id)
   const fallbackAnchors = ['programming-foundations', 'software-engineering', 'machine-learning'].filter(id => projection.nodes.some(node => node.id === id))
   const suggestedAnchorIds = unique((anchorPool.length ? anchorPool : fallbackAnchors).slice(0, 3))
   const nodeMap = new Map(projection.nodes.map(node => [node.id, node]))
@@ -864,19 +866,27 @@ export function readLearningPathGraph(message: string, state: LearnerPathState, 
   }))
   const matchKind: LearningPathReadPacket['matchKind'] = gap
     ? 'graph_gap'
-    : strongest?.node.origin === 'personal'
+    : unresolved || resolution === 'ambiguous'
+      ? 'unresolved'
+    : matched[0]?.origin === 'personal'
       ? 'personal_match'
       : matched.length ? 'official_match' : 'overview'
-  const signature = `${query}|${packetNodes.map(node => `${node.id}:${node.status}`).join('|')}|${projection.eventCount}`
+  const signature = `${retrieval?.policyId || 'overview'}|${retrieval?.mode || 'overview'}|${query}|${packetNodes.map(node => `${node.id}:${node.status}`).join('|')}|${projection.eventCount}`
   return {
     snapshotId: `path-${stableHash(signature)}`,
-    policyId: 'vnext-learning-path-reader-v1',
+    policyId: 'vnext-learning-path-reader-v2',
     query,
     topicCandidate: candidate,
     matchKind,
+    retrievalMode: overview ? 'overview' : retrieval?.mode || 'fuzzy',
+    resolution,
+    candidates: retrieval?.candidates || [],
+    omittedCandidateCount: retrieval?.omittedCandidateCount || 0,
+    recommendedNextAction: overview ? 'show_overview' : retrieval?.recommendedNextAction || 'research_graph_gap',
     matchedNodeIds: matched.map(node => node.id),
     contextNodeIds: packetNodes.map(node => node.id),
     suggestedAnchorIds,
+    needsFuzzySearch: Boolean(retrieval?.recommendedNextAction === 'run_fuzzy_search'),
     needsExternalResearch: gap,
     nodes: packetNodes,
     manifest: {
@@ -886,6 +896,26 @@ export function readLearningPathGraph(message: string, state: LearnerPathState, 
       noKnowledgeMasteryInference: true,
     },
   }
+}
+
+export function lookupLearningPathGraph(message: string, state: LearnerPathState, maxNodes = 10) {
+  const projection = projectLearnerPath(state)
+  const topic = extractLearningPathTopic(message)
+  if (!topic) return packetFromRetrieval(message, state, undefined, maxNodes)
+  return packetFromRetrieval(message, state, lookupExactLearningPath(projection.nodes, topic), maxNodes)
+}
+
+export function searchLearningPathGraph(message: string, state: LearnerPathState, maxNodes = 10) {
+  const projection = projectLearnerPath(state)
+  const topic = extractLearningPathTopic(message) || message
+  return packetFromRetrieval(message, state, searchFuzzyLearningPath(projection.nodes, topic), maxNodes)
+}
+
+export function readLearningPathGraph(message: string, state: LearnerPathState, maxNodes = 10): LearningPathReadPacket {
+  const exact = lookupLearningPathGraph(message, state, maxNodes)
+  return exact.resolution === 'resolved' || exact.resolution === 'overview'
+    ? exact
+    : searchLearningPathGraph(message, state, maxNodes)
 }
 
 function planningHorizon(message: string) {
@@ -1023,9 +1053,16 @@ export function learningPathPacketToTutorContext(packet: LearningPathReadPacket)
   }).join('\n')
   return [
     '学习路径图读取结果（结构核参考投影，不是强制培养方案）：',
-    `匹配类型：${packet.matchKind}；查询主题：${packet.query || '概览'}。`,
+    `检索：${packet.retrievalMode} / ${packet.resolution}；匹配类型：${packet.matchKind}；查询主题：${packet.query || '概览'}。`,
+    packet.candidates.length
+      ? `候选：${packet.candidates.slice(0, 5).map(candidate => `${candidate.title}(${Math.round(candidate.confidence * 100)}%，${candidate.reasons.join('+') || '弱相关'})`).join('、')}${packet.omittedCandidateCount ? `；另省略 ${packet.omittedCandidateCount} 项` : ''}。`
+      : '',
     nodeLines,
-    packet.needsExternalResearch
+    packet.resolution === 'ambiguous'
+      ? '当前结果存在歧义。应把候选与匹配理由交给学习者选择，不能直接生成长期路线或个人节点。'
+      : packet.needsFuzzySearch
+        ? '精确读取未命中；下一步应调用模糊图谱检索，不要直接联网或创建个人节点。'
+      : packet.needsExternalResearch
       ? `图谱不能可靠承载“${packet.topicCandidate}”。应联网确认它与已有节点的关系，再把结果作为可确认的个人节点提案；不得直接改图。`
       : '可以把匹配节点作为路线锚点，但应尊重学习者目标、已有资源和实际约束，不得强制按图学习。',
     '状态证据边界：“学过/掌握”均为学习者自报，只能用于路径导航；不能替代题目、项目或迁移证据，不能据此写 Knowledge mastery。',
@@ -1036,9 +1073,19 @@ export function learningPathPacketToTutorContext(packet: LearningPathReadPacket)
 export function buildPersonalNodeProposal(
   packet: LearningPathReadPacket,
   sourceUrls: string[] = [],
+  state?: LearnerPathState,
 ): PersonalPathNodeProposal | undefined {
-  if (!packet.needsExternalResearch || !packet.topicCandidate) return undefined
-  const projectionNodeMap = new Map(OFFICIAL_PATH_NODES.map(node => [node.id, node]))
+  const validatedUrls = unique(sourceUrls.map(item => String(item || '').trim()).filter(item => /^https?:\/\/[^\s]+$/i.test(item))).slice(0, 6)
+  if (!packet.needsExternalResearch || packet.retrievalMode !== 'fuzzy' || packet.resolution !== 'not_found'
+    || !packet.topicCandidate || !validatedUrls.length) return undefined
+  const projection = state ? projectLearnerPath(state) : {
+    nodes: OFFICIAL_PATH_NODES,
+    edges: OFFICIAL_PATH_EDGES,
+    statuses: {}, personalNodeIds: [], plans: [], eventCount: 0,
+  } satisfies LearnerPathProjection
+  const duplicateCheck = searchFuzzyLearningPath(projection.nodes, packet.topicCandidate, 3)
+  if (duplicateCheck.resolution === 'resolved' || (duplicateCheck.candidates[0]?.confidence || 0) >= 0.67) return undefined
+  const projectionNodeMap = new Map(projection.nodes.map(node => [node.id, node]))
   const anchors = packet.suggestedAnchorIds.flatMap(nodeId => {
     const node = projectionNodeMap.get(nodeId)
     return node ? [node] : []
@@ -1047,18 +1094,22 @@ export function buildPersonalNodeProposal(
   const title = packet.topicCandidate.slice(0, 64)
   return {
     id: `path-proposal-${stableHash(`${packet.snapshotId}:${title}:${sourceUrls.join('|')}`)}`,
+    policyId: 'vnext-personal-path-node-proposer-v2',
+    generatedFromSnapshotId: packet.snapshotId,
     title,
-    summary: `围绕“${title}”形成的个人学习节点；加入前应检查来源与前置关系，后续可以修改或删除。`,
+    summary: `围绕“${title}”形成的个人学习节点候选；来源证明该主题值得独立定位，连接关系仍需学习者检查。`,
     aliases: [title],
     domains: unique(anchors.flatMap(node => node.domains)).slice(0, 4),
     stage: order >= 6 ? 'advanced' : 'domain',
     order,
-    sourceUrls: sourceUrls.slice(0, 6),
+    sourceUrls: validatedUrls,
     connections: anchors.map(anchor => ({
       nodeId: anchor.id,
       kind: 'soft_prerequisite' as const,
-      rationale: `联网确认前暂按与“${anchor.title}”相近的软前置连接；由学习者确认后加入个人图谱。`,
+      rationale: `检索排序显示它与“${anchor.title}”关系较近；当前仅作为待确认软前置，不代表课程权威或掌握结论。`,
     })),
+    requiresLearnerConfirmation: true,
+    masteryUnchanged: true,
   }
 }
 

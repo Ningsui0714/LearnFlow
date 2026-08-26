@@ -1,4 +1,4 @@
-.PHONY: start stop restart demo setup
+.PHONY: start stop restart demo setup verify verify-layout
 
 # ── 启动 ──
 
@@ -35,3 +35,11 @@ backend-logs:
 lint:
 	cd frontend && npx tsc --noEmit
 	cd backend && source venv/bin/activate && python -m py_compile app/**/*.py 2>/dev/null || true
+
+verify-layout:
+	@bash scripts/verify_repository_layout.sh
+
+verify: verify-layout
+	cd frontend && npm test && npm run build
+	cd backend && venv/bin/python -m pytest -q
+	cargo check --manifest-path desktop/src-tauri/Cargo.toml
