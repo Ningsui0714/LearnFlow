@@ -29,6 +29,13 @@ ACTION_BOARD = {
             ("use_learning_skill", "run_learning_task", "draft_learning_project"),
         ),
         ActionDefinition(
+            "coordinate_vnext_agent_turn", "编排 vNext 有界观察—行动—观察循环", "context", "none",
+            {},
+            ("read_vnext_five_kernel_profile", "read_vnext_learning_workspace",
+             "read_vnext_learning_path_graph",
+             "search_computer_knowledge", "generate_learning_visual"),
+        ),
+        ActionDefinition(
             "search_computer_knowledge", "检索计算机知识来源", "none", "explicit_or_auto",
             {},
             (),
@@ -57,6 +64,11 @@ ACTION_BOARD = {
             "read_vnext_five_kernel_profile", "为 vNext Tutor 读取正式五核上下文", "none", "none",
             {},
             (),
+        ),
+        ActionDefinition(
+            "read_vnext_learning_workspace", "读取当前任务、规划与项目知识领域", "none", "none",
+            {},
+            ("run_vnext_learning_task", "run_vnext_learning_plan"),
         ),
         ActionDefinition(
             "read_vnext_learning_path_graph", "为规划态读取官方与个人学习路径图", "none", "none",

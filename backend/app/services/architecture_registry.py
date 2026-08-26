@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.13"
+REGISTRY_VERSION = "2026-08-26.14"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -251,6 +251,8 @@ TOOLS = {
                      KERNEL_NAMES),
         ToolContract("chat_mode_runtime", "Deterministic Chat Mode Runtime", "tutor_agent", "learnflow", "orchestration",
                      KERNEL_NAMES, (), "AgentSession context + registered EvidenceEvent only"),
+        ToolContract("vnext_agent_turn_runtime", "vNext Bounded Agent Turn Graph", "tutor_agent", "vnext", "orchestration",
+                     KERNEL_NAMES, (), "typed ContextEnvelope -> bounded observe/act/observe loop -> structured AgentTurnTrace; read-only model tools and no direct learner-state write"),
         ToolContract("computer_knowledge_search", "Explanation-oriented Computer Knowledge Search", "learning_design_agent", "vnext", "read",
                      (), (), "intent/facet plan -> tiered source adapters -> deterministic rerank -> bounded untrusted evidence bundle"),
         ToolContract("safe_visual_generation", "Safe Learning Visual Generator", "learning_design_agent", "vnext", "artifact",
@@ -263,6 +265,8 @@ TOOLS = {
                      KERNEL_NAMES, (), "planning events -> learner-visible proposal -> explicit confirmation EvidenceEvent -> reducer; proposal/rejection remain zero-target"),
         ToolContract("vnext_five_kernel_profile_reader", "vNext Formal Five-kernel Context Reader", "tutor_agent", "vnext", "read",
                      KERNEL_NAMES, (), "ContextPolicy -> KernelHead + scoped Memory Graph -> bounded read-only Tutor context; local simulation is offline fallback only"),
+        ToolContract("vnext_learning_workspace_reader", "vNext Scoped Learning Workspace Reader", "tutor_agent", "vnext", "read",
+                     KERNEL_NAMES, (), "formal LearningTask queue + in-chat task binding + PlanningDialogue + project-scoped repository knowledge domains -> bounded read-only observation"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "versioned official course DAG + formal learner overlay -> bounded Structure reference packet; self-report is never Knowledge mastery"),
         ToolContract("vnext_learning_path_planner", "vNext Personalized Long-term Learning Path Planner", "learning_design_agent", "vnext", "proposal",
@@ -331,6 +335,56 @@ TOOLS = {
         ToolContract("local_agent_broker", "Local Agent Broker", "tutor_agent", "learnflow", "isolated_execution",
                      (), (), "two-confirmation WorkspaceOperation batch only"),
     )
+}
+
+
+# `ToolContract.mode` is retained for API compatibility. These complete, orthogonal
+# classifications define what each registered object *is* at the Agent interface.
+# Only `aci_tool` objects are candidates for model tool calling. Harness, projection,
+# policy and adapter objects remain service-side infrastructure.
+TOOL_INTERFACE_ROLES = {
+    **{tool_id: "aci_tool" for tool_id in {
+        "action_board", "computer_knowledge_search", "safe_visual_generation",
+        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader",
+        "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
+        "personal_concept_graph_reader", "concept_self_report_gateway",
+        "vnext_personal_path_node_runtime", "learner_memory_manager",
+        "vnext_five_kernel_explicit_editor", "workspace_lifecycle", "source_ingestion",
+        "repository_knowledge_domains", "hierarchical_rag", "content_generation",
+        "teach_back_analyzer", "process_animation", "code_executor",
+        "deterministic_assessment", "evidence_ledger", "five_kernel_retriever",
+        "workspace_file_service", "managed_artifact_service", "local_agent_broker",
+    }},
+    **{tool_id: "harness" for tool_id in {
+        "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime",
+        "selection_followup_context", "vnext_learning_task_runtime",
+        "vnext_learning_plan_runtime", "micro_learning_orchestrator",
+        "learning_skill_runtime", "learning_task_runtime", "learning_task_planner",
+        "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
+    }},
+    **{tool_id: "projection" for tool_id in {
+        "review_scheduler", "five_kernel_reducer", "memory_graph", "kernel_head_projector",
+    }},
+    "deterministic_remediation": "policy",
+    "workflow_gateway": "adapter",
+    "workflow_validator": "adapter",
+}
+
+# Exposure is intentionally narrower than the ACI catalog. vNext currently gives
+# the model five read/artifact capabilities; proposal and write tools stay behind
+# deterministic orchestration and explicit learner confirmation.
+TOOL_MODEL_EXPOSURE = {
+    tool_id: (
+        "vnext_native"
+        if tool_id in {
+            "computer_knowledge_search", "safe_visual_generation",
+            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_graph_reader",
+        }
+        else "agent_mediated"
+        if TOOL_INTERFACE_ROLES.get(tool_id) == "aci_tool"
+        else "not_model_callable"
+    )
+    for tool_id in TOOLS
 }
 
 
@@ -481,6 +535,21 @@ SKILLS = {
 }
 
 
+SKILL_KINDS = {
+    skill_id: (
+        "pedagogical_method"
+        if skill_id in {
+            "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+            "worked_example_fading", "feynman_teach_back",
+        }
+        else "coordination_skill"
+        if skill_id in {"intent_and_handoff", "checkpoint_tutoring"}
+        else "playbook"
+    )
+    for skill_id in SKILLS
+}
+
+
 WORKBENCHES = {
     item.id: item for item in (
         WorkbenchContract("global_tutor", "Chat Tutor + Lightweight Workbench", "/agent/:sessionId", "tutor_agent",
@@ -489,8 +558,9 @@ WORKBENCHES = {
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "vNext Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
-                          ("search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
+                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
+                           "read_vnext_learning_workspace",
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
                            "read_personal_concept_graph",
                            "record_concept_self_report", "manage_vnext_personal_path_node"), "vnext"),
@@ -535,12 +605,14 @@ WORKBENCHES = {
 
 CAPABILITY_OWNERS = {
     "coordinate_chat_mode": ("tutor_agent", "chat_mode_runtime", "global_tutor"),
+    "coordinate_vnext_agent_turn": ("tutor_agent", "vnext_agent_turn_runtime", "vnext_chat"),
     "search_computer_knowledge": ("learning_design_agent", "computer_knowledge_search", "vnext_chat"),
     "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
     "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
     "read_vnext_five_kernel_profile": ("tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat"),
+    "read_vnext_learning_workspace": ("tutor_agent", "vnext_learning_workspace_reader", "vnext_chat"),
     "read_vnext_learning_path_graph": ("tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat"),
     "plan_vnext_learning_path": ("learning_design_agent", "vnext_learning_path_planner", "vnext_chat"),
     "manage_vnext_learning_path_plan": ("tutor_agent", "vnext_learning_path_plan_manager", "vnext_learning_path"),
@@ -748,6 +820,29 @@ def chat_mode_manifest() -> list[dict[str, Any]]:
     return [asdict(item) for item in CHAT_MODES.values()]
 
 
+def tool_manifest() -> list[dict[str, Any]]:
+    """Return tool contracts with their Agent-interface role and exposure policy."""
+    result = []
+    for tool in TOOLS.values():
+        row = asdict(tool)
+        row.update({
+            "interface_role": TOOL_INTERFACE_ROLES[tool.id],
+            "model_exposure": TOOL_MODEL_EXPOSURE[tool.id],
+        })
+        result.append(row)
+    return result
+
+
+def skill_manifest() -> list[dict[str, Any]]:
+    """Return skills without conflating local pedagogy with multi-capability playbooks."""
+    result = []
+    for skill in SKILLS.values():
+        row = asdict(skill)
+        row["skill_kind"] = SKILL_KINDS[skill.id]
+        result.append(row)
+    return result
+
+
 def selectable_learning_skill(skill_id: str | None) -> SkillContract | None:
     skill = SKILLS.get(str(skill_id or "").strip())
     return skill if skill and skill.learner_selectable else None
@@ -788,6 +883,17 @@ def validate_registry() -> list[str]:
     direct_writers = {tool.id for tool in TOOLS.values() if tool.writes_kernels}
     if direct_writers != {"five_kernel_reducer"}:
         errors.append("five_kernel_reducer must be the only direct KernelState writer")
+    if set(TOOL_INTERFACE_ROLES) != set(TOOLS):
+        errors.append("every tool contract must have exactly one interface role")
+    if set(TOOL_MODEL_EXPOSURE) != set(TOOLS):
+        errors.append("every tool contract must have a model exposure policy")
+    if any(
+        exposure == "vnext_native" and TOOL_INTERFACE_ROLES[tool_id] != "aci_tool"
+        for tool_id, exposure in TOOL_MODEL_EXPOSURE.items()
+    ):
+        errors.append("only ACI tools may be exposed as native model tools")
+    if set(SKILL_KINDS) != set(SKILLS):
+        errors.append("every skill contract must have exactly one skill kind")
     for event in EVENTS.values():
         if event.owner_agent not in AGENTS or event.capability not in ACTION_BOARD:
             errors.append(f"invalid event owner/capability: {event.id}")
@@ -846,13 +952,16 @@ def registry_manifest() -> dict[str, Any]:
             "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> current skill step substate; transitions only from the browser-local event queue",
             "vnext_learning_plan_projection": "planning intent -> proposal -> explicit learner decision; accepted Value changes enter the formal EvidenceEvent reducer",
             "vnext_learning_path_projection": "versioned official course DAG + formal learner overlay events -> Structure/Value reference projection; Knowledge only records self-reported exposure and never mastery",
+            "vnext_agent_turn_runtime": "typed ContextEnvelope -> bounded model/tool loop -> structured AgentTurnTrace; model receives only registered read/artifact ACI tools",
+            "tool_ontology": "ACI tools are Agent-callable affordances; harness, projection, policy and adapter objects are service-side infrastructure",
+            "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],
         "kernels": [asdict(item) for item in KERNELS.values()],
         "capabilities": capability_manifest(),
-        "tools": [asdict(item) for item in TOOLS.values()],
-        "skills": [asdict(item) for item in SKILLS.values()],
+        "tools": tool_manifest(),
+        "skills": skill_manifest(),
         "workbenches": [asdict(item) for item in WORKBENCHES.values()],
         "important_events": [asdict(item) for item in EVENTS.values()],
         "validation_errors": validate_registry(),

@@ -7,7 +7,10 @@ from app.services.architecture_registry import (
     KERNELS,
     KERNEL_NAMES,
     SKILLS,
+    SKILL_KINDS,
     TOOLS,
+    TOOL_INTERFACE_ROLES,
+    TOOL_MODEL_EXPOSURE,
     WORKBENCHES,
     normalize_event_provenance,
     registry_manifest,
@@ -75,6 +78,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
         "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
+        "vnext_learning_workspace_reader",
         "vnext_learning_path_graph_reader", "vnext_learning_path_planner",
         "vnext_learning_path_plan_manager", "personal_concept_graph_reader",
         "concept_self_report_gateway", "vnext_personal_path_node_runtime",
@@ -82,12 +86,17 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     } <= set(TOOLS)
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
+        "coordinate_vnext_agent_turn",
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
+        "read_vnext_learning_workspace",
         "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
+    assert CAPABILITY_OWNERS["coordinate_vnext_agent_turn"] == (
+        "tutor_agent", "vnext_agent_turn_runtime", "vnext_chat",
+    )
     assert CAPABILITY_OWNERS["open_selection_followup"][0] == "tutor_agent"
     assert CAPABILITY_OWNERS["run_vnext_learning_task"] == (
         "tutor_agent", "vnext_learning_task_runtime", "vnext_chat",
@@ -97,6 +106,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     )
     assert CAPABILITY_OWNERS["read_vnext_five_kernel_profile"] == (
         "tutor_agent", "vnext_five_kernel_profile_reader", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["read_vnext_learning_workspace"] == (
+        "tutor_agent", "vnext_learning_workspace_reader", "vnext_chat",
     )
     assert CAPABILITY_OWNERS["read_vnext_learning_path_graph"] == (
         "tutor_agent", "vnext_learning_path_graph_reader", "vnext_chat",
@@ -114,6 +126,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         for tool_id in {
             "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
+            "vnext_learning_workspace_reader",
             "vnext_learning_path_graph_reader", "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
             "personal_concept_graph_reader", "concept_self_report_gateway", "vnext_personal_path_node_runtime",
             "vnext_five_kernel_explicit_editor",
@@ -166,6 +179,26 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert EVENTS["learner_concept_relation_recorded"].kernel_targets == ("structure",)
     assert "shared ConceptAnchor identity" in TOOLS["personal_concept_graph_reader"].write_path
     assert "no mastery inference" in TOOLS["concept_self_report_gateway"].write_path
+
+
+def test_agent_interface_ontology_separates_tools_harness_and_skills():
+    assert set(TOOL_INTERFACE_ROLES) == set(TOOLS)
+    assert set(TOOL_MODEL_EXPOSURE) == set(TOOLS)
+    assert set(SKILL_KINDS) == set(SKILLS)
+    assert TOOL_INTERFACE_ROLES["computer_knowledge_search"] == "aci_tool"
+    assert TOOL_INTERFACE_ROLES["vnext_agent_turn_runtime"] == "harness"
+    assert TOOL_INTERFACE_ROLES["five_kernel_reducer"] == "projection"
+    assert TOOL_INTERFACE_ROLES["deterministic_remediation"] == "policy"
+    assert TOOL_MODEL_EXPOSURE["vnext_five_kernel_profile_reader"] == "vnext_native"
+    assert TOOL_MODEL_EXPOSURE["vnext_learning_workspace_reader"] == "vnext_native"
+    assert TOOL_MODEL_EXPOSURE["concept_self_report_gateway"] == "agent_mediated"
+    assert SKILL_KINDS["guided_explanation"] == "pedagogical_method"
+    assert SKILL_KINDS["atomic_learning_loop"] == "playbook"
+    manifest = registry_manifest()
+    runtime = next(tool for tool in manifest["tools"] if tool["id"] == "vnext_agent_turn_runtime")
+    assert runtime["interface_role"] == "harness"
+    guided = next(skill for skill in manifest["skills"] if skill["id"] == "guided_explanation")
+    assert guided["skill_kind"] == "pedagogical_method"
 
 
 def test_remediation_events_have_standard_authority_provenance():

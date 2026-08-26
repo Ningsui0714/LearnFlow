@@ -27,11 +27,17 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'path' | 'search' | 'image' | 'animation'
+  kind: 'memory' | 'workspace' | 'path' | 'search' | 'image' | 'animation'
   status: 'completed' | 'failed'
   title: string
   detail: string
   durationMs: number
+  sequence?: number
+  toolName?: string
+  toolCallId?: string
+  inputSummary?: string
+  observationSummary?: string
+  errorType?: 'transient' | 'model_recoverable' | 'user_fixable' | 'unexpected'
   sources?: SearchSource[]
   artifact?: VisualArtifact
   pathProposal?: PersonalPathNodeProposal

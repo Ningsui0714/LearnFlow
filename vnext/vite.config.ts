@@ -2,10 +2,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import {
   buildProviderRequest,
-  buildTutorProviderRequest,
   errorFromTutorProviderResponse,
-  ensureSearchCitations,
-  isDisplayableTutorReply,
   isTutorMode,
   textFromTutorProviderResponse,
   tutorConfigurationIssue,
@@ -13,7 +10,7 @@ import {
 import { isTutorToolChoice } from './src/tooling'
 import { sanitizeLearningTaskTutorContext } from './src/learning'
 import { sanitizeLearningPlanTutorContext } from './src/planning'
-import { runTutorTools } from './server/tool-runtime'
+import { runTutorAgentTurn } from './server/agent-runtime'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
 
@@ -128,20 +125,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       if (!providerResponse.ok) {
         throw new Error(errorFromTutorProviderResponse(providerPayload, providerResponse.status))
       }
-      const text = textFromTutorProviderResponse(providerPayload)
-      if (!text) {
-        const root = providerPayload && typeof providerPayload === 'object' ? providerPayload as Record<string, unknown> : {}
-        const firstChoice = Array.isArray(root.choices) && root.choices[0] && typeof root.choices[0] === 'object'
-          ? root.choices[0] as Record<string, unknown> : {}
-        const message = firstChoice.message && typeof firstChoice.message === 'object'
-          ? firstChoice.message as Record<string, unknown> : {}
-        console.warn('[LearnFlow vNext] provider returned no display text', {
-          rootKeys: Object.keys(root), choiceKeys: Object.keys(firstChoice), messageKeys: Object.keys(message),
-          contentType: Array.isArray(message.content) ? 'array' : typeof message.content,
-        })
-        throw new Error('模型服务没有返回可显示的文本')
-      }
-      return text
+      return providerPayload
     } finally {
       clearTimeout(timeout)
     }
@@ -188,12 +172,31 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       const learningTaskContext = sanitizeLearningTaskTutorContext(input.learningTaskContext)
       const learningPlanContext = sanitizeLearningPlanTutorContext(input.learningPlanContext)
       const learnerPathState = sanitizeLearnerPathState(input.learnerPathState)
+      const taskQueue = Array.isArray(input.taskQueue) ? input.taskQueue.filter((item): item is any => (
+        item && typeof item === 'object' && typeof item.id === 'number'
+        && typeof item.objective === 'string' && typeof item.status === 'string'
+      )).slice(0, 30).map(item => ({
+        id: item.id,
+        objective: item.objective.slice(0, 300),
+        status: item.status.slice(0, 60),
+        sourceType: typeof item.sourceType === 'string' ? item.sourceType.slice(0, 80) : undefined,
+        sourceId: typeof item.sourceId === 'string' ? item.sourceId.slice(0, 180) : undefined,
+        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt.slice(0, 80) : undefined,
+      })) : []
+      const knowledgeDomains = Array.isArray(input.knowledgeDomains) ? input.knowledgeDomains.filter((item): item is any => (
+        item && typeof item === 'object' && typeof item.id === 'string' && typeof item.title === 'string'
+      )).slice(0, 30).map(item => ({
+        id: item.id.slice(0, 120),
+        title: item.title.slice(0, 160),
+        summary: typeof item.summary === 'string' ? item.summary.slice(0, 600) : undefined,
+        sourceIds: Array.isArray(item.sourceIds) ? item.sourceIds.filter((value: unknown) => typeof value === 'string').slice(0, 12) : [],
+      })) : []
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
 
       const messages = Array.isArray(input.messages)
-        ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string } => {
+        ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
             if (!message || typeof message !== 'object') return false
             const item = message as Record<string, unknown>
             return (item.role === 'assistant' || item.role === 'user') && typeof item.content === 'string'
@@ -208,7 +211,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       }
 
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
-      let formalLearnerContext = ''
+      let formalLearnerContext: unknown = null
       try {
         const contextPurpose = modeValue === 'learning_plan'
           ? 'learning_plan'
@@ -222,11 +225,10 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           signal: AbortSignal.timeout(4_000),
         })
         if (contextResponse.ok) {
-          const packet = await contextResponse.json()
-          formalLearnerContext = `正式五核 ContextPacket（只读、答案隔离）：\n${JSON.stringify(packet).slice(0, 14_000)}`
+          formalLearnerContext = await contextResponse.json()
         }
       } catch {
-        formalLearnerContext = ''
+        formalLearnerContext = null
       }
       const generate = async (instructions: string, inputText: string, timeoutMs?: number) => {
         const request = buildProviderRequest({
@@ -234,60 +236,31 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           messages: [{ role: 'user', content: inputText }],
           maxTokens: 1200,
         })
-        return callProvider({ ...request, timeoutMs })
+        const payload = await callProvider({ ...request, timeoutMs: timeoutMs || 32_000 })
+        const text = textFromTutorProviderResponse(payload)
+        if (!text) throw new Error('模型没有返回视觉生成文本')
+        return text
       }
-      const tools = await runTutorTools({
-        message: latestMessage,
-        choice: toolChoice,
-        generate,
-        searchConfiguration,
+      const result = await runTutorAgentTurn({
+        baseUrl,
+        model,
         mode: modeValue,
-        learningTaskContext,
-        learnerPathState,
-        formalLearnerContext,
-      })
-      const providerRequest = buildTutorProviderRequest({
-        baseUrl, model, mode: modeValue, messages,
-        toolContext: tools.context,
+        messages,
+        toolChoice,
         selectionContext,
         learningTaskContext,
         learningPlanContext,
+        learnerPathState,
+        taskQueue,
+        knowledgeDomains,
+        formalLearnerContext,
+        conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
+        sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
+        generate,
+        searchConfiguration,
+        invokeProvider: callProvider,
       })
-      let reply = tools.directReply
-      if (!reply) {
-        try {
-          reply = await callProvider(providerRequest)
-        } catch (error) {
-          if (!(error instanceof Error) || error.message !== '模型服务没有返回可显示的文本') throw error
-          const compactToolContext = tools.runs.map(run => {
-            const sourceLines = (run.sources || []).slice(0, 5).map(source => `- ${source.title}: ${source.url}`)
-            return `${run.title}：${run.detail}${sourceLines.length ? `\n${sourceLines.join('\n')}` : ''}`
-          }).join('\n\n')
-          const retryRequest = buildTutorProviderRequest({
-            baseUrl, model, mode: modeValue, messages: messages.slice(-10),
-            toolContext: compactToolContext,
-            selectionContext,
-            learningTaskContext,
-            learningPlanContext,
-          })
-          reply = await callProvider({ ...retryRequest, timeoutMs: 32_000 })
-        }
-      }
-      if (!isDisplayableTutorReply(reply)) {
-        const repairRequest = buildTutorProviderRequest({
-          baseUrl, model, mode: modeValue, messages: messages.slice(-10),
-          toolContext: `${tools.context}\n\n回复契约修正：上一次模型输出了不可展示的内部工具协议。请重新回答当前学生问题，只输出自然的中文教学正文，不得输出任何 tool_call、function、XML 参数或内部状态指令。`,
-          selectionContext,
-          learningTaskContext,
-          learningPlanContext,
-        })
-        reply = await callProvider({ ...repairRequest, timeoutMs: 32_000 })
-        if (!isDisplayableTutorReply(reply)) {
-          throw new Error('模型连续返回内部工具协议，已停止展示；请重试本轮')
-        }
-      }
-      reply = ensureSearchCitations(reply, tools.runs)
-      sendJson(response, 200, { reply, toolRuns: tools.runs })
+      sendJson(response, 200, result)
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError'
         ? '模型请求超过当前时间预算，已停止等待'

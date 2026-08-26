@@ -20,13 +20,18 @@ export type LearningSubstateId =
   | 'synthesis'
   | 'reflection'
 
-export type LearningTask = {
+// Browser-side binding to a formal LearningTask, or an explicitly labelled
+// offline fallback. This object is not a second learning-task authority.
+export type LearningTaskBinding = {
   id: string
   objective: string
   createdAt: number
   formalTaskId?: number
   formalTaskVersion?: number
 }
+
+// Backward-compatible name for existing persisted vNext records.
+export type LearningTask = LearningTaskBinding
 
 export type LearningSkillStep = {
   id: string
@@ -89,6 +94,9 @@ export type LearningTaskProjection = {
 }
 
 export type LearningTaskTutorContext = {
+  objectType: 'learning_task_binding'
+  authority: 'formal_learning_task' | 'local_offline_fallback'
+  formalTaskId?: number
   taskId: string
   objective: string
   skillId: LearningSkillId
@@ -417,6 +425,9 @@ export function learningTaskTutorContext(projection: LearningTaskProjection): Le
   const skill = LEARNING_SKILLS[projection.skillId]
   const step = skill.steps[projection.stepIndex]
   return {
+    objectType: 'learning_task_binding',
+    authority: projection.task.formalTaskId ? 'formal_learning_task' : 'local_offline_fallback',
+    formalTaskId: projection.task.formalTaskId,
     taskId: projection.task.id,
     objective: projection.task.objective,
     skillId: projection.skillId,
@@ -459,6 +470,9 @@ export function sanitizeLearningTaskTutorContext(value: unknown): LearningTaskTu
   ) return undefined
   const maxStepIndex = Math.max(0, LEARNING_SKILLS[item.skillId].steps.length - 1)
   return {
+    objectType: 'learning_task_binding',
+    authority: item.authority === 'formal_learning_task' ? 'formal_learning_task' : 'local_offline_fallback',
+    formalTaskId: typeof item.formalTaskId === 'number' ? Math.floor(item.formalTaskId) : undefined,
     taskId: item.taskId.slice(0, 120),
     objective: item.objective.slice(0, 500),
     skillId: item.skillId,

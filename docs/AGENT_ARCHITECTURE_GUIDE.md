@@ -209,6 +209,22 @@ Tutor 每轮同时考虑：
 
 ## 8. Action Board 与工具调用
 
+首先区分四个容易混淆的对象：
+
+- **ACI Tool**：模型可选择的、输入输出有 schema 的外部观察或动作接口。
+- **Harness**：装配上下文、执行循环、预算、重试、暂停和轨迹记录的服务端运行环境，不是模型工具。
+- **Learning Skill**：绑定 Tutor 学习态、具有局部子状态和循环的教学方法。
+- **Playbook**：跨多个 Tool/Agent/Workbench 的产品闭环，例如原子学习、纠错和间隔复习。
+
+Reducer、Memory Graph、ContextPacket assembler 和策略机不能因为历史上登记在 `TOOLS` 集合就暴露
+给模型。机器可读注册表的 `interface_role`、`model_exposure` 与 `skill_kind` 是该边界的权威分类。
+
+vNext 每轮 MUST 经过 `vnext_agent_turn_runtime`。它先生成 typed `ContextEnvelope`，再执行最多
+5 轮模型决策、8 次工具调用、总计 90 秒的 observe/decide/act 循环，并返回可展示的
+`AgentTurnTrace`。Tool result MUST 以正式 tool message 回灌，不能只拼在 system prompt；相同参数调用
+MUST 去重，工具失败 MUST 分类并留给模型恢复。模型只拥有五个 vNext native ACI，所有写入仍通过
+Action Board、确认策略和 EvidenceEvent 网关。
+
 Action Board 是所有聊天按钮和页面按钮共享的语义事务层。每个 action 定义至少包含：
 
 - `capability`
@@ -336,6 +352,11 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 掌握。旧 `vnext_learning_task_phase_entered` 只用于兼容 v0.5 浏览器存储。正式
 `practice / verify / consolidate` 完成仍由证据投影裁决，不能沿用浏览器中的 Skill 导航。
 
+浏览器持久化对象的准确名称是 `LearningTaskBinding`：`formalTaskId` 存在时只绑定正式
+LearningTask，不存在时必须标为 `local_offline_fallback`。它不能成为第二个任务队列或掌握权威。
+同理，浏览器原 `LearningPlan` 是 `PlanningDialogue`，只负责收集信息和展示候选；确认后的长期
+路线是独立 `LearningPathPlan`。两者通过稳定 ID/事件关联，不共享生命周期结论。
+
 vNext MUST 使用 `Tutor 主状态 -> 绑定 Skill -> 当前 Skill 步骤子状态` 的单一包含关系。首批四个
 Learning Skill 只允许绑定 `guided_learning`；用户预选 Skill 时只绑定下一轮，发送消息并建立任务后
 才启动 Skill。每个步骤 MUST 声明可见子状态，`vnext_learning_skill_step_entered` 同时投影步骤与
@@ -369,7 +390,9 @@ Knowledge 节点内部历程与 Structure 节点间关系装成有界上下文�
 `concept_self_report_gateway` 必须先保留原文，再追加独立的 Knowledge observation 和 Structure
 relation 事件。工具或模型不得把“学过”“熟悉”或课程图标记提升为 mastery，也不得从一条阻碍关系
 反推前置概念不会；只有后续验证事件可以改变证据等级。官方课程图仍是一般培养路径，个人概念图是
-学习者实际认识与联系，两者只能在规划读取时叠加。Project、Checkpoint 与 Session Tutor 读取该图时
+学习者实际认识与联系，两者只能在规划读取时叠加。叠加 MUST 输出显式
+`ConceptPathAlignment`，说明匹配方式和置信度；Alignment 不得携带或推断 mastery。
+Project、Checkpoint 与 Session Tutor 读取该图时
 必须沿用 ContextPolicy 的 scope 过滤：允许全局事实与当前 scope，禁止带入其他项目或关卡的题目原文。
 
 Learning Task Runtime MUST 从现有内容对象和证据对象重建阶段，而不是另存一套掌握状态：

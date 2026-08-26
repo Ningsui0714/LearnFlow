@@ -126,6 +126,36 @@ LLM 只能在模式边界内生成表达。`chat_mode_entered` 是零 target 的
 
 ### vNext Chat 的工具与选中追问原型
 
+vNext Tutor 回合由 `vnext_agent_turn_runtime` 统一编排为有界 Turn Graph：
+
+```text
+ContextEnvelope
+  -> observe（正式五核；规划态再读学习路径）
+  -> decide（模型可回答或选择已登记原生工具）
+  -> act（只读/产物工具）
+  -> observe（结构化 ToolMessage）
+  -> decide ...
+  -> verify / finalize
+  -> AgentTurnTrace
+```
+
+单回合最多 5 次模型决策、8 次工具调用并共享 90 秒 deadline；重复调用被阻断，暂时性模型错误
+只允许在剩余 deadline 内重试一次。正式五核读取不再把 JSON 截断片段塞进提示，而是形成有 scope、
+有预算、答案隔离的语义投影；历史工具观察以有界摘要进入下一回合。模型当前只获得五个原生
+ACI：五核读取、学习工作区读取、学习路径读取、计算机知识搜索和安全视觉产物生成；任何五核、个人节点、长期路线、
+任务或文件写入能力仍由确定性 runtime 和显式确认控制。
+
+注册表中的 `TOOLS` 保留稳定 ID 以兼容既有 API，同时增加正交分类：`aci_tool / harness /
+projection / policy / adapter`。只有 `aci_tool` 可以成为模型工具；`vnext_agent_turn_runtime`、
+任务/规划 runtime 是 Harness，`five_kernel_reducer` 和 Memory Graph 是投影基础设施，不得冒充
+Agent 动作。`SKILLS` 同样区分 `pedagogical_method / playbook / coordination_skill`：学习方法
+定义局部教学转换，Playbook 组合多个能力完成闭环，二者不得用同一职责解释。
+
+Contract impact：注册表版本提升到 `2026-08-26.14`。新增只编排上下文的
+`coordinate_vnext_agent_turn` capability 和 Harness 登记；所有既有稳定工具、Skill、事件与 API
+保持兼容，没有新增 Kernel writer。浏览器 `LearningTask` 对象被明确为正式任务绑定或离线回退，
+浏览器 `LearningPlan` 被明确为 Planning Dialogue；正式长期路线仍只有 `LearningPathPlan`。
+
 独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
@@ -200,6 +230,10 @@ Knowledge 与 Structure 现在通过稳定 `concept_key` 共享 `ConceptAnchor` 
 错误、纠正、回忆、变式和迁移历程；后者只保存硬/软前置、阻碍、推动、联想、类比、易混淆、共生、
 应用、返回锚点和迁移关系。该图直接从 EvidenceEvent、KernelMutation 与 MemoryFact 重建，不增加
 数据库长期权威表，也不改变 Module/Claim 门槛。
+
+`ConceptAnchor.official_node_id` 以及稳定 key/名称/别名可以确定性投影为 `ConceptPathAlignment`。
+该投影只说明个人概念节点与官方课程节点的身份对齐、匹配方式和置信度，不携带掌握度；Knowledge
+历程与 Structure 边仍分别归约。这样规划态可以叠加两张图，而无需复制概念结论或建立第三张状态图。
 
 `concept_self_report_gateway` 接受学习者显式提交的原文，产生一个零 target 原文事件，再为每个已
 抽取/核对概念和关系追加独立注册事件。所有自述固定为 unverified、`mastery_inference=false`。

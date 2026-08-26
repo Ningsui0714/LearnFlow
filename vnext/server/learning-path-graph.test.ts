@@ -5,6 +5,7 @@ import {
   OFFICIAL_PATH_EDGES,
   OFFICIAL_PATH_NODES,
   addPersonalPathNode,
+  alignPersonalConceptsToLearningPath,
   archiveLearningPathPlan,
   buildLearningPathPlanProposal,
   buildPersonalNodeProposal,
@@ -97,6 +98,17 @@ test('course status remains explicitly self reported', () => {
   const packet = readLearningPathGraph('机器学习', state)
   assert.equal(packet.nodes.find((node) => node.id === 'machine-learning')?.status, 'self_reported_mastered')
   assert.equal(packet.manifest.noKnowledgeMasteryInference, true)
+})
+
+test('personal concept anchors align to course nodes without sharing mastery conclusions', () => {
+  const alignments = alignPersonalConceptsToLearningPath([
+    { concept_key: 'bayes-formula', name: '贝叶斯公式' },
+    { concept_key: 'machine-learning', name: '机器学习' },
+    { concept_key: 'my-python', name: 'Python', official_node_id: 'python-programming' },
+  ])
+  assert.deepEqual(alignments.map(item => item.pathNodeId), ['machine-learning', 'python-programming'])
+  assert.ok(alignments.every(item => item.authority === 'deterministic_alignment_projection'))
+  assert.ok(alignments.every(item => !('mastery' in item)))
 })
 
 test('planning mode invokes the path reader without asking the model to decide structure', async () => {

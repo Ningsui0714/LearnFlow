@@ -35,12 +35,17 @@ export type ValueClaimProposal = {
   createdAt: number
 }
 
-export type LearningPlan = {
+// A planning dialogue collects requirements and proposals. A confirmed
+// long-term route is a separate LearningPathPlan object.
+export type PlanningDialogue = {
   id: string
   kind: LearningPlanKind
   objective: string
   createdAt: number
 }
+
+// Backward-compatible name for existing persisted vNext records.
+export type LearningPlan = PlanningDialogue
 
 export type PlanningEventType =
   | 'vnext_learning_plan_started'
@@ -78,6 +83,8 @@ export type LearningPlanProjection = {
 }
 
 export type LearningPlanTutorContext = {
+  objectType: 'planning_dialogue'
+  authority: 'browser_proposal_only'
   planId: string
   kind: LearningPlanKind
   kindLabel: string
@@ -301,6 +308,8 @@ export function closeLearningPlan(events: PlanningEvent[], projection: LearningP
 export function learningPlanTutorContext(projection: LearningPlanProjection): LearningPlanTutorContext {
   const labels = new Map(projection.requirements.map(requirement => [requirement.id, requirement.label]))
   return {
+    objectType: 'planning_dialogue',
+    authority: 'browser_proposal_only',
     planId: projection.plan.id,
     kind: projection.plan.kind,
     kindLabel: planningKindLabel(projection.plan.kind),
@@ -358,6 +367,8 @@ export function sanitizeLearningPlanTutorContext(value: unknown): LearningPlanTu
       }
     : undefined
   return {
+    objectType: 'planning_dialogue',
+    authority: 'browser_proposal_only',
     planId: item.planId.slice(0, 100),
     kind: item.kind,
     kindLabel: item.kindLabel.slice(0, 60),

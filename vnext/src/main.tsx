@@ -87,6 +87,7 @@ import {
   type FormalLearnerSnapshot,
   type FormalRuntimeConnection,
 } from './formal-runtime'
+import type { AgentTurnTrace } from './agent-contracts'
 import './styles.css'
 
 type Message = {
@@ -96,6 +97,7 @@ type Message = {
   createdAt: number
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
+  agentTrace?: AgentTurnTrace
   learningActionLabel?: string
   learningSkillId?: LearningSkillId
   learningSubstateId?: LearningSubstateId
@@ -797,7 +799,7 @@ function App() {
     const contextMessages = [
       ...inheritedContextMessages(conversation)
         .filter((message): message is Message & { role: 'assistant' | 'user' } => message.role !== 'system')
-        .map(message => ({ role: message.role, content: message.content })),
+        .map(message => ({ role: message.role, content: message.content, toolRuns: message.toolRuns })),
       { role: 'user' as const, content },
     ]
     const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
@@ -859,9 +861,20 @@ function App() {
         learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
         learningPlanContext: planningProjection ? learningPlanTutorContext(planningProjection) : undefined,
         learnerPathState: workspace.learningPath,
+        taskQueue: (formalSnapshot?.learning_tasks || []).map(task => ({
+          id: task.id,
+          objective: task.objective,
+          status: task.status,
+          sourceType: task.origin_kind,
+          sourceId: task.source_refs[0] ? JSON.stringify(task.source_refs[0]).slice(0, 160) : undefined,
+          updatedAt: task.updated_at || undefined,
+        })),
+        knowledgeDomains: [],
+        conversationId,
+        sheetId,
       })
       finishTurn(conversationId, sheetId, mode, {
-        role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns,
+        role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns, agentTrace: reply.trace,
         learningSkillId: learningProjection?.skillId,
         learningSubstateId: turnStep?.substateId,
         learningSubstateLabel: turnStep?.substateLabel,
@@ -1936,6 +1949,32 @@ function ToolRunCard({ run, onAcceptPathProposal, onAcceptPathPlan, activePathPl
   )
 }
 
+function AgentTraceSummary({ trace }: { trace: AgentTurnTrace }) {
+  const stopLabels: Record<AgentTurnTrace['stopReason'], string> = {
+    final_answer: '形成回答',
+    tool_budget: '工具预算收束',
+    model_budget: '时间预算收束',
+    forced_finalize: '强制收束',
+    error: '异常收束',
+  }
+  return (
+    <details className="agent-trace-summary">
+      <summary>
+        <span>Agent 轨迹</span>
+        <small>{trace.modelRounds} 轮判断 · {trace.toolCalls} 次工具 · {stopLabels[trace.stopReason]}</small>
+      </summary>
+      <ol>
+        {trace.events.map(event => (
+          <li key={`${event.sequence}-${event.at}`} className={event.status === 'failed' || event.status === 'blocked' ? 'trace-event-warning' : ''}>
+            <i>{event.sequence}</i>
+            <span>{event.detail}</span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  )
+}
+
 function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAcceptPathPlan, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors }: {
   messages: Message[]
   onQuoteFollowUp: (messageId: string, quote: string) => void
@@ -2040,6 +2079,7 @@ function MessageList({ messages, onQuoteFollowUp, onAcceptPathProposal, onAccept
                   pathPlanWriteError={run.pathPlanProposal ? pathPlanWriteErrors[run.pathPlanProposal.id] : undefined}
                 />
               ))}
+              {message.agentTrace && <AgentTraceSummary trace={message.agentTrace} />}
               {message.learningActionLabel ? (
                 <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
               ) : (

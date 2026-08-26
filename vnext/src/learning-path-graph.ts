@@ -97,6 +97,22 @@ export type LearnerPathProjection = {
   eventCount: number
 }
 
+export type ConceptPathAlignment = {
+  conceptKey: string
+  conceptName: string
+  pathNodeId: string
+  pathNodeTitle: string
+  match: 'declared_official_anchor' | 'exact_key' | 'exact_name_or_alias'
+  confidence: number
+  authority: 'deterministic_alignment_projection'
+}
+
+export type ConceptAnchorLike = {
+  concept_key?: string
+  name?: string
+  official_node_id?: string | null
+}
+
 export type LearningPathReadPacket = {
   snapshotId: string
   policyId: 'vnext-learning-path-reader-v1'
@@ -167,6 +183,44 @@ export const LEARNING_PATH_SOURCES: LearningPathSource[] = [
   { id: 'moe-mobile-510213', title: '移动应用开发专业教学标准（高职专科）', institution: '中华人民共和国教育部', url: 'https://www.moe.gov.cn/s78/A07/zcs_ztzl/2017_zt06/17zt06_bznr/bznr_zyjyzyjxbz/gdzyjy_zk/zk_dzyxxdl/dzxxdl_jsjl/202502/P020250207531781244062.pdf', kind: 'vocational' },
   { id: 'nyu-agents', title: 'Foundations of AI Agents', institution: 'NYU Stern', url: 'https://aiagents.stern.nyu.edu/', kind: 'emerging' },
 ]
+
+export function alignPersonalConceptsToLearningPath(concepts: ConceptAnchorLike[]): ConceptPathAlignment[] {
+  const seen = new Set<string>()
+  const result: ConceptPathAlignment[] = []
+  for (const concept of concepts) {
+    const key = String(concept.concept_key || '').trim()
+    const name = String(concept.name || key).trim()
+    const declared = String(concept.official_node_id || '').trim()
+    let node = declared ? OFFICIAL_PATH_NODES.find(candidate => candidate.id === declared) : undefined
+    let match: ConceptPathAlignment['match'] = 'declared_official_anchor'
+    if (!node && key) {
+      node = OFFICIAL_PATH_NODES.find(candidate => candidate.id === key)
+      match = 'exact_key'
+    }
+    if (!node && name) {
+      const normalized = name.toLocaleLowerCase()
+      node = OFFICIAL_PATH_NODES.find(candidate => (
+        candidate.title.toLocaleLowerCase() === normalized
+        || candidate.aliases.some(alias => alias.toLocaleLowerCase() === normalized)
+      ))
+      match = 'exact_name_or_alias'
+    }
+    if (!node) continue
+    const identity = `${key || name}:${node.id}`
+    if (seen.has(identity)) continue
+    seen.add(identity)
+    result.push({
+      conceptKey: key || node.id,
+      conceptName: name || node.title,
+      pathNodeId: node.id,
+      pathNodeTitle: node.title,
+      match,
+      confidence: match === 'declared_official_anchor' ? 1 : match === 'exact_key' ? 0.98 : 0.94,
+      authority: 'deterministic_alignment_projection',
+    })
+  }
+  return result
+}
 
 const n = (
   id: string, title: string, order: number, stage: PathStage, domains: string[],
