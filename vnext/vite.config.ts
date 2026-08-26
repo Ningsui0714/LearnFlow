@@ -186,6 +186,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       return
     }
 
+    const requestId = `tutor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const startedAt = Date.now()
     try {
       const payload = await readJsonBody(request)
       if (!payload || typeof payload !== 'object') throw new Error('请求内容无效')
@@ -243,6 +245,16 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           })
         : []
       if (messages.length === 0) throw new Error('没有可发送的对话内容')
+
+      console.info('[tutor] turn started', {
+        requestId,
+        conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
+        sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
+        mode: modeValue,
+        model,
+        messageCount: messages.length,
+        toolChoice,
+      })
 
       const providerUrl = new URL(baseUrl)
       const localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
@@ -370,14 +382,26 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         searchConfiguration,
         invokeProvider: callProvider,
       })
-      sendJson(response, 200, result)
+      console.info('[tutor] turn completed', {
+        requestId,
+        elapsedMs: Date.now() - startedAt,
+        replyLength: result.reply.length,
+        toolRunCount: result.toolRuns.length,
+      })
+      sendJson(response, 200, { ...result, requestId })
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError'
         ? '模型请求超过当前时间预算，已停止等待'
         : error instanceof TypeError
           ? '本地服务无法连接模型地址，请检查 Base URL 和网络'
           : error instanceof Error ? error.message : 'Tutor 请求失败'
-      sendJson(response, 400, { error: message })
+      console.error('[tutor] turn failed', {
+        requestId,
+        elapsedMs: Date.now() - startedAt,
+        errorName: error instanceof Error ? error.name : typeof error,
+        message,
+      })
+      sendJson(response, 400, { error: message, requestId })
     }
   }
 

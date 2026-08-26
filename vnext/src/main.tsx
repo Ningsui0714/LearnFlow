@@ -114,6 +114,7 @@ import {
 import type { AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
+import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
 import './styles.css'
 
 type Message = {
@@ -1046,14 +1047,28 @@ function App() {
   const runTutorTurn = async (
     conversationId: string,
     rawContent: string,
-    options: { advanceStep?: boolean; repeatStep?: boolean; learningActionLabel?: string } = {},
+    options: { advanceStep?: boolean; repeatStep?: boolean; learningActionLabel?: string; replayInterruptedTurn?: boolean } = {},
   ) => {
     const conversation = workspace.conversations.find(item => item.id === conversationId)
-    if (!conversation) return
+    if (!conversation) {
+      console.warn('[tutor-ui] ignored turn for missing conversation', { conversationId })
+      return
+    }
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversationId, sheetId)
     const content = rawContent.trim()
-    if (!content || pendingTurns[conversationId]) return
+    if (!content || pendingTurns[conversationId]) {
+      console.warn('[tutor-ui] ignored turn', {
+        conversationId,
+        reason: !content ? 'empty_content' : 'already_pending',
+      })
+      return
+    }
+    console.info('[tutor-ui] turn requested', {
+      conversationId,
+      sheetId,
+      replayInterruptedTurn: Boolean(options.replayInterruptedTurn),
+    })
 
     const now = Date.now()
     const priorLearningEventIds = new Set(conversation.learningEvents.map(item => item.id))
@@ -1068,14 +1083,19 @@ function App() {
     let formalSessionId = conversation.formalSessionId
     let formalSkillRun: FormalLearningSkillRun | undefined
     let formalSnapshotForTurn = formalSnapshot
+    const replayInterruptedTurn = Boolean(options.replayInterruptedTurn)
     const clientTurnId = `vnext-turn:${conversationId}:${now}`.slice(0, 120)
-    const mode = conversation.projectRole === 'tutor'
+    const activeConversationMessages = activeMessages(conversation)
+    const interruptedMode = activeConversationMessages[activeConversationMessages.length - 1]?.tutorMode
+    const mode = replayInterruptedTurn && isTutorMode(interruptedMode)
+      ? interruptedMode
+      : conversation.projectRole === 'tutor'
       ? 'learning_plan'
       : conversation.projectRole === 'checkpoint'
         ? 'guided_learning'
         : resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
 
-    if (mode === 'guided_learning') {
+    if (!replayInterruptedTurn && mode === 'guided_learning') {
       if (!learningProjection) {
         const created = createLearningTask(content, now, learningEvents, conversation.preferredSkillId)
         learningTasks = [...learningTasks, created.task]
@@ -1118,7 +1138,7 @@ function App() {
       }
     }
 
-    if (mode === 'learning_plan') {
+    if (!replayInterruptedTurn && mode === 'learning_plan') {
       if (!planningProjection) {
         const created = createLearningPlan(content, now, planningEvents)
         learningPlans = [...learningPlans, created.plan]
@@ -1132,7 +1152,7 @@ function App() {
 
     const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
 
-    if (formalConnection.status === 'connected' && !configurationIssue) {
+    if (!replayInterruptedTurn && formalConnection.status === 'connected' && !configurationIssue) {
       try {
         if (mode === 'guided_learning' && learningProjection) {
           if (!formalSessionId) {
@@ -1202,12 +1222,11 @@ function App() {
       }
     }
 
-    const contextMessages = [
-      ...inheritedContextMessages(conversation)
-        .filter((message): message is Message & { role: 'assistant' | 'user' } => message.role !== 'system')
-        .map(message => ({ role: message.role, content: message.content, toolRuns: message.toolRuns })),
-      { role: 'user' as const, content },
-    ]
+    const contextMessages = buildTutorContextMessages(
+      inheritedContextMessages(conversation),
+      content,
+      replayInterruptedTurn,
+    )
     const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
 
     setPendingTurns(previous => ({ ...previous, [conversationId]: mode }))
@@ -1224,7 +1243,7 @@ function App() {
         }
         return {
           ...conversation,
-          title: sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : conversation.title,
+          title: !replayInterruptedTurn && sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : conversation.title,
           updatedAt: now,
           mode,
           formalSessionId,
@@ -1232,8 +1251,8 @@ function App() {
           learningEvents,
           learningPlans,
           planningEvents,
-          messages: sheetId === 'main' ? [...conversation.messages, userMessage] : conversation.messages,
-          sheets: sheetId === 'main' ? conversation.sheets : conversation.sheets.map(sheet => (
+          messages: sheetId === 'main' && !replayInterruptedTurn ? [...conversation.messages, userMessage] : conversation.messages,
+          sheets: sheetId === 'main' || replayInterruptedTurn ? conversation.sheets : conversation.sheets.map(sheet => (
             sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
           )),
         }
@@ -1243,7 +1262,7 @@ function App() {
       const tabs = previous.tabs.map(tab => tab.conversationId === current.id ? { ...tab, title: current.title } : tab)
       return { ...previous, conversations, tabs }
     })
-    setDrafts(previous => ({ ...previous, [draftKey]: '' }))
+    if (!replayInterruptedTurn) setDrafts(previous => ({ ...previous, [draftKey]: '' }))
 
     if (configurationIssue) {
       finishTurn(conversationId, sheetId, mode, {
@@ -1927,6 +1946,7 @@ function App() {
     const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
     const backPages = pages.filter(page => page.id !== sheetId).slice(-6)
     const messages = activeMessages(conversation)
+    const interruptedTurn = recoverableTutorTurn(messages, Boolean(pendingMode))
     const attachedSources = conversation.projectId ? conversation.projectSources : conversation.domainSources
     const hasWorkbench = conversation.sheets.length > 0
     const paperMode = paperDeskView?.conversationId === conversation.id ? paperDeskView.mode : 'stack'
@@ -2278,6 +2298,12 @@ function App() {
                   </div>
                 </details>
               </section>
+            )}
+            {interruptedTurn && (
+              <div className="turn-recovery" role="status">
+                <span><strong>上一轮没有完成</strong> 页面刷新或服务重载可能中断了回答。</span>
+                <button type="button" onClick={() => { void runTutorTurn(conversation.id, interruptedTurn.content, { replayInterruptedTurn: true }) }}>重新回答</button>
+              </div>
             )}
             {pendingMode && <div className="turn-progress" role="status"><i /> 正在判断工具并由{TUTOR_MODE_LABELS[pendingMode]}组织回复…</div>}
             {attachedSources.length > 0 && (

@@ -275,9 +275,11 @@ export async function requestTutorReply(options: {
       body: JSON.stringify(options),
       signal: controller.signal,
     })
-    const payload = await response.json().catch(() => null) as { reply?: unknown; error?: unknown; toolRuns?: unknown; trace?: unknown } | null
+    const payload = await response.json().catch(() => null) as { reply?: unknown; error?: unknown; requestId?: unknown; toolRuns?: unknown; trace?: unknown } | null
     if (!response.ok) {
-      throw new Error(typeof payload?.error === 'string' ? payload.error : `本地 Tutor 服务返回 HTTP ${response.status}`)
+      const message = typeof payload?.error === 'string' ? payload.error : `本地 Tutor 服务返回 HTTP ${response.status}`
+      const requestId = typeof payload?.requestId === 'string' ? `（请求编号 ${payload.requestId}）` : ''
+      throw new Error(`${message}${requestId}`)
     }
     if (typeof payload?.reply !== 'string' || !payload.reply.trim()) {
       throw new Error('本地 Tutor 服务没有返回可显示的文本')

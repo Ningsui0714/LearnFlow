@@ -431,6 +431,11 @@ button { cursor: pointer; }
 .settings-actions button:hover { background: #066443; }
 .turn-progress { display: flex; align-items: center; gap: 7px; margin: 0 2px 8px; border-radius: 8px; background: #f7f3e7; padding: 6px 8px; color: #806321; font-size: 9px; font-weight: 700; }
 .turn-progress i { height: 6px; width: 6px; border-radius: 50%; background: #d0a33b; box-shadow: 0 0 0 3px #f3e4b9; animation: pulse 1s ease-in-out infinite alternate; }
+.turn-recovery { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 2px 8px; border: 1px solid #ddcfae; border-radius: 9px; background: #fffaf0; padding: 7px 9px; color: #765f2d; font-size: 10px; }
+.turn-recovery span { min-width: 0; }
+.turn-recovery strong { color: #473b22; margin-right: 4px; }
+.turn-recovery button { flex: none; border: 1px solid #cdbb91; border-radius: 7px; background: #fff; padding: 5px 9px; color: #5f4a1d; font: inherit; font-weight: 750; cursor: pointer; }
+.turn-recovery button:hover { border-color: #9e8249; background: #fffdf7; }
 @keyframes pulse { to { opacity: .38; } }
 
 .settings-page { flex: 1; overflow-y: auto; padding: 46px 28px; }
