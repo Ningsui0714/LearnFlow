@@ -164,10 +164,10 @@ export default function WorkspaceAgentRail({
         onRefreshCandidateSources={state.checkpointId ? undefined : projectContext?.onRefreshCandidateSources}
         onAddCandidateSource={state.checkpointId ? undefined : projectContext?.onAddCandidateSource}
         learningTaskGenerationEnabled
-        onLearningTaskPlanCreated={planned => openPath(
-          planned.workspace_path,
+        onLearningTaskGenerated={generated => openPath(
+          `/wf03/tasks/${encodeURIComponent(generated.task_card_id)}`,
           {
-            title: '学习型任务 Plan',
+            title: generated.bundle?.task.work_task.teaching_task_name || '具体任务步骤',
             kind: 'wf03',
           },
         )}
