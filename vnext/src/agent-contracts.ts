@@ -92,6 +92,7 @@ export type AgentKnowledgeDomain = {
   id: string
   title: string
   summary?: string
+  labels?: string[]
   sourceIds?: string[]
 }
 

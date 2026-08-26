@@ -13,6 +13,7 @@ import {
   activeLearningTaskProjection,
   advanceLearningSkillStep,
   appendLearningEvents,
+  bindFormalSkillRun,
   canAdvanceLearningSkillStep,
   createLearningTask,
   currentLearningSkillStep,
@@ -24,6 +25,7 @@ import {
   loopLearningSkillStep,
   nextLearningSkillStep,
   projectLearningTask,
+  reconcileLearningEventsWithFormalSkillRun,
   switchLearningSkill,
   type LearningEvent,
   type LearningSkillId,
@@ -66,13 +68,15 @@ import {
   type PersonalPathNodeProposal,
 } from './learning-path-graph'
 import {
+  actOnFormalLearningSkillRun,
   actOnFormalLearningTask,
+  advanceFormalLearningSkillTurn,
   addFormalPersonalPathNode,
   archiveFormalLearningPathPlan,
   bootstrapFormalRuntime,
   confirmFormalValueClaim,
   commitFormalLearningPathPlan,
-  createFormalLearningTask,
+  createFormalTutorSession,
   learnerPathStateFromFormal,
   loadFormalLearnerSnapshot,
   removeFormalPersonalPathNode,
@@ -80,11 +84,13 @@ import {
   setFormalMemoryArchived,
   setFormalPathStatus,
   submitFormalClaimFeedback,
+  startFormalLearningSkillRun,
   syncFormalEvent,
   syncFormalEvents,
   updateFormalLearnerProfile,
   type FormalLearnerProfilePatch,
   type FormalLearnerSnapshot,
+  type FormalLearningSkillRun,
   type FormalRuntimeConnection,
 } from './formal-runtime'
 import type { AgentTurnTrace } from './agent-contracts'
@@ -142,6 +148,7 @@ type Conversation = {
   preferredSkillId?: LearningSkillId
   learningPlans: LearningPlan[]
   planningEvents: PlanningEvent[]
+  formalSessionId?: number
 }
 
 type WorkspaceTab = {
@@ -637,7 +644,15 @@ function App() {
     }))
   }
 
-  const finishTurn = (conversationId: string, sheetId: string, mode: TutorMode, message: Omit<Message, 'id' | 'createdAt'>) => {
+  const finishTurn = (
+    conversationId: string,
+    sheetId: string,
+    mode: TutorMode,
+    message: Omit<Message, 'id' | 'createdAt'>,
+    formalSessionIdOverride?: number,
+  ) => {
+    const formalSessionId = formalSessionIdOverride
+      || workspace.conversations.find(item => item.id === conversationId)?.formalSessionId
     const finishedMessage = { ...message, id: uid('message'), createdAt: Date.now(), tutorMode: message.role === 'assistant' ? mode : undefined }
     setWorkspace(previous => ({
       ...previous,
@@ -675,6 +690,7 @@ function App() {
           learning_task_id: message.formalTaskId || message.learningTaskId,
           skills: message.learningSkillId ? [message.learningSkillId] : [],
           conversation_id: conversationId,
+          session_id: formalSessionId,
           exit_message_id: finishedMessage.id,
         },
       }).catch(error => setFormalError(error instanceof Error ? error.message : '学习片段事件同步失败'))
@@ -703,6 +719,10 @@ function App() {
     let planningEvents = [...conversation.planningEvents]
     let planningProjection = activeLearningPlanProjection(learningPlans, planningEvents)
     let createdLocalTask: LearningTask | undefined
+    let formalSessionId = conversation.formalSessionId
+    let formalSkillRun: FormalLearningSkillRun | undefined
+    let formalSnapshotForTurn = formalSnapshot
+    const clientTurnId = `vnext-turn:${conversationId}:${now}`.slice(0, 120)
     const mode = resolveTutorMode(conversation.mode, content, Boolean(learningProjection))
 
     if (mode === 'guided_learning') {
@@ -713,11 +733,11 @@ function App() {
         learningEvents = created.events
         learningProjection = projectLearningTask(created.task, learningEvents)
       }
-      if (options.advanceStep && learningProjection) {
+      if (options.advanceStep && learningProjection && !learningProjection.task.formalSkillRunId) {
         learningEvents = advanceLearningSkillStep(learningEvents, learningProjection, now + 8)
         learningProjection = projectLearningTask(learningProjection.task, learningEvents)
       }
-      if (options.repeatStep && learningProjection) {
+      if (options.repeatStep && learningProjection && !learningProjection.task.formalSkillRunId) {
         learningEvents = loopLearningSkillStep(learningEvents, learningProjection, '学生选择再来一轮', now + 8)
         learningProjection = projectLearningTask(learningProjection.task, learningEvents)
       }
@@ -760,25 +780,54 @@ function App() {
       }
     }
 
-    if (formalConnection.status === 'connected') {
+    const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
+
+    if (formalConnection.status === 'connected' && !configurationIssue) {
       try {
-        if (createdLocalTask && learningProjection) {
-          const queuedFormalTask = await createFormalLearningTask(createdLocalTask, learningProjection.skillId, conversationId)
-          const formalTask = queuedFormalTask.available_actions.includes('start')
-            ? await actOnFormalLearningTask(queuedFormalTask, 'start')
-            : queuedFormalTask
-          learningTasks = learningTasks.map(task => task.id === createdLocalTask?.id
-            ? { ...task, formalTaskId: formalTask.id, formalTaskVersion: formalTask.version }
+        if (mode === 'guided_learning' && learningProjection) {
+          if (!formalSessionId) {
+            const session = await createFormalTutorSession(true)
+            formalSessionId = session.id
+          }
+          const binding = learningProjection.task
+          if (createdLocalTask || !binding.formalSkillRunId || !binding.formalSkillRunVersion) {
+            const started = await startFormalLearningSkillRun(
+              formalSessionId,
+              learningProjection.skillId,
+              binding.objective,
+              `vnext-skill:${binding.id}`.slice(0, 120),
+            )
+            formalSkillRun = started.active_skill_run
+          } else {
+            const advanced = await advanceFormalLearningSkillTurn(
+              formalSessionId,
+              binding.formalSkillRunId,
+              content,
+              binding.formalSkillRunVersion,
+              clientTurnId,
+            )
+            formalSkillRun = advanced.active_skill_run
+          }
+          learningTasks = learningTasks.map(task => task.id === binding.id && formalSkillRun
+            ? bindFormalSkillRun(task, formalSkillRun)
             : task)
-          const linkedLocalTask = learningTasks.find(task => task.id === createdLocalTask?.id)
-          if (linkedLocalTask) learningProjection = projectLearningTask(linkedLocalTask, learningEvents)
-          setFormalSnapshot(previous => previous ? {
+          const linkedTask = learningTasks.find(task => task.id === binding.id)
+          if (linkedTask && formalSkillRun) {
+            learningProjection = projectLearningTask(linkedTask, learningEvents)
+            learningEvents = reconcileLearningEventsWithFormalSkillRun(
+              learningEvents, learningProjection, formalSkillRun, now + 24,
+            )
+            learningProjection = projectLearningTask(linkedTask, learningEvents)
+          }
+          formalSnapshotForTurn = await loadFormalLearnerSnapshot()
+          setFormalSnapshot(formalSnapshotForTurn)
+          setWorkspace(previous => ({
             ...previous,
-            learning_tasks: [...previous.learning_tasks.filter(task => task.id !== formalTask.id), formalTask],
-          } : previous)
+            learningPath: learnerPathStateFromFormal(formalSnapshotForTurn!.learning_path),
+          }))
         }
         const atomicEvents = [
-          ...learningEvents.filter(item => !priorLearningEventIds.has(item.id)),
+          ...learningEvents.filter(item => !priorLearningEventIds.has(item.id) && !formalSkillRun),
           ...planningEvents.filter(item => !priorPlanningEventIds.has(item.id)),
         ]
         await Promise.all([
@@ -787,7 +836,10 @@ function App() {
             type: 'chat_mode_entered',
             at: now,
             detail: `对话进入${TUTOR_MODE_LABELS[mode]}`,
-            payload: { mode: formalModeId(mode), previous_mode: formalModeId(conversation.mode), conversation_id: conversationId },
+            payload: {
+              mode: formalModeId(mode), previous_mode: formalModeId(conversation.mode),
+              conversation_id: conversationId, session_id: formalSessionId,
+            },
           }),
           syncFormalEvents(atomicEvents),
         ])
@@ -821,6 +873,7 @@ function App() {
           title: sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : conversation.title,
           updatedAt: now,
           mode,
+          formalSessionId,
           learningTasks,
           learningEvents,
           learningPlans,
@@ -838,7 +891,6 @@ function App() {
     })
     setDrafts(previous => ({ ...previous, [draftKey]: '' }))
 
-    const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
     if (configurationIssue) {
       finishTurn(conversationId, sheetId, mode, {
         role: 'system',
@@ -860,8 +912,10 @@ function App() {
         selectionContext: activeSheet(conversation)?.quote,
         learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
         learningPlanContext: planningProjection ? learningPlanTutorContext(planningProjection) : undefined,
-        learnerPathState: workspace.learningPath,
-        taskQueue: (formalSnapshot?.learning_tasks || []).map(task => ({
+        learnerPathState: formalSnapshotForTurn
+          ? learnerPathStateFromFormal(formalSnapshotForTurn.learning_path)
+          : workspace.learningPath,
+        taskQueue: (formalSnapshotForTurn?.learning_tasks || []).map(task => ({
           id: task.id,
           objective: task.objective,
           status: task.status,
@@ -881,7 +935,7 @@ function App() {
         learningTaskId: learningProjection?.task.id,
         formalTaskId: learningProjection?.task.formalTaskId,
         learningGoal: learningProjection?.task.objective || planningProjection?.plan.objective || content,
-      })
+      }, formalSessionId)
       setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
     } catch (error) {
       finishTurn(conversationId, sheetId, mode, {
@@ -890,7 +944,7 @@ function App() {
         learningSkillId: learningProjection?.skillId,
         learningSubstateId: turnStep?.substateId,
         learningSubstateLabel: turnStep?.substateLabel,
-      })
+      }, formalSessionId)
     }
   }
 
@@ -904,7 +958,7 @@ function App() {
 
   const updateLearningTask = async (
     conversationId: string,
-    action: 'pause' | 'resume' | 'complete' | 'skill',
+    action: 'pause' | 'resume' | 'complete' | 'verify' | 'skill',
     skillId?: LearningSkillId,
   ) => {
     if (pendingTurns[conversationId]) return
@@ -912,14 +966,62 @@ function App() {
     if (!conversation) return
     const projection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
     if (!projection || projection.status === 'completed') return
+    let learningTasks = conversation.learningTasks
     let learningEvents = conversation.learningEvents
-    if (action === 'skill') {
+    let effectiveAction = action
+    if (
+      formalConnection.status === 'connected'
+      && conversation.formalSessionId
+      && projection.task.formalSkillRunId
+      && projection.task.formalSkillRunVersion
+    ) {
+      try {
+        let run: FormalLearningSkillRun | undefined
+        if (action === 'skill' && isLearningSkillId(skillId)) {
+          const started = await startFormalLearningSkillRun(
+            conversation.formalSessionId,
+            skillId,
+            projection.task.objective,
+            `vnext-skill-switch:${projection.task.id}:${skillId}`.slice(0, 120),
+          )
+          run = started.active_skill_run
+        } else {
+          const requestedAction = action === 'verify'
+            ? 'start_verification'
+            : action === 'complete' ? 'pause' : action
+          if (requestedAction === 'pause' || requestedAction === 'resume' || requestedAction === 'start_verification') {
+            const updated = await actOnFormalLearningSkillRun(
+              conversation.formalSessionId,
+              { id: projection.task.formalSkillRunId, version: projection.task.formalSkillRunVersion },
+              requestedAction,
+            )
+            run = updated.active_skill_run
+            if (action === 'complete') effectiveAction = 'pause'
+          }
+        }
+        if (run) {
+          learningTasks = learningTasks.map(task => task.id === projection.task.id
+            ? bindFormalSkillRun(task, run!)
+            : task)
+          await refreshFormalSnapshot()
+        }
+      } catch (error) {
+        setFormalError(error instanceof Error ? error.message : '正式 SkillRun 状态同步失败')
+        return
+      }
+    } else if (action === 'verify') {
+      setFormalError('正式 SkillRun 未连接，不能创建可验证学习附件。')
+      return
+    }
+    if (effectiveAction === 'skill') {
       learningEvents = switchLearningSkill(learningEvents, projection, skillId || projection.skillId, Date.now())
     } else {
-      const event = action === 'pause'
+      const event = effectiveAction === 'pause'
         ? { type: 'vnext_learning_task_paused' as const, detail: '暂停学习任务' }
-        : action === 'resume'
+        : effectiveAction === 'resume'
           ? { type: 'vnext_learning_task_resumed' as const, detail: '恢复学习任务' }
+          : effectiveAction === 'verify'
+            ? { type: 'vnext_learning_task_paused' as const, detail: '已转交独立验证；对话任务暂停，等待验证结果' }
           : { type: 'vnext_learning_task_completed' as const, detail: '结束本段 Skill 流程；不代表掌握，正式任务仍需可检查证据' }
       learningEvents = appendLearningEvents(learningEvents, projection.task.id, [event], Date.now())
     }
@@ -929,9 +1031,10 @@ function App() {
       ...previous,
       conversations: previous.conversations.map(item => item.id === conversationId ? {
         ...item,
+        learningTasks,
         learningEvents,
-        mode: action === 'resume' || action === 'skill' ? 'guided_learning' : 'free',
-        preferredSkillId: action === 'complete' ? undefined : item.preferredSkillId,
+        mode: effectiveAction === 'resume' || effectiveAction === 'skill' ? 'guided_learning' : 'free',
+        preferredSkillId: effectiveAction === 'complete' ? undefined : item.preferredSkillId,
         updatedAt: Date.now(),
       } : item),
     }))
@@ -939,8 +1042,8 @@ function App() {
       try {
         await syncFormalEvents(newEvents)
         const formalTask = formalSnapshot?.learning_tasks.find(item => item.id === projection.task.formalTaskId)
-        if (formalTask && action !== 'skill' && action !== 'complete') {
-          const updated = await actOnFormalLearningTask(formalTask, action)
+        if (!projection.task.formalSkillRunId && formalTask && (effectiveAction === 'pause' || effectiveAction === 'resume')) {
+          const updated = await actOnFormalLearningTask(formalTask, effectiveAction)
           setFormalSnapshot(previous => previous ? {
             ...previous,
             learning_tasks: previous.learning_tasks.map(item => item.id === updated.id ? updated : item),
@@ -1352,8 +1455,9 @@ function App() {
     const visibleSkillId = activeTaskProjection?.skillId
       || (conversation.mode === 'guided_learning' ? conversation.preferredSkillId : undefined)
     const visibleSkill = visibleSkillId ? LEARNING_SKILLS[visibleSkillId] : undefined
-    const visibleSubstateLabel = activeTaskStep?.substateLabel
+    const visibleSubstateLabel = activeTaskProjection?.task.formalSkillStageLabel || activeTaskStep?.substateLabel
       || (visibleMode === 'guided_learning' ? '准备态' : '')
+    const formalVerificationReady = taskProjection?.task.formalSkillState === 'verification_ready'
     const sheet = activeSheet(conversation)
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
@@ -1614,8 +1718,9 @@ function App() {
                 <div className="learning-task-anchor-main">
                   <strong>{taskProjection.task.objective}</strong>
                   <span>
-                    {taskProjection.status === 'paused' ? '已暂停 · ' : ''}带领学习态 · {taskStep?.substateLabel} · {taskSkill?.name} · {taskStep?.title}
+                    {taskProjection.status === 'paused' ? '已暂停 · ' : ''}带领学习态 · {taskProjection.task.formalSkillStageLabel || taskStep?.substateLabel} · {taskSkill?.name} · {taskStep?.title}
                     {taskProjection.loopCount > 0 ? ` · 本步第 ${taskProjection.loopCount + 1} 轮` : ''}
+                    {taskProjection.task.formalSkillRunId ? ' · 正式 SkillRun' : ' · 离线回退'}
                   </span>
                 </div>
                 <div className="learning-skill-dots" aria-label={`${taskSkill?.name}：第 ${taskProjection.stepIndex + 1}/${taskSkill?.steps.length} 步`}>
@@ -1625,6 +1730,17 @@ function App() {
                 </div>
                 {taskProjection.status === 'paused' ? (
                   <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'resume')}>继续</button>
+                ) : formalVerificationReady ? (
+                  <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'verify')} disabled={Boolean(pendingMode)}>开始独立验证</button>
+                ) : taskProjection.task.formalSkillRunId ? (
+                  <button
+                    type="button"
+                    className="learning-primary-action"
+                    title="正式 SkillRun 只根据学习者在对话中的真实回答推进"
+                    disabled
+                  >
+                    在对话中作答
+                  </button>
                 ) : nextLearningSkillStep(taskProjection) ? (
                   <button
                     type="button"
@@ -1678,7 +1794,7 @@ function App() {
                       <button type="button" onClick={event => {
                         event.currentTarget.closest('details')?.removeAttribute('open')
                         updateLearningTask(conversation.id, 'complete')
-                      }} disabled={Boolean(pendingMode)}>结束任务</button>
+                      }} disabled={Boolean(pendingMode)}>{taskProjection.task.formalSkillRunId ? '暂停并退出' : '结束任务'}</button>
                     </div>
                     <details className="learning-event-queue">
                       <summary>运行记录 {taskProjection.eventCount}</summary>

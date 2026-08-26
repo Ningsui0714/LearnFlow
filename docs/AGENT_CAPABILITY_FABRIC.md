@@ -21,10 +21,10 @@ LearnFlow 只有三类主责任接口：Tutor 控制交互；Learning Design 生
 | 感知对象 | 正式入口 | 进入什么上下文 | 当前状态 |
 |---|---|---|---|
 | 五核状态与长期记忆 | `vnext_five_kernel_profile_reader` -> `/api/learner-state/context` | 每轮按 `global_tutor / learning_task / learning_plan` 选择有预算 ContextPolicy | 已接入；正式后端不可用时才显示离线演示回退 |
-| 官方课程图与个人覆盖层 | `vnext_learning_path_graph_reader` | 规划态与明确路径问题；返回匹配、前置、后继、自报状态和图谱缺口 | 已接入 |
+| 四类学习图对齐 | `vnext_learning_path_graph_reader` | 显式连接课程路径图（含个人覆盖层）、个人概念图、来源知识领域和已确认路线；保留 gap，永不携带 mastery | 已接入 |
 | 已确认长期路径 | `active_learning_path_plan` | `learning_plan` ContextPacket 的 Structure 热头与 Value 目标 | 已接入 |
 | 个人概念学习图 | `personal_concept_graph_reader` | Knowledge 节点内部历程 + Structure 节点间关系 | 已接入 |
-| 原子学习任务与 Skill 子状态 | `vnext_learning_task_runtime` | 当前目标、绑定 Skill、当前步骤、循环次数和 learner-reply 边界 | 已接入 |
+| 原子学习任务与 Skill 子状态 | `vnext_learning_task_runtime` | 正式 AgentSession、SkillRun、LearningTask、当前步骤、循环次数和 learner-reply 边界 | 已接入；浏览器只保留投影/离线回退 |
 | 页面、选区与纸张分支 | `selection_followup_context` | 主对话、祖先纸和当前纸的有界分支上下文 | 已接入 |
 | 外部计算机知识来源 | `computer_knowledge_search` | 分层、不可信 Evidence Bundle；规范和官方来源优先 | 已接入 |
 
@@ -106,6 +106,9 @@ guided_learning
 
 ## 当前已用与仍待深化
 
-已经形成真实闭环：正式五核 ContextPacket、按 mode 选择 policy、原子学习 Skill 子状态、路径 Reader、图谱缺口搜索、个人节点确认、长期路线 proposal/确认/归档、路径图目标投影、概念自述、Claim 修订和正式任务队列。
+已经形成真实闭环：唯一 vNext Agent Turn Graph、正式五核 ContextPacket、按 mode 选择 policy、正式
+Session/SkillRun/LearningTask、四类学习图显式对齐、路径 Reader、图谱缺口搜索、个人节点确认、长期路线
+proposal/确认/归档、路径图目标投影、概念自述、Claim 修订和正式任务队列。固定 Agent 评测覆盖规划
+读取、图缺口研究、“不知道”支架、Claim 冲突、工具失败、项目来源约束和任务完成/掌握分离。
 
 仍需后续深化但不能用假实现掩盖：项目创建仍只是规划态中的 project seed；长期路线还需要转成可确认的阶段任务集合；Practice 正向证据需要更多代码执行器与项目验收；星图布局可继续升级，但视觉实现不得改变路径与证据权威。

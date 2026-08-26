@@ -189,6 +189,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         id: item.id.slice(0, 120),
         title: item.title.slice(0, 160),
         summary: typeof item.summary === 'string' ? item.summary.slice(0, 600) : undefined,
+        labels: Array.isArray(item.labels) ? item.labels.filter((value: unknown) => typeof value === 'string').slice(0, 16) : [],
         sourceIds: Array.isArray(item.sourceIds) ? item.sourceIds.filter((value: unknown) => typeof value === 'string').slice(0, 12) : [],
       })) : []
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)

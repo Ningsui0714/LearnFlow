@@ -536,9 +536,84 @@ def test_skill_runtime_scaffolds_no_knowledge_without_advancing(client: TestClie
     assert advanced["last_response_signal"] == "attempt"
 
 
+def test_vnext_skill_turn_endpoint_advances_once_without_second_model_answer(client: TestClient):
+    session_id = new_session(client)
+    started = client.post(f"/api/agent/sessions/{session_id}/skill-runs", json={
+        "skill_id": "socratic_dialogue",
+        "goal": "理解朴素贝叶斯分类器",
+        "client_request_id": f"vnext-skill-{uuid.uuid4().hex}",
+    })
+    assert started.status_code == 200, started.text
+    run = started.json()["active_skill_run"]
+    initial_state = run["state"]
+    client_turn_id = f"vnext-turn-{uuid.uuid4().hex}"
+
+    support = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": "我不知道",
+            "expected_version": run["version"],
+            "client_turn_id": client_turn_id,
+        },
+    )
+    assert support.status_code == 200, support.text
+    supported = support.json()["active_skill_run"]
+    assert support.json()["created"] is True
+    assert supported["state"] == initial_state
+    assert supported["support_count"] == 1
+    assert supported["turn_count"] == 0
+
+    duplicate = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": "我不知道",
+            "expected_version": run["version"],
+            "client_turn_id": client_turn_id,
+        },
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["created"] is False
+    assert duplicate.json()["active_skill_run"]["version"] == supported["version"]
+
+    attempt = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": "它会把先验概率和当前证据结合起来更新类别判断。",
+            "expected_version": supported["version"],
+            "client_turn_id": f"vnext-turn-{uuid.uuid4().hex}",
+        },
+    )
+    assert attempt.status_code == 200, attempt.text
+    advanced = attempt.json()["active_skill_run"]
+    assert advanced["state"] != initial_state
+    assert advanced["turn_count"] == 1
+
+    async def audit_messages_and_mutations():
+        async with async_session() as db:
+            messages = list((await db.execute(select(AgentMessage).where(
+                AgentMessage.session_id == session_id,
+                AgentMessage.role == "user",
+            ))).scalars().all())
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+                EvidenceEvent.event_type == "learning_skill_run_advanced",
+            ))).scalars().all())
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id.in_([event.id for event in events]),
+            ))).scalars().all()) if events else []
+            return messages, events, mutations
+
+    messages, events, mutations = asyncio.run(audit_messages_and_mutations())
+    assert len(messages) == 2
+    assert all(message.meta_data["model_answer_generated"] is False for message in messages)
+    assert len(events) == 2
+    assert mutations == []
+
+
 def test_skill_response_signals_distinguish_help_skip_and_attempt():
     assert learner_response_signal("我不知道") == "no_prior_knowledge"
     assert learner_response_signal("请直接解释一下") == "direct_explanation_requested"
+    assert learner_response_signal("请换一种支架，再来一轮") == "direct_explanation_requested"
     assert learner_response_signal("先跳过") == "skip"
     assert learner_response_signal("好的") == "acknowledgement"
     assert learner_response_signal("我不知道，但我觉得可能和先验概率有关") == "attempt"

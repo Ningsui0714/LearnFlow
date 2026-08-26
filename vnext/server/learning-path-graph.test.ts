@@ -8,6 +8,7 @@ import {
   alignPersonalConceptsToLearningPath,
   archiveLearningPathPlan,
   buildLearningPathPlanProposal,
+  buildLearningGraphAlignments,
   buildPersonalNodeProposal,
   commitLearningPathPlan,
   createInitialLearnerPathState,
@@ -17,7 +18,7 @@ import {
   setLearnerPathStatus,
   validateOfficialLearningPathGraph,
 } from '../src/learning-path-graph.ts'
-import { runTutorTools } from './tool-runtime.ts'
+import { executeTutorAgentTool } from './tool-runtime.ts'
 import {
   KNOWLEDGE_CLUSTERS,
   NEBULA_WIDTH,
@@ -111,23 +112,49 @@ test('personal concept anchors align to course nodes without sharing mastery con
   assert.ok(alignments.every(item => !('mastery' in item)))
 })
 
+test('four graph families use explicit alignment records and preserve unmatched gaps', () => {
+  const initial = createInitialLearnerPathState()
+  const proposal = buildLearningPathPlanProposal('我想用半年系统学习 Agent 开发', initial)!
+  const state = commitLearningPathPlan(initial, proposal)
+  const alignment = buildLearningGraphAlignments(
+    state,
+    [
+      { concept_key: 'machine-learning', name: '机器学习' },
+      { concept_key: 'private-intuition', name: '我自己的调试直觉' },
+    ],
+    [
+      { id: 'repo-agent', title: 'Agent 工程', labels: ['智能体工程', '工具调用'], sourceIds: ['source-1'] },
+      { id: 'repo-unknown', title: '团队内部专用协议', labels: ['私有协议'], sourceIds: ['source-2'] },
+    ],
+  )
+  assert.equal(alignment.version, 'vnext-graph-alignment.v1')
+  assert.ok(alignment.alignments.some(item => item.fromGraph === 'source_knowledge_domain' && item.toId === 'agent-engineering'))
+  assert.ok(alignment.alignments.some(item => item.fromGraph === 'learning_path_plan' && item.relation === 'routes_through'))
+  assert.ok(alignment.alignments.some(item => item.fromGraph === 'personal_concept_graph' && item.toId === 'machine-learning'))
+  assert.ok(alignment.alignments.some(item => item.toGraph === 'personal_course_overlay'))
+  assert.ok(alignment.alignments.every(item => item.carriesMastery === false))
+  assert.ok(alignment.gaps.some(item => item.objectId === 'repo-unknown'))
+  assert.ok(alignment.gaps.some(item => item.objectId === 'private-intuition'))
+})
+
 test('planning mode invokes the path reader without asking the model to decide structure', async () => {
-  const result = await runTutorTools({
+  const result = await executeTutorAgentTool('read_learning_path', {
+    query: '我想规划 Agent 开发的学习路线',
+  }, {
     message: '我想规划 Agent 开发的学习路线',
-    choice: 'auto',
     mode: 'learning_plan',
     learnerPathState: createInitialLearnerPathState(),
     generate: async () => { throw new Error('known-node path read should not need generation') },
   })
-  const pathRun = result.runs.find(run => run.kind === 'path')
+  const pathRun = result.run
+  const observation = result.observation as { context: string; pathPlanProposal?: { targetNodeIds: string[] } }
   assert.equal(pathRun?.status, 'completed')
   assert.match(pathRun?.detail || '', /智能体工程/)
-  assert.match(result.context, /结构核参考投影/)
-  assert.match(result.context, /不能替代题目、项目或迁移证据/)
+  assert.match(observation.context, /结构核参考投影/)
+  assert.match(observation.context, /不能替代题目、项目或迁移证据/)
   assert.ok(pathRun?.pathPlanProposal)
   assert.ok(pathRun!.pathPlanProposal!.targetNodeIds.includes('agent-engineering'))
-  assert.match(result.context, /长期学习路径提案/)
-  assert.match(result.context, /尚未确认/)
+  assert.equal(observation.pathPlanProposal, pathRun.pathPlanProposal)
 })
 
 test('long-term route proposal becomes an inspectable learner-owned plan and remains archivable', () => {

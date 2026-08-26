@@ -134,12 +134,13 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
-    assert "registered EvidenceEvent" in TOOLS["vnext_learning_task_runtime"].write_path
+    assert "LearningSkillRun" in TOOLS["vnext_learning_task_runtime"].write_path
     assert "explicit confirmation EvidenceEvent" in TOOLS["vnext_learning_plan_runtime"].write_path
     assert registry_manifest()["authority"]["vnext_learning_substate_projection"] == (
-        "guided_learning main state -> bound learning skill -> current skill step substate; "
-        "transitions only from the browser-local event queue"
+        "guided_learning main state -> bound learning skill -> formal LearningSkillRun state; "
+        "browser events only mirror the formal state or serve explicit offline fallback"
     )
+    assert "non-mastery alignment records" in registry_manifest()["authority"]["vnext_learning_graph_alignment"]
     assert TOOLS["vnext_five_kernel_profile_reader"].reads_kernels == (
         "structure", "knowledge", "human", "value", "practice",
     )

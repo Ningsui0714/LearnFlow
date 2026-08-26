@@ -47,6 +47,19 @@ class LearningSkillRunActionRequest(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
+class LearningSkillRunTurnRequest(BaseModel):
+    """Advance the deterministic SkillRun without invoking a second Tutor LLM."""
+
+    message: str = Field(min_length=1, max_length=12000)
+    expected_version: int = Field(ge=1)
+    client_turn_id: str = Field(min_length=8, max_length=120)
+
+    @field_validator("message", "client_turn_id", mode="before")
+    @classmethod
+    def normalize_turn_text(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
 class LearningEventRequest(BaseModel):
     client_event_id: str = Field(min_length=3, max_length=160)
     event_type: str = Field(min_length=2, max_length=80)

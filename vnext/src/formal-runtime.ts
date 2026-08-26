@@ -1,4 +1,4 @@
-import type { LearningEvent, LearningSkillId, LearningTask as LocalLearningTask } from './learning'
+import type { LearningEvent, LearningSkillId } from './learning'
 import type {
   LearningPathPlan,
   LearningPathPlanProposal,
@@ -76,6 +76,54 @@ export type FormalLearningTask = {
   version: number
   created_at?: string | null
   updated_at?: string | null
+}
+
+export type FormalLearningSkillRun = {
+  id: number
+  skill: { id: LearningSkillId; name: string; description?: string }
+  goal: string
+  status: string
+  state: string
+  stage_label: string
+  step_index: number
+  total_steps: number
+  turn_count: number
+  turn_budget: number
+  support_count: number
+  flow_note: string
+  version: number
+  next_prompt: string
+  can_start_verification: boolean
+  can_pause: boolean
+  can_resume: boolean
+  learning_task?: {
+    id: number
+    title: string
+    status: string
+    current_phase_id: string
+    plan_version: number
+    version: number
+    path?: string | null
+    management_path?: string | null
+    artifact_path?: string | null
+  } | null
+  micro_learning_run?: {
+    id: number
+    goal: string
+    status: string
+    state: string
+    version: number
+  } | null
+}
+
+export type FormalTutorSession = {
+  id: number
+  title: string
+  session_type: 'global' | 'project' | 'checkpoint'
+  project_id?: number | null
+  checkpoint_id?: number | null
+  active_skill_run?: FormalLearningSkillRun | null
+  learning_tasks: FormalLearningTask[]
 }
 
 export type FormalPathOverlay = {
@@ -296,6 +344,9 @@ export async function syncFormalEvent(event: LearningEvent | PlanningEvent | {
   detail: string
   payload?: Record<string, unknown>
 }) {
+  const explicitScope = 'payload' in event && event.payload && typeof event.payload === 'object'
+    ? event.payload as Record<string, unknown>
+    : {}
   const payload: Record<string, unknown> = {
     detail: event.detail,
     ...('taskId' in event ? { local_task_id: event.taskId } : {}),
@@ -312,6 +363,9 @@ export async function syncFormalEvent(event: LearningEvent | PlanningEvent | {
       event_type: event.type,
       client_event_id: event.id,
       occurred_at: new Date(event.at).toISOString(),
+      session_id: typeof explicitScope.session_id === 'number' ? explicitScope.session_id : undefined,
+      project_id: typeof explicitScope.project_id === 'number' ? explicitScope.project_id : undefined,
+      checkpoint_id: typeof explicitScope.checkpoint_id === 'number' ? explicitScope.checkpoint_id : undefined,
       payload,
     }),
   })
@@ -420,17 +474,74 @@ export async function recordFormalConceptStatement(rawText: string, clientEventI
   })
 }
 
-export async function createFormalLearningTask(task: LocalLearningTask, skillId: LearningSkillId, conversationId: string) {
-  return jsonRequest<FormalLearningTask>('/api/learning-tasks', {
+export async function createFormalTutorSession(createNew = true) {
+  return jsonRequest<FormalTutorSession>('/api/agent/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ session_type: 'global', create_new: createNew }),
+  })
+}
+
+export async function loadFormalTutorSession(sessionId: number) {
+  return jsonRequest<FormalTutorSession>(`/api/agent/sessions/${sessionId}`)
+}
+
+export async function startFormalLearningSkillRun(
+  sessionId: number,
+  skillId: LearningSkillId,
+  goal: string,
+  clientRequestId: string,
+) {
+  return jsonRequest<{
+    session_id: number
+    active_skill_run: FormalLearningSkillRun
+    created: boolean
+  }>(`/api/agent/sessions/${sessionId}/skill-runs`, {
     method: 'POST',
     body: JSON.stringify({
-      title: task.objective.slice(0, 255),
-      objective: task.objective,
-      estimated_minutes: 25,
-      preferred_skills: [skillId],
-      source_refs: [{ kind: 'vnext_conversation', conversation_id: conversationId, local_task_id: task.id }],
-      success_criteria: ['完成当前 Skill 的必要学习动作', '至少完成一次无答案泄露的迁移或独立检查'],
-      client_request_id: `vnext-task:${task.id}`,
+      skill_id: skillId,
+      goal,
+      client_request_id: clientRequestId,
+    }),
+  })
+}
+
+export async function advanceFormalLearningSkillTurn(
+  sessionId: number,
+  runId: number,
+  message: string,
+  expectedVersion: number,
+  clientTurnId: string,
+) {
+  return jsonRequest<{
+    session_id: number
+    active_skill_run: FormalLearningSkillRun
+    turn_plan?: { directive?: string; fallback?: string }
+    created: boolean
+  }>(`/api/agent/sessions/${sessionId}/skill-runs/${runId}/turns`, {
+    method: 'POST',
+    body: JSON.stringify({
+      message,
+      expected_version: expectedVersion,
+      client_turn_id: clientTurnId,
+    }),
+  })
+}
+
+export async function actOnFormalLearningSkillRun(
+  sessionId: number,
+  run: Pick<FormalLearningSkillRun, 'id' | 'version'>,
+  action: 'pause' | 'resume' | 'start_verification',
+) {
+  return jsonRequest<{
+    session_id: number
+    active_skill_run: FormalLearningSkillRun
+    learning_run?: Record<string, unknown> | null
+  }>(`/api/agent/sessions/${sessionId}/skill-runs/${run.id}/actions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      action,
+      expected_version: run.version,
+      client_action_id: `vnext-skill-action:${run.id}:${action}:${Date.now()}`,
     }),
   })
 }

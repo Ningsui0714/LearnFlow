@@ -35,6 +35,7 @@ test('only an explicit atomic learning request starts guided learning automatica
 })
 
 test('a task starts at the recommended skill own first step', () => {
+  assert.equal(createLearningTask('带我学习贝叶斯公式', 99).task.objective, '贝叶斯公式')
   const created = createLearningTask('带我写一个二分查找', 100)
   const projection = projectLearningTask(created.task, created.events)
   assert.equal(created.task.objective, '写一个二分查找')

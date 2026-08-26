@@ -28,6 +28,14 @@ export type LearningTaskBinding = {
   createdAt: number
   formalTaskId?: number
   formalTaskVersion?: number
+  formalSkillRunId?: number
+  formalSkillRunVersion?: number
+  formalSkillStatus?: string
+  formalSkillState?: string
+  formalSkillStageLabel?: string
+  formalSkillDirective?: string
+  formalSkillTurnCount?: number
+  formalSkillTurnBudget?: number
 }
 
 // Backward-compatible name for existing persisted vNext records.
@@ -97,6 +105,11 @@ export type LearningTaskTutorContext = {
   objectType: 'learning_task_binding'
   authority: 'formal_learning_task' | 'local_offline_fallback'
   formalTaskId?: number
+  formalSkillRunId?: number
+  formalSkillRunVersion?: number
+  formalSkillStatus?: string
+  formalSkillState?: string
+  formalSkillStageLabel?: string
   taskId: string
   objective: string
   skillId: LearningSkillId
@@ -111,6 +124,22 @@ export type LearningTaskTutorContext = {
   nextAction: string
   loopCount: number
   loopInstruction: string
+}
+
+export type FormalSkillRunBindingInput = {
+  id: number
+  version: number
+  status: string
+  state: string
+  stage_label?: string
+  next_prompt?: string
+  step_index?: number
+  turn_count?: number
+  turn_budget?: number
+  learning_task?: {
+    id: number
+    version?: number
+  } | null
 }
 
 export const LEARNING_SKILLS: Record<LearningSkillId, LearningSkillDefinition> = {
@@ -267,7 +296,7 @@ export function isSupportRequest(input: string) {
 export function learningObjectiveFromInput(input: string) {
   const cleaned = input
     .replace(/^(?:请|可以|能不能|你能)?\s*带我(?=(?:写|实现|完成))/i, '')
-    .replace(/^(?:请|可以|能不能|你能)?\s*(?:带我(?:学|学习|弄懂|理解|练习|做)|教我(?:学会|理解|弄懂)|陪我(?:学|练)|让我练习)\s*/i, '')
+    .replace(/^(?:请|可以|能不能|你能)?\s*(?:带我(?:学习|练习|弄懂|理解|学|做)|教我(?:学会|理解|弄懂)|陪我(?:学|练)|让我练习)\s*/i, '')
     .replace(/[。！？!?]+$/g, '')
     .trim()
   return (cleaned || input.trim() || '完成当前学习目标').slice(0, 180)
@@ -428,6 +457,11 @@ export function learningTaskTutorContext(projection: LearningTaskProjection): Le
     objectType: 'learning_task_binding',
     authority: projection.task.formalTaskId ? 'formal_learning_task' : 'local_offline_fallback',
     formalTaskId: projection.task.formalTaskId,
+    formalSkillRunId: projection.task.formalSkillRunId,
+    formalSkillRunVersion: projection.task.formalSkillRunVersion,
+    formalSkillStatus: projection.task.formalSkillStatus,
+    formalSkillState: projection.task.formalSkillState,
+    formalSkillStageLabel: projection.task.formalSkillStageLabel,
     taskId: projection.task.id,
     objective: projection.task.objective,
     skillId: projection.skillId,
@@ -438,11 +472,45 @@ export function learningTaskTutorContext(projection: LearningTaskProjection): Le
     stepTitle: step.title,
     stepIndex: projection.stepIndex,
     stepCount: skill.steps.length,
-    stepInstruction: step.tutorInstruction,
+    stepInstruction: projection.task.formalSkillDirective || step.tutorInstruction,
     nextAction: step.nextAction,
     loopCount: projection.loopCount,
     loopInstruction: step.loopInstruction || '继续当前动作并缩小问题范围。',
   }
+}
+
+export function bindFormalSkillRun(task: LearningTask, run: FormalSkillRunBindingInput): LearningTask {
+  return {
+    ...task,
+    formalTaskId: run.learning_task?.id || task.formalTaskId,
+    formalTaskVersion: run.learning_task?.version || task.formalTaskVersion,
+    formalSkillRunId: run.id,
+    formalSkillRunVersion: run.version,
+    formalSkillStatus: run.status.slice(0, 40),
+    formalSkillState: run.state.slice(0, 80),
+    formalSkillStageLabel: String(run.stage_label || run.state).slice(0, 100),
+    formalSkillDirective: String(run.next_prompt || '').slice(0, 1800),
+    formalSkillTurnCount: Math.max(0, Math.floor(run.turn_count || 0)),
+    formalSkillTurnBudget: Math.max(0, Math.floor(run.turn_budget || 0)),
+  }
+}
+
+export function reconcileLearningEventsWithFormalSkillRun(
+  events: LearningEvent[],
+  projection: LearningTaskProjection,
+  run: FormalSkillRunBindingInput,
+  now = Date.now(),
+) {
+  const steps = LEARNING_SKILLS[projection.skillId].steps
+  const targetIndex = Math.max(0, Math.min(steps.length - 1, Math.floor((run.step_index || 1) - 1)))
+  if (targetIndex <= projection.stepIndex) return events
+  const additions = steps.slice(projection.stepIndex + 1, targetIndex + 1).map(step => ({
+    type: 'vnext_learning_skill_step_entered' as const,
+    detail: `正式 SkillRun 推进到${step.substateLabel}：${step.title}`,
+    skillId: projection.skillId,
+    stepId: step.id,
+  }))
+  return appendLearningEvents(events, projection.task.id, additions, now)
 }
 
 export function isLearningSkillId(value: unknown): value is LearningSkillId {
@@ -473,6 +541,11 @@ export function sanitizeLearningTaskTutorContext(value: unknown): LearningTaskTu
     objectType: 'learning_task_binding',
     authority: item.authority === 'formal_learning_task' ? 'formal_learning_task' : 'local_offline_fallback',
     formalTaskId: typeof item.formalTaskId === 'number' ? Math.floor(item.formalTaskId) : undefined,
+    formalSkillRunId: typeof item.formalSkillRunId === 'number' ? Math.floor(item.formalSkillRunId) : undefined,
+    formalSkillRunVersion: typeof item.formalSkillRunVersion === 'number' ? Math.floor(item.formalSkillRunVersion) : undefined,
+    formalSkillStatus: typeof item.formalSkillStatus === 'string' ? item.formalSkillStatus.slice(0, 40) : undefined,
+    formalSkillState: typeof item.formalSkillState === 'string' ? item.formalSkillState.slice(0, 80) : undefined,
+    formalSkillStageLabel: typeof item.formalSkillStageLabel === 'string' ? item.formalSkillStageLabel.slice(0, 100) : undefined,
     taskId: item.taskId.slice(0, 120),
     objective: item.objective.slice(0, 500),
     skillId: item.skillId,

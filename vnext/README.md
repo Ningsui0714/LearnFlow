@@ -33,6 +33,6 @@ npm run dev:web
 - 没有配置或调用失败时显示真实原因，不生成占位答案。
 - 正式学习者写入只通过 `/api/learner-state/*` 的 allow-list 事件网关，统一进入 `EvidenceEvent -> five_kernel_reducer -> Memory Graph`；vNext 不直接写数据库或 KernelState。
 - 联网讲解使用分层的计算机知识来源和可检查的检索计划；设计与可选搜索后端见 [COMPUTER_KNOWLEDGE_SEARCH.md](./COMPUTER_KNOWLEDGE_SEARCH.md)。
-- 四种基础 Skill 的步骤仍由对话内本地运行时编排，但正式 Learning Task 生命周期进入全局任务队列；Skill 导航和任务完成都不等于掌握。活动位置、证据边界与研究依据见 [LEARNING_TASK_DESIGN.md](./LEARNING_TASK_DESIGN.md)。
+- 四种基础 Skill 由正式 `AgentSession -> LearningSkillRun -> LearningTask` 编排；浏览器事件只镜像正式步骤，断线时才提供明确标注的离线回退。Skill 导航和任务完成都不等于掌握。活动位置、证据边界与研究依据见 [LEARNING_TASK_DESIGN.md](./LEARNING_TASK_DESIGN.md)。
 - 学习路径状态与个人节点写入 Structure；“自报学过”最多在 Knowledge 留下接触记录，绝不升级 mastery。
 - 五核画像支持归档/恢复记忆，以及确认、纠正、撤回 Claim；原始事件和历史版本保持只追加、可审计。

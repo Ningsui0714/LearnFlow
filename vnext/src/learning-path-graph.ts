@@ -113,6 +113,53 @@ export type ConceptAnchorLike = {
   official_node_id?: string | null
 }
 
+export type SourceKnowledgeDomainLike = {
+  id: string
+  title: string
+  summary?: string
+  labels?: string[]
+  sourceIds?: string[]
+}
+
+export type LearningGraphKind =
+  | 'source_knowledge_domain'
+  | 'official_course_graph'
+  | 'personal_course_overlay'
+  | 'learning_path_plan'
+  | 'personal_concept_graph'
+
+export type LearningGraphAlignment = {
+  id: string
+  fromGraph: LearningGraphKind
+  toGraph: LearningGraphKind
+  fromId: string
+  toId: string
+  relation: 'covers' | 'personalizes' | 'routes_through' | 'anchors_concept'
+  match: 'declared' | 'exact_key' | 'exact_name_or_alias' | 'deterministic_topic_match'
+  confidence: number
+  authority: 'deterministic_alignment_projection'
+  carriesMastery: false
+}
+
+export type LearningGraphAlignmentProjection = {
+  version: 'vnext-graph-alignment.v1'
+  alignments: LearningGraphAlignment[]
+  gaps: Array<{
+    graph: 'source_knowledge_domain' | 'personal_concept_graph'
+    objectId: string
+    title: string
+    reason: 'no_reliable_official_course_match'
+  }>
+  manifest: {
+    sourceDomainCount: number
+    courseNodeCount: number
+    overlayStatusCount: number
+    planCount: number
+    conceptCount: number
+    masteryInference: false
+  }
+}
+
 export type LearningPathReadPacket = {
   snapshotId: string
   policyId: 'vnext-learning-path-reader-v1'
@@ -220,6 +267,114 @@ export function alignPersonalConceptsToLearningPath(concepts: ConceptAnchorLike[
     })
   }
   return result
+}
+
+function alignmentTopicScore(node: LearningPathNode, values: string[]) {
+  const names = [node.id, node.title, ...node.aliases].map(normalize).filter(Boolean)
+  let best = 0
+  for (const raw of values) {
+    const value = normalize(raw)
+    if (!value) continue
+    for (const name of names) {
+      if (name === value) best = Math.max(best, 100)
+      else if (name.length >= 2 && value.includes(name)) best = Math.max(best, 78)
+      else if (value.length >= 2 && name.includes(value)) best = Math.max(best, 72)
+    }
+    for (const domain of node.domains.map(normalize)) {
+      if (domain && (value.includes(domain) || domain.includes(value))) best = Math.max(best, 68)
+    }
+  }
+  return best
+}
+
+export function buildLearningGraphAlignments(
+  state: LearnerPathState,
+  concepts: ConceptAnchorLike[] = [],
+  sourceDomains: SourceKnowledgeDomainLike[] = [],
+): LearningGraphAlignmentProjection {
+  const projection = projectLearnerPath(state)
+  const officialNodes = projection.nodes.filter(node => node.origin === 'official')
+  const alignments: LearningGraphAlignment[] = []
+  const gaps: LearningGraphAlignmentProjection['gaps'] = []
+  const push = (alignment: Omit<LearningGraphAlignment, 'id' | 'authority' | 'carriesMastery'>) => {
+    const identity = `${alignment.fromGraph}:${alignment.fromId}:${alignment.relation}:${alignment.toGraph}:${alignment.toId}`
+    if (alignments.some(item => item.id === identity)) return
+    alignments.push({
+      ...alignment,
+      id: identity,
+      authority: 'deterministic_alignment_projection',
+      carriesMastery: false,
+    })
+  }
+
+  for (const [nodeId, status] of Object.entries(projection.statuses)) {
+    if (status === 'unmarked' || !projection.nodes.some(node => node.id === nodeId)) continue
+    push({
+      fromGraph: 'official_course_graph', toGraph: 'personal_course_overlay',
+      fromId: nodeId, toId: `overlay:${nodeId}`, relation: 'personalizes',
+      match: 'declared', confidence: 1,
+    })
+  }
+  for (const plan of projection.plans) {
+    for (const nodeId of plan.routeNodeIds) {
+      if (!projection.nodes.some(node => node.id === nodeId)) continue
+      push({
+        fromGraph: 'learning_path_plan', toGraph: 'official_course_graph',
+        fromId: plan.id, toId: nodeId, relation: 'routes_through',
+        match: 'declared', confidence: 1,
+      })
+    }
+  }
+  const conceptMatches = alignPersonalConceptsToLearningPath(concepts)
+  for (const match of conceptMatches) {
+    push({
+      fromGraph: 'personal_concept_graph', toGraph: 'official_course_graph',
+      fromId: match.conceptKey, toId: match.pathNodeId, relation: 'anchors_concept',
+      match: match.match === 'declared_official_anchor' ? 'declared' : match.match,
+      confidence: match.confidence,
+    })
+  }
+  const matchedConcepts = new Set(conceptMatches.map(item => item.conceptKey))
+  for (const concept of concepts) {
+    const key = String(concept.concept_key || concept.name || '').trim()
+    if (key && !matchedConcepts.has(key)) gaps.push({
+      graph: 'personal_concept_graph', objectId: key,
+      title: String(concept.name || concept.concept_key || key),
+      reason: 'no_reliable_official_course_match',
+    })
+  }
+  for (const domain of sourceDomains) {
+    const values = [domain.title, ...(domain.labels || []), domain.summary || '']
+    const ranked = officialNodes.map(node => ({ node, score: alignmentTopicScore(node, values) }))
+      .filter(item => item.score >= 72)
+      .sort((left, right) => right.score - left.score || left.node.order - right.node.order)
+      .slice(0, 3)
+    if (!ranked.length) {
+      gaps.push({
+        graph: 'source_knowledge_domain', objectId: domain.id, title: domain.title,
+        reason: 'no_reliable_official_course_match',
+      })
+      continue
+    }
+    for (const { node, score } of ranked) push({
+      fromGraph: 'source_knowledge_domain', toGraph: 'official_course_graph',
+      fromId: domain.id, toId: node.id, relation: 'covers',
+      match: 'deterministic_topic_match', confidence: Math.min(0.96, score / 100),
+    })
+  }
+  return {
+    version: 'vnext-graph-alignment.v1',
+    alignments,
+    gaps,
+    manifest: {
+      sourceDomainCount: sourceDomains.length,
+      courseNodeCount: projection.nodes.length,
+      overlayStatusCount: Object.values(projection.statuses).filter(status => status !== 'unmarked').length,
+      planCount: projection.plans.length,
+      conceptCount: concepts.length,
+      masteryInference: false,
+    },
+  }
 }
 
 const n = (

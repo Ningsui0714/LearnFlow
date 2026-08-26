@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-26.14"
+REGISTRY_VERSION = "2026-08-26.15"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -260,7 +260,7 @@ TOOLS = {
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
-                     KERNEL_NAMES, (), "browser interaction -> registered EvidenceEvent + formal LearningTask API -> deterministic task projection; lifecycle events never imply mastery"),
+                     KERNEL_NAMES, (), "browser interaction -> formal AgentSession + LearningSkillRun + linked LearningTask -> deterministic turn transition; browser events are display/offline projections and lifecycle never implies mastery"),
         ToolContract("vnext_learning_plan_runtime", "vNext In-chat Learning Plan Runtime", "tutor_agent", "vnext", "orchestration",
                      KERNEL_NAMES, (), "planning events -> learner-visible proposal -> explicit confirmation EvidenceEvent -> reducer; proposal/rejection remain zero-target"),
         ToolContract("vnext_five_kernel_profile_reader", "vNext Formal Five-kernel Context Reader", "tutor_agent", "vnext", "read",
@@ -948,11 +948,12 @@ def registry_manifest() -> dict[str, Any]:
             "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
-            "vnext_learning_task_projection": "browser interaction -> registered EvidenceEvent + formal LearningTask API -> deterministic in-chat task projection; lifecycle never mastery evidence",
-            "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> current skill step substate; transitions only from the browser-local event queue",
+            "vnext_learning_task_projection": "browser interaction -> formal AgentSession + LearningSkillRun + linked LearningTask; browser cache is projection/offline fallback and lifecycle never mastery evidence",
+            "vnext_learning_substate_projection": "guided_learning main state -> bound learning skill -> formal LearningSkillRun state; browser events only mirror the formal state or serve explicit offline fallback",
+            "vnext_learning_graph_alignment": "official course graph + personal course overlay + personal concept graph + source knowledge domains + confirmed path plan are joined only by explicit non-mastery alignment records",
             "vnext_learning_plan_projection": "planning intent -> proposal -> explicit learner decision; accepted Value changes enter the formal EvidenceEvent reducer",
             "vnext_learning_path_projection": "versioned official course DAG + formal learner overlay events -> Structure/Value reference projection; Knowledge only records self-reported exposure and never mastery",
-            "vnext_agent_turn_runtime": "typed ContextEnvelope -> bounded model/tool loop -> structured AgentTurnTrace; model receives only registered read/artifact ACI tools",
+            "vnext_agent_turn_runtime": "typed ContextEnvelope -> bounded model/tool loop -> deterministic final-state verifier -> structured AgentTurnTrace; model receives only registered read/artifact ACI tools",
             "tool_ontology": "ACI tools are Agent-callable affordances; harness, projection, policy and adapter objects are service-side infrastructure",
             "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
         },

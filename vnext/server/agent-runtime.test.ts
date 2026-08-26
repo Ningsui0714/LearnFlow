@@ -5,8 +5,10 @@ import {
   buildAgentProviderRequest,
   runTutorAgentTurn,
   toolCallsFromProviderResponse,
+  verifyTutorTurnOutcome,
 } from './agent-runtime.ts'
 import { createInitialLearnerPathState } from '../src/learning-path-graph.ts'
+import { executeTutorAgentTool } from './tool-runtime.ts'
 
 test('provider tool calls are normalized for chat completions and responses APIs', () => {
   assert.deepEqual(toolCallsFromProviderResponse({
@@ -37,6 +39,24 @@ test('provider requests expose real tool definitions in both API dialects', () =
     messages: [{ role: 'user', content: 'hello' }], tools: [tool], includeTools: true,
   })
   assert.equal((responses.body as any).tools[0].name, 'read_learner_context')
+})
+
+test('final-state verifier rejects unconfirmed writes, mastery overclaims and hidden failures', () => {
+  const proposalRun: any = {
+    id: 'path', kind: 'path', status: 'completed', title: '路径', detail: 'proposal', durationMs: 1,
+    pathProposal: { id: 'p' },
+  }
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '我已经把这个节点加入个人学习路径。', mode: 'learning_plan', toolRuns: [proposalRun],
+  }).violations, ['unconfirmed_path_write_claim'])
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '这说明你已经完全掌握了哈希表。', mode: 'guided_learning', toolRuns: [],
+  }).violations, ['unsupported_mastery_claim'])
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: '下面给出正常答案。', mode: 'free', toolRuns: [{
+      id: 'search', kind: 'search', status: 'failed', title: '搜索', detail: '503', durationMs: 1,
+    }],
+  }).violations, ['hidden_tool_failure'])
 })
 
 test('Tutor runs a bounded observe-act-observe loop and preserves tool results', async () => {
@@ -133,5 +153,142 @@ test('guided turns observe the formal task queue and never expose write tools', 
   assert.match(result.toolRuns[1].detail, /1 个正式队列任务/)
   const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
   assert.ok(exposed.includes('read_learning_workspace'))
+  assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
+})
+
+test('planning final state observes five-kernel, workspace and path without upgrading self report', async () => {
+  const requests: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我学过机器学习，想规划 Agent 工程路线' }],
+    toolChoice: 'auto',
+    learnerPathState: createInitialLearnerPathState(),
+    formalLearnerContext: {
+      snapshot_id: 'snapshot-1',
+      kernel_heads: {
+        knowledge: { summary: '自述接触过机器学习，尚无独立验证' },
+        value: { summary: '希望学习 Agent 工程' },
+      },
+      items: [], conflicts: [], missing_facets: ['practice.transfer'],
+    },
+    taskQueue: [],
+    knowledgeDomains: [],
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '路线会保留机器学习验证节点，不把“学过”直接当作掌握。' } }] }
+    },
+  })
+  assert.deepEqual(result.toolRuns.map(run => run.kind), ['memory', 'workspace', 'path'])
+  assert.match(result.reply, /不把“学过”直接当作掌握/)
+  assert.ok(requests[0].body.messages.filter((message: any) => message.role === 'tool').length === 3)
+})
+
+test('a path gap is searched and returned as an uncommitted personal-node proposal', async () => {
+  const state = createInitialLearnerPathState()
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想系统学习量子机器学习' }],
+    toolChoice: 'auto',
+    learnerPathState: state,
+    generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'search_computer_knowledge') {
+        return {
+          run: {
+            id: 'search-gap', kind: 'search', toolName: name, toolCallId: meta?.callId,
+            status: 'completed', title: '搜索', detail: '找到一条大学课程来源',
+            durationMs: 1,
+            sources: [{ title: 'QML course', url: 'https://example.edu/qml', snippet: 'course', source: 'University', quality: 'academic', role: 'course', reason: '课程来源' }],
+          },
+          observation: { authority: 'untrusted_web_evidence_bundle' },
+          searchSourceUrls: ['https://example.edu/qml'],
+        }
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async () => {
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'search-qml', function: { name: 'search_computer_knowledge', arguments: '{"query":"量子机器学习 大学课程 前置"}' },
+      }] } }] }
+      return { choices: [{ message: { content: '现有官方图没有可靠节点；我已形成个人节点提案，只有你确认后才会加入。' } }] }
+    },
+  })
+  const refreshedPath = result.toolRuns.filter(run => run.kind === 'path').at(-1)
+  assert.ok(refreshedPath?.pathProposal)
+  assert.match(result.reply, /只有你确认后/)
+  assert.equal(state.events.some(event => event.type === 'vnext_personal_path_node_added'), false)
+})
+
+test('a failed tool is visible and the model can switch observations before answering', async () => {
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'free',
+    messages: [{ role: 'user', content: '查一下机器学习路线；如果联网失败就看内置路径' }],
+    toolChoice: 'auto',
+    learnerPathState: createInitialLearnerPathState(),
+    generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'search_computer_knowledge') return {
+        run: {
+          id: 'failed-search', kind: 'search', toolName: name, toolCallId: meta?.callId,
+          status: 'failed', title: '搜索', detail: '503 temporary search failure', errorType: 'transient', durationMs: 1,
+        },
+        observation: { error: '503 temporary search failure', recoverableByModel: true },
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async () => {
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'search-fails', function: { name: 'search_computer_knowledge', arguments: '{"query":"机器学习路线"}' },
+      }] } }] }
+      if (round === 2) return { choices: [{ message: { tool_calls: [{
+        id: 'fallback-path', function: { name: 'read_learning_path', arguments: '{"query":"机器学习路线"}' },
+      }] } }] }
+      return { choices: [{ message: { content: '联网检索暂时失败；下面仅依据内置课程图给出前置关系。' } }] }
+    },
+  })
+  assert.equal(result.toolRuns.find(run => run.kind === 'search')?.status, 'failed')
+  assert.equal(result.toolRuns.find(run => run.kind === 'path')?.status, 'completed')
+  assert.match(result.reply, /联网检索暂时失败/)
+})
+
+test('learner conflicts and project source domains remain observations, never write tools', async () => {
+  const requests: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'guided_learning',
+    messages: [{ role: 'user', content: '继续完成仓库里的 Agent 工具调用章节' }],
+    toolChoice: 'auto',
+    formalLearnerContext: {
+      snapshot_id: 'conflict-snapshot', kernel_heads: {}, items: [],
+      conflicts: [{ subject: 'tool-calling', text: '旧 Claim 与本轮自述冲突，等待学习者确认' }],
+    },
+    taskQueue: [{ id: 8, objective: '完成 Agent 工具调用章节', status: 'active' }],
+    knowledgeDomains: [{
+      id: 'repo-agent-tools', title: 'Agent 工具调用', labels: ['tool calling', 'function calling'],
+      summary: '来源仓库覆盖工具定义、调用结果和失败恢复。', sourceIds: ['source-8'],
+    }],
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '我会按仓库覆盖范围继续，并把记忆冲突留给你确认，不会静默覆盖。' } }] }
+    },
+  })
+  const serialized = JSON.stringify(requests[0].body.messages)
+  assert.match(serialized, /旧 Claim 与本轮自述冲突/)
+  assert.match(serialized, /来源仓库覆盖工具定义/)
+  assert.match(result.reply, /不会静默覆盖/)
+  const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
   assert.ok(!exposed.some((name: string) => /write|update|commit|confirm|create|delete/.test(name)))
 })

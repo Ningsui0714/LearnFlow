@@ -13,6 +13,7 @@ from app.schemas.agent import (
     AgentSessionCreate, TutorTurnRequest, LearningEventRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
     LearningSkillRunCreateRequest, LearningSkillRunActionRequest,
+    LearningSkillRunTurnRequest,
 )
 from app.services.learning_runtime import (
     PUBLIC_EVENT_TYPES, record_event, get_state_summary, evaluate_checkpoint_status,
@@ -34,6 +35,7 @@ from app.services.learning_skill_runtime import (
     create_learning_skill_run,
     latest_learning_skill_run_view,
     learning_skill_run_view,
+    prepare_learning_skill_turn,
 )
 from app.services.project_proposals import (
     list_session_proposals, proposal_view, set_proposal_status,
@@ -377,6 +379,77 @@ async def update_learning_skill_run(
         "active_skill": session_learning_skill(session),
         "active_skill_run": await learning_skill_run_view(db, run),
         "learning_run": micro_view,
+    }
+
+
+@router.post("/sessions/{session_id}/skill-runs/{run_id}/turns")
+async def advance_learning_skill_turn(
+    session_id: int,
+    run_id: int,
+    request: LearningSkillRunTurnRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """Advance only the deterministic SkillRun projection for a vNext turn.
+
+    vNext owns the bounded model/tool loop.  This endpoint records the learner
+    utterance and advances the registered SkillRun exactly once, so connecting
+    the formal runtime does not create a second model answer or a second state
+    authority.
+    """
+    session = await _owned_session(db, current.learner.id, session_id)
+    run = (await db.execute(select(LearningSkillRun).where(
+        LearningSkillRun.id == run_id,
+        LearningSkillRun.learner_id == current.learner.id,
+        LearningSkillRun.session_id == session.id,
+    ))).scalar_one_or_none()
+    if not run:
+        raise HTTPException(404, "学习方法记录不存在")
+
+    message_key = f"vnext-skill-turn:{session.id}:{request.client_turn_id}"[:160]
+    existing_message = (await db.execute(select(AgentMessage).where(
+        AgentMessage.idempotency_key == message_key,
+        AgentMessage.session_id == session.id,
+    ))).scalar_one_or_none()
+    if existing_message:
+        return {
+            "session_id": session.id,
+            "active_skill_run": await learning_skill_run_view(db, run),
+            "created": False,
+        }
+    if run.version != request.expected_version:
+        raise HTTPException(409, "学习方法状态已更新，请刷新后重试")
+
+    learner_message = AgentMessage(
+        session_id=session.id,
+        role="user",
+        content=request.message,
+        meta_data={
+            "source": "vnext_agent_turn_runtime",
+            "learning_skill_run_id": run.id,
+            "model_answer_generated": False,
+        },
+        idempotency_key=message_key,
+    )
+    db.add(learner_message)
+    await db.flush()
+    try:
+        advanced, turn_plan = await prepare_learning_skill_turn(
+            db,
+            session=session,
+            skill_id=run.skill_id,
+            message=request.message,
+            message_id=learner_message.id,
+            client_turn_id=request.client_turn_id,
+        )
+    except RuntimeError as error:
+        raise _skill_run_error(error) from error
+    await db.commit()
+    return {
+        "session_id": session.id,
+        "active_skill_run": await learning_skill_run_view(db, advanced),
+        "turn_plan": turn_plan,
+        "created": True,
     }
 
 

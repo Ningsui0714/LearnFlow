@@ -156,6 +156,27 @@ Contract impact：注册表版本提升到 `2026-08-26.14`。新增只编排上�
 保持兼容，没有新增 Kernel writer。浏览器 `LearningTask` 对象被明确为正式任务绑定或离线回退，
 浏览器 `LearningPlan` 被明确为 Planning Dialogue；正式长期路线仍只有 `LearningPathPlan`。
 
+### vNext 正式运行权威闭环
+
+vNext 的生产回合只经过一个 `vnext_agent_turn_runtime`：模型原生选择 ACI，工具观察以正式
+ToolMessage 回灌，并由确定性终态校验器拦截“未确认却声称已写入”、无证据掌握结论、隐去工具失败
+和缺少来源链接。旧的预调用工具流水线已删除，不再与原生循环竞争决策权。
+
+带领学习态以正式 `AgentSession -> LearningSkillRun -> LearningTask` 为运行权威。浏览器建立或恢复
+Session，启动 SkillRun 后绑定其自动建立的 LearningTask；后续学生输入调用
+`POST /api/agent/sessions/{session_id}/skill-runs/{run_id}/turns`，由确定性 Skill runtime 推进。
+该端点不再调用 Tutor LLM，不生成第二份回答；浏览器步骤事件只是显示缓存，离线时才成为明确标注的
+回退。点击“下一步”不能绕过 learner-reply gate，“不知道/换一种支架”停留在当前步骤。
+
+学习规划通过 `LearningGraphAlignmentProjection` 显式连接官方课程图、个人课程覆盖层、个人概念图、
+项目来源知识领域与已确认长期路线。每条 Alignment 记录图类型、对象 ID、匹配方式、置信度与依据；
+未匹配对象保留为 gap，所有 Alignment 固定 `carriesMastery=false`。图的身份对齐因此可检查，但不会
+把课程自报、仓库主题或路径目标转换成 Knowledge 掌握。
+
+Contract impact：注册表版本提升到 `2026-08-26.15`。新增 SkillRun 确定性 turn API 与四图对齐
+只读投影，收紧 vNext 浏览器绑定语义和终态校验；既有稳定 Agent、Skill、Event ID、LearningTask API
+与五核写入链保持兼容，无数据库迁移、无新增 Kernel writer。
+
 独立重构目录 `vnext/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。

@@ -178,6 +178,7 @@ def learner_response_signal(message: str) -> str:
         return "missing"
     if any(marker in normalized for marker in (
         "直接告诉我", "直接解释", "先给我解释", "先讲一下", "别再问了", "不要再问",
+        "换一种支架", "换种讲法", "再来一轮",
     )):
         return "direct_explanation_requested"
     if normalized in {"跳过", "先跳过", "略过", "下一步", "先不答", "不想答"}:

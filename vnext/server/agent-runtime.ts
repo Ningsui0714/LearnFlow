@@ -22,6 +22,7 @@ import type { LearnerPathState } from '../src/learning-path-graph.ts'
 import {
   executeTutorAgentTool,
   TUTOR_AGENT_TOOL_DEFINITIONS,
+  type TutorAgentToolExecution,
   type TutorAgentToolRuntimeOptions,
 } from './tool-runtime.ts'
 import type { SearchProviderConfiguration } from './computer-knowledge-search.ts'
@@ -58,6 +59,12 @@ export type TutorAgentRuntimeInput = {
   generate: TutorAgentToolRuntimeOptions['generate']
   searchConfiguration?: SearchProviderConfiguration
   invokeProvider: ProviderInvoke
+  executeTool?: (
+    name: string,
+    args: Record<string, unknown>,
+    options: TutorAgentToolRuntimeOptions,
+    meta?: { callId?: string; sequence?: number; sourceUrls?: string[] },
+  ) => Promise<TutorAgentToolExecution>
 }
 
 function turnId() {
@@ -275,6 +282,39 @@ function explicitToolCall(choice: TutorToolChoice, message: string): AgentToolCa
   }
 }
 
+export function verifyTutorTurnOutcome(options: {
+  reply: string
+  mode: TutorMode
+  toolRuns: TutorToolRun[]
+  learningTaskContext?: LearningTaskTutorContext
+}) {
+  const violations: string[] = []
+  const reply = options.reply.trim()
+  if (!isDisplayableTutorReply(reply)) violations.push('display_protocol')
+  const hasUncommittedProposal = options.toolRuns.some(run => run.pathProposal || run.pathPlanProposal)
+  if (
+    hasUncommittedProposal
+    && /(?:已经|已)[^。！!？?\n]{0,24}(?:保存|加入|写入|更新|创建)(?:了)?[^。！!？?\n]{0,20}(?:路径|节点|规划)/i.test(reply)
+    && !/(?:尚未|没有|并未|等待|需要|只有.*确认)/i.test(reply)
+  ) violations.push('unconfirmed_path_write_claim')
+  const masteryClaim = /(?:你|这说明你)[^。！!？?\n]{0,18}(?:已经|已)?(?:完全|稳定|真正)?掌握/i.test(reply)
+    && !/(?:尚未|还没|没有|未能|并未)[^。！!？?\n]{0,10}掌握/i.test(reply)
+  if (
+    (options.mode === 'guided_learning' || Boolean(options.learningTaskContext))
+    && masteryClaim
+  ) violations.push('unsupported_mastery_claim')
+  const failedKinds = new Set(options.toolRuns.filter(run => run.status === 'failed').map(run => run.kind))
+  const unresolvedFailure = [...failedKinds].some(kind => !options.toolRuns.some(run => run.kind === kind && run.status === 'completed'))
+  if (unresolvedFailure && !/(?:失败|暂时|无法|未能|没有拿到|资料缺口|证据不足|连接问题)/i.test(reply)) {
+    violations.push('hidden_tool_failure')
+  }
+  const searched = options.toolRuns.some(run => run.kind === 'search' && run.status === 'completed' && run.sources?.length)
+  if (searched && !options.toolRuns.some(run => run.kind === 'search' && run.sources?.some(source => reply.includes(source.url)))) {
+    violations.push('missing_search_citation')
+  }
+  return { valid: violations.length === 0, violations }
+}
+
 export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<AgentTurnResponse> {
   const id = turnId()
   const startedAt = Date.now()
@@ -328,7 +368,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     toolCalls += 1
     record({ phase: 'act', detail: `调用 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'started' })
     runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
-    const result = await executeTutorAgentTool(call.name, call.arguments, toolOptions, {
+    const result = await (input.executeTool || executeTutorAgentTool)(call.name, call.arguments, toolOptions, {
       callId: call.id,
       sequence: toolCalls,
       sourceUrls,
@@ -453,15 +493,25 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         }
         continue
       }
-      if (isDisplayableTutorReply(text)) {
-        reply = text
+      const candidate = ensureSearchCitations(text, runs)
+      const verification = verifyTutorTurnOutcome({
+        reply: candidate,
+        mode: input.mode,
+        toolRuns: runs,
+        learningTaskContext: input.learningTaskContext,
+      })
+      if (verification.valid) {
+        reply = candidate
         stopReason = 'final_answer'
         record({ phase: 'verify', detail: '最终回复通过展示协议校验', status: 'completed' })
         break
       }
       runtimeMessages.push({ role: 'assistant', content: text })
-      runtimeMessages.push({ role: 'user', content: '上一次输出不可展示。请只输出自然的中文教学正文，不要输出内部工具协议。' })
-      record({ phase: 'verify', detail: '回复未通过展示协议，进入修正', status: 'failed' })
+      runtimeMessages.push({
+        role: 'user',
+        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明。`,
+      })
+      record({ phase: 'verify', detail: `回复未通过终态校验：${verification.violations.join('、')}`, status: 'failed' })
     }
 
     if (!reply) {
@@ -482,7 +532,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       if (Date.now() < deadline) {
         const payload = await invokeModel(request)
         const text = textFromTutorProviderResponse(payload)
-        if (isDisplayableTutorReply(text)) reply = text
+        const candidate = ensureSearchCitations(text, runs)
+        if (verifyTutorTurnOutcome({
+          reply: candidate,
+          mode: input.mode,
+          toolRuns: runs,
+          learningTaskContext: input.learningTaskContext,
+        }).valid) reply = candidate
       }
       if (!reply && fallbackReply) reply = fallbackReply
       if (!reply) throw new Error('模型在本轮预算内没有返回可显示的教学内容')
@@ -496,6 +552,16 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
 
   reply = ensureSearchCitations(reply, runs)
+  const finalVerification = verifyTutorTurnOutcome({
+    reply,
+    mode: input.mode,
+    toolRuns: runs,
+    learningTaskContext: input.learningTaskContext,
+  })
+  if (!finalVerification.valid) {
+    record({ phase: 'error', detail: `终态校验失败：${finalVerification.violations.join('、')}`, status: 'failed' })
+    throw new Error(`模型回复未通过终态安全校验：${finalVerification.violations.join('、')}`)
+  }
   return {
     reply,
     toolRuns: runs,

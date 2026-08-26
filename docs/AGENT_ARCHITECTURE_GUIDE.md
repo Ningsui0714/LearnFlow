@@ -225,6 +225,10 @@ vNext 每轮 MUST 经过 `vnext_agent_turn_runtime`。它先生成 typed `Contex
 MUST 去重，工具失败 MUST 分类并留给模型恢复。模型只拥有五个 vNext native ACI，所有写入仍通过
 Action Board、确认策略和 EvidenceEvent 网关。
 
+生产路径 MUST 只有这一个模型/工具循环；历史预调用工具函数不得参与 Tutor 回合。模型提出最终回答后，
+确定性 verifier MUST 检查展示协议、未确认写入声明、无证据掌握声明、未解释的工具失败和搜索引用。
+不合格回答只可在同一预算内要求模型纠正；预算耗尽且仍不合格时必须失败，不得向 UI 泄漏伪终态。
+
 Action Board 是所有聊天按钮和页面按钮共享的语义事务层。每个 action 定义至少包含：
 
 - `capability`
@@ -345,22 +349,26 @@ Checkpoint 仍表达真实产物旅程中的知识主题、依赖与通关条件
 事件 MUST 保持零 Kernel target；掌握、误解、独立实践和迁移仍只能来自判题证据链。
 完整契约见 `docs/LEARNING_TASK_RUNTIME.md`。
 
-`vnext/` 已把任务生命周期接入正式 LearningTask API：对话识别或 Skill 启动时建立或复用同目标
-任务，并把开始、暂停、恢复、取消、重开和流程完成同步到全局任务队列。每个 Learning Skill 仍
+`vnext/` 已把任务生命周期接入正式 `AgentSession -> LearningSkillRun -> LearningTask`：对话识别或
+Skill 启动时先建立 Session，再启动 SkillRun 并绑定其正式任务；后续学习者输入只调用确定性
+Skill turn API，不能触发第二次 Tutor 模型回答。暂停、恢复、取消、重开和流程完成同步到全局任务队列。每个 Learning Skill 仍
 自己定义步骤、循环和支架；`vnext_learning_skill_step_entered` 与
 `vnext_learning_skill_looped` 只是零 target 的对话导航事件，MUST NOT 表示前一步达标或升级
 掌握。旧 `vnext_learning_task_phase_entered` 只用于兼容 v0.5 浏览器存储。正式
 `practice / verify / consolidate` 完成仍由证据投影裁决，不能沿用浏览器中的 Skill 导航。
 
-浏览器持久化对象的准确名称是 `LearningTaskBinding`：`formalTaskId` 存在时只绑定正式
-LearningTask，不存在时必须标为 `local_offline_fallback`。它不能成为第二个任务队列或掌握权威。
+浏览器持久化对象的准确名称是 `LearningTaskBinding`：正式运行时必须同时持有
+`formalSessionId / formalSkillRunId / formalTaskId / expectedVersion`，本地事件只镜像正式 SkillRun
+步骤；正式引用不存在时必须标为 `local_offline_fallback`。它不能成为第二个任务队列、Skill 状态机或掌握权威。
 同理，浏览器原 `LearningPlan` 是 `PlanningDialogue`，只负责收集信息和展示候选；确认后的长期
 路线是独立 `LearningPathPlan`。两者通过稳定 ID/事件关联，不共享生命周期结论。
 
-vNext MUST 使用 `Tutor 主状态 -> 绑定 Skill -> 当前 Skill 步骤子状态` 的单一包含关系。首批四个
+vNext MUST 使用 `Tutor 主状态 -> 绑定 Skill -> 正式 SkillRun 当前子状态` 的单一包含关系。首批四个
 Learning Skill 只允许绑定 `guided_learning`；用户预选 Skill 时只绑定下一轮，发送消息并建立任务后
 才启动 Skill。每个步骤 MUST 声明可见子状态，`vnext_learning_skill_step_entered` 同时投影步骤与
 子状态；循环 MUST 留在本步。UI 和 Tutor LLM 只能读取该投影，不得维护或转换另一套子状态机。
+正式 turn API 必须幂等并校验 learner/session/run ownership 与 expected version；“不知道”和明确支援
+请求只能增加支架轮次，不得推进知识步骤或产生 Knowledge/Practice 正向证据。
 
 vNext 的 `learning_plan` MUST 只处理跨多个任务/阶段、复杂真实产物或长期发展方向，不得吞并
 边界清楚的讲解和原子学习任务。`project_seed` 只能收集目标产物、基础、资源、时间、实践验收和
@@ -390,8 +398,10 @@ Knowledge 节点内部历程与 Structure 节点间关系装成有界上下文�
 `concept_self_report_gateway` 必须先保留原文，再追加独立的 Knowledge observation 和 Structure
 relation 事件。工具或模型不得把“学过”“熟悉”或课程图标记提升为 mastery，也不得从一条阻碍关系
 反推前置概念不会；只有后续验证事件可以改变证据等级。官方课程图仍是一般培养路径，个人概念图是
-学习者实际认识与联系，两者只能在规划读取时叠加。叠加 MUST 输出显式
-`ConceptPathAlignment`，说明匹配方式和置信度；Alignment 不得携带或推断 mastery。
+学习者实际认识与联系。规划读取必须使用 `LearningGraphAlignmentProjection` 显式连接四类图：
+课程路径图（官方课程与个人覆盖层）、个人概念图、项目来源知识领域和已确认长期路线。每条 Alignment MUST
+记录双方图类型/对象 ID、关系、匹配方式、置信度与依据；无法匹配的对象 MUST 进入 gap 列表，供搜索
+或学习者确认，而不是隐式丢弃。Alignment 固定 `carriesMastery=false`，不得携带或推断 mastery。
 Project、Checkpoint 与 Session Tutor 读取该图时
 必须沿用 ContextPolicy 的 scope 过滤：允许全局事实与当前 scope，禁止带入其他项目或关卡的题目原文。
 
