@@ -235,13 +235,52 @@ export function buildTutorProviderRequest(options: {
 }
 
 export function ensureSearchCitations(reply: string, runs: TutorToolRun[]) {
-  const searchRun = runs.find(run => run.kind === 'search' && run.status === 'completed' && run.sources?.length)
+  const eligibleRuns = runs.filter(run => run.kind === 'search' && run.status === 'completed' && run.sources?.length)
+  const searchRun = eligibleRuns.find(run => run.searchMeta?.pageRead || run.sources?.some(source => source.readState === 'page_excerpt'))
+    || eligibleRuns[0]
   if (!searchRun?.sources?.length || searchRun.sources.some(source => reply.includes(source.url))) return reply
   const links = searchRun.sources.slice(0, 2).map(source => {
     const title = source.title.replace(/[\[\]]/g, '').replace(/[()]/g, ' ')
     return `[${title}](${source.url})`
   })
   return `${reply.trim()}\n\n参考依据：${links.join('；')}。`
+}
+
+function normalizedCitationUrl(value: string) {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    for (const key of [...url.searchParams.keys()]) {
+      if (/^(?:utm_|ref$|source$|campaign$)/i.test(key)) url.searchParams.delete(key)
+    }
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return ''
+  }
+}
+
+export function auditSearchCitations(reply: string, runs: TutorToolRun[]) {
+  const sources = runs.filter(run => run.kind === 'search' && run.status === 'completed').flatMap(run => run.sources || [])
+  const allowed = new Set(sources.map(source => normalizedCitationUrl(source.url)).filter(Boolean))
+  const markdownUrls = [...reply.matchAll(/\[[^\]]+\]\((https:\/\/[^)\s]+)\)/g)].map(match => normalizedCitationUrl(match[1])).filter(Boolean)
+  const citedAllowedUrls = [...new Set(markdownUrls.filter(url => allowed.has(url)))]
+  const citationLikeUnknownUrls = [...new Set(markdownUrls.filter(url => !allowed.has(url)))]
+  const temporalClaim = /(?:最新|当前版本|截至|发布于|升级到|弃用|breaking change|release|\b20\d{2}[-年/])/i.test(reply)
+  const currentSearch = runs.some(run => run.searchMeta?.intent === 'current')
+  const evidenceGap = runs.some(run => run.searchMeta?.status === 'partial' || run.searchMeta?.status === 'empty')
+  const acknowledgesGap = /(?:资料|证据|来源|检索).{0,16}(?:不足|缺口|未覆盖|没有找到|暂时无法)/i.test(reply)
+  return {
+    valid: citedAllowedUrls.length > 0
+      && citationLikeUnknownUrls.length === 0
+      && (!currentSearch || !temporalClaim || citedAllowedUrls.length > 0)
+      && (!evidenceGap || acknowledgesGap),
+    citedAllowedUrls,
+    citationLikeUnknownUrls,
+    temporalClaim,
+    currentSearch,
+    evidenceGap,
+    acknowledgesGap,
+  }
 }
 
 export function isDisplayableTutorReply(reply: string) {

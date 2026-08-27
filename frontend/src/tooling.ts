@@ -4,6 +4,7 @@ import type { ProjectLearningFileProposal, ProjectRoadmapProposal } from './proj
 export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation'
 
 export type SearchSource = {
+  id?: string
   title: string
   url: string
   snippet: string
@@ -11,6 +12,12 @@ export type SearchSource = {
   quality: 'official' | 'academic' | 'community' | 'repository'
   role: 'standard' | 'reference' | 'textbook' | 'course' | 'definition' | 'research' | 'example' | 'discussion'
   reason: string
+  provider?: string
+  facetIds?: string[]
+  publishedAt?: string
+  retrievedAt?: string
+  retrievalScore?: number
+  readState?: 'catalog_summary' | 'search_snippet' | 'page_excerpt'
 }
 
 export type VisualStep = {
@@ -41,6 +48,14 @@ export type TutorToolRun = {
   observationSummary?: string
   errorType?: 'transient' | 'model_recoverable' | 'user_fixable' | 'unexpected'
   sources?: SearchSource[]
+  searchMeta?: {
+    intent?: string
+    depth?: string
+    status?: string
+    coverageRatio?: number
+    coverageGaps?: string[]
+    pageRead?: boolean
+  }
   artifact?: VisualArtifact
   pathProposal?: PersonalPathNodeProposal
   pathPlanProposal?: LearningPathPlanProposal

@@ -82,7 +82,7 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
 
 def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
-        "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
+        "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
         "vnext_learning_workspace_reader",
         "vnext_learning_path_graph_reader", "vnext_learning_path_exact_reader",
@@ -98,7 +98,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "coordinate_vnext_agent_turn",
-        "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
+        "search_computer_knowledge", "read_web_evidence", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
         "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
             "recommend_learning_resources", "attach_learning_file_to_chat",
@@ -111,6 +111,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
+    assert CAPABILITY_OWNERS["read_web_evidence"] == (
+        "learning_design_agent", "web_evidence_reader", "vnext_chat",
+    )
     assert CAPABILITY_OWNERS["coordinate_vnext_agent_turn"] == (
         "tutor_agent", "vnext_agent_turn_runtime", "vnext_chat",
     )
@@ -159,7 +162,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
-            "computer_knowledge_search", "safe_visual_generation", "selection_followup_context",
+            "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
             "vnext_learning_workspace_reader", "review_context_reader",
             "domain_knowledge_reader", "learning_file_service",
@@ -173,6 +176,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     )
     assert "deterministic rerank" in TOOLS["computer_knowledge_search"].write_path
     assert "untrusted evidence bundle" in TOOLS["computer_knowledge_search"].write_path
+    assert TOOLS["web_evidence_reader"].writes_kernels == ()
+    assert "exact URL from current search" in TOOLS["web_evidence_reader"].write_path
     assert "LearningSkillRun" in TOOLS["vnext_learning_task_runtime"].write_path
     assert "explicit confirmation EvidenceEvent" in TOOLS["vnext_learning_plan_runtime"].write_path
     assert registry_manifest()["authority"]["vnext_learning_substate_projection"] == (
@@ -231,6 +236,8 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert set(TOOL_MODEL_EXPOSURE) == set(TOOLS)
     assert set(SKILL_KINDS) == set(SKILLS)
     assert TOOL_INTERFACE_ROLES["computer_knowledge_search"] == "aci_tool"
+    assert TOOL_INTERFACE_ROLES["web_evidence_reader"] == "aci_tool"
+    assert TOOL_MODEL_EXPOSURE["web_evidence_reader"] == "vnext_native"
     assert TOOL_INTERFACE_ROLES["vnext_agent_turn_runtime"] == "harness"
     assert TOOL_INTERFACE_ROLES["five_kernel_reducer"] == "projection"
     assert TOOL_INTERFACE_ROLES["deterministic_remediation"] == "policy"

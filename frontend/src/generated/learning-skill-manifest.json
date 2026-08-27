@@ -1,6 +1,6 @@
 {
   "schema_version": "learnflow.skill.v2",
-  "registry_version": "2026-08-27.4",
+  "registry_version": "2026-08-27.5",
   "generated_from": "backend/app/services/architecture_registry.py",
   "skills": {
     "guided_explanation": {

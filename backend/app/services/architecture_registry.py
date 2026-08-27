@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.4"
+REGISTRY_VERSION = "2026-08-27.5"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
@@ -303,7 +303,9 @@ TOOLS = {
         ToolContract("vnext_chat_session_store", "vNext Cross-browser Chat Session Store", "tutor_agent", "vnext", "adapter",
                      (), (), "learner-owned AgentSession + idempotent AgentMessage projection; browser cache is non-authoritative and persistence creates no learning evidence"),
         ToolContract("computer_knowledge_search", "Explanation-oriented Computer Knowledge Search", "learning_design_agent", "vnext", "read",
-                     (), (), "intent/facet plan -> tiered source adapters -> deterministic rerank -> bounded untrusted evidence bundle"),
+                     (), (), "privacy scrub -> bounded facet plan -> tiered adapters + circuit breakers -> hybrid deterministic rerank/MMR -> coverage audit -> one bounded gap search -> versioned untrusted evidence bundle; quick/standard/deep budgets and no learner-state write"),
+        ToolContract("web_evidence_reader", "Allow-listed Web Evidence Reader", "learning_design_agent", "vnext", "read",
+                     (), (), "exact URL from current search -> HTTPS/redirect/content guards -> query-relevant bounded page excerpt -> untrusted evidence page; cacheable and no learner-state write"),
         ToolContract("safe_visual_generation", "Safe Learning Visual Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "validated graph plan -> sanitized static SVG or deterministic SVG frames"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
@@ -429,7 +431,7 @@ TOOLS = {
 # policy and adapter objects remain service-side infrastructure.
 TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
-        "action_board", "computer_knowledge_search", "safe_visual_generation",
+        "action_board", "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation",
         "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
         "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
@@ -461,13 +463,13 @@ TOOL_INTERFACE_ROLES = {
 }
 
 # Exposure is intentionally narrower than the ACI catalog. vNext currently gives
-# the model five read/artifact capabilities; proposal and write tools stay behind
+# the model a bounded set of read/artifact capabilities; proposal and write tools stay behind
 # deterministic orchestration and explicit learner confirmation.
 TOOL_MODEL_EXPOSURE = {
     tool_id: (
         "vnext_native"
         if tool_id in {
-            "computer_knowledge_search", "safe_visual_generation",
+            "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation",
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
@@ -789,7 +791,7 @@ SKILLS = {
                       "inspectable long-term route proposal or project roadmap with goal, prerequisites, milestones and provenance",
                       "deterministic route proposal + explicit learner confirmation"),
         SkillContract("learning_resource_curation", "规划态学习资源策展", "learning_design_agent",
-                      ("domain_knowledge_reader", "computer_knowledge_search",
+                      ("domain_knowledge_reader", "computer_knowledge_search", "web_evidence_reader",
                        "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "source_ingestion"),
                       "goal-aligned resource proposal with coverage, authority tier, provenance and identified gaps",
                       "Skill chooses the comparison workflow; read/search tools only supply evidence"),
@@ -883,7 +885,7 @@ WORKBENCHES = {
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "LearnFlow Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
-                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
+                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "read_web_evidence", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
                            "manage_domain_knowledge_sources", "read_domain_knowledge", "recommend_learning_resources",
@@ -949,6 +951,7 @@ CAPABILITY_OWNERS = {
     "coordinate_chat_mode": ("tutor_agent", "chat_mode_runtime", "global_tutor"),
     "coordinate_vnext_agent_turn": ("tutor_agent", "vnext_agent_turn_runtime", "vnext_chat"),
     "search_computer_knowledge": ("learning_design_agent", "computer_knowledge_search", "vnext_chat"),
+    "read_web_evidence": ("learning_design_agent", "web_evidence_reader", "vnext_chat"),
     "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),

@@ -163,6 +163,75 @@ test('provider deltas reach the UI live and a tool decision resets only the draf
   assert.equal(typeof result.trace.timings?.firstTextDeltaMs, 'number')
 })
 
+test('Tutor searches candidates, reads an allow-listed page, and cites the exact evidence URL', async () => {
+  const url = 'https://docs.example.edu/gradient-descent'
+  let round = 0
+  let readReceivedAllowList = false
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'simple_explain',
+    messages: [{ role: 'user', content: '梯度下降为什么沿负梯度更新？请给可靠依据。' }],
+    toolChoice: 'auto',
+    generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'search_computer_knowledge') {
+        const source = {
+          title: 'Gradient descent notes', url, snippet: 'The negative gradient is the steepest local descent direction.',
+          source: 'Example University', quality: 'academic' as const, role: 'course' as const,
+          reason: '大学课程讲义', provider: 'test', readState: 'search_snippet' as const,
+        }
+        return {
+          run: {
+            id: 'search-candidates', kind: 'search', toolName: name, toolCallId: meta?.callId,
+            status: 'completed', title: '联网搜索', detail: '候选来源已取得', durationMs: 1,
+            sources: [source], searchMeta: { intent: 'concept', depth: 'standard', status: 'ok', coverageRatio: 1 },
+          },
+          observation: { authority: 'untrusted_web_evidence_bundle_v2', sources: [source] },
+          searchSourceUrls: [url], searchSources: [source],
+        }
+      }
+      if (name === 'read_web_evidence') {
+        readReceivedAllowList = meta?.sourceUrls?.includes(url) === true && args.url === url
+        const source = {
+          title: 'Gradient descent notes', url,
+          snippet: 'For a differentiable function, the negative gradient gives the direction of steepest local decrease.',
+          source: 'Example University', quality: 'academic' as const, role: 'course' as const,
+          reason: '已读取的大学课程讲义', provider: 'test', readState: 'page_excerpt' as const,
+        }
+        return {
+          run: {
+            id: 'read-page', kind: 'search', toolName: name, toolCallId: meta?.callId,
+            status: 'completed', title: '读取网页证据', detail: '已抽取相关段落', durationMs: 1,
+            sources: [source], searchMeta: { status: 'ok', pageRead: true },
+          },
+          observation: { authority: 'untrusted_web_page', excerpt: source.snippet },
+          searchSourceUrls: [url], searchSources: [source],
+        }
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async request => {
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'search-gradient', function: { name: 'search_computer_knowledge', arguments: '{"query":"gradient descent negative gradient reliable explanation","depth":"standard"}' },
+      }] } }] }
+      if (round === 2) return { choices: [{ message: { tool_calls: [{
+        id: 'read-gradient', function: { name: 'read_web_evidence', arguments: JSON.stringify({ url, query: 'why negative gradient descends' }) },
+      }] } }] }
+      assert.ok(request.body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'read-gradient'))
+      return { choices: [{ message: { content: `负梯度给出函数在当前位置下降最快的一阶方向。[课程讲义](${url})` } }] }
+    },
+  })
+
+  assert.equal(readReceivedAllowList, true)
+  const evidenceRuns = result.toolRuns.filter(run => run.kind === 'search')
+  assert.deepEqual(evidenceRuns.map(run => run.toolName), ['search_computer_knowledge', 'read_web_evidence'])
+  assert.equal(evidenceRuns[1].searchMeta?.pageRead, true)
+  assert.match(result.reply, new RegExp(url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.equal(result.trace.events.some(event => event.phase === 'verify' && event.status === 'failed'), false)
+})
+
 test('duplicate tool calls are blocked and the model can recover to a final answer', async () => {
   let round = 0
   const result = await runTutorAgentTurn({

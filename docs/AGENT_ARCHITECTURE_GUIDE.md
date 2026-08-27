@@ -34,7 +34,7 @@ Contract impact（`2026-08-26.27`）：动态习题由 `dynamic_practice_loop` P
 
 LearnFlow 不是一个“聊天机器人包装器”，也不是多个人格化 Agent 同时与用户对话。它是一套围绕单个学习者持续运行的教学系统：
 
-`frontend/` 的正式 Chat 服从同一责任边界：联网资料由学习设计能力按意图、证据角度和来源层级形成有界 Evidence Bundle，安全视觉产物由学习设计能力生成，选中追问上下文由 Tutor 组装。联网片段是不可信数据；搜索与讲解只产生来源，不能直接形成掌握证据。三者只产生来源、产物或会话分支，不直接写五核。
+`frontend/` 的正式 Chat 服从同一责任边界：联网资料由学习设计能力通过 Search Harness 形成有界 Evidence Bundle。模型先以 `search_computer_knowledge` 取得候选、覆盖和 provider 状态；只有精确机制、版本、日期、数值、排错结论或研究判断需要原文时，才以 `read_web_evidence` 读取本轮候选中的精确 URL。query 改写、隐私清理、provider 路由、熔断、缓存、混合重排、MMR、覆盖审计、一次补搜和 deep research 预算都在 Harness 内部，不拆成更多模型工具。安全视觉产物由学习设计能力生成，选中追问上下文由 Tutor 组装。联网片段是不可信数据；搜索、读取、研究简报与讲解只产生来源，不能直接形成掌握证据。它们只产生来源、产物或会话分支，不直接写五核。
 
 - 常驻 Tutor 维护教学关系、理解意图并协调下一步。
 - Action Board 把自然语言转换为受控、可审计、可幂等执行的语义行动。

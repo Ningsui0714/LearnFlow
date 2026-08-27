@@ -33,10 +33,15 @@ ACTION_BOARD = {
             {},
             ("read_vnext_five_kernel_profile", "read_vnext_learning_workspace",
              "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "read_review_context",
-             "search_computer_knowledge", "generate_learning_visual"),
+             "search_computer_knowledge", "read_web_evidence", "generate_learning_visual"),
         ),
         ActionDefinition(
             "search_computer_knowledge", "检索计算机知识来源", "none", "explicit_or_auto",
+            {},
+            ("read_web_evidence",),
+        ),
+        ActionDefinition(
+            "read_web_evidence", "读取本轮搜索候选网页证据", "none", "none",
             {},
             (),
         ),
@@ -53,7 +58,7 @@ ACTION_BOARD = {
         ActionDefinition(
             "run_vnext_learning_task", "在 vNext 对话中编排原子学习任务", "context", "explicit_or_click",
             {},
-            ("search_computer_knowledge", "generate_learning_visual"),
+            ("search_computer_knowledge", "read_web_evidence", "generate_learning_visual"),
         ),
         ActionDefinition(
             "run_vnext_learning_plan", "在 vNext 对话中形成项目雏形或发展方向草案", "proposal", "explicit_or_auto",

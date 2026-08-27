@@ -9,6 +9,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
     "test:search": "node --experimental-strip-types --test server/computer-knowledge-search.test.ts",
+    "eval:search:offline": "node --experimental-strip-types server/search-evaluation.ts",
+    "eval:search:live": "node --experimental-strip-types server/search-live-evaluation.ts",
     "test:learning": "node --experimental-strip-types --test server/learning-task.test.ts server/agent-runtime.test.ts server/provider-stream.test.ts server/turn-recovery.test.ts",
     "test:planning": "node --experimental-strip-types --test server/planning.test.ts",
     "test:profile": "node --experimental-strip-types --test server/five-kernel-profile.test.ts server/profile-presentation.test.ts",

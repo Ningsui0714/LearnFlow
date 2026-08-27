@@ -10,6 +10,7 @@ import type {
 } from '../src/agent-contracts.ts'
 import type { TutorContextMessage, TutorMode } from '../src/tutor.ts'
 import {
+  auditSearchCitations,
   buildTutorInstructions,
   endpointFor,
   ensureSearchCitations,
@@ -272,6 +273,9 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '## 工具策略',
     '只有需要外部观察时才调用工具。可以连续调用不同读取工具，但不得重复相同调用。',
     '读取工具可自主调用；项目路线和文件工具只产生 learner-visible proposal，绝不直接写入。',
+    '联网搜索先用 search_computer_knowledge 取得候选证据、覆盖缺口和来源状态；需要据此陈述精确机制、版本行为、日期、数值或排错结论时，再用 read_web_evidence 读取最相关的 1-3 个候选页面。搜索摘要不等于已读全文。',
+    'quick 只用于单一事实，standard 用于普通讲解、比较、实现与排错，deep 只用于论文综述、项目调研或多来源复杂决策。deep 仍有查询、页面和补搜预算，不能无限研究。',
+    '搜索或读取返回 partial、empty、coverage gaps、circuit_open 时必须在回答中显式保留证据缺口；不得用模型常识伪装成已检索证据。',
     '评估目标、题型组合或成功条件不清时，先调用 design_assessment_blueprint；它返回可检查的蓝图与确定性量表，但不评分。动态习题工具只可在带领学习态且绑定正式 LearningTask/Checkpoint 时调用；生成题目是零目标 artifact 事件，不得声称形成掌握。需要动态练习、诊断或变式验证时，可生成正式练习文件，再让学习者在答案安全工作台提交。',
     '处于项目 scope 时，所有规划、来源选择、讲义与练习都必须锚定 envelope.scope.projectId 对应的项目主题；不得偷换为通用课程规划。',
     '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
@@ -305,7 +309,14 @@ function explicitToolCall(choice: TutorToolChoice, message: string, projectScope
     name: projectScoped ? 'read_project_sources' : 'read_domain_knowledge',
     arguments: { query: message },
   }
-  if (choice === 'search') return { id: `explicit-search-${Date.now()}`, name: 'search_computer_knowledge', arguments: { query: message } }
+  if (choice === 'search') return {
+    id: `explicit-search-${Date.now()}`,
+    name: 'search_computer_knowledge',
+    arguments: {
+      query: message,
+      depth: /深度研究|系统调研|文献综述|研究综述|多来源|全面研究|deep research/i.test(message) ? 'deep' : 'standard',
+    },
+  }
   return {
     id: `explicit-visual-${Date.now()}`,
     name: 'generate_learning_visual',
@@ -341,8 +352,16 @@ export function verifyTutorTurnOutcome(options: {
     violations.push('hidden_tool_failure')
   }
   const searched = options.toolRuns.some(run => run.kind === 'search' && run.status === 'completed' && run.sources?.length)
-  if (searched && !options.toolRuns.some(run => run.kind === 'search' && run.sources?.some(source => reply.includes(source.url)))) {
-    violations.push('missing_search_citation')
+  if (searched) {
+    const citationAudit = auditSearchCitations(reply, options.toolRuns)
+    const hasNonSearchSourceObservation = options.toolRuns.some(run => (
+      run.status === 'completed'
+      && run.kind !== 'search'
+      && ['domain', 'project', 'file'].includes(run.kind)
+    ))
+    if (!citationAudit.citedAllowedUrls.length) violations.push('missing_search_citation')
+    if (citationAudit.citationLikeUnknownUrls.length && !hasNonSearchSourceObservation) violations.push('unverified_search_citation')
+    if (citationAudit.evidenceGap && !citationAudit.acknowledgesGap) violations.push('hidden_search_coverage_gap')
   }
   const learnerContext = options.observations?.find(observation => observation.source === 'read_learner_context')?.data
   const learnerConflicts = learnerContext && typeof learnerContext === 'object'
@@ -690,7 +709,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       resetVisibleDraft('verification')
       runtimeMessages.push({
         role: 'user',
-        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明；观察到记忆冲突时必须把冲突和确认权告诉学习者；没有可见 Attempt 只能说暂无记录，不能推断学生第一次学习或从未练习。`,
+        content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败和搜索覆盖缺口要透明说明；联网事实只能引用本轮工具返回的精确 URL，不得补写链接；观察到记忆冲突时必须把冲突和确认权告诉学习者；没有可见 Attempt 只能说暂无记录，不能推断学生第一次学习或从未练习。`,
       })
       record({ phase: 'verify', detail: `回复未通过终态校验：${verification.violations.join('、')}`, status: 'failed' })
     }

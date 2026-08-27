@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.5`）：计算机知识检索升级为 Search Harness v2。模型仍只看两个目标级只读 ACI：`search_computer_knowledge` 负责 quick/standard/deep 的有界多角度召回、混合确定性重排、覆盖审计和最多一次补搜；`read_web_evidence` 只读取本轮候选中的精确 HTTPS URL，并返回相关原文片段。Provider 熔断、缓存、隐私清理、来源分层、MMR 去冗余、时效评分和研究简报均是 Harness 内部机制，不扩张工具面。两工具都为零 Kernel target；搜索、读取、研究简报和引用均不是学习掌握证据。旧 `{query}` 调用保持兼容，三类主 Agent、五核、事件 schema、数据库和状态机均不变。实现与评测见 `docs/implementation/SEARCH_HARNESS_IMPLEMENTATION.md`、`docs/validation/2026-08-27-search-harness-evaluation.md`。
+
 Contract impact（`2026-08-27.4`）：`SkillSpec v2` 增加可声明的校准维度；费曼复述以受众层次、认知要求、支架强度和表征方式进行显式校准，并产生零 Kernel target 的 `TeachBackDiagnostic`。诊断只保存学习者原话、表面覆盖和一个待验证候选缺口；修订最多围绕该缺口循环两次，最终只能进入独立验证。稳定 Skill/状态 ID、三类主 Agent、五核 schema、评分、纠错和唯一 reducer 写入链均不变。详细契约见 `docs/SKILL_ENGINEERING.md` 与 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
 Contract impact（`2026-08-27.2`）：学习路径图扩展到 108 个课程节点和 187 条有向关系，补入十二个稳定行业知识域；路线规划改为硬前置闭包、直接软前置和确定性拓扑排序，`co_learning` 不再产生先后约束。层次筛选保留被后续课程依赖的跨层硬前置，并在 UI 标为“补充前置”。检索策略升级为 `vnext-learning-path-retrieval-v3`；个人节点提案只接受 Harness 注入的结构化搜索结果，并通过主题相关性、来源等级和独立来源门槛，模型提供的任意 URL 不再是 provenance。现有事件 ID、Kernel reducer、数据库 schema 和已确认个人节点保持兼容。
