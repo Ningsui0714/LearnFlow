@@ -27,6 +27,7 @@ from app.api.learner_state import router as learner_state_router
 from app.api.knowledge_library import router as knowledge_library_router
 from app.api.learning_files import router as learning_files_router
 from app.api.vnext_projects import router as vnext_projects_router
+from app.api.assessment_design import router as assessment_design_router
 
 
 @asynccontextmanager
@@ -87,3 +88,4 @@ app.include_router(learner_state_router, prefix="/api")
 app.include_router(knowledge_library_router, prefix="/api")
 app.include_router(learning_files_router, prefix="/api")
 app.include_router(vnext_projects_router, prefix="/api")
+app.include_router(assessment_design_router, prefix="/api")

@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.3`）：首批四个教学方法升级为 `SkillSpec v2`。注册表现在直接声明每个 Skill 的适用/避用条件、绑定模式、输入输出对象、有界状态、失败策略、事件白名单、证据边界和评测套件；后端 runtime 与前端清单均从该注册表生成，旧浏览器步骤 ID 只通过显式别名迁移。新增 learner-scoped `AssessmentBlueprint` 与 `AssessmentRubric`、`assessment_blueprint_builder` ACI 和 `assessment_blueprint_design` Playbook；蓝图生成是零 target，Practice Agent 继续独占确定性评分。新增数据库表与向后兼容 API，不改变既有 Skill ID、三类主 Agent、五核 schema 或唯一 reducer 写入链。多轮离线评测只证明状态契约和证据边界，不宣称真实学习增益。详细契约见 `docs/SKILL_ENGINEERING.md`。
+
 Contract impact（`2026-08-27.2`）：学习路径图扩展到 108 个课程节点和 187 条有向关系，补入十二个稳定行业知识域；路线规划改为硬前置闭包、直接软前置和确定性拓扑排序，`co_learning` 不再产生先后约束。层次筛选保留被后续课程依赖的跨层硬前置，并在 UI 标为“补充前置”。检索策略升级为 `vnext-learning-path-retrieval-v3`；个人节点提案只接受 Harness 注入的结构化搜索结果，并通过主题相关性、来源等级和独立来源门槛，模型提供的任意 URL 不再是 provenance。现有事件 ID、Kernel reducer、数据库 schema 和已确认个人节点保持兼容。
 
 Contract impact（`2026-08-27.1`）：学习路径读取拆分为 `vnext_learning_path_exact_reader`、`vnext_learning_path_fuzzy_reader` 与 `vnext_personal_path_node_proposer` 三个正交 ACI；旧 `vnext_learning_path_graph_reader` 只保留为非模型可见的兼容调度器。精确读取只比较稳定 ID、标题和别名；只有未命中才允许确定性模糊排序；歧义必须交还学习者确认；只有明确图谱缺口且存在带 provenance 的外部来源时才能形成个人节点提案。提案为零 Kernel target，正式节点仍须学习者确认并通过既有事件网关写入，没有新增 Kernel writer、事件 schema 或数据库迁移。

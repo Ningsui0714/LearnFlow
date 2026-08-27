@@ -65,7 +65,8 @@ def runtime_contract_score() -> dict[str, float]:
     verified_handoff = all(
         blueprint
         and blueprint.get("verification_required") is True
-        and "mastery_requires_existing_graded_attempts" in str(blueprint.get("evidence_policy"))
+        and "zero-target" in str(blueprint.get("evidence_policy"))
+        and "independently graded attempts" in str(blueprint.get("evidence_policy"))
         for blueprint in blueprints
     )
     zero_target_events = all(
@@ -111,7 +112,7 @@ def main() -> int:
     report = {
         "evaluation_scope": "engineering_readiness_not_learning_effect",
         "case_count": len(cases),
-        "candidate": "atomic_learning_skill_runtime_v2",
+        "candidate": "atomic_learning_skill_runtime_v4_skill_spec_v2",
         "baseline": "prompt_only_guided_explanation",
         "candidate_metrics": candidate_metrics,
         "baseline_metrics": baseline_metrics,

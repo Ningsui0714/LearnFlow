@@ -101,6 +101,11 @@ ACTION_BOARD = {
             ("open_learning_file", "attach_learning_file_to_chat"),
         ),
         ActionDefinition(
+            "design_assessment_blueprint", "设计练习蓝图与评分量表", "proposal", "explicit_or_auto",
+            {},
+            ("generate_dynamic_practice", "generate_similar_practice"),
+        ),
+        ActionDefinition(
             "generate_dynamic_practice", "按能力蓝图生成动态练习文件", "artifact", "explicit_or_auto",
             {},
             ("inspect_practice_quality", "open_learning_file", "attach_learning_file_to_chat", "evaluate_attempt"),

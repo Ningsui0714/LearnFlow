@@ -558,7 +558,7 @@ def test_skill_runtime_scaffolds_no_knowledge_without_advancing(client: TestClie
     run = opening_body["active_skill_run"]
     assert run["goal"] == "朴素贝叶斯分类器"
     assert run["state"] == "eliciting_prior_model"
-    assert run["stage_label"] == "建立起点与当前直觉"
+    assert run["stage_label"] == "建立可回答起点"
     assert run["turn_count"] == 0
     assert run["support_count"] == 0
     assert run["stages"][0]["status"] == "current"

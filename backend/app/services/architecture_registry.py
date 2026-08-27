@@ -14,8 +14,9 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.2"
+REGISTRY_VERSION = "2026-08-27.3"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
+SKILL_SPEC_VERSION = "learnflow.skill.v2"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
 # This is the canonical allow-list used by Tutor semantic observations. The
@@ -94,6 +95,40 @@ class ToolContract:
 
 
 @dataclass(frozen=True)
+class SkillStateContract:
+    id: str
+    title: str
+    short_title: str
+    substate_id: str
+    substate_label: str
+    instructional_objective: str
+    tutor_instruction: str
+    next_action: str
+    accepted_signals: tuple[str, ...] = ("attempt",)
+    can_loop: bool = True
+    requires_learner_reply: bool = True
+    loop_instruction: str = "缩小当前动作并补一层支架；不得把提示后的回应当作独立完成。"
+
+
+@dataclass(frozen=True)
+class SkillRuntimeContract:
+    version: str
+    bound_chat_modes: tuple[str, ...]
+    initial_state: str
+    states: tuple[SkillStateContract, ...]
+    turn_budget: int
+    verification_required: bool
+    required_context: tuple[str, ...]
+    input_objects: tuple[str, ...]
+    output_objects: tuple[str, ...]
+    allowed_event_types: tuple[str, ...]
+    evidence_policy: str
+    failure_policy: str
+    eval_suite: str
+    maturity: str = "production_candidate"
+
+
+@dataclass(frozen=True)
 class SkillContract:
     id: str
     name: str
@@ -109,6 +144,8 @@ class SkillContract:
     best_for: tuple[str, ...] = ()
     avoid_when: tuple[str, ...] = ()
     atomic_task_capable: bool = False
+    spec_version: str = SKILL_SPEC_VERSION
+    runtime: SkillRuntimeContract | None = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +310,8 @@ TOOLS = {
                      (), (), "learner-owned processed Source/Chunk library -> relevance-ranked, provenance-bearing, bounded untrusted context; never learner knowledge evidence"),
         ToolContract("learning_file_service", "Managed Lecture and Practice File Service", "tutor_agent", "vnext", "artifact",
                      (), (), "learner-owned Lecture/Exercise/ConceptQuestion refs -> answer-safe file views, explicit open/attach audit events; generation and opening never imply mastery"),
+        ToolContract("assessment_blueprint_builder", "Assessment Blueprint and Rubric Builder", "learning_design_agent", "vnext", "proposal",
+                     ("knowledge", "structure", "human"), (), "formal LearningTask + checkpoint scope -> validated versioned AssessmentBlueprint + Rubric draft; proposal is zero-target and grading remains deterministic"),
         ToolContract("dynamic_practice_generator", "Blueprint-bound Dynamic Practice Generator", "learning_design_agent", "vnext", "artifact",
                      ("knowledge", "structure", "human"), (), "formal LearningTask + checkpoint scope + target-skill blueprint -> model candidates -> deterministic schema/answer/duplicate gate -> answer-safe ConceptQuestion set; generation is zero-target and psychometrically uncalibrated"),
         ToolContract("similar_practice_generator", "Construct-preserving Similar Practice Generator", "learning_design_agent", "vnext", "artifact",
@@ -391,7 +430,7 @@ TOOL_INTERFACE_ROLES = {
         "teach_back_analyzer", "process_animation", "code_executor",
         "deterministic_assessment", "evidence_ledger", "five_kernel_retriever",
         "workspace_file_service", "managed_artifact_service", "learning_file_service", "local_agent_broker",
-        "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
+        "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         "project_workspace_reader", "project_source_reader", "project_learning_file_reader",
         "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
     }},
@@ -422,13 +461,154 @@ TOOL_MODEL_EXPOSURE = {
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
-            "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
+            "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         }
         else "agent_mediated"
         if TOOL_INTERFACE_ROLES.get(tool_id) == "aci_tool"
         else "not_model_callable"
     )
     for tool_id in TOOLS
+}
+
+
+_SKILL_RUNTIME_EVENTS = (
+    "learning_skill_run_started", "learning_skill_run_advanced",
+    "learning_skill_run_paused", "learning_skill_run_resumed",
+    "learning_skill_verification_started", "learning_skill_run_completed",
+)
+
+
+def _skill_runtime(*states: SkillStateContract) -> SkillRuntimeContract:
+    return SkillRuntimeContract(
+        version="atomic-learning-skill-runtime-v4",
+        bound_chat_modes=("learn",),
+        initial_state=states[0].id,
+        states=tuple(states),
+        turn_budget=max(1, len(states) - 1),
+        verification_required=True,
+        required_context=(
+            "scoped_learning_task", "learner_reply_signal", "answer_free_context_packet",
+        ),
+        input_objects=("LearningTask", "LearningSkillRun", "ContextPacket", "AgentMessage"),
+        output_objects=("LearningSkillRunTransition", "VerificationHandoff"),
+        allowed_event_types=_SKILL_RUNTIME_EVENTS,
+        evidence_policy=(
+            "coaching turns and self-report are zero-target; only existing independently "
+            "graded attempts, remediation and review may support capability evidence"
+        ),
+        failure_policy=(
+            "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation "
+            "requests stay on the current state with bounded support; never auto-pass"
+        ),
+        eval_suite="learning-skill-dialogue-v2",
+    )
+
+
+PEDAGOGICAL_SKILL_RUNTIMES = {
+    "guided_explanation": _skill_runtime(
+        SkillStateContract(
+            "presenting_core_model", "建立核心模型", "模型", "guidance", "引导态",
+            "建立一个可回答、可检查的最小心智模型。",
+            "直接说明目标解决的问题、关键对象、核心关系与一个边界；不能用空泛追问代替知识起点。",
+            "看最小例子", loop_instruction="只换表征、类比或反例，不增加新的知识层次。",
+        ),
+        SkillStateContract(
+            "checking_minimal_example", "检查最小例子", "例子", "demonstration", "示范态",
+            "把核心关系映射到一个表面不同的最小例子。",
+            "给一个可逐项映射到核心模型的例子，只要求学生判断一个关键变化。",
+            "用自己的话解释", loop_instruction="保持同一知识关系，缩小例子与待判断范围。",
+        ),
+        SkillStateContract(
+            "repairing_explanation", "修补并重新表达", "修补", "teachback", "复述态",
+            "根据回应修补一处理解，再由学生重组核心关系。",
+            "只修正一个关键偏差，请学生用条件—机制—结果重新表达；复述不算掌握。",
+            "进入独立验证", loop_instruction="把重述目标缩成一句因果关系，再让学生修订同一处。",
+        ),
+        SkillStateContract(
+            "verification_ready", "准备独立验证", "验证", "independent", "验证态",
+            "停止继续讲解，将任务交给无提示验证。",
+            "明确引导和重述不是掌握证据，提供独立题或正式练习入口。",
+            "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
+        ),
+    ),
+    "socratic_dialogue": _skill_runtime(
+        SkillStateContract(
+            "eliciting_prior_model", "建立可回答起点", "起点", "guidance", "引导态",
+            "用最小支架暴露学习者当前直觉，而非要求凭空猜测。",
+            "给必要事实与具体情境，每轮只问一个无需猜术语即可回答的问题。",
+            "检验一个判断", loop_instruction="补一个事实或二选一情境，继续停留在同一判断附近。",
+        ),
+        SkillStateContract(
+            "testing_assumption", "检验关键假设", "假设", "inquiry", "探究态",
+            "用反例、边界或单变量变化检验当前判断。",
+            "先回应已有推理，再只问一个能检验关键条件或因果方向的问题。",
+            "连接理由与结论", loop_instruction="固定其余条件，把问题缩成一个可观察的变化。",
+        ),
+        SkillStateContract(
+            "building_explanation", "连接理由与边界", "收束", "synthesis", "收束态",
+            "让学习者把条件、机制与结论组成可检查解释。",
+            "只要求用因为—所以—只有当收束推理，反馈一个关键连接。",
+            "进入独立验证", loop_instruction="给三段式句架，只补缺失的一段后再完整表达。",
+        ),
+        SkillStateContract(
+            "verification_ready", "准备独立验证", "验证", "independent", "验证态",
+            "停止追问，将形成的推理交给新情境验证。",
+            "明确普通对话不是掌握证明，提供不照搬当前表述的独立题入口。",
+            "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
+        ),
+    ),
+    "feynman_dialogue": _skill_runtime(
+        SkillStateContract(
+            "awaiting_teach_back", "第一次自己的话复述", "初讲", "teachback", "复述态",
+            "在有知识起点后取得第一版自己的话解释。",
+            "若主题陌生先补三点以内的最小解释；随后只邀请一句自己的话复述。",
+            "定位一个跳步", loop_instruction="缩小到一个关系并提供句架，不要求从空白完整复述。",
+        ),
+        SkillStateContract(
+            "locating_gap", "定位一个关键跳步", "诊断", "diagnosis", "诊断态",
+            "只定位一个含糊词、遗漏前提或因果跳步。",
+            "先指出讲清楚的一点，再问一个能暴露最关键连接的问题。",
+            "修订复述", loop_instruction="把跳步拆成更小前提；仍不会时直接补足前提。",
+        ),
+        SkillStateContract(
+            "revising_explanation", "带着修正再讲", "修订", "revision", "修订态",
+            "修订同一个关键跳步，并加入例子与边界。",
+            "请学生不用术语重讲，加入一个例子和一个不适用边界；不做掌握判断。",
+            "进入独立验证", loop_instruction="继续围绕同一跳步缩小范围，必要时给半成品改错。",
+        ),
+        SkillStateContract(
+            "verification_ready", "准备独立验证", "验证", "independent", "验证态",
+            "把复述诊断交给独立变式验证。",
+            "说明复述只是诊断，提供一道不复用当前例子的独立验证。",
+            "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
+        ),
+    ),
+    "worked_example_fading": _skill_runtime(
+        SkillStateContract(
+            "studying_worked_example", "拆解完整示例", "示范", "demonstration", "示范态",
+            "用子目标标注的小示例建立程序性步骤模型。",
+            "给一个小而完整、按子目标分段的示例，解释每一步为什么服务于目标。",
+            "补全最后一步", loop_instruction="恢复完整过程并缩小输入，不撤掉更多支架。",
+        ),
+        SkillStateContract(
+            "completing_last_step", "补全最后一步", "末步", "practice", "练习态",
+            "只撤去最后一个可检查动作，让学生完成并说明用途。",
+            "保留前面步骤，只隐藏最后一步；一次只要求一个可检查产物。",
+            "撤去更多支架", loop_instruction="给局部输入、输出形状或规则提示，仍由学生完成该步。",
+        ),
+        SkillStateContract(
+            "solving_faded_example", "完成渐隐变式", "渐隐", "transfer", "迁移态",
+            "在同结构新情境中只保留目标与起始条件。",
+            "提供同结构新情境，只保留子目标标签和起始条件；提示必须显式记录。",
+            "进入独立验证", loop_instruction="恢复一个相邻步骤，降低一次需保持的信息量。",
+        ),
+        SkillStateContract(
+            "verification_ready", "准备独立验证", "验证", "independent", "验证态",
+            "撤去示例与子目标标签，进入无提示变式验证。",
+            "总结已独立完成的动作，明确训练不等于掌握，提供无提示变式入口。",
+            "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
+        ),
+    ),
 }
 
 
@@ -455,6 +635,7 @@ SKILLS = {
             best_for=("陌生概念", "认知负荷较高", "需要先建立最小心智模型"),
             avoid_when=("学习者明确要求自己推导", "目标主要是程序性步骤练习"),
             atomic_task_capable=True,
+            runtime=PEDAGOGICAL_SKILL_RUNTIMES["guided_explanation"],
         ),
         SkillContract(
             "socratic_dialogue", "苏格拉底追问", "tutor_agent",
@@ -476,6 +657,7 @@ SKILLS = {
             best_for=("因果推理", "证明与不变量", "已有部分直觉但需要暴露假设"),
             avoid_when=("完全陌生且没有可调用的先备知识", "学习者明确要求直接解释"),
             atomic_task_capable=True,
+            runtime=PEDAGOGICAL_SKILL_RUNTIMES["socratic_dialogue"],
         ),
         SkillContract(
             "feynman_dialogue", "费曼复述", "tutor_agent",
@@ -496,6 +678,7 @@ SKILLS = {
             best_for=("查漏补缺", "组织概念关系", "已有接触后检验能否说清"),
             avoid_when=("尚未接触主题", "程序性任务只需要先看步骤示范"),
             atomic_task_capable=True,
+            runtime=PEDAGOGICAL_SKILL_RUNTIMES["feynman_dialogue"],
         ),
         SkillContract(
             "worked_example_fading", "示例渐隐", "tutor_agent",
@@ -515,6 +698,7 @@ SKILLS = {
             best_for=("代码与算法步骤", "配置和工具流程", "新手程序性问题求解"),
             avoid_when=("只需事实解释", "已经能独立完成且只需迁移验证"),
             atomic_task_capable=True,
+            runtime=PEDAGOGICAL_SKILL_RUNTIMES["worked_example_fading"],
         ),
         SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
                       ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
@@ -560,8 +744,18 @@ SKILLS = {
                       ("code_executor", "deterministic_assessment", "evidence_ledger"),
                       "graded LearningAttempt + evidence", "test/grading rules"),
         SkillContract(
+            "assessment_blueprint_design", "练习蓝图与量表设计", "learning_design_agent",
+            ("assessment_blueprint_builder", "practice_quality_inspector"),
+            "versioned AssessmentBlueprint + Rubric draft with construct, item mix, success policy and evidence boundary",
+            "Learning Design proposes; schema validator owns admissibility; Practice Agent owns deterministic grading",
+            "vnext",
+            description="把学习任务目标收紧为可测能力、题型组合、成功条件与评分量表；它是 playbook，不是教学方法。",
+            best_for=("动态练习生成前", "诊断性检测", "迁移验证"),
+            avoid_when=("没有正式学习任务或关卡", "无法确定性判题"),
+        ),
+        SkillContract(
             "dynamic_practice_loop", "动态练习与检测编排", "tutor_agent",
-            ("dynamic_practice_generator", "similar_practice_generator",
+            ("assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator",
              "practice_quality_inspector", "deterministic_assessment",
              "deterministic_remediation", "review_scheduler", "evidence_ledger"),
             "target-skill blueprint -> validated uncalibrated set -> formal attempt -> remediation/variant/review handoff",
@@ -631,7 +825,7 @@ WORKBENCHES = {
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
                            "manage_domain_knowledge_sources", "read_domain_knowledge", "recommend_learning_resources",
-                           "attach_learning_file_to_chat", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
+                           "attach_learning_file_to_chat", "design_assessment_blueprint", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
                            "read_review_context",
                            "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "propose_vnext_personal_path_node",
                            "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
@@ -646,7 +840,7 @@ WORKBENCHES = {
                            "read_personal_concept_graph", "record_concept_self_report",
                            "manage_learner_memory", "edit_vnext_five_kernel_profile"), "vnext"),
         WorkbenchContract("vnext_learning_files", "LearnFlow Learning File Library", "/learning-files", "tutor_agent",
-                          ("generate_learning_files", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
+                          ("generate_learning_files", "design_assessment_blueprint", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality", "open_learning_file", "attach_learning_file_to_chat"), "vnext"),
         WorkbenchContract("vnext_projects", "LearnFlow Project Library", "/projects", "tutor_agent",
                           ("create_project", "enter_project", "delete_project"), "vnext"),
         WorkbenchContract("vnext_lecture_file", "vNext Lecture File Workbench", "/files/lecture/:lectureId", "tutor_agent",
@@ -703,6 +897,7 @@ CAPABILITY_OWNERS = {
     "read_domain_knowledge": ("tutor_agent", "domain_knowledge_reader", "vnext_chat"),
     "recommend_learning_resources": ("learning_design_agent", "domain_knowledge_reader", "vnext_chat"),
     "generate_learning_files": ("learning_design_agent", "learning_file_service", "vnext_learning_files"),
+    "design_assessment_blueprint": ("learning_design_agent", "assessment_blueprint_builder", "vnext_chat"),
     "generate_dynamic_practice": ("learning_design_agent", "dynamic_practice_generator", "vnext_chat"),
     "generate_similar_practice": ("learning_design_agent", "similar_practice_generator", "vnext_chat"),
     "inspect_practice_quality": ("learning_design_agent", "practice_quality_inspector", "vnext_practice_file"),
@@ -831,6 +1026,7 @@ EVENTS = {
         _event("knowledge_source_added", "manage_domain_knowledge_sources", (), "artifact_ingest", origin="vnext"),
         _event("knowledge_source_processed", "manage_domain_knowledge_sources", (), "artifact_indexed", origin="vnext"),
         _event("learning_file_generated", "generate_learning_files", (), "artifact", origin="vnext"),
+        _event("assessment_blueprint_proposed", "design_assessment_blueprint", (), "validated_assessment_proposal", tool="assessment_blueprint_builder", workbench="vnext_chat", origin="vnext"),
         _event("practice_file_generated", "generate_dynamic_practice", (), "validated_uncalibrated_artifact", tool="dynamic_practice_generator", workbench="vnext_chat", origin="vnext"),
         _event("practice_variant_generated", "generate_similar_practice", (), "validated_uncalibrated_artifact", tool="similar_practice_generator", workbench="vnext_chat", origin="vnext"),
         _event("practice_quality_inspected", "inspect_practice_quality", (), "artifact_quality_observation", tool="practice_quality_inspector", workbench="vnext_practice_file", origin="vnext"),
@@ -916,18 +1112,39 @@ def capability_manifest() -> list[dict[str, Any]]:
 
 def selectable_learning_skill_manifest() -> list[dict[str, Any]]:
     """Return the learner-facing portion of registered conversational skills."""
-    return [
-        {
+    result = []
+    for skill in SKILLS.values():
+        if not skill.learner_selectable:
+            continue
+        result.append({
             "id": skill.id,
             "name": skill.name,
             "description": skill.description,
             "best_for": list(skill.best_for),
             "avoid_when": list(skill.avoid_when),
             "atomic_task_capable": skill.atomic_task_capable,
-        }
-        for skill in SKILLS.values()
-        if skill.learner_selectable
-    ]
+            "spec_version": skill.spec_version,
+            "runtime": asdict(skill.runtime) if skill.runtime else None,
+        })
+    return result
+
+
+def learning_skill_runtime_contract(skill_id: str) -> SkillRuntimeContract | None:
+    skill = selectable_learning_skill(skill_id)
+    return skill.runtime if skill else None
+
+
+def frontend_learning_skill_manifest() -> dict[str, Any]:
+    """Deterministic frontend projection generated from the registry authority."""
+    return {
+        "schema_version": SKILL_SPEC_VERSION,
+        "registry_version": REGISTRY_VERSION,
+        "generated_from": "backend/app/services/architecture_registry.py",
+        "skills": {
+            item["id"]: item
+            for item in selectable_learning_skill_manifest()
+        },
+    }
 
 
 def chat_mode_manifest() -> list[dict[str, Any]]:
@@ -1019,6 +1236,25 @@ def validate_registry() -> list[str]:
     for skill in SKILLS.values():
         if skill.owner_agent not in AGENTS or set(skill.tools) - set(TOOLS):
             errors.append(f"invalid skill contract: {skill.id}")
+        kind = SKILL_KINDS.get(skill.id)
+        if skill.learner_selectable and kind != "pedagogical_method":
+            errors.append(f"learner-selectable skill must be a pedagogical method: {skill.id}")
+        if skill.learner_selectable:
+            runtime = skill.runtime
+            if not runtime or runtime.version != "atomic-learning-skill-runtime-v4":
+                errors.append(f"learner-selectable skill lacks SkillSpec v2 runtime: {skill.id}")
+                continue
+            state_ids = [state.id for state in runtime.states]
+            if len(state_ids) != len(set(state_ids)) or runtime.initial_state not in state_ids:
+                errors.append(f"invalid skill state graph: {skill.id}")
+            if not state_ids or state_ids[-1] != "verification_ready":
+                errors.append(f"skill must end in verification_ready: {skill.id}")
+            if set(runtime.bound_chat_modes) - set(CHAT_MODES):
+                errors.append(f"skill binds unknown chat mode: {skill.id}")
+            if set(runtime.allowed_event_types) - set(EVENTS):
+                errors.append(f"skill references unknown event: {skill.id}")
+            if runtime.turn_budget != max(1, len(runtime.states) - 1):
+                errors.append(f"skill turn budget must match valid transitions: {skill.id}")
     return errors
 
 
@@ -1074,6 +1310,8 @@ def registry_manifest() -> dict[str, Any]:
             "frontend_authority": "frontend/ is the only product frontend; former vNext stable IDs remain compatibility identifiers, not a second runtime; web and Tauri use the same build and formal API contracts",
             "tool_ontology": "ACI tools are Agent-callable affordances; harness, projection, policy and adapter objects are service-side infrastructure",
             "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
+            "skill_spec_authority": "SkillSpec v2 in architecture_registry.py -> backend runtime + generated frontend manifest; no handwritten frontend workflow copy",
+            "assessment_design_authority": "AssessmentBlueprint + Rubric are versioned learner-scoped proposals; generation is zero-target and deterministic grading remains Practice Agent authority",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],

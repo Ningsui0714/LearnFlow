@@ -333,6 +333,65 @@ class LearningTaskPlanRevision(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class AssessmentBlueprint(Base):
+    """Versioned, learner-scoped proposal for what an assessment should measure.
+
+    A blueprint constrains item generation.  It is not an attempt, score or
+    mastery source and therefore never writes KernelState directly.
+    """
+
+    __tablename__ = "assessment_blueprints"
+    __table_args__ = (
+        UniqueConstraint(
+            "learner_id", "client_request_id",
+            name="uq_assessment_blueprint_learner_request",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    learning_task_id = Column(Integer, ForeignKey("learning_tasks.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    purpose = Column(String(30), nullable=False, default="practice", index=True)
+    target_subjects = Column(JSON, default=list)
+    item_mix = Column(JSON, default=list)
+    difficulty_distribution = Column(JSON, default=dict)
+    success_policy = Column(JSON, default=dict)
+    source_refs = Column(JSON, default=list)
+    status = Column(String(30), nullable=False, default="draft", index=True)
+    schema_version = Column(String(50), nullable=False, default="assessment-blueprint.v1")
+    version = Column(Integer, nullable=False, default=1)
+    created_by = Column(String(40), nullable=False, default="learning_design_agent")
+    client_request_id = Column(String(160), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class AssessmentRubric(Base):
+    """Deterministic grading contract attached to one assessment blueprint."""
+
+    __tablename__ = "assessment_rubrics"
+    __table_args__ = (
+        UniqueConstraint("blueprint_id", "version", name="uq_assessment_rubric_version"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    blueprint_id = Column(Integer, ForeignKey("assessment_blueprints.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    criteria = Column(JSON, default=list)
+    performance_levels = Column(JSON, default=list)
+    scoring_policy = Column(JSON, default=dict)
+    evidence_contract = Column(JSON, default=dict)
+    learner_visibility = Column(JSON, default=dict)
+    status = Column(String(30), nullable=False, default="draft", index=True)
+    schema_version = Column(String(50), nullable=False, default="assessment-rubric.v1")
+    version = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class MicroLearningRun(Base):
     """Persistent projection for one focused, checkpoint-scoped learning loop.
 

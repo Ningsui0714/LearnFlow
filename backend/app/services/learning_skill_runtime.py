@@ -15,11 +15,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.learning import AgentSession, LearningSkillRun, LearningTask, MicroLearningRun
-from app.services.architecture_registry import selectable_learning_skill
+from app.services.architecture_registry import (
+    learning_skill_runtime_contract,
+    selectable_learning_skill,
+)
 from app.services.learning_runtime import record_event
 
 
-SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v3"
+SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v4"
 RUNTIME_SKILL_IDS = (
     "guided_explanation",
     "socratic_dialogue",
@@ -28,87 +31,31 @@ RUNTIME_SKILL_IDS = (
 )
 ACTIVE_RUN_STATUSES = ("active", "paused", "verification")
 
+def _workflow_from_registry(skill_id: str) -> dict[str, Any]:
+    runtime = learning_skill_runtime_contract(skill_id)
+    if not runtime:
+        raise RuntimeError(f"missing_skill_runtime_contract:{skill_id}")
+    states = tuple(state.id for state in runtime.states)
+    labels = {state.id: state.title for state in runtime.states}
+    labels.update({
+        "verification_in_progress": "独立验证中",
+        "completed": "本轮完成",
+        "paused": "已暂停",
+    })
+    return {
+        "turn_budget": runtime.turn_budget,
+        "total_steps": len(states),
+        "initial_state": runtime.initial_state,
+        "states": states,
+        "labels": labels,
+        "evidence_policy": runtime.evidence_policy,
+        "failure_policy": runtime.failure_policy,
+    }
+
+
 WORKFLOWS: dict[str, dict[str, Any]] = {
-    "guided_explanation": {
-        "turn_budget": 3,
-        "total_steps": 4,
-        "initial_state": "presenting_core_model",
-        "states": (
-            "presenting_core_model",
-            "checking_minimal_example",
-            "repairing_explanation",
-            "verification_ready",
-        ),
-        "labels": {
-            "presenting_core_model": "核心模型与最小例子",
-            "checking_minimal_example": "检查例子中的关键关系",
-            "repairing_explanation": "修补理解并迁移表达",
-            "verification_ready": "准备独立验证",
-            "verification_in_progress": "独立验证中",
-            "completed": "本轮完成",
-            "paused": "已暂停",
-        },
-    },
-    "socratic_dialogue": {
-        "turn_budget": 3,
-        "total_steps": 4,
-        "initial_state": "eliciting_prior_model",
-        "states": (
-            "eliciting_prior_model",
-            "testing_assumption",
-            "building_explanation",
-            "verification_ready",
-        ),
-        "labels": {
-            "eliciting_prior_model": "建立起点与当前直觉",
-            "testing_assumption": "在具体情境检验判断",
-            "building_explanation": "连接理由与边界",
-            "verification_ready": "准备独立验证",
-            "verification_in_progress": "独立验证中",
-            "completed": "本轮完成",
-            "paused": "已暂停",
-        },
-    },
-    "feynman_dialogue": {
-        "turn_budget": 3,
-        "total_steps": 4,
-        "initial_state": "awaiting_teach_back",
-        "states": (
-            "awaiting_teach_back",
-            "locating_gap",
-            "revising_explanation",
-            "verification_ready",
-        ),
-        "labels": {
-            "awaiting_teach_back": "第一次自己的话复述",
-            "locating_gap": "定位一个模糊处",
-            "revising_explanation": "用例子重新讲清",
-            "verification_ready": "准备独立验证",
-            "verification_in_progress": "独立验证中",
-            "completed": "本轮完成",
-            "paused": "已暂停",
-        },
-    },
-    "worked_example_fading": {
-        "turn_budget": 3,
-        "total_steps": 4,
-        "initial_state": "studying_worked_example",
-        "states": (
-            "studying_worked_example",
-            "completing_last_step",
-            "solving_faded_example",
-            "verification_ready",
-        ),
-        "labels": {
-            "studying_worked_example": "拆解完整示例",
-            "completing_last_step": "补全最后一步",
-            "solving_faded_example": "撤去更多支架",
-            "verification_ready": "准备独立验证",
-            "verification_in_progress": "独立验证中",
-            "completed": "本轮完成",
-            "paused": "已暂停",
-        },
-    },
+    skill_id: _workflow_from_registry(skill_id)
+    for skill_id in RUNTIME_SKILL_IDS
 }
 
 
@@ -207,7 +154,8 @@ def workflow_blueprint(skill_id: str) -> dict[str, Any] | None:
         "total_steps": int(workflow["total_steps"]),
         "states": list(workflow["states"]),
         "verification_required": True,
-        "evidence_policy": "conversation_is_coaching; mastery_requires_existing_graded_attempts",
+        "evidence_policy": str(workflow["evidence_policy"]),
+        "failure_policy": str(workflow["failure_policy"]),
     }
 
 
@@ -587,6 +535,69 @@ def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
     })
 
 
+def transition_learning_skill_turn(
+    *,
+    skill_id: str,
+    current_state: str,
+    step_index: int,
+    turn_count: int,
+    support_count: int,
+    goal: str,
+    message: str,
+    entry_mode: str = "direct",
+) -> dict[str, Any]:
+    """Pure SkillSpec transition used by runtime tests and multi-turn evals.
+
+    The function classifies interaction shape, never correctness.  Only an
+    explicit learner attempt may advance one state; support signals stay put.
+    """
+    if skill_id not in WORKFLOWS:
+        raise ValueError(f"unsupported_skill:{skill_id}")
+    if current_state not in WORKFLOWS[skill_id]["states"]:
+        raise ValueError(f"unsupported_skill_state:{skill_id}:{current_state}")
+    response_signal = learner_response_signal(message)
+    normalized_choice = re.sub(r"[\s，,。.!！?？、]", "", str(message or "").casefold())
+    if (
+        entry_mode == "grounded"
+        and current_state == WORKFLOWS[skill_id]["initial_state"]
+        and re.match(r"^[ab](?:我想|先看|选择|$)", normalized_choice)
+    ):
+        response_signal = (
+            "orientation_problem_choice"
+            if normalized_choice.startswith("a") else
+            "orientation_example_choice"
+        )
+    support_only = response_signal != "attempt"
+    next_support_count = support_count + (1 if support_only else 0)
+    next_step = (
+        _support_step(
+            skill_id,
+            current_state,
+            step_index,
+            goal,
+            response_signal,
+            next_support_count,
+        )
+        if support_only else
+        _next_step(skill_id, current_state, goal)
+    )
+    next_turn_count = turn_count + (0 if support_only else 1)
+    if (
+        not support_only
+        and next_turn_count >= int(WORKFLOWS[skill_id]["turn_budget"])
+        and next_step["state"] != "verification_ready"
+    ):
+        next_step = _next_step(skill_id, "budget_exhausted", goal)
+    return {
+        **next_step,
+        "response_signal": response_signal,
+        "support_only": support_only,
+        "support_count": next_support_count,
+        "turn_count": next_turn_count,
+        "advanced": str(next_step["state"]) != current_state,
+    }
+
+
 async def active_skill_run(
     db: AsyncSession, session: AgentSession,
 ) -> LearningSkillRun | None:
@@ -955,32 +966,19 @@ async def prepare_learning_skill_turn(
 
     data = dict(current.run_data or {})
     previous_state = current.state
-    response_signal = learner_response_signal(message)
-    normalized_choice = re.sub(r"[\s，,。.!！?？、]", "", str(message or "").casefold())
-    if (
-        data.get("entry_mode") == "grounded"
-        and current.state == WORKFLOWS[current.skill_id]["initial_state"]
-        and re.match(r"^[ab](?:我想|先看|选择|$)", normalized_choice)
-    ):
-        response_signal = (
-            "orientation_problem_choice"
-            if normalized_choice.startswith("a") else
-            "orientation_example_choice"
-        )
-    support_only = response_signal != "attempt"
-    support_count = int(data.get("support_count") or 0) + (1 if support_only else 0)
-    next_step = (
-        _support_step(
-            current.skill_id,
-            previous_state,
-            current.step_index,
-            current.goal,
-            response_signal,
-            support_count,
-        )
-        if support_only else
-        _next_step(current.skill_id, previous_state, current.goal)
+    transition = transition_learning_skill_turn(
+        skill_id=current.skill_id,
+        current_state=previous_state,
+        step_index=current.step_index,
+        turn_count=current.turn_count,
+        support_count=int(data.get("support_count") or 0),
+        goal=current.goal,
+        message=message,
+        entry_mode=str(data.get("entry_mode") or "direct"),
     )
+    response_signal = str(transition["response_signal"])
+    support_only = bool(transition["support_only"])
+    support_count = int(transition["support_count"])
     responses = list(data.get("responses") or [])
     responses.append({
         "message_id": message_id,
@@ -989,21 +987,18 @@ async def prepare_learning_skill_turn(
         "response_signal": response_signal,
         "recorded_at": datetime.utcnow().isoformat(),
     })
-    if not support_only:
-        current.turn_count += 1
-    if not support_only and current.turn_count >= current.turn_budget and next_step["state"] != "verification_ready":
-        next_step = _next_step(current.skill_id, "budget_exhausted", current.goal)
-    current.state = str(next_step["state"])
-    current.step_index = int(next_step["step_index"])
+    current.turn_count = int(transition["turn_count"])
+    current.state = str(transition["state"])
+    current.step_index = int(transition["step_index"])
     current.run_data = {
         **data,
         "responses": responses[-12:],
-        "next_directive": next_step["directive"],
-        "next_prompt": next_step["fallback"],
+        "next_directive": transition["directive"],
+        "next_prompt": transition["fallback"],
         "mastery_claim": "none",
         "support_count": support_count,
         "last_response_signal": response_signal,
-        "flow_note": next_step.get(
+        "flow_note": transition.get(
             "flow_note",
             "已收到一个可检查的尝试，流程只推进了一步。",
         ),
@@ -1034,8 +1029,8 @@ async def prepare_learning_skill_turn(
         )
     return current, {
         "started": False,
-        "directive": next_step["directive"],
-        "fallback": next_step["fallback"],
+        "directive": transition["directive"],
+        "fallback": transition["fallback"],
     }
 
 

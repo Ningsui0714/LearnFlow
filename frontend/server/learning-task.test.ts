@@ -41,7 +41,7 @@ test('a task starts at the recommended skill own first step', () => {
   assert.equal(created.task.objective, '写一个二分查找')
   assert.equal(projection.status, 'active')
   assert.equal(projection.skillId, 'worked_example_fading')
-  assert.equal(projection.stepId, 'worked_example')
+  assert.equal(projection.stepId, 'studying_worked_example')
   assert.equal(projection.stepIndex, 0)
   assert.equal(projection.eventCount, 4)
 })
@@ -55,16 +55,16 @@ test('each learning skill owns a distinct deterministic flow', () => {
     step => Boolean(step.substateId && step.substateLabel.endsWith('态')),
   )), true)
   assert.deepEqual(LEARNING_SKILLS.guided_explanation.steps.map(step => step.id), [
-    'anchor_model', 'inspect_example', 'learner_explain', 'transfer_check',
+    'presenting_core_model', 'checking_minimal_example', 'repairing_explanation', 'verification_ready',
   ])
   assert.deepEqual(LEARNING_SKILLS.socratic_dialogue.steps.map(step => step.id), [
-    'ground_context', 'hypothesis', 'probe_reason', 'test_boundary', 'synthesize_reasoning',
+    'eliciting_prior_model', 'testing_assumption', 'building_explanation', 'verification_ready',
   ])
   assert.deepEqual(LEARNING_SKILLS.feynman_dialogue.steps.map(step => step.id), [
-    'knowledge_anchor', 'first_teachback', 'diagnose_gap', 'revised_teachback', 'example_or_boundary',
+    'awaiting_teach_back', 'locating_gap', 'revising_explanation', 'verification_ready',
   ])
   assert.deepEqual(LEARNING_SKILLS.worked_example_fading.steps.map(step => step.id), [
-    'worked_example', 'complete_last_step', 'complete_middle_step', 'independent_problem', 'reflect_strategy',
+    'studying_worked_example', 'completing_last_step', 'solving_faded_example', 'verification_ready',
   ])
 })
 
@@ -74,9 +74,9 @@ test('an explicitly selected skill binds the next guided task and exposes its su
   const context = learningTaskTutorContext(projection)
 
   assert.equal(projection.skillId, 'feynman_dialogue')
-  assert.equal(context.substateId, 'guidance')
-  assert.equal(context.substateLabel, '引导态')
-  assert.match(created.events.at(-1)?.detail || '', /引导态/)
+  assert.equal(context.substateId, 'teachback')
+  assert.equal(context.substateLabel, '复述态')
+  assert.match(created.events.at(-1)?.detail || '', /复述态/)
 })
 
 test('step movement is queue-driven and follows the current skill', () => {
@@ -88,10 +88,10 @@ test('step movement is queue-driven and follows the current skill', () => {
     skillId: before.skillId,
     stepId: before.stepId,
   }], 200)
-  assert.equal(projectLearningTask(created.task, withReply).stepId, 'anchor_model')
+  assert.equal(projectLearningTask(created.task, withReply).stepId, 'presenting_core_model')
 
   const advanced = advanceLearningSkillStep(withReply, projectLearningTask(created.task, withReply), 300)
-  assert.equal(projectLearningTask(created.task, advanced).stepId, 'inspect_example')
+  assert.equal(projectLearningTask(created.task, advanced).stepId, 'checking_minimal_example')
   assert.equal(learningTaskTutorContext(projectLearningTask(created.task, advanced)).substateId, 'demonstration')
 })
 
@@ -106,27 +106,31 @@ test('support and explicit repeats loop inside the current skill step', () => {
     { type: 'vnext_learning_skill_looped', detail: '支架后重做', skillId: before.skillId, stepId: before.stepId },
   ], 200)
   const once = projectLearningTask(created.task, withSupport)
-  assert.equal(once.stepId, 'anchor_model')
+  assert.equal(once.stepId, 'presenting_core_model')
   assert.equal(once.supportCount, 1)
   assert.equal(once.loopCount, 1)
 
   const twice = projectLearningTask(created.task, loopLearningSkillStep(withSupport, once, '换例子', 300))
-  assert.equal(twice.stepId, 'anchor_model')
+  assert.equal(twice.stepId, 'presenting_core_model')
   assert.equal(twice.loopCount, 2)
   assert.equal(twice.totalLoopCount, 2)
 })
 
 test('switching skill resets orchestration to that skill first step', () => {
   const created = createLearningTask('理解索引', 100)
+  const initial = projectLearningTask(created.task, created.events)
+  const withReply = appendLearningEvents(created.events, created.task.id, [{
+    type: 'vnext_learning_task_learner_replied', detail: '学生回应', skillId: initial.skillId, stepId: initial.stepId,
+  }], 150)
   const guided = projectLearningTask(created.task, advanceLearningSkillStep(
-    created.events, projectLearningTask(created.task, created.events), 200,
+    withReply, projectLearningTask(created.task, withReply), 200,
   ))
-  assert.equal(guided.stepId, 'inspect_example')
+  assert.equal(guided.stepId, 'checking_minimal_example')
 
-  const switchedEvents = switchLearningSkill(created.events, guided, 'feynman_dialogue', 300)
+  const switchedEvents = switchLearningSkill(withReply, guided, 'feynman_dialogue', 300)
   const switched = projectLearningTask(created.task, switchedEvents)
   assert.equal(switched.skillId, 'feynman_dialogue')
-  assert.equal(switched.stepId, 'knowledge_anchor')
+  assert.equal(switched.stepId, 'awaiting_teach_back')
   assert.equal(switched.stepIndex, 0)
 })
 
@@ -137,11 +141,9 @@ test('skill steps that require learner work cannot advance before a reply', () =
     created.task,
     switchLearningSkill(created.events, initial, 'feynman_dialogue', 200),
   )
-  const teachbackEvents = advanceLearningSkillStep(
-    switchLearningSkill(created.events, initial, 'feynman_dialogue', 200), switched, 300,
-  )
+  const teachbackEvents = switchLearningSkill(created.events, initial, 'feynman_dialogue', 200)
   const awaitingReply = projectLearningTask(created.task, teachbackEvents)
-  assert.equal(awaitingReply.stepId, 'first_teachback')
+  assert.equal(awaitingReply.stepId, 'awaiting_teach_back')
   assert.equal(canAdvanceLearningSkillStep(awaitingReply), false)
 
   const withReply = appendLearningEvents(teachbackEvents, created.task.id, [{
@@ -162,7 +164,7 @@ test('legacy four-phase browser events migrate into the selected skill path', ()
   ], 100)
   const projection = projectLearningTask(task, events)
   assert.equal(projection.skillId, 'feynman_dialogue')
-  assert.equal(projection.stepId, 'revised_teachback')
+  assert.equal(projection.stepId, 'revising_explanation')
 })
 
 test('the model receives a bounded read-only skill-step projection', () => {
@@ -171,8 +173,8 @@ test('the model receives a bounded read-only skill-step projection', () => {
   const context = learningTaskTutorContext(projection)
   assert.equal(context.skillName, '清晰讲解')
   assert.equal(context.substateLabel, '引导态')
-  assert.equal(context.stepTitle, '建立最小模型')
+  assert.equal(context.stepTitle, '建立核心模型')
   assert.equal(context.stepCount, LEARNING_SKILLS.guided_explanation.steps.length)
-  assert.match(context.stepInstruction, /先直接解释/)
-  assert.match(currentLearningSkillStep(projection).loopInstruction || '', /换一种表征/)
+  assert.match(context.stepInstruction, /直接说明/)
+  assert.match(currentLearningSkillStep(projection).loopInstruction || '', /只换表征/)
 })

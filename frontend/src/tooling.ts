@@ -28,7 +28,7 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'file' | 'search' | 'image' | 'animation'
+  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'assessment' | 'file' | 'search' | 'image' | 'animation'
   status: 'running' | 'completed' | 'failed'
   title: string
   detail: string
@@ -46,6 +46,13 @@ export type TutorToolRun = {
   pathPlanProposal?: LearningPathPlanProposal
   projectRoadmapProposal?: ProjectRoadmapProposal
   projectLearningFileProposal?: ProjectLearningFileProposal
+  assessmentBlueprint?: {
+    id: number
+    rubricId: number
+    title: string
+    purpose: string
+    itemCount: number
+  }
   learningFile?: {
     kind: 'lecture' | 'practice'
     ref: string

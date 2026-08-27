@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from app.services.action_board import ACTION_BOARD
 from app.services.architecture_registry import (
     AGENTS,
@@ -8,6 +11,7 @@ from app.services.architecture_registry import (
     KERNEL_NAMES,
     SKILLS,
     SKILL_KINDS,
+    SKILL_SPEC_VERSION,
     TOOLS,
     TOOL_INTERFACE_ROLES,
     TOOL_MODEL_EXPOSURE,
@@ -15,6 +19,7 @@ from app.services.architecture_registry import (
     normalize_event_provenance,
     registry_manifest,
     chat_mode_manifest,
+    frontend_learning_skill_manifest,
     selectable_learning_skill_manifest,
     validate_registry,
 )
@@ -96,8 +101,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "search_computer_knowledge", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
         "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
-        "recommend_learning_resources", "attach_learning_file_to_chat",
-        "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
+            "recommend_learning_resources", "attach_learning_file_to_chat",
+            "design_assessment_blueprint",
+            "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
         "read_review_context",
         "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph",
         "propose_vnext_personal_path_node",
@@ -364,6 +370,9 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
         "worked_example_fading",
     } == {item["id"] for item in selectable_learning_skill_manifest()}
     assert all(item["atomic_task_capable"] for item in selectable_learning_skill_manifest())
+    assert all(item["spec_version"] == SKILL_SPEC_VERSION for item in selectable_learning_skill_manifest())
+    assert all(item["runtime"]["states"][-1]["id"] == "verification_ready" for item in selectable_learning_skill_manifest())
+    assert all(item["runtime"]["verification_required"] for item in selectable_learning_skill_manifest())
     assert "use_learning_skill" in ACTION_BOARD
     assert CAPABILITY_OWNERS["use_learning_skill"] == (
         "tutor_agent", "tutor_context", "global_tutor",
@@ -396,7 +405,19 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
     assert "learning_skill_runtime" in SKILLS["feynman_dialogue"].tools
     assert "learning_task_runtime" in SKILLS["guided_explanation"].tools
     assert "learning_task_runtime" in SKILLS["worked_example_fading"].tools
+    assert SKILLS["assessment_blueprint_design"].learner_selectable is False
+    assert "assessment_blueprint_builder" in TOOLS
+    assert EVENTS["assessment_blueprint_proposed"].kernel_targets == ()
+    assert CAPABILITY_OWNERS["design_assessment_blueprint"] == (
+        "learning_design_agent", "assessment_blueprint_builder", "vnext_chat",
+    )
     assert len(AGENTS) == 3
+
+
+def test_frontend_learning_skill_manifest_matches_registry_authority():
+    path = Path(__file__).resolve().parents[2] / "frontend" / "src" / "generated" / "learning-skill-manifest.json"
+    registry_payload = json.loads(json.dumps(frontend_learning_skill_manifest(), ensure_ascii=False))
+    assert json.loads(path.read_text(encoding="utf-8")) == registry_payload
 
 
 def test_learner_growth_is_an_additive_read_only_workbench():

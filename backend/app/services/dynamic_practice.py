@@ -120,7 +120,10 @@ def validate_practice_candidate(candidate: dict[str, Any]) -> PracticeValidation
     return PracticeValidation(not errors, tuple(errors), tuple(warnings), quality)
 
 
-def normalized_candidate(candidate: dict[str, Any], *, practice_set_id: str, family_id: str) -> dict[str, Any]:
+def normalized_candidate(
+    candidate: dict[str, Any], *, practice_set_id: str, family_id: str,
+    assessment_blueprint_id: int | None = None, rubric_id: int | None = None,
+) -> dict[str, Any]:
     validation = validate_practice_candidate(candidate)
     if not validation.valid:
         raise ValueError("；".join(validation.errors))
@@ -129,6 +132,8 @@ def normalized_candidate(candidate: dict[str, Any], *, practice_set_id: str, fam
         "schema_version": "dynamic-practice-item.v1",
         "practice_set_id": practice_set_id,
         "family_id": family_id,
+        "assessment_blueprint_id": assessment_blueprint_id,
+        "rubric_id": rubric_id,
         "purpose": str(candidate.get("purpose") or "practice"),
         "target_skill": _clean_text(candidate.get("target_skill"), 240),
         "concept_key": _clean_text(candidate.get("concept_key"), 160),
@@ -170,6 +175,8 @@ async def create_practice_set(
     practice_set_id: str,
     title: str,
     candidates: list[dict[str, Any]],
+    assessment_blueprint_id: int | None = None,
+    rubric_id: int | None = None,
 ) -> list[ConceptQuestion]:
     existing = list((await db.execute(select(ConceptQuestion).where(
         ConceptQuestion.checkpoint_id == checkpoint_id,
@@ -185,7 +192,13 @@ async def create_practice_set(
     created: list[ConceptQuestion] = []
     for index, candidate in enumerate(candidates[:12]):
         family_id = _clean_text(candidate.get("family_id") or f"{practice_set_id}:{index + 1}", 160)
-        normalized = normalized_candidate(candidate, practice_set_id=practice_set_id, family_id=family_id)
+        normalized = normalized_candidate(
+            candidate,
+            practice_set_id=practice_set_id,
+            family_id=family_id,
+            assessment_blueprint_id=assessment_blueprint_id,
+            rubric_id=rubric_id,
+        )
         fingerprint = normalized["assessment_meta"]["quality"]["fingerprint"]
         if fingerprint in existing_fingerprints:
             continue

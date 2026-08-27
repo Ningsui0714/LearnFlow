@@ -455,6 +455,28 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
+    name: 'design_assessment_blueprint',
+    title: '设计练习蓝图与量表',
+    description: '把正式学习任务收紧为可测能力、题型组合、难度、成功条件与确定性评分量表。它是零目标提案，不评分、不写掌握。动态习题生成前目标或检测用途不清时先调用。',
+    toolClass: 'execution',
+    risk: 'proposal',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        learning_task_id: { type: 'integer', description: '当前正式 LearningTask ID' },
+        title: { type: 'string' },
+        concept: { type: 'string', description: '要测量的概念或能力' },
+        concept_key: { type: 'string' },
+        purpose: { type: 'string', enum: ['practice', 'diagnostic', 'transfer'] },
+        difficulty: { type: 'string', enum: ['easy', 'medium', 'hard'] },
+        item_types: { type: 'array', maxItems: 6, items: { type: 'string', enum: ['single', 'multi', 'judge', 'ordered_blocks', 'exact_text', 'numeric', 'code_output', 'trace_table'] } },
+        count: { type: 'integer', minimum: 1, maximum: 12 },
+      },
+      required: ['learning_task_id', 'title', 'concept', 'purpose', 'difficulty', 'item_types', 'count'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'generate_dynamic_practice',
     title: '生成动态练习文件',
     description: '按能力蓝图生成计算机学习题目，经过后端静态质量检查后保存为正式答案安全练习文件。生成不等于掌握；只有正式提交与确定性判题才形成证据。',
@@ -464,6 +486,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
       type: 'object',
       properties: {
         learning_task_id: { type: 'integer', description: '当前关卡绑定的正式 LearningTask ID' },
+        assessment_blueprint_id: { type: 'integer', description: '可选；本轮先前生成的 AssessmentBlueprint ID' },
         title: { type: 'string', description: '练习文件标题' },
         concept: { type: 'string', description: '要练习或检测的概念' },
         purpose: { type: 'string', enum: ['practice', 'diagnostic', 'transfer'] },
@@ -769,6 +792,28 @@ async function callFormalPracticeApi(
   if (!response.ok) {
     const detail = typeof payload.detail === 'string' ? payload.detail : payload.detail?.message || payload.error
     throw new Error(compactText(detail || `正式习题服务返回 ${response.status}`, 500))
+  }
+  return payload
+}
+
+async function callAssessmentBlueprintApi(
+  options: TutorAgentToolRuntimeOptions,
+  body: Record<string, unknown>,
+) {
+  if (!options.backendBase) throw new Error('正式评估蓝图后端未连接')
+  const response = await fetch(`${options.backendBase}/api/assessment-blueprints`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.requestCookie ? { Cookie: options.requestCookie } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20_000),
+  })
+  const payload = await response.json().catch(() => ({})) as any
+  if (!response.ok) {
+    const detail = typeof payload.detail === 'string' ? payload.detail : payload.detail?.message || payload.error
+    throw new Error(compactText(detail || `正式评估蓝图服务返回 ${response.status}`, 500))
   }
   return payload
 }
@@ -1229,6 +1274,47 @@ export async function executeTutorAgentTool(
         directReply: visual.explanation,
       }
     }
+    if (name === 'design_assessment_blueprint') {
+      if (options.mode !== 'guided_learning') throw new Error('评估蓝图只能在带领学习态的正式学习任务中设计')
+      if (!options.formalProjectContext?.checkpoint_id) throw new Error('评估蓝图必须绑定当前项目关卡')
+      const learningTaskId = Number(args.learning_task_id)
+      if (!Number.isInteger(learningTaskId) || learningTaskId <= 0) throw new Error('缺少正式 LearningTask ID')
+      const itemTypes = Array.isArray(args.item_types) ? args.item_types.map(String).slice(0, 6) : ['single']
+      const count = Math.max(1, Math.min(12, Number(args.count) || 3))
+      const blueprint = await callAssessmentBlueprintApi(options, {
+        learning_task_id: learningTaskId,
+        title: compactText(args.title || `${compactText(args.concept, 120)} · 评估蓝图`, 255),
+        concept: compactText(args.concept || options.message, 240),
+        concept_key: compactText(args.concept_key, 160),
+        purpose: compactText(args.purpose || 'practice', 24),
+        difficulty: compactText(args.difficulty || 'medium', 16),
+        item_types: itemTypes,
+        count,
+        client_request_id: `assessment-blueprint:${learningTaskId}:${meta.callId || Date.now()}`.slice(0, 160),
+      })
+      const projection = {
+        id: Number(blueprint.id),
+        rubricId: Number(blueprint.rubric?.id),
+        title: compactText(blueprint.title, 255),
+        purpose: compactText(blueprint.purpose, 30),
+        itemCount: (blueprint.item_mix || []).reduce((sum: number, item: any) => sum + Number(item.count || 0), 0),
+      }
+      return {
+        run: {
+          ...base, kind: 'assessment', status: 'completed', title: '设计练习蓝图与量表',
+          detail: `已形成 ${projection.itemCount} 题的评估蓝图与确定性评分量表；它约束后续生成，但不代表学生已作答或掌握。`,
+          observationSummary: `${projection.purpose} · ${projection.itemCount} 题 · Blueprint #${projection.id}`,
+          durationMs: Date.now() - startedAt,
+          assessmentBlueprint: projection,
+        },
+        observation: {
+          authority: 'formal_assessment_blueprint',
+          assessment_blueprint: blueprint,
+          next_action: '后续调用动态习题工具时传入 assessment_blueprint_id',
+          evidence_boundary: '蓝图与量表是零目标提案；只有正式提交与确定性判题才形成学习证据。',
+        },
+      }
+    }
     if (name === 'generate_dynamic_practice' || name === 'generate_similar_practice') {
       if (options.mode !== 'guided_learning') throw new Error('动态习题只能在带领学习态的正式学习任务中生成')
       if (!options.formalProjectContext?.checkpoint_id) throw new Error('动态习题必须绑定当前项目关卡')
@@ -1245,6 +1331,7 @@ export async function executeTutorAgentTool(
           candidates,
           client_request_id: clientRequestId,
           generation_kind: similar ? 'similar' : 'dynamic',
+          assessment_blueprint_id: Number(args.assessment_blueprint_id) || undefined,
           source_practice_ref: similar ? compactText(args.source_practice_ref, 180) : '',
         }),
       })

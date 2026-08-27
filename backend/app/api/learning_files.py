@@ -19,6 +19,10 @@ from app.services.dynamic_practice import (
     create_practice_set,
     validate_practice_candidate,
 )
+from app.services.assessment_design import (
+    create_assessment_blueprint,
+    validate_candidates_against_blueprint,
+)
 
 
 router = APIRouter(prefix="/learning-files", tags=["learning-files"])
@@ -84,6 +88,8 @@ def _practice_set_ref(items: list[ConceptQuestion], checkpoint: Checkpoint, proj
         "logical_filename": f"{checkpoint.title}-{title}.lfexercise",
         "project_id": project.id,
         "checkpoint_id": checkpoint.id,
+        "assessment_blueprint_id": meta.get("assessment_blueprint_id"),
+        "rubric_id": meta.get("rubric_id"),
         "question_count": len(items),
         "quality_status": "validated_static_uncalibrated",
         "path": f"/files/practice/practice-set-{practice_set_id}",
@@ -298,6 +304,49 @@ async def generate_dynamic_practice_file(
             "message": "候选题未通过静态质量检查",
             "errors": [list(report.errors) for report in invalid],
         })
+    requested_blueprint_id = int(data.get("assessment_blueprint_id") or 0)
+    if requested_blueprint_id:
+        try:
+            blueprint, rubric = await validate_candidates_against_blueprint(
+                db,
+                learner_id=current.learner.id,
+                learning_task_id=task.id,
+                blueprint_id=requested_blueprint_id,
+                candidates=candidates,
+            )
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+    else:
+        item_counts: dict[str, int] = defaultdict(int)
+        difficulty_counts: dict[str, int] = defaultdict(int)
+        for candidate in candidates:
+            item_counts[str(candidate.get("q_type") or "single")] += 1
+            difficulty_counts[str(candidate.get("difficulty") or "medium")] += 1
+        first = candidates[0]
+        try:
+            blueprint, rubric, _ = await create_assessment_blueprint(
+                db,
+                learner_id=current.learner.id,
+                learning_task_id=task.id,
+                title=f"{str(data.get('title') or task.title)[:220]} · 评估蓝图",
+                client_request_id=f"auto:{client_request_id}",
+                data={
+                    "purpose": str(first.get("purpose") or "practice"),
+                    "target_subjects": [{
+                        "name": str(first.get("target_skill") or task.objective),
+                        "concept_key": str(first.get("concept_key") or ""),
+                    }],
+                    "item_mix": [
+                        {"q_type": q_type, "count": count}
+                        for q_type, count in sorted(item_counts.items())
+                    ],
+                    "difficulty_distribution": dict(difficulty_counts),
+                    "source_refs": list(first.get("source_refs") or []),
+                },
+                source="dynamic_practice_generator",
+            )
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
     try:
         questions = await create_practice_set(
             db,
@@ -305,6 +354,8 @@ async def generate_dynamic_practice_file(
             practice_set_id=practice_set_id,
             title=str(data.get("title") or f"{task.title} · 动态练习")[:255],
             candidates=candidates,
+            assessment_blueprint_id=blueprint.id,
+            rubric_id=rubric.id,
         )
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
@@ -330,6 +381,8 @@ async def generate_dynamic_practice_file(
             "item_count": len(questions), "quality_status": "validated_static_uncalibrated",
             "generation_kind": generation_kind,
             "source_practice_ref": str(data.get("source_practice_ref") or "")[:180],
+            "assessment_blueprint_id": blueprint.id,
+            "rubric_id": rubric.id,
             "mastery_unchanged": True,
         },
         artifact_refs=[artifact],
@@ -337,7 +390,13 @@ async def generate_dynamic_practice_file(
         client_event_id=f"{event_type}:{current.learner.id}:{practice_set_id}",
     )
     await db.commit()
-    return {**ref, "quality_reports": [report.quality for report in reports], "mastery_inference": False}
+    return {
+        **ref,
+        "assessment_blueprint_id": blueprint.id,
+        "rubric_id": rubric.id,
+        "quality_reports": [report.quality for report in reports],
+        "mastery_inference": False,
+    }
 
 
 @router.post("/practice/{practice_ref}/quality")

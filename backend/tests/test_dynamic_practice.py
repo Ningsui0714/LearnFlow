@@ -31,8 +31,11 @@ def test_dynamic_item_validation_declares_evidence_boundary_and_fingerprint():
 
     normalized = normalized_candidate(
         _candidate(), practice_set_id="ps-test", family_id="queue-family",
+        assessment_blueprint_id=31, rubric_id=47,
     )
     meta = normalized["assessment_meta"]
+    assert meta["assessment_blueprint_id"] == 31
+    assert meta["rubric_id"] == 47
     assert meta["practice_set_id"] == "ps-test"
     assert meta["evidence_contract"]["formal_submission"] == "knowledge_and_practice"
     assert meta["evidence_contract"]["human"].startswith("only_explicit_feedback")

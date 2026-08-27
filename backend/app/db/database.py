@@ -149,6 +149,7 @@ CONVERSATION_SKILL_RUNTIME_MIGRATION = "v14-conversation-skill-runtime"
 LEARNING_TASK_RUNTIME_MIGRATION = "v15-learning-task-runtime"
 ATOMIC_LEARNING_SKILL_MIGRATION = "v16-atomic-learning-skill-runtime"
 PERSONAL_CONCEPT_GRAPH_MIGRATION = "v17-personal-concept-learning-graph"
+ASSESSMENT_BLUEPRINT_MIGRATION = "v18-assessment-blueprint-rubric"
 
 
 def _sqlite_path() -> Path | None:
@@ -1121,6 +1122,21 @@ async def _mark_conversation_skill_runtime_migration():
         print(f"[migrate] applied {CONVERSATION_SKILL_RUNTIME_MIGRATION}")
 
 
+async def _mark_assessment_blueprint_migration():
+    """Record additive AssessmentBlueprint and Rubric tables."""
+    from app.models.learning import SchemaMigration
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == ASSESSMENT_BLUEPRINT_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        db.add(SchemaMigration(version=ASSESSMENT_BLUEPRINT_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {ASSESSMENT_BLUEPRINT_MIGRATION}")
+
+
 async def _backfill_learning_task_runtime():
     """Create learner-visible task projections for existing checkpoints/runs."""
     from app.models.learning import SchemaMigration
@@ -1277,3 +1293,4 @@ async def init_db():
     await _backfill_learning_task_runtime()
     await _backfill_atomic_learning_skill_runtime()
     await _backfill_personal_concept_graph()
+    await _mark_assessment_blueprint_migration()

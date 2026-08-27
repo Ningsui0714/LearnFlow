@@ -181,8 +181,18 @@ def test_dynamic_practice_is_answer_safe_and_only_formal_attempt_reaches_kernels
             }],
         })
         assert generated.status_code == 200, generated.text
-        practice_ref = generated.json()["ref"]
-        assert generated.json()["mastery_inference"] is False
+        generated_body = generated.json()
+        practice_ref = generated_body["ref"]
+        assert generated_body["mastery_inference"] is False
+        assert generated_body["assessment_blueprint_id"] > 0
+        assert generated_body["rubric_id"] > 0
+
+        blueprint = client.get(
+            f"/api/assessment-blueprints/{generated_body['assessment_blueprint_id']}"
+        )
+        assert blueprint.status_code == 200, blueprint.text
+        assert blueprint.json()["mastery_inference"] is False
+        assert blueprint.json()["rubric"]["scoring_policy"]["llm_may_score"] is False
 
         practice = client.get(f"/api/learning-files/practice/{practice_ref}")
         assert practice.status_code == 200, practice.text
@@ -200,7 +210,10 @@ def test_dynamic_practice_is_answer_safe_and_only_formal_attempt_reaches_kernels
             async with async_session() as db:
                 event_ids = list((await db.execute(select(EvidenceEvent.id).where(
                     EvidenceEvent.learner_id == learner_id,
-                    EvidenceEvent.event_type.in_({"practice_file_generated", "practice_quality_inspected"}),
+                    EvidenceEvent.event_type.in_({
+                        "assessment_blueprint_proposed", "practice_file_generated",
+                        "practice_quality_inspected",
+                    }),
                 ))).scalars().all())
                 return len(list((await db.execute(select(KernelMutation.id).where(
                     KernelMutation.event_id.in_(event_ids),

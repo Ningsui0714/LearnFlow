@@ -272,6 +272,7 @@ test('dynamic practice tools are scoped to a formal guided checkpoint and stream
   })
 
   const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(exposed.includes('design_assessment_blueprint'))
   assert.ok(exposed.includes('generate_dynamic_practice'))
   assert.ok(exposed.includes('generate_similar_practice'))
   assert.ok(exposed.includes('inspect_practice_quality'))
@@ -299,9 +300,51 @@ test('dynamic practice tools are scoped to a formal guided checkpoint and stream
     },
   })
   const freeExposed = freeRequests[0].body.tools.map((tool: any) => tool.function.name)
+  assert.ok(!freeExposed.includes('design_assessment_blueprint'))
   assert.ok(!freeExposed.includes('generate_dynamic_practice'))
   assert.ok(!freeExposed.includes('generate_similar_practice'))
   assert.ok(!freeExposed.includes('inspect_practice_quality'))
+})
+
+test('assessment blueprint tool persists a zero-target deterministic grading contract', async () => {
+  const originalFetch = globalThis.fetch
+  let requestBody: any
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body || '{}'))
+    return new Response(JSON.stringify({
+      id: 19,
+      title: 'QKV 张量形状 · 诊断蓝图',
+      purpose: 'diagnostic',
+      item_mix: [{ q_type: 'single', count: 2 }, { q_type: 'trace_table', count: 1 }],
+      rubric: { id: 23, scoring_policy: { owner: 'practice_agent', llm_may_score: false } },
+      mastery_inference: false,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  try {
+    const result = await executeTutorAgentTool('design_assessment_blueprint', {
+      learning_task_id: 81,
+      title: 'QKV 张量形状 · 诊断蓝图',
+      concept: 'QKV 张量形状',
+      purpose: 'diagnostic',
+      difficulty: 'medium',
+      item_types: ['single', 'trace_table'],
+      count: 3,
+    }, {
+      message: '先设计检测蓝图',
+      mode: 'guided_learning',
+      formalProjectContext: { checkpoint_id: 45 } as any,
+      backendBase: 'http://formal.example.test',
+      generate: async () => 'unused',
+    })
+    assert.equal(result.run.kind, 'assessment')
+    assert.equal(result.run.assessmentBlueprint?.id, 19)
+    assert.equal(result.run.assessmentBlueprint?.rubricId, 23)
+    assert.equal(result.observation.evidence_boundary.includes('零目标'), true)
+    assert.equal(requestBody.learning_task_id, 81)
+    assert.equal(requestBody.count, 3)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('dynamic practice generation receives an item-sized output budget', async () => {
