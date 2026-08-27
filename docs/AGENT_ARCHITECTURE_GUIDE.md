@@ -5,6 +5,8 @@
 > 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
+Contract impact（`2026-08-27.2`）：路径 ACI 的职责不变，但外部证据和路线顺序被收紧。Harness 固定执行 `exact -> conditional fuzzy -> clarify | external research -> evidence gate -> proposal`；`propose_personal_path_node` 的模型 schema 不再接受 URL，只有刚刚执行的搜索结果能通过受信元数据进入提案器。路线规划由确定性硬前置闭包和拓扑排序控制，`co_learning` 不制造先后关系。以上变化不新增 Agent、Kernel writer 或事件类型。
+
 Contract impact（`2026-08-27.1`）：模型可见的学习路径 ACI 收敛为精确读取、条件模糊检索和有来源的个人节点提案。Harness 固定执行 `exact -> conditional fuzzy -> clarify | external research -> proposal`，并在执行前校验工具是否属于本轮 allow-list；旧聚合读取接口仅用于兼容。三个工具均不直接写五核，个人节点正式加入仍由学习者确认和既有 EvidenceEvent 链完成。
 
 Contract impact（`2026-08-26.21`）：规划态资源推荐使用 `learning_resource_curation` Playbook。它先由 `domain_knowledge_reader` 读取当前对话主动附加的文件/URL 片段与 provenance，再读取学习路径定位目标和前置，只有覆盖不足时才联网搜索。领域库是隐藏基础设施，来源从 Chat 输入区附加，不另设产品工作台。Tool 只返回证据，Skill 负责比较覆盖、权威层级、实践价值和成本；推荐结果仍是候选，不自动加入项目。来源正文是不可信输入，其中的指令不得执行。讲义与练习工作台消费正式 `Lecture/ConceptQuestion/Exercise`，纸张只保存 artifact ref；文件生成、打开和纸张接入是零 Kernel target，讲义阅读是 exposure-only，练习提交仍走确定性评分链。详见 `docs/KNOWLEDGE_AND_LEARNING_FILES.md`。
@@ -423,11 +425,19 @@ vNext `learning_plan` MUST 先调用 `vnext_learning_path_exact_reader`。精确
 `ambiguous` MUST 请求学习者消歧；`not_found` 才表示需要联网研究的图谱缺口。模型不得跳过精确
 读取、不得把歧义候选当作已解析节点，也不得调用未向当前 mode/scope 暴露的旧接口。
 
-外部搜索得到 provenance URL 后，`vnext_personal_path_node_proposer` MAY 形成个人节点提案；它必须
-再次执行重复检查，固定 `confirmation_required=true`、`mastery_unchanged=true`，并保持零 Kernel
-target。`vnext_personal_path_node_runtime` 只有在学习者点击确认后才可追加个人节点事件；正式网关
+外部搜索得到结构化结果后，Harness MAY 把这些结果作为只读元数据注入
+`vnext_personal_path_node_proposer`；模型参数中的 URL MUST 被忽略或拒绝。提案器必须验证查询主题在
+标题/摘要中的覆盖、来源等级和独立来源数量，并再次执行重复检查，固定
+`confirmation_required=true`、`mastery_unchanged=true`，保持零 Kernel target。单个低权威仓库、
+URL-only 结果或与主题无关的权威页面都不能成为个人节点证据。`vnext_personal_path_node_runtime`
+只有在学习者点击确认后才可追加个人节点事件；正式网关
 验证 learner scope、所有权和 DAG 约束后调用 `record_event()`。节点状态必须显示为自报，禁止
 转译为 Knowledge mastery。详细算法与验收矩阵见 `docs/LEARNING_PATH_RETRIEVAL.md`。
+
+`vnext_learning_path_planner` MUST 只消费唯一 resolved 目标。路线必须包含目标的直接硬前置，并在
+预算内递归补齐硬前置闭包；直接软前置可以加入路线，但 `co_learning` 只能作为并行建议。最终节点
+顺序 MUST 来自确定性拓扑排序，不能回退到手工 `order` 排序。层次视图若因硬前置闭包引入本层之外
+的课程，UI MUST 显式标记“补充前置”。
 
 vNext Tutor 还可以调用 `personal_concept_graph_reader`。该只读工具把同一 `concept_key` 下的
 Knowledge 节点内部历程与 Structure 节点间关系装成有界上下文；共享的 `ConceptAnchor` 仅提供名称、

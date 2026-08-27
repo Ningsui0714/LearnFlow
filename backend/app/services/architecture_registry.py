@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.1"
+REGISTRY_VERSION = "2026-08-27.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 
@@ -296,11 +296,11 @@ TOOLS = {
         ToolContract("vnext_learning_path_exact_reader", "vNext Exact Learning Path Node Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "normalized id/title/alias equality over versioned official + personal nodes -> bounded candidates with match reasons; miss explicitly requests fuzzy retrieval"),
         ToolContract("vnext_learning_path_fuzzy_reader", "vNext Fuzzy Learning Path Graph Search", "tutor_agent", "vnext", "read",
-                     ("structure", "knowledge", "value"), (), "exact-miss query -> deterministic lexical/spelling/topical rank fusion -> resolved, ambiguous, or graph-gap observation; ambiguity cannot become a route"),
+                     ("structure", "knowledge", "value"), (), "exact-miss query -> versioned intent/topic normalization + deterministic lexical/spelling/topical rank fusion -> resolved, ambiguous, or graph-gap observation; ambiguity cannot become a route"),
         ToolContract("vnext_personal_path_node_proposer", "vNext Evidence-backed Personal Path Node Proposer", "tutor_agent", "vnext", "proposal",
-                     ("structure", "knowledge", "value"), (), "confirmed graph gap + provenance URLs + duplicate guard -> learner-visible node proposal; zero kernel target until explicit learner confirmation"),
+                     ("structure", "knowledge", "value"), (), "confirmed graph gap + runtime-injected structured search evidence + deterministic topic/authority/independence gate + duplicate guard -> learner-visible node proposal; the model cannot supply provenance URLs and the proposal has zero kernel target until explicit learner confirmation"),
         ToolContract("vnext_learning_path_planner", "vNext Personalized Long-term Learning Path Planner", "learning_design_agent", "vnext", "proposal",
-                     ("structure", "knowledge", "human", "value"), (), "goal + official/personal DAG + scoped ContextPacket -> deterministic inspectable route proposal; model may explain but cannot choose mastery or commit"),
+                     ("structure", "knowledge", "human", "value"), (), "resolved goal + official/personal DAG + scoped ContextPacket -> hard-prerequisite closure + direct soft prerequisites + deterministic topological order; co-learning never imposes precedence; model may explain but cannot choose mastery or commit"),
         ToolContract("vnext_learning_path_plan_manager", "vNext Confirmed Learning Path Plan Manager", "tutor_agent", "vnext", "orchestration",
                      ("structure", "value"), (), "learner-visible route proposal -> explicit learner confirmation -> registered EvidenceEvent -> reducer; revisions and archive preserve history"),
         ToolContract("personal_concept_graph_reader", "Personal Concept Learning Graph Reader", "tutor_agent", "vnext", "read",
@@ -1068,7 +1068,7 @@ def registry_manifest() -> dict[str, Any]:
             "vnext_learning_graph_alignment": "official course graph + personal course overlay + personal concept graph + source knowledge domains + confirmed path plan are joined only by explicit non-mastery alignment records",
             "vnext_learning_plan_projection": "planning intent -> proposal -> explicit learner decision; accepted Value changes enter the formal EvidenceEvent reducer",
             "vnext_learning_path_projection": "versioned official course DAG + formal learner overlay events -> Structure/Value reference projection; Knowledge only records self-reported exposure and never mastery",
-            "vnext_learning_path_retrieval": "exact id/title/alias lookup -> conditional deterministic fuzzy rank fusion -> ambiguity clarification or evidence-backed personal-node proposal; proposal remains zero-target until learner confirmation",
+            "vnext_learning_path_retrieval": "exact id/title/alias lookup -> conditional deterministic fuzzy rank fusion -> ambiguity clarification or structured-evidence personal-node proposal; model-supplied URLs are rejected and proposal remains zero-target until learner confirmation",
             "vnext_agent_turn_runtime": "typed ContextEnvelope -> bounded model/tool loop -> deterministic final-state verifier -> structured AgentTurnTrace; model receives only registered read/artifact ACI tools",
             "vnext_chat_session_authority": "learner-owned AgentSession + idempotent AgentMessage are the cross-browser ordinary-chat authority; localStorage keeps drafts, tabs and paper layout only; persistence never implies learning evidence",
             "frontend_authority": "frontend/ is the only product frontend; former vNext stable IDs remain compatibility identifiers, not a second runtime; web and Tauri use the same build and formal API contracts",

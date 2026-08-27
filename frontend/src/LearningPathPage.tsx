@@ -4,7 +4,7 @@ import {
   LEARNING_PATH_SOURCES,
   PATH_EDGE_LABELS,
   PATH_STATUS_LABELS,
-  buildPersonalNodeProposal,
+  learningPathAudienceNodeIds,
   projectLearnerPath,
   readLearningPathGraph,
   type LearnerPathState,
@@ -36,6 +36,9 @@ type Props = {
 }
 
 const STATUS_ORDER: LearnerPathStatus[] = ['unmarked', 'exploring', 'self_reported_exposed', 'self_reported_mastered']
+const AUDIENCE_LABELS: Record<string, string> = {
+  vocational: '高职', undergraduate: '本科', graduate: '研究生', self_directed: '自主学习',
+}
 
 function compact(value: string) {
   return value.toLowerCase().replace(/[\s·（）()_\-/]+/g, '')
@@ -59,15 +62,25 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
   const nebulaPositions = useMemo(() => layoutLearningPathNebula(projection.nodes, projection.edges), [projection.nodes, projection.edges])
   const clusterBounds = useMemo(() => layoutKnowledgeClusters(projection.nodes), [projection.nodes])
   const nebulaCanvasHeight = useMemo(() => nebulaHeight(projection.nodes), [projection.nodes])
+  const audienceNodeIds = useMemo(() => audience === '全部'
+    ? undefined
+    : learningPathAudienceNodeIds(projection.nodes, projection.edges, audience as LearningPathNode['audiences'][number]),
+  [audience, projection.edges, projection.nodes])
+  const audienceBridgeNodeIds = useMemo(() => audience === '全部' || !audienceNodeIds
+    ? new Set<string>()
+    : new Set([...audienceNodeIds].filter(nodeId => {
+      const node = projection.nodes.find(item => item.id === nodeId)
+      return Boolean(node && !node.audiences.includes(audience as LearningPathNode['audiences'][number]))
+    })), [audience, audienceNodeIds, projection.nodes])
   const visibleNodes = useMemo(() => {
     const normalized = compact(query)
     return projection.nodes.filter(node => {
       const matchesQuery = !normalized || [node.title, ...node.aliases, ...node.domains].some(value => compact(value).includes(normalized))
       const matchesCluster = clusterFilter === 'all' || clusterLearningPathNode(node) === clusterFilter
-      const matchesAudience = audience === '全部' || node.audiences.includes(audience as LearningPathNode['audiences'][number])
+      const matchesAudience = !audienceNodeIds || audienceNodeIds.has(node.id)
       return matchesQuery && matchesCluster && matchesAudience
     })
-  }, [projection.nodes, query, clusterFilter, audience])
+  }, [projection.nodes, query, clusterFilter, audienceNodeIds])
   const visibleIds = useMemo(() => new Set(visibleNodes.map(node => node.id)), [visibleNodes])
   const selected = projection.nodes.find(node => node.id === selectedId && visibleIds.has(node.id)) || visibleNodes[0]
   const nodeMap = useMemo(() => new Map(projection.nodes.map(node => [node.id, node])), [projection.nodes])
@@ -117,12 +130,21 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
     const anchor = projection.nodes.find(node => node.id === anchorId)
     if (!title || !anchor) return
     const packet = readLearningPathGraph(`学习${title}`, state)
-    const generated = buildPersonalNodeProposal({ ...packet, topicCandidate: title, needsExternalResearch: true, suggestedAnchorIds: [anchor.id] }, [])
-    if (!generated) return
     onAddPersonalNode({
-      ...generated,
       id: `manual-${Date.now()}`,
+      policyId: 'vnext-personal-path-node-proposer-v3',
+      generatedFromSnapshotId: packet.snapshotId,
+      title,
+      summary: `由学习者明确添加的个人学习节点“${title}”。`,
+      aliases: [title],
+      domains: anchor.domains.slice(0, 4),
+      stage: anchor.order >= 5 ? 'advanced' : 'domain',
+      order: Math.max(4, anchor.order + 1),
+      sourceUrls: [],
+      sourceEvidence: [],
       connections: [{ nodeId: anchor.id, kind: edgeKind, rationale: `由学习者手动关联到“${anchor.title}”` }],
+      requiresLearnerConfirmation: true,
+      masteryUnchanged: true,
     })
     setPersonalTitle('')
   }
@@ -223,19 +245,20 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
                 const cluster = knowledgeCluster(position.clusterId)
                 const status = projection.statuses[node.id] || 'unmarked'
                 const planRole = planTargetNodeIds.has(node.id) ? 'target' : planMilestoneNodeIds.has(node.id) ? 'milestone' : planRouteNodeIds.has(node.id) ? 'route' : ''
+                const audienceBridge = audienceBridgeNodeIds.has(node.id)
                 return (
                   <button
                     type="button"
                     key={node.id}
-                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${planRole ? ` path-node-plan-${planRole}` : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${focusId && !focusTrace?.nodes.has(node.id) && !planRole ? ' path-node-muted' : ''}${focusTrace?.upstream.has(node.id) && node.id !== focusId ? ' path-node-upstream' : ''}${focusTrace?.downstream.has(node.id) && node.id !== focusId ? ' path-node-downstream' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
+                    className={`path-node path-node-${status}${node.origin === 'personal' ? ' path-node-personal' : ''}${audienceBridge ? ' path-node-audience-bridge' : ''}${planRole ? ` path-node-plan-${planRole}` : ''}${selected?.id === node.id ? ' path-node-selected' : ''}${focusId && !focusTrace?.nodes.has(node.id) && !planRole ? ' path-node-muted' : ''}${focusTrace?.upstream.has(node.id) && node.id !== focusId ? ' path-node-upstream' : ''}${focusTrace?.downstream.has(node.id) && node.id !== focusId ? ' path-node-downstream' : ''}${node.title.length > 10 ? ' path-node-long-title' : ''}`}
                     style={{ left: position.x, top: position.y, width: position.width, height: position.height, '--cluster-color': cluster.color, '--cluster-rgb': cluster.rgb } as CSSProperties}
                     onClick={() => selectAndFocus(node.id)}
                     onMouseEnter={() => setHoveredId(node.id)}
                     onMouseLeave={() => setHoveredId(undefined)}
-                    title={`${node.title} · ${cluster.label} · ${planRole === 'target' ? '规划目标' : planRole === 'milestone' ? '路线里程碑' : planRole === 'route' ? '规划路线' : PATH_STATUS_LABELS[status]}`}
+                    title={`${node.title} · ${cluster.label} · ${audienceBridge ? `${AUDIENCE_LABELS[audience] || audience}路线所需前置` : planRole === 'target' ? '规划目标' : planRole === 'milestone' ? '路线里程碑' : planRole === 'route' ? '规划路线' : PATH_STATUS_LABELS[status]}`}
                   >
                     <strong>{node.title}</strong>
-                    <small>{planRole === 'target' ? '◎ 规划目标' : planRole === 'milestone' ? '◆ 路线里程碑' : planRole === 'route' ? '· 规划路线' : node.origin === 'personal' ? '个人节点' : PATH_STATUS_LABELS[status]}</small>
+                    <small>{audienceBridge ? '↳ 补充前置' : planRole === 'target' ? '◎ 规划目标' : planRole === 'milestone' ? '◆ 路线里程碑' : planRole === 'route' ? '· 规划路线' : node.origin === 'personal' ? '个人节点' : PATH_STATUS_LABELS[status]}</small>
                   </button>
                 )
               })}
@@ -253,6 +276,7 @@ export default function LearningPathPage({ state, onStatusChange, onAddPersonalN
             <>
               <h2>{selected.title}</h2>
               <p>{selected.summary}</p>
+              {audienceBridgeNodeIds.has(selected.id) && <div className="path-audience-bridge-note">它不属于“{AUDIENCE_LABELS[audience] || audience}”主课程集，但被保留为后续课程的硬前置，避免路线断裂。</div>}
               <div className="path-node-tags"><span className="path-cluster-tag" style={{ '--cluster-color': knowledgeCluster(clusterLearningPathNode(selected)).color, '--cluster-rgb': knowledgeCluster(clusterLearningPathNode(selected)).rgb } as CSSProperties}>{knowledgeCluster(clusterLearningPathNode(selected)).label}</span>{selected.domains.map(item => <span key={item}>{item}</span>)}</div>
               {activePlan && planRouteNodeIds.has(selected.id) && (
                 <div className={`path-plan-role path-plan-role-${planTargetNodeIds.has(selected.id) ? 'target' : planMilestoneNodeIds.has(selected.id) ? 'milestone' : 'route'}`}>

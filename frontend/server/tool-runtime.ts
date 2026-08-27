@@ -1,4 +1,5 @@
 import type {
+  SearchSource,
   TutorToolRun,
   VisualArtifact,
   VisualStep,
@@ -21,6 +22,7 @@ import {
   buildLearningGraphAlignments,
   buildLearningPathPlanProposal,
   buildPersonalNodeProposal,
+  assessPersonalPathNodeEvidence,
   learningPathPacketToTutorContext,
   lookupLearningPathGraph,
   readLearningPathGraph,
@@ -394,14 +396,13 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'propose_personal_path_node',
     title: '提出个人学习路径节点',
-    description: '仅当模糊检索明确返回 graph_gap，且联网搜索已取得外部来源时调用。它会复查重复节点和候选前置，只生成学习者可检查的提案；不得直接写图，也不得用于歧义候选。',
+    description: '仅当模糊检索明确返回 graph_gap，且本轮联网搜索已取得结构化、主题相关的来源证据时调用。来源由运行时注入，模型不能自行填写 URL。工具会复查来源相关性、重复节点和候选关系，只生成学习者可检查的提案；不得直接写图，也不得用于歧义候选。',
     toolClass: 'collaboration',
     risk: 'proposal',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '已确认不在官方/个人图中的学习主题' },
-        source_urls: { type: 'array', items: { type: 'string' }, description: '支持该主题与图谱关系的来源 URL；运行时还会合并本轮搜索结果' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -532,6 +533,7 @@ export type TutorAgentToolExecution = {
   observation: unknown
   directReply?: string
   searchSourceUrls?: string[]
+  searchSources?: SearchSource[]
 }
 
 function compactFormalLearnerContext(value: unknown) {
@@ -775,7 +777,7 @@ export async function executeTutorAgentTool(
   name: string,
   args: Record<string, unknown>,
   options: TutorAgentToolRuntimeOptions,
-  meta: { callId?: string; sequence?: number; sourceUrls?: string[] } = {},
+  meta: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[] } = {},
 ): Promise<TutorAgentToolExecution> {
   const startedAt = Date.now()
   const query = compactText(args.query || options.message, 1800) || compactText(options.message, 1800)
@@ -1092,12 +1094,16 @@ export async function executeTutorAgentTool(
       if (!options.learnerPathState) throw new Error('当前没有可读取的学习路径状态')
       const packet = searchLearningPathGraph(query, options.learnerPathState, 10)
       const argumentUrls = Array.isArray(args.source_urls) ? args.source_urls.map(String) : []
-      const sourceUrls = [...new Set([...(meta.sourceUrls || []), ...argumentUrls])]
-      const proposal = buildPersonalNodeProposal(packet, sourceUrls, options.learnerPathState)
+      const knownSources = meta.searchSources || []
+      const requestedUrls = new Set([...(meta.sourceUrls || []), ...argumentUrls])
+      const sourceEvidence = knownSources.filter(source => !requestedUrls.size || requestedUrls.has(source.url))
+      const evidenceReport = assessPersonalPathNodeEvidence(packet.topicCandidate, sourceEvidence)
+      const proposal = buildPersonalNodeProposal(packet, sourceEvidence, options.learnerPathState)
       if (!proposal) {
         if (packet.resolution === 'ambiguous') throw new Error('当前是候选歧义，不允许创建个人节点；请先让学习者选择')
         if (!packet.needsExternalResearch) throw new Error('图中已有可靠相似节点，不允许重复创建个人节点')
-        if (!sourceUrls.length) throw new Error('个人节点提案缺少外部来源；请先联网搜索')
+        if (!knownSources.length) throw new Error('个人节点提案缺少结构化搜索来源；请先联网搜索，不能由模型自行填写 URL')
+        if (!evidenceReport.valid) throw new Error(`搜索来源不足以证明“${packet.topicCandidate}”是独立图谱主题；${evidenceReport.accepted.length} 条相关来源、${evidenceReport.rejected.length} 条被拒绝`)
         throw new Error('个人节点提案未通过重复与关系校验')
       }
       return {
@@ -1200,6 +1206,7 @@ export async function executeTutorAgentTool(
           sources,
         },
         searchSourceUrls: sources.map(item => item.url),
+        searchSources: sources,
       }
     }
 

@@ -539,7 +539,7 @@ test('a known planning target stops after exact lookup', async () => {
 test('a misspelled planning target uses fuzzy recovery without web search', async () => {
   const result = await runTutorAgentTurn({
     baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
-    messages: [{ role: 'user', content: '我想规划操作系統原里的学习路线' }],
+    messages: [{ role: 'user', content: '我想规划操作系統源理的学习路线' }],
     toolChoice: 'auto', learnerPathState: createInitialLearnerPathState(),
     taskQueue: [], knowledgeDomains: [], generate: async () => 'unused',
     invokeProvider: async () => ({ choices: [{ message: { content: '我把目标修复定位为操作系统，再基于它检查前置课程。' } }] }),
@@ -636,15 +636,17 @@ test('a path gap is searched and returned as an uncommitted personal-node propos
     generate: async () => 'unused',
     executeTool: async (name, args, options, meta) => {
       if (name === 'search_computer_knowledge') {
+        const sources = [{ title: 'Quantum Machine Learning', url: 'https://example.edu/qml', snippet: 'Quantum machine learning combines quantum computing with machine learning algorithms.', source: 'University', quality: 'academic' as const, role: 'course' as const, reason: '课程来源' }]
         return {
           run: {
             id: 'search-gap', kind: 'search', toolName: name, toolCallId: meta?.callId,
             status: 'completed', title: '搜索', detail: '找到一条大学课程来源',
             durationMs: 1,
-            sources: [{ title: 'QML course', url: 'https://example.edu/qml', snippet: 'course', source: 'University', quality: 'academic', role: 'course', reason: '课程来源' }],
+            sources,
           },
           observation: { authority: 'untrusted_web_evidence_bundle' },
           searchSourceUrls: ['https://example.edu/qml'],
+          searchSources: sources,
         }
       }
       return executeTutorAgentTool(name, args, options, meta)
@@ -661,6 +663,44 @@ test('a path gap is searched and returned as an uncommitted personal-node propos
   assert.ok(refreshedPath?.pathProposal)
   assert.match(result.reply, /只有你确认后/)
   assert.equal(state.events.some(event => event.type === 'vnext_personal_path_node_added'), false)
+})
+
+test('an off-topic web result cannot become a personal learning-path node', async () => {
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想系统学习量子机器学习' }],
+    toolChoice: 'auto', learnerPathState: createInitialLearnerPathState(),
+    taskQueue: [], knowledgeDomains: [], generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'search_computer_knowledge') {
+        const sources = [{
+          title: 'Database Systems', url: 'https://example.edu/database',
+          snippet: 'SQL, transactions, indexes and database design.', source: 'University',
+          quality: 'academic' as const, role: 'course' as const, reason: '搜索结果',
+        }]
+        return {
+          run: { id: 'search-off-topic', kind: 'search', status: 'completed', title: '搜索', detail: '返回一条结果', durationMs: 1, sources },
+          observation: { authority: 'untrusted_web_evidence_bundle', sources },
+          searchSourceUrls: sources.map(source => source.url),
+          searchSources: sources,
+        }
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async () => {
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'search-qml-off-topic', function: { name: 'search_computer_knowledge', arguments: '{"query":"量子机器学习 大学课程"}' },
+      }] } }] }
+      return { choices: [{ message: { content: '现有结果与量子机器学习不相关，因此我不会生成个人节点；需要继续寻找可靠来源。' } }] }
+    },
+  })
+  const proposalRun = result.toolRuns.find(run => run.toolName === 'propose_personal_path_node')
+  assert.equal(proposalRun?.status, 'failed')
+  assert.match(proposalRun?.detail || '', /不足以证明/)
+  assert.equal(result.toolRuns.some(run => Boolean(run.pathProposal)), false)
+  assert.match(result.reply, /不会生成个人节点/)
 })
 
 test('a failed tool is visible and the model can switch observations before answering', async () => {

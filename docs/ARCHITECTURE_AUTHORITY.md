@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.2`）：学习路径图扩展到 108 个课程节点和 187 条有向关系，补入十二个稳定行业知识域；路线规划改为硬前置闭包、直接软前置和确定性拓扑排序，`co_learning` 不再产生先后约束。层次筛选保留被后续课程依赖的跨层硬前置，并在 UI 标为“补充前置”。检索策略升级为 `vnext-learning-path-retrieval-v3`；个人节点提案只接受 Harness 注入的结构化搜索结果，并通过主题相关性、来源等级和独立来源门槛，模型提供的任意 URL 不再是 provenance。现有事件 ID、Kernel reducer、数据库 schema 和已确认个人节点保持兼容。
+
 Contract impact（`2026-08-27.1`）：学习路径读取拆分为 `vnext_learning_path_exact_reader`、`vnext_learning_path_fuzzy_reader` 与 `vnext_personal_path_node_proposer` 三个正交 ACI；旧 `vnext_learning_path_graph_reader` 只保留为非模型可见的兼容调度器。精确读取只比较稳定 ID、标题和别名；只有未命中才允许确定性模糊排序；歧义必须交还学习者确认；只有明确图谱缺口且存在带 provenance 的外部来源时才能形成个人节点提案。提案为零 Kernel target，正式节点仍须学习者确认并通过既有事件网关写入，没有新增 Kernel writer、事件 schema 或数据库迁移。
 
 Contract impact（`2026-08-26.27`）：新增 `dynamic_practice_generator`、`similar_practice_generator`、`practice_quality_inspector` 三个受限 ACI 与 `dynamic_practice_loop` Playbook。它们只在正式带领学习任务和项目关卡 scope 内生成经过确定性校验、答案安全、心理测量状态为 `uncalibrated` 的 `ConceptQuestion` 集合；生成、检查、打开和纸张接入均为零 Kernel target。正式提交继续复用 `LearningAttempt -> concept_attempt_evaluated -> five_kernel_reducer`，固定写 Knowledge / Practice；仅学习者显式声明的前置卡点或已确认有效帮助可分别补充 Structure / Human。没有新增 Kernel writer 或数据库表，旧练习引用保持兼容。
@@ -272,10 +274,17 @@ vNext 使用三段式路径检索。`vnext_learning_path_exact_reader` 先对版
 错误折叠。`vnext_learning_path_graph_reader` 仅作为兼容调度器存在，不向模型暴露。
 
 只有 `not_found` 被判为图谱缺口后，Tutor 才能搜索外部来源，并调用
-`vnext_personal_path_node_proposer` 生成带来源、重复检查和快照 ID 的可拒绝提案。提案不改图、不改
+`vnext_personal_path_node_proposer`。Harness 只把刚刚实际取得的结构化搜索结果注入工具元数据；模型参数
+不能自行提供 provenance。提案器确定性检查主题相关性、来源等级、独立主机数量、重复节点和快照 ID，
+不满足门槛时返回可观察失败，不生成占位节点。合格提案仍然可拒绝，且不改图、不改
 掌握度、不写五核。`vnext_personal_path_node_runtime` 只接受学习者点击确认后的自报状态或个人节点
 变更，并通过正式事件网关落盘。完整检索契约、阈值和评测矩阵见
 `docs/LEARNING_PATH_RETRIEVAL.md`。
+
+路线规划使用 `vnext-learning-path-planner-v2`。目标必须先被检索为唯一节点；规划器随后闭包收集硬
+前置、加入目标的直接软前置，并对诱导子图做确定性拓扑排序。硬前置和软前置都必须位于后继之前，
+`co_learning` 只表示适合并行学习，不参与拓扑约束。高职、本科、研究生筛选展示各自课程集，同时
+递归保留可见课程依赖的硬前置；这些跨层节点必须标为“补充前置”，不能静默隐藏或冒充该层主课。
 
 `/learning-path` 负责图谱查看、筛选、自报标记和个人节点管理，`/learner-profile` 负责分核展示
 正式 KernelState、MemoryFact、Module/Claim 及路径摘要，`/tasks` 负责正式原子任务队列。三者

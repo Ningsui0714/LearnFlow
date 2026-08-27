@@ -697,6 +697,8 @@ button { cursor: pointer; }
 .path-node-self_reported_exposed { border-width: 2px; border-color: var(--cluster-color); outline-color: rgba(var(--cluster-rgb),.12); }
 .path-node-self_reported_mastered { border-width: 3px; border-color: var(--cluster-color); outline-color: rgba(var(--cluster-rgb),.2); background: rgba(var(--cluster-rgb),.13); }
 .path-node-personal { border-color: #c89b3d; outline-color: rgba(200,155,61,.16); box-shadow: 0 5px 16px rgba(30,55,42,.08), 0 0 26px rgba(200,155,61,.14); }
+.path-node-audience-bridge { border-style: dashed; background: rgba(248,250,249,.88); }
+.path-node-audience-bridge small { color: #687b71; font-weight: 760; }
 .path-node-plan-route { border-color: #37a77f; border-left-color: #15936b; background: #f3fbf7; box-shadow: 0 0 0 2px rgba(21,147,107,.11), 0 6px 16px rgba(21,100,74,.1); }
 .path-node-plan-route small { color: #18805d; font-weight: 780; }
 .path-node-plan-milestone { border-color: #2878aa; border-left-color: #2878aa; background: #f1f8fc; box-shadow: 0 0 0 3px rgba(40,120,170,.12), 0 8px 20px rgba(34,93,126,.12); }
@@ -722,6 +724,7 @@ button { cursor: pointer; }
 .path-node-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .path-node-tags span { border-radius: 99px; background: #edf4ef; padding: 4px 7px; color: #537062; font-size: 7px; font-weight: 700; }
 .path-node-tags .path-cluster-tag { background: rgba(var(--cluster-rgb),.12); color: var(--cluster-color); }
+.path-audience-bridge-note { margin: 9px 0; border-left: 2px solid #8ba497; background: #f1f6f3; padding: 7px 9px; color: #52695d; font-size: 7px; line-height: 1.6; }
 .path-plan-role { display: grid; gap: 4px; margin-top: 10px; border: 1px solid #bcddcd; border-radius: 9px; background: #f0faf5; padding: 9px; }
 .path-plan-role span { color: #187c58; font-size: 8px; font-weight: 820; }
 .path-plan-role p { margin: 0; color: #718078; font-size: 7px; line-height: 1.5; }

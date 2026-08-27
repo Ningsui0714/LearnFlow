@@ -43,20 +43,22 @@ export type LearningPathRetrievalResult = {
   resolution: 'resolved' | 'ambiguous' | 'not_found'
   candidates: LearningPathRetrievalCandidate[]
   omittedCandidateCount: number
-  policyId: 'vnext-learning-path-retrieval-v2'
+  policyId: 'vnext-learning-path-retrieval-v3'
   recommendedNextAction: 'use_match' | 'run_fuzzy_search' | 'ask_disambiguation' | 'research_graph_gap'
 }
 
-const LEADING_INTENT = /^(?:请你?|麻烦你?|帮我|给我|我想要?|我准备|我打算|我希望|想要?|需要)?\s*(?:系统(?:地)?|深入(?:地)?|完整(?:地)?|从零开始)?\s*(?:学习|学会|了解|研究|掌握|规划|学|做|开发)?\s*/i
-const TRAILING_INTENT = /(?:的)?\s*(?:学习)?\s*(?:路线|路径|规划|课程|先修|前置(?:知识|课程)?|怎么学|如何学|该学什么|要学什么|相关内容|相关知识|方向)\s*[？?。！!]*$/i
+const LEADING_INTENT = /^(?:请你?|麻烦你?|帮我|给我|我想要?|我想|我准备|我打算|我希望|想要?|想|需要)?\s*(?:看看|规划(?:一下)?|深入(?:地)?|完整(?:地)?|从零开始)?\s*(?:学习|学会|了解|研究|掌握|规划|学|做|开发)?\s*/i
+const TRAILING_INTENT = /(?:的)?\s*(?:学习)?\s*(?:路线|路径|规划|课程|先修|前置(?:知识|课程)?|怎么学|如何学|该学什么|要学什么|相关内容|相关知识|方向|研究)\s*[？?。！!]*$/i
 const GENERIC_TOPICS = new Set(['计算机', '课程', '方向', '未来', '知识', '技能', '学习', '规划'])
 
 export function normalizeLearningPathText(value: string) {
   return value.normalize('NFKC').toLocaleLowerCase()
-    .replace(/[學習網絡統計數據軟體應用開發]/g, character => ({
+    .replace(/[學習網絡統計數據庫軟體應用開發]/g, character => ({
       學: '学', 習: '习', 網: '网', 絡: '络', 統: '统', 計: '计', 數: '数', 據: '据',
-      軟: '软', 體: '体', 應: '应', 用: '用', 開: '开', 發: '发',
+      庫: '库', 軟: '软', 體: '体', 應: '应', 用: '用', 開: '开', 發: '发',
     }[character] || character))
+    .replace(/软体/g, '软件')
+    .replace(/原里/g, '原理')
     .replace(/人工智能代理/g, 'aiagent')
     .replace(/智能体开发/g, 'agent开发')
     .replace(/[‐-―]/g, '-')
@@ -67,12 +69,19 @@ export function extractLearningPathTopic(message: string) {
   let value = String(message || '').replace(/\s+/g, ' ').trim().slice(0, 240)
   const quoted = value.match(/[“「『\"]([^”」』\"]{2,80})[”」』\"]/)?.[1]
   if (quoted) value = quoted
-  const focused = value.match(/(?:系统(?:地)?学习|深入(?:地)?学习|学习|学会|了解|研究|掌握|规划)\s*([A-Za-z0-9+#.\u4e00-\u9fff ]{2,96}?)(?=\s*(?:并|，|。|、|然后|并且|以及|做一个|做项目|路线|路径|规划|$))/i)?.[1]
+  value = value.replace(/^(?:(?:作为|身为|我是)?\s*(?:一名)?\s*(?:高职|专科|本科|硕士|博士|大学)?(?:生|学生|研究生)\s*(?:，|,)?\s*)/i, '')
+  value = value.replace(/^(?:(?:我)?(?:想|准备|打算|希望|需要)\s*)?(?:(?:用|在|计划用)\s*)?(?:(?:\d{1,2}|半|一|两|三|四|五|六|七|八|九|十)\s*(?:周|个月|月|年)|本学期|这学期|暑假|寒假)\s*/i, '')
+  const fromTopic = value.match(/(?:我想)?从\s*([A-Za-z0-9+#.\u4e00-\u9fff ]{2,64}?)\s*(?:走向|转向|深入)/i)?.[1]
+  if (fromTopic) value = fromTopic
+  const focused = value.match(/^(?:(?:请你?|麻烦你?|帮我|给我)\s*)?(?:(?:我)?(?:想|准备|打算|希望|需要)\s*)?(?:系统(?:地)?学习|深入(?:地)?学习|学习|学会|了解|研究|掌握|规划|做)\s*([A-Za-z0-9+#.\u4e00-\u9fff ]{2,96}?)(?=\s*(?:并|，|。|、|然后|并且|以及|做一个|做项目|路线|路径|规划|$))/i)?.[1]
   if (focused) value = focused
   // “规划 Agent 开发的学习路线”中的“的学习”是路线句式，不是主题本身。
   // 先在 focused 片段上去掉它，避免精确查找被迫退化成模糊检索。
   value = value.replace(/的学习$/i, '').trim()
-  value = value.replace(LEADING_INTENT, '').replace(TRAILING_INTENT, '').trim()
+  value = value
+    .replace(/[，,；;：:]\s*(?:需要|要|应该|该|然后|并完成|并做|怎么|如何|有哪些|有什么|请|希望)[\s\S]*$/i, '')
+    .replace(/(?:的)?\s*(?:区别|差异|对比)\s*[？?。！!]*$/i, '')
+    .replace(LEADING_INTENT, '').replace(TRAILING_INTENT, '').trim()
   value = value.replace(/^(?:一下|关于|一门|一个)/, '').trim()
   if (!value || GENERIC_TOPICS.has(value)) return ''
   return value.slice(0, 96)
@@ -172,12 +181,25 @@ export function lookupExactLearningPath(
   rawQuery: string,
   limit = 5,
 ): LearningPathRetrievalResult {
-  const query = extractLearningPathTopic(rawQuery) || String(rawQuery || '').trim().slice(0, 96)
-  const normalizedQuery = normalizeLearningPathText(query)
-  const all = normalizedQuery ? nodes.flatMap(node => {
-    const candidate = exactCandidate(node, normalizedQuery)
-    return candidate ? [candidate] : []
-  }) : []
+  const raw = String(rawQuery || '').trim().slice(0, 240)
+  const extracted = extractLearningPathTopic(raw)
+  const queryCandidates = [...new Set([raw, extracted].filter(Boolean))]
+  let query = queryCandidates[0] || ''
+  let normalizedQuery = normalizeLearningPathText(query)
+  let all: LearningPathRetrievalCandidate[] = []
+  for (const candidateQuery of queryCandidates) {
+    const normalizedCandidate = normalizeLearningPathText(candidateQuery)
+    const matches = normalizedCandidate ? nodes.flatMap(node => {
+      const candidate = exactCandidate(node, normalizedCandidate)
+      return candidate ? [candidate] : []
+    }) : []
+    if (matches.length) {
+      query = candidateQuery
+      normalizedQuery = normalizedCandidate
+      all = matches
+      break
+    }
+  }
   all.sort((left, right) => right.confidence - left.confidence || left.title.localeCompare(right.title))
   const resolution = all.length === 1 ? 'resolved' : all.length > 1 ? 'ambiguous' : 'not_found'
   return {
@@ -187,7 +209,7 @@ export function lookupExactLearningPath(
     resolution,
     candidates: all.slice(0, Math.max(1, Math.min(limit, 10))),
     omittedCandidateCount: Math.max(0, all.length - limit),
-    policyId: 'vnext-learning-path-retrieval-v2',
+    policyId: 'vnext-learning-path-retrieval-v3',
     recommendedNextAction: resolution === 'resolved' ? 'use_match'
       : resolution === 'ambiguous' ? 'ask_disambiguation' : 'run_fuzzy_search',
   }
@@ -202,7 +224,7 @@ export function searchFuzzyLearningPath(
   const normalizedQuery = normalizeLearningPathText(query)
   if (!normalizedQuery) return {
     query, normalizedQuery, mode: 'fuzzy', resolution: 'not_found', candidates: [], omittedCandidateCount: 0,
-    policyId: 'vnext-learning-path-retrieval-v2', recommendedNextAction: 'research_graph_gap',
+    policyId: 'vnext-learning-path-retrieval-v3', recommendedNextAction: 'research_graph_gap',
   }
 
   const scored = nodes.map(node => {
@@ -305,7 +327,7 @@ export function searchFuzzyLearningPath(
     resolution,
     candidates: candidates.slice(0, boundedLimit),
     omittedCandidateCount: Math.max(0, candidates.length - boundedLimit),
-    policyId: 'vnext-learning-path-retrieval-v2',
+    policyId: 'vnext-learning-path-retrieval-v3',
     recommendedNextAction: resolution === 'resolved' ? 'use_match'
       : resolution === 'ambiguous' ? 'ask_disambiguation' : 'research_graph_gap',
   }

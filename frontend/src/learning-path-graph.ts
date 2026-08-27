@@ -1,6 +1,7 @@
 import {
   extractLearningPathTopic,
   lookupExactLearningPath,
+  normalizeLearningPathText,
   searchFuzzyLearningPath,
   type LearningPathRetrievalCandidate,
   type LearningPathRetrievalResult,
@@ -45,7 +46,7 @@ export type LearningPathEdge = {
 
 export type PersonalPathNodeProposal = {
   id: string
-  policyId: 'vnext-personal-path-node-proposer-v2'
+  policyId: 'vnext-personal-path-node-proposer-v3'
   generatedFromSnapshotId: string
   title: string
   summary: string
@@ -54,9 +55,35 @@ export type PersonalPathNodeProposal = {
   stage: PathStage
   order: number
   sourceUrls: string[]
+  sourceEvidence: PersonalPathNodeEvidenceAssessment[]
   connections: Array<{ nodeId: string; kind: PathEdgeKind; rationale: string }>
   requiresLearnerConfirmation: true
   masteryUnchanged: true
+}
+
+export type PersonalPathNodeEvidence = {
+  url: string
+  title?: string
+  snippet?: string
+  source?: string
+  quality?: 'official' | 'academic' | 'community' | 'repository'
+  role?: 'standard' | 'reference' | 'textbook' | 'course' | 'definition' | 'research' | 'example' | 'discussion'
+}
+
+export type PersonalPathNodeEvidenceAssessment = {
+  url: string
+  title: string
+  source: string
+  quality: NonNullable<PersonalPathNodeEvidence['quality']>
+  relevance: number
+  matchedTerms: string[]
+}
+
+export type PersonalPathNodeEvidenceReport = {
+  valid: boolean
+  accepted: PersonalPathNodeEvidenceAssessment[]
+  rejected: Array<{ url: string; reason: 'invalid_url' | 'insufficient_metadata' | 'off_topic' | 'weak_source' }>
+  policyId: 'vnext-personal-path-evidence-v1'
 }
 
 export type LearningPathPlan = {
@@ -75,7 +102,7 @@ export type LearningPathPlan = {
 }
 
 export type LearningPathPlanProposal = Omit<LearningPathPlan, 'status' | 'revision'> & {
-  policyId: 'vnext-learning-path-planner-v1'
+  policyId: 'vnext-learning-path-planner-v2'
   generatedFromSnapshotId: string
 }
 
@@ -247,6 +274,11 @@ export const LEARNING_PATH_SOURCES: LearningPathSource[] = [
   { id: 'moe-security-510207', title: '信息安全技术应用专业教学标准（高职专科）', institution: '中华人民共和国教育部', url: 'https://www.moe.gov.cn/s78/A07/zcs_ztzl/2017_zt06/17zt06_bznr/bznr_zyjyzyjxbz/gdzyjy_zk/zk_dzyxxdl/dzxxdl_jsjl/202502/P020250207532704599869.pdf', kind: 'vocational' },
   { id: 'moe-mobile-510213', title: '移动应用开发专业教学标准（高职专科）', institution: '中华人民共和国教育部', url: 'https://www.moe.gov.cn/s78/A07/zcs_ztzl/2017_zt06/17zt06_bznr/bznr_zyjyzyjxbz/gdzyjy_zk/zk_dzyxxdl/dzxxdl_jsjl/202502/P020250207531781244062.pdf', kind: 'vocational' },
   { id: 'nyu-agents', title: 'Foundations of AI Agents', institution: 'NYU Stern', url: 'https://aiagents.stern.nyu.edu/', kind: 'emerging' },
+  { id: 'swebok-v4', title: 'Guide to the Software Engineering Body of Knowledge v4', institution: 'IEEE Computer Society', url: 'https://www.computer.org/education/bodies-of-knowledge/software-engineering', kind: 'framework' },
+  { id: 'google-sre', title: 'Site Reliability Engineering', institution: 'Google', url: 'https://sre.google/sre-book/table-of-contents/', kind: 'emerging' },
+  { id: 'nist-ssdf', title: 'Secure Software Development Framework', institution: 'NIST', url: 'https://csrc.nist.gov/pubs/sp/800/218/final', kind: 'framework' },
+  { id: 'nist-ai-evaluation', title: 'Assessing Risks and Impacts of AI', institution: 'NIST', url: 'https://ai-challenges.nist.gov/aria', kind: 'framework' },
+  { id: 'cncf-platform-engineering', title: 'Cloud Native Platform Engineering', institution: 'Cloud Native Computing Foundation', url: 'https://www.cncf.io/training/certification/cnpa/', kind: 'emerging' },
 ]
 
 export function alignPersonalConceptsToLearningPath(concepts: ConceptAnchorLike[]): ConceptPathAlignment[] {
@@ -397,7 +429,9 @@ export function buildLearningGraphAlignments(
 
 const n = (
   id: string, title: string, order: number, stage: PathStage, domains: string[],
-  aliases: string[], sources: string[], audiences: PathAudience[] = ['undergraduate', 'self_directed'],
+  aliases: string[], sources: string[], audiences: PathAudience[] = stage === 'advanced' || stage === 'research'
+    ? ['undergraduate', 'graduate', 'self_directed']
+    : ['undergraduate', 'self_directed'],
   summary = `${title}的核心概念、方法与基本实践。`,
 ): LearningPathNode => ({ id, title, summary, aliases, domains, audiences, stage, order, origin: 'official', sourceRefs: sources })
 
@@ -492,6 +526,18 @@ export const OFFICIAL_PATH_NODES: LearningPathNode[] = [
   n('advanced-systems', '高阶系统专题', 6, 'advanced', ['系统', '研究'], ['高级操作系统', '高级分布式系统'], ['cmu-mscs'], ['graduate', 'self_directed']),
   n('formal-methods', '形式化方法与程序验证', 6, 'advanced', ['理论', '软件', '安全'], ['模型检测', '程序验证'], ['cmu-mscs', 'acm-cs2023'], ['graduate', 'self_directed']),
   n('security-operations', '安全运营与应急响应', 6, 'advanced', ['安全', '实践'], ['风险评估', '数字取证'], ['moe-security-510207'], ['vocational', 'undergraduate', 'graduate', 'self_directed']),
+  n('engineering-debugging-observability', '工程调试与可观测性', 4, 'domain', ['软件', '系统', '运维', '实践'], ['调试方法', '日志指标链路', 'Observability'], ['swebok-v4', 'google-sre'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '系统学习复现、假设、定位和验证故障，并使用日志、指标、追踪与剖析建立可解释的运行证据，最终能够完成一次有依据的故障归因。'),
+  n('api-design-evolution', 'API 设计与演进', 4, 'domain', ['软件', '工程', 'Web'], ['接口设计', 'API版本治理', '契约测试'], ['swebok-v4'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '围绕接口契约、错误模型、兼容性、版本、幂等与弃用策略设计可长期演进的服务边界，并通过契约测试验证调用方和服务方的共同预期。'),
+  n('software-maintenance-evolution', '软件维护与演化', 4, 'domain', ['软件', '工程'], ['遗留系统维护', '重构', '技术债'], ['swebok-v4'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '阅读既有系统，安全重构与迁移，管理依赖和技术债，并用回归证据控制长期变更风险，能够为一次真实演化说明边界、迁移步骤和回退策略。'),
+  n('open-source-collaboration', '开源协作与工程沟通', 3, 'domain', ['软件', '工程', '实践'], ['开源贡献', '代码评审', '技术写作'], ['swebok-v4'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '通过问题描述、提交、代码评审、文档、许可证和社区协作完成可被他人检查与接续的工程贡献，并理解维护者、贡献者与用户之间的责任边界。'),
+  n('performance-engineering', '性能工程', 5, 'advanced', ['系统', '软件', '工程'], ['性能分析', '基准测试', '容量规划'], ['swebok-v4', 'google-sre'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '从工作负载与服务目标出发测量延迟、吞吐和资源成本，使用剖析、基准和容量模型定位瓶颈，并验证优化是否改善真实负载而非单一样例。'),
+  n('reliability-incident-response', '可靠性工程与生产事件响应', 5, 'advanced', ['系统', '运维', '工程', '实践'], ['SRE', '故障响应', '复盘'], ['google-sre'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '定义服务目标和错误预算，设计降级与恢复机制，并通过值守、事件指挥和无责复盘改善真实生产系统。'),
+  n('secure-software-supply-chain', '安全软件开发与软件供应链', 5, 'advanced', ['安全', '软件', '工程'], ['安全开发生命周期', '依赖安全', '软件供应链安全'], ['nist-ssdf', 'swebok-v4'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '把威胁建模、安全编码、依赖与构建来源、制品签名、漏洞响应嵌入软件全生命周期，并以可追溯清单和验证流程降低交付风险。'),
+  n('information-retrieval', '信息检索', 5, 'advanced', ['数据', 'AI', '语言'], ['搜索引擎原理', '检索模型', 'Information Retrieval'], ['acm-cs2023', 'stanford-ms'], ['undergraduate', 'graduate', 'self_directed'], '学习索引、召回与排序、相关性判断、离线评测和交互反馈，理解从关键词检索到语义检索的共同骨架。'),
+  n('data-governance-privacy', '数据治理与隐私工程', 5, 'advanced', ['数据', '安全', '伦理', '工程'], ['数据质量治理', '隐私工程', '数据血缘'], ['acm-cs2023', 'nist-ssdf'], ['vocational', 'undergraduate', 'graduate', 'self_directed'], '管理数据质量、目录、血缘、访问、保留与删除，并把隐私风险和合规约束转化为可验证的工程控制。'),
+  n('ai-system-evaluation', 'AI 系统评测', 7, 'research', ['AI', '工程', '研究'], ['模型评测', 'Agent评测', '红队测试'], ['nist-ai-evaluation', 'cmu-ai'], ['undergraduate', 'graduate', 'self_directed'], '从任务定义、数据切分、指标、基线和不确定性出发评估模型与智能体，并检查鲁棒性、安全性和真实使用效果。'),
+  n('platform-engineering', '平台工程', 6, 'advanced', ['系统', '云', '运维', '工程'], ['开发者平台', '内部开发平台', 'Platform Engineering'], ['cncf-platform-engineering', 'google-sre'], ['undergraduate', 'graduate', 'self_directed'], '把基础设施、交付、可观测性和安全能力组织成自助式开发者平台，以产品思维降低团队认知负担，并用内部用户反馈和交付指标持续验证平台价值。'),
+  n('numerical-scientific-computing', '数值与科学计算', 5, 'advanced', ['数学', '计算', '研究'], ['数值分析', '科学计算', 'Numerical Computing'], ['acm-cs2023', 'cmu-mscs'], ['undergraduate', 'graduate', 'self_directed'], '研究浮点误差、数值稳定性、线性方程与迭代方法，并用向量化、误差分析和对照实验验证计算结果是否可靠、可复现。'),
   n('research-methods', '计算机研究方法', 6, 'research', ['研究', '通识'], ['论文阅读', '实验设计', '科研方法'], ['cmu-mscs', 'tsinghua-2023', 'zju-cs'], ['undergraduate', 'graduate', 'self_directed']),
   n('retrieval-augmented-generation', '检索增强生成（RAG）', 7, 'advanced', ['AI', '数据', '工程'], ['RAG', '向量检索'], ['nyu-agents'], ['undergraduate', 'graduate', 'self_directed']),
   n('agent-engineering', '智能体工程', 8, 'advanced', ['AI', '工程', '智能体'], ['Agent开发', 'AI Agent', '工具调用', 'agent development'], ['nyu-agents'], ['undergraduate', 'graduate', 'self_directed'], '围绕工具调用、状态、记忆、编排、评测和真实用户交付构建 AI 智能体。'),
@@ -647,12 +693,44 @@ export const OFFICIAL_PATH_EDGES: LearningPathEdge[] = [
   e('operating-system-security', 'security-risk-assessment', 'soft_prerequisite', '风险评估需要能够检查主机安全控制'),
   e('security-product-configuration', 'security-risk-assessment', 'soft_prerequisite', '理解防护产品有助于评估网络与边界控制'),
   e('cybersecurity-engineering', 'security-risk-assessment', 'hard_prerequisite', '系统化风险评估建立在安全工程与控制实施之上'),
+  e('software-development-foundations', 'open-source-collaboration', 'hard_prerequisite', '参与协作前需要版本控制、测试和基本软件构造能力'),
+  e('software-engineering', 'engineering-debugging-observability', 'hard_prerequisite', '系统调试需要可测试的软件边界和工程过程'),
+  e('linux-administration', 'engineering-debugging-observability', 'soft_prerequisite', '系统日志、进程和资源观察通常依赖操作系统管理能力'),
+  e('software-engineering', 'api-design-evolution', 'hard_prerequisite', '接口契约与演进建立在模块、测试和变更管理基础上'),
+  e('web-development', 'api-design-evolution', 'soft_prerequisite', 'Web 请求、状态和服务边界为 API 设计提供真实语境'),
+  e('software-engineering', 'software-maintenance-evolution', 'hard_prerequisite', '维护与演化需要需求、架构、测试和配置管理基础'),
+  e('open-source-collaboration', 'software-maintenance-evolution', 'co_learning', '真实维护往往通过问题、评审、文档和增量提交完成'),
+  e('engineering-debugging-observability', 'performance-engineering', 'hard_prerequisite', '性能优化必须先建立可复现、可观测和可验证的测量方法'),
+  e('computer-organization', 'performance-engineering', 'soft_prerequisite', '缓存、内存和处理器模型帮助解释底层性能现象'),
+  e('engineering-debugging-observability', 'reliability-incident-response', 'hard_prerequisite', '生产响应依赖日志、指标、追踪和系统化故障定位'),
+  e('devops', 'reliability-incident-response', 'hard_prerequisite', '可靠性实践建立在自动化交付、部署与变更控制之上'),
+  e('distributed-systems', 'reliability-incident-response', 'soft_prerequisite', '分布式故障模型帮助设计降级、恢复与演练'),
+  e('software-development-foundations', 'secure-software-supply-chain', 'hard_prerequisite', '安全供应链需要版本、构建、依赖和测试基础'),
+  e('computer-security', 'secure-software-supply-chain', 'hard_prerequisite', '安全开发必须建立在威胁、身份和控制原则上'),
+  e('devops', 'secure-software-supply-chain', 'soft_prerequisite', '构建和交付流水线是供应链控制的主要执行位置'),
+  e('data-structures', 'information-retrieval', 'hard_prerequisite', '倒排索引、向量索引和排序结构依赖数据结构'),
+  e('probability-statistics', 'information-retrieval', 'soft_prerequisite', '相关性评估和排序实验需要统计判断'),
+  e('machine-learning', 'information-retrieval', 'soft_prerequisite', '学习排序与语义检索会使用机器学习方法'),
+  e('database-systems', 'data-governance-privacy', 'hard_prerequisite', '治理数据之前需要理解模型、查询、事务和权限'),
+  e('data-engineering', 'data-governance-privacy', 'hard_prerequisite', '目录、血缘和质量控制依附于真实数据管道'),
+  e('computing-ethics', 'data-governance-privacy', 'soft_prerequisite', '隐私工程需要责任、用途和影响边界'),
+  e('machine-learning', 'ai-system-evaluation', 'hard_prerequisite', '评测 AI 系统需要理解训练、推断、泛化和基线'),
+  e('research-methods', 'ai-system-evaluation', 'hard_prerequisite', '可靠评测需要实验设计、证据质量和不确定性表达'),
+  e('ai-safety-ethics', 'ai-system-evaluation', 'co_learning', '能力评测应与风险、失效和真实影响评测同步'),
+  e('cloud-platform-operations', 'platform-engineering', 'hard_prerequisite', '平台工程建立在可运行的计算、网络、存储和权限能力上'),
+  e('devops', 'platform-engineering', 'hard_prerequisite', '内部平台需要承载构建、交付和开发工作流'),
+  e('reliability-incident-response', 'platform-engineering', 'soft_prerequisite', '平台能力必须用可靠性目标和生产反馈持续改进'),
+  e('calculus', 'numerical-scientific-computing', 'hard_prerequisite', '数值方法以连续问题、导数与积分为主要对象'),
+  e('linear-algebra', 'numerical-scientific-computing', 'hard_prerequisite', '科学计算广泛依赖矩阵分解与线性方程求解'),
+  e('parallel-computing', 'numerical-scientific-computing', 'co_learning', '大规模科学计算常需并行实现与性能验证'),
   e('research-methods', 'thesis-research', 'hard_prerequisite', '课题研究需要问题、证据和实验设计'),
   e('llm-foundations', 'retrieval-augmented-generation', 'hard_prerequisite', 'RAG 需要理解生成模型的输入输出边界'),
   e('database-systems', 'retrieval-augmented-generation', 'soft_prerequisite', '检索增强涉及索引、查询与数据治理'),
   e('software-architecture', 'agent-engineering', 'hard_prerequisite', '智能体工程需要状态、边界和系统组合能力'),
   e('llm-foundations', 'agent-engineering', 'hard_prerequisite', '需要理解模型调用、上下文和不确定性'),
   e('retrieval-augmented-generation', 'agent-engineering', 'soft_prerequisite', '知识型智能体常需要受控检索'),
+  e('information-retrieval', 'retrieval-augmented-generation', 'hard_prerequisite', 'RAG 的检索部分依赖索引、召回、排序与离线评测'),
+  e('ai-system-evaluation', 'agent-engineering', 'co_learning', '智能体交付需要同步建立任务成功、轨迹、安全和用户效果评测'),
   e('computing-ethics', 'agent-engineering', 'co_learning', '工具行动与用户影响需要责任边界'),
   e('agent-engineering', 'multi-agent-systems', 'hard_prerequisite', '多智能体建立在单智能体状态与工具编排之上'),
   e('distributed-systems', 'multi-agent-systems', 'soft_prerequisite', '并发通信与故障模型可帮助理解多体协作'),
@@ -902,7 +980,7 @@ export function lookupLearningPathGraph(message: string, state: LearnerPathState
   const projection = projectLearnerPath(state)
   const topic = extractLearningPathTopic(message)
   if (!topic) return packetFromRetrieval(message, state, undefined, maxNodes)
-  return packetFromRetrieval(message, state, lookupExactLearningPath(projection.nodes, topic), maxNodes)
+  return packetFromRetrieval(message, state, lookupExactLearningPath(projection.nodes, message), maxNodes)
 }
 
 export function searchLearningPathGraph(message: string, state: LearnerPathState, maxNodes = 10) {
@@ -925,6 +1003,72 @@ function planningHorizon(message: string) {
   if (/本学期|这学期/.test(message)) return '本学期'
   if (/暑假|寒假/.test(message)) return message.match(/暑假|寒假/)?.[0] || '阶段性'
   return '长期滚动规划'
+}
+
+export function topologicallyOrderLearningPathRoute(
+  nodeIds: string[],
+  nodes: LearningPathNode[],
+  edges: LearningPathEdge[],
+) {
+  const selected = new Set(nodeIds)
+  const nodeMap = new Map(nodes.map(node => [node.id, node]))
+  const indegree = new Map([...selected].map(nodeId => [nodeId, 0]))
+  const outgoing = new Map([...selected].map(nodeId => [nodeId, [] as string[]]))
+  const seenEdges = new Set<string>()
+  edges.forEach(edge => {
+    if (edge.kind === 'co_learning' || !selected.has(edge.from) || !selected.has(edge.to)) return
+    const key = `${edge.from}:${edge.to}`
+    if (seenEdges.has(key)) return
+    seenEdges.add(key)
+    outgoing.get(edge.from)?.push(edge.to)
+    indegree.set(edge.to, (indegree.get(edge.to) || 0) + 1)
+  })
+  const compare = (left: string, right: string) => {
+    const leftNode = nodeMap.get(left), rightNode = nodeMap.get(right)
+    return (leftNode?.order || 0) - (rightNode?.order || 0)
+      || left.localeCompare(right)
+  }
+  const ready = [...indegree.entries()].filter(([, degree]) => degree === 0).map(([nodeId]) => nodeId).sort(compare)
+  const ordered: string[] = []
+  while (ready.length) {
+    const current = ready.shift()!
+    ordered.push(current)
+    for (const successor of outgoing.get(current) || []) {
+      const next = (indegree.get(successor) || 0) - 1
+      indegree.set(successor, next)
+      if (next === 0) {
+        ready.push(successor)
+        ready.sort(compare)
+      }
+    }
+  }
+  if (ordered.length !== selected.size) {
+    ordered.push(...[...selected].filter(nodeId => !ordered.includes(nodeId)).sort(compare))
+  }
+  return ordered
+}
+
+export function learningPathAudienceNodeIds(
+  nodes: LearningPathNode[],
+  edges: LearningPathEdge[],
+  audience: PathAudience,
+) {
+  const visible = new Set(nodes.filter(node => node.audiences.includes(audience)).map(node => node.id))
+  const incomingHard = new Map<string, string[]>()
+  edges.forEach(edge => {
+    if (edge.kind !== 'hard_prerequisite') return
+    incomingHard.set(edge.to, [...(incomingHard.get(edge.to) || []), edge.from])
+  })
+  const queue = [...visible]
+  while (queue.length) {
+    const current = queue.shift()!
+    for (const prerequisite of incomingHard.get(current) || []) {
+      if (visible.has(prerequisite)) continue
+      visible.add(prerequisite)
+      queue.push(prerequisite)
+    }
+  }
+  return visible
 }
 
 export function buildLearningPathPlanProposal(
@@ -960,7 +1104,7 @@ export function buildLearningPathPlanProposal(
     }
   }
   const targetDomains = new Set(targets.flatMap(nodeId => nodeMap.get(nodeId)?.domains || []))
-  const selected = [...distance.entries()]
+  const ranked = [...distance.entries()]
     .sort((left, right) => {
       const leftNode = nodeMap.get(left[0])!, rightNode = nodeMap.get(right[0])!
       const leftStatus = projection.statuses[left[0]] || 'unmarked'
@@ -977,10 +1121,30 @@ export function buildLearningPathPlanProposal(
       const scoreDifference = score(rightNode, right[0], right[1], rightStatus) - score(leftNode, left[0], left[1], leftStatus)
       return scoreDifference || left[1] - right[1] || leftNode.order - rightNode.order || leftNode.id.localeCompare(rightNode.id)
     })
-    .slice(0, 18)
     .map(([nodeId]) => nodeId)
-  const routeNodeIds = [...new Set([...selected, ...targets])]
-    .sort((left, right) => (nodeMap.get(left)?.order || 0) - (nodeMap.get(right)?.order || 0) || left.localeCompare(right))
+  const hardRequired = new Set(targets)
+  const hardQueue = targets.map(nodeId => ({ nodeId, depth: 0 }))
+  while (hardQueue.length) {
+    const { nodeId, depth } = hardQueue.shift()!
+    if (depth >= 6) continue
+    for (const edge of reverse.get(nodeId) || []) {
+      if (edge.kind !== 'hard_prerequisite' || hardRequired.has(edge.from)) continue
+      hardRequired.add(edge.from)
+      hardQueue.push({ nodeId: edge.from, depth: depth + 1 })
+    }
+  }
+  const directSoft = new Set(targets.flatMap(nodeId => (reverse.get(nodeId) || [])
+    .filter(edge => edge.kind === 'soft_prerequisite').map(edge => edge.from)))
+  const bounded = [
+    ...ranked.filter(nodeId => hardRequired.has(nodeId)),
+    ...ranked.filter(nodeId => directSoft.has(nodeId) && !hardRequired.has(nodeId)),
+    ...ranked.filter(nodeId => !hardRequired.has(nodeId) && !directSoft.has(nodeId)),
+  ].slice(0, Math.max(24, hardRequired.size + directSoft.size))
+  const routeNodeIds = topologicallyOrderLearningPathRoute(
+    [...new Set([...bounded, ...targets])],
+    projection.nodes,
+    projection.edges,
+  )
   const milestones: string[] = []
   for (const nodeId of routeNodeIds) {
     const node = nodeMap.get(nodeId)
@@ -996,7 +1160,7 @@ export function buildLearningPathPlanProposal(
   const snapshotSignature = `${packet.snapshotId}:${objective}:${routeNodeIds.join('|')}`
   return {
     id: `path-plan-${stableHash(snapshotSignature)}`,
-    policyId: 'vnext-learning-path-planner-v1',
+    policyId: 'vnext-learning-path-planner-v2',
     generatedFromSnapshotId: packet.snapshotId,
     title: `通向${targetTitles.join('与')}的长期路径`.slice(0, 100),
     objective,
@@ -1070,14 +1234,119 @@ export function learningPathPacketToTutorContext(packet: LearningPathReadPacket)
   ].filter(Boolean).join('\n\n')
 }
 
+const PERSONAL_NODE_TERM_EXPANSIONS: Array<[RegExp, string[]]> = [
+  [/量子/, ['quantum']],
+  [/机器学习/, ['machine']],
+  [/深度学习/, ['deep', 'neural']],
+  [/强化学习/, ['reinforcement']],
+  [/具身智能/, ['embodied', 'robotics']],
+  [/智能体/, ['agent']],
+  [/大语言模型/, ['language', 'model', 'llm']],
+  [/计算机视觉/, ['computer', 'vision']],
+  [/自然语言处理/, ['natural', 'language', 'nlp']],
+  [/网络安全/, ['cybersecurity', 'security']],
+  [/操作系统/, ['operating', 'system']],
+  [/数据库/, ['database']],
+  [/编译器/, ['compiler']],
+]
+
+const GENERIC_EVIDENCE_TERMS = new Set([
+  'learn', 'learning', 'course', 'class', 'introduction', 'overview', 'guide', 'tutorial',
+  '研究', '学习', '课程', '入门', '指南', '概述', '方向',
+])
+
+function evidenceTermGroups(topic: string) {
+  const normalized = topic.normalize('NFKC').toLocaleLowerCase()
+  const latin = (normalized.match(/[a-z0-9+#]{2,}/g) || []).filter(term => !GENERIC_EVIDENCE_TERMS.has(term))
+  const chineseWords = normalized.match(/[\u4e00-\u9fff]{2,}/g) || []
+  const chinese = chineseWords.flatMap(word => word.length <= 4
+    ? [word]
+    : Array.from({ length: word.length - 1 }, (_, index) => word.slice(index, index + 2)))
+    .filter(term => !GENERIC_EVIDENCE_TERMS.has(term))
+  const expanded = PERSONAL_NODE_TERM_EXPANSIONS.flatMap(([pattern, terms]) => pattern.test(normalized) ? terms : [])
+    .filter(term => !GENERIC_EVIDENCE_TERMS.has(term))
+  return [unique(latin), unique(chinese), unique(expanded)].filter(group => group.length)
+}
+
+function isPublicEvidenceUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && !['localhost', '127.0.0.1', '::1'].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+export function assessPersonalPathNodeEvidence(
+  topic: string,
+  evidence: PersonalPathNodeEvidence[] = [],
+): PersonalPathNodeEvidenceReport {
+  const groups = evidenceTermGroups(topic)
+  const accepted: PersonalPathNodeEvidenceAssessment[] = []
+  const rejected: PersonalPathNodeEvidenceReport['rejected'] = []
+  const seenUrls = new Set<string>()
+  evidence.slice(0, 12).forEach(item => {
+    const rawUrl = String(item.url || '').trim()
+    if (!isPublicEvidenceUrl(rawUrl)) {
+      rejected.push({ url: rawUrl, reason: 'invalid_url' })
+      return
+    }
+    const url = new URL(rawUrl)
+    url.hash = ''
+    const canonical = url.toString().replace(/\/$/, '')
+    if (seenUrls.has(canonical)) return
+    seenUrls.add(canonical)
+    const title = String(item.title || '').replace(/\s+/g, ' ').trim().slice(0, 180)
+    const snippet = String(item.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 1200)
+    const source = String(item.source || url.hostname).replace(/\s+/g, ' ').trim().slice(0, 120)
+    if (!title || title.length < 3 || `${title}${snippet}`.length < 24) {
+      rejected.push({ url: canonical, reason: 'insufficient_metadata' })
+      return
+    }
+    const haystack = `${title} ${snippet} ${source}`.normalize('NFKC').toLocaleLowerCase()
+    let bestMatches: string[] = []
+    let relevance = 0
+    groups.forEach(group => {
+      const matches = group.filter(term => haystack.includes(term.toLocaleLowerCase()))
+      const coverage = matches.length / Math.max(1, group.length)
+      if (coverage > relevance) {
+        relevance = coverage
+        bestMatches = matches
+      }
+    })
+    const quality = item.quality || 'community'
+    const minimum = quality === 'official' || quality === 'academic' ? 0.5 : 0.72
+    if (!bestMatches.length || relevance < minimum) {
+      rejected.push({ url: canonical, reason: bestMatches.length ? 'weak_source' : 'off_topic' })
+      return
+    }
+    accepted.push({
+      url: canonical,
+      title,
+      source,
+      quality,
+      relevance: Math.round(relevance * 100) / 100,
+      matchedTerms: bestMatches.slice(0, 8),
+    })
+  })
+  const authoritative = accepted.some(item => item.quality === 'official' || item.quality === 'academic')
+  const independentHosts = new Set(accepted.map(item => new URL(item.url).hostname)).size
+  return {
+    valid: authoritative || independentHosts >= 2,
+    accepted: accepted.slice(0, 6),
+    rejected,
+    policyId: 'vnext-personal-path-evidence-v1',
+  }
+}
+
 export function buildPersonalNodeProposal(
   packet: LearningPathReadPacket,
-  sourceUrls: string[] = [],
+  sourceEvidence: PersonalPathNodeEvidence[] = [],
   state?: LearnerPathState,
 ): PersonalPathNodeProposal | undefined {
-  const validatedUrls = unique(sourceUrls.map(item => String(item || '').trim()).filter(item => /^https?:\/\/[^\s]+$/i.test(item))).slice(0, 6)
+  const evidenceReport = assessPersonalPathNodeEvidence(packet.topicCandidate, sourceEvidence)
   if (!packet.needsExternalResearch || packet.retrievalMode !== 'fuzzy' || packet.resolution !== 'not_found'
-    || !packet.topicCandidate || !validatedUrls.length) return undefined
+    || !packet.topicCandidate || !evidenceReport.valid) return undefined
   const projection = state ? projectLearnerPath(state) : {
     nodes: OFFICIAL_PATH_NODES,
     edges: OFFICIAL_PATH_EDGES,
@@ -1092,9 +1361,23 @@ export function buildPersonalNodeProposal(
   })
   const order = Math.max(4, ...anchors.map(node => node.order + 1))
   const title = packet.topicCandidate.slice(0, 64)
+  const normalizedTitle = normalizeLearningPathText(title)
+  const connections = anchors.map(anchor => {
+    const normalizedAnchor = normalizeLearningPathText(anchor.title)
+    const compoundExtension = normalizedAnchor.length >= 3 && normalizedTitle.includes(normalizedAnchor)
+      && normalizedTitle.length >= normalizedAnchor.length + 2
+    return {
+      nodeId: anchor.id,
+      kind: compoundExtension ? 'soft_prerequisite' as const : 'co_learning' as const,
+      rationale: compoundExtension
+        ? `“${title}”在名称上扩展了“${anchor.title}”，暂列为待确认软前置；来源只证明主题存在，不证明掌握或硬依赖。`
+        : `图谱检索显示它与“${anchor.title}”主题邻近，暂列为待确认共学关系；不据此臆造前置要求。`,
+    }
+  })
+  const validatedUrls = evidenceReport.accepted.map(item => item.url)
   return {
-    id: `path-proposal-${stableHash(`${packet.snapshotId}:${title}:${sourceUrls.join('|')}`)}`,
-    policyId: 'vnext-personal-path-node-proposer-v2',
+    id: `path-proposal-${stableHash(`${packet.snapshotId}:${title}:${validatedUrls.join('|')}`)}`,
+    policyId: 'vnext-personal-path-node-proposer-v3',
     generatedFromSnapshotId: packet.snapshotId,
     title,
     summary: `围绕“${title}”形成的个人学习节点候选；来源证明该主题值得独立定位，连接关系仍需学习者检查。`,
@@ -1103,11 +1386,8 @@ export function buildPersonalNodeProposal(
     stage: order >= 6 ? 'advanced' : 'domain',
     order,
     sourceUrls: validatedUrls,
-    connections: anchors.map(anchor => ({
-      nodeId: anchor.id,
-      kind: 'soft_prerequisite' as const,
-      rationale: `检索排序显示它与“${anchor.title}”关系较近；当前仅作为待确认软前置，不代表课程权威或掌握结论。`,
-    })),
+    sourceEvidence: evidenceReport.accepted,
+    connections,
     requiresLearnerConfirmation: true,
     masteryUnchanged: true,
   }

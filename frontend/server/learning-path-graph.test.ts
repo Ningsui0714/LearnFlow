@@ -10,16 +10,20 @@ import {
   buildLearningPathPlanProposal,
   buildLearningGraphAlignments,
   buildPersonalNodeProposal,
+  assessPersonalPathNodeEvidence,
   commitLearningPathPlan,
   createInitialLearnerPathState,
   lookupLearningPathGraph,
+  learningPathAudienceNodeIds,
   projectLearnerPath,
   readLearningPathGraph,
   removePersonalPathNode,
   setLearnerPathStatus,
   searchLearningPathGraph,
+  topologicallyOrderLearningPathRoute,
   validateOfficialLearningPathGraph,
 } from '../src/learning-path-graph.ts'
+import { extractLearningPathTopic } from '../src/learning-path-retrieval.ts'
 import { executeTutorAgentTool, TUTOR_AGENT_TOOL_DEFINITIONS } from './tool-runtime.ts'
 import {
   KNOWLEDGE_CLUSTERS,
@@ -30,6 +34,15 @@ import {
   nebulaHeight,
   traceLearningPath,
 } from '../src/learning-path-nebula.ts'
+
+const qmlEvidence = [{
+  title: 'Quantum Machine Learning',
+  url: 'https://example.edu/quantum-machine-learning',
+  snippet: 'Quantum machine learning combines quantum computing methods with machine learning models and algorithms.',
+  source: 'Example University',
+  quality: 'academic' as const,
+  role: 'course' as const,
+}]
 
 test('official graph is sourced, broad, and acyclic', () => {
   const validation = validateOfficialLearningPathGraph()
@@ -86,7 +99,7 @@ test('exact reader resolves ids, names and aliases without fuzzy or external wor
 
 test('fuzzy reader repairs spelling but exposes broad ambiguity instead of guessing', () => {
   const state = createInitialLearnerPathState()
-  const typo = searchLearningPathGraph('操作系統原里', state)
+  const typo = searchLearningPathGraph('操作系統源理', state)
   assert.equal(typo.resolution, 'resolved')
   assert.equal(typo.candidates[0].nodeId, 'operating-systems')
   assert.ok(typo.candidates[0].reasons.includes('alias_similarity'))
@@ -97,7 +110,7 @@ test('fuzzy reader repairs spelling but exposes broad ambiguity instead of guess
   assert.equal(ambiguous.recommendedNextAction, 'ask_disambiguation')
   assert.equal(ambiguous.matchedNodeIds.length, 0)
   assert.equal(buildLearningPathPlanProposal('安全', state, ambiguous), undefined)
-  assert.equal(buildPersonalNodeProposal(ambiguous, ['https://example.edu/security'], state), undefined)
+  assert.equal(buildPersonalNodeProposal(ambiguous, qmlEvidence, state), undefined)
 })
 
 test('compound graph gaps do not collapse into a shorter official course', () => {
@@ -108,7 +121,7 @@ test('compound graph gaps do not collapse into a shorter official course', () =>
   assert.equal(packet.needsExternalResearch, true)
   assert.equal(packet.candidates[0].nodeId, 'machine-learning')
   assert.equal(buildPersonalNodeProposal(packet, [], state), undefined)
-  const proposal = buildPersonalNodeProposal(packet, ['https://example.edu/qml'], state)
+  const proposal = buildPersonalNodeProposal(packet, qmlEvidence, state)
   assert.ok(proposal)
   assert.equal(proposal!.requiresLearnerConfirmation, true)
   assert.equal(proposal!.masteryUnchanged, true)
@@ -133,9 +146,7 @@ test('a graph gap becomes a confirmable personal node and remains removable', ()
   assert.equal(packet.matchKind, 'graph_gap')
   assert.equal(packet.needsExternalResearch, true)
 
-  const proposal = buildPersonalNodeProposal(packet, [
-    'https://example.edu/quantum-machine-learning',
-  ])
+  const proposal = buildPersonalNodeProposal(packet, qmlEvidence)
   assert.ok(proposal)
   const added = addPersonalPathNode(initial, proposal!)
   const projection = projectLearnerPath(added)
@@ -145,6 +156,69 @@ test('a graph gap becomes a confirmable personal node and remains removable', ()
 
   const removed = removePersonalPathNode(added, personal!.id)
   assert.equal(projectLearnerPath(removed).nodes.some((node) => node.id === personal!.id), false)
+})
+
+test('personal-node evidence rejects URL-only and off-topic search results', () => {
+  const packet = searchLearningPathGraph('量子机器学习', createInitialLearnerPathState())
+  assert.equal(buildPersonalNodeProposal(packet, [{ url: 'https://example.edu/qml' }]), undefined)
+  const report = assessPersonalPathNodeEvidence('量子机器学习', [{
+    title: 'Introduction to Databases', url: 'https://example.edu/database',
+    snippet: 'A course about SQL, transactions, indexing and database design.',
+    source: 'Example University', quality: 'academic', role: 'course',
+  }])
+  assert.equal(report.valid, false)
+  assert.equal(report.accepted.length, 0)
+  assert.equal(buildPersonalNodeProposal(packet, [{
+    title: 'Introduction to Databases', url: 'https://example.edu/database',
+    snippet: 'A course about SQL, transactions, indexing and database design.',
+    source: 'Example University', quality: 'academic', role: 'course',
+  }]), undefined)
+})
+
+test('topic extraction removes planning wrappers without swallowing the course name', () => {
+  assert.equal(extractLearningPathTopic('我想学量子机器学习，需要哪些前置？'), '量子机器学习')
+  assert.equal(extractLearningPathTopic('研究生想做具身智能研究，该怎么规划'), '具身智能')
+  assert.equal(extractLearningPathTopic('我想从机器学习走向科研，该学什么'), '机器学习')
+  assert.equal(extractLearningPathTopic('帮我看看网络安全和系统安全的区别'), '网络安全和系统安全')
+})
+
+test('industry practice domains are explicit course nodes with inspectable content', () => {
+  const expected = [
+    'engineering-debugging-observability', 'reliability-incident-response',
+    'secure-software-supply-chain', 'information-retrieval', 'data-governance-privacy',
+    'ai-system-evaluation', 'api-design-evolution', 'performance-engineering',
+    'platform-engineering', 'software-maintenance-evolution', 'open-source-collaboration',
+    'numerical-scientific-computing',
+  ]
+  expected.forEach(nodeId => {
+    const node = OFFICIAL_PATH_NODES.find(item => item.id === nodeId)
+    assert.ok(node, `missing industry domain: ${nodeId}`)
+    assert.ok(node!.summary.length >= 45, `${nodeId} needs a concrete scope summary`)
+    assert.ok(node!.sourceRefs.length > 0)
+  })
+})
+
+test('audience views retain hidden hard prerequisites as bridge nodes', () => {
+  const graduate = learningPathAudienceNodeIds(OFFICIAL_PATH_NODES, OFFICIAL_PATH_EDGES, 'graduate')
+  const vocational = learningPathAudienceNodeIds(OFFICIAL_PATH_NODES, OFFICIAL_PATH_EDGES, 'vocational')
+  for (const edge of OFFICIAL_PATH_EDGES.filter(item => item.kind === 'hard_prerequisite')) {
+    if (graduate.has(edge.to)) assert.ok(graduate.has(edge.from), `graduate view hides ${edge.from} -> ${edge.to}`)
+    if (vocational.has(edge.to)) assert.ok(vocational.has(edge.from), `vocational view hides ${edge.from} -> ${edge.to}`)
+  }
+})
+
+test('route ordering honors hard and soft prerequisites while excluding co-learning as precedence', () => {
+  const ordered = topologicallyOrderLearningPathRoute(
+    ['deep-learning', 'optimization', 'machine-learning', 'computer-organization', 'digital-logic'],
+    OFFICIAL_PATH_NODES,
+    OFFICIAL_PATH_EDGES,
+  )
+  assert.ok(ordered.indexOf('optimization') < ordered.indexOf('deep-learning'))
+  assert.ok(ordered.indexOf('digital-logic') < ordered.indexOf('computer-organization'))
+  const plan = buildLearningPathPlanProposal('我想系统学习深度学习', createInitialLearnerPathState())
+  assert.ok(plan)
+  assert.ok(plan!.routeNodeIds.indexOf('optimization') < plan!.routeNodeIds.indexOf('deep-learning'))
+  assert.equal(plan!.policyId, 'vnext-learning-path-planner-v2')
 })
 
 test('course status remains explicitly self reported', () => {

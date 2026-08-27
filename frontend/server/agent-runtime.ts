@@ -16,7 +16,7 @@ import {
   isDisplayableTutorReply,
   textFromTutorProviderResponse,
 } from '../src/tutor.ts'
-import type { TutorToolChoice, TutorToolRun } from '../src/tooling.ts'
+import type { SearchSource, TutorToolChoice, TutorToolRun } from '../src/tooling.ts'
 import type { LearningTaskTutorContext } from '../src/learning.ts'
 import type { LearningPlanTutorContext } from '../src/planning.ts'
 import type { LearnerPathState } from '../src/learning-path-graph.ts'
@@ -71,7 +71,7 @@ export type TutorAgentRuntimeInput = {
     name: string,
     args: Record<string, unknown>,
     options: TutorAgentToolRuntimeOptions,
-    meta?: { callId?: string; sequence?: number; sourceUrls?: string[] },
+    meta?: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[] },
   ) => Promise<TutorAgentToolExecution>
   observe?: (event: AgentTurnStreamEvent) => void
 }
@@ -406,7 +406,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     requestCookie: input.requestCookie,
   }
 
-  const execute = async (call: AgentToolCall, sourceUrls: string[] = []) => {
+  const execute = async (call: AgentToolCall, searchSources: SearchSource[] = []) => {
     // Artifact generators are expensive and have side effects. Treat a second
     // request for the same formal task as a duplicate even when the model only
     // changes a title or difficulty after a failure. Recovery must use the
@@ -442,7 +442,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     const result = await (input.executeTool || executeTutorAgentTool)(call.name, call.arguments, toolOptions, {
       callId: call.id,
       sequence: toolCalls,
-      sourceUrls,
+      sourceUrls: searchSources.map(source => source.url),
+      searchSources,
     })
     runs.push(result.run)
     input.observe?.({ type: 'tool_completed', run: result.run })
@@ -487,16 +488,16 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       toolName: call.name,
       status: result.run.status,
     })
-    return result.searchSourceUrls || []
+    return result.searchSources || []
   }
 
-  const refreshPathAfterSearch = async (urls: string[]) => {
-    if (!pathGapPending || !urls.length || !input.learnerPathState) return
+  const refreshPathAfterSearch = async (sources: SearchSource[]) => {
+    if (!pathGapPending || !sources.length || !input.learnerPathState) return
     await execute({
       id: `path-evidence-refresh-${id}-${toolCalls + 1}`,
       name: 'propose_personal_path_node',
-      arguments: { query: latestMessage, source_urls: urls },
-    }, urls)
+      arguments: { query: latestMessage, source_urls: sources.map(source => source.url) },
+    }, sources)
   }
 
   record({ phase: 'observe', detail: '开始组装本轮观察空间', status: 'started' })
@@ -524,8 +525,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
   const explicit = explicitToolCall(input.toolChoice, latestMessage, Boolean(input.formalProjectContext))
   if (explicit) {
-    const urls = await execute(explicit)
-    if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(urls)
+    const sources = await execute(explicit)
+    if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(sources)
   }
   record({ phase: 'observe', detail: `观察空间已就绪：${observations.length} 个结构化观察`, status: 'completed' })
 
@@ -557,7 +558,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   })
 
   let reply = ''
-  let sourceUrls: string[] = runs.flatMap(run => run.sources || []).map(source => source.url)
+  let searchSources: SearchSource[] = runs.flatMap(run => run.sources || [])
   const invokeModel = async (request: ReturnType<typeof buildAgentProviderRequest>) => {
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -634,9 +635,12 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             })
             continue
           }
-          const urls = await execute(call, sourceUrls)
-          if (urls.length) sourceUrls = [...new Set([...sourceUrls, ...urls])]
-          if (call.name === 'search_computer_knowledge') await refreshPathAfterSearch(urls)
+          const sources = await execute(call, searchSources)
+          if (sources.length) {
+            const byUrl = new Map([...searchSources, ...sources].map(source => [source.url, source]))
+            searchSources = [...byUrl.values()]
+          }
+          if (call.name === 'search_computer_knowledge') await refreshPathAfterSearch(sources)
         }
         continue
       }
