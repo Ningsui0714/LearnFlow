@@ -22,6 +22,8 @@ from app.services.auth import CurrentLearner, get_current_learner, require_owned
 from app.services.five_kernel_context import build_five_kernel_context
 from app.services.learning_runtime import record_event
 from app.services.learning_tasks import act_on_learning_task, ensure_all_checkpoint_learning_tasks, learning_task_view
+from app.services.delivery_readiness import checkpoint_delivery_readiness
+from app.services.teaching_contract import normalize_teaching_contract
 from app.services.tutor_service import get_or_create_session
 
 
@@ -237,13 +239,20 @@ async def _workspace_view(db: AsyncSession, learner_id: int, project: Project) -
                 LearningTask.learner_id == learner_id,
                 LearningTask.checkpoint_id == checkpoint.id,
             ))).scalar_one_or_none()
+            contract = normalize_teaching_contract(
+                checkpoint.learning_contract,
+                objective=checkpoint.description or checkpoint.title,
+            )
+            contract["delivery_readiness"] = await checkpoint_delivery_readiness(
+                db, checkpoint, learner_id=learner_id,
+            )
             checkpoints.append({
                 "id": checkpoint.id,
                 "key": str((checkpoint.brief or {}).get("checkpoint_key") or f"checkpoint-{checkpoint.order}"),
                 "title": checkpoint.title, "objective": checkpoint.description or "",
                 "order": checkpoint.order, "prerequisites": list(checkpoint.prerequisites or []),
                 "learning_status": checkpoint.learning_status or "not_started",
-                "learning_contract": dict(checkpoint.learning_contract or {}),
+                "learning_contract": contract,
                 "editable": (checkpoint.learning_status or "not_started") == "not_started",
                 "session_id": session.id,
                 "learning_task": await learning_task_view(db, task) if task else None,
@@ -358,13 +367,15 @@ async def apply_vnext_roadmap(
         checkpoint = Checkpoint(
             roadmap_id=roadmap.id, title=item.title.strip(), description=item.objective.strip(),
             order=order, prerequisites=[], learning_status="not_started",
-            learning_contract={
+            learning_contract=normalize_teaching_contract({
                 "project_theme": project.name,
                 "exit_criteria": list(item.success_criteria),
                 "estimated_minutes": item.estimated_minutes,
                 "knowledge_target": {"checkpoint_key": item.key},
                 "practice_target": {"requires_generation": True},
-            },
+                "must_preserve": [item.objective.strip()],
+                "avoid": ["泄露独立验证答案", "把内容生成或阅读表述为掌握"],
+            }, objective=item.objective, outcomes=item.success_criteria),
             brief={"project_theme": project.name, "checkpoint_key": item.key,
                    "objective": item.objective, "source_scope": "project"},
         )
@@ -521,14 +532,16 @@ async def revise_vnext_roadmap(
         checkpoint.order = order
         checkpoint.title = item.title.strip()
         checkpoint.description = item.objective.strip()
-        checkpoint.learning_contract = {
+        checkpoint.learning_contract = normalize_teaching_contract({
             **dict(checkpoint.learning_contract or {}),
             "project_theme": project.name,
             "exit_criteria": list(item.success_criteria),
             "estimated_minutes": item.estimated_minutes,
             "knowledge_target": {"checkpoint_key": item.key},
             "practice_target": {"requires_generation": True},
-        }
+            "must_preserve": [item.objective.strip()],
+            "avoid": ["泄露独立验证答案", "把内容生成或阅读表述为掌握"],
+        }, objective=item.objective, outcomes=item.success_criteria)
         checkpoint.brief = {
             **dict(checkpoint.brief or {}),
             "project_theme": project.name, "checkpoint_key": item.key,

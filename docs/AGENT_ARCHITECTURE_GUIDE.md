@@ -5,6 +5,8 @@
 > 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
+Contract impact（`2026-08-27.8`）：Learning Design 在现有 Checkpoint 上执行轻量 Teaching Contract 门禁和可重建 `delivery_readiness`，不建立新表或第二套学习状态。教学生成失败时由确定性 fallback 保证仍有可继续学习的最小产物。视频推荐作为 `learning_resource_curation`、`learning_file_study` 与 `evidence_grounded_teaching` 可组合的两级 ACI：先搜索候选，再核验本轮候选字幕和时间点；底层 Bilibili/YouTube/字幕/ASR 适配器不直接暴露。任何候选、视频观看或字幕读取都不形成掌握证据。详见 `docs/implementation/TEACHING_DELIVERY_AND_VIDEO_HARNESS.md`。
+
 Contract impact（`2026-08-27.6`）：新增文件驱动教学 Skill `learning_file_study` 与当前纸张精确读取 ACI `read_active_learning_file`。Tutor 仍拥有主对话和纸张协调，Learning Design 仍拥有讲义/练习候选，Practice Agent 仍拥有正式提交与判题；Skill 只编排选择、阅读锚点、文件内练习和独立验证。讲义、练习、来源和追问纸允许形成任意深度的有根纸张树，但纸张关系只是可恢复 UI 状态。来源指令不执行，练习答案不进入模型观察，打开和阅读不升级掌握。详见 `docs/implementation/GUIDED_LEARNING_FILE_PAPERS.md`。
 
 Contract impact（`2026-08-27.4`）：教学方法继续采用 `SkillSpec v2` 单一权威。费曼 Skill 新增注册表声明的四轴校准和确定性表面诊断；Tutor 模型只渲染当前指令，不拥有状态、缺口事实或掌握判定。`learning_skill_calibration_updated` 与 `learning_skill_teach_back_diagnostic_updated` 均为零 Kernel target，只有正式独立验证可以沿 EvidenceEvent/reducer 写入五核。前端校准项继续由注册表生成，不建立第二套常量。

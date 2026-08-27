@@ -8,7 +8,7 @@
     "dev:web": "vite --host 127.0.0.1 --port 4174 --strictPort",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4174 --strictPort",
-    "test:search": "node --experimental-strip-types --test server/computer-knowledge-search.test.ts",
+    "test:search": "node --experimental-strip-types --test server/computer-knowledge-search.test.ts server/learning-video-harness.test.ts",
     "eval:search:offline": "node --experimental-strip-types server/search-evaluation.ts",
     "eval:search:live": "node --experimental-strip-types server/search-live-evaluation.ts",
     "test:learning": "node --experimental-strip-types --test server/learning-task.test.ts server/learning-file-message.test.ts server/paper-workbench.test.ts server/agent-runtime.test.ts server/provider-stream.test.ts server/turn-recovery.test.ts",

@@ -29,6 +29,7 @@ import {
   type TutorAgentToolRuntimeOptions,
 } from './tool-runtime.ts'
 import type { SearchProviderConfiguration } from './computer-knowledge-search.ts'
+import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
 
 export type TutorAgentBudget = {
@@ -112,7 +113,7 @@ export type TutorAgentRuntimeInput = {
     name: string,
     args: Record<string, unknown>,
     options: TutorAgentToolRuntimeOptions,
-    meta?: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[] },
+    meta?: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[]; videoCandidates?: LearningVideoCandidate[] },
   ) => Promise<TutorAgentToolExecution>
   observe?: (event: AgentTurnStreamEvent) => void
 }
@@ -140,6 +141,8 @@ function toolDecisionReason(call: AgentToolCall) {
     search_learning_path_graph: '精确匹配不足，转为模糊读取学习路径候选与关系',
     search_computer_knowledge: '现有上下文不足以支撑可靠讲解，补充计算机领域的高质量来源',
     read_web_evidence: '搜索摘要不足以直接支撑结论，继续读取候选页面中的相关原文',
+    search_learning_videos: '当前目标适合演示或分步讲解，先取得可用的视频候选',
+    inspect_learning_video: '标题和热度不能证明内容适合学习，继续用字幕与时间点核验覆盖',
     generate_dynamic_practice: '当前学习动作需要可作答的检测，因此生成受任务约束的练习文件',
     generate_similar_practice: '需要检查迁移而不是重复原题，因此生成同构但不相同的练习',
     inspect_practice_quality: '题目投入学习前先检查结构、答案确定性和目标覆盖',
@@ -395,6 +398,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '只有需要外部观察时才调用工具。可以连续调用不同读取工具，但不得重复相同调用。',
     '读取工具可自主调用；项目路线和文件工具只产生 learner-visible proposal，绝不直接写入。',
     '联网搜索先用 search_computer_knowledge 取得候选证据、覆盖缺口和来源状态；需要据此陈述精确机制、版本行为、日期、数值或排错结论时，再用 read_web_evidence 读取最相关的 1-3 个候选页面。搜索摘要不等于已读全文。',
+    '视频推荐先用 search_learning_videos 取得 discovered 候选；推荐前必须用 inspect_learning_video 核验本轮候选的字幕、时间点、目标覆盖和内容缺口。元数据、播放量、搜索或观看都不是掌握证据；metadata_only 候选只能标为待核验。',
     'quick 只用于单一事实，standard 用于普通讲解、比较、实现与排错，deep 只用于论文综述、项目调研或多来源复杂决策。deep 仍有查询、页面和补搜预算，不能无限研究。',
     '搜索或读取返回 partial、empty、coverage gaps、circuit_open 时必须在回答中显式保留证据缺口；不得用模型常识伪装成已检索证据。',
     '评估目标、题型组合或成功条件不清时，先调用 design_assessment_blueprint；它返回可检查的蓝图与确定性量表，但不评分。动态习题工具只可在带领学习态且绑定正式 LearningTask/Checkpoint 时调用；生成题目是零目标 artifact 事件，不得声称形成掌握。需要动态练习、诊断或变式验证时，可生成正式练习文件，再让学习者在答案安全工作台提交。',
@@ -433,11 +437,10 @@ function explicitToolCall(choice: TutorToolChoice, message: string, projectScope
   }
   if (choice === 'search') return {
     id: `explicit-search-${Date.now()}`,
-    name: 'search_computer_knowledge',
-    arguments: {
-      query: message,
-      depth: /深度研究|系统调研|文献综述|研究综述|多来源|全面研究|deep research/i.test(message) ? 'deep' : 'standard',
-    },
+    name: /视频|课程视频|b站|bilibili|youtube/i.test(message) ? 'search_learning_videos' : 'search_computer_knowledge',
+    arguments: /视频|课程视频|b站|bilibili|youtube/i.test(message)
+      ? { target: message, platforms: /b站|bilibili/i.test(message) ? ['bilibili'] : /youtube/i.test(message) ? ['youtube'] : ['bilibili', 'youtube'], max_results: 6 }
+      : { query: message, depth: /深度研究|系统调研|文献综述|研究综述|多来源|全面研究|deep research/i.test(message) ? 'deep' : 'standard' },
   }
   return {
     id: `explicit-visual-${Date.now()}`,
@@ -525,6 +528,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let pathGapPending = false
   let pathFuzzyPending = false
   let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
+  let currentVideoCandidates: LearningVideoCandidate[] = []
   const explicitlyRequestsExternalResources = input.toolChoice !== 'auto'
     || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|来源|论文|文档|仓库|官网|最新)/i.test(latestMessage)
 
@@ -611,7 +615,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       sequence: toolCalls,
       sourceUrls: searchSources.map(source => source.url),
       searchSources,
+      videoCandidates: currentVideoCandidates,
     })
+    if (result.videoCandidates) currentVideoCandidates = result.videoCandidates
     runs.push(result.run)
     input.observe?.({ type: 'tool_completed', run: result.run })
     const decisionSummary: AgentDecisionSummary = {
@@ -655,7 +661,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'read_project_roadmap'
         || call.name === 'read_project_sources'
         || call.name === 'read_project_learning_file'
-        || call.name === 'read_active_learning_file',
+        || call.name === 'read_active_learning_file'
+        || call.name === 'search_learning_videos'
+        || call.name === 'inspect_learning_video',
       data: result.observation,
     })
     runtimeMessages.push({

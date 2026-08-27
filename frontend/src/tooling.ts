@@ -35,7 +35,7 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'assessment' | 'file' | 'search' | 'image' | 'animation'
+  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'assessment' | 'file' | 'search' | 'video' | 'image' | 'animation'
   status: 'running' | 'completed' | 'failed'
   title: string
   detail: string

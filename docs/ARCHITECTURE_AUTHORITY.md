@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.8`）：关卡现有 `Checkpoint.learning_contract` 增加向后兼容的 Teaching Contract v1 规范化与确定性门禁，状态仅为 `ready / ready_with_gaps / fallback_ready`；模型最多修订一次，仍不合格时发布包含目标、核心事实、最小示例、下一步和缺口的答案安全降级讲解，不允许空交付。`delivery_readiness` 作为该字段中的只读、可重建投影，完全由既有 Source/Chunk、Lecture、ConceptQuestion/Exercise、AssessmentBlueprint/Rubric 与 LearningTask 计算，不复用学习者 `learning_status`，也不表示掌握。规划态资源策展新增两个目标级只读 ACI：`search_learning_videos` 返回 `discovered` 候选，`inspect_learning_video` 只接受本轮候选 ID 并返回字幕/ASR 状态、相关时间点、目标覆盖缺口与答案泄露风险。平台 API、字幕获取和离线目录属于 Harness 内部适配器；搜索、核验和观看均为零 Kernel target。三类主 Agent、EvidenceEvent、五核 reducer、评分和掌握语义均不变，无数据库迁移。
+
 Contract impact（`2026-08-27.7`）：Tutor Turn Graph 增加按模式分层的预算与确定性教学续接。自由/简单讲解仍为 5 轮模型、8 次工具、90 秒；学习规划为 7/12/150 秒；带领学习为 9/14/180 秒，并为无工具最终正文预留最多两次、45 秒的独立收束预算。带领学习即使模型最终正文为空或暂时失败，也必须使用正式 SkillRun 的学生可见 fallback 续接，不能把恢复责任交给学生；若已生成的教学正文只缺少工具失败透明度、检索覆盖说明或受信来源链接，Harness 确定性补齐后保留正文，不再因收尾故障整段覆盖。`AgentTurnTrace` 向后兼容地增加 `decisionSummaries`，只保存“工具选择理由、已验证观察摘要、下一操作”，明确不保存或展示供应商隐藏思维链。SkillRun 仍由学习者真实输入触发确定性自动推进；UI 不再用伪造的用户消息或“下一步”按钮改变步骤。五核、EvidenceEvent、评分与掌握语义没有变化，也没有新增工具、能力、事件或数据库迁移。
 
 带领学习的浏览器传输层也执行同一续接策略：若服务端流在已有 SkillRun 范围内中断，前端保留已收到的工具结果与决策摘要，并使用当前步骤指令形成透明的最小续接；不得退化为要求学生重试或手动推进的系统错误卡。

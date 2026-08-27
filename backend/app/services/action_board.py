@@ -33,7 +33,7 @@ ACTION_BOARD = {
             {},
             ("read_vnext_five_kernel_profile", "read_vnext_learning_workspace",
              "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "read_review_context",
-             "search_computer_knowledge", "read_web_evidence", "generate_learning_visual"),
+             "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_visual"),
         ),
         ActionDefinition(
             "search_computer_knowledge", "检索计算机知识来源", "none", "explicit_or_auto",
@@ -44,6 +44,26 @@ ACTION_BOARD = {
             "read_web_evidence", "读取本轮搜索候选网页证据", "none", "none",
             {},
             (),
+        ),
+        ActionDefinition(
+            "search_learning_videos", "搜索与学习目标匹配的视频候选", "none", "none",
+            {},
+            ("inspect_learning_video",),
+        ),
+        ActionDefinition(
+            "inspect_learning_video", "核验本轮视频候选的字幕与目标覆盖", "none", "none",
+            {},
+            (),
+        ),
+        ActionDefinition(
+            "validate_teaching_contract", "校验关卡教学契约并保证最小交付", "none", "none",
+            {},
+            ("read_checkpoint_delivery_readiness",),
+        ),
+        ActionDefinition(
+            "read_checkpoint_delivery_readiness", "读取关卡确定性交付成熟度", "none", "none",
+            {},
+            ("generate_learning_files", "design_assessment_blueprint"),
         ),
         ActionDefinition(
             "generate_learning_visual", "生成安全学习图解或动画", "artifact", "explicit_or_auto",

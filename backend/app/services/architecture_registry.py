@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.6"
+REGISTRY_VERSION = "2026-08-27.8"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
@@ -306,6 +306,14 @@ TOOLS = {
                      (), (), "privacy scrub -> bounded facet plan -> tiered adapters + circuit breakers -> hybrid deterministic rerank/MMR -> coverage audit -> one bounded gap search -> versioned untrusted evidence bundle; quick/standard/deep budgets and no learner-state write"),
         ToolContract("web_evidence_reader", "Allow-listed Web Evidence Reader", "learning_design_agent", "vnext", "read",
                      (), (), "exact URL from current search -> HTTPS/redirect/content guards -> query-relevant bounded page excerpt -> untrusted evidence page; cacheable and no learner-state write"),
+        ToolContract("learning_video_search", "Goal-aligned Learning Video Search", "learning_design_agent", "vnext", "read",
+                     (), (), "structured learning target -> bounded Bilibili/YouTube adapters + offline catalog -> discovered candidate IDs and metadata; no content or mastery claim"),
+        ToolContract("learning_video_inspector", "Current-turn Learning Video Inspector", "learning_design_agent", "vnext", "read",
+                     (), (), "candidate ID from current search -> subtitle/ASR availability + timestamped relevant segments + outcome gaps + answer-leak audit; zero learner-state write"),
+        ToolContract("teaching_contract_gate", "Deterministic Teaching Contract Gate", "learning_design_agent", "learnflow", "policy",
+                     (), (), "Checkpoint.learning_contract -> ready | ready_with_gaps | fallback_ready; one bounded model revision then deterministic minimum teaching artifact"),
+        ToolContract("checkpoint_delivery_readiness", "Checkpoint Delivery Readiness Projection", "learning_design_agent", "learnflow", "projection",
+                     (), (), "existing Source/Lecture/Question/Exercise/Assessment/LearningTask objects -> rebuildable delivery readiness; never learner progress or mastery"),
         ToolContract("safe_visual_generation", "Safe Learning Visual Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "validated graph plan -> sanitized static SVG or deterministic SVG frames"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
@@ -433,7 +441,7 @@ TOOLS = {
 # policy and adapter objects remain service-side infrastructure.
 TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
-        "action_board", "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation",
+        "action_board", "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation",
         "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
         "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
@@ -456,9 +464,10 @@ TOOL_INTERFACE_ROLES = {
         "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
     }},
     **{tool_id: "projection" for tool_id in {
-        "review_scheduler", "review_proficiency_projector", "five_kernel_reducer", "memory_graph", "kernel_head_projector",
+        "review_scheduler", "review_proficiency_projector", "five_kernel_reducer", "memory_graph", "kernel_head_projector", "checkpoint_delivery_readiness",
     }},
     "deterministic_remediation": "policy",
+    "teaching_contract_gate": "policy",
     "vnext_chat_session_store": "adapter",
     "workflow_gateway": "adapter",
     "workflow_validator": "adapter",
@@ -471,7 +480,7 @@ TOOL_MODEL_EXPOSURE = {
     tool_id: (
         "vnext_native"
         if tool_id in {
-            "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation",
+            "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation",
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
@@ -806,6 +815,7 @@ SKILLS = {
              "learning_task_runtime", "learning_task_planner", "vnext_learning_workspace_reader",
              "active_learning_file_reader", "project_learning_file_reader",
              "project_learning_file_proposer", "learning_file_service",
+             "teaching_contract_gate", "checkpoint_delivery_readiness", "learning_video_search", "learning_video_inspector",
              "assessment_blueprint_builder", "dynamic_practice_generator",
              "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
             "task-linked file selection -> anchored lecture reading -> answer-safe practice paper -> evidence-aware verification handoff",
@@ -851,7 +861,7 @@ SKILLS = {
                       "inspectable long-term route proposal or project roadmap with goal, prerequisites, milestones and provenance",
                       "deterministic route proposal + explicit learner confirmation"),
         SkillContract("learning_resource_curation", "规划态学习资源策展", "learning_design_agent",
-                      ("domain_knowledge_reader", "computer_knowledge_search", "web_evidence_reader",
+                      ("domain_knowledge_reader", "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector",
                        "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "source_ingestion"),
                       "goal-aligned resource proposal with coverage, authority tier, provenance and identified gaps",
                       "Skill chooses the comparison workflow; read/search tools only supply evidence"),
@@ -862,7 +872,7 @@ SKILLS = {
                       "topic-locked project Tutor -> confirmed checkpoint DAG -> checkpoint LearningTasks -> managed files and evidence-safe practice",
                       "Tutor owns orchestration; Learning Design proposes; user confirms structure/artifacts; reducer alone owns five-kernel mutations"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
-                      ("hierarchical_rag", "content_generation", "process_animation"),
+                      ("hierarchical_rag", "content_generation", "process_animation", "teaching_contract_gate", "checkpoint_delivery_readiness", "learning_video_inspector"),
                       "structured teaching artifact; never mastery evidence", "artifact contract"),
         SkillContract("practice_verification", "代码实践与确定性验证", "practice_agent",
                       ("code_executor", "deterministic_assessment", "evidence_ledger"),
@@ -945,10 +955,11 @@ WORKBENCHES = {
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "LearnFlow Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
-                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "read_web_evidence", "generate_learning_visual", "open_selection_followup",
+                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
                            "manage_domain_knowledge_sources", "read_domain_knowledge", "read_active_learning_file", "recommend_learning_resources",
+                           "validate_teaching_contract", "read_checkpoint_delivery_readiness",
                            "attach_learning_file_to_chat", "design_assessment_blueprint", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
                            "read_review_context",
                            "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "propose_vnext_personal_path_node",
@@ -1012,6 +1023,8 @@ CAPABILITY_OWNERS = {
     "coordinate_vnext_agent_turn": ("tutor_agent", "vnext_agent_turn_runtime", "vnext_chat"),
     "search_computer_knowledge": ("learning_design_agent", "computer_knowledge_search", "vnext_chat"),
     "read_web_evidence": ("learning_design_agent", "web_evidence_reader", "vnext_chat"),
+    "search_learning_videos": ("learning_design_agent", "learning_video_search", "vnext_chat"),
+    "inspect_learning_video": ("learning_design_agent", "learning_video_inspector", "vnext_chat"),
     "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
@@ -1021,6 +1034,8 @@ CAPABILITY_OWNERS = {
     "manage_domain_knowledge_sources": ("tutor_agent", "source_ingestion", "vnext_chat"),
     "read_domain_knowledge": ("tutor_agent", "domain_knowledge_reader", "vnext_chat"),
     "read_active_learning_file": ("tutor_agent", "active_learning_file_reader", "vnext_chat"),
+    "validate_teaching_contract": ("learning_design_agent", "teaching_contract_gate", "vnext_chat"),
+    "read_checkpoint_delivery_readiness": ("learning_design_agent", "checkpoint_delivery_readiness", "vnext_chat"),
     "recommend_learning_resources": ("learning_design_agent", "domain_knowledge_reader", "vnext_chat"),
     "generate_learning_files": ("learning_design_agent", "learning_file_service", "vnext_learning_files"),
     "design_assessment_blueprint": ("learning_design_agent", "assessment_blueprint_builder", "vnext_chat"),

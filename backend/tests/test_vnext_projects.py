@@ -93,6 +93,10 @@ def test_confirmed_roadmap_creates_checkpoint_sessions_and_formal_tasks(client: 
     assert all(item["session_id"] for item in checkpoints)
     assert all(item["learning_task"]["origin_kind"] == "checkpoint" for item in checkpoints)
     assert all(item["learning_task"]["project_id"] == project["id"] for item in checkpoints)
+    assert all(item["learning_contract"]["schema_version"] == "learnflow.teaching-contract.v1" for item in checkpoints)
+    assert all(item["learning_contract"]["teaching_gate"]["status"] == "ready_with_gaps" for item in checkpoints)
+    assert all(item["learning_contract"]["delivery_readiness"]["overall"] == "outline_only" for item in checkpoints)
+    assert all(item["learning_contract"]["delivery_readiness"]["mastery_inference"] is False for item in checkpoints)
 
     context = client.get(
         f"/api/vnext-projects/{project['id']}/agent-context",

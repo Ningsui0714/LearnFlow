@@ -422,11 +422,13 @@ async def run_lecture_generation(task_id: int):
 
     for i, ps in enumerate(plan_sections):
         title = ps.get("title", f"第{i+1}节")
+        section_delivery_state = "generated"
 
         # Reuse on resume when the saved section matches this plan position
         if resume and i < len(saved) and saved[i].get("title") == title:
             content = saved[i].get("content", "")
             questions = saved[i].get("questions", [])
+            section_delivery_state = saved[i].get("delivery_state", "generated")
         else:
             await update_task(task_id, progress={
                 "current": i,
@@ -454,14 +456,17 @@ async def run_lecture_generation(task_id: int):
                         feedback=feedback,
                     )
                 except Exception as e2:
-                    from app.services.task_manager import classify_error
-                    err = classify_error(e2)
-                    await update_task(
-                        task_id, status="failed", error=err,
-                        progress={"current": i, "total": total,
-                                  "message": f"第{i+1}节生成失败，已保留前 {i} 节"},
-                        finished_at=datetime.utcnow())
-                    return
+                    # The model gets one bounded revision.  If it still fails,
+                    # the deterministic Teaching Contract gate keeps the
+                    # learner moving with an explicit, answer-safe fallback.
+                    from app.services.teaching_contract import build_fallback_section
+                    fallback = build_fallback_section(
+                        checkpoint.learning_contract,
+                        checkpoint_title=checkpoint.title,
+                        failure_reason="模型生成连续两次失败，尚未取得完整正文。",
+                    )
+                    content = fallback["content"]
+                    section_delivery_state = "fallback_ready"
             questions = agent._extract_questions(content)
             # T6: rewrite image paths + render matplotlib blocks
             content = _postprocess_section(
@@ -486,6 +491,8 @@ async def run_lecture_generation(task_id: int):
         sec["source_file"] = ps.get("source_file", "")
         sec["source_heading"] = ps.get("source_heading", "")
         sec["cited_chunks"] = agent._extract_cited_chunks(content)
+        sec["delivery_state"] = section_delivery_state
+        sec["mastery_inference"] = False
 
         # Incremental save: replace section at index (fresh) or append
         async with async_session() as db:
@@ -514,6 +521,16 @@ async def run_lecture_generation(task_id: int):
             select(Lecture).where(Lecture.checkpoint_id == checkpoint_id)
         )).scalar_one_or_none()
         if lecture:
+            from app.services.teaching_contract import ensure_teaching_sections
+            checkpoint_for_gate = (await db.execute(
+                select(Checkpoint).where(Checkpoint.id == checkpoint_id)
+            )).scalar_one_or_none()
+            lecture.sections = ensure_teaching_sections(
+                lecture.sections,
+                contract=checkpoint_for_gate.learning_contract if checkpoint_for_gate else {},
+                checkpoint_title=checkpoint_for_gate.title if checkpoint_for_gate else "当前关卡",
+                failure_reason="讲义生成没有产生可展示正文",
+            )
             lecture.status = "published"
             lecture.version = int(lecture.version or 1) + 1
             from app.api.phase2 import _reanchor_lecture_annotations

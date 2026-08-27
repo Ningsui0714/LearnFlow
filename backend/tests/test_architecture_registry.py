@@ -82,7 +82,7 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
 
 def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
-        "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation", "selection_followup_context",
+        "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
         "vnext_learning_workspace_reader",
         "vnext_learning_path_graph_reader", "vnext_learning_path_exact_reader",
@@ -98,10 +98,10 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "coordinate_vnext_agent_turn",
-        "search_computer_knowledge", "read_web_evidence", "generate_learning_visual", "open_selection_followup",
+        "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
             "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
-                "read_active_learning_file",
+                "read_active_learning_file", "validate_teaching_contract", "read_checkpoint_delivery_readiness",
                 "recommend_learning_resources", "attach_learning_file_to_chat",
             "design_assessment_blueprint",
             "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
@@ -114,6 +114,12 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["read_web_evidence"] == (
         "learning_design_agent", "web_evidence_reader", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["search_learning_videos"] == (
+        "learning_design_agent", "learning_video_search", "vnext_chat",
+    )
+    assert CAPABILITY_OWNERS["inspect_learning_video"] == (
+        "learning_design_agent", "learning_video_inspector", "vnext_chat",
     )
     assert CAPABILITY_OWNERS["coordinate_vnext_agent_turn"] == (
         "tutor_agent", "vnext_agent_turn_runtime", "vnext_chat",
@@ -163,7 +169,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
-            "computer_knowledge_search", "web_evidence_reader", "safe_visual_generation", "selection_followup_context",
+            "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
             "vnext_learning_workspace_reader", "review_context_reader",
             "domain_knowledge_reader", "learning_file_service",
@@ -238,6 +244,12 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert set(SKILL_KINDS) == set(SKILLS)
     assert TOOL_INTERFACE_ROLES["computer_knowledge_search"] == "aci_tool"
     assert TOOL_INTERFACE_ROLES["web_evidence_reader"] == "aci_tool"
+    assert TOOL_INTERFACE_ROLES["learning_video_search"] == "aci_tool"
+    assert TOOL_INTERFACE_ROLES["learning_video_inspector"] == "aci_tool"
+    assert TOOL_MODEL_EXPOSURE["learning_video_search"] == "vnext_native"
+    assert TOOL_MODEL_EXPOSURE["learning_video_inspector"] == "vnext_native"
+    assert TOOL_INTERFACE_ROLES["teaching_contract_gate"] == "policy"
+    assert TOOL_INTERFACE_ROLES["checkpoint_delivery_readiness"] == "projection"
     assert TOOL_MODEL_EXPOSURE["web_evidence_reader"] == "vnext_native"
     assert TOOL_INTERFACE_ROLES["vnext_agent_turn_runtime"] == "harness"
     assert TOOL_INTERFACE_ROLES["five_kernel_reducer"] == "projection"

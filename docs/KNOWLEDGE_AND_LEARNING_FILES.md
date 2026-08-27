@@ -28,6 +28,7 @@ LearningTask
 
 - `domain_knowledge_reader` 是 ACI Tool：按当前对话附件和问题返回有界领域索引、来源片段和 provenance，不做资源选择。输入区可以显式选择“对话资料”，也可由 Tutor 在“自动”模式中与联网搜索比较。
 - `learning_resource_curation` 是规划态 Playbook Skill：先比较个人来源和学习路径覆盖，再用计算机知识搜索补缺；从目标匹配、来源层级、实践价值和成本说明推荐理由。
+- 视频资源沿用同一个 Playbook：`search_learning_videos` 只返回 `discovered` 候选；推荐前用 `inspect_learning_video` 核验本轮候选的字幕/ASR、时间点、目标覆盖与答案泄露风险。底层平台适配器不是模型工具，标题、热度、观看和字幕读取都不构成掌握。
 - `learning_file_service` 管理正式讲义/练习的列表、打开和纸张接入。模型没有通用文件写权限；仅在带领学习态、正式 `LearningTask + checkpoint` scope 下，`dynamic_practice_generator` / `similar_practice_generator` 可以提交题目候选，服务端通过静态质量门后物化为正式练习文件。
 - `practice_quality_inspector` 只检查 schema、测量目标声明、答案确定性和重复指纹；它不评价学生，也不产生掌握证据。
 - `dynamic_practice_loop` 是 Tutor Playbook：组合出题、质量检查、正式提交、确定性判题、纠错、变式和复习。Tool 生产或读取对象，Skill 编排闭环，二者不互相冒充。

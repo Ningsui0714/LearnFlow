@@ -10,6 +10,11 @@ import {
   type SearchDepth,
   type SearchProviderConfiguration,
 } from './computer-knowledge-search.ts'
+import {
+  inspectLearningVideo,
+  searchLearningVideos,
+  type LearningVideoCandidate,
+} from './learning-video-harness.ts'
 import type { LearningTaskTutorContext } from '../src/learning.ts'
 import type { LearningPlanTutorContext } from '../src/planning.ts'
 import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentToolDefinition } from '../src/agent-contracts.ts'
@@ -470,6 +475,45 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
+    name: 'search_learning_videos',
+    title: '搜索学习视频',
+    description: '当学习目标适合视频演示、分步操作或课程讲解时，跨平台搜索结构化候选。只返回已核验可用性、元数据和推荐理由，内容仍是 discovered；纯文本资料已足够或无需视频时不要调用。搜索和播放都不是掌握证据。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: '视频必须覆盖的具体主题，例如“Python generator 的 yield、暂停恢复与内存收益”' },
+        goal: { type: 'string', description: '学习者看完后应能解释或完成什么' },
+        level: { type: 'string', enum: ['beginner', 'intermediate', 'advanced'] },
+        language: { type: 'string', description: '偏好语言，例如 zh-Hans 或 en' },
+        max_duration_minutes: { type: 'integer', minimum: 1, maximum: 180 },
+        platforms: { type: 'array', items: { type: 'string', enum: ['bilibili', 'youtube'] } },
+        max_results: { type: 'integer', minimum: 1, maximum: 10 },
+      },
+      required: ['target'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'inspect_learning_video',
+    title: '核验学习视频内容',
+    description: '只核验本轮 search_learning_videos 返回的 candidate_id。读取字幕或已配置 ASR 的带时间点片段，检查目标覆盖、内容缺口与答案泄露风险；不能用任意 URL，也不能把观看表述为掌握。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        candidate_id: { type: 'string', description: '逐字复制本轮视频搜索返回的 candidateId' },
+        query: { type: 'string', description: '要在视频内容中定位的具体机制或步骤' },
+        outcomes: { type: 'array', items: { type: 'string' }, maxItems: 8 },
+        max_segments: { type: 'integer', minimum: 1, maximum: 16 },
+      },
+      required: ['candidate_id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'generate_learning_visual',
     title: '生成学习图解或动画',
     description: '把适合视觉表达的机制、结构或过程生成经过 SVG 白名单校验的静态图解或分步动画。',
@@ -594,6 +638,7 @@ export type TutorAgentToolExecution = {
   directReply?: string
   searchSourceUrls?: string[]
   searchSources?: SearchSource[]
+  videoCandidates?: LearningVideoCandidate[]
 }
 
 function compactFormalLearnerContext(value: unknown) {
@@ -929,7 +974,7 @@ export async function executeTutorAgentTool(
   name: string,
   args: Record<string, unknown>,
   options: TutorAgentToolRuntimeOptions,
-  meta: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[] } = {},
+  meta: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[]; videoCandidates?: LearningVideoCandidate[] } = {},
 ): Promise<TutorAgentToolExecution> {
   const startedAt = Date.now()
   const query = compactText(args.query || options.message, 1800) || compactText(options.message, 1800)
@@ -1437,6 +1482,55 @@ export async function executeTutorAgentTool(
       }
     }
 
+    if (name === 'search_learning_videos') {
+      const search = await searchLearningVideos({
+        target: compactText(args.target || query, 500),
+        goal: compactText(args.goal, 500),
+        level: ['beginner', 'intermediate', 'advanced'].includes(String(args.level)) ? args.level as any : undefined,
+        language: compactText(args.language, 40),
+        maxDurationMinutes: Number(args.max_duration_minutes) || undefined,
+        platforms: Array.isArray(args.platforms)
+          ? args.platforms.filter(item => item === 'bilibili' || item === 'youtube') as any
+          : undefined,
+        maxResults: Number(args.max_results) || 6,
+      }, options.searchConfiguration)
+      return {
+        run: {
+          ...base, kind: 'video', status: search.candidates.length ? 'completed' : 'failed', title: '搜索学习视频',
+          detail: `已检索 ${search.providers.map(item => `${item.platform}:${item.status}`).join(' · ')}，保留 ${search.candidates.length} 个候选；候选仍需内容核验。`,
+          observationSummary: `${search.candidates.length} 个 discovered 候选`,
+          durationMs: Date.now() - startedAt,
+        },
+        observation: search,
+        videoCandidates: search.candidates,
+      }
+    }
+
+    if (name === 'inspect_learning_video') {
+      const inspection = await inspectLearningVideo(
+        compactText(args.candidate_id, 100),
+        meta.videoCandidates || [],
+        {
+          query: compactText(args.query || query, 900),
+          outcomes: Array.isArray(args.outcomes) ? args.outcomes.map(item => compactText(item, 300)).filter(Boolean) : [],
+          maxSegments: Number(args.max_segments) || 8,
+        },
+        options.searchConfiguration,
+      )
+      return {
+        run: {
+          ...base, kind: 'video', status: inspection.verificationState === 'content_inspected' ? 'completed' : 'failed', title: '核验学习视频内容',
+          detail: inspection.verificationState === 'content_inspected'
+            ? `已取得 ${inspection.segments.length} 个相关字幕时间点，并检查目标覆盖与答案泄露风险。`
+            : '只核验到视频元数据，尚未取得字幕或 ASR；不能据此声称内容覆盖。',
+          observationSummary: `${inspection.verificationState} · ${inspection.segments.length} 个时间点`,
+          durationMs: Date.now() - startedAt,
+        },
+        observation: inspection,
+        videoCandidates: meta.videoCandidates || [],
+      }
+    }
+
     if (name === 'generate_learning_visual') {
       const kind = args.kind === 'animation' ? 'animation' : 'image'
       const visual = await generateVisual(kind, query, options.generate)
@@ -1569,6 +1663,7 @@ export async function executeTutorAgentTool(
       : name === 'read_review_context' ? 'review'
       : ['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node', 'read_learning_path'].includes(name) ? 'path'
         : name === 'search_computer_knowledge' ? 'search'
+          : /learning_video/.test(name) ? 'video'
           : /practice/i.test(name) ? 'file'
           : args.kind === 'animation' ? 'animation' : 'image'
     return {

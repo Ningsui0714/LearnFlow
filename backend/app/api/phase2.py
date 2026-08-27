@@ -243,6 +243,16 @@ async def _save_lecture_versioned(
         Lecture.checkpoint_id == checkpoint_id,
     ))).scalar_one_or_none()
     sections = _normalized_sections(sections_data.get("sections") or [])
+    checkpoint = (await db.execute(select(Checkpoint).where(
+        Checkpoint.id == checkpoint_id,
+    ))).scalar_one_or_none()
+    from app.services.teaching_contract import ensure_teaching_sections
+    sections = ensure_teaching_sections(
+        sections,
+        contract=checkpoint.learning_contract if checkpoint else {},
+        checkpoint_title=checkpoint.title if checkpoint else "当前关卡",
+        failure_reason="保存请求没有包含有效讲义正文",
+    )
     base_version = int(sections_data.get("base_version", lecture.version if lecture else 0) or 0)
     request_key = str(sections_data.get("idempotency_key") or "").strip()
     if not request_key:
