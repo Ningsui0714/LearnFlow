@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知行课径 UI 方向稿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============ 画布（展示壳）主题令牌 ============ */
+:root{
+  --ground:#F3F5FA; --surface:#FFFFFF; --surface2:#EDF0F7; --line:#E1E6F0;
+  --text:#1B2334; --muted:#5B6679; --faint:#8A95A9;
+  --accent:#147D76; --accent-ink:#0F5C57; --accent-soft:rgba(20,125,118,.11);
+  --amber:#A96613; --amber-soft:rgba(169,102,19,.11);
+  --good:#2F9E63; --warn:#C07A17; --bad:#CF4537; --bad-soft:rgba(207,69,55,.10);
+  --font-disp:"Archivo",system-ui,sans-serif;
+  --font-ui:"IBM Plex Sans",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"Cascadia Code",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0A0F1B; --surface:#111A2C; --surface2:#0D1524; --line:#223049;
+    --text:#E7ECF6; --muted:#95A1B8; --faint:#6B7690;
+    --accent:#2BA89F; --accent-ink:#3BC4BA; --accent-soft:rgba(43,168,159,.14);
+    --amber:#D98A2B; --amber-soft:rgba(217,138,43,.14);
+    --good:#3CB46E; --warn:#E0A32C; --bad:#E5675A; --bad-soft:rgba(229,103,90,.13);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0A0F1B; --surface:#111A2C; --surface2:#0D1524; --line:#223049;
+  --text:#E7ECF6; --muted:#95A1B8; --faint:#6B7690;
+  --accent:#2BA89F; --accent-ink:#3BC4BA; --accent-soft:rgba(43,168,159,.14);
+  --amber:#D98A2B; --amber-soft:rgba(217,138,43,.14);
+  --good:#3CB46E; --warn:#E0A32C; --bad:#E5675A; --bad-soft:rgba(229,103,90,.13);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--ground); color:var(--text);
+  font-family:var(--font-ui); line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{background:var(--accent-soft)}
+button{font-family:inherit; cursor:pointer}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+
+/* ============ 页头 ============ */
+.shell{max-width:1280px;margin:0 auto;padding:34px 28px 72px}
+.masthead{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:10px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);font-weight:500;margin-bottom:10px}
+h1{font-family:var(--font-disp);font-weight:800;font-size:clamp(30px,4.4vw,46px);line-height:1.05;letter-spacing:-.015em;text-wrap:balance}
+h1 .soft{color:var(--muted);font-weight:600}
+.lede{max-width:56ch;color:var(--muted);font-size:15px;margin-top:12px}
+.meta-line{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.chip{font-size:11.5px;color:var(--muted);border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-family:var(--font-mono)}
+.chip b{color:var(--text);font-weight:600}
+
+/* ============ 概念切换 Tabs ============ */
+.tabs{display:flex;gap:10px;flex-wrap:wrap;margin:30px 0 6px;border-top:1px solid var(--line);padding-top:22px}
+.tab{
+  display:flex;align-items:center;gap:9px;
+  background:var(--surface);color:var(--muted);
+  border:1px solid var(--line);border-radius:12px;
+  padding:10px 16px;font-size:14px;font-weight:600;
+  transition:border-color .18s,color .18s,transform .12s;
+}
+.tab:hover{transform:translateY(-1px);border-color:var(--accent)}
+.tab .k{font-family:var(--font-mono);font-size:11px;color:var(--faint);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.tab[aria-selected="true"]{border-color:var(--accent);color:var(--text);background:var(--accent-soft)}
+.tab[aria-selected="true"] .k{color:var(--accent);border-color:var(--accent)}
+
+/* ============ 概念面板 ============ */
+.panel{display:none}
+.panel.active{display:block;animation:fade .35s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.rationale{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;padding:26px 0 18px}
+.rationale .idx{font-family:var(--font-disp);font-weight:800;font-size:15px;color:var(--accent);letter-spacing:.02em}
+.rationale .txt{flex:1;min-width:260px}
+.rationale h3{font-family:var(--font-disp);font-weight:700;font-size:21px;letter-spacing:-.01em}
+.rationale .th{color:var(--muted);font-size:13.5px;margin-top:5px;max-width:60ch}
+.tagrow{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.tag{font-size:11px;font-weight:600;border-radius:6px;padding:3px 9px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+.tag.meta{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+.tag.cost{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
+
+/* ============ 浏览器/缩放舞台 ============ */
+.stage{position:relative;width:100%;overflow:hidden;border-radius:16px;border:1px solid var(--line);background:var(--surface);box-shadow:0 22px 60px -28px rgba(15,23,42,.35)}
+.screen{position:absolute;top:0;left:0;width:1280px;transform-origin:top left;background:#fff}
+.chrome{height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#eef0f4;border-bottom:1px solid #dfe3ea}
+.chrome .dot{width:10px;height:10px;border-radius:50%}
+.chrome .url{margin-left:10px;flex:1;max-width:340px;background:#fff;border:1px solid #dfe3ea;border-radius:7px;padding:3px 10px;font-size:11px;color:#7a8494;font-family:var(--font-mono)}
+.chrome .spacer{flex:1}
+
+/* ============ 概念 A —— 三阶段成长工作台 ============ */
+.scrA{--a-bg:#F6F8FC;--a-card:#fff;--a-line:#E3E8F2;--a-ink:#1D2637;--a-mut:#6A7588;--a-ac:#147D76;--a-ac-soft:rgba(20,125,118,.10);--a-amber:#A96613;--a-ok:#2F9E63;--a-bad:#CF4537;background:var(--a-bg);color:var(--a-ink);font-family:var(--font-ui)}
+.scrA .top{display:flex;align-items:center;gap:16px;padding:14px 22px;background:var(--a-card);border-bottom:1px solid var(--a-line)}
+.scrA .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px}
+.scrA .logo .mk{width:26px;height:26px;border-radius:8px;background:var(--a-ac);color:#fff;display:grid;place-items:center;font-size:13px;font-weight:800}
+.stepper{display:flex;align-items:center;gap:2px;margin:0 auto}
+.step{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:9px;font-size:13px;color:var(--a-mut);border:1px solid transparent}
+.step .no{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;border:1.5px solid var(--a-line);color:var(--a-mut);background:#fff}
+.step.active{color:var(--a-ink);font-weight:600;background:var(--a-ac-soft);border-color:var(--a-ac)}
+.step.active .no{background:var(--a-ac);border-color:var(--a-ac);color:#fff}
+.step.done .no{background:var(--a-ac);border-color:var(--a-ac);color:#fff}
+.step .br{color:#c3cad6;font-size:16px;padding:0 2px}
+.step.done .br{color:var(--a-ac)}
+.scrA .posel{margin-left:auto;font-size:12.5px;color:var(--a-mut);border:1px solid var(--a-line);background:#fff;border-radius:8px;padding:6px 10px;display:flex;gap:6px;align-items:center}
+.scrA .posel b{color:var(--a-ink)}
+.scrA .body{display:grid;grid-template-columns:270px 1fr 280px;gap:16px;padding:16px 22px 12px;min-height:470px}
+.scrA .col{background:var(--a-card);border:1px solid var(--a-line);border-radius:14px;padding:14px}
+.scrA .col h4{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--a-mut);font-weight:600;margin-bottom:10px}
+.ability{display:flex;align-items:center;gap:10px;padding:8px 9px;border-radius:9px;font-size:12.5px;cursor:pointer}
+.ability .dot{width:7px;height:7px;border-radius:50%;background:var(--a-line)}
+.ability .nm{flex:1}
+.ability .bar{width:44px;height:5px;border-radius:3px;background:var(--a-line);overflow:hidden}
+.ability .bar i{display:block;height:100%;border-radius:3px;background:var(--a-ac)}
+.ability.sel{background:var(--a-ac-soft);border:1px solid var(--a-ac)}
+.ability.sel .dot{background:var(--a-ac)}
+.ability.weak .bar i{background:var(--a-bad)}
+.ability .val{font-size:10.5px;color:var(--a-mut);font-family:var(--font-mono)}
+.chead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:4px}
+.chead h3{font-size:16px;font-weight:700}
+.chead .flag{font-size:10.5px;color:var(--a-bad);background:var(--bad-soft,#fdecea);border:1px solid #f3c9c3;border-radius:999px;padding:3px 9px;font-weight:600}
+.radar-wrap{display:grid;place-items:center;padding:4px 0}
+.cnote{font-size:12.5px;color:var(--a-mut);background:#f4f6fb;border:1px solid var(--a-line);border-radius:10px;padding:10px 12px;margin-top:6px;line-height:1.6}
+.cnote b{color:var(--a-ink)}
+.srcitem{display:flex;gap:9px;padding:7px 0;border-bottom:1px dashed var(--a-line);font-size:12px}
+.srcitem:last-child{border-bottom:none}
+.srcitem .ic{width:24px;height:24px;border-radius:7px;background:var(--a-ac-soft);color:var(--a-ac);display:grid;place-items:center;font-size:12px;flex:none}
+.srcitem .t{color:var(--a-ink);font-weight:500}
+.srcitem .s{color:var(--a-mut);font-size:11px}
+.resitem{display:flex;gap:9px;padding:6px 0;font-size:12px;align-items:center}
+.resitem .ic{width:24px;height:24px;border-radius:7px;background:#fff3e2;color:var(--a-amber);display:grid;place-items:center;font-size:12px;flex:none}
+.resitem .t{color:var(--a-ink);font-weight:500}
+.scrA .inbar{display:flex;align-items:center;gap:10px;margin:6px 22px 18px;background:#fff;border:1px solid var(--a-line);border-radius:12px;padding:9px 12px}
+.scrA .inbar .ph{flex:1;color:#aeb7c6;font-size:13px}
+.scrA .inbar .btn{background:var(--a-ac);color:#fff;border:none;border-radius:9px;padding:7px 15px;font-size:13px;font-weight:600}
+.scrA .inbar .tool{width:30px;height:30px;border-radius:8px;background:#f2f5fa;color:var(--a-mut);border:none;font-size:13px}
+/* A 阶段2/3 内容 */
+.taskcard{background:var(--a-card);border:1px solid var(--a-line);border-radius:12px;padding:12px 14px;margin-bottom:10px;display:flex;gap:12px}
+.taskcard .ic{width:34px;height:34px;border-radius:9px;background:var(--a-ac-soft);color:var(--a-ac);display:grid;place-items:center;font-size:15px;flex:none}
+.taskcard h4{font-size:13.5px;font-weight:600}
+.taskcard p{font-size:11.5px;color:var(--a-mut);margin-top:2px}
+.taskcard .go{margin-left:auto;align-self:center;font-size:11.5px;color:#fff;background:var(--a-ac);border:none;border-radius:8px;padding:6px 12px;font-weight:600}
+.tstripe{height:4px;border-radius:3px;margin:2px 0 12px;display:flex;gap:3px;overflow:hidden}
+.tstripe i{flex:1;border-radius:3px;background:var(--a-line)}
+.tstripe i.done{background:var(--a-ac)}
+.tstripe i.cur{background:var(--a-ac);opacity:.4}
+.pathstep{display:flex;gap:11px;padding:9px 0;position:relative;font-size:12.5px}
+.pathstep .rail{position:relative;width:16px;flex:none;display:flex;flex-direction:column;align-items:center}
+.pathstep .rail .n{width:16px;height:16px;border-radius:50%;border:2px solid var(--a-line);background:#fff;z-index:1}
+.pathstep .rail .ln{flex:1;width:2px;background:var(--a-line);margin-top:2px}
+.pathstep.cur .rail .n{border-color:var(--a-ac);background:var(--a-ac);box-shadow:0 0 0 3px var(--a-ac-soft)}
+.pathstep.cur .nm{font-weight:600;color:var(--a-ink)}
+.pathstep .nm{color:var(--a-ink)}
+.pathstep .sd{color:var(--a-mut);font-size:11px}
+.stg-body{display:none}
+.stg-body.on{display:block}
+
+/* ============ 概念 B —— 对话伴学 ============ */
+.scrB{--b-bg:#F3F5F9;--b-card:#fff;--b-line:#E2E7F0;--b-ink:#222B3C;--b-mut:#68748A;--b-ac:#2E6FD0;--b-ac-soft:rgba(46,111,208,.09);--b-user:#2E6FD0;--b-sec:#7A8599;background:var(--b-bg);color:var(--b-ink);font-family:var(--font-ui)}
+.scrB .row{display:grid;grid-template-columns:236px 1fr 260px;height:520px}
+.scrB .rail{background:var(--b-card);border-right:1px solid var(--b-line);padding:12px;overflow:hidden}
+.scrB .rail .grp{font-size:10.5px;letter-spacing:.09em;color:var(--b-sec);font-weight:600;text-transform:uppercase;margin:14px 10px 7px}
+.scrB .ses{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:8px 10px;border-radius:9px;cursor:pointer}
+.scrB .ses.cur{background:var(--b-ac-soft);font-weight:600;color:var(--b-ink)}
+.scrB .ses .dot{width:8px;height:8px;border-radius:50%;background:var(--b-ac)}
+.scrB .node{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--b-mut);padding:6px 10px;border-radius:8px}
+.scrB .node .ic{width:20px;height:20px;border-radius:6px;background:#eef1f7;color:var(--b-mut);display:grid;place-items:center;font-size:11px}
+.scrB .node.cur{background:var(--b-ac-soft);color:var(--b-ink);font-weight:600}
+.scrB .node.cur .ic{background:var(--b-ac);color:#fff}
+.scrB .node.done .ic{background:var(--b-ac-soft);color:var(--b-ac)}
+.scrB .node .st{font-size:10px;font-weight:700;color:var(--b-ac)}
+.scrB .node .st.bad{color:#CF4537}
+.scrB .chat{display:flex;flex-direction:column;padding:16px 20px;overflow:hidden;background:var(--b-bg)}
+.scrB .msg{max-width:88%;margin-bottom:13px}
+.scrB .msg.me{align-self:flex-end}
+.scrB .msg .who{font-size:10.5px;color:var(--b-sec);margin-bottom:4px;font-weight:600}
+.scrB .bubble{border-radius:13px;padding:11px 13px;font-size:13px;line-height:1.6}
+.scrB .msg.me .bubble{background:var(--b-user);color:#fff;border-bottom-right-radius:4px}
+.scrB .msg.ai .bubble{background:var(--b-card);border:1px solid var(--b-line);border-bottom-left-radius:4px}
+.scrB .msg.ai .bubble .src{font-size:10.5px;color:var(--b-ac);margin-top:8px;font-family:var(--font-mono)}
+.scrB .msg .hint{font-size:11px;color:var(--b-mut);margin-top:5px}
+.scrB .table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+.scrB .table th,.scrB .table td{border:1px solid var(--b-line);padding:6px 9px;text-align:left}
+.scrB .table th{background:#f4f6fa;color:var(--b-mut);font-weight:600}
+.scrB .table .ok{color:var(--b-ac);font-weight:700}
+.scrB .table .no{color:#CF4537}
+.scrB .qcard{border:1px dashed var(--b-line);border-radius:11px;padding:10px 12px;margin-top:9px;background:#fbfcfe}
+.scrB .qcard .q{font-size:12.5px;font-weight:600;margin-bottom:8px}
+.scrB .opt{display:flex;align-items:center;gap:8px;font-size:12px;padding:6px 9px;border:1px solid var(--b-line);border-radius:8px;margin-bottom:6px;background:#fff}
+.scrB .opt .r{width:13px;height:13px;border-radius:50%;border:1.5px solid var(--b-line)}
+.scrB .inbar{display:flex;align-items:center;gap:9px;margin:auto 0 0;background:#fff;border:1px solid var(--b-line);border-radius:11px;padding:8px 11px}
+.scrB .inbar .ph{flex:1;color:#aeb7c6;font-size:12.5px}
+.scrB .inbar .btn{background:var(--b-user);color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12.5px;font-weight:600}
+.scrB .ctx{background:var(--b-card);border-left:1px solid var(--b-line);padding:14px;overflow:hidden}
+.scrB .ctx h4{font-size:10.5px;letter-spacing:.09em;color:var(--b-sec);text-transform:uppercase;font-weight:600;margin:13px 0 8px}
+.scrB .ctx h4:first-child{margin-top:0}
+.scrB .kp{font-size:12px;padding:6px 9px;border-radius:8px;background:#f4f6fa;margin-bottom:6px;display:flex;justify-content:space-between}
+.scrB .kp b{font-weight:600}
+.scrB .kp .m{font-family:var(--font-mono);font-size:10.5px;color:var(--b-ac)}
+.scrB .ctx .res{font-size:12px;display:flex;gap:8px;align-items:center;padding:5px 0;color:var(--b-mut)}
+.scrB .ctx .res .ic{width:22px;height:22px;border-radius:6px;background:var(--b-ac-soft);color:var(--b-ac);display:grid;place-items:center;font-size:11px}
+
+/* ============ 概念 C —— 学习驾驶舱 ============ */
+.scrC{--c-bg:#F4F6FA;--c-card:#fff;--c-line:#E4E8F1;--c-ink:#1F2838;--c-mut:#66718A;--c-ac:#1E6FD9;--c-ok:#2F9E63;--c-warn:#C07A17;--c-bad:#CF4537;--c-bad-soft:#FCEBEA;--c-ok-soft:#E7F5EC;--c-warn-soft:#FBF1DF;background:var(--c-bg);color:var(--c-ink);font-family:var(--font-ui)}
+.scrC .ctop{display:flex;align-items:center;gap:18px;padding:13px 22px;background:var(--c-card);border-bottom:1px solid var(--c-line)}
+.scrC .logo{display:flex;gap:8px;align-items:center;font-weight:700;font-size:14px}
+.scrC .logo .mk{width:24px;height:24px;border-radius:7px;background:var(--c-ac);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:800}
+.scrC .who{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--c-mut);border:1px solid var(--c-line);border-radius:9px;padding:5px 11px}
+.scrC .who .av{width:20px;height:20px;border-radius:50%;background:var(--c-ac-soft,#e8f0fc);color:var(--c-ac);display:grid;place-items:center;font-size:11px;font-weight:700}
+.scrC .stat{font-size:12px;color:var(--c-mut);display:flex;gap:6px;align-items:center}
+.scrC .stat b{color:var(--c-ink)}
+.scrC .ctop .r{margin-left:auto;display:flex;gap:9px}
+.scrC .btn{background:var(--c-ac);color:#fff;border:none;border-radius:8px;padding:6px 13px;font-size:12px;font-weight:600}
+.scrC .btn.ghost{background:#fff;color:var(--c-mut);border:1px solid var(--c-line)}
+.scrC .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:16px 22px}
+.scrC .card{background:var(--c-card);border:1px solid var(--c-line);border-radius:14px;padding:14px}
+.scrC .card .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.scrC .card .hd h4{font-size:13.5px;font-weight:700}
+.scrC .card .hd .go{font-size:11px;color:var(--c-ac);font-weight:600}
+.scrC .pstage{display:flex;gap:0;align-items:stretch;margin:4px 0 10px}
+.scrC .pstage .seg{flex:1;text-align:center;padding:7px 4px 8px;border:1px solid var(--c-line);font-size:10.5px;color:var(--c-mut);position:relative;border-right:none}
+.scrC .pstage .seg:last-child{border-right:1px solid var(--c-line)}
+.scrC .pstage .seg.cur{background:var(--c-ac-soft,#e8f0fc);color:var(--c-ac);font-weight:700;border-color:var(--c-ac)}
+.scrC .pstage .seg .nm{display:block;font-size:10.5px}
+.scrC .pstage .seg .sub{font-size:9.5px;color:var(--c-mut)}
+.scrC .plabel{display:flex;justify-content:space-between;font-size:10.5px;color:var(--c-mut);margin-bottom:5px;font-family:var(--font-mono)}
+.scrC .bars .brow{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:9px;font-size:11.5px;margin:7px 0}
+.scrC .bars .bk{height:7px;background:var(--c-line);border-radius:4px;overflow:hidden}
+.scrC .bars .bk i{display:block;height:100%;border-radius:4px;background:var(--c-ac)}
+.scrC .bars .bk i.good{background:var(--c-ok)}
+.scrC .bars .bk i.warn{background:var(--c-warn)}
+.scrC .bars .bk i.bad{background:var(--c-bad)}
+.scrC .bars .bv{font-family:var(--font-mono);font-size:11px;text-align:right}
+.scrC .tlist .trow{display:flex;gap:10px;align-items:center;padding:7px 0;border-bottom:1px dashed var(--c-line);font-size:12px}
+.scrC .tlist .trow:last-child{border:none}
+.scrC .trow .cb{width:16px;height:16px;border-radius:5px;border:1.5px solid var(--c-line);flex:none}
+.scrC .trow.done .cb{background:var(--c-ok);border-color:var(--c-ok);color:#fff;display:grid;place-items:center;font-size:10px}
+.scrC .trow.done .nm{color:var(--c-mut);text-decoration:line-through}
+.scrC .trow .nm{flex:1}
+.scrC .st{font-size:10px;font-weight:700;border-radius:999px;padding:2px 8px}
+.scrC .st.doing{background:var(--c-ok-soft);color:var(--c-ok)}
+.scrC .st.todo{background:#f1f4f9;color:var(--c-mut)}
+.scrC .st.done{background:var(--c-ok-soft);color:var(--c-ok)}
+.scrC .wrow{display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid #f2c8c2;background:var(--c-bad-soft);border-radius:10px;margin-bottom:8px;font-size:12px}
+.scrC .wrow .badge{width:7px;height:7px;border-radius:50%;background:var(--c-bad);flex:none}
+.scrC .wrow .nm{flex:1;font-weight:600}
+.scrC .wrow .why{color:#a5453a;font-size:11px}
+.scrC .wrow .go{font-size:11px;font-weight:700;color:#a53a2e}
+.scrC .foot{display:flex;gap:10px;padding:0 22px 16px}
+.scrC .foot .q{flex:1;background:var(--c-card);border:1px solid var(--c-line);border-radius:11px;padding:11px 13px;display:flex;gap:9px;align-items:center;font-size:12px;color:var(--c-mut);cursor:pointer}
+.scrC .foot .q .ic{width:28px;height:28px;border-radius:8px;background:var(--c-ac-soft,#e8f0fc);color:var(--c-ac);display:grid;place-items:center;font-size:14px}
+
+/* ============ 概念 D —— 沉浸式学习舱 ============ */
+.scrD{--d-bg:#0E1218;--d-card:#151B25;--d-line:#252E3D;--d-ink:#E6EAF2;--d-mut:#8B97AB;--d-am:#D9A24A;--d-am-soft:rgba(217,162,74,.13);--d-ac:#4FB3AC;background:var(--d-bg);color:var(--d-ink);font-family:var(--font-ui)}
+.scrD .top{display:flex;align-items:center;gap:14px;padding:12px 26px;border-bottom:1px solid var(--d-line);font-size:13px}
+.scrD .crumb{color:var(--d-mut);font-size:12px}
+.scrD .crumb b{color:var(--d-ink)}
+.scrD .dtitle{font-weight:600}
+.scrD .tclock{margin-left:auto;color:var(--d-mut);font-size:11.5px;font-family:var(--font-mono)}
+.scrD .body{display:grid;grid-template-columns:1fr 300px;gap:26px;padding:26px 26px 10px}
+.scrD .article{max-width:720px;font-size:14px;line-height:1.85;color:#D7DDE8}
+.scrD .article .tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;color:var(--d-am);border:1px solid rgba(217,162,74,.4);border-radius:999px;padding:2px 9px;margin-bottom:12px}
+.scrD .article h2{font-size:22px;font-weight:700;color:var(--d-ink);margin:6px 0 4px;text-wrap:balance}
+.scrD .article .lead{color:var(--d-mut);font-size:13.5px;margin-bottom:18px}
+.scrD .blk{background:var(--d-card);border:1px solid var(--d-line);border-left:3px solid var(--d-am);border-radius:11px;padding:14px 16px;margin:16px 0}
+.scrD .blk .h{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--d-am);font-weight:600;margin-bottom:8px}
+.scrD .code{background:#0A0E14;border:1px solid var(--d-line);border-radius:10px;padding:12px 14px;font-family:var(--font-mono);font-size:12px;line-height:1.7;color:#B9E3DE;overflow-x:auto}
+.scrD .code .c{color:#7c8aa0}
+.scrD .cmp{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+.scrD .cmp th,.scrD .cmp td{border:1px solid var(--d-line);padding:7px 10px;text-align:left}
+.scrD .cmp th{color:var(--d-mut);font-weight:600;background:#0C1119}
+.scrD .cmp .bad{color:#E5766A}
+.scrD .cmp .good{color:#67C98B}
+.scrD .blk.warn{border-left-color:#E5766A}
+.scrD .blk.warn .h{color:#E5766A}
+.scrD .probe{display:flex;gap:10px;align-items:center;padding:9px 12px;border:1px dashed var(--d-line);border-radius:10px;margin-top:14px;font-size:13px}
+.scrD .probe .ic{width:26px;height:26px;border-radius:8px;background:var(--d-am-soft);color:var(--d-am);display:grid;place-items:center;font-size:13px}
+.scrD .side .box{background:var(--d-card);border:1px solid var(--d-line);border-radius:12px;padding:13px;margin-bottom:12px}
+.scrD .side .box h5{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--d-mut);font-weight:600;margin-bottom:9px}
+.scrD .side .bar{display:flex;gap:8px;align-items:center;font-size:12px;margin:7px 0;color:#CBD3E0}
+.scrD .side .bar .bk{flex:1;height:6px;background:var(--d-line);border-radius:3px;overflow:hidden}
+.scrD .side .bar i{display:block;height:100%;border-radius:3px;background:var(--d-ac)}
+.scrD .side .bar i.weak{background:#E5766A}
+.scrD .side .src{font-size:11.5px;color:var(--d-mut);padding:6px 0;border-bottom:1px dashed var(--d-line);display:flex;gap:8px}
+.scrD .side .src:last-child{border:none}
+.scrD .side .src .ic{color:var(--d-am);flex:none}
+.scrD .ask{position:fixed;right:26px;bottom:86px;width:52px;height:52px;border-radius:50%;background:var(--d-am);color:#15120b;display:grid;place-items:center;font-size:18px;box-shadow:0 10px 26px rgba(0,0,0,.45);border:none;font-weight:700}
+.scrD .askcap{position:fixed;right:26px;bottom:26px;font-size:11px;color:var(--d-mut)}
+.scrD .footer{display:flex;align-items:center;gap:16px;padding:18px 26px;border-top:1px solid var(--d-line);margin-top:6px}
+.scrD .footer .prog{flex:1;height:6px;background:var(--d-line);border-radius:3px;overflow:hidden}
+.scrD .footer .prog i{display:block;height:100%;width:68%;background:var(--d-am);border-radius:3px}
+.scrD .footer .pt{font-size:11.5px;color:var(--d-mut);font-family:var(--font-mono)}
+.scrD .footer .btn{background:var(--d-am);color:#15120b;border:none;border-radius:9px;padding:8px 16px;font-size:12.5px;font-weight:700}
+
+/* ============ 横向对比表 ============ */
+.compare{margin-top:44px;border-top:1px solid var(--line);padding-top:22px}
+.compare h2{font-family:var(--font-disp);font-weight:700;font-size:18px;margin-bottom:14px}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+table.cmp{border-collapse:collapse;width:100%;min-width:860px;font-size:12.5px}
+table.cmp th,table.cmp td{border-bottom:1px solid var(--line);padding:12px 16px;text-align:left;vertical-align:top}
+table.cmp thead th{background:var(--surface2);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+table.cmp th.hd{width:150px;background:transparent;color:var(--muted);font-weight:600;font-size:11px;letter-spacing:.04em}
+table.cmp td .ck{font-family:var(--font-disp);font-weight:800;color:var(--accent);font-size:11px}
+table.cmp td .nm{font-weight:600}
+table.cmp tr:last-child td{border-bottom:none}
+.footnote{margin-top:14px;font-size:12px;color:var(--muted);max-width:70ch}
+.footnote code{font-family:var(--font-mono);font-size:11px;background:var(--surface);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+
+@media (max-width:760px){
+  .masthead{flex-direction:column;align-items:flex-start}
+  .rationale{flex-direction:column}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ============ 页头 ============ -->
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">知行课径 · 前端方向稿 · 计算机信息技术专业群 / Java 应用开发工程师</div>
+      <h1>四种学习工作台<span class="soft">，</span>一条学习闭环</h1>
+      <p class="lede">为「个性化自适应学习」智能体设计的四套界面方向，覆盖同一个闭环：<b>看清目标 → 领取任务 → 学习成长 → 随时追问</b>。每一稿都按真实内容（成绩管理实训 / KN_JAVA_* 知识点）绘制，可直接进团队评审。</p>
+      <div class="meta-line">
+        <span class="chip">主场景：<b>方向4 个性化自适应学习</b></span>
+        <span class="chip">对接：<b>方向2 岗位图谱 · 方向3 任务转化</b></span>
+        <span class="chip">可用性：<b>逐稿可交互</b></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ============ 概念切换 ============ -->
+  <nav class="tabs" role="tablist" aria-label="界面方向">
+    <button class="tab" id="t-a" role="tab" aria-selected="true" data-k="a"><span class="k">A</span>三阶段成长工作台</button>
+    <button class="tab" id="t-b" role="tab" aria-selected="false" data-k="b"><span class="k">B</span>对话伴学工作台</button>
+    <button class="tab" id="t-c" role="tab" aria-selected="false" data-k="c"><span class="k">C</span>学习驾驶舱</button>
+    <button class="tab" id="t-d" role="tab" aria-selected="false" data-k="d"><span class="k">D</span>沉浸式学习舱</button>
+  </nav>
+
+  <!-- ============ A ============ -->
+  <section class="panel active" id="p-a">
+    <div class="rationale">
+      <div class="idx">方案 A</div>
+      <div class="txt">
+        <h3>三阶段成长工作台</h3>
+        <p class="th">顶部一条「明确目标 → 领取任务 → 学习成长」步骤条，三个方向在同一界面流转。与方向2/3同学对接的主线：方向2 输出能力图谱（阶段1），方向3 输出任务卡（阶段2），方向4 承接学习路径（阶段3）。用户不会迷路。</p>
+        <div class="tagrow">
+          <span class="tag meta">信息架构：三屏步骤条</span>
+          <span class="tag meta">核心交互：按步骤引导</span>
+          <span class="tag">方向2 · 能力图谱</span>
+          <span class="tag">方向3 · 任务卡</span>
+          <span class="tag">方向4 · 学习路径</span>
+          <span class="tag cost">实现成本：中</span>
+        </div>
+      </div>
+    </div>
+    <div class="stage"><div class="screen scrA">
+      <div class="chrome"><span class="dot" style="background:#e05a4e"></span><span class="dot" style="background:#e0a32c"></span><span class="dot" style="background:#3cb46e"></span><span class="url">zhixingkejing · 学习工作台</span><span class="spacer"></span></div>
+      <div class="top">
+        <div class="logo"><span class="mk">知</span>知行课径</div>
+        <div class="stepper" id="stepperA">
+          <div class="step active" data-stage="1"><span class="no">1</span>明确目标<span class="br">→</span></div>
+          <div class="step" data-stage="2"><span class="no">2</span>领取任务<span class="br">→</span></div>
+          <div class="step" data-stage="3"><span class="no">3</span>学习成长</div>
+        </div>
+        <div class="posel">计算机信息技术专业群 · <b>Java 应用开发工程师</b></div>
+      </div>
+
+      <div class="body">
+        <!-- 左：随阶段切换 -->
+        <div class="col" id="colL">
+          <h4 id="colLTitle">能力清单</h4>
+          <div id="colLBody">
+            <div class="ability sel"><span class="dot"></span><span class="nm">封装与访问控制</span><span class="bar"><i style="width:42%"></i></span><span class="val">42%</span></div>
+            <div class="ability weak"><span class="dot"></span><span class="nm">统计口径 / 集合</span><span class="bar"><i style="width:35%"></i></span><span class="val">35%</span></div>
+            <div class="ability"><span class="dot"></span><span class="nm">类与对象</span><span class="bar"><i style="width:70%"></i></span><span class="val">70%</span></div>
+            <div class="ability"><span class="dot"></span><span class="nm">继承与方法重写</span><span class="bar"><i style="width:58%"></i></span><span class="val">58%</span></div>
+            <div class="ability"><span class="dot"></span><span class="nm">多态与接口</span><span class="bar"><i style="width:50%"></i></span><span class="val">50%</span></div>
+            <div class="ability"><span class="dot"></span><span class="nm">异常与健壮性</span><span class="bar"><i style="width:46%"></i></span><span class="val">46%</span></div>
+          </div>
+        </div>
+        <!-- 中：随阶段切换 -->
+        <div class="col" id="colC">
+          <div class="stg-body on" data-stg="1">
+            <div class="chead"><h3>岗位能力图谱 · Java 应用开发工程师</h3><span class="flag">薄弱：封装访问</span></div>
+            <div class="radar-wrap"><canvas id="radarA" width="300" height="250"></canvas></div>
+            <div class="cnote">当前聚焦 <b>封装与访问控制</b>：直接访问 <code>scores</code> 数组绕过了 getter，外部修改破坏了内部状态。<a style="color:#147D76">从图谱节点领取相关任务 →</a></div>
+          </div>
+          <div class="stg-body" data-stg="2">
+            <div class="chead"><h3>可选学习任务</h3><span class="flag" style="background:#e7f5ec;color:#2F9E63;border-color:#bfe4cd">已领 1 / 3</span></div>
+            <div class="taskcard"><span class="ic">📝</span><div><h4>成绩录入与缺考标记</h4><p>新增/修改学生成绩，正确处理 null 缺考值</p></div><button class="go">领取</button></div>
+            <div class="taskcard"><span class="ic">🧮</span><div><h4>排除缺考的平均分统计</h4><p>分子分母来自同一有效成绩集合</p></div><button class="go">领取</button></div>
+            <div class="taskcard"><span class="ic">🔍</span><div><h4>合格人数统计与输出</h4><p>按 60 分线统计，输出到文件</p></div><button class="go">领取</button></div>
+          </div>
+          <div class="stg-body" data-stg="3">
+            <div class="chead"><h3>个性化学习路径 · 成绩管理实训</h3><span class="flag" style="background:#e7f5ec;color:#2F9E63;border-color:#bfe4cd">进度 4 / 7</span></div>
+            <div class="tstripe"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="cur"></i><i></i><i></i></div>
+            <div class="pathstep done"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">类与对象</div><div class="sd">完成 · 已自测</div></div></div>
+            <div class="pathstep done"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">封装与访问控制</div><div class="sd">完成 · 纠错后通过</div></div></div>
+            <div class="pathstep cur"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">集合与统计口径</div><div class="sd">当前 · 推荐先补微课《null 与分母》</div></div></div>
+            <div class="pathstep"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">异常与健壮性</div><div class="sd">未开始</div></div></div>
+          </div>
+        </div>
+        <!-- 右：固定联动面板 -->
+        <div class="col">
+          <h4>知识来源</h4>
+          <div class="srcitem"><span class="ic">📖</span><div><div class="t">《Java 核心技术·卷I》第 4 节</div><div class="s">封装与访问控制 · 防御性拷贝</div></div></div>
+          <div class="srcitem"><span class="ic">📖</span><div><div class="t">《Java 核心技术·卷I》第 12 节</div><div class="s">集合与泛型 · 过滤空值</div></div></div>
+          <h4 style="margin-top:12px">关联资源</h4>
+          <div class="resitem"><span class="ic">🎬</span><span class="t">微课：getter 与防御性拷贝</span></div>
+          <div class="resitem"><span class="ic">💻</span><span class="t">在线练习：统计口径对比</span></div>
+          <div class="resitem"><span class="ic">🧾</span><span class="t">1+X Java 应用开发 · 考核要点</span></div>
+        </div>
+      </div>
+      <div class="inbar"><span class="ph">输入你的问题，或从图谱节点开始…</span><button class="tool">🎤</button><button class="tool">📎</button><button class="btn">发送</button></div>
+    </div></div>
+  </section>
+
+  <!-- ============ B ============ -->
+  <section class="panel" id="p-b">
+    <div class="rationale">
+      <div class="idx">方案 B</div>
+      <div class="txt">
+        <h3>对话伴学工作台</h3>
+        <p class="th">以对话为核心：左栏章节树，中间对话流（AI 回复卡片化：讲解 / 对照表 / 变式题），右侧当前章节的要点与来源。最贴近现有 agent.html，改动成本最低，但"边读边问"的即时性最强。</p>
+        <div class="tagrow">
+          <span class="tag meta">信息架构：三栏对话</span>
+          <span class="tag meta">核心交互：选中文本追问</span>
+          <span class="tag">方向4 · 讲解 + 追问</span>
+          <span class="tag">方向3 · 任务卡</span>
+          <span class="tag cost">实现成本：低（沿用现有结构）</span>
+        </div>
+      </div>
+    </div>
+    <div class="stage"><div class="screen scrB">
+      <div class="chrome"><span class="dot" style="background:#e05a4e"></span><span class="dot" style="background:#e0a32c"></span><span class="dot" style="background:#3cb46e"></span><span class="url">zhixingkejing · 对话</span><span class="spacer"></span></div>
+      <div class="row">
+        <div class="rail">
+          <div class="grp">会话</div>
+          <div class="ses cur"><span class="dot"></span>成绩管理实训</div>
+          <div class="ses"><span class="dot" style="background:#cfd6e0"></span>面向对象基础</div>
+          <div class="grp">学习路径</div>
+          <div class="node done"><span class="ic">📗</span>类与对象<span class="st">✓</span></div>
+          <div class="node done"><span class="ic">🔒</span>封装与访问控制<span class="st">✓</span></div>
+          <div class="node cur"><span class="ic">🧮</span>集合与统计口径<span class="st bad">薄弱</span></div>
+          <div class="node"><span class="ic">⚠️</span>异常与健壮性</div>
+          <div class="node"><span class="ic">📂</span>输入输出流</div>
+          <div class="grp">测验</div>
+          <div class="node"><span class="ic">📝</span>阶段检查 · 2/3 通过</div>
+        </div>
+        <div class="chat">
+          <div class="msg me"><div class="who">小林</div><div class="bubble">我算平均分 (90+60)/3 = 50.0，为什么不对？</div></div>
+          <div class="msg ai"><div class="who">知行课径 · 讲解</div><div class="bubble">
+            问题不在加法，在<b>分子分母必须来自同一个有效成绩集合</b>——缺考（null）从分子排除了，分母却仍按 3 计。
+            <table class="table"><tr><th>口径</th><th>计算</th><th>结果</th><th>正确？</th></tr>
+            <tr><td>含缺考</td><td>(90 + 60) / 3</td><td>50.0</td><td class="no">✗</td></tr>
+            <tr><td>排除缺考</td><td>(90 + 60) / 2</td><td>75.0</td><td class="ok">✓</td></tr></table>
+            <div class="src">来源：《Java 核心技术·卷I》第 12 节 · 集合过滤空值</div>
+          </div>
+          <div class="msg ai"><div class="who">变式题</div><div class="bubble">
+            <div class="qcard"><div class="q">换一组数据：{80, null, 100, null}，正确平均分是？</div>
+              <div class="opt"><span class="r"></span>90</div><div class="opt"><span class="r"></span>60</div><div class="opt"><span class="r"></span>75</div>
+            </div>
+            <div class="hint">选中上表任一数字，可向 AI 追问依据</div>
+          </div>
+          <div class="inbar"><span class="ph">输入你的问题…</span><button class="btn">发送</button></div>
+        </div>
+        <div class="ctx">
+          <h4>当前章节 · 集合与统计口径</h4>
+          <div class="kp"><b>掌握度</b><span class="m">35%</span></div>
+          <div class="kp"><b>错因</b><span class="m">分母口径</span></div>
+          <h4>讲解要点</h4>
+          <div class="res"><span class="ic">✅</span>分子分母同源</div>
+          <div class="res"><span class="ic">⚠️</span>null ≠ 0</div>
+          <div class="res"><span class="ic">🧩</span>filter 过滤</div>
+          <h4>知识来源</h4>
+          <div class="res"><span class="ic">📖</span>《Java 核心技术》12 节</div>
+          <div class="res"><span class="ic">🎬</span>微课：null 与分母</div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ============ C ============ -->
+  <section class="panel" id="p-c">
+    <div class="rationale">
+      <div class="idx">方案 C</div>
+      <div class="txt">
+        <h3>学习驾驶舱</h3>
+        <p class="th">一屏总览：学习路径时间轴、能力分布、今日任务、薄弱点看板并置，点哪进哪。数据驱动、状态一目了然，教师可投屏看全貌，学生可秒回现场。信息密度最高的一稿。</p>
+        <div class="tagrow">
+          <span class="tag meta">信息架构：2×2 看板</span>
+          <span class="tag meta">核心交互：点卡片进详情</span>
+          <span class="tag">方向4 · 进度 + 薄弱点</span>
+          <span class="tag">方向2 · 能力雷达</span>
+          <span class="tag cost">实现成本：中</span>
+        </div>
+      </div>
+    </div>
+    <div class="stage"><div class="screen scrC">
+      <div class="chrome"><span class="dot" style="background:#e05a4e"></span><span class="dot" style="background:#e0a32c"></span><span class="dot" style="background:#3cb46e"></span><span class="url">zhixingkejing · 学习驾驶舱</span><span class="spacer"></span></div>
+      <div class="ctop">
+        <div class="logo"><span class="mk">知</span>知行课径</div>
+        <div class="who"><span class="av">林</span>小林 · 软件技术二年级</div>
+        <div class="stat">今日已学 <b>45min</b> · 连续打卡 <b>6 天</b></div>
+        <div class="r"><button class="btn ghost">错题本</button><button class="btn">开始学习</button></div>
+      </div>
+      <div class="grid">
+        <div class="card">
+          <div class="hd"><h4>学习路径 · 成绩管理实训</h4><span class="go">查看全部 ›</span></div>
+          <div class="pstage">
+            <div class="seg done"><span class="nm">实训一 · 录入</span><span class="sub">已完成</span></div>
+            <div class="seg done"><span class="nm">实训二 · 封装</span><span class="sub">已完成</span></div>
+            <div class="seg cur"><span class="nm">实训三 · 统计</span><span class="sub">进行中</span></div>
+            <div class="seg"><span class="nm">实训四 · 异常</span><span class="sub">未开始</span></div>
+          </div>
+          <div class="plabel"><span>全局进度 57%</span><span>7 个知识点 · 4 已解锁</span></div>
+        </div>
+        <div class="card">
+          <div class="hd"><h4>能力分布</h4><span class="go">图谱 ›</span></div>
+          <div class="bars">
+            <div class="brow"><span>类与对象</span><span class="bk"><i class="good" style="width:70%"></i></span><span class="bv">70%</span></div>
+            <div class="brow"><span>封装访问</span><span class="bk"><i class="warn" style="width:42%"></i></span><span class="bv">42%</span></div>
+            <div class="brow"><span>集合口径</span><span class="bk"><i class="bad" style="width:35%"></i></span><span class="bv">35%</span></div>
+            <div class="brow"><span>继承重写</span><span class="bk"><i class="good" style="width:58%"></i></span><span class="bv">58%</span></div>
+            <div class="brow"><span>异常健壮性</span><span class="bk"><i style="width:46%"></i></span><span class="bv">46%</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h4>今日任务</h4><span class="go">任务中心 ›</span></div>
+          <div class="tlist">
+            <div class="trow done"><span class="cb">✓</span><span class="nm">完成《类与对象》自测</span><span class="st done">完成</span></div>
+            <div class="trow"><span class="cb"></span><span class="nm">学习微课《null 与分母》</span><span class="st doing">进行中</span></div>
+            <div class="trow"><span class="cb"></span><span class="nm">重做变式题：含缺考平均分</span><span class="st todo">待办</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h4>薄弱点 · 待补习</h4><span class="go">全部 ›</span></div>
+          <div class="wrow"><span class="badge"></span><div><div class="nm">统计口径不一致</div><div class="why">2 次踩坑 · 缺考被计入分母</div></div><span class="go">去补习 ›</span></div>
+          <div class="wrow"><span class="badge"></span><div><div class="nm">绕过封装直接访问</div><div class="why">getter 返回内部数组引用</div></div><span class="go">去补习 ›</span></div>
+        </div>
+      </div>
+      <div class="foot">
+        <div class="q"><span class="ic">🧠</span>智能讲解 · 按薄弱点生成</div>
+        <div class="q"><span class="ic">📝</span>测评中心</div>
+        <div class="q"><span class="ic">🔁</span>错题重做</div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ============ D ============ -->
+  <section class="panel" id="p-d">
+    <div class="rationale">
+      <div class="idx">方案 D</div>
+      <div class="txt">
+        <h3>沉浸式学习舱</h3>
+        <p class="th">全屏深读章节讲解：阅读器质感、结构化知识块、右侧能力分布、底部进度 + 自测入口，悬浮"问 AI"随叫随到。把"学习本身"放到最大，让用户只面对眼前这一章。</p>
+        <div class="tagrow">
+          <span class="tag meta">信息架构：阅读器 + 悬浮助手</span>
+          <span class="tag meta">核心交互：深读 + 即时追问</span>
+          <span class="tag">方向4 · 讲解正文</span>
+          <span class="tag">自测 · 纠错闭环</span>
+          <span class="tag cost">实现成本：中（正文区重做）</span>
+        </div>
+      </div>
+    </div>
+    <div class="stage"><div class="screen scrD">
+      <div class="chrome" style="background:#10141c;border-color:#252e3d"><span class="dot" style="background:#e05a4e"></span><span class="dot" style="background:#e0a32c"></span><span class="dot" style="background:#3cb46e"></span><span class="url" style="background:#0a0e14;border-color:#252e3d;color:#8b97ab">zhixingkejing · 学习舱</span><span class="spacer"></span></div>
+      <div class="top">
+        <span class="crumb">成绩管理实训 · 实训三 / <b>集合与统计口径</b></span>
+        <span class="tclock">本节预计 18 min · 已读 7 min</span>
+      </div>
+      <div class="body">
+        <div class="article">
+          <span class="tag">KN_JAVA_COLLECTION · 集合与统计口径</span>
+          <h2>为什么平均分会算错：分子分母必须同源</h2>
+          <p class="lead">你提交的 <code>(90+60)/3 = 50.0</code> 不算错，只是统计口径不对。理解这一节，缺考与空值的处理就过关了。</p>
+
+          <div class="blk"><div class="h">核心结论</div>
+          平均分 = <b>有效成绩之和 ÷ 有效成绩个数</b>。缺考（null）必须先从分子排除，<b>也要从分母排除</b>。分子分母必须来自同一个有效集合，否则口径不一致，结果不可比。</div>
+
+          <div class="blk"><div class="h">两种口径对照</div>
+          <table class="cmp"><tr><th>口径</th><th>公式</th><th>结果</th></tr>
+          <tr><td class="bad">含缺考（分母含 null）</td><td>(90 + 60) / 3</td><td>50.0 ✗</td></tr>
+          <tr><td class="good">排除缺考（同源）</td><td>(90 + 60) / 2</td><td>75.0 ✓</td></tr></table></div>
+
+          <div class="blk"><div class="h">最小实现</div>
+          <pre class="code"><span class="c">// 过滤 null 后，分子分母来自同一集合</span>
+List&lt;Double&gt; valid = scores.stream()
+    .filter(Objects::nonNull)
+    .toList();
+double avg = valid.stream().mapToDouble(v -&gt; v).average()
+    .orElse(0.0);</pre></div>
+
+          <div class="blk warn"><div class="h">常见误区</div>
+          把 null 直接当 0 参与计算——两者业务含义不同；或只过滤分子、不过滤分母，导致平均分被"摊薄"。</div>
+
+          <div class="probe"><span class="ic">🎯</span><b>自测</b>：{80, null, 100, null} 的正确平均分是多少？<span style="margin-left:auto">→ 开始</span></div>
+        </div>
+        <div class="side">
+          <div class="box"><h5>本节能力分布</h5>
+            <div class="bar"><span style="width:76px">理解</span><span class="bk"><i style="width:72%"></i></span></div>
+            <div class="bar"><span style="width:76px">应用</span><span class="bk"><i class="weak" style="width:34%"></i></span></div>
+            <div class="bar"><span style="width:76px">辨析</span><span class="bk"><i class="weak" style="width:28%"></i></span></div>
+          </div>
+          <div class="box"><h5>知识来源</h5>
+            <div class="src"><span class="ic">📖</span>《Java 核心技术·卷I》第 12 节</div>
+            <div class="src"><span class="ic">📖</span>1+X 考核 · 集合过滤</div>
+            <div class="src"><span class="ic">🎬</span>微课《null 与分母》</div>
+          </div>
+        </div>
+      </div>
+      <button class="ask">问 AI</button>
+      <div class="askcap">选中文字可即时追问</div>
+      <div class="footer">
+        <span class="pt">本节进度 68%</span><div class="prog"><i></i></div>
+        <button class="btn">完成本节 · 进入自测</button>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ============ 横向对比 ============ -->
+  <div class="compare">
+    <h2>四稿一页对看</h2>
+    <div class="tblwrap">
+      <table class="cmp">
+        <thead><tr><th class="hd"></th><th>A · 三阶段成长</th><th>B · 对话伴学</th><th>C · 学习驾驶舱</th><th>D · 沉浸学习舱</th></tr></thead>
+        <tbody>
+          <tr><td class="hd">一句话</td>
+            <td>图谱→任务→学习，按步骤引导</td>
+            <td>边读边问，回复卡片化</td>
+            <td>一屏总览，点哪进哪</td>
+            <td>全屏深读，随叫随到</td></tr>
+          <tr><td class="hd">核心布局</td>
+            <td>顶部步骤条 + 三栏</td>
+            <td>左章节树 + 对话 + 右要点</td>
+            <td>2×2 数据看板</td>
+            <td>阅读器 + 右侧能力分布</td></tr>
+          <tr><td class="hd">最强的一手</td>
+            <td>方向 2/3/4 同一界面流转，团队对齐</td>
+            <td>选中文本追问，即时性最强</td>
+            <td>进度 / 薄弱点可视化，教师可看</td>
+            <td>学习专注度最高，讲解正文最专业</td></tr>
+          <tr><td class="hd">对方向 2</td>
+            <td>图谱即阶段 1</td>
+            <td>右侧小雷达</td>
+            <td>能力分布卡</td>
+            <td>侧栏能力分布</td></tr>
+          <tr><td class="hd">对方向 3</td>
+            <td>任务卡即阶段 2</td>
+            <td>任务卡消息</td>
+            <td>今日任务卡</td>
+            <td>任务 → 自测</td></tr>
+          <tr><td class="hd">对方向 4</td>
+            <td>路径即阶段 3</td>
+            <td>讲解 + 追问 + 变式</td>
+            <td>进度 + 薄弱点 + 错题</td>
+            <td>深读讲解 + 自测闭环</td></tr>
+          <tr><td class="hd">实现成本</td>
+            <td>中 · 步骤条重构</td>
+            <td>低 · 沿用现有对话</td>
+            <td>中 · 看板组装</td>
+            <td>中 · 正文区重做</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="footnote">注：A/B 偏"工作台"心智（学完后离开）；D 偏"阅读舱"心智（一坐一下午）。实际可 <code>A 做骨架 + D 做讲解页</code> 混搭，B 的选中追问保留为全局能力。方向稿为静态高保真，未接后端数据。</p>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  var tabs=document.querySelectorAll('.tab');
+  function select(k){
+    tabs.forEach(function(t){var on=t.dataset.k===k;t.setAttribute('aria-selected',on?'true':'false');});
+    ['a','b','c','d'].forEach(function(id){document.getElementById('p-'+id).classList.toggle('active',id===k);});
+    fit();
+  }
+  tabs.forEach(function(t){t.addEventListener('click',function(){select(t.dataset.k);});});
+
+  // ---- 概念 A 步骤条交互 ----
+  var steps=document.querySelectorAll('#stepperA .step');
+  var stageMap={'1':'colLTitle=能力清单','2':'colLTitle=待领任务','3':'colLTitle=学习路径'};
+  steps.forEach(function(s){
+    s.addEventListener('click',function(){
+      var st=s.dataset.stage;
+      steps.forEach(function(x){x.classList.toggle('active',x===s);if(parseInt(x.dataset.stage,10)<parseInt(st,10))x.classList.add('done');else x.classList.remove('done');});
+      document.querySelectorAll('.stg-body').forEach(function(b){b.classList.toggle('on',b.dataset.stg===st);});
+      if(st==='2'){document.getElementById('colLTitle').textContent='待领任务';
+        document.getElementById('colLBody').innerHTML=
+          '<div class="taskcard" style="margin-bottom:8px"><span class="ic">📝</span><div><h4>成绩录入与缺考标记</h4><p>状态：进行中</p></div></div>'+
+          '<div class="taskcard" style="margin-bottom:8px"><span class="ic">🧮</span><div><h4>排除缺考的平均分</h4><p>状态：待领取</p></div></div>'+
+          '<div class="taskcard"><span class="ic">🔍</span><div><h4>合格人数统计</h4><p>状态：待领取</p></div></div>';
+      }else if(st==='3'){document.getElementById('colLTitle').textContent='学习路径';
+        document.getElementById('colLBody').innerHTML=
+          '<div class="pathstep done"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">类与对象</div><div class="sd">已解锁</div></div></div>'+
+          '<div class="pathstep done"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">封装与访问控制</div><div class="sd">已解锁</div></div></div>'+
+          '<div class="pathstep cur"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">集合与统计口径</div><div class="sd">当前 · 薄弱</div></div></div>'+
+          '<div class="pathstep"><div class="rail"><span class="n"></span><span class="ln"></span></div><div><div class="nm">异常与健壮性</div><div class="sd">锁定</div></div></div>';
+      }else{document.getElementById('colLTitle').textContent='能力清单';
+        document.getElementById('colLBody').innerHTML=
+          '<div class="ability sel"><span class="dot"></span><span class="nm">封装与访问控制</span><span class="bar"><i style="width:42%"></i></span><span class="val">42%</span></div>'+
+          '<div class="ability weak"><span class="dot"></span><span class="nm">统计口径 / 集合</span><span class="bar"><i style="width:35%"></i></span><span class="val">35%</span></div>'+
+          '<div class="ability"><span class="dot"></span><span class="nm">类与对象</span><span class="bar"><i style="width:70%"></i></span><span class="val">70%</span></div>'+
+          '<div class="ability"><span class="dot"></span><span class="nm">继承与方法重写</span><span class="bar"><i style="width:58%"></i></span><span class="val">58%</span></div>'+
+          '<div class="ability"><span class="dot"></span><span class="nm">多态与接口</span><span class="bar"><i style="width:50%"></i></span><span class="val">50%</span></div>';
+      }
+    });
+  });
+
+  // ---- 缩放舞台 ----
+  function fit(){
+    document.querySelectorAll('.stage').forEach(function(stage){
+      var screen=stage.querySelector('.screen');
+      var scale=Math.min(1,stage.clientWidth/1280);
+      screen.style.transform='scale('+scale+')';
+      stage.style.height=(screen.offsetHeight*scale)+'px';
+    });
+  }
+  window.addEventListener('resize',fit);
+  window.addEventListener('load',function(){fit();drawRadars();});
+
+  // ---- 雷达图（A/C 用） ----
+  function drawRadars(){
+    var cv=document.getElementById('radarA'); if(!cv)return;
+    drawRadar(cv,['语法基础','面向对象','集合口径','异常健壮','IO 持久化','规范调试'],
+      [0.7,0.5,0.35,0.46,0.3,0.6],
+      {grid:'#E3E8F2',text:'#6A7588',fill:'rgba(20,125,118,.18)',stroke:'#147D76'});
+  }
+  function drawRadar(cv,dims,vals,c){
+    var ctx=cv.getContext('2d'),W=cv.width,H=cv.height,cx=W/2,cy=H/2,R=Math.min(W,H)/2-30;
+    ctx.clearRect(0,0,W,H); var n=dims.length;
+    function pt(i,r){var a=-Math.PI/2+i*2*Math.PI/n;return[cx+r*Math.cos(a),cy+r*Math.sin(a)];}
+    ctx.strokeStyle=c.grid;ctx.lineWidth=1;ctx.fillStyle=c.text;ctx.font='11px "IBM Plex Sans"';
+    [0.25,0.5,0.75,1].forEach(function(r){
+      ctx.beginPath();
+      for(var i=0;i<=n;i++){var p=pt(i%n,R*r);i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]);}
+      ctx.stroke();
+    });
+    for(var i=0;i<n;i++){
+      var p=pt(i,R);ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(p[0],p[1]);ctx.stroke();
+      var l=pt(i,R+18);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(dims[i],l[0],l[1]);
+    }
+    ctx.beginPath();
+    for(var j=0;j<=n;j++){var q=pt(j%n,R*vals[j%n]);j?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]);}
+    ctx.closePath();ctx.fillStyle=c.fill;ctx.fill();ctx.strokeStyle=c.stroke;ctx.lineWidth=2;ctx.stroke();
+    for(var k=0;k<n;k++){var d=pt(k,R*vals[k]);ctx.beginPath();ctx.arc(d[0],d[1],3,0,7);ctx.fillStyle=c.stroke;ctx.fill();}
+  }
+})();
+</script>
+</body>
+</html>
