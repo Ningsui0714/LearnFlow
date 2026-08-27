@@ -169,6 +169,14 @@ ContextEnvelope
 `LearningTask + checkpoint` 时才额外开放动态出题、同构变式和题目质量检查。任何五核、个人节点、长期路线、
 通用任务或任意文件写入能力仍由确定性 runtime 和显式确认控制。
 
+传输层采用“即时输入确认 + 可撤销流式草稿 + 校验后持久化”：页面不等待正式上下文同步才显示用户消息；
+Chat Completions 与 Responses 的原生文本增量直接形成 `text_delta`。模型改为调用工具、重试、校验回退
+或草稿与最终正文不一致时必须发送 `text_reset`，因此 UI 不会把前一模型轮的工具前导语拼进最终答案。
+只有通过 verifier 的最终正文写入正式消息；流式草稿不进入 EvidenceEvent、五核或 Memory Graph。
+
+Contract impact（Tutor streaming transport）：`AgentTurnTrace` 仅增加向后兼容的可选 timings，流式联合类型仅增加
+`text_reset` 分支；没有数据库迁移、工具/Skill/Event 注册变化，也没有新增 Kernel writer。
+
 注册表中的 `TOOLS` 保留稳定 ID 以兼容既有 API，同时增加正交分类：`aci_tool / harness /
 projection / policy / adapter`。只有 `aci_tool` 可以成为模型工具；`vnext_agent_turn_runtime`、
 任务/规划 runtime 是 Harness，`five_kernel_reducer` 和 Memory Graph 是投影基础设施，不得冒充

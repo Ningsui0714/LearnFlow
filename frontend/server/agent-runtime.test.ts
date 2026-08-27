@@ -117,6 +117,52 @@ test('Tutor runs a bounded observe-act-observe loop and preserves tool results',
   assert.ok(requests[1].body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'path-call'))
 })
 
+test('provider deltas reach the UI live and a tool decision resets only the draft round', async () => {
+  const events: any[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'simple_explain',
+    messages: [{ role: 'user', content: '解释一下梯度下降' }],
+    toolChoice: 'auto',
+    generate: async () => 'unused',
+    observe: event => events.push(event),
+    invokeProvider: async request => {
+      round += 1
+      if (round === 1) {
+        request.onTextDelta?.('我先查一下。')
+        return { choices: [{ message: { content: '我先查一下。', tool_calls: [{
+          id: 'search-1', function: {
+            name: 'search_computer_knowledge', arguments: '{"query":"梯度下降定义"}',
+          },
+        }] } }] }
+      }
+      request.onTextDelta?.('梯度下降会沿着')
+      request.onTextDelta?.('损失函数下降方向更新参数。')
+      return { choices: [{ message: { content: '梯度下降会沿着损失函数下降方向更新参数。' } }] }
+    },
+    executeTool: async (name, args, options, meta) => {
+      if (name === 'search_computer_knowledge') return {
+        run: {
+          id: 'search-run', kind: 'search', toolName: name, toolCallId: meta?.callId,
+          status: 'completed', title: '联网搜索', detail: '已取得定义来源', durationMs: 3,
+        },
+        observation: { authority: 'search', query: args.query },
+      }
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+  })
+
+  const reset = events.findIndex(event => event.type === 'text_reset' && event.reason === 'tool_call')
+  const toolStarted = events.findIndex(event => event.type === 'tool_started' && event.toolName === 'search_computer_knowledge')
+  assert.ok(reset >= 0 && toolStarted > reset)
+  const finalDeltas = events.slice(reset + 1).filter(event => event.type === 'text_delta').map(event => event.delta).join('')
+  assert.equal(finalDeltas, result.reply)
+  assert.equal(result.trace.timings?.totalMs >= 0, true)
+  assert.equal(typeof result.trace.timings?.firstTextDeltaMs, 'number')
+})
+
 test('duplicate tool calls are blocked and the model can recover to a final answer', async () => {
   let round = 0
   const result = await runTutorAgentTurn({

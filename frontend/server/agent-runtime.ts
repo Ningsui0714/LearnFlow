@@ -41,6 +41,7 @@ type ProviderInvoke = (request: {
   endpoint: string
   body: unknown
   timeoutMs: number
+  onTextDelta?: (delta: string) => void
 }) => Promise<unknown>
 
 export type TutorAgentRuntimeInput = {
@@ -376,6 +377,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let sequence = 0
   let stopReason: AgentTurnResponse['trace']['stopReason'] = 'error'
   let fallbackReply = ''
+  let visibleDraft = ''
+  let firstTextDeltaAt: number | undefined
   let pathGapPending = false
   let pathFuzzyPending = false
   let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
@@ -386,6 +389,26 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     const recorded = { ...event, sequence: ++sequence, at: Date.now() }
     trajectory.push(recorded)
     input.observe?.({ type: 'trajectory', event: recorded })
+  }
+  const emitTextDelta = (delta: string) => {
+    if (!delta) return
+    if (!firstTextDeltaAt) firstTextDeltaAt = Date.now()
+    visibleDraft += delta
+    input.observe?.({ type: 'text_delta', delta })
+  }
+  const resetVisibleDraft = (reason: 'tool_call' | 'retry' | 'verification' | 'reconcile') => {
+    if (!visibleDraft) return
+    visibleDraft = ''
+    input.observe?.({ type: 'text_reset', reason })
+  }
+  const reconcileVisibleDraft = (candidate: string) => {
+    if (!input.observe) return
+    if (candidate.startsWith(visibleDraft)) {
+      emitTextDelta(candidate.slice(visibleDraft.length))
+      return
+    }
+    resetVisibleDraft('reconcile')
+    emitTextDelta(candidate)
   }
   const toolOptions: TutorAgentToolRuntimeOptions = {
     message: latestMessage,
@@ -563,12 +586,15 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        return await input.invokeProvider({
+        const payload = await input.invokeProvider({
           ...request,
           timeoutMs: Math.max(1_000, Math.min(40_000, deadline - Date.now())),
+          onTextDelta: emitTextDelta,
         })
+        return payload
       } catch (error) {
         lastError = error
+        resetVisibleDraft('retry')
         const message = error instanceof Error ? error.message : String(error || '')
         const transient = /timeout|超时|429|rate|network|fetch|ECONN|temporar|503|502/i.test(message)
         if (!transient || attempt > 0 || Date.now() >= deadline - 1_000) throw error
@@ -593,6 +619,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       const calls = toolCallsFromProviderResponse(payload)
       const text = textFromTutorProviderResponse(payload)
       if (calls.length) {
+        resetVisibleDraft('tool_call')
         record({ phase: 'decide', detail: `模型选择 ${calls.length} 个工具`, status: 'completed' })
         for (const call of calls.slice(0, MAX_TOOL_CALLS - toolCalls)) {
           if (!modelVisibleToolNames.has(call.name)) {
@@ -654,11 +681,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       })
       if (verification.valid) {
         reply = candidate
+        reconcileVisibleDraft(candidate)
         stopReason = 'final_answer'
         record({ phase: 'verify', detail: '最终回复通过展示协议校验', status: 'completed' })
         break
       }
       runtimeMessages.push({ role: 'assistant', content: text })
+      resetVisibleDraft('verification')
       runtimeMessages.push({
         role: 'user',
         content: `上一次输出未通过终态校验（${verification.violations.join('、')}）。请只输出自然的中文教学正文；不得冒充已写入状态、不得无证据宣布掌握，工具失败要透明说明；观察到记忆冲突时必须把冲突和确认权告诉学习者；没有可见 Attempt 只能说暂无记录，不能推断学生第一次学习或从未练习。`,
@@ -691,7 +720,12 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           toolRuns: runs,
           learningTaskContext: input.learningTaskContext,
           observations,
-        }).valid) reply = candidate
+        }).valid) {
+          reply = candidate
+          reconcileVisibleDraft(candidate)
+        } else {
+          resetVisibleDraft('verification')
+        }
       }
       if (!reply && fallbackReply) reply = fallbackReply
       if (!reply) throw new Error('模型在本轮预算内没有返回可显示的教学内容')
@@ -716,13 +750,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     record({ phase: 'error', detail: `终态校验失败：${finalVerification.violations.join('、')}`, status: 'failed' })
     throw new Error(`模型回复未通过终态安全校验：${finalVerification.violations.join('、')}`)
   }
-  if (input.observe) {
-    const chunks = reply.match(/.{1,18}(?:\s+|$)|.{1,18}/gs) || [reply]
-    for (const delta of chunks) {
-      input.observe({ type: 'text_delta', delta })
-      await new Promise(resolve => setTimeout(resolve, 8))
-    }
-  }
+  reconcileVisibleDraft(reply)
   return {
     reply,
     toolRuns: runs,
@@ -733,6 +761,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       toolCalls,
       stopReason,
       events: trajectory,
+      timings: {
+        ...(firstTextDeltaAt ? { firstTextDeltaMs: firstTextDeltaAt - startedAt } : {}),
+        totalMs: Date.now() - startedAt,
+      },
     },
   }
 }

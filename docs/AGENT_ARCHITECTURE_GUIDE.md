@@ -237,6 +237,14 @@ MUST 去重，工具失败 MUST 分类并留给模型恢复。vNext native ACI �
 未校准练习文件，不能写五核或宣布掌握；所有学习状态写入仍通过正式提交、Action Board、确认策略和
 EvidenceEvent 网关。
 
+浏览器提交后 MUST 先本地确认用户消息、清空输入框并建立 live turn，再异步完成正式 Session、SkillRun、
+五核与工作区观察的同步；这些权威操作不得阻塞输入反馈。模型调用使用供应商原生流式协议，正文增量作为
+可撤销草稿发送 `text_delta`。若当前模型轮转而选择工具、发生可重试错误、终态校验失败或最终正文与草稿
+不一致，Harness MUST 先发送带原因的 `text_reset`，再进入下一轮或重放权威正文。只有通过终态 verifier
+的完整回复可以持久化为 AgentMessage；草稿增量、工具前导语和被撤销文本都不是学习证据。
+`AgentTurnTrace.timings` 以可选的 `firstTextDeltaMs` 和必填 `totalMs` 分别观测首字延迟与总耗时，不能把
+“工具卡已经出现”误报为正文首字。
+
 `dynamic_practice_loop` 是 Playbook，不是第四类 Agent，也不是单一 Tool。Tutor 决定是否进入“生成—作答—
 纠错—变式—复习”闭环；Learning Design 只生成题目候选，`dynamic_practice` 服务检查题型、target skill、
 答案确定性、重复指纹和答案安全，Practice Agent 复用正式确定性判题。题目质量检查与学习者作答评估必须分离。

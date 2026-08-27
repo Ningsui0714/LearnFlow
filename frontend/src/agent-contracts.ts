@@ -80,6 +80,10 @@ export type AgentTurnTrace = {
   toolCalls: number
   stopReason: 'final_answer' | 'tool_budget' | 'model_budget' | 'forced_finalize' | 'error'
   events: AgentTrajectoryEvent[]
+  timings?: {
+    firstTextDeltaMs?: number
+    totalMs: number
+  }
 }
 
 export type AgentTaskQueueItem = {
@@ -135,5 +139,6 @@ export type AgentTurnStreamEvent =
   | { type: 'tool_started'; toolCallId: string; toolName: string; title: string; startedAt: number }
   | { type: 'tool_completed'; run: TutorToolRun }
   | { type: 'text_delta'; delta: string }
+  | { type: 'text_reset'; reason: 'tool_call' | 'retry' | 'verification' | 'reconcile' }
   | { type: 'done'; result: AgentTurnResponse; requestId?: string }
   | { type: 'error'; error: string; requestId?: string }

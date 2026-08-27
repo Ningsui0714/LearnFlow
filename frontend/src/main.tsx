@@ -1271,6 +1271,9 @@ function App() {
     setLiveTurns(previous => {
       const current = previous[conversationId]
       if (!current || event.type === 'done' || event.type === 'error') return previous
+      if (event.type === 'text_reset') {
+        return { ...previous, [conversationId]: { ...current, content: '', phase: '正在调整回答' } }
+      }
       if (event.type === 'text_delta') {
         return { ...previous, [conversationId]: { ...current, content: current.content + event.delta, phase: '正在回答' } }
       }
@@ -1410,6 +1413,59 @@ function App() {
     }
 
     const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
+    const optimisticTurnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
+
+    // Paint the learner turn before any formal persistence or context work.
+    // The awaited operations below remain authoritative, but they must not
+    // block input acknowledgement or make the composer feel frozen.
+    setPendingTurns(previous => ({ ...previous, [conversationId]: mode }))
+    setLiveTurns(previous => ({
+      ...previous,
+      [conversationId]: {
+        sheetId,
+        messageId: uid('stream'),
+        content: '',
+        toolRuns: [],
+        phase: formalConnection.status === 'connected' ? '正在同步学习状态' : '正在理解问题',
+        startedAt: Date.now(),
+      },
+    }))
+    setWorkspace(previous => {
+      const conversations = previous.conversations.map(item => {
+        if (item.id !== conversationId) return item
+        const firstStudentMessage = !item.messages.some(message => message.role === 'user')
+        const userMessage: Message = {
+          id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
+          persistedByTutor: isDesktopRuntime(),
+          learningActionLabel: options.learningActionLabel,
+          learningSkillId: learningProjection?.skillId,
+          learningSubstateId: optimisticTurnStep?.substateId,
+          learningSubstateLabel: optimisticTurnStep?.substateLabel,
+        }
+        return {
+          ...item,
+          title: !replayInterruptedTurn && sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : item.title,
+          updatedAt: now,
+          mode,
+          learningTasks,
+          learningEvents,
+          learningPlans,
+          planningEvents,
+          messages: sheetId === 'main' && !replayInterruptedTurn ? [...item.messages, userMessage] : item.messages,
+          sheets: sheetId === 'main' || replayInterruptedTurn ? item.sheets : item.sheets.map(sheet => (
+            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
+          )),
+        }
+      })
+      const current = conversations.find(item => item.id === conversationId)
+      if (!current) return previous
+      return {
+        ...previous,
+        conversations,
+        tabs: previous.tabs.map(tab => tab.conversationId === current.id ? { ...tab, title: current.title } : tab),
+      }
+    })
+    if (!replayInterruptedTurn) setDrafts(previous => ({ ...previous, [draftKey]: '' }))
 
     if (!replayInterruptedTurn && formalConnection.status === 'connected' && !configurationIssue) {
       try {
@@ -1483,48 +1539,28 @@ function App() {
       }
     }
 
+    // Reconcile the optimistic browser projection with the formal IDs and
+    // SkillRun state obtained above. This updates metadata only; the user
+    // message was already inserted exactly once.
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(item => item.id === conversationId ? {
+        ...item,
+        formalSessionId,
+        learningTasks,
+        learningEvents,
+        learningPlans,
+        planningEvents,
+        updatedAt: Date.now(),
+      } : item),
+    }))
+
     const contextMessages = buildTutorContextMessages(
       inheritedContextMessages(conversation),
       content,
       replayInterruptedTurn,
     )
     const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
-
-    setPendingTurns(previous => ({ ...previous, [conversationId]: mode }))
-    setWorkspace(previous => {
-      const conversations = previous.conversations.map(conversation => {
-        if (conversation.id !== conversationId) return conversation
-        const firstStudentMessage = !conversation.messages.some(message => message.role === 'user')
-        const userMessage: Message = {
-          id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
-          persistedByTutor: isDesktopRuntime(),
-          learningActionLabel: options.learningActionLabel,
-          learningSkillId: learningProjection?.skillId,
-          learningSubstateId: turnStep?.substateId,
-          learningSubstateLabel: turnStep?.substateLabel,
-        }
-        return {
-          ...conversation,
-          title: !replayInterruptedTurn && sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : conversation.title,
-          updatedAt: now,
-          mode,
-          formalSessionId,
-          learningTasks,
-          learningEvents,
-          learningPlans,
-          planningEvents,
-          messages: sheetId === 'main' && !replayInterruptedTurn ? [...conversation.messages, userMessage] : conversation.messages,
-          sheets: sheetId === 'main' || replayInterruptedTurn ? conversation.sheets : conversation.sheets.map(sheet => (
-            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
-          )),
-        }
-      })
-      const current = conversations.find(item => item.id === conversationId)
-      if (!current) return previous
-      const tabs = previous.tabs.map(tab => tab.conversationId === current.id ? { ...tab, title: current.title } : tab)
-      return { ...previous, conversations, tabs }
-    })
-    if (!replayInterruptedTurn) setDrafts(previous => ({ ...previous, [draftKey]: '' }))
 
     if (configurationIssue) {
       finishTurn(conversationId, sheetId, mode, {
@@ -1537,17 +1573,10 @@ function App() {
       return
     }
 
-    setLiveTurns(previous => ({
+    setLiveTurns(previous => previous[conversationId] ? {
       ...previous,
-      [conversationId]: {
-        sheetId,
-        messageId: uid('stream'),
-        content: '',
-        toolRuns: [],
-        phase: '正在理解问题',
-        startedAt: Date.now(),
-      },
-    }))
+      [conversationId]: { ...previous[conversationId], phase: '正在装配观察空间' },
+    } : previous)
 
     try {
       const formalTaskForTurn = learningProjection?.task.formalTaskId
@@ -3126,11 +3155,14 @@ function AgentTraceSummary({ trace }: { trace: AgentTurnTrace }) {
     forced_finalize: '强制收束',
     error: '异常收束',
   }
+  const timing = trace.timings
+    ? ` · ${trace.timings.firstTextDeltaMs === undefined ? '' : `首字 ${(trace.timings.firstTextDeltaMs / 1000).toFixed(1)}s · `}总计 ${(trace.timings.totalMs / 1000).toFixed(1)}s`
+    : ''
   return (
     <details className="agent-trace-summary">
       <summary>
         <span>Agent 轨迹</span>
-        <small>{trace.modelRounds} 轮判断 · {trace.toolCalls} 次工具 · {stopLabels[trace.stopReason]}</small>
+        <small>{trace.modelRounds} 轮判断 · {trace.toolCalls} 次工具 · {stopLabels[trace.stopReason]}{timing}</small>
       </summary>
       <ol>
         {trace.events.map(event => (

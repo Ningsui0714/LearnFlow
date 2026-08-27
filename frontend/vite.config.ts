@@ -11,6 +11,7 @@ import { isTutorToolChoice } from './src/tooling.ts'
 import { sanitizeLearningTaskTutorContext } from './src/learning.ts'
 import { sanitizeLearningPlanTutorContext } from './src/planning.ts'
 import { runTutorAgentTurn } from './server/agent-runtime.ts'
+import { readProviderStream } from './server/provider-stream.ts'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
 
@@ -122,19 +123,30 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
     endpoint: string
     body: unknown
     timeoutMs?: number
+    onTextDelta?: (delta: string) => void
   }) => {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 65_000)
     try {
+      const requestBody = options.onTextDelta && options.body && typeof options.body === 'object'
+        ? { ...(options.body as Record<string, unknown>), stream: true }
+        : options.body
       const providerResponse = await fetch(options.endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(keyConfiguration.apiKey ? { Authorization: `Bearer ${keyConfiguration.apiKey}` } : {}),
         },
-        body: JSON.stringify(options.body),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       })
+      if (options.onTextDelta) {
+        const streamed = await readProviderStream(providerResponse, options.onTextDelta)
+        if (!providerResponse.ok) {
+          throw new Error(errorFromTutorProviderResponse(streamed.payload, providerResponse.status))
+        }
+        return streamed.payload
+      }
       const providerBody = await providerResponse.text()
       let providerPayload: unknown = null
       try {
@@ -277,6 +289,18 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       }
 
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
+      if (streamResponse) {
+        sendStreamEvent(response, {
+          type: 'trajectory',
+          event: {
+            sequence: 0,
+            phase: 'observe',
+            detail: '正在读取学习状态与当前作用域',
+            at: Date.now(),
+            status: 'started',
+          },
+        })
+      }
       let formalLearnerContext: unknown = null
       let formalWorkspaceContext: unknown = null
       let formalDomainKnowledgeContext: unknown = null

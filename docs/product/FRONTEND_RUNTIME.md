@@ -28,6 +28,7 @@ npm run dev:web
 - 对话目录和主纸消息以正式后端为权威；草稿、纸张布局和标签工作区保存在浏览器 `localStorage`。
 - API Key 只保存在被 Git 忽略的 `frontend/.env.local`，页面不会读取或返回 Key。
 - 模型请求经过本地 `/api/tutor` 代理；支持 Chat Completions 和 Responses endpoint，不要求供应商开放浏览器 CORS。
+- 发送后先在本地确认用户消息并清空输入框；Tutor 使用供应商原生流式增量。工具决策、重试或终态校验回退会撤销当前草稿，只有校验通过的完整回复被保存。
 - 对话内容支持安全的 Markdown、GFM 和 KaTeX 数学公式渲染，不执行模型返回的原始 HTML。
 - 修改 `.env.local` 后需要重启 LearnFlow 服务。
 - 没有配置或调用失败时显示真实原因，不生成占位答案。
