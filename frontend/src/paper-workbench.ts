@@ -16,6 +16,33 @@ export type PaperSheet<TMessage = unknown> = {
   artifact?: PaperArtifact
 }
 
+export function paperArtifactKey(artifact: PaperArtifact) {
+  return `${artifact.kind}:${artifact.projectId || 0}:${artifact.ref}`
+}
+
+export function findPaperSheetByArtifact<TMessage>(
+  sheets: PaperSheet<TMessage>[],
+  artifact: PaperArtifact,
+) {
+  const key = paperArtifactKey(artifact)
+  return sheets.find(sheet => sheet.artifact && paperArtifactKey(sheet.artifact) === key)
+}
+
+function mergePaperMessages<TMessage>(messages: TMessage[]) {
+  const seen = new Set<string>()
+  return messages.filter((message, index) => {
+    let key = `index:${index}`
+    if (message && typeof message === 'object' && 'id' in message) {
+      key = `id:${String((message as { id?: unknown }).id || '')}`
+    } else {
+      try { key = `value:${JSON.stringify(message)}` } catch { /* keep positional fallback */ }
+    }
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function normalizedArtifact(value: unknown): PaperArtifact | undefined {
   if (!value || typeof value !== 'object') return undefined
   const candidate = value as Partial<PaperArtifact>
@@ -55,12 +82,48 @@ export function sanitizePaperSheets<TMessage>(value: unknown): PaperSheet<TMessa
     })
   }
 
-  const repaired = [...byId.values()].map(sheet => ({
-    ...sheet,
-    parentSheetId: sheet.parentSheetId !== sheet.id && byId.has(sheet.parentSheetId)
-      ? sheet.parentSheetId
-      : 'main',
-  }))
+  // Older clients could append the same learning file repeatedly. Keep the
+  // latest paper as the canonical surface and redirect descendants to it.
+  const artifactOwner = new Map<string, string>()
+  const artifactMessages = new Map<string, TMessage[]>()
+  for (const sheet of byId.values()) {
+    if (!sheet.artifact) continue
+    const key = paperArtifactKey(sheet.artifact)
+    artifactOwner.set(key, sheet.id)
+    artifactMessages.set(key, [...(artifactMessages.get(key) || []), ...sheet.messages])
+  }
+  const duplicateAlias = new Map<string, string>()
+  const unique = [...byId.values()].filter(sheet => {
+    if (!sheet.artifact) return true
+    const ownerId = artifactOwner.get(paperArtifactKey(sheet.artifact))
+    if (ownerId && ownerId !== sheet.id) {
+      duplicateAlias.set(sheet.id, ownerId)
+      return false
+    }
+    return true
+  })
+  const resolveParent = (parentId: string) => {
+    const seen = new Set<string>()
+    let resolved = parentId
+    while (duplicateAlias.has(resolved) && !seen.has(resolved)) {
+      seen.add(resolved)
+      resolved = duplicateAlias.get(resolved) || 'main'
+    }
+    return resolved
+  }
+  const uniqueById = new Map(unique.map(sheet => [sheet.id, sheet]))
+  const repaired = unique.map(sheet => {
+    const parentSheetId = resolveParent(sheet.parentSheetId)
+    return {
+      ...sheet,
+      messages: sheet.artifact
+        ? mergePaperMessages(artifactMessages.get(paperArtifactKey(sheet.artifact)) || sheet.messages)
+        : sheet.messages,
+      parentSheetId: parentSheetId !== sheet.id && uniqueById.has(parentSheetId)
+        ? parentSheetId
+        : 'main',
+    }
+  })
   const repairedById = new Map(repaired.map(sheet => [sheet.id, sheet]))
   return repaired.map(sheet => {
     const seen = new Set([sheet.id])

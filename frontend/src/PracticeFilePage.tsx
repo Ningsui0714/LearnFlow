@@ -9,13 +9,15 @@ import {
 type Props = {
   practiceRef: string
   embedded?: boolean
+  inline?: boolean
   conversationId?: string
   sheetId?: string
   onAttach?: (file: { kind: 'practice'; ref: string; title: string }) => void
   onFollowUp?: () => void
+  onOpenPaper?: () => void
 }
 
-export default function PracticeFilePage({ practiceRef, embedded, conversationId, sheetId, onAttach, onFollowUp }: Props) {
+export default function PracticeFilePage({ practiceRef, embedded, inline, conversationId, sheetId, onAttach, onFollowUp, onOpenPaper }: Props) {
   const [file, setFile] = useState<Awaited<ReturnType<typeof loadPracticeFile>>>()
   const [answers, setAnswers] = useState<Record<number, number[]>>({})
   const [responses, setResponses] = useState<Record<number, string>>({})
@@ -30,10 +32,10 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
     void loadPracticeFile(practiceRef).then(result => {
       if (!alive) return
       setFile(result); setCode(result.starter_code || '')
-      void recordLearningFileAccess('practice', practiceRef, 'opened', { conversation_id: conversationId, sheet_id: sheetId }).catch(() => undefined)
+      if (!inline) void recordLearningFileAccess('practice', practiceRef, 'opened', { conversation_id: conversationId, sheet_id: sheetId }).catch(() => undefined)
     }).catch(failure => alive && setError(failure instanceof Error ? failure.message : '练习读取失败'))
     return () => { alive = false }
-  }, [practiceRef, conversationId, sheetId])
+  }, [practiceRef, conversationId, sheetId, inline])
   if (error) return <div className="formal-inline-error">{error}</div>
   if (!file) return <div className="page-loading">正在打开正式练习…</div>
   const submitQuestion = async (questionId: number) => {
@@ -69,9 +71,9 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
     finally { setBusy('') }
   }
   return (
-    <section className={`practice-file-workbench${embedded ? ' learning-file-embedded' : ''}`}>
-      <header className="learning-file-workbench-heading">
-        <div><span>练习</span><h1>{file.title}</h1>{!embedded && <code>{file.logical_filename}</code>}</div>
+    <section className={`practice-file-workbench${embedded ? ' learning-file-embedded' : ''}${inline ? ' learning-file-inline' : ''}`}>
+      <header className={inline ? 'learning-file-inline-heading' : 'learning-file-workbench-heading'}>
+        <div><span>{inline ? `练习 · ${file.questions?.length || 1} 题` : '练习'}</span><h1>{file.title}</h1>{!embedded && !inline && <code>{file.logical_filename}</code>}</div>
         <div>
           {onFollowUp && <button type="button" className="learning-file-subtle-action" onMouseDown={event => event.preventDefault()} onClick={onFollowUp}>选中追问</button>}
           {onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'practice', ref: file.ref, title: file.title })}>放到对话纸张</button>}
@@ -86,6 +88,7 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
           : selectionType ? selected.length > 0 : Boolean((responses[question.id] || '').trim())
         const reflection = reflections[question.id] || { blocker: '', helpfulFormat: '' }
         return <article key={question.id}>
+          {inline && onOpenPaper && <button type="button" className="practice-question-paper-open" title="在新纸张打开整份练习" aria-label="在新纸张打开整份练习" onClick={onOpenPaper}>↗</button>}
           <span>第 {index + 1} 题 · {question.difficulty === 'easy' ? '基础' : question.difficulty === 'hard' ? '挑战' : '进阶'}{question.target_skill ? ` · ${question.target_skill}` : ''}</span>
           <h2>{question.question}</h2>
           {question.code && <pre className="practice-question-code"><code>{question.code}</code></pre>}

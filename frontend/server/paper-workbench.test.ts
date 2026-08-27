@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deletePaperSheet, paperAncestorChain, sanitizePaperSheets } from '../src/paper-workbench.ts'
+import { deletePaperSheet, findPaperSheetByArtifact, paperAncestorChain, sanitizePaperSheets } from '../src/paper-workbench.ts'
 
 test('paper sanitizer preserves nested learning files and source papers', () => {
   const sheets = sanitizePaperSheets([
@@ -33,4 +33,16 @@ test('deleting a paper keeps its descendants reachable', () => {
   const result = deletePaperSheet(sheets, 'b')
   assert.equal(result.parentSheetId, 'a')
   assert.equal(result.sheets.find(sheet => sheet.id === 'c')?.parentSheetId, 'a')
+})
+
+test('the same learning file has one canonical paper and keeps descendants reachable', () => {
+  const sheets = sanitizePaperSheets([
+    { id: 'practice-old', title: '练习', parentSheetId: 'main', messages: [{ id: 'm-old' }], artifact: { kind: 'practice', ref: 'ps-1', title: 'QKV' } },
+    { id: 'follow-up', title: '追问', parentSheetId: 'practice-old', messages: [] },
+    { id: 'practice-current', title: '练习', parentSheetId: 'main', messages: [{ id: 'm-current' }], artifact: { kind: 'practice', ref: 'ps-1', title: 'QKV' } },
+  ])
+  assert.equal(sheets.length, 2)
+  assert.equal(findPaperSheetByArtifact(sheets, { kind: 'practice', ref: 'ps-1', title: 'QKV' })?.id, 'practice-current')
+  assert.deepEqual(findPaperSheetByArtifact(sheets, { kind: 'practice', ref: 'ps-1', title: 'QKV' })?.messages, [{ id: 'm-old' }, { id: 'm-current' }])
+  assert.equal(sheets.find(sheet => sheet.id === 'follow-up')?.parentSheetId, 'practice-current')
 })

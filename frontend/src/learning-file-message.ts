@@ -2,6 +2,7 @@ export type ConversationLearningFile = {
   kind: 'lecture' | 'practice'
   ref: string
   title: string
+  questionCount?: number
 }
 
 function escapeRegExp(value: string) {

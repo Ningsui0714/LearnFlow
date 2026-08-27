@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { loadLectureFile, loadPracticeFile } from './formal-runtime'
 import { plainLearningFileExcerpt, type ConversationLearningFile } from './learning-file-message'
+import PracticeFilePage from './PracticeFilePage'
 
 type Props = {
   file: ConversationLearningFile
   onOpen: () => void
   onAttach: () => void
+  conversationId?: string
 }
 
 type PreviewState = {
@@ -14,11 +16,15 @@ type PreviewState = {
   lines: string[]
 }
 
-export default function LearningFileMessagePreview({ file, onOpen, onAttach }: Props) {
+export default function LearningFileMessagePreview({ file, onOpen, onAttach, conversationId }: Props) {
   const [preview, setPreview] = useState<PreviewState>()
   const [failed, setFailed] = useState(false)
+  const inlinePractice = file.kind === 'practice'
+    && Number(file.questionCount) > 0
+    && Number(file.questionCount) <= 4
 
   useEffect(() => {
+    if (inlinePractice) return
     let alive = true
     setPreview(undefined)
     setFailed(false)
@@ -54,12 +60,23 @@ export default function LearningFileMessagePreview({ file, onOpen, onAttach }: P
       if (alive) setFailed(true)
     })
     return () => { alive = false }
-  }, [file.kind, file.ref, file.title])
+  }, [file.kind, file.ref, file.title, inlinePractice])
 
   const display = preview || {
     eyebrow: file.kind === 'practice' ? '练习' : '讲义',
     title: file.title,
     lines: [failed ? '暂时无法读取预览，文件本身仍可打开。' : '正在读取文件开头…'],
+  }
+  if (inlinePractice) {
+    return (
+      <PracticeFilePage
+        practiceRef={file.ref}
+        inline
+        conversationId={conversationId}
+        sheetId="main"
+        onOpenPaper={onAttach}
+      />
+    )
   }
 
   return (

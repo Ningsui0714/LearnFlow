@@ -125,6 +125,8 @@ import { projectSidebarChats } from './project-sidebar'
 import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
 import {
   deletePaperSheet,
+  findPaperSheetByArtifact,
+  paperArtifactKey,
   paperAncestorChain,
   sanitizePaperSheets,
   type PaperArtifact,
@@ -201,6 +203,8 @@ type WorkspaceTab = {
   kind: 'chat' | 'settings' | 'projects' | 'project' | 'learning-path' | 'profile' | 'tasks' | 'review' | 'learning-files' | 'lecture-file' | 'practice-file'
   title: string
   conversationId?: string
+  originConversationId?: string
+  originSheetId?: string
   fileRef?: string
   projectId?: number
 }
@@ -361,12 +365,17 @@ function projectTab(project: Pick<FormalProjectWorkspace['project'], 'id' | 'nam
   return { id: `project:${project.id}`, kind: 'project', title: project.name, projectId: project.id }
 }
 
-function learningFileTab(file: Pick<FormalLearningFileRef, 'kind' | 'ref' | 'title'>): WorkspaceTab {
+function learningFileTab(
+  file: Pick<FormalLearningFileRef, 'kind' | 'ref' | 'title'>,
+  origin?: { conversationId?: string; sheetId?: string },
+): WorkspaceTab {
   return {
     id: `${file.kind}-file:${file.ref}`,
     kind: file.kind === 'lecture' ? 'lecture-file' : 'practice-file',
     title: file.title,
     fileRef: file.ref,
+    originConversationId: origin?.conversationId,
+    originSheetId: origin?.sheetId,
   }
 }
 
@@ -543,6 +552,7 @@ function App() {
   const [projectPanelConversationId, setProjectPanelConversationId] = useState('')
   const formalChatHydrated = useRef(false)
   const formalChatFingerprints = useRef<Record<string, string>>({})
+  const paperAttachIntents = useRef(new Map<string, string>())
 
   const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId) || workspace.tabs[0]
   const splitTab = workspace.tabs.find(tab => tab.id === workspace.splitTabId && tab.id !== activeTab?.id)
@@ -1158,37 +1168,50 @@ function App() {
     preferredConversationId?: string,
     anchor?: { sourceMessageId?: string; parentSheetId?: string },
   ) => {
+    setPaperDeskView(null)
     const activeConversationId = workspace.tabs.find(tab => tab.id === workspace.activeTabId)?.conversationId
-    const conversation = workspace.conversations.find(item => item.id === preferredConversationId)
+    const origin = workspace.conversations.find(item => item.id === preferredConversationId)
       || workspace.conversations.find(item => item.id === activeConversationId)
       || workspace.conversations[0]
-    if (!conversation) return
-    const sheet: FollowUpSheet = {
-      id: uid('sheet'),
+    if (!origin) return
+    const knownSheetId = findPaperSheetByArtifact(origin.sheets, file)?.id
+    const intentKey = `${origin.id}:${paperArtifactKey(file)}`
+    const sheetId = knownSheetId || paperAttachIntents.current.get(intentKey) || uid('sheet')
+    paperAttachIntents.current.set(intentKey, sheetId)
+    const candidateSheet: FollowUpSheet = {
+      id: sheetId,
       title: file.title.slice(0, 28),
       quote: `${file.kind === 'lecture' ? '讲义' : file.kind === 'practice' ? '练习' : '资料'}：${file.title}`,
       sourceMessageId: anchor?.sourceMessageId || '',
-      parentSheetId: anchor?.parentSheetId || conversation.activeSheetId || 'main',
+      parentSheetId: anchor?.parentSheetId || origin.activeSheetId || 'main',
       messages: [],
       createdAt: Date.now(),
       artifact: file,
     }
     setWorkspace(previous => {
-      const target = previous.conversations.find(item => item.id === conversation.id) || conversation
+      const target = previous.conversations.find(item => item.id === origin.id)
+      if (!target) return previous
+      const existing = findPaperSheetByArtifact(target.sheets, file)
+      const sheet = existing || candidateSheet
       const tab = chatTab(target)
       const tabs = previous.tabs.some(item => item.id === tab.id) ? previous.tabs : [...previous.tabs, tab].slice(-12)
       return {
         ...previous,
-        conversations: previous.conversations.map(item => item.id === conversation.id
-          ? { ...item, sheets: [...item.sheets, sheet], activeSheetId: sheet.id, updatedAt: Date.now() }
+        conversations: previous.conversations.map(item => item.id === target.id
+          ? {
+              ...item,
+              sheets: existing ? item.sheets : [...item.sheets, sheet],
+              activeSheetId: sheet.id,
+              updatedAt: Date.now(),
+            }
           : item),
         tabs,
         activeTabId: tab.id,
       }
     })
     void recordLearningFileAccess(file.kind, file.ref, 'attached', {
-      conversation_id: conversation.id,
-      sheet_id: sheet.id,
+      conversation_id: origin.id,
+      sheet_id: sheetId,
     }).catch(() => undefined)
   }
 
@@ -1201,9 +1224,15 @@ function App() {
     }, conversation.id, { parentSheetId: conversation.activeSheetId })
   }
 
-  const openLearningFile = (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => {
-    openTab(learningFileTab(file))
-    void recordLearningFileAccess(file.kind, file.ref, 'opened').catch(() => undefined)
+  const openLearningFile = (
+    file: { kind: 'lecture' | 'practice'; ref: string; title: string },
+    origin?: { conversationId?: string; sheetId?: string },
+  ) => {
+    openTab(learningFileTab(file, origin))
+    void recordLearningFileAccess(file.kind, file.ref, 'opened', {
+      conversation_id: origin?.conversationId,
+      sheet_id: origin?.sheetId,
+    }).catch(() => undefined)
   }
 
   const finishTurn = (
@@ -2124,7 +2153,7 @@ function App() {
       const preferred = matching.find(item => item.kind === 'lecture') || matching[0]
       await refreshFormalSnapshot(true)
       if (preferred) {
-        openTab(learningFileTab(preferred))
+        openTab(learningFileTab(preferred, { conversationId }))
         if (conversationId) attachLearningFileToConversation(preferred, conversationId)
       } else openTab(LEARNING_FILES_TAB)
     } catch (error) {
@@ -2209,10 +2238,10 @@ function App() {
       return <Suspense fallback={<div className="page-loading">正在载入学习文件…</div>}><LearningFilesPage onOpen={file => openTab(learningFileTab(file))} /></Suspense>
     }
     if (tab.kind === 'lecture-file' && tab.fileRef) {
-      return <Suspense fallback={<div className="page-loading">正在打开讲义…</div>}><LectureFilePage lectureId={Number(tab.fileRef)} onAttach={attachLearningFileToConversation} /></Suspense>
+      return <Suspense fallback={<div className="page-loading">正在打开讲义…</div>}><LectureFilePage lectureId={Number(tab.fileRef)} onAttach={file => attachLearningFileToConversation(file, tab.originConversationId, { parentSheetId: tab.originSheetId })} /></Suspense>
     }
     if (tab.kind === 'practice-file' && tab.fileRef) {
-      return <Suspense fallback={<div className="page-loading">正在打开练习…</div>}><PracticeFilePage practiceRef={tab.fileRef} onAttach={attachLearningFileToConversation} /></Suspense>
+      return <Suspense fallback={<div className="page-loading">正在打开练习…</div>}><PracticeFilePage practiceRef={tab.fileRef} onAttach={file => attachLearningFileToConversation(file, tab.originConversationId, { parentSheetId: tab.originSheetId })} /></Suspense>
     }
     if (tab.kind === 'settings') {
       return (
@@ -2569,7 +2598,11 @@ function App() {
                     onAcceptProjectLearningFile={proposal => { void acceptProjectLearningFileProposal(proposal, conversation.id) }}
                     projectBusyKey={formalBusyKey}
                     projectError={formalError}
-                    onOpenLearningFile={openLearningFile}
+                    conversationId={conversation.id}
+                    onOpenLearningFile={file => openLearningFile(file, {
+                      conversationId: conversation.id,
+                      sheetId: conversation.activeSheetId,
+                    })}
                     onAttachLearningFile={(file, sourceMessageId) => attachLearningFileToConversation(file, conversation.id, {
                       sourceMessageId,
                       parentSheetId: conversation.activeSheetId,
@@ -3052,9 +3085,10 @@ function App() {
   )
 }
 
-function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError }: {
+function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError }: {
   run: TutorToolRun
   sourceMessageId: string
+  conversationId: string
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
@@ -3076,9 +3110,9 @@ function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearnin
   const icon = run.kind === 'memory' ? '◇' : run.kind === 'domain' || run.kind === 'file' ? '▤' : run.kind === 'project' ? '◈' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const pathPlanConfirmed = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === activePathPlanId)
   const pathPlanBusy = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === pathPlanBusyId)
-  const actionableLearningFile: { kind: 'lecture' | 'practice'; ref: string; title: string } | undefined =
+  const actionableLearningFile: { kind: 'lecture' | 'practice'; ref: string; title: string; questionCount?: number } | undefined =
     run.learningFile && (run.learningFile.kind === 'lecture' || run.learningFile.kind === 'practice')
-      ? { kind: run.learningFile.kind, ref: run.learningFile.ref, title: run.learningFile.title }
+      ? { kind: run.learningFile.kind, ref: run.learningFile.ref, title: run.learningFile.title, questionCount: run.learningFile.questionCount }
       : undefined
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
     standard: '规范', reference: '参考', textbook: '教材', course: '课程',
@@ -3101,6 +3135,7 @@ function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearnin
         <Suspense fallback={<div className="learning-file-preview-loading">正在展开文件开头…</div>}>
           <LearningFileMessagePreview
             file={actionableLearningFile}
+            conversationId={conversationId}
             onOpen={() => onOpenLearningFile(actionableLearningFile)}
             onAttach={() => onAttachLearningFile(actionableLearningFile, sourceMessageId)}
           />
@@ -3198,8 +3233,9 @@ function AgentTraceSummary({ trace }: { trace: AgentTurnTrace }) {
   )
 }
 
-function MessageList({ messages, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
+function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
   messages: Message[]
+  conversationId: string
   onQuoteFollowUp: (messageId: string, quote: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
@@ -3302,6 +3338,7 @@ function MessageList({ messages, onQuoteFollowUp, onOpenLearningFile, onAttachLe
                   key={run.id}
                   run={run}
                   sourceMessageId={message.id}
+                  conversationId={conversationId}
                   onOpenLearningFile={onOpenLearningFile}
                   onAttachLearningFile={onAttachLearningFile}
                   onAcceptPathProposal={onAcceptPathProposal}
