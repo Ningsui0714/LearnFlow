@@ -1,6 +1,6 @@
 {
   "schema_version": "learnflow.skill.v2",
-  "registry_version": "2026-08-27.3",
+  "registry_version": "2026-08-27.4",
   "generated_from": "backend/app/services/architecture_registry.py",
   "skills": {
     "guided_explanation": {
@@ -19,7 +19,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v4",
+        "version": "atomic-learning-skill-runtime-v5",
         "bound_chat_modes": [
           "learn"
         ],
@@ -116,6 +116,7 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "calibration_axes": [],
         "maturity": "production_candidate"
       }
     },
@@ -135,7 +136,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v4",
+        "version": "atomic-learning-skill-runtime-v5",
         "bound_chat_modes": [
           "learn"
         ],
@@ -232,6 +233,7 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "calibration_axes": [],
         "maturity": "production_candidate"
       }
     },
@@ -251,7 +253,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v4",
+        "version": "atomic-learning-skill-runtime-v5",
         "bound_chat_modes": [
           "learn"
         ],
@@ -320,7 +322,7 @@
             "loop_instruction": "缩小当前动作并补一层支架；不得把提示后的回应当作独立完成。"
           }
         ],
-        "turn_budget": 3,
+        "turn_budget": 5,
         "verification_required": true,
         "required_context": [
           "scoped_learning_task",
@@ -335,6 +337,7 @@
         ],
         "output_objects": [
           "LearningSkillRunTransition",
+          "TeachBackDiagnostic",
           "VerificationHandoff"
         ],
         "allowed_event_types": [
@@ -343,11 +346,123 @@
           "learning_skill_run_paused",
           "learning_skill_run_resumed",
           "learning_skill_verification_started",
-          "learning_skill_run_completed"
+          "learning_skill_run_completed",
+          "learning_skill_calibration_updated",
+          "learning_skill_teach_back_diagnostic_updated"
         ],
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "calibration_axes": [
+          {
+            "id": "audience_level",
+            "title": "讲给谁听",
+            "description": "控制语言与先备知识假设。",
+            "options": [
+              [
+                "beginner",
+                "零基础"
+              ],
+              [
+                "high_school",
+                "高中"
+              ],
+              [
+                "vocational",
+                "高职"
+              ],
+              [
+                "undergraduate",
+                "本科"
+              ],
+              [
+                "graduate",
+                "研究生"
+              ],
+              [
+                "professional",
+                "从业者"
+              ]
+            ],
+            "default": "undergraduate"
+          },
+          {
+            "id": "cognitive_demand",
+            "title": "说到多深",
+            "description": "控制本轮复述需要覆盖的认知动作。",
+            "options": [
+              [
+                "define",
+                "定义"
+              ],
+              [
+                "mechanism",
+                "机制"
+              ],
+              [
+                "boundary",
+                "边界"
+              ],
+              [
+                "transfer",
+                "迁移"
+              ]
+            ],
+            "default": "mechanism"
+          },
+          {
+            "id": "scaffold_level",
+            "title": "给多少支架",
+            "description": "控制 Tutor 提供的帮助强度。",
+            "options": [
+              [
+                "model",
+                "完整示范"
+              ],
+              [
+                "guided",
+                "引导"
+              ],
+              [
+                "minimal",
+                "少量提示"
+              ],
+              [
+                "none",
+                "无提示"
+              ]
+            ],
+            "default": "guided"
+          },
+          {
+            "id": "representation_mode",
+            "title": "怎么表达",
+            "description": "选择更适合当前知识的表征。",
+            "options": [
+              [
+                "auto",
+                "自动"
+              ],
+              [
+                "code",
+                "代码"
+              ],
+              [
+                "visual",
+                "可视化"
+              ],
+              [
+                "analogy",
+                "类比"
+              ],
+              [
+                "formal",
+                "公式/形式化"
+              ]
+            ],
+            "default": "auto"
+          }
+        ],
         "maturity": "production_candidate"
       }
     },
@@ -367,7 +482,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v4",
+        "version": "atomic-learning-skill-runtime-v5",
         "bound_chat_modes": [
           "learn"
         ],
@@ -464,6 +579,7 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "calibration_axes": [],
         "maturity": "production_candidate"
       }
     }

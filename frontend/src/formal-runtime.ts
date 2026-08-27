@@ -129,6 +129,24 @@ export type FormalLearningSkillRun = {
   turn_count: number
   turn_budget: number
   support_count: number
+  gap_loop_count: number
+  calibration: Record<string, string>
+  calibration_axes: Array<{
+    id: string
+    title: string
+    description: string
+    default: string
+    options: Array<{ id: string; label: string }>
+  }>
+  teach_back_diagnostic: {
+    schema_version?: string
+    learner_wording?: string
+    candidate_gap?: string
+    candidate_gap_label?: string
+    status?: string
+    verification?: string
+    mastery_inference?: boolean
+  }
   flow_note: string
   version: number
   next_prompt: string
@@ -849,7 +867,13 @@ export async function advanceFormalLearningSkillTurn(
 export async function actOnFormalLearningSkillRun(
   sessionId: number,
   run: Pick<FormalLearningSkillRun, 'id' | 'version'>,
-  action: 'pause' | 'resume' | 'start_verification',
+  action: 'pause' | 'resume' | 'start_verification' | 'calibrate',
+  calibrationPatch: Partial<{
+    audience_level: string
+    cognitive_demand: string
+    scaffold_level: string
+    representation_mode: string
+  }> = {},
 ) {
   return jsonRequest<{
     session_id: number
@@ -861,6 +885,7 @@ export async function actOnFormalLearningSkillRun(
       action,
       expected_version: run.version,
       client_action_id: `vnext-skill-action:${run.id}:${action}:${Date.now()}`,
+      ...calibrationPatch,
     }),
   })
 }

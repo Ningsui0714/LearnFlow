@@ -20,7 +20,7 @@ from app.services.learning_runtime import (
     apply_semantic_observations, create_attempt, evaluate_checkpoint_status,
     get_kernel_projection, record_event,
 )
-from app.services.learning_skill_runtime import learner_response_signal
+from app.services.learning_skill_runtime import learner_response_signal, transition_learning_skill_turn
 from app.services.profile import memory_projection
 from app.services.task_manager import manager
 from app.services.auth import load_current_learner
@@ -701,6 +701,61 @@ def test_skill_response_signals_distinguish_help_skip_and_attempt():
     assert learner_response_signal("我不知道，但我觉得可能和先验概率有关") == "attempt"
 
 
+def test_feynman_single_gap_loop_is_bounded_and_never_claims_mastery():
+    state = "awaiting_teach_back"
+    step_index = 1
+    turn_count = 0
+    support_count = 0
+    calibration = {
+        "audience_level": "undergraduate",
+        "cognitive_demand": "mechanism",
+        "scaffold_level": "guided",
+        "representation_mode": "auto",
+    }
+    diagnostic = {}
+    gap_loop_count = 0
+    messages = (
+        "事务隔离会控制并发事务能看到哪些数据。",
+        "这里的可见性表示一个事务读取另一个事务修改的时机。",
+        "它会控制读取结果。",
+        "它仍然是控制读取结果。",
+        "因为隔离级别限制了修改何时可见，所以不同并发顺序会呈现不同读取结果。",
+    )
+    states = []
+    gaps = []
+    for message in messages:
+        result = transition_learning_skill_turn(
+            skill_id="feynman_dialogue",
+            current_state=state,
+            step_index=step_index,
+            turn_count=turn_count,
+            support_count=support_count,
+            goal="事务隔离",
+            message=message,
+            calibration=calibration,
+            teach_back_diagnostic=diagnostic,
+            gap_loop_count=gap_loop_count,
+        )
+        state = str(result["state"])
+        step_index = int(result["step_index"])
+        turn_count = int(result["turn_count"])
+        support_count = int(result["support_count"])
+        calibration = dict(result["calibration"])
+        diagnostic = dict(result["teach_back_diagnostic"])
+        gap_loop_count = int(result["gap_loop_count"])
+        states.append(state)
+        gaps.append(diagnostic["candidate_gap"])
+    assert states == [
+        "locating_gap", "revising_explanation", "revising_explanation",
+        "revising_explanation", "verification_ready",
+    ]
+    assert len(set(gaps)) == 1
+    assert gap_loop_count == 2
+    assert turn_count == 5
+    assert diagnostic["status"] == "ready_for_independent_verification"
+    assert diagnostic["mastery_inference"] is False
+
+
 def test_adaptive_tutor_recommends_but_does_not_silently_activate_skill(client: TestClient):
     session = client.post("/api/agent/sessions", json={
         "session_type": "global", "create_new": True,
@@ -776,22 +831,49 @@ def test_feynman_skill_run_uses_a_distinct_bounded_workflow(client: TestClient):
     run = first.json()["active_skill_run"]
     assert run["state"] == "awaiting_teach_back"
     assert run["goal"] == "条件概率"
+    assert run["turn_budget"] == 5
+    assert run["calibration"]["audience_level"] == "undergraduate"
 
-    for index, expected_state in enumerate((
-        "locating_gap", "revising_explanation", "verification_ready",
-    )):
+    calibrated = client.post(
+        f"/api/agent/sessions/{session['id']}/skill-runs/{run['id']}/actions",
+        json={
+            "action": "calibrate",
+            "expected_version": run["version"],
+            "client_action_id": f"feynman-calibrate-{uuid.uuid4().hex}",
+            "audience_level": "vocational",
+            "cognitive_demand": "mechanism",
+            "scaffold_level": "minimal",
+            "representation_mode": "code",
+        },
+    )
+    assert calibrated.status_code == 200, calibrated.text
+    run = calibrated.json()["active_skill_run"]
+    assert run["state"] == "awaiting_teach_back"
+    assert run["calibration"] == {
+        "audience_level": "vocational",
+        "cognitive_demand": "mechanism",
+        "scaffold_level": "minimal",
+        "representation_mode": "code",
+    }
+
+    messages = (
+        "条件概率是在已经知道一件事发生的情况下重新判断另一件事的概率。",
+        "这里的条件就是先把观察范围缩小到已经发生的事件。",
+        "因为已知事件缩小了样本空间，所以要在这个范围内重新计算比例；例如抽到红球后再判断大小，但前提是条件事件概率不为零。",
+    )
+    for index, expected_state in enumerate(("locating_gap", "revising_explanation", "verification_ready")):
         next_turn = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
-            "message": (
-                "条件概率是在已经知道一件事发生的情况下重新判断另一件事的概率，"
-                f"这是我的第 {index + 1} 次解释，并补充条件、例子和边界。"
-            ),
+            "message": messages[index],
             "selected_skill_id": "feynman_dialogue",
             "client_turn_id": f"feynman-{index}-{uuid.uuid4().hex}",
         })
         assert next_turn.status_code == 200, next_turn.text
         run = next_turn.json()["active_skill_run"]
         assert run["state"] == expected_state
-    assert run["turn_count"] == run["turn_budget"] == 3
+    assert run["turn_count"] == 3
+    assert run["turn_budget"] == 5
+    assert run["teach_back_diagnostic"]["status"] == "ready_for_independent_verification"
+    assert run["teach_back_diagnostic"]["mastery_inference"] is False
     assert run["can_start_verification"] is True
     cleared = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
         "message": "先退出这个方法，后面再继续。",

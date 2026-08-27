@@ -34,6 +34,8 @@ RUNTIME_EVENTS = {
     "learning_skill_run_advanced",
     "learning_skill_run_paused",
     "learning_skill_run_resumed",
+    "learning_skill_calibration_updated",
+    "learning_skill_teach_back_diagnostic_updated",
     "learning_skill_verification_started",
     "learning_skill_run_completed",
 }
@@ -58,7 +60,7 @@ def runtime_contract_score() -> dict[str, float]:
     blueprints = [workflow_blueprint(skill_id) for skill_id in sorted(RUNTIME_SKILLS)]
     bounded = all(
         blueprint
-        and 1 <= int(blueprint["turn_budget"]) <= 4
+        and 1 <= int(blueprint["turn_budget"]) <= 5
         and list(blueprint["states"])[-1] == "verification_ready"
         for blueprint in blueprints
     )
@@ -112,7 +114,7 @@ def main() -> int:
     report = {
         "evaluation_scope": "engineering_readiness_not_learning_effect",
         "case_count": len(cases),
-        "candidate": "atomic_learning_skill_runtime_v4_skill_spec_v2",
+        "candidate": "atomic_learning_skill_runtime_v5_skill_spec_v2",
         "baseline": "prompt_only_guided_explanation",
         "candidate_metrics": candidate_metrics,
         "baseline_metrics": baseline_metrics,

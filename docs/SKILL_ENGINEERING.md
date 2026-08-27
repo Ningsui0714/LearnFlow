@@ -21,6 +21,11 @@ LearnFlow 的 Skill 是一个由主 Agent 拥有、在明确状态中运行、�
 5. 允许的 EventContract、证据边界、独立验证交接；
 6. eval suite 与成熟度。
 
+需要因人或因任务调整的 Skill 还必须把校准维度声明在 `calibration_axes`，而不是把“难度”藏在
+Prompt 中。费曼复述当前声明四个正交维度：受众层次、认知要求、支架强度和表征方式。学习者
+可以显式修改；运行时也只能在“不会/请求直接解释”等求助信号下有界提高支架，不能据一次回答
+擅自修改教育层次、学习偏好或掌握状态。
+
 状态推进规则固定为：
 
 ```text
@@ -35,6 +40,11 @@ verification_ready
 ```
 
 这里的 `attempt` 只表示有可检查回应，不表示正确。正确性、评分、纠错和掌握只能由 Practice Agent 的确定性链裁决。
+
+费曼复述允许在 `revising_explanation` 内围绕同一候选缺口循环，最多两次，再把该缺口作为
+`VerificationHandoff` 的检查目标。`TeachBackDiagnostic` 只保存学习者原话、可观察的表达覆盖、
+候选缺口、所用支架和待验证状态；它不判断领域正确性，事件为零 Kernel target。只有独立验证
+后的正式 Attempt 才能产生 Knowledge / Practice 证据。
 
 ## 3. 评估蓝图不是教学 Skill
 

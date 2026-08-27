@@ -69,9 +69,15 @@ class LearningSkillRunCreateRequest(BaseModel):
 
 
 class LearningSkillRunActionRequest(BaseModel):
-    action: Literal["pause", "resume", "start_verification"]
+    action: Literal["pause", "resume", "start_verification", "calibrate"]
     expected_version: int = Field(ge=1)
     client_action_id: str = Field(min_length=8, max_length=120)
+    audience_level: Optional[Literal[
+        "beginner", "high_school", "vocational", "undergraduate", "graduate", "professional",
+    ]] = None
+    cognitive_demand: Optional[Literal["define", "mechanism", "boundary", "transfer"]] = None
+    scaffold_level: Optional[Literal["model", "guided", "minimal", "none"]] = None
+    representation_mode: Optional[Literal["auto", "code", "visual", "analogy", "formal"]] = None
 
     @field_validator("client_action_id", mode="before")
     @classmethod

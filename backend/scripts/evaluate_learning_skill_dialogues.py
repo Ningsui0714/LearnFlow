@@ -27,6 +27,8 @@ def evaluate(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "one_step_advance": [],
         "verification_handoff": [],
         "evidence_boundary": [],
+        "feynman_diagnostic_boundary": [],
+        "calibration_contract": [],
     }
     details = []
     for case in cases:
@@ -37,6 +39,9 @@ def evaluate(cases: list[dict[str, Any]]) -> dict[str, Any]:
         step_index = 1
         turn_count = 0
         support_count = 0
+        calibration = dict(case.get("calibration") or {})
+        teach_back_diagnostic: dict[str, Any] = {}
+        gap_loop_count = 0
         trace = []
         for turn in case["turns"]:
             previous_state = state
@@ -49,11 +54,17 @@ def evaluate(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 goal=case["goal"],
                 message=turn["message"],
                 entry_mode=case.get("entry_mode", "direct"),
+                calibration=calibration,
+                teach_back_diagnostic=teach_back_diagnostic,
+                gap_loop_count=gap_loop_count,
             )
             state = result["state"]
             step_index = int(result["step_index"])
             turn_count = int(result["turn_count"])
             support_count = int(result["support_count"])
+            calibration = dict(result.get("calibration") or {})
+            teach_back_diagnostic = dict(result.get("teach_back_diagnostic") or {})
+            gap_loop_count = int(result.get("gap_loop_count") or 0)
             signal_ok = result["response_signal"] == turn["signal"]
             state_ok = (
                 state == turn["state"]
@@ -76,12 +87,24 @@ def evaluate(cases: list[dict[str, Any]]) -> dict[str, Any]:
             checks["one_step_advance"].append(one_step_ok)
             checks["verification_handoff"].append(terminal_ok)
             checks["evidence_boundary"].append(event_ok and "zero-target" in runtime.evidence_policy)
+            diagnostic_ok = case["skill_id"] != "feynman_dialogue" or result["support_only"] or (
+                bool(teach_back_diagnostic)
+                and teach_back_diagnostic.get("verification") == "unverified"
+                and teach_back_diagnostic.get("mastery_inference") is False
+            )
+            calibration_ok = case["skill_id"] != "feynman_dialogue" or all(
+                axis.id in calibration for axis in runtime.calibration_axes
+            )
+            checks["feynman_diagnostic_boundary"].append(diagnostic_ok)
+            checks["calibration_contract"].append(calibration_ok)
             trace.append({
                 "message": turn["message"],
                 "signal": result["response_signal"],
                 "state": state,
                 "turn_count": turn_count,
                 "support_count": support_count,
+                "gap_loop_count": gap_loop_count,
+                "candidate_gap": teach_back_diagnostic.get("candidate_gap"),
             })
         details.append({"id": case["id"], "passed": all(items[-1] for items in checks.values()), "trace": trace})
     metrics = {

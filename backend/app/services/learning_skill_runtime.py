@@ -14,7 +14,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.learning import AgentSession, LearningSkillRun, LearningTask, MicroLearningRun
+from app.models.learning import (
+    AgentSession, LearnerProfile, LearningSkillRun, LearningTask, MicroLearningRun,
+)
 from app.services.architecture_registry import (
     learning_skill_runtime_contract,
     selectable_learning_skill,
@@ -22,7 +24,7 @@ from app.services.architecture_registry import (
 from app.services.learning_runtime import record_event
 
 
-SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v4"
+SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v5"
 RUNTIME_SKILL_IDS = (
     "guided_explanation",
     "socratic_dialogue",
@@ -30,6 +32,183 @@ RUNTIME_SKILL_IDS = (
     "worked_example_fading",
 )
 ACTIVE_RUN_STATUSES = ("active", "paused", "verification")
+
+FEYNMAN_GAP_LABELS = {
+    "circular_definition": "定义绕回原词",
+    "missing_prerequisite": "缺少必要前提",
+    "causal_break": "因果链断裂",
+    "mechanism_black_box": "机制仍是黑箱",
+    "boundary_confusion": "适用边界不清",
+    "example_mismatch": "例子与解释未对齐",
+    "transfer_failure": "尚未迁移到新情境",
+    "unresolved": "仍需独立核实",
+}
+
+_FEYNMAN_DEFAULT_CALIBRATION = {
+    "audience_level": "undergraduate",
+    "cognitive_demand": "mechanism",
+    "scaffold_level": "guided",
+    "representation_mode": "auto",
+}
+
+_EDUCATION_TO_AUDIENCE = {
+    "middle_school": "beginner",
+    "high_school": "high_school",
+    "vocational": "vocational",
+    "higher_vocational": "vocational",
+    "undergraduate": "undergraduate",
+    "graduate": "graduate",
+    "postgraduate": "graduate",
+    "professional": "professional",
+}
+
+_SCAFFOLD_ORDER = ("none", "minimal", "guided", "model")
+
+
+def feynman_calibration_options() -> dict[str, tuple[str, ...]]:
+    runtime = learning_skill_runtime_contract("feynman_dialogue")
+    if not runtime:
+        return {}
+    return {
+        axis.id: tuple(option[0] for option in axis.options)
+        for axis in runtime.calibration_axes
+    }
+
+
+def normalize_feynman_calibration(
+    value: dict[str, Any] | None,
+    *,
+    education_stage: str = "",
+) -> dict[str, str]:
+    calibration = dict(_FEYNMAN_DEFAULT_CALIBRATION)
+    audience = _EDUCATION_TO_AUDIENCE.get(str(education_stage or "").strip().casefold())
+    if audience:
+        calibration["audience_level"] = audience
+    options = feynman_calibration_options()
+    for key, option in dict(value or {}).items():
+        if key in options and str(option) in options[key]:
+            calibration[key] = str(option)
+    return calibration
+
+
+def _increase_scaffold(calibration: dict[str, str]) -> dict[str, str]:
+    result = dict(calibration)
+    current = result.get("scaffold_level", "guided")
+    try:
+        index = _SCAFFOLD_ORDER.index(current)
+    except ValueError:
+        index = 2
+    result["scaffold_level"] = _SCAFFOLD_ORDER[min(len(_SCAFFOLD_ORDER) - 1, index + 1)]
+    return result
+
+
+def _teach_back_coverage(message: str) -> dict[str, bool]:
+    text = re.sub(r"\s+", " ", str(message or "")).strip().casefold()
+    compact = re.sub(r"[\s，,。.!！?？、；;：:]", "", text)
+    return {
+        "definition": any(marker in text for marker in (
+            "是", "指", "意味着", "可以理解为", "一种", " refers to ", " means ",
+        )) or bool(re.search(r"\b\w+(?:\s+\w+){0,4}\s+is\s+", text)),
+        "mechanism": any(marker in text for marker in (
+            "因为", "所以", "通过", "导致", "从而", "使得", "依赖",
+            " because ", " therefore ", " through ", " causes ", " depends on ",
+        )) or bool(re.search(r"先.{1,80}(?:再|然后)", text)),
+        "example": any(marker in text for marker in (
+            "例如", "比如", "举例", "假设", "代码", "就像",
+            " for example ", " e.g.", " suppose ", " code ",
+        )),
+        "boundary": any(marker in text for marker in (
+            "但是", "但", "除非", "只有", "不适用", "前提", "条件", "边界", "例外", "并不代表",
+            " but ", " unless ", " only if ", " boundary ", " except ",
+        )),
+        "transfer": any(marker in text for marker in (
+            "如果", "换成", "类似", "应用", "迁移", "另一个",
+            " if ", " similar ", " apply ", " another ",
+        )),
+        "substantive": len(compact) >= 18,
+    }
+
+
+def _candidate_gap(
+    message: str,
+    coverage: dict[str, bool],
+    calibration: dict[str, str],
+) -> str:
+    compact = re.sub(r"[\s，,。.!！?？、；;：:]", "", str(message or "").casefold())
+    if len(compact) < 10:
+        return "missing_prerequisite"
+    circular = re.search(r"(.{2,10})(?:就是|是)(?:一种)?\1", compact)
+    if circular:
+        return "circular_definition"
+    demand = calibration.get("cognitive_demand", "mechanism")
+    if demand in {"mechanism", "boundary", "transfer"} and not coverage["mechanism"]:
+        return "causal_break"
+    if demand in {"boundary", "transfer"} and not coverage["boundary"]:
+        return "boundary_confusion"
+    if demand == "transfer" and not coverage["transfer"]:
+        return "transfer_failure"
+    if demand == "mechanism" and not coverage["example"]:
+        return "mechanism_black_box"
+    return "unresolved"
+
+
+def build_teach_back_diagnostic(
+    message: str,
+    *,
+    calibration: dict[str, str],
+    previous: dict[str, Any] | None = None,
+    preserve_gap: bool = False,
+) -> dict[str, Any]:
+    """Build an operational, unverified diagnostic from observable answer form.
+
+    This never evaluates domain correctness and therefore cannot become a
+    Knowledge/Practice claim without the independent assessment handoff.
+    """
+    coverage = _teach_back_coverage(message)
+    previous_gap = str((previous or {}).get("candidate_gap") or "")
+    gap = previous_gap if preserve_gap and previous_gap in FEYNMAN_GAP_LABELS else _candidate_gap(
+        message, coverage, calibration,
+    )
+    return {
+        "schema_version": "teach-back-diagnostic-v1",
+        "learner_wording": str(message or "").strip()[:1200],
+        "candidate_gap": gap,
+        "candidate_gap_label": FEYNMAN_GAP_LABELS[gap],
+        "coverage": coverage,
+        "calibration": dict(calibration),
+        "status": "needs_focused_repair",
+        "verification": "unverified",
+        "mastery_inference": False,
+        "decision_owner": "deterministic_surface_diagnostic",
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+
+def _gap_observably_addressed(
+    diagnostic: dict[str, Any],
+    message: str,
+    calibration: dict[str, str],
+) -> bool:
+    coverage = _teach_back_coverage(message)
+    gap = str(diagnostic.get("candidate_gap") or "unresolved")
+    required = {
+        "circular_definition": "definition",
+        "missing_prerequisite": "definition",
+        "causal_break": "mechanism",
+        "mechanism_black_box": "example",
+        "boundary_confusion": "boundary",
+        "example_mismatch": "example",
+        "transfer_failure": "transfer",
+        "unresolved": "substantive",
+    }.get(gap, "substantive")
+    if not coverage.get(required, False):
+        return False
+    demand = calibration.get("cognitive_demand", "mechanism")
+    demand_key = {
+        "define": "definition", "mechanism": "mechanism",
+        "boundary": "boundary", "transfer": "transfer",
+    }.get(demand, "mechanism")
+    return bool(coverage.get(demand_key, False))
 
 def _workflow_from_registry(skill_id: str) -> dict[str, Any]:
     runtime = learning_skill_runtime_contract(skill_id)
@@ -535,6 +714,44 @@ def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
     })
 
 
+def _feynman_repair_step(
+    goal: str,
+    diagnostic: dict[str, Any],
+    calibration: dict[str, str],
+    loop_count: int,
+) -> dict[str, Any]:
+    gap_label = str(diagnostic.get("candidate_gap_label") or FEYNMAN_GAP_LABELS["unresolved"])
+    scaffold = calibration.get("scaffold_level", "guided")
+    representation = calibration.get("representation_mode", "auto")
+    support_instruction = {
+        "model": "先示范一段只修补该缺口的两句解释，再让学习者改写同一关系",
+        "guided": "给一个半成品句架，只让学习者补上缺失连接",
+        "minimal": "只给一个关键词提示，让学习者自行重讲",
+        "none": "不提供内容提示，只指出要修订的连接",
+    }.get(scaffold, "给一个半成品句架，只让学习者补上缺失连接")
+    representation_instruction = {
+        "code": "优先用最小代码或输入输出变化承载修订",
+        "visual": "优先用可视化位置、箭头或流程关系承载修订",
+        "analogy": "允许一个可逐项映射的类比，但必须指出类比边界",
+        "formal": "允许公式或形式化关系，但要求逐项解释符号",
+        "auto": "选择当前概念最短、最可检查的表征",
+    }.get(representation, "选择当前概念最短、最可检查的表征")
+    return {
+        "state": "revising_explanation",
+        "step_index": 3,
+        "directive": (
+            f"继续围绕“{goal}”的同一个候选缺口“{gap_label}”进行第 {loop_count} 次修订。"
+            f"{support_instruction}；{representation_instruction}。一次只处理这一处，不新增第二个缺口，"
+            "不判断内容正确或掌握。"
+        ),
+        "fallback": (
+            f"我们仍只修一处：{gap_label}。请把这一个连接重讲一次；完成后会进入无提示验证，"
+            "而不是继续扩展新知识。"
+        ),
+        "flow_note": f"单缺口修订第 {loop_count} 轮：仍停留在同一缺口，不把对话表现当作掌握。",
+    }
+
+
 def transition_learning_skill_turn(
     *,
     skill_id: str,
@@ -545,6 +762,9 @@ def transition_learning_skill_turn(
     goal: str,
     message: str,
     entry_mode: str = "direct",
+    calibration: dict[str, Any] | None = None,
+    teach_back_diagnostic: dict[str, Any] | None = None,
+    gap_loop_count: int = 0,
 ) -> dict[str, Any]:
     """Pure SkillSpec transition used by runtime tests and multi-turn evals.
 
@@ -556,6 +776,7 @@ def transition_learning_skill_turn(
     if current_state not in WORKFLOWS[skill_id]["states"]:
         raise ValueError(f"unsupported_skill_state:{skill_id}:{current_state}")
     response_signal = learner_response_signal(message)
+    normalized_calibration = normalize_feynman_calibration(calibration)
     normalized_choice = re.sub(r"[\s，,。.!！?？、]", "", str(message or "").casefold())
     if (
         entry_mode == "grounded"
@@ -569,6 +790,22 @@ def transition_learning_skill_turn(
         )
     support_only = response_signal != "attempt"
     next_support_count = support_count + (1 if support_only else 0)
+    next_diagnostic = dict(teach_back_diagnostic or {})
+    next_gap_loop_count = max(0, int(gap_loop_count or 0))
+    if skill_id == "feynman_dialogue" and support_only and response_signal in {
+        "no_prior_knowledge", "direct_explanation_requested",
+    }:
+        normalized_calibration = _increase_scaffold(normalized_calibration)
+    if skill_id == "feynman_dialogue" and response_signal == "no_prior_knowledge":
+        next_diagnostic = build_teach_back_diagnostic(
+            message,
+            calibration=normalized_calibration,
+        )
+        next_diagnostic.update({
+            "candidate_gap": "missing_prerequisite",
+            "candidate_gap_label": FEYNMAN_GAP_LABELS["missing_prerequisite"],
+            "status": "needs_primer",
+        })
     next_step = (
         _support_step(
             skill_id,
@@ -582,6 +819,39 @@ def transition_learning_skill_turn(
         _next_step(skill_id, current_state, goal)
     )
     next_turn_count = turn_count + (0 if support_only else 1)
+    if skill_id == "feynman_dialogue" and not support_only:
+        preserve_gap = current_state != "awaiting_teach_back"
+        next_diagnostic = build_teach_back_diagnostic(
+            message,
+            calibration=normalized_calibration,
+            previous=teach_back_diagnostic,
+            preserve_gap=preserve_gap,
+        )
+        if current_state == "revising_explanation":
+            addressed = _gap_observably_addressed(
+                dict(teach_back_diagnostic or next_diagnostic),
+                message,
+                normalized_calibration,
+            )
+            if addressed:
+                next_diagnostic["status"] = "ready_for_independent_verification"
+                next_diagnostic["support_used"] = normalized_calibration.get("scaffold_level")
+            else:
+                next_gap_loop_count += 1
+                if (
+                    next_gap_loop_count <= 2
+                    and next_turn_count < int(WORKFLOWS[skill_id]["turn_budget"])
+                ):
+                    next_step = _feynman_repair_step(
+                        goal,
+                        next_diagnostic,
+                        normalized_calibration,
+                        next_gap_loop_count,
+                    )
+                else:
+                    next_step = _next_step(skill_id, "budget_exhausted", goal)
+                    next_diagnostic["status"] = "unresolved_before_independent_verification"
+                    next_diagnostic["verification_focus"] = next_diagnostic.get("candidate_gap")
     if (
         not support_only
         and next_turn_count >= int(WORKFLOWS[skill_id]["turn_budget"])
@@ -594,6 +864,9 @@ def transition_learning_skill_turn(
         "support_only": support_only,
         "support_count": next_support_count,
         "turn_count": next_turn_count,
+        "calibration": normalized_calibration,
+        "teach_back_diagnostic": next_diagnostic,
+        "gap_loop_count": next_gap_loop_count,
         "advanced": str(next_step["state"]) != current_state,
     }
 
@@ -812,6 +1085,35 @@ async def create_learning_skill_run(
         normalized_goal,
         grounded_entry=grounded_entry,
     )
+    profile = await db.get(LearnerProfile, session.learner_id)
+    calibration = (
+        normalize_feynman_calibration(
+            None,
+            education_stage=profile.education_stage if profile else "",
+        )
+        if skill_id == "feynman_dialogue" else None
+    )
+    initial_data: dict[str, Any] = {
+        "responses": [],
+        "next_directive": directive,
+        "next_prompt": fallback,
+        "verification_required": True,
+        "mastery_claim": "none",
+        "entry_mode": "grounded" if grounded_entry else "standard",
+        "support_count": 0,
+        "last_response_signal": "opening",
+        "flow_note": (
+            "先建立可回答的知识起点，再进入单步追问。"
+            if grounded_entry else
+            "每次只推进一个可检查的学习动作。"
+        ),
+    }
+    if calibration is not None:
+        initial_data.update({
+            "calibration": calibration,
+            "teach_back_diagnostic": {},
+            "gap_loop_count": 0,
+        })
     run = LearningSkillRun(
         learner_id=session.learner_id,
         session_id=session.id,
@@ -823,21 +1125,7 @@ async def create_learning_skill_run(
         step_index=1,
         turn_count=0,
         turn_budget=int(workflow["turn_budget"]),
-        run_data={
-            "responses": [],
-            "next_directive": directive,
-            "next_prompt": fallback,
-            "verification_required": True,
-            "mastery_claim": "none",
-            "entry_mode": "grounded" if grounded_entry else "standard",
-            "support_count": 0,
-            "last_response_signal": "opening",
-            "flow_note": (
-                "先建立可回答的知识起点，再进入单步追问。"
-                if grounded_entry else
-                "每次只推进一个可检查的学习动作。"
-            ),
-        },
+        run_data=initial_data,
         action_log=[],
         client_request_id=request_key,
         version=1,
@@ -853,6 +1141,17 @@ async def create_learning_skill_run(
         client_event_id=f"learning-skill-run:{run.id}:started",
         source=source,
     )
+    if calibration is not None:
+        await _record_run_event(
+            db, run, "learning_skill_calibration_updated",
+            payload={
+                "calibration": calibration,
+                "reason": "profile_seeded_default",
+                "mastery_unchanged": True,
+            },
+            client_event_id=f"learning-skill-run:{run.id}:calibration:initial",
+            source="runtime",
+        )
     return run, True
 
 
@@ -975,6 +1274,9 @@ async def prepare_learning_skill_turn(
         goal=current.goal,
         message=message,
         entry_mode=str(data.get("entry_mode") or "direct"),
+        calibration=dict(data.get("calibration") or {}),
+        teach_back_diagnostic=dict(data.get("teach_back_diagnostic") or {}),
+        gap_loop_count=int(data.get("gap_loop_count") or 0),
     )
     response_signal = str(transition["response_signal"])
     support_only = bool(transition["support_only"])
@@ -990,7 +1292,7 @@ async def prepare_learning_skill_turn(
     current.turn_count = int(transition["turn_count"])
     current.state = str(transition["state"])
     current.step_index = int(transition["step_index"])
-    current.run_data = {
+    next_run_data = {
         **data,
         "responses": responses[-12:],
         "next_directive": transition["directive"],
@@ -1003,6 +1305,13 @@ async def prepare_learning_skill_turn(
             "已收到一个可检查的尝试，流程只推进了一步。",
         ),
     }
+    if current.skill_id == "feynman_dialogue":
+        next_run_data.update({
+            "calibration": dict(transition.get("calibration") or {}),
+            "teach_back_diagnostic": dict(transition.get("teach_back_diagnostic") or {}),
+            "gap_loop_count": int(transition.get("gap_loop_count") or 0),
+        })
+    current.run_data = next_run_data
     current.action_log = [*history, turn_key][-80:]
     current.version += 1
     current.updated_at = datetime.utcnow()
@@ -1020,6 +1329,33 @@ async def prepare_learning_skill_turn(
         client_event_id=f"learning-skill-run:{current.id}:{turn_key}:advanced",
         source="user",
     )
+    if current.skill_id == "feynman_dialogue":
+        previous_calibration = dict(data.get("calibration") or {})
+        next_calibration = dict(transition.get("calibration") or {})
+        if next_calibration != previous_calibration:
+            await _record_run_event(
+                db, current, "learning_skill_calibration_updated",
+                payload={
+                    "calibration": next_calibration,
+                    "reason": "bounded_support_adjustment",
+                    "mastery_unchanged": True,
+                },
+                client_event_id=f"learning-skill-run:{current.id}:{turn_key}:calibration",
+                source="runtime",
+            )
+        previous_diagnostic = dict(data.get("teach_back_diagnostic") or {})
+        next_diagnostic = dict(transition.get("teach_back_diagnostic") or {})
+        if next_diagnostic and next_diagnostic != previous_diagnostic:
+            await _record_run_event(
+                db, current, "learning_skill_teach_back_diagnostic_updated",
+                payload={
+                    "diagnostic": next_diagnostic,
+                    "mastery_unchanged": True,
+                    "kernel_write": "none_until_independent_verification",
+                },
+                client_event_id=f"learning-skill-run:{current.id}:{turn_key}:diagnostic",
+                source="runtime",
+            )
     if current.state == "verification_ready":
         await _advance_linked_task(
             db,
@@ -1118,6 +1454,22 @@ async def learning_skill_run_view(
     micro = await db.get(MicroLearningRun, run.micro_learning_run_id) if run.micro_learning_run_id else None
     task = await _linked_learning_task(db, run)
     total_steps = int(workflow.get("total_steps") or 4)
+    runtime_contract = learning_skill_runtime_contract(run.skill_id)
+    calibration_axes = [
+        {
+            "id": axis.id,
+            "title": axis.title,
+            "description": axis.description,
+            "default": axis.default,
+            "options": [{"id": option_id, "label": label} for option_id, label in axis.options],
+        }
+        for axis in (runtime_contract.calibration_axes if runtime_contract else ())
+    ]
+    calibration = (
+        normalize_feynman_calibration(data.get("calibration"))
+        if run.skill_id == "feynman_dialogue" else
+        dict(data.get("calibration") or {})
+    )
     return {
         "id": run.id,
         "skill": {
@@ -1135,6 +1487,10 @@ async def learning_skill_run_view(
         "turn_count": run.turn_count,
         "turn_budget": run.turn_budget,
         "support_count": int(data.get("support_count") or 0),
+        "gap_loop_count": int(data.get("gap_loop_count") or 0),
+        "calibration": calibration,
+        "calibration_axes": calibration_axes,
+        "teach_back_diagnostic": dict(data.get("teach_back_diagnostic") or {}),
         "last_response_signal": str(data.get("last_response_signal") or ""),
         "flow_note": str(data.get("flow_note") or "每次只推进一个可检查的学习动作。"),
         "stages": _workflow_stage_projection(run, workflow, data),
@@ -1197,6 +1553,7 @@ async def act_on_learning_skill_run(
     client_action_id: str,
     education_stage: str = "",
     background: str = "",
+    calibration_patch: dict[str, Any] | None = None,
 ) -> tuple[LearningSkillRun, MicroLearningRun | None]:
     history = list(run.action_log or [])
     action_key = f"action:{client_action_id}"
@@ -1206,7 +1563,35 @@ async def act_on_learning_skill_run(
     if run.version != expected_version:
         raise RuntimeError("version_conflict")
     micro: MicroLearningRun | None = None
-    if action == "pause" and run.status in {"active", "verification"}:
+    if action == "calibrate":
+        if run.skill_id != "feynman_dialogue" or run.status not in {"active", "paused"}:
+            raise RuntimeError("invalid_state")
+        options = feynman_calibration_options()
+        patch = {
+            key: str(value)
+            for key, value in dict(calibration_patch or {}).items()
+            if key in options and str(value) in options[key]
+        }
+        if not patch:
+            raise RuntimeError("invalid_state")
+        data = dict(run.run_data or {})
+        calibration = normalize_feynman_calibration({
+            **dict(data.get("calibration") or {}),
+            **patch,
+        })
+        run.run_data = {
+            **data,
+            "calibration": calibration,
+            "flow_note": "费曼复述的难度、支架或表征已更新；流程位置没有改变。",
+        }
+        event_type = "learning_skill_calibration_updated"
+        event_payload = {
+            "calibration": calibration,
+            "changed_fields": sorted(patch),
+            "reason": "learner_control",
+            "mastery_unchanged": True,
+        }
+    elif action == "pause" and run.status in {"active", "verification"}:
         resume_state = run.state
         run.status = "paused"
         run.state = "paused"

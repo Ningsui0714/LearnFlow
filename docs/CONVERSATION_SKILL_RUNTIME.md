@@ -1,7 +1,7 @@
-# 原子学习 Skill Runtime v3
+# 原子学习 Skill Runtime v5
 
 - 状态：已实现
-- 运行时版本：`atomic-learning-skill-runtime-v3`
+- 运行时版本：`atomic-learning-skill-runtime-v5`
 - 数据迁移：`v16-atomic-learning-skill-runtime`
 
 ## 1. 产品承诺
@@ -30,11 +30,17 @@ Tutor 可以推荐方法，但推荐固定返回 `requires_confirmation=true`，
 |---|---|---|---|
 | `guided_explanation` 清晰讲解 | 陌生概念、认知负荷高、先建立最小模型 | 核心模型和最小例子 → 新例子检查 → 用“条件—机制—结果”重述 | 学生明确要自行推导；主要目标是程序步骤 |
 | `socratic_dialogue` 苏格拉底追问 | 因果、证明、不变量；已有部分直觉 | 建立可回答起点 → 在具体情境检验判断 → 连接理由与边界 | 完全没有先备知识；学生明确要求直接解释 |
-| `feynman_dialogue` 费曼复述 | 已接触主题后的查漏、概念组织 | 首次复述 → 定位一个跳步 → 无术语修订并补例子/边界 | 初次接触；只需先看程序步骤 |
+| `feynman_dialogue` 费曼复述 | 已接触主题后的查漏、概念组织 | 最小起点/首次复述 → 定位一个候选缺口 → 围绕同一缺口修订 → 独立验证 | 初次接触时不能从空白强迫复述；只需先看程序步骤 |
 | `worked_example_fading` 示例渐隐 | 代码、算法、配置和其他程序性技能 | 子目标标注的完整示例 → 隐去最后一步 → 只保留子目标与起始条件 | 单纯事实解释；已经能独立完成且只需迁移验证 |
 
-四条流程的引导预算均为三轮。每轮只推进一个可检查动作；预算结束必须停止追加教学，转入
-独立验证。学习者可随时要求直接解释、暂停、换方法或稍后继续。
+清晰讲解、苏格拉底追问和示例渐隐的有效引导预算为三轮；费曼复述预算为五轮，其中额外两轮
+只能用于修订同一个候选缺口。每轮最多推进一个状态；预算结束必须停止追加教学，把仍未解决的
+候选缺口交给独立验证。学习者可随时要求直接解释、暂停、换方法或稍后继续。
+
+费曼运行数据增加 `calibration` 与 `teach_back_diagnostic`。校准由受众层次、认知要求、支架
+强度、表征方式组成，初值可由学习者明确教育阶段提供，但只用于表达适配。诊断只使用表面可观察
+信号区分定义绕回、前提缺失、因果断裂、机制黑箱、边界不清和迁移缺口；它始终标记
+`verification=unverified / mastery_inference=false`，模型只能据此组织追问，不能把它升级成结论。
 
 运行时先把学习者输入确定性区分为 `attempt`、`no_prior_knowledge`、
 `direct_explanation_requested`、`orientation_problem_choice / orientation_example_choice`、
@@ -91,7 +97,7 @@ LearningTask 不再产生指向任务详情页的竞争入口；完成教学引�
 | `GET /api/agent/skills` | 返回四种可选方法及适用/避用元数据 |
 | `GET /api/agent/modes` | 返回 free / explain / learn / plan 四种粗粒度 Chat 契约 |
 | `POST /api/agent/sessions/{sessionId}/skill-runs` | 幂等启动任一运行型 Skill，并绑定任务 |
-| `POST /api/agent/sessions/{sessionId}/skill-runs/{runId}/actions` | 暂停、恢复或在同一任务上开始验证 |
+| `POST /api/agent/sessions/{sessionId}/skill-runs/{runId}/actions` | 暂停、恢复、校准费曼维度，或在同一任务上开始验证 |
 | `GET /api/agent/sessions/{sessionId}` | 恢复 Session、最近 SkillRun、任务引用和推荐 |
 | `POST /api/agent/sessions/{sessionId}/turns` | 在 runtime 已裁决的当前步骤内继续对话 |
 
@@ -102,7 +108,8 @@ LearningTask 不再产生指向任务详情页的竞争入口；完成教学引�
 
 以下 Skill 事件全部为零 Kernel target：`learning_skill_run_started`、
 `learning_skill_run_advanced`、`learning_skill_run_paused`、
-`learning_skill_run_resumed`、`learning_skill_verification_started`、
+`learning_skill_run_resumed`、`learning_skill_calibration_updated`、
+`learning_skill_teach_back_diagnostic_updated`、`learning_skill_verification_started`、
 `learning_skill_run_completed`。任务同步继续复用已登记的 Learning Task 生命周期和阶段事件。
 其中 `learning_skill_run_advanced` 的 payload 会明确携带 `response_signal` 与 `support_only`；
 支架回合允许 `from_state == to_state`，且不会增加 `turn_count`。
@@ -121,7 +128,7 @@ cd backend
 venv/bin/python scripts/evaluate_learning_skills.py
 ```
 
-`atomic_learning_skill_runtime_v2` 的既有冻结样例结果为：路由准确率、有界运行、验证交接和
+`atomic_learning_skill_runtime_v5_skill_spec_v2` 的冻结样例结果为：路由准确率、有界运行、验证交接和
 证据边界均为 `1.000`；只会普通讲解的基线分别为 `0.250 / 0 / 0 / 0`，四项平均提升
 `0.938`。这只证明工程契约可执行，不证明真实学习效果。
 
@@ -129,6 +136,15 @@ venv/bin/python scripts/evaluate_learning_skills.py
 率、暂停恢复率、24 小时和 7 天复习保持率，并结合访谈检查学生是否感到被流程绑架。
 
 ## 7. Contract impact
+
+- 注册表版本提升为 `2026-08-27.4`，运行时提升为 v5。稳定 Skill ID 和四个主要状态 ID 不变；
+  旧运行记录可继续恢复，缺失的校准字段使用注册表默认值。
+- 费曼 turn budget 从 3 增至 5，仅允许在 `revising_explanation` 围绕同一缺口循环两次；其他
+  Skill 的预算和状态图不变。
+- API 回包向后兼容地增加 `calibration / calibration_axes / teach_back_diagnostic /
+  gap_loop_count`，动作增加 `calibrate`。全部存放在现有 `run_data`，无需数据库迁移。
+- 两个新增事件均为零 Kernel target；`teach_back_analyzed` 仍只属于正式微学习的已验证诊断链。
+- 三类主 Agent、五核 schema、评分、纠错、复习和 reducer 均未改变。
 
 - 注册表版本提升为 `2026-08-24.6`。苏格拉底契约新增“陌生主题先支架”和“非尝试不得推进”
   规则；没有新增主 Agent、Kernel 或直接写入路径。

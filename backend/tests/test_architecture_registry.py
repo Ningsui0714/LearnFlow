@@ -390,6 +390,7 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
     assert {
         "learning_skill_run_started", "learning_skill_run_advanced",
         "learning_skill_run_paused", "learning_skill_run_resumed",
+        "learning_skill_calibration_updated", "learning_skill_teach_back_diagnostic_updated",
         "learning_skill_verification_started", "learning_skill_run_completed",
     } <= set(EVENTS)
     assert all(
@@ -397,12 +398,22 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
         for event_id in {
             "learning_skill_run_started", "learning_skill_run_advanced",
             "learning_skill_run_paused", "learning_skill_run_resumed",
+            "learning_skill_calibration_updated", "learning_skill_teach_back_diagnostic_updated",
             "learning_skill_verification_started", "learning_skill_run_completed",
         }
     )
     assert "learning_skill_runtime" in SKILLS["socratic_dialogue"].tools
     assert "不得把它当成有效尝试或推进步骤" in SKILLS["socratic_dialogue"].invocation_prompt
     assert "learning_skill_runtime" in SKILLS["feynman_dialogue"].tools
+    feynman_runtime = SKILLS["feynman_dialogue"].runtime
+    assert feynman_runtime is not None
+    assert feynman_runtime.version == "atomic-learning-skill-runtime-v5"
+    assert feynman_runtime.turn_budget == 5
+    assert {axis.id for axis in feynman_runtime.calibration_axes} == {
+        "audience_level", "cognitive_demand", "scaffold_level", "representation_mode",
+    }
+    assert "TeachBackDiagnostic" in feynman_runtime.output_objects
+    assert "只围绕诊断中的一个候选缺口" in SKILLS["feynman_dialogue"].invocation_prompt
     assert "learning_task_runtime" in SKILLS["guided_explanation"].tools
     assert "learning_task_runtime" in SKILLS["worked_example_fading"].tools
     assert SKILLS["assessment_blueprint_design"].learner_selectable is False

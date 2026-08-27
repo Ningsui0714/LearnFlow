@@ -5,7 +5,7 @@
 > 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
-Contract impact（`2026-08-27.3`）：教学方法采用 `SkillSpec v2` 单一权威。Skill 是 Tutor 学习态中的有界教学策略，不是提示词模板、工具或第四类 Agent；其状态只能由确定性 runtime 根据交互信号推进。练习生成前可由 Learning Design 的 `assessment_blueprint_design` Playbook 调用 `assessment_blueprint_builder` 形成 `AssessmentBlueprint + AssessmentRubric`，但评分与证据升级仍由 Practice Agent 和 reducer 裁决。前端 Skill 定义由注册表导出，多轮契约评测覆盖支架不误推进、单步推进、验证交接和零 target 边界。详见 `docs/SKILL_ENGINEERING.md`。
+Contract impact（`2026-08-27.4`）：教学方法继续采用 `SkillSpec v2` 单一权威。费曼 Skill 新增注册表声明的四轴校准和确定性表面诊断；Tutor 模型只渲染当前指令，不拥有状态、缺口事实或掌握判定。`learning_skill_calibration_updated` 与 `learning_skill_teach_back_diagnostic_updated` 均为零 Kernel target，只有正式独立验证可以沿 EvidenceEvent/reducer 写入五核。前端校准项继续由注册表生成，不建立第二套常量。
 
 Contract impact（`2026-08-27.2`）：路径 ACI 的职责不变，但外部证据和路线顺序被收紧。Harness 固定执行 `exact -> conditional fuzzy -> clarify | external research -> evidence gate -> proposal`；`propose_personal_path_node` 的模型 schema 不再接受 URL，只有刚刚执行的搜索结果能通过受信元数据进入提案器。路线规划由确定性硬前置闭包和拓扑排序控制，`co_learning` 不制造先后关系。以上变化不新增 Agent、Kernel writer 或事件类型。
 

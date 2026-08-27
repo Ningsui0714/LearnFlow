@@ -408,6 +408,16 @@ button { cursor: pointer; }
 .learning-task-popover li.done { color: #779184; }
 .learning-task-popover li.current { color: #1e684a; font-weight: 750; }
 .learning-task-popover li.current i { background: #e1f0e8; color: #176a49; }
+.feynman-calibration { margin: 8px 0; border-top: 1px solid #edf0ee; padding-top: 8px; }
+.feynman-calibration > header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.feynman-calibration > header strong { color: #294338; font-size: 8px; }
+.feynman-calibration > header span { color: #93a098; font-size: 6.5px; }
+.feynman-calibration-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 6px; }
+.feynman-calibration-grid label { display: grid; gap: 3px; color: #7d8b83; font-size: 6.5px; }
+.feynman-calibration-grid select { width: 100%; min-width: 0; }
+.feynman-calibration > p { display: flex; align-items: center; gap: 5px; margin: 7px 0 0; border-radius: 7px; background: #f3f7f5; padding: 6px 7px; color: #728178; font-size: 7px; }
+.feynman-calibration > p strong { color: #245f46; font-size: 7.5px; }
+.feynman-calibration > p small { margin-left: auto; color: #9a8260; font-size: 6px; }
 .learning-task-popover > label { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid #edf0ee; padding-top: 8px; color: #87948d; font-size: 7px; }
 .learning-task-popover select { height: 25px; min-width: 112px; border: 1px solid #d8dfda; border-radius: 7px; background: #fff; padding: 0 20px 0 6px; color: #50635a; font-size: 8px; outline: 0; }
 .learning-task-menu-actions { display: flex; gap: 5px; margin-top: 8px; }

@@ -1738,6 +1738,54 @@ function App() {
     }))
   }
 
+  const calibrateFeynmanSkill = async (
+    conversationId: string,
+    patch: Record<string, string>,
+  ) => {
+    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    if (!conversation?.formalSessionId || formalConnection.status !== 'connected') return
+    const projection = latestLearningTaskProjection(conversation.learningTasks, conversation.learningEvents)
+    if (
+      !projection
+      || projection.skillId !== 'feynman_dialogue'
+      || !projection.task.formalSkillRunId
+      || !projection.task.formalSkillRunVersion
+    ) return
+    const busyKey = `skill-calibration:${projection.task.formalSkillRunId}`
+    setFormalBusyKey(busyKey)
+    try {
+      const updated = await actOnFormalLearningSkillRun(
+        conversation.formalSessionId,
+        {
+          id: projection.task.formalSkillRunId,
+          version: projection.task.formalSkillRunVersion,
+        },
+        'calibrate',
+        patch as Partial<{
+          audience_level: string
+          cognitive_demand: string
+          scaffold_level: string
+          representation_mode: string
+        }>,
+      )
+      setWorkspace(previous => ({
+        ...previous,
+        conversations: previous.conversations.map(item => item.id === conversationId ? {
+          ...item,
+          learningTasks: item.learningTasks.map(task => task.id === projection.task.id
+            ? bindFormalSkillRun(task, updated.active_skill_run)
+            : task),
+          updatedAt: Date.now(),
+        } : item),
+      }))
+      await refreshFormalSnapshot()
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '费曼复述校准失败')
+    } finally {
+      setFormalBusyKey('')
+    }
+  }
+
   const updateValueProposal = async (
     conversationId: string,
     projection: LearningPlanProjection,
@@ -2603,6 +2651,39 @@ function App() {
                         </li>
                       ))}
                     </ol>
+                    {taskProjection.skillId === 'feynman_dialogue' && taskProjection.task.formalSkillRunId && (
+                      <section className="feynman-calibration" aria-label="费曼复述校准">
+                        <header>
+                          <strong>复述校准</strong>
+                          <span>调整难度不会改变流程位置或掌握状态</span>
+                        </header>
+                        <div className="feynman-calibration-grid">
+                          {taskSkill?.calibrationAxes.map(axis => (
+                            <label key={axis.id}>
+                              <span>{axis.title}</span>
+                              <select
+                                value={taskProjection.task.formalSkillCalibration?.[axis.id as keyof typeof taskProjection.task.formalSkillCalibration] || axis.default}
+                                disabled={Boolean(pendingMode) || formalBusyKey.startsWith('skill-calibration:')}
+                                onChange={event => {
+                                  void calibrateFeynmanSkill(conversation.id, {
+                                    [axis.id]: event.target.value,
+                                  })
+                                }}
+                              >
+                                {axis.options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+                              </select>
+                            </label>
+                          ))}
+                        </div>
+                        {taskProjection.task.formalTeachBackDiagnostic?.candidate_gap_label && (
+                          <p>
+                            <span>本轮只修</span>
+                            <strong>{taskProjection.task.formalTeachBackDiagnostic.candidate_gap_label}</strong>
+                            <small>待独立验证</small>
+                          </p>
+                        )}
+                      </section>
+                    )}
                     <label>
                       <span>切换学习方法</span>
                       <select

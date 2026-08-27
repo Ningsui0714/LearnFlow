@@ -383,6 +383,16 @@ async def update_learning_skill_run(
             client_action_id=request.client_action_id,
             education_stage=current.profile.education_stage or "",
             background=current.profile.background or "",
+            calibration_patch={
+                key: value
+                for key, value in {
+                    "audience_level": request.audience_level,
+                    "cognitive_demand": request.cognitive_demand,
+                    "scaffold_level": request.scaffold_level,
+                    "representation_mode": request.representation_mode,
+                }.items()
+                if value is not None
+            },
         )
     except RuntimeError as error:
         raise _skill_run_error(error) from error

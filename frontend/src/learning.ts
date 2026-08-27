@@ -18,6 +18,22 @@ export type LearningSubstateId =
   | 'synthesis'
   | 'reflection'
 
+export type FeynmanCalibration = Partial<{
+  audience_level: string
+  cognitive_demand: string
+  scaffold_level: string
+  representation_mode: string
+}>
+
+export type TeachBackDiagnostic = Partial<{
+  learner_wording: string
+  candidate_gap: string
+  candidate_gap_label: string
+  status: string
+  verification: string
+  mastery_inference: boolean
+}>
+
 // Browser-side binding to a formal LearningTask, or an explicitly labelled
 // offline fallback. This object is not a second learning-task authority.
 export type LearningTaskBinding = {
@@ -34,6 +50,9 @@ export type LearningTaskBinding = {
   formalSkillDirective?: string
   formalSkillTurnCount?: number
   formalSkillTurnBudget?: number
+  formalSkillGapLoopCount?: number
+  formalSkillCalibration?: FeynmanCalibration
+  formalTeachBackDiagnostic?: TeachBackDiagnostic
 }
 
 // Backward-compatible name for existing persisted vNext records.
@@ -58,6 +77,13 @@ export type LearningSkillDefinition = {
   bestFor: string
   boundState: 'guided_learning'
   steps: readonly LearningSkillStep[]
+  calibrationAxes: readonly {
+    id: string
+    title: string
+    description: string
+    default: string
+    options: readonly { id: string; label: string }[]
+  }[]
 }
 
 export type LearningEventType =
@@ -108,6 +134,8 @@ export type LearningTaskTutorContext = {
   formalSkillStatus?: string
   formalSkillState?: string
   formalSkillStageLabel?: string
+  formalSkillCalibration?: FeynmanCalibration
+  formalTeachBackDiagnostic?: TeachBackDiagnostic
   taskId: string
   objective: string
   skillId: LearningSkillId
@@ -134,6 +162,9 @@ export type FormalSkillRunBindingInput = {
   step_index?: number
   turn_count?: number
   turn_budget?: number
+  gap_loop_count?: number
+  calibration?: Record<string, string>
+  teach_back_diagnostic?: Record<string, unknown>
   learning_task?: {
     id: number
     version?: number
@@ -163,6 +194,18 @@ function skillFromManifest(
     description: skill.description,
     bestFor: skill.best_for.join('、'),
     boundState: 'guided_learning',
+    calibrationAxes: ((runtime as unknown as {
+      calibration_axes?: Array<{
+        id: string
+        title: string
+        description: string
+        default: string
+        options: Array<[string, string]>
+      }>
+    }).calibration_axes || []).map(axis => ({
+      ...axis,
+      options: axis.options.map(([id, label]) => ({ id, label })),
+    })),
     steps: (runtime.states as readonly ManifestSkillState[]).map(state => ({
       id: state.id,
       title: state.title,
@@ -413,6 +456,8 @@ export function learningTaskTutorContext(projection: LearningTaskProjection): Le
     formalSkillStatus: projection.task.formalSkillStatus,
     formalSkillState: projection.task.formalSkillState,
     formalSkillStageLabel: projection.task.formalSkillStageLabel,
+    formalSkillCalibration: projection.task.formalSkillCalibration,
+    formalTeachBackDiagnostic: projection.task.formalTeachBackDiagnostic,
     taskId: projection.task.id,
     objective: projection.task.objective,
     skillId: projection.skillId,
@@ -443,6 +488,9 @@ export function bindFormalSkillRun(task: LearningTask, run: FormalSkillRunBindin
     formalSkillDirective: String(run.next_prompt || '').slice(0, 1800),
     formalSkillTurnCount: Math.max(0, Math.floor(run.turn_count || 0)),
     formalSkillTurnBudget: Math.max(0, Math.floor(run.turn_budget || 0)),
+    formalSkillGapLoopCount: Math.max(0, Math.floor(run.gap_loop_count || 0)),
+    formalSkillCalibration: { ...(run.calibration || {}) },
+    formalTeachBackDiagnostic: { ...(run.teach_back_diagnostic || {}) },
   }
 }
 
@@ -497,6 +545,12 @@ export function sanitizeLearningTaskTutorContext(value: unknown): LearningTaskTu
     formalSkillStatus: typeof item.formalSkillStatus === 'string' ? item.formalSkillStatus.slice(0, 40) : undefined,
     formalSkillState: typeof item.formalSkillState === 'string' ? item.formalSkillState.slice(0, 80) : undefined,
     formalSkillStageLabel: typeof item.formalSkillStageLabel === 'string' ? item.formalSkillStageLabel.slice(0, 100) : undefined,
+    formalSkillCalibration: item.formalSkillCalibration && typeof item.formalSkillCalibration === 'object'
+      ? { ...(item.formalSkillCalibration as FeynmanCalibration) }
+      : undefined,
+    formalTeachBackDiagnostic: item.formalTeachBackDiagnostic && typeof item.formalTeachBackDiagnostic === 'object'
+      ? { ...(item.formalTeachBackDiagnostic as TeachBackDiagnostic) }
+      : undefined,
     taskId: item.taskId.slice(0, 120),
     objective: item.objective.slice(0, 500),
     skillId: item.skillId,

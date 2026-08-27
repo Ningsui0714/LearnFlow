@@ -48,11 +48,19 @@
     "skill_id": "feynman_dialogue",
     "goal": "理解事务隔离",
     "entry_mode": "direct",
+    "calibration": {
+      "audience_level": "vocational",
+      "cognitive_demand": "mechanism",
+      "scaffold_level": "guided",
+      "representation_mode": "code"
+    },
     "turns": [
       {"message": "我不会讲", "signal": "no_prior_knowledge", "state": "awaiting_teach_back", "turn_count": 0, "support_count": 1},
       {"message": "隔离让并发事务看起来像按某种顺序执行", "signal": "attempt", "state": "locating_gap", "turn_count": 1, "support_count": 1},
       {"message": "这里的某种顺序取决于隔离级别允许哪些可见性", "signal": "attempt", "state": "revising_explanation", "turn_count": 2, "support_count": 1},
-      {"message": "例如可重复读限制同一事务两次读取发生变化，但不代表所有执行都完全串行", "signal": "attempt", "state": "verification_ready", "turn_count": 3, "support_count": 1}
+      {"message": "它会控制同一事务再次读取时看到的结果", "signal": "attempt", "state": "revising_explanation", "turn_count": 3, "support_count": 1},
+      {"message": "它仍然控制再次读取的结果", "signal": "attempt", "state": "revising_explanation", "turn_count": 4, "support_count": 1},
+      {"message": "因为隔离级别限制了其他事务修改何时可见，所以再次读取的结果会受约束", "signal": "attempt", "state": "verification_ready", "turn_count": 5, "support_count": 1}
     ]
   },
   {

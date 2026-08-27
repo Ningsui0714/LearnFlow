@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.3"
+REGISTRY_VERSION = "2026-08-27.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
@@ -111,6 +111,15 @@ class SkillStateContract:
 
 
 @dataclass(frozen=True)
+class SkillCalibrationAxisContract:
+    id: str
+    title: str
+    description: str
+    options: tuple[tuple[str, str], ...]
+    default: str
+
+
+@dataclass(frozen=True)
 class SkillRuntimeContract:
     version: str
     bound_chat_modes: tuple[str, ...]
@@ -125,6 +134,7 @@ class SkillRuntimeContract:
     evidence_policy: str
     failure_policy: str
     eval_suite: str
+    calibration_axes: tuple[SkillCalibrationAxisContract, ...] = ()
     maturity: str = "production_candidate"
 
 
@@ -478,20 +488,26 @@ _SKILL_RUNTIME_EVENTS = (
 )
 
 
-def _skill_runtime(*states: SkillStateContract) -> SkillRuntimeContract:
+def _skill_runtime(
+    *states: SkillStateContract,
+    turn_budget: int | None = None,
+    calibration_axes: tuple[SkillCalibrationAxisContract, ...] = (),
+    output_objects: tuple[str, ...] = ("LearningSkillRunTransition", "VerificationHandoff"),
+    extra_event_types: tuple[str, ...] = (),
+) -> SkillRuntimeContract:
     return SkillRuntimeContract(
-        version="atomic-learning-skill-runtime-v4",
+        version="atomic-learning-skill-runtime-v5",
         bound_chat_modes=("learn",),
         initial_state=states[0].id,
         states=tuple(states),
-        turn_budget=max(1, len(states) - 1),
+        turn_budget=turn_budget or max(1, len(states) - 1),
         verification_required=True,
         required_context=(
             "scoped_learning_task", "learner_reply_signal", "answer_free_context_packet",
         ),
         input_objects=("LearningTask", "LearningSkillRun", "ContextPacket", "AgentMessage"),
-        output_objects=("LearningSkillRunTransition", "VerificationHandoff"),
-        allowed_event_types=_SKILL_RUNTIME_EVENTS,
+        output_objects=output_objects,
+        allowed_event_types=(*_SKILL_RUNTIME_EVENTS, *extra_event_types),
         evidence_policy=(
             "coaching turns and self-report are zero-target; only existing independently "
             "graded attempts, remediation and review may support capability evidence"
@@ -501,6 +517,7 @@ def _skill_runtime(*states: SkillStateContract) -> SkillRuntimeContract:
             "requests stay on the current state with bounded support; never auto-pass"
         ),
         eval_suite="learning-skill-dialogue-v2",
+        calibration_axes=calibration_axes,
     )
 
 
@@ -581,6 +598,48 @@ PEDAGOGICAL_SKILL_RUNTIMES = {
             "把复述诊断交给独立变式验证。",
             "说明复述只是诊断，提供一道不复用当前例子的独立验证。",
             "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
+        ),
+        turn_budget=5,
+        calibration_axes=(
+            SkillCalibrationAxisContract(
+                "audience_level", "讲给谁听", "控制语言与先备知识假设。",
+                (
+                    ("beginner", "零基础"), ("high_school", "高中"),
+                    ("vocational", "高职"), ("undergraduate", "本科"),
+                    ("graduate", "研究生"), ("professional", "从业者"),
+                ),
+                "undergraduate",
+            ),
+            SkillCalibrationAxisContract(
+                "cognitive_demand", "说到多深", "控制本轮复述需要覆盖的认知动作。",
+                (
+                    ("define", "定义"), ("mechanism", "机制"),
+                    ("boundary", "边界"), ("transfer", "迁移"),
+                ),
+                "mechanism",
+            ),
+            SkillCalibrationAxisContract(
+                "scaffold_level", "给多少支架", "控制 Tutor 提供的帮助强度。",
+                (
+                    ("model", "完整示范"), ("guided", "引导"),
+                    ("minimal", "少量提示"), ("none", "无提示"),
+                ),
+                "guided",
+            ),
+            SkillCalibrationAxisContract(
+                "representation_mode", "怎么表达", "选择更适合当前知识的表征。",
+                (
+                    ("auto", "自动"), ("code", "代码"), ("visual", "可视化"),
+                    ("analogy", "类比"), ("formal", "公式/形式化"),
+                ),
+                "auto",
+            ),
+        ),
+        output_objects=(
+            "LearningSkillRunTransition", "TeachBackDiagnostic", "VerificationHandoff",
+        ),
+        extra_event_types=(
+            "learning_skill_calibration_updated", "learning_skill_teach_back_diagnostic_updated",
         ),
     ),
     "worked_example_fading": _skill_runtime(
@@ -670,9 +729,12 @@ SKILLS = {
             learner_selectable=True,
             description="请你用自己的话讲一遍，再一起找出模糊处。",
             invocation_prompt=(
-                "当前对话已由学习者选择“费曼复述”技能。请让学习者先用自己的话解释目标概念；"
-                "收到复述后，先指出讲清楚的一点，再定位最关键的一处模糊或跳步，并只追问一个问题。"
-                "普通对话反馈不能宣布掌握；需要形成学习证据时，只能建议进入已登记的可验证微学习。"
+                "当前对话已由学习者选择“费曼复述”技能。严格读取 SkillRun 中的 calibration 和"
+                "teach_back_diagnostic：按受众、认知要求、支架强度和表征方式组织本轮，不自行改写状态。"
+                "若主题陌生，先给三点以内的最小解释和一个具体例子，再邀请复述。收到复述后先指出"
+                "讲清楚的一点，只围绕诊断中的一个候选缺口追问或修订；候选缺口未经独立验证，不得"
+                "当成事实。达到 verification_ready 后停止追加教学问题并交给独立变式。普通对话反馈"
+                "不能宣布掌握；需要形成学习证据时，只能进入已登记的可验证微学习。"
             ),
             aliases=("费曼", "费曼学习", "费曼复述"),
             best_for=("查漏补缺", "组织概念关系", "已有接触后检验能否说清"),
@@ -1039,6 +1101,8 @@ EVENTS = {
         _event("learning_skill_run_advanced", "advance_learning_skill_run", (), "operational"),
         _event("learning_skill_run_paused", "advance_learning_skill_run", (), "operational"),
         _event("learning_skill_run_resumed", "advance_learning_skill_run", (), "operational"),
+        _event("learning_skill_calibration_updated", "advance_learning_skill_run", (), "operational_calibration"),
+        _event("learning_skill_teach_back_diagnostic_updated", "advance_learning_skill_run", (), "unverified_diagnostic"),
         _event("learning_skill_verification_started", "start_skill_verification", (), "operational_handoff"),
         _event("learning_skill_run_completed", "advance_learning_skill_run", (), "operational_milestone"),
         _event("micro_learning_started", "start_micro_learning", ("structure", "value"), "confirmed_goal"),
@@ -1241,7 +1305,7 @@ def validate_registry() -> list[str]:
             errors.append(f"learner-selectable skill must be a pedagogical method: {skill.id}")
         if skill.learner_selectable:
             runtime = skill.runtime
-            if not runtime or runtime.version != "atomic-learning-skill-runtime-v4":
+            if not runtime or runtime.version != "atomic-learning-skill-runtime-v5":
                 errors.append(f"learner-selectable skill lacks SkillSpec v2 runtime: {skill.id}")
                 continue
             state_ids = [state.id for state in runtime.states]
@@ -1253,8 +1317,12 @@ def validate_registry() -> list[str]:
                 errors.append(f"skill binds unknown chat mode: {skill.id}")
             if set(runtime.allowed_event_types) - set(EVENTS):
                 errors.append(f"skill references unknown event: {skill.id}")
-            if runtime.turn_budget != max(1, len(runtime.states) - 1):
-                errors.append(f"skill turn budget must match valid transitions: {skill.id}")
+            if runtime.turn_budget < max(1, len(runtime.states) - 1):
+                errors.append(f"skill turn budget cannot be shorter than valid transitions: {skill.id}")
+            for axis in runtime.calibration_axes:
+                option_ids = [option[0] for option in axis.options]
+                if len(option_ids) != len(set(option_ids)) or axis.default not in option_ids:
+                    errors.append(f"invalid skill calibration axis: {skill.id}:{axis.id}")
     return errors
 
 
