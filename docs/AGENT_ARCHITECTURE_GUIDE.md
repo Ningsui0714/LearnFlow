@@ -231,8 +231,10 @@ Tutor 每轮同时考虑：
 Reducer、Memory Graph、ContextPacket assembler 和策略机不能因为历史上登记在 `TOOLS` 集合就暴露
 给模型。机器可读注册表的 `interface_role`、`model_exposure` 与 `skill_kind` 是该边界的权威分类。
 
-vNext 每轮 MUST 经过 `vnext_agent_turn_runtime`。它先生成 typed `ContextEnvelope`，再执行最多
-5 轮模型决策、8 次工具调用、总计 90 秒的 observe/decide/act 循环，并返回可展示的
+vNext 每轮 MUST 经过 `vnext_agent_turn_runtime`。它先生成 typed `ContextEnvelope`，再按模式执行有界的
+observe/decide/act 循环：自由态与简单讲解最多 5 轮模型、8 次工具、90 秒；学习规划态最多 7 轮模型、
+12 次工具、150 秒；带领学习态最多 9 轮模型、14 次工具、180 秒。带领学习和学习规划可在主预算耗尽后
+使用独立的无工具收束预算，但总预算仍由 Harness 明确限制并可观测。运行时最终返回可展示的
 `AgentTurnTrace`。Tool result MUST 以正式 tool message 回灌，不能只拼在 system prompt；相同参数调用
 MUST 去重，工具失败 MUST 分类并留给模型恢复。vNext native ACI 必须按模式与正式 scope 过滤；动态出题、
 同构变式和质量检查只在带领学习态且有 `LearningTask + checkpoint` 时开放。它们只能物化经过确定性静态门的
@@ -245,7 +247,14 @@ EvidenceEvent 网关。
 不一致，Harness MUST 先发送带原因的 `text_reset`，再进入下一轮或重放权威正文。只有通过终态 verifier
 的完整回复可以持久化为 AgentMessage；草稿增量、工具前导语和被撤销文本都不是学习证据。
 `AgentTurnTrace.timings` 以可选的 `firstTextDeltaMs` 和必填 `totalMs` 分别观测首字延迟与总耗时，不能把
-“工具卡已经出现”误报为正文首字。
+“工具卡已经出现”误报为正文首字。`AgentTurnTrace.decisionSummaries` MAY 保存由 Harness 根据工具定义、
+结构化调用参数和工具结果确定性生成的“调用理由—观察摘要—下一步”；它用于复盘工具之间的决策桥，
+不是模型私有思维链，不得保存隐藏推理或把生成性自述冒充真实内部过程。带领学习态即使供应商持续返回
+空正文或发生暂时故障，也 MUST 用当前 SkillRun 的确定性步骤指令形成可继续作答的最小教学回复，不能把
+“预算内无正文”直接暴露为学习中断。如果模型已经流出可展示且仅缺少工具失败说明、检索覆盖声明或正式
+来源链接，Harness MUST 确定性补齐这些可审计缺口并保留原教学正文；不得因收尾连接中断而用通用 fallback
+覆盖已经形成的有效教学内容。涉及越权写入、无证据掌握、未知引用、记忆冲突或历史臆断等语义违规时仍
+必须拒绝该草稿，不能用确定性补句掩盖安全问题。
 
 `dynamic_practice_loop` 是 Playbook，不是第四类 Agent，也不是单一 Tool。Tutor 决定是否进入“生成—作答—
 纠错—变式—复习”闭环；Learning Design 只生成题目候选，`dynamic_practice` 服务检查题型、target skill、
@@ -514,6 +523,11 @@ Tutor 可以推荐注册表中的 learner-selectable Skill，但不能静默切�
 暂停、恢复和教学阶段完成；这些同步不得写入五核。Tutor LLM MUST 服从确定性 runtime 给出的当前步
 指令，MUST NOT 改变状态或自行宣布完成。自适应推荐 MUST 返回待确认卡；接受、拒绝、暂停、
 恢复和独立验证均由显式用户动作触发。运行事件 MUST 保持零 Kernel target。
+
+SkillRun 的内部步骤 MUST 根据学习者在主对话中的真实回答，由确定性 runtime 自动推进或保持；前端不得
+要求学习者发送“进入下一步”一类伪用户消息，也不得用“下一步”按钮替代 Agent 对当前回答的处理。只有
+切换教学方法、暂停或退出、不可逆写入以及进入独立验证等边界动作需要显式确认。步骤推进本身不构成掌握
+证据，仍需后续确定性评估。
 
 Skill runtime MUST 区分可检查尝试、明确不会、请求直接解释、跳过、仅确认和缺失输入。只有
 可检查尝试可以消耗有效引导轮次并推进步骤；其他信号 MUST 保留当前位置并补支架，且不得被
@@ -859,7 +873,7 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 
 系统应优先保证事实正确，而不是保持“什么都成功”的表象：
 
-- Tutor LLM 失败：保留消息与事件，跳过语义观察，允许确定性 action 继续。
+- Tutor LLM 失败：优先保留已通过语义边界且可确定性补齐来源/失败说明的教学正文；否则保留消息与事件，跳过语义观察，允许确定性 action 继续。
 - 结构化输出不可解析：使用受限 fallback，不应用越权状态。
 - 交互模型超时：Tutor 在共享总预算后停止重试；任务计划和学习包使用确定性同契约降级。
 - 来源搜索失败：保留项目提案，来源区域显示失败并允许重试。

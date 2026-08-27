@@ -2,6 +2,10 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.7`）：Tutor Turn Graph 增加按模式分层的预算与确定性教学续接。自由/简单讲解仍为 5 轮模型、8 次工具、90 秒；学习规划为 7/12/150 秒；带领学习为 9/14/180 秒，并为无工具最终正文预留最多两次、45 秒的独立收束预算。带领学习即使模型最终正文为空或暂时失败，也必须使用正式 SkillRun 的学生可见 fallback 续接，不能把恢复责任交给学生；若已生成的教学正文只缺少工具失败透明度、检索覆盖说明或受信来源链接，Harness 确定性补齐后保留正文，不再因收尾故障整段覆盖。`AgentTurnTrace` 向后兼容地增加 `decisionSummaries`，只保存“工具选择理由、已验证观察摘要、下一操作”，明确不保存或展示供应商隐藏思维链。SkillRun 仍由学习者真实输入触发确定性自动推进；UI 不再用伪造的用户消息或“下一步”按钮改变步骤。五核、EvidenceEvent、评分与掌握语义没有变化，也没有新增工具、能力、事件或数据库迁移。
+
+带领学习的浏览器传输层也执行同一续接策略：若服务端流在已有 SkillRun 范围内中断，前端保留已收到的工具结果与决策摘要，并使用当前步骤指令形成透明的最小续接；不得退化为要求学生重试或手动推进的系统错误卡。
+
 Contract impact（`2026-08-27.6`）：带领学习新增 `learning_file_study` 教学 Skill，按“选择学习文件 → 带锚点阅读 → 在正式练习文件中作答 → 独立验证”确定性推进。模型新增唯一目标级只读 ACI `read_active_learning_file`，只读取当前打开纸张对应的讲义、练习或来源正文；练习投影固定隔离答案，来源正文固定标记为不可信输入。纸张升级为可嵌套的 UI 工作空间，子纸可挂在主对话消息、讲义、练习、来源或追问纸下；纸张只保存 artifact ref、父子关系和分支消息，不成为文件权威、对话权威或学习者状态。生成、打开、附着、阅读和纸张整理均不形成掌握；正式练习提交仍唯一经过 `LearningAttempt -> EvidenceEvent -> five_kernel_reducer`。本次新增来源纸张只读 API、Action Board 读取能力和向后兼容的纸张修复器，没有数据库迁移、事件 schema 或 Kernel writer 变化。实现与评测见 `docs/implementation/GUIDED_LEARNING_FILE_PAPERS.md` 和 `docs/validation/2026-08-27-guided-learning-paper-evaluation.md`。
 
 Contract impact（`2026-08-27.5`）：计算机知识检索升级为 Search Harness v2。模型仍只看两个目标级只读 ACI：`search_computer_knowledge` 负责 quick/standard/deep 的有界多角度召回、混合确定性重排、覆盖审计和最多一次补搜；`read_web_evidence` 只读取本轮候选中的精确 HTTPS URL，并返回相关原文片段。Provider 熔断、缓存、隐私清理、来源分层、MMR 去冗余、时效评分和研究简报均是 Harness 内部机制，不扩张工具面。两工具都为零 Kernel target；搜索、读取、研究简报和引用均不是学习掌握证据。旧 `{query}` 调用保持兼容，三类主 Agent、五核、事件 schema、数据库和状态机均不变。实现与评测见 `docs/implementation/SEARCH_HARNESS_IMPLEMENTATION.md`、`docs/validation/2026-08-27-search-harness-evaluation.md`。
@@ -166,8 +170,9 @@ ContextEnvelope
   -> AgentTurnTrace
 ```
 
-单回合最多 5 次模型决策、8 次工具调用并共享 90 秒 deadline；重复调用被阻断，暂时性模型错误
-只允许在剩余 deadline 内重试一次。正式五核读取不再把 JSON 截断片段塞进提示，而是形成有 scope、
+单回合使用按模式分层的预算：自由/简单讲解最多 5 次模型决策、8 次工具调用和 90 秒，学习规划为
+7/12/150 秒，带领学习为 9/14/180 秒。规划与带领学习另有受限的无工具最终收束预算，不能形成无限循环；
+重复调用被阻断，暂时性模型错误只允许在剩余 deadline 内重试一次。正式五核读取不再把 JSON 截断片段塞进提示，而是形成有 scope、
 有预算、答案隔离的语义投影；历史工具观察以有界摘要进入下一回合。原生 ACI 按对话状态和 scope
 动态过滤：基础观察包含五核、学习工作区、学习路径、计算机知识搜索和安全视觉产物；带领学习态且存在正式
 `LearningTask + checkpoint` 时才额外开放动态出题、同构变式和题目质量检查。任何五核、个人节点、长期路线、
@@ -177,6 +182,11 @@ ContextEnvelope
 Chat Completions 与 Responses 的原生文本增量直接形成 `text_delta`。模型改为调用工具、重试、校验回退
 或草稿与最终正文不一致时必须发送 `text_reset`，因此 UI 不会把前一模型轮的工具前导语拼进最终答案。
 只有通过 verifier 的最终正文写入正式消息；流式草稿不进入 EvidenceEvent、五核或 Memory Graph。
+
+每个已完成 ToolRun 都形成一个有界 `decisionSummary`：只陈述为何选择该工具、工具实际返回了什么、
+运行时接下来执行什么。该投影由 Harness 根据工具定义和结构化观察确定性生成，随消息持久化并可在工具卡
+之间回放；它不是模型隐藏思维链，不得保存自由推理草稿、私有 token 或未验证假设。旧消息没有该字段时，
+UI 只能从已有 ToolRun 的标题和 observation summary 生成兼容摘要。
 
 Contract impact（Tutor streaming transport）：`AgentTurnTrace` 仅增加向后兼容的可选 timings，流式联合类型仅增加
 `text_reset` 分支；没有数据库迁移、工具/Skill/Event 注册变化，也没有新增 Kernel writer。
@@ -211,7 +221,8 @@ ToolMessage 回灌，并由确定性终态校验器拦截“未确认却声称�
 Session，启动 SkillRun 后绑定其自动建立的 LearningTask；后续学生输入调用
 `POST /api/agent/sessions/{session_id}/skill-runs/{run_id}/turns`，由确定性 Skill runtime 推进。
 该端点不再调用 Tutor LLM，不生成第二份回答；浏览器步骤事件只是显示缓存，离线时才成为明确标注的
-回退。点击“下一步”不能绕过 learner-reply gate，“不知道/换一种支架”停留在当前步骤。
+回退。正式 SkillRun 根据学习者真实输入自动推进；UI 不得伪造“进入下一步”的用户消息，也不得提供能
+绕过 learner-reply gate 的手工推进按钮。“不知道/换一种支架”停留在当前步骤并由 runtime 自动补支架。
 
 学习规划通过 `LearningGraphAlignmentProjection` 显式连接官方课程图、个人课程覆盖层、个人概念图、
 项目来源知识领域与已确认长期路线。每条 Alignment 记录图类型、对象 ID、匹配方式、置信度与依据；

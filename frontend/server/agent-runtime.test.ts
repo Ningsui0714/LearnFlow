@@ -3,12 +3,33 @@ import test from 'node:test'
 
 import {
   buildAgentProviderRequest,
+  repairTutorDraftForObservedGaps,
   runTutorAgentTurn,
+  tutorAgentBudget,
   toolCallsFromProviderResponse,
   verifyTutorTurnOutcome,
 } from './agent-runtime.ts'
 import { createInitialLearnerPathState } from '../src/learning-path-graph.ts'
 import { executeTutorAgentTool } from './tool-runtime.ts'
+
+test('guided learning receives a larger but still bounded runtime budget', () => {
+  const simple = tutorAgentBudget('simple_explain')
+  const guided = tutorAgentBudget('guided_learning')
+  assert.deepEqual(simple, {
+    maxModelRounds: 5,
+    maxToolCalls: 8,
+    maxWallTimeMs: 90_000,
+    finalizationAttempts: 1,
+    finalizationGraceMs: 25_000,
+  })
+  assert.deepEqual(guided, {
+    maxModelRounds: 9,
+    maxToolCalls: 14,
+    maxWallTimeMs: 180_000,
+    finalizationAttempts: 2,
+    finalizationGraceMs: 45_000,
+  })
+})
 
 test('provider tool calls are normalized for chat completions and responses APIs', () => {
   assert.deepEqual(toolCallsFromProviderResponse({
@@ -86,6 +107,37 @@ test('final-state verifier rejects unconfirmed writes, mastery overclaims and hi
   }).violations, [])
 })
 
+test('a useful teaching draft is repaired for observable tool gaps instead of being discarded', () => {
+  const sourceUrl = 'https://docs.example.edu/ensembles'
+  const runs: any[] = [
+    {
+      id: 'visual', kind: 'visual', status: 'failed', title: '生成学习图解',
+      detail: '模型没有返回图解', durationMs: 50,
+    },
+    {
+      id: 'search', kind: 'search', status: 'completed', title: '计算机知识搜索',
+      detail: '取得部分来源', durationMs: 10,
+      searchMeta: { status: 'partial', coverageRatio: 0.5 },
+      sources: [{
+        title: 'Ensemble methods', url: sourceUrl, snippet: 'Bagging and boosting.',
+        source: 'Example University', quality: 'academic', role: 'course', reason: '课程资料', provider: 'test',
+      }],
+    },
+  ]
+  const repaired = repairTutorDraftForObservedGaps(
+    'Bagging 并行训练多个基学习器，Boosting 则按顺序纠正前一轮的错误。',
+    runs,
+  )
+
+  assert.match(repaired, /Bagging 并行训练/)
+  assert.match(repaired, /生成学习图解.*暂时未能成功/s)
+  assert.match(repaired, /资料覆盖仍有缺口/)
+  assert.match(repaired, new RegExp(sourceUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.deepEqual(verifyTutorTurnOutcome({
+    reply: repaired, mode: 'guided_learning', toolRuns: runs,
+  }).violations, [])
+})
+
 test('Tutor runs a bounded observe-act-observe loop and preserves tool results', async () => {
   const requests: any[] = []
   let round = 0
@@ -113,6 +165,9 @@ test('Tutor runs a bounded observe-act-observe loop and preserves tool results',
   assert.equal(result.trace.modelRounds, 2)
   assert.equal(result.trace.toolCalls, 1) // 普通解释不预读五核，只保留模型真正需要的路径读取
   assert.deepEqual(result.toolRuns.map(run => run.kind), ['path'])
+  assert.equal(result.trace.decisionSummaries?.length, 1)
+  assert.equal(result.trace.decisionSummaries?.[0]?.toolCallId, 'path-call')
+  assert.match(result.trace.decisionSummaries?.[0]?.reason || '', /路径/)
   assert.ok(requests[0].body.tools.length >= 3)
   assert.ok(requests[1].body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'path-call'))
 })
@@ -156,11 +211,62 @@ test('provider deltas reach the UI live and a tool decision resets only the draf
 
   const reset = events.findIndex(event => event.type === 'text_reset' && event.reason === 'tool_call')
   const toolStarted = events.findIndex(event => event.type === 'tool_started' && event.toolName === 'search_computer_knowledge')
+  const decision = events.find(event => event.type === 'decision_summary' && event.summary.toolCallId === 'search-1')
   assert.ok(reset >= 0 && toolStarted > reset)
+  assert.match(decision?.summary.observation || '', /定义来源/)
   const finalDeltas = events.slice(reset + 1).filter(event => event.type === 'text_delta').map(event => event.delta).join('')
   assert.equal(finalDeltas, result.reply)
   assert.equal(result.trace.timings?.totalMs >= 0, true)
   assert.equal(typeof result.trace.timings?.firstTextDeltaMs, 'number')
+})
+
+test('guided learning keeps the learner in flow when the provider returns no teaching text', async () => {
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'empty-model',
+    mode: 'guided_learning',
+    messages: [{ role: 'user', content: '带我学习一下集成学习' }],
+    toolChoice: 'auto',
+    learningTaskContext: {
+      objectType: 'learning_task_binding',
+      authority: 'formal_learning_task',
+      taskId: 'task-ensemble',
+      objective: '集成学习',
+      skillId: 'guided_explanation',
+      skillName: '清晰讲解',
+      substateId: 'guidance',
+      substateLabel: '引导态',
+      stepId: 'presenting_core_model',
+      stepTitle: '建立核心模型',
+      stepIndex: 0,
+      stepCount: 4,
+      stepInstruction: '先用一句话说明集成学习解决什么问题，再请学习者比较 Bagging 和 Boosting。',
+      nextAction: '等待学习者比较两种方法',
+      loopCount: 0,
+      loopInstruction: '必要时提供一个最小例子。',
+    },
+    generate: async () => 'unused',
+    invokeProvider: async () => ({ choices: [{ message: { content: '' } }] }),
+    executeTool: async (name, _args, _options, meta) => ({
+      run: {
+        id: `run-${name}`,
+        kind: name === 'read_learner_context' ? 'memory' : 'workspace',
+        toolName: name,
+        toolCallId: meta?.callId,
+        status: 'completed',
+        title: name,
+        detail: '当前作用域读取完成',
+        observationSummary: '当前作用域读取完成，没有需要阻断教学的冲突。',
+        durationMs: 0,
+      },
+      observation: { authority: 'test_read_only' },
+    }),
+  })
+
+  assert.match(result.reply, /集成学习/)
+  assert.doesNotMatch(result.reply, /没有返回可显示的教学内容|请求失败/)
+  assert.equal(result.trace.stopReason, 'forced_finalize')
+  assert.equal(result.trace.decisionSummaries?.length, 2)
 })
 
 test('Tutor searches candidates, reads an allow-listed page, and cites the exact evidence URL', async () => {

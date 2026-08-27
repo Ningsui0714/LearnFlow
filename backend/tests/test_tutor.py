@@ -818,6 +818,19 @@ def test_adaptive_tutor_recommends_guided_explanation_without_silent_activation(
     ).json()["plan"]["phases"][0]["methods"]
 
 
+def test_learning_skill_goal_normalizes_conversational_fillers(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    accepted = client.post(f"/api/agent/sessions/{session['id']}/skill-runs", json={
+        "skill_id": "guided_explanation",
+        "goal": "带我学习一下集成学习",
+        "client_request_id": f"normalize-goal-{uuid.uuid4().hex}",
+    })
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["active_skill_run"]["goal"] == "集成学习"
+
+
 def test_feynman_skill_run_uses_a_distinct_bounded_workflow(client: TestClient):
     session = client.post("/api/agent/sessions", json={
         "session_type": "global", "create_new": True,

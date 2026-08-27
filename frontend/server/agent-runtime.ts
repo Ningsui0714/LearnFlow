@@ -1,5 +1,6 @@
 import type {
   AgentContextEnvelope,
+  AgentDecisionSummary,
   AgentKnowledgeDomain,
   AgentTaskQueueItem,
   AgentToolCall,
@@ -30,9 +31,41 @@ import {
 import type { SearchProviderConfiguration } from './computer-knowledge-search.ts'
 import type { AgentProjectContext } from '../src/project.ts'
 
-const MAX_MODEL_ROUNDS = 5
-const MAX_TOOL_CALLS = 8
-const MAX_WALL_TIME_MS = 90_000
+export type TutorAgentBudget = {
+  maxModelRounds: number
+  maxToolCalls: number
+  maxWallTimeMs: number
+  finalizationAttempts: number
+  finalizationGraceMs: number
+}
+
+export function tutorAgentBudget(mode: TutorMode): TutorAgentBudget {
+  if (mode === 'guided_learning') {
+    return {
+      maxModelRounds: 9,
+      maxToolCalls: 14,
+      maxWallTimeMs: 180_000,
+      finalizationAttempts: 2,
+      finalizationGraceMs: 45_000,
+    }
+  }
+  if (mode === 'learning_plan') {
+    return {
+      maxModelRounds: 7,
+      maxToolCalls: 12,
+      maxWallTimeMs: 150_000,
+      finalizationAttempts: 2,
+      finalizationGraceMs: 40_000,
+    }
+  }
+  return {
+    maxModelRounds: 5,
+    maxToolCalls: 8,
+    maxWallTimeMs: 90_000,
+    finalizationAttempts: 1,
+    finalizationGraceMs: 25_000,
+  }
+}
 
 type RuntimeMessage =
   | { role: 'user' | 'assistant'; content: string; toolCalls?: AgentToolCall[] }
@@ -86,6 +119,88 @@ export type TutorAgentRuntimeInput = {
 
 function turnId() {
   return `turn-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function compactDecisionText(value: unknown, fallback: string, limit = 220) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  return (text || fallback).slice(0, limit)
+}
+
+function toolDecisionReason(call: AgentToolCall) {
+  const reasons: Record<string, string> = {
+    read_learner_context: '先确认与当前问题相关的基础、目标和已记录学习线索，避免使用不合适的讲法',
+    read_learning_workspace: '先确认当前任务、练习、错题和复习位置，避免脱离正在进行的学习现场',
+    read_project_workspace: '先读取当前项目目标、关卡和来源范围，保证回答只服务于这个项目',
+    read_project_roadmap: '先核对项目关卡图与当前位置，再决定是否调整尚未学习的部分',
+    read_project_sources: '先核对项目已接入的来源，避免重复搜索或引用项目外材料',
+    read_active_learning_file: '先读取当前纸张中的讲义或练习锚点，让回答延续正在看的内容',
+    read_domain_knowledge: '先从本对话资料中取得带来源的上下文，再判断是否仍需联网',
+    read_review_context: '先读取复习与错题状态，再安排本轮回忆或纠错动作',
+    lookup_learning_path_node: '先精确匹配正式学习路径节点，避免把相近课程误当成目标',
+    search_learning_path_graph: '精确匹配不足，转为模糊读取学习路径候选与关系',
+    search_computer_knowledge: '现有上下文不足以支撑可靠讲解，补充计算机领域的高质量来源',
+    read_web_evidence: '搜索摘要不足以直接支撑结论，继续读取候选页面中的相关原文',
+    generate_dynamic_practice: '当前学习动作需要可作答的检测，因此生成受任务约束的练习文件',
+    generate_similar_practice: '需要检查迁移而不是重复原题，因此生成同构但不相同的练习',
+    inspect_practice_quality: '题目投入学习前先检查结构、答案确定性和目标覆盖',
+    generate_learning_lecture: '当前概念需要一份可留存、可作为纸张展开的讲义',
+    generate_learning_visual: '文字不足以表达当前关系或过程，因此补充图解或动画',
+  }
+  const definition = TUTOR_AGENT_TOOL_DEFINITIONS.find(tool => tool.name === call.name)
+  return compactDecisionText(reasons[call.name], `为完成当前学习动作，调用“${definition?.title || call.name}”取得结构化观察`)
+}
+
+function toolDecisionNextAction(run: TutorToolRun) {
+  if (run.status === 'failed') return '保留失败原因，调整工具路线；最终回答必须透明说明仍存在的缺口'
+  if (run.kind === 'file' || run.learningFile) return '把文件作为当前对话的学习对象，并继续决定阅读、练习或验证动作'
+  if (run.kind === 'search') return '把来源与证据覆盖回灌给 Tutor，再判断是否需要读取原文或形成讲解'
+  return '把这条结构化观察回灌给 Tutor，继续选择下一个学习动作或形成回答'
+}
+
+function deterministicTutorFallback(input: TutorAgentRuntimeInput, runs: TutorToolRun[]) {
+  const failedRuns = runs.filter(run => run.status === 'failed')
+  const failureNote = failedRuns.length
+    ? `\n\n本轮有 ${failedRuns.length} 个工具没有成功（${failedRuns.map(run => run.title).join('、')}），我不会用猜测补齐这些缺口。`
+    : ''
+  if (input.mode === 'guided_learning' && input.learningTaskContext) {
+    const task = input.learningTaskContext
+    const formalPrompt = task.authority === 'formal_learning_task' && task.stepInstruction.trim()
+      ? task.stepInstruction.trim()
+      : ''
+    const nextPrompt = formalPrompt || `当前来到“${task.stepTitle}”。请先说出你已经能确认的一点，或者直接指出卡住的位置；我会从你的回答继续推进，而不要求你手动切换步骤。`
+    return `我们保留当前学习进度，继续完成「${task.objective}」。\n\n${nextPrompt}${failureNote}`
+  }
+  if (input.mode === 'learning_plan') {
+    return `这轮模型正文没有稳定返回，但已经取得的观察会保留。请先确认你最想达成的产物或方向，我会从该目标继续收紧路线。${failureNote}`
+  }
+  return `这轮模型正文没有稳定返回，已保留工具观察和上下文。你可以直接继续追问，我会从当前位置重试。${failureNote}`
+}
+
+export function repairTutorDraftForObservedGaps(reply: string, runs: TutorToolRun[]) {
+  let repaired = ensureSearchCitations(reply, runs).trim()
+  if (!repaired) return repaired
+
+  const unresolvedFailures = runs.filter(run => (
+    run.status === 'failed'
+    && !runs.some(candidate => candidate.kind === run.kind && candidate.status === 'completed')
+  ))
+  if (
+    unresolvedFailures.length
+    && !/(?:失败|暂时|无法|未能|没有拿到|资料缺口|证据不足|连接问题)/i.test(repaired)
+  ) {
+    const titles = [...new Set(unresolvedFailures.map(run => run.title))].slice(0, 3).join('、')
+    repaired += `\n\n说明：本轮“${titles}”暂时未能成功，因此我先用已经取得的可靠观察完成这一教学动作，不把缺失产物冒充为已生成。`
+  }
+
+  const searched = runs.some(run => run.kind === 'search' && run.status === 'completed' && run.sources?.length)
+  if (searched) {
+    const citationAudit = auditSearchCitations(repaired, runs)
+    if (citationAudit.evidenceGap && !citationAudit.acknowledgesGap) {
+      repaired += '\n\n检索说明：本轮资料覆盖仍有缺口，以上只采用已经读取到的来源支撑核心辨析，不把未覆盖内容当作检索结论。'
+    }
+  }
+
+  return repaired
 }
 
 function structurallyCompact(value: unknown, depth = 0, tight = false): unknown {
@@ -391,9 +506,11 @@ export function verifyTutorTurnOutcome(options: {
 export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<AgentTurnResponse> {
   const id = turnId()
   const startedAt = Date.now()
-  const deadline = startedAt + MAX_WALL_TIME_MS
+  const budget = tutorAgentBudget(input.mode)
+  const deadline = startedAt + budget.maxWallTimeMs
   const latestMessage = [...input.messages].reverse().find(message => message.role === 'user')?.content || ''
   const trajectory: AgentTrajectoryEvent[] = []
+  const decisionSummaries: AgentDecisionSummary[] = []
   const runs: TutorToolRun[] = []
   const runtimeMessages: RuntimeMessage[] = input.messages.slice(-18).map(message => ({ role: message.role, content: message.content }))
   const observations: AgentContextEnvelope['observations'] = []
@@ -476,7 +593,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       record({ phase: 'act', detail: '阻止重复工具调用', toolCallId: call.id, toolName: call.name, status: 'blocked' })
       return [] as string[]
     }
-    if (toolCalls >= MAX_TOOL_CALLS) {
+    if (toolCalls >= budget.maxToolCalls) {
       record({ phase: 'act', detail: '达到工具调用预算', toolCallId: call.id, toolName: call.name, status: 'blocked' })
       return [] as string[]
     }
@@ -497,6 +614,22 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     })
     runs.push(result.run)
     input.observe?.({ type: 'tool_completed', run: result.run })
+    const decisionSummary: AgentDecisionSummary = {
+      id: `decision-${id}-${toolCalls}`,
+      sequence: toolCalls,
+      round: modelRounds,
+      at: Date.now(),
+      toolCallId: call.id,
+      toolName: call.name,
+      reason: toolDecisionReason(call),
+      observation: compactDecisionText(
+        result.run.observationSummary || result.run.detail,
+        result.run.status === 'completed' ? '工具返回了结构化观察' : '工具没有返回可用观察',
+      ),
+      nextAction: toolDecisionNextAction(result.run),
+    }
+    decisionSummaries.push(decisionSummary)
+    input.observe?.({ type: 'decision_summary', summary: decisionSummary })
     if (call.name === 'lookup_learning_path_node') {
       pathFuzzyPending = Boolean((result.observation as any)?.needsFuzzySearch)
       pathResolution = ((result.observation as any)?.retrieval?.resolution || pathResolution) as typeof pathResolution
@@ -605,7 +738,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     },
     observations: observations.map(item => ({ ...item, data: undefined })),
     recentToolObservations: compactPriorRuns(input.messages),
-    budgets: { maxModelRounds: MAX_MODEL_ROUNDS, maxToolCalls: MAX_TOOL_CALLS, maxWallTimeMs: MAX_WALL_TIME_MS },
+    budgets: {
+      maxModelRounds: budget.maxModelRounds,
+      maxToolCalls: budget.maxToolCalls,
+      maxWallTimeMs: budget.maxWallTimeMs,
+    },
   }
   const tools = availableTools(input)
   const modelVisibleToolNames = new Set(tools.map(tool => tool.name))
@@ -620,13 +757,16 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
 
   let reply = ''
   let searchSources: SearchSource[] = runs.flatMap(run => run.sources || [])
-  const invokeModel = async (request: ReturnType<typeof buildAgentProviderRequest>) => {
+  const invokeModel = async (
+    request: ReturnType<typeof buildAgentProviderRequest>,
+    requestDeadline = deadline,
+  ) => {
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const payload = await input.invokeProvider({
           ...request,
-          timeoutMs: Math.max(1_000, Math.min(40_000, deadline - Date.now())),
+          timeoutMs: Math.max(1_000, Math.min(45_000, requestDeadline - Date.now())),
           onTextDelta: emitTextDelta,
         })
         return payload
@@ -635,14 +775,14 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         resetVisibleDraft('retry')
         const message = error instanceof Error ? error.message : String(error || '')
         const transient = /timeout|超时|429|rate|network|fetch|ECONN|temporar|503|502/i.test(message)
-        if (!transient || attempt > 0 || Date.now() >= deadline - 1_000) throw error
+        if (!transient || attempt > 0 || Date.now() >= requestDeadline - 1_000) throw error
         record({ phase: 'decide', detail: '模型请求遇到暂时故障，使用剩余预算重试一次', status: 'retrying' })
       }
     }
     throw lastError
   }
   try {
-    for (let round = 0; round < MAX_MODEL_ROUNDS && Date.now() < deadline; round += 1) {
+    for (let round = 0; round < budget.maxModelRounds && Date.now() < deadline; round += 1) {
       modelRounds += 1
       record({ phase: 'decide', detail: `模型决策第 ${modelRounds} 轮`, status: 'started' })
       const request = buildAgentProviderRequest({
@@ -651,7 +791,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         instructions,
         messages: runtimeMessages,
         tools,
-        includeTools: toolCalls < MAX_TOOL_CALLS,
+        includeTools: toolCalls < budget.maxToolCalls,
       })
       const payload = await invokeModel(request)
       const calls = toolCallsFromProviderResponse(payload)
@@ -659,7 +799,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       if (calls.length) {
         resetVisibleDraft('tool_call')
         record({ phase: 'decide', detail: `模型选择 ${calls.length} 个工具`, status: 'completed' })
-        for (const call of calls.slice(0, MAX_TOOL_CALLS - toolCalls)) {
+        for (const call of calls.slice(0, budget.maxToolCalls - toolCalls)) {
           if (!modelVisibleToolNames.has(call.name)) {
             const observation = {
               error: 'tool_not_available',
@@ -709,7 +849,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         }
         continue
       }
-      const candidate = ensureSearchCitations(text, runs)
+      const candidate = repairTutorDraftForObservedGaps(text, runs)
       const verification = verifyTutorTurnOutcome({
         reply: candidate,
         mode: input.mode,
@@ -734,24 +874,28 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     }
 
     if (!reply) {
-      stopReason = Date.now() >= deadline ? 'model_budget' : toolCalls >= MAX_TOOL_CALLS ? 'tool_budget' : 'forced_finalize'
+      stopReason = Date.now() >= deadline ? 'model_budget' : toolCalls >= budget.maxToolCalls ? 'tool_budget' : 'forced_finalize'
       record({ phase: 'finalize', detail: '进入无工具最终收束', status: 'started' })
-      runtimeMessages.push({
-        role: 'user',
-        content: '工具阶段已经结束。请基于已有观察直接给出完整、自然的中文教学回复；明确资料缺口，不再调用工具。',
-      })
-      const request = buildAgentProviderRequest({
-        baseUrl: input.baseUrl,
-        model: input.model,
-        instructions,
-        messages: runtimeMessages.slice(-24),
-        tools,
-        includeTools: false,
-      })
-      if (Date.now() < deadline) {
-        const payload = await invokeModel(request)
+      const finalizationDeadline = Math.max(Date.now(), deadline) + budget.finalizationGraceMs
+      for (let attempt = 0; attempt < budget.finalizationAttempts && Date.now() < finalizationDeadline && !reply; attempt += 1) {
+        modelRounds += 1
+        runtimeMessages.push({
+          role: 'user',
+          content: attempt === 0
+            ? '工具阶段已经结束。请基于已有观察直接给出完整、自然的中文教学回复；明确资料缺口，不再调用工具。'
+            : '上一轮仍没有形成可展示正文。现在只完成当前 SkillRun 要求的一个教学动作：先自然回应，再给最小必要解释或问题；不要调用工具，不要输出协议文本。',
+        })
+        const request = buildAgentProviderRequest({
+          baseUrl: input.baseUrl,
+          model: input.model,
+          instructions,
+          messages: runtimeMessages.slice(-24),
+          tools,
+          includeTools: false,
+        })
+        const payload = await invokeModel(request, finalizationDeadline)
         const text = textFromTutorProviderResponse(payload)
-        const candidate = ensureSearchCitations(text, runs)
+        const candidate = repairTutorDraftForObservedGaps(text, runs)
         if (verifyTutorTurnOutcome({
           reply: candidate,
           mode: input.mode,
@@ -763,16 +907,27 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           reconcileVisibleDraft(candidate)
         } else {
           resetVisibleDraft('verification')
+          record({ phase: 'verify', detail: `第 ${attempt + 1} 次最终收束未形成可展示正文`, status: 'failed' })
         }
       }
       if (!reply && fallbackReply) reply = fallbackReply
-      if (!reply) throw new Error('模型在本轮预算内没有返回可显示的教学内容')
+      if (!reply) {
+        reply = deterministicTutorFallback(input, runs)
+        reconcileVisibleDraft(reply)
+        record({ phase: 'finalize', detail: '模型正文缺失，使用确定性教学续接保护学习现场', status: 'completed' })
+      }
       record({ phase: 'finalize', detail: '最终回复已收束', status: 'completed' })
     }
   } catch (error) {
     record({ phase: 'error', detail: error instanceof Error ? error.message.slice(0, 240) : 'Agent Runtime 失败', status: 'failed' })
     stopReason = 'error'
     if (!reply && fallbackReply) reply = fallbackReply
+    if (!reply && input.mode === 'guided_learning') {
+      reply = deterministicTutorFallback(input, runs)
+      stopReason = 'forced_finalize'
+      reconcileVisibleDraft(reply)
+      record({ phase: 'finalize', detail: '模型或工具异常，使用确定性教学续接保护学习现场', status: 'completed' })
+    }
     if (!reply) throw error
   }
 
@@ -799,6 +954,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       toolCalls,
       stopReason,
       events: trajectory,
+      decisionSummaries,
       timings: {
         ...(firstTextDeltaAt ? { firstTextDeltaMs: firstTextDeltaAt - startedAt } : {}),
         totalMs: Date.now() - startedAt,

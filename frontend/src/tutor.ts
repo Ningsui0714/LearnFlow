@@ -310,6 +310,15 @@ export function isDisplayableTutorReply(reply: string) {
   return !/(?:<\/?tool_call>|<function=|<parameter=|\btrigger_start_learning\b)/i.test(normalized)
 }
 
+export function guidedLearningRecoveryReply(context: LearningTaskTutorContext, errorMessage = '') {
+  const directive = context.stepInstruction.trim()
+    || `请先说出你对“${context.objective}”已经能确认的一点，或者直接指出卡住的位置。`
+  const transparentNote = errorMessage
+    ? '模型连接这轮没有稳定完成，但你的学习任务和当前位置已经保留。'
+    : '你的学习任务和当前位置已经保留。'
+  return `${transparentNote}\n\n我们先继续「${context.objective}」的“${context.stepTitle}”：${directive}`
+}
+
 export async function requestTutorReply(options: {
   baseUrl: string
   model: string
@@ -333,9 +342,15 @@ export async function requestTutorReply(options: {
   conversationId?: string
   sheetId?: string
   onEvent?: (event: AgentTurnStreamEvent) => void
-}) {
+}): Promise<AgentTurnResponse> {
   const controller = new AbortController()
-  const timeout = globalThis.setTimeout(() => controller.abort(), 105_000)
+  const observedToolRuns: TutorToolRun[] = []
+  const observedDecisionSummaries: NonNullable<AgentTurnTrace['decisionSummaries']> = []
+  const observedTrajectory: AgentTurnTrace['events'] = []
+  const timeoutMs = options.mode === 'guided_learning'
+    ? 235_000
+    : options.mode === 'learning_plan' ? 200_000 : 105_000
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs)
   try {
     if (isDesktopRuntime()) {
       if (!options.formalScope?.sessionId) throw new Error('桌面 Tutor 尚未取得正式会话，请重试本轮')
@@ -391,6 +406,9 @@ export async function requestTutorReply(options: {
         for (const line of lines) {
           if (!line.trim()) continue
           const event = JSON.parse(line) as AgentTurnStreamEvent
+          if (event.type === 'tool_completed') observedToolRuns.push(event.run)
+          if (event.type === 'decision_summary') observedDecisionSummaries.push(event.summary)
+          if (event.type === 'trajectory') observedTrajectory.push(event.event)
           options.onEvent(event)
           if (event.type === 'done') result = event.result
           if (event.type === 'error') throw new Error(event.error)
@@ -415,8 +433,29 @@ export async function requestTutorReply(options: {
       trace: payload.trace as AgentTurnTrace,
     }
   } catch (error) {
+    if (options.mode === 'guided_learning' && options.learningTaskContext) {
+      const at = Date.now()
+      const detail = error instanceof Error ? error.message.slice(0, 180) : 'Tutor 传输异常'
+      return {
+        reply: guidedLearningRecoveryReply(options.learningTaskContext, detail),
+        toolRuns: observedToolRuns,
+        trace: {
+          version: 'vnext-agent-trace.v1',
+          turnId: `client-recovery-${at}`,
+          modelRounds: 0,
+          toolCalls: observedToolRuns.length,
+          stopReason: 'forced_finalize',
+          events: [
+            ...observedTrajectory,
+            { sequence: observedTrajectory.length + 1, phase: 'error', detail, at, status: 'failed' },
+            { sequence: observedTrajectory.length + 2, phase: 'finalize', detail: '使用当前 SkillRun 锚点续接教学', at, status: 'completed' },
+          ],
+          decisionSummaries: observedDecisionSummaries,
+        },
+      }
+    }
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Tutor 请求超过 105 秒，已停止等待')
+      throw new Error(`Tutor 请求超过 ${Math.round(timeoutMs / 1000)} 秒，已停止等待`)
     }
     if (error instanceof TypeError) {
       throw new Error('无法连接本地 Tutor 服务，请确认 LearnFlow 服务正在运行')

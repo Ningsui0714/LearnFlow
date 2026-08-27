@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { FormEvent, Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { initializeRuntimeClient, isDesktopRuntime } from './runtime-client.ts'
 import {
@@ -22,8 +22,8 @@ import {
   isSupportRequest,
   latestLearningTaskProjection,
   LEARNING_SKILLS,
+  learningObjectiveFromInput,
   learningTaskTutorContext,
-  loopLearningSkillStep,
   nextLearningSkillStep,
   projectLearningTask,
   reconcileLearningEventsWithFormalSkillRun,
@@ -119,7 +119,7 @@ import {
   type FormalTutorMessage,
   type FormalTutorSession,
 } from './formal-runtime'
-import type { AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
+import type { AgentDecisionSummary, AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
 import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
@@ -142,6 +142,7 @@ type Message = {
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
   agentTrace?: AgentTurnTrace
+  decisionSummaries?: AgentDecisionSummary[]
   learningActionLabel?: string
   learningSkillId?: LearningSkillId
   learningSubstateId?: LearningSubstateId
@@ -159,6 +160,7 @@ type LiveTurn = {
   messageId: string
   content: string
   toolRuns: TutorToolRun[]
+  decisionSummaries: AgentDecisionSummary[]
   phase: string
   startedAt: number
 }
@@ -435,7 +437,12 @@ function restoreState(): PersistedState {
       ...conversation,
       mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
       sheets,
-      learningTasks: Array.isArray(conversation.learningTasks) ? conversation.learningTasks : [],
+      learningTasks: Array.isArray(conversation.learningTasks)
+        ? conversation.learningTasks.map(task => ({
+            ...task,
+            objective: learningObjectiveFromInput(task.objective),
+          }))
+        : [],
       learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
       learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
       planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
@@ -502,7 +509,8 @@ function activeSheet(conversation: Conversation) {
 }
 
 function activeMessages(conversation: Conversation) {
-  return activeSheet(conversation)?.messages || conversation.messages
+  return (activeSheet(conversation)?.messages || conversation.messages)
+    .filter(message => !message.learningActionLabel)
 }
 
 function paperPreview(messages: Message[]) {
@@ -516,9 +524,13 @@ function paperPreview(messages: Message[]) {
 }
 
 function inheritedContextMessages(conversation: Conversation) {
-  if (conversation.activeSheetId === 'main') return conversation.messages
+  const mainMessages = conversation.messages.filter(message => !message.learningActionLabel)
+  if (conversation.activeSheetId === 'main') return mainMessages
   const chain = paperAncestorChain(conversation.sheets, conversation.activeSheetId)
-  return [...conversation.messages, ...chain.flatMap(sheet => sheet.messages)]
+  return [
+    ...mainMessages,
+    ...chain.flatMap(sheet => sheet.messages.filter(message => !message.learningActionLabel)),
+  ]
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
@@ -1306,6 +1318,19 @@ function App() {
       if (event.type === 'trajectory') {
         return { ...previous, [conversationId]: { ...current, phase: event.event.detail } }
       }
+      if (event.type === 'decision_summary') {
+        return {
+          ...previous,
+          [conversationId]: {
+            ...current,
+            decisionSummaries: [
+              ...current.decisionSummaries.filter(item => item.toolCallId !== event.summary.toolCallId),
+              event.summary,
+            ].sort((left, right) => left.sequence - right.sequence),
+            phase: event.summary.nextAction,
+          },
+        }
+      }
       if (event.type === 'tool_started') {
         const running: TutorToolRun = {
           id: event.toolCallId,
@@ -1335,7 +1360,7 @@ function App() {
   const runTutorTurn = async (
     conversationId: string,
     rawContent: string,
-    options: { advanceStep?: boolean; repeatStep?: boolean; learningActionLabel?: string; replayInterruptedTurn?: boolean } = {},
+    options: { replayInterruptedTurn?: boolean } = {},
   ) => {
     const conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) {
@@ -1391,23 +1416,16 @@ function App() {
         learningEvents = created.events
         learningProjection = projectLearningTask(created.task, learningEvents)
       }
-      if (options.advanceStep && learningProjection && !learningProjection.task.formalSkillRunId) {
-        learningEvents = advanceLearningSkillStep(learningEvents, learningProjection, now + 8)
-        learningProjection = projectLearningTask(learningProjection.task, learningEvents)
-      }
-      if (options.repeatStep && learningProjection && !learningProjection.task.formalSkillRunId) {
-        learningEvents = loopLearningSkillStep(learningEvents, learningProjection, '学生选择再来一轮', now + 8)
-        learningProjection = projectLearningTask(learningProjection.task, learningEvents)
-      }
-      if (learningProjection && !options.learningActionLabel) {
+      if (learningProjection) {
         const step = currentLearningSkillStep(learningProjection)
+        const supportRequested = isSupportRequest(content)
         const additions: Array<Omit<LearningEvent, 'id' | 'sequence' | 'taskId' | 'at'>> = [{
           type: 'vnext_learning_task_learner_replied',
           detail: `学生回应：${content.slice(0, 80)}`,
           skillId: learningProjection.skillId,
           stepId: step.id,
         }]
-        if (isSupportRequest(content)) additions.push(
+        if (supportRequested) additions.push(
           {
             type: 'vnext_learning_support_requested',
             detail: '学生需要补充支架，本轮不自动推进',
@@ -1423,6 +1441,15 @@ function App() {
         )
         learningEvents = appendLearningEvents(learningEvents, learningProjection.task.id, additions, now + 16)
         learningProjection = projectLearningTask(learningProjection.task, learningEvents)
+        if (
+          !createdLocalTask
+          && !supportRequested
+          && !learningProjection.task.formalSkillRunId
+          && canAdvanceLearningSkillStep(learningProjection)
+        ) {
+          learningEvents = advanceLearningSkillStep(learningEvents, learningProjection, now + 24)
+          learningProjection = projectLearningTask(learningProjection.task, learningEvents)
+        }
       }
     }
 
@@ -1452,6 +1479,7 @@ function App() {
         messageId: uid('stream'),
         content: '',
         toolRuns: [],
+        decisionSummaries: [],
         phase: formalConnection.status === 'connected' ? '正在同步学习状态' : '正在理解问题',
         startedAt: Date.now(),
       },
@@ -1463,7 +1491,6 @@ function App() {
         const userMessage: Message = {
           id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
           persistedByTutor: isDesktopRuntime(),
-          learningActionLabel: options.learningActionLabel,
           learningSkillId: learningProjection?.skillId,
           learningSubstateId: optimisticTurnStep?.substateId,
           learningSubstateLabel: optimisticTurnStep?.substateLabel,
@@ -1908,24 +1935,6 @@ function App() {
     }
   }
 
-  const advanceTaskAndContinue = async (conversation: Conversation, projection: LearningTaskProjection) => {
-    const next = nextLearningSkillStep(projection)
-    if (!next || !canAdvanceLearningSkillStep(projection) || pendingTurns[conversation.id]) return
-    await runTutorTurn(conversation.id, `继续当前学习任务，进入“${next.title}”。`, {
-      advanceStep: true,
-      learningActionLabel: `进入${next.title}`,
-    })
-  }
-
-  const repeatTaskStep = async (conversation: Conversation, projection: LearningTaskProjection) => {
-    if (pendingTurns[conversation.id]) return
-    const step = currentLearningSkillStep(projection)
-    await runTutorTurn(conversation.id, `换一种支架，再完成一轮“${step.title}”。`, {
-      repeatStep: true,
-      learningActionLabel: `再来一轮 · ${step.shortTitle}`,
-    })
-  }
-
   const updateSettings = (patch: Partial<SettingsState>) => {
     setSettingsSaved(false)
     setWorkspace(previous => ({ ...previous, settings: { ...previous.settings, ...patch } }))
@@ -2337,6 +2346,7 @@ function App() {
           createdAt: liveTurn.startedAt,
           tutorMode: visibleMode,
           toolRuns: liveTurn.toolRuns,
+          decisionSummaries: liveTurn.decisionSummaries,
           streaming: true,
           streamingPhase: liveTurn.phase,
         }]
@@ -2706,15 +2716,9 @@ function App() {
                     在对话中作答
                   </button>
                 ) : nextLearningSkillStep(taskProjection) ? (
-                  <button
-                    type="button"
-                    className="learning-primary-action"
-                    title={taskCanAdvance ? taskStep?.nextAction : '先在对话中完成当前动作'}
-                    onClick={() => advanceTaskAndContinue(conversation, taskProjection)}
-                    disabled={Boolean(pendingMode) || !taskCanAdvance}
-                  >
-                    {taskCanAdvance ? taskStep?.nextAction : '等待回答'}
-                  </button>
+                  <span className="learning-agent-progress" title="SkillRun 会根据对话中的真实回答自动推进">
+                    {taskCanAdvance ? 'Tutor 将自动继续' : '等待你的回答'}
+                  </span>
                 ) : (
                   <button type="button" className="learning-primary-action" onClick={() => updateLearningTask(conversation.id, 'complete')} disabled={Boolean(pendingMode) || !taskCanAdvance}>完成本轮</button>
                 )}
@@ -2778,12 +2782,6 @@ function App() {
                       </select>
                     </label>
                     <div className="learning-task-menu-actions">
-                      {taskProjection.status === 'active' && taskStep?.canLoop && (
-                        <button type="button" onClick={event => {
-                          event.currentTarget.closest('details')?.removeAttribute('open')
-                          repeatTaskStep(conversation, taskProjection)
-                        }} disabled={Boolean(pendingMode)}>再来一轮</button>
-                      )}
                       {taskProjection.status === 'active' && <button type="button" onClick={event => {
                         event.currentTarget.closest('details')?.removeAttribute('open')
                         updateLearningTask(conversation.id, 'pause')
@@ -3233,6 +3231,35 @@ function AgentTraceSummary({ trace }: { trace: AgentTurnTrace }) {
   )
 }
 
+function ToolDecisionBridge({
+  run,
+  nextRun,
+  summary,
+}: {
+  run: TutorToolRun
+  nextRun?: TutorToolRun
+  summary?: AgentDecisionSummary
+}) {
+  if (run.status === 'running') return null
+  const reason = summary?.reason || `为完成当前学习动作，Tutor 选择了“${run.title}”取得结构化观察。`
+  const observation = summary?.observation || run.observationSummary || run.detail
+  const nextAction = nextRun
+    ? `基于这条观察，继续使用“${nextRun.title}”。`
+    : summary?.nextAction || (run.status === 'failed'
+      ? '保留失败原因并调整路线，最终回答会说明仍存在的缺口。'
+      : '把观察交回 Tutor，继续组织当前学习动作。')
+  return (
+    <section className={`tool-decision-bridge${run.status === 'failed' ? ' tool-decision-bridge-warning' : ''}`} aria-label="Tutor 工具决策摘要">
+      <span>判断</span>
+      <div>
+        <strong>{reason}</strong>
+        <p><i>观察</i>{observation}</p>
+        <p><i>下一步</i>{nextAction}</p>
+      </div>
+    </section>
+  )
+}
+
 function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
   messages: Message[]
   conversationId: string
@@ -3333,25 +3360,31 @@ function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearning
                   >选中文字追问</button>
                 )}
               </div>
-              {message.toolRuns?.map(run => (
-                <ToolRunCard
-                  key={run.id}
-                  run={run}
-                  sourceMessageId={message.id}
-                  conversationId={conversationId}
-                  onOpenLearningFile={onOpenLearningFile}
-                  onAttachLearningFile={onAttachLearningFile}
-                  onAcceptPathProposal={onAcceptPathProposal}
-                  onAcceptPathPlan={onAcceptPathPlan}
-                  activePathPlanId={activePathPlanId}
-                  pathPlanBusyId={pathPlanBusyId}
-                  pathPlanWriteError={run.pathPlanProposal ? pathPlanWriteErrors[run.pathPlanProposal.id] : undefined}
-                  onAcceptProjectRoadmap={onAcceptProjectRoadmap}
-                  onAcceptProjectLearningFile={onAcceptProjectLearningFile}
-                  projectBusyKey={projectBusyKey}
-                  projectError={projectError}
-                />
-              ))}
+              {message.toolRuns?.map((run, index, runs) => {
+                const decisionSummary = (message.agentTrace?.decisionSummaries || message.decisionSummaries || [])
+                  .find(item => item.toolCallId === run.toolCallId)
+                return (
+                  <Fragment key={run.id}>
+                    <ToolRunCard
+                      run={run}
+                      sourceMessageId={message.id}
+                      conversationId={conversationId}
+                      onOpenLearningFile={onOpenLearningFile}
+                      onAttachLearningFile={onAttachLearningFile}
+                      onAcceptPathProposal={onAcceptPathProposal}
+                      onAcceptPathPlan={onAcceptPathPlan}
+                      activePathPlanId={activePathPlanId}
+                      pathPlanBusyId={pathPlanBusyId}
+                      pathPlanWriteError={run.pathPlanProposal ? pathPlanWriteErrors[run.pathPlanProposal.id] : undefined}
+                      onAcceptProjectRoadmap={onAcceptProjectRoadmap}
+                      onAcceptProjectLearningFile={onAcceptProjectLearningFile}
+                      projectBusyKey={projectBusyKey}
+                      projectError={projectError}
+                    />
+                    <ToolDecisionBridge run={run} nextRun={runs[index + 1]} summary={decisionSummary} />
+                  </Fragment>
+                )
+              })}
               {message.agentTrace && <AgentTraceSummary trace={message.agentTrace} />}
               {message.streaming && <div className="streaming-phase"><i />{message.streamingPhase || '正在形成回答'}</div>}
               {message.learningActionLabel ? (

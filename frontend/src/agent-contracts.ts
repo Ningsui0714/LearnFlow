@@ -44,6 +44,21 @@ export type AgentTrajectoryEvent = {
   status?: 'started' | 'completed' | 'failed' | 'blocked' | 'retrying'
 }
 
+// A bounded, user-visible projection of the runtime decision. This is not the
+// provider's hidden chain of thought: it contains only the tool rationale,
+// verified observation summary and the next operational action.
+export type AgentDecisionSummary = {
+  id: string
+  sequence: number
+  round: number
+  at: number
+  toolCallId: string
+  toolName: string
+  reason: string
+  observation: string
+  nextAction: string
+}
+
 export type AgentContextEnvelope = {
   version: 'vnext-agent-context.v1'
   scope: {
@@ -86,6 +101,7 @@ export type AgentTurnTrace = {
   toolCalls: number
   stopReason: 'final_answer' | 'tool_budget' | 'model_budget' | 'forced_finalize' | 'error'
   events: AgentTrajectoryEvent[]
+  decisionSummaries?: AgentDecisionSummary[]
   timings?: {
     firstTextDeltaMs?: number
     totalMs: number
@@ -148,6 +164,7 @@ export type AgentTurnResponse = {
 
 export type AgentTurnStreamEvent =
   | { type: 'trajectory'; event: AgentTrajectoryEvent }
+  | { type: 'decision_summary'; summary: AgentDecisionSummary }
   | { type: 'tool_started'; toolCallId: string; toolName: string; title: string; startedAt: number }
   | { type: 'tool_completed'; run: TutorToolRun }
   | { type: 'text_delta'; delta: string }

@@ -247,7 +247,13 @@ def _compact_goal(value: str) -> str:
 def _learning_goal(value: str, skill_id: str) -> str:
     """Remove method-selection language while preserving the topic request."""
     original = _compact_goal(value)
-    goal = original
+    goal = re.sub(
+        r"^(?:请|可以|能不能|你能)?\s*(?:带我(?:学习|练习|弄懂|理解|学|做)|教我(?:学会|理解|弄懂)|陪我(?:学|练)|让我练习)\s*",
+        "",
+        original,
+        count=1,
+    ).strip()
+    goal = re.sub(r"^(?:一下|关于)\s*", "", goal, count=1).strip()
     if skill_id == "guided_explanation":
         prefixes = (
             r"^(?:请)?(?:直接)?(?:给我)?(?:解释|讲清楚|讲清|说明)[，,：:\s]*",

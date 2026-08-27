@@ -288,6 +288,7 @@ export function learningObjectiveFromInput(input: string) {
   const cleaned = input
     .replace(/^(?:请|可以|能不能|你能)?\s*带我(?=(?:写|实现|完成))/i, '')
     .replace(/^(?:请|可以|能不能|你能)?\s*(?:带我(?:学习|练习|弄懂|理解|学|做)|教我(?:学会|理解|弄懂)|陪我(?:学|练)|让我练习)\s*/i, '')
+    .replace(/^(?:一下|关于)\s*/i, '')
     .replace(/[。！？!?]+$/g, '')
     .trim()
   return (cleaned || input.trim() || '完成当前学习目标').slice(0, 180)
