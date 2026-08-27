@@ -66,6 +66,9 @@ test('each learning skill owns a distinct deterministic flow', () => {
   assert.deepEqual(LEARNING_SKILLS.worked_example_fading.steps.map(step => step.id), [
     'studying_worked_example', 'completing_last_step', 'solving_faded_example', 'verification_ready',
   ])
+  assert.deepEqual(LEARNING_SKILLS.learning_file_study.steps.map(step => step.id), [
+    'selecting_learning_artifact', 'reading_with_anchor', 'practicing_in_file', 'verification_ready',
+  ])
 })
 
 test('an explicitly selected skill binds the next guided task and exposes its substate', () => {

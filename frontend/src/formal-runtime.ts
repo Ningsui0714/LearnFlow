@@ -104,6 +104,19 @@ export type FormalKnowledgeSource = {
   mastery_inference: false
 }
 
+export type FormalSourcePaper = FormalKnowledgeSource & {
+  project_id: number
+  sections: Array<{
+    chunk_id: number
+    index: number
+    title: string
+    content: string
+    provenance: { source_id: number; chunk_id: number; chunk_index: number }
+  }>
+  content_truncated: boolean
+  trust_boundary: string
+}
+
 export type FormalLearningFileRef = {
   kind: 'lecture' | 'practice'
   practice_kind?: 'exercise' | 'concept_question_set'
@@ -929,6 +942,11 @@ export async function processKnowledgeLibrarySource(sourceId: number) {
   return jsonRequest<{ status: string; source: FormalKnowledgeSource }>(`/api/knowledge-library/sources/${sourceId}/process`, { method: 'POST' })
 }
 
+export async function loadSourcePaper(sourceId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<FormalSourcePaper>(`/api/knowledge-library/sources/${sourceId}/paper`)
+}
+
 export async function loadLearningFiles() {
   await ensureFormalIdentity()
   return jsonRequest<{ lectures: FormalLearningFileRef[]; practices: FormalLearningFileRef[]; boundary: string }>('/api/learning-files')
@@ -970,7 +988,7 @@ export async function generateFormalLearningFiles(task: FormalLearningTask, sour
 }
 
 export async function recordLearningFileAccess(
-  kind: 'lecture' | 'practice',
+  kind: 'lecture' | 'practice' | 'source',
   ref: string,
   action: 'opened' | 'attached',
   context: { conversation_id?: string; sheet_id?: string } = {},

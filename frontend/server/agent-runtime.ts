@@ -52,6 +52,12 @@ export type TutorAgentRuntimeInput = {
   messages: TutorContextMessage[]
   toolChoice: TutorToolChoice
   selectionContext?: string
+  activeArtifactContext?: {
+    kind: 'lecture' | 'practice' | 'source'
+    ref: string
+    title: string
+    projectId?: number
+  }
   learningTaskContext?: LearningTaskTutorContext
   learningPlanContext?: LearningPlanTutorContext
   learnerPathState?: LearnerPathState
@@ -292,6 +298,7 @@ function availableTools(input: TutorAgentRuntimeInput) {
     (!['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node'].includes(tool.name) || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
+    && (tool.name !== 'read_active_learning_file' || Boolean(input.activeArtifactContext))
     && (!tool.name.startsWith('read_project_') || Boolean(input.formalProjectContext))
     && (tool.name !== 'read_project_roadmap' || projectTutor)
     && (tool.name !== 'propose_project_roadmap' || projectTutor && input.mode === 'learning_plan')
@@ -444,6 +451,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     formalDomainKnowledgeContext: input.formalDomainKnowledgeContext,
     formalReviewContext: input.formalReviewContext,
     formalProjectContext: input.formalProjectContext,
+    activeArtifactContext: input.activeArtifactContext,
     backendBase: input.backendBase,
     requestCookie: input.requestCookie,
   }
@@ -513,7 +521,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'read_project_workspace'
         || call.name === 'read_project_roadmap'
         || call.name === 'read_project_sources'
-        || call.name === 'read_project_learning_file',
+        || call.name === 'read_project_learning_file'
+        || call.name === 'read_active_learning_file',
       data: result.observation,
     })
     runtimeMessages.push({
@@ -543,7 +552,12 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
 
   record({ phase: 'observe', detail: '开始组装本轮观察空间', status: 'started' })
-  await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } })
+  const needsLearnerContext = input.mode === 'guided_learning'
+    || input.mode === 'learning_plan'
+    || /(?:根据我|适合我|我的基础|我的情况|我之前|我学过|我不会|我总是|记得我|偏好|目标|熟练度|掌握度|薄弱|错题)/i.test(latestMessage)
+  if (needsLearnerContext) {
+    await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } })
+  }
   if (input.formalProjectContext) {
     await execute({ id: `observe-project-${id}`, name: 'read_project_workspace', arguments: { query: latestMessage } })
     if (input.formalProjectContext.tool_policy?.roadmap_tool_access === 'project_tutor' && input.mode === 'learning_plan') {
@@ -552,6 +566,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
     await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
+  }
+  if (input.activeArtifactContext) {
+    await execute({ id: `observe-active-file-${id}`, name: 'read_active_learning_file', arguments: {} })
   }
   if (input.formalDomainKnowledgeContext && input.mode === 'learning_plan' && input.toolChoice === 'auto') {
     await execute({ id: `observe-domain-${id}`, name: 'read_domain_knowledge', arguments: { query: latestMessage } })
@@ -582,6 +599,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     current: {
       userMessage: latestMessage,
       selection: input.selectionContext,
+      activeArtifact: input.activeArtifactContext,
       learningTask: input.learningTaskContext,
       learningPlan: input.learningPlanContext,
     },
@@ -594,6 +612,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   const instructions = buildTutorInstructions({
     mode: input.mode,
     selectionContext: input.selectionContext,
+    activeArtifactContext: input.activeArtifactContext,
     learningTaskContext: input.learningTaskContext,
     learningPlanContext: input.learningPlanContext,
     toolContext: envelopePrompt(envelope),

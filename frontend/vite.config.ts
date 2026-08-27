@@ -409,6 +409,9 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         messages,
         toolChoice,
         selectionContext,
+        activeArtifactContext: input.activeArtifactContext && typeof input.activeArtifactContext === 'object'
+          ? input.activeArtifactContext as any
+          : undefined,
         learningTaskContext,
         learningPlanContext,
         learnerPathState,

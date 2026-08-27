@@ -66,6 +66,10 @@ Chat、学习任务、学习路径和规划态只通过 allow-list 事件网关�
 - `learner_concept_statement_recorded`：保留学习者原文，零 Kernel target。
 - `learner_concept_observation_recorded`：只写 Knowledge 概念历程，自述保持待验证且不推断掌握。
 - `learner_concept_relation_recorded`：只写 Structure 概念关系，不替 Knowledge 下结论。
+- 讲义/练习/来源的生成、打开、附着纸张和普通阅读：零 Kernel target。纸张父子图是浏览器工作空间，
+  不是个人概念图、Memory Graph 或第六个 Kernel；来源文本即使被阅读也只构成带 provenance 的上下文。
+- 正式练习文件中的提交：先建立 learner-owned `LearningAttempt` 并确定性判题，再由已登记事件写入
+  Knowledge / Practice。未提交草稿、显示答案、打开题目和模型生成题目均不进入掌握证据。
 - 已接受的 Value proposal：学生查看依据并确认后，由正式 capability 追加确认事件；拒绝、未确认和纯模型建议不能写长期 Value。
 - 记忆归档/恢复、Claim 确认/纠正/撤回：全部追加新事件或新版本，保留原始历史。
 

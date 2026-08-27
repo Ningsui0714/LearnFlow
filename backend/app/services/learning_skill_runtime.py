@@ -24,12 +24,13 @@ from app.services.architecture_registry import (
 from app.services.learning_runtime import record_event
 
 
-SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v5"
+SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v6"
 RUNTIME_SKILL_IDS = (
     "guided_explanation",
     "socratic_dialogue",
     "feynman_dialogue",
     "worked_example_fading",
+    "learning_file_study",
 )
 ACTIVE_RUN_STATUSES = ("active", "paused", "verification")
 
@@ -278,6 +279,12 @@ def _learning_goal(value: str, skill_id: str) -> str:
             r"^(?:请)?(?:用)?示例渐隐(?:来)?(?:学习|讲解)?[，,：:\s]*",
             r"^(?:请)?给我一个完整(?:例题|示例|样例代码)[，,：:\s]*",
         )
+    elif skill_id == "learning_file_study":
+        prefixes = (
+            r"^(?:请)?(?:用)?讲义(?:和练习)?带我学[，,：:\s]*",
+            r"^(?:请)?(?:基于|看着)?这份(?:讲义|练习|文件|资料)(?:带我)?(?:学习|练习)?[，,：:\s]*",
+            r"^(?:请)?看讲义做练习[，,：:\s]*",
+        )
     else:
         prefixes = ()
     for pattern in prefixes:
@@ -347,6 +354,11 @@ def recommend_learning_skill(message: str) -> dict[str, Any] | None:
     # In particular, "不要直接告诉我" is Socratic while "直接告诉我为什么"
     # asks for an explanation even though it contains "为什么".
     rules = (
+        (
+            "learning_file_study",
+            ("用讲义带我学", "讲义和练习", "看讲义做练习", "基于这份讲义", "基于这份练习", "基于这份文件", "文件驱动学习"),
+            "这个目标明确需要以可留存文件承载内容和正式作答，适合由讲义定位阅读、练习提交证据、对话负责引导。",
+        ),
         (
             "worked_example_fading",
             ("带我做一遍", "先示范再", "示例渐隐", "渐隐示例", "完整例题", "完整示例", "样例代码再让我", "照着例子"),
@@ -453,6 +465,17 @@ def _opening_prompt(
             "不要先讲答案，不要宣布掌握。"
         )
         return directive, fallback
+    if skill_id == "learning_file_study":
+        fallback = (
+            f"我们用文件完成“{goal}”：先从已有讲义或资料里选最相关的一份，在纸张中读一个明确位置；"
+            "再打开对应练习正式作答。聊天只负责带路和解释卡点，不会把整份文件重复贴出来。"
+        )
+        directive = (
+            f"SkillRun 刚开始，目标是“{goal}”。先自然回应学习者当下问题，再读取正式工作区里的文件引用。"
+            "优先建议打开一份已有讲义或资料；没有适合文件时只提出一次讲义/练习生成操作并等待确认。"
+            "不要复制整份内容，不要因文件已生成或打开而宣布掌握。"
+        )
+        return directive, fallback
     fallback = (
         f"我们先把“{goal}”拆成几个有名称的子目标，看一遍完整示例；"
         "接着我会先拿掉最后一步，让你补全，再逐步撤掉更多提示。"
@@ -549,6 +572,13 @@ def _support_step(
             "这说明支架撤得太快了，所以不会进入下一层。我会先恢复当前这一步并说明它为什么存在，"
             "然后只换一个近似输入，请你补相邻的一个动作。"
         )
+    elif skill_id == "learning_file_study":
+        directive = (
+            f"学习者在“{goal}”的文件学习步骤上需要支架。保持当前纸张和当前步骤；"
+            "如果是讲义，只指出一个更小的段落锚点并给一个最小解释；如果是练习，只给一层提示，"
+            "不泄露答案并让学生回到练习纸张提交。不得重复生成同类文件。"
+        )
+        fallback = "先不换文件，也不推进。我们把当前阅读或题目缩小到一个关系；我只补一层提示，你仍在原纸张继续。"
     else:
         directive = (
             f"学习者仍未理解“{goal}”的当前解释。不要推进到新例子。改用更短的句子和一个具体类比，"
@@ -673,6 +703,36 @@ def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
                     "这次复述已经比第一版更可检查了，但复述仍只是诊断。"
                     "下一步用一道独立变式题验证，才能留下能力证据。"
                 ),
+            },
+        }
+    elif skill_id == "learning_file_study":
+        rows = {
+            "selecting_learning_artifact": {
+                "state": "reading_with_anchor",
+                "step_index": 2,
+                "directive": (
+                    f"学习者已确认“{goal}”要使用的讲义或资料。精确读取当前文件，"
+                    "只给一个段落/小节锚点、一条核心关系和一个读后检查问题；正文留在纸张。"
+                ),
+                "fallback": "文件已经选定。请在纸张中先读我标出的这一小节；读完只回答一个问题：其中哪条关系直接服务当前目标？",
+            },
+            "reading_with_anchor": {
+                "state": "practicing_in_file",
+                "step_index": 3,
+                "directive": (
+                    "先回应学习者对阅读锚点的理解，再打开已有练习；没有对齐练习时只提出一次生成并等待确认。"
+                    "答案保持隔离，聊天不代替正式提交。"
+                ),
+                "fallback": "阅读锚点已经完成。下一步在练习纸张里做一道直接检验这条关系的题；需要帮助时我只给最小提示。",
+            },
+            "practicing_in_file": {
+                "state": "verification_ready",
+                "step_index": 4,
+                "directive": (
+                    "只引用当前作用域中真实存在的 Attempt 和卡点做简短复盘；没有正式提交就明确暂无证据。"
+                    "区分独立、提示和阅读，不新增教学问题，交给独立验证或复习。"
+                ),
+                "fallback": "文件阅读和练习阶段到这里收束；下一步依据正式提交结果进入独立验证或复习，暂无提交时不会宣布掌握。",
             },
         }
     else:

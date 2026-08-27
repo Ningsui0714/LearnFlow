@@ -1,6 +1,6 @@
 {
   "schema_version": "learnflow.skill.v2",
-  "registry_version": "2026-08-27.5",
+  "registry_version": "2026-08-27.6",
   "generated_from": "backend/app/services/architecture_registry.py",
   "skills": {
     "guided_explanation": {
@@ -19,7 +19,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v5",
+        "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
           "learn"
         ],
@@ -136,7 +136,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v5",
+        "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
           "learn"
         ],
@@ -253,7 +253,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v5",
+        "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
           "learn"
         ],
@@ -482,7 +482,7 @@
       "atomic_task_capable": true,
       "spec_version": "learnflow.skill.v2",
       "runtime": {
-        "version": "atomic-learning-skill-runtime-v5",
+        "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
           "learn"
         ],
@@ -566,6 +566,127 @@
         ],
         "output_objects": [
           "LearningSkillRunTransition",
+          "VerificationHandoff"
+        ],
+        "allowed_event_types": [
+          "learning_skill_run_started",
+          "learning_skill_run_advanced",
+          "learning_skill_run_paused",
+          "learning_skill_run_resumed",
+          "learning_skill_verification_started",
+          "learning_skill_run_completed"
+        ],
+        "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
+        "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
+        "eval_suite": "learning-skill-dialogue-v2",
+        "calibration_axes": [],
+        "maturity": "production_candidate"
+      }
+    },
+    "learning_file_study": {
+      "id": "learning_file_study",
+      "name": "讲义与练习共学",
+      "description": "让讲义负责承载内容、练习负责正式作答，对话负责带路和反馈。",
+      "best_for": [
+        "已有讲义或练习文件",
+        "需要留下可复用学习材料",
+        "希望阅读和正式作答连成闭环"
+      ],
+      "avoid_when": [
+        "只需一句事实解释",
+        "没有明确原子目标",
+        "当前任务无法形成可验证练习"
+      ],
+      "atomic_task_capable": true,
+      "spec_version": "learnflow.skill.v2",
+      "runtime": {
+        "version": "atomic-learning-skill-runtime-v6",
+        "bound_chat_modes": [
+          "learn"
+        ],
+        "initial_state": "selecting_learning_artifact",
+        "states": [
+          {
+            "id": "selecting_learning_artifact",
+            "title": "选择学习文件",
+            "short_title": "选文件",
+            "substate_id": "guidance",
+            "substate_label": "引导态",
+            "instructional_objective": "围绕原子目标选择已有讲义/练习，缺少时才提出生成。",
+            "tutor_instruction": "先回应学习者的问题，再读取工作区文件引用；优先复用已有文件。只提出一个打开或生成动作，不在聊天里复制整份内容。",
+            "next_action": "打开讲义",
+            "accepted_signals": [
+              "attempt"
+            ],
+            "can_loop": true,
+            "requires_learner_reply": true,
+            "loop_instruction": "缩小目标并只保留一个最相关文件；不为推进流程重复生成。"
+          },
+          {
+            "id": "reading_with_anchor",
+            "title": "带锚点阅读讲义",
+            "short_title": "读讲义",
+            "substate_id": "demonstration",
+            "substate_label": "阅读态",
+            "instructional_objective": "在讲义或资料纸张中完成一个有明确位置和问题的阅读动作。",
+            "tutor_instruction": "精确读取当前文件，只指出一处阅读位置、一个核心关系和一个阅读后问题；正文留在纸张里。",
+            "next_action": "进入文件练习",
+            "accepted_signals": [
+              "attempt"
+            ],
+            "can_loop": true,
+            "requires_learner_reply": true,
+            "loop_instruction": "换一个段落锚点、图解或最小例子，不把整篇讲义搬进对话。"
+          },
+          {
+            "id": "practicing_in_file",
+            "title": "在练习纸张中作答",
+            "short_title": "做练习",
+            "substate_id": "practice",
+            "substate_label": "练习态",
+            "instructional_objective": "把讲义中的关键关系交给答案隔离的正式练习。",
+            "tutor_instruction": "打开或生成一份与目标对齐的练习文件；对话只提供最小支架，学生必须在练习纸张中正式提交。",
+            "next_action": "复盘本次证据",
+            "accepted_signals": [
+              "attempt"
+            ],
+            "can_loop": true,
+            "requires_learner_reply": true,
+            "loop_instruction": "只针对当前卡点给一层提示或同构小题，答案继续隔离。"
+          },
+          {
+            "id": "verification_ready",
+            "title": "复盘并准备验证",
+            "short_title": "复盘",
+            "substate_id": "independent",
+            "substate_label": "验证态",
+            "instructional_objective": "区分阅读、提示练习与独立证据，并将下一步交给正式验证或复习。",
+            "tutor_instruction": "引用已存在的作答结果和具体卡点做短复盘；没有 Attempt 时明确暂无证据，不得宣布掌握。",
+            "next_action": "开始独立验证",
+            "accepted_signals": [],
+            "can_loop": false,
+            "requires_learner_reply": false,
+            "loop_instruction": "缩小当前动作并补一层支架；不得把提示后的回应当作独立完成。"
+          }
+        ],
+        "turn_budget": 3,
+        "verification_required": true,
+        "required_context": [
+          "scoped_learning_task",
+          "learner_reply_signal",
+          "answer_free_context_packet",
+          "managed_learning_file_refs",
+          "active_paper_artifact"
+        ],
+        "input_objects": [
+          "LearningTask",
+          "LearningSkillRun",
+          "ContextPacket",
+          "AgentMessage"
+        ],
+        "output_objects": [
+          "LearningSkillRunTransition",
+          "PaperArtifactHandoff",
           "VerificationHandoff"
         ],
         "allowed_event_types": [

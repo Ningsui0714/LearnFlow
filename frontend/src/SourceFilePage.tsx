@@ -1,0 +1,61 @@
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { loadSourcePaper, recordLearningFileAccess } from './formal-runtime'
+
+const MarkdownContent = lazy(() => import('./MarkdownContent'))
+
+type Props = {
+  sourceId: number
+  embedded?: boolean
+  conversationId?: string
+  sheetId?: string
+  onAttach?: (file: { kind: 'source'; ref: string; title: string; projectId?: number }) => void
+  onFollowUp?: () => void
+}
+
+export default function SourceFilePage({ sourceId, embedded, conversationId, sheetId, onAttach, onFollowUp }: Props) {
+  const [file, setFile] = useState<Awaited<ReturnType<typeof loadSourcePaper>>>()
+  const [active, setActive] = useState(0)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let alive = true
+    void loadSourcePaper(sourceId).then(result => {
+      if (!alive) return
+      setFile(result)
+      void recordLearningFileAccess('source', String(sourceId), 'opened', {
+        conversation_id: conversationId,
+        sheet_id: sheetId,
+      }).catch(() => undefined)
+    }).catch(failure => alive && setError(failure instanceof Error ? failure.message : '资料读取失败'))
+    return () => { alive = false }
+  }, [sourceId, conversationId, sheetId])
+  if (error) return <div className="formal-inline-error">{error}</div>
+  if (!file) return <div className="page-loading">正在打开资料…</div>
+  const section = file.sections[active]
+  return (
+    <section className={`source-file-workbench${embedded ? ' learning-file-embedded' : ''}`}>
+      <header className="learning-file-workbench-heading">
+        <div><span>资料</span><h1>{file.name}</h1>{!embedded && file.url && <code>{file.url}</code>}</div>
+        <div>
+          {onFollowUp && <button type="button" className="learning-file-subtle-action" onMouseDown={event => event.preventDefault()} onClick={onFollowUp}>选中追问</button>}
+          {onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'source', ref: String(file.id), title: file.name, projectId: file.project_id })}>放到对话纸张</button>}
+        </div>
+      </header>
+      {file.sections.length > 1 && <nav className="source-paper-navigation" aria-label="资料片段">
+        <button type="button" disabled={active === 0} onClick={() => setActive(index => Math.max(0, index - 1))} aria-label="上一段">←</button>
+        <label>
+          <span>{active + 1} / {file.sections.length}</span>
+          <select value={active} onChange={event => setActive(Number(event.target.value))} aria-label="选择资料片段">
+            {file.sections.map((item, index) => <option value={index} key={item.chunk_id}>第 {index + 1} 段 · {item.title}</option>)}
+          </select>
+        </label>
+        <button type="button" disabled={active >= file.sections.length - 1} onClick={() => setActive(index => Math.min(file.sections.length - 1, index + 1))} aria-label="下一段">→</button>
+      </nav>}
+      <article className="source-paper-content">
+        <Suspense fallback={<div className="page-loading">渲染资料…</div>}>
+          <MarkdownContent content={section ? `## ${section.title}\n\n${section.content}` : '资料尚未形成可阅读片段。'} />
+        </Suspense>
+      </article>
+      {file.content_truncated && <footer>内容较长，本页显示已建立索引的前部片段。</footer>}
+    </section>
+  )
+}

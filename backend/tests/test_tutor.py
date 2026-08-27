@@ -173,7 +173,7 @@ def test_independent_global_chats_invoke_registered_session_skills(client: TestC
     assert skills.status_code == 200
     assert {item["id"] for item in skills.json()} == {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",
-        "worked_example_fading",
+        "worked_example_fading", "learning_file_study",
     }
 
     turn = client.post(f"/api/agent/sessions/{first.json()['id']}/turns", json={
@@ -921,6 +921,35 @@ def test_worked_example_fading_is_task_linked_and_bounded(client: TestClient):
     })
     assert cleared.status_code == 200, cleared.text
     assert cleared.json()["active_skill"] is None
+
+
+def test_learning_file_study_keeps_content_in_papers_and_reaches_verification(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+    first = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+        "message": "用讲义和练习带我学注意力矩阵形状",
+        "selected_skill_id": "learning_file_study",
+        "client_turn_id": f"file-open-{uuid.uuid4().hex}",
+    })
+    assert first.status_code == 200, first.text
+    run = first.json()["active_skill_run"]
+    assert run["state"] == "selecting_learning_artifact"
+    assert run["learning_task"]["status"] == "active"
+    assert "纸张" in first.json()["message"]
+
+    for index, expected_state in enumerate((
+        "reading_with_anchor", "practicing_in_file", "verification_ready",
+    )):
+        advanced = client.post(f"/api/agent/sessions/{session['id']}/turns", json={
+            "message": "已完成当前纸张中的动作并给出可检查回应。",
+            "selected_skill_id": "learning_file_study",
+            "client_turn_id": f"file-step-{index}-{uuid.uuid4().hex}",
+        })
+        assert advanced.status_code == 200, advanced.text
+        run = advanced.json()["active_skill_run"]
+        assert run["state"] == expected_state
+    assert run["can_start_verification"] is True
 
 
 def test_conversation_skill_runtime_migration_is_idempotent(client: TestClient):

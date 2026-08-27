@@ -12,9 +12,10 @@ type Props = {
   conversationId?: string
   sheetId?: string
   onAttach?: (file: { kind: 'practice'; ref: string; title: string }) => void
+  onFollowUp?: () => void
 }
 
-export default function PracticeFilePage({ practiceRef, embedded, conversationId, sheetId, onAttach }: Props) {
+export default function PracticeFilePage({ practiceRef, embedded, conversationId, sheetId, onAttach, onFollowUp }: Props) {
   const [file, setFile] = useState<Awaited<ReturnType<typeof loadPracticeFile>>>()
   const [answers, setAnswers] = useState<Record<number, number[]>>({})
   const [responses, setResponses] = useState<Record<number, string>>({})
@@ -69,7 +70,13 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
   }
   return (
     <section className={`practice-file-workbench${embedded ? ' learning-file-embedded' : ''}`}>
-      <header className="learning-file-workbench-heading"><div><span>PRACTICE · ANSWER SAFE</span><h1>{file.title}</h1><code>{file.logical_filename}</code></div>{onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'practice', ref: file.ref, title: file.title })}>作为对话纸张打开</button>}</header>
+      <header className="learning-file-workbench-heading">
+        <div><span>练习</span><h1>{file.title}</h1>{!embedded && <code>{file.logical_filename}</code>}</div>
+        <div>
+          {onFollowUp && <button type="button" className="learning-file-subtle-action" onMouseDown={event => event.preventDefault()} onClick={onFollowUp}>选中追问</button>}
+          {onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'practice', ref: file.ref, title: file.title })}>放到对话纸张</button>}
+        </div>
+      </header>
       {file.practice_kind !== 'exercise' ? <div className="practice-question-list">{(file.questions || []).map((question, index) => {
         const selected = answers[question.id] || []
         const result = results[question.id]
@@ -79,7 +86,7 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
           : selectionType ? selected.length > 0 : Boolean((responses[question.id] || '').trim())
         const reflection = reflections[question.id] || { blocker: '', helpfulFormat: '' }
         return <article key={question.id}>
-          <span>QUESTION {String(index + 1).padStart(2, '0')} · {question.difficulty}{question.target_skill ? ` · ${question.target_skill}` : ''}</span>
+          <span>第 {index + 1} 题 · {question.difficulty === 'easy' ? '基础' : question.difficulty === 'hard' ? '挑战' : '进阶'}{question.target_skill ? ` · ${question.target_skill}` : ''}</span>
           <h2>{question.question}</h2>
           {question.code && <pre className="practice-question-code"><code>{question.code}</code></pre>}
           {question.q_type === 'ordered_blocks' ? <div className="practice-order-builder">
@@ -93,8 +100,8 @@ export default function PracticeFilePage({ practiceRef, embedded, conversationId
           </div> : selectionType ? <div className="practice-options">{question.options.map((option, optionIndex) => <label key={optionIndex} className={selected.includes(optionIndex) ? 'selected' : ''}><input type={question.q_type === 'multi' ? 'checkbox' : 'radio'} name={`q-${question.id}`} checked={selected.includes(optionIndex)} disabled={Boolean(result)} onChange={() => setAnswers(previous => ({ ...previous, [question.id]: question.q_type === 'multi' ? (selected.includes(optionIndex) ? selected.filter(item => item !== optionIndex) : [...selected, optionIndex]) : [optionIndex] }))} /><i>{String.fromCharCode(65 + optionIndex)}</i><span>{option}</span></label>)}</div> : <textarea className="practice-structured-response" value={responses[question.id] || ''} onChange={event => setResponses(previous => ({ ...previous, [question.id]: event.target.value }))} disabled={Boolean(result)} placeholder={question.q_type === 'trace_table' ? '输入二维 JSON 数组，例如 [["i","sum"],["1","1"]]' : question.q_type === 'numeric' ? '输入数值' : '输入确定答案'} />}
           {question.q_type === 'ordered_blocks' && !result && selected.length > 0 && <button type="button" className="practice-reset-order" onClick={() => setAnswers(previous => ({ ...previous, [question.id]: [] }))}>重置顺序</button>}
           {!result && <details className="practice-reflection"><summary>补充这次作答的卡点或有效帮助（可选）</summary><div><label>哪一个前置概念卡住了你？<input value={reflection.blocker} onChange={event => setReflections(previous => ({ ...previous, [question.id]: { ...reflection, blocker: event.target.value } }))} placeholder="例如：矩阵乘法的形状" /></label><label>哪种帮助这次确实有效？<select value={reflection.helpfulFormat} onChange={event => setReflections(previous => ({ ...previous, [question.id]: { ...reflection, helpfulFormat: event.target.value } }))}><option value="">不记录</option><option value="visual">图解</option><option value="worked_example">完整示例</option><option value="code_example">代码例子</option><option value="step_by_step">逐步提示</option><option value="analogy">类比</option></select></label></div></details>}
-          <button type="button" disabled={!hasResponse || Boolean(result) || Boolean(busy)} onClick={() => void submitQuestion(question.id)}>{busy === `question:${question.id}` ? '确定性判定中…' : result ? result.correct ? '回答正确' : '回答有误' : '提交独立作答'}</button>
-          {result && <p className={result.correct ? 'practice-correct' : 'practice-wrong'}>{result.correct ? '正确。该结果已进入正式证据链，但一次答对仍不等于稳定掌握。' : '本次未通过。系统已保留具体错误、题型与目标能力，进入纠错和复习链。'}</p>}
+          <button type="button" disabled={!hasResponse || Boolean(result) || Boolean(busy)} onClick={() => void submitQuestion(question.id)}>{busy === `question:${question.id}` ? '正在判定…' : result ? result.correct ? '回答正确' : '再想一想' : '提交作答'}</button>
+          {result && <p className={result.correct ? 'practice-correct' : 'practice-wrong'}>{result.correct ? '回答正确。可以继续下一题，稍后再用变式确认。' : '这次还没有通过。具体错误已经保留，可在对话中继续纠正。'}</p>}
         </article>
       })}</div> : <div className="code-practice-surface"><p>{file.description}</p><textarea value={code} onChange={event => setCode(event.target.value)} spellCheck={false} /><button type="button" disabled={Boolean(busy) || !code.trim()} onClick={() => void submitCode()}>{busy === 'code' ? '正在沙箱判题…' : '提交代码并验证'}</button>{codeResult && <pre className={codeResult.passed ? 'practice-correct' : 'practice-wrong'}>{codeResult.passed ? '全部验证通过' : '验证未通过'}{codeResult.stdout ? `\n${codeResult.stdout}` : ''}{codeResult.stderr ? `\n${codeResult.stderr}` : ''}</pre>}</div>}
     </section>

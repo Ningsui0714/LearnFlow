@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.5"
+REGISTRY_VERSION = "2026-08-27.6"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
@@ -322,6 +322,8 @@ TOOLS = {
                      (), (), "learner-owned processed Source/Chunk library -> relevance-ranked, provenance-bearing, bounded untrusted context; never learner knowledge evidence"),
         ToolContract("learning_file_service", "Managed Lecture and Practice File Service", "tutor_agent", "vnext", "artifact",
                      (), (), "learner-owned Lecture/Exercise/ConceptQuestion refs -> answer-safe file views, explicit open/attach audit events; generation and opening never imply mastery"),
+        ToolContract("active_learning_file_reader", "Active Paper Learning File Reader", "tutor_agent", "vnext", "read",
+                     (), (), "current paper artifact ref -> owned Lecture/Practice/Source answer-safe bounded content; Source remains untrusted and access never implies mastery"),
         ToolContract("assessment_blueprint_builder", "Assessment Blueprint and Rubric Builder", "learning_design_agent", "vnext", "proposal",
                      ("knowledge", "structure", "human"), (), "formal LearningTask + checkpoint scope -> validated versioned AssessmentBlueprint + Rubric draft; proposal is zero-target and grading remains deterministic"),
         ToolContract("dynamic_practice_generator", "Blueprint-bound Dynamic Practice Generator", "learning_design_agent", "vnext", "artifact",
@@ -441,7 +443,7 @@ TOOL_INTERFACE_ROLES = {
         "repository_knowledge_domains", "hierarchical_rag", "content_generation",
         "teach_back_analyzer", "process_animation", "code_executor",
         "deterministic_assessment", "evidence_ledger", "five_kernel_retriever",
-        "workspace_file_service", "managed_artifact_service", "learning_file_service", "local_agent_broker",
+        "workspace_file_service", "managed_artifact_service", "learning_file_service", "active_learning_file_reader", "local_agent_broker",
         "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         "project_workspace_reader", "project_source_reader", "project_learning_file_reader",
         "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
@@ -473,7 +475,7 @@ TOOL_MODEL_EXPOSURE = {
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
-            "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
+            "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector", "active_learning_file_reader",
         }
         else "agent_mediated"
         if TOOL_INTERFACE_ROLES.get(tool_id) == "aci_tool"
@@ -496,17 +498,18 @@ def _skill_runtime(
     calibration_axes: tuple[SkillCalibrationAxisContract, ...] = (),
     output_objects: tuple[str, ...] = ("LearningSkillRunTransition", "VerificationHandoff"),
     extra_event_types: tuple[str, ...] = (),
+    required_context: tuple[str, ...] = (
+        "scoped_learning_task", "learner_reply_signal", "answer_free_context_packet",
+    ),
 ) -> SkillRuntimeContract:
     return SkillRuntimeContract(
-        version="atomic-learning-skill-runtime-v5",
+        version="atomic-learning-skill-runtime-v6",
         bound_chat_modes=("learn",),
         initial_state=states[0].id,
         states=tuple(states),
         turn_budget=turn_budget or max(1, len(states) - 1),
         verification_required=True,
-        required_context=(
-            "scoped_learning_task", "learner_reply_signal", "answer_free_context_packet",
-        ),
+        required_context=required_context,
         input_objects=("LearningTask", "LearningSkillRun", "ContextPacket", "AgentMessage"),
         output_objects=output_objects,
         allowed_event_types=(*_SKILL_RUNTIME_EVENTS, *extra_event_types),
@@ -670,6 +673,39 @@ PEDAGOGICAL_SKILL_RUNTIMES = {
             "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
         ),
     ),
+    "learning_file_study": _skill_runtime(
+        SkillStateContract(
+            "selecting_learning_artifact", "选择学习文件", "选文件", "guidance", "引导态",
+            "围绕原子目标选择已有讲义/练习，缺少时才提出生成。",
+            "先回应学习者的问题，再读取工作区文件引用；优先复用已有文件。只提出一个打开或生成动作，不在聊天里复制整份内容。",
+            "打开讲义", loop_instruction="缩小目标并只保留一个最相关文件；不为推进流程重复生成。",
+        ),
+        SkillStateContract(
+            "reading_with_anchor", "带锚点阅读讲义", "读讲义", "demonstration", "阅读态",
+            "在讲义或资料纸张中完成一个有明确位置和问题的阅读动作。",
+            "精确读取当前文件，只指出一处阅读位置、一个核心关系和一个阅读后问题；正文留在纸张里。",
+            "进入文件练习", loop_instruction="换一个段落锚点、图解或最小例子，不把整篇讲义搬进对话。",
+        ),
+        SkillStateContract(
+            "practicing_in_file", "在练习纸张中作答", "做练习", "practice", "练习态",
+            "把讲义中的关键关系交给答案隔离的正式练习。",
+            "打开或生成一份与目标对齐的练习文件；对话只提供最小支架，学生必须在练习纸张中正式提交。",
+            "复盘本次证据", loop_instruction="只针对当前卡点给一层提示或同构小题，答案继续隔离。",
+        ),
+        SkillStateContract(
+            "verification_ready", "复盘并准备验证", "复盘", "independent", "验证态",
+            "区分阅读、提示练习与独立证据，并将下一步交给正式验证或复习。",
+            "引用已存在的作答结果和具体卡点做短复盘；没有 Attempt 时明确暂无证据，不得宣布掌握。",
+            "开始独立验证", accepted_signals=(), can_loop=False, requires_learner_reply=False,
+        ),
+        required_context=(
+            "scoped_learning_task", "learner_reply_signal", "answer_free_context_packet",
+            "managed_learning_file_refs", "active_paper_artifact",
+        ),
+        output_objects=(
+            "LearningSkillRunTransition", "PaperArtifactHandoff", "VerificationHandoff",
+        ),
+    ),
 }
 
 
@@ -763,6 +799,30 @@ SKILLS = {
             avoid_when=("只需事实解释", "已经能独立完成且只需迁移验证"),
             atomic_task_capable=True,
             runtime=PEDAGOGICAL_SKILL_RUNTIMES["worked_example_fading"],
+        ),
+        SkillContract(
+            "learning_file_study", "讲义与练习共学", "tutor_agent",
+            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+             "learning_task_runtime", "learning_task_planner", "vnext_learning_workspace_reader",
+             "active_learning_file_reader", "project_learning_file_reader",
+             "project_learning_file_proposer", "learning_file_service",
+             "assessment_blueprint_builder", "dynamic_practice_generator",
+             "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
+            "task-linked file selection -> anchored lecture reading -> answer-safe practice paper -> evidence-aware verification handoff",
+            "deterministic SkillRun + owned paper artifacts; generation is confirmed, answers stay isolated, only graded attempts support evidence",
+            learner_selectable=True,
+            description="让讲义负责承载内容、练习负责正式作答，对话负责带路和反馈。",
+            invocation_prompt=(
+                "当前对话已选择“讲义与练习共学”。先回应学习者当下问题，再查看现有讲义与练习；"
+                "优先复用已有文件，缺少时才提出生成且等待确认。讲义、练习和资料必须在纸张中打开，"
+                "可以成为当前纸张的子纸张；聊天只给阅读锚点、最小支架和证据复盘，不复制整份文件。"
+                "练习答案必须隔离，正式提交由 Practice Agent 确定性判定；阅读、生成和提示作答都不能宣布掌握。"
+            ),
+            aliases=("讲义与练习共学", "文件驱动学习", "用讲义带我学", "看讲义做练习"),
+            best_for=("已有讲义或练习文件", "需要留下可复用学习材料", "希望阅读和正式作答连成闭环"),
+            avoid_when=("只需一句事实解释", "没有明确原子目标", "当前任务无法形成可验证练习"),
+            atomic_task_capable=True,
+            runtime=PEDAGOGICAL_SKILL_RUNTIMES["learning_file_study"],
         ),
         SkillContract("checkpoint_tutoring", "关卡内统一教学协作", "tutor_agent",
                       ("checkpoint_context", "context_packet_assembler", "hierarchical_rag", "workspace_file_service"),
@@ -867,7 +927,7 @@ SKILL_KINDS = {
         "pedagogical_method"
         if skill_id in {
             "guided_explanation", "socratic_dialogue", "feynman_dialogue",
-            "worked_example_fading", "feynman_teach_back",
+            "worked_example_fading", "learning_file_study", "feynman_teach_back",
         }
         else "coordination_skill"
         if skill_id in {"intent_and_handoff", "checkpoint_tutoring"}
@@ -888,7 +948,7 @@ WORKBENCHES = {
                           ("coordinate_vnext_agent_turn", "search_computer_knowledge", "read_web_evidence", "generate_learning_visual", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
-                           "manage_domain_knowledge_sources", "read_domain_knowledge", "recommend_learning_resources",
+                           "manage_domain_knowledge_sources", "read_domain_knowledge", "read_active_learning_file", "recommend_learning_resources",
                            "attach_learning_file_to_chat", "design_assessment_blueprint", "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
                            "read_review_context",
                            "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "propose_vnext_personal_path_node",
@@ -960,6 +1020,7 @@ CAPABILITY_OWNERS = {
     "read_vnext_learning_workspace": ("tutor_agent", "vnext_learning_workspace_reader", "vnext_chat"),
     "manage_domain_knowledge_sources": ("tutor_agent", "source_ingestion", "vnext_chat"),
     "read_domain_knowledge": ("tutor_agent", "domain_knowledge_reader", "vnext_chat"),
+    "read_active_learning_file": ("tutor_agent", "active_learning_file_reader", "vnext_chat"),
     "recommend_learning_resources": ("learning_design_agent", "domain_knowledge_reader", "vnext_chat"),
     "generate_learning_files": ("learning_design_agent", "learning_file_service", "vnext_learning_files"),
     "design_assessment_blueprint": ("learning_design_agent", "assessment_blueprint_builder", "vnext_chat"),
@@ -1308,7 +1369,7 @@ def validate_registry() -> list[str]:
             errors.append(f"learner-selectable skill must be a pedagogical method: {skill.id}")
         if skill.learner_selectable:
             runtime = skill.runtime
-            if not runtime or runtime.version != "atomic-learning-skill-runtime-v5":
+            if not runtime or runtime.version != "atomic-learning-skill-runtime-v6":
                 errors.append(f"learner-selectable skill lacks SkillSpec v2 runtime: {skill.id}")
                 continue
             state_ids = [state.id for state in runtime.states]

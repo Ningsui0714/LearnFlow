@@ -100,8 +100,9 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "coordinate_vnext_agent_turn",
         "search_computer_knowledge", "read_web_evidence", "generate_learning_visual", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-        "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
-            "recommend_learning_resources", "attach_learning_file_to_chat",
+            "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
+                "read_active_learning_file",
+                "recommend_learning_resources", "attach_learning_file_to_chat",
             "design_assessment_blueprint",
             "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
         "read_review_context",
@@ -374,7 +375,7 @@ def test_learning_task_runtime_is_registered_as_zero_evidence_coordination():
 def test_conversational_learning_skills_are_registered_without_mastery_side_effects():
     assert {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",
-        "worked_example_fading",
+        "worked_example_fading", "learning_file_study",
     } == {item["id"] for item in selectable_learning_skill_manifest()}
     assert all(item["atomic_task_capable"] for item in selectable_learning_skill_manifest())
     assert all(item["spec_version"] == SKILL_SPEC_VERSION for item in selectable_learning_skill_manifest())
@@ -414,7 +415,7 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
     assert "learning_skill_runtime" in SKILLS["feynman_dialogue"].tools
     feynman_runtime = SKILLS["feynman_dialogue"].runtime
     assert feynman_runtime is not None
-    assert feynman_runtime.version == "atomic-learning-skill-runtime-v5"
+    assert feynman_runtime.version == "atomic-learning-skill-runtime-v6"
     assert feynman_runtime.turn_budget == 5
     assert {axis.id for axis in feynman_runtime.calibration_axes} == {
         "audience_level", "cognitive_demand", "scaffold_level", "representation_mode",
@@ -423,6 +424,19 @@ def test_conversational_learning_skills_are_registered_without_mastery_side_effe
     assert "只围绕诊断中的一个候选缺口" in SKILLS["feynman_dialogue"].invocation_prompt
     assert "learning_task_runtime" in SKILLS["guided_explanation"].tools
     assert "learning_task_runtime" in SKILLS["worked_example_fading"].tools
+    file_runtime = SKILLS["learning_file_study"].runtime
+    assert file_runtime is not None
+    assert [state.id for state in file_runtime.states] == [
+        "selecting_learning_artifact", "reading_with_anchor",
+        "practicing_in_file", "verification_ready",
+    ]
+    assert "active_learning_file_reader" in SKILLS["learning_file_study"].tools
+    assert "active_paper_artifact" in file_runtime.required_context
+    assert "PaperArtifactHandoff" in file_runtime.output_objects
+    assert TOOL_INTERFACE_ROLES["active_learning_file_reader"] == "aci_tool"
+    assert CAPABILITY_OWNERS["read_active_learning_file"] == (
+        "tutor_agent", "active_learning_file_reader", "vnext_chat",
+    )
     assert SKILLS["assessment_blueprint_design"].learner_selectable is False
     assert "assessment_blueprint_builder" in TOOLS
     assert EVENTS["assessment_blueprint_proposed"].kernel_targets == ()

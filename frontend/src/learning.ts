@@ -256,6 +256,7 @@ const LEGACY_SKILL_STEP_ALIASES: Record<LearningSkillId, Record<string, string>>
     independent_problem: 'solving_faded_example',
     reflect_strategy: 'verification_ready',
   },
+  learning_file_study: {},
 }
 
 function canonicalSkillStepId(skillId: LearningSkillId, stepId: string) {

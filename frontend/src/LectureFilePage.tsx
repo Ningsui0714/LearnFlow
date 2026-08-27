@@ -9,9 +9,10 @@ type Props = {
   conversationId?: string
   sheetId?: string
   onAttach?: (file: { kind: 'lecture'; ref: string; title: string }) => void
+  onFollowUp?: () => void
 }
 
-export default function LectureFilePage({ lectureId, embedded, conversationId, sheetId, onAttach }: Props) {
+export default function LectureFilePage({ lectureId, embedded, conversationId, sheetId, onAttach, onFollowUp }: Props) {
   const [file, setFile] = useState<Awaited<ReturnType<typeof loadLectureFile>>>()
   const [active, setActive] = useState(0)
   const [notice, setNotice] = useState('')
@@ -29,13 +30,20 @@ export default function LectureFilePage({ lectureId, embedded, conversationId, s
   if (!file) return <div className="page-loading">正在打开正式讲义…</div>
   return (
     <section className={`lecture-file-workbench${embedded ? ' learning-file-embedded' : ''}`}>
-      <header className="learning-file-workbench-heading"><div><span>LECTURE · V{file.version}</span><h1>{file.title}</h1><code>{file.logical_filename}</code></div><div>{onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'lecture', ref: String(file.id), title: file.title })}>作为对话纸张打开</button>}<button type="button" onClick={() => void markFormalLectureRead(file.id).then(() => setNotice('已记录为讲义接触；掌握状态没有改变。')).catch(failure => setError(failure instanceof Error ? failure.message : '讲义阅读事件记录失败'))}>标记已读</button></div></header>
+      <header className="learning-file-workbench-heading">
+        <div><span>讲义</span><h1>{file.title}</h1>{!embedded && <code>{file.logical_filename}</code>}</div>
+        <div>
+          {onFollowUp && <button type="button" className="learning-file-subtle-action" onMouseDown={event => event.preventDefault()} onClick={onFollowUp}>选中追问</button>}
+          {onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'lecture', ref: String(file.id), title: file.title })}>放到对话纸张</button>}
+          <button type="button" className="learning-file-subtle-action" onClick={() => void markFormalLectureRead(file.id).then(() => setNotice('已记录这次阅读。')).catch(failure => setError(failure instanceof Error ? failure.message : '讲义阅读事件记录失败'))}>标记已读</button>
+        </div>
+      </header>
       {notice && <div className="learning-evidence-notice">{notice}</div>}
       <div className="lecture-file-layout">
         <nav aria-label="讲义目录">{file.sections.map((section, index) => <button type="button" className={index === active ? 'active' : ''} key={`${section.title}-${index}`} onClick={() => setActive(index)}><i>{String(index + 1).padStart(2, '0')}</i><span>{section.title || `第 ${index + 1} 节`}</span></button>)}</nav>
         <article><Suspense fallback={<div className="page-loading">渲染讲义…</div>}><MarkdownContent content={`# ${file.sections[active]?.title || file.title}\n\n${file.sections[active]?.content || '本节暂无内容。'}`} /></Suspense></article>
       </div>
-      <footer>来源定位：Project #{file.project_id} · Checkpoint #{file.checkpoint_id} · Lecture #{file.id} · 阅读只表示接触，不表示掌握。</footer>
+      {!embedded && <footer>阅读位置会保留，便于下次继续。</footer>}
     </section>
   )
 }

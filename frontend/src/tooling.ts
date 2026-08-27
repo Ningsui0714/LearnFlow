@@ -69,7 +69,7 @@ export type TutorToolRun = {
     itemCount: number
   }
   learningFile?: {
-    kind: 'lecture' | 'practice'
+    kind: 'lecture' | 'practice' | 'source'
     ref: string
     title: string
     checkpointId?: number

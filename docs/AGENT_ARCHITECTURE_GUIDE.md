@@ -5,6 +5,8 @@
 > 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
+Contract impact（`2026-08-27.6`）：新增文件驱动教学 Skill `learning_file_study` 与当前纸张精确读取 ACI `read_active_learning_file`。Tutor 仍拥有主对话和纸张协调，Learning Design 仍拥有讲义/练习候选，Practice Agent 仍拥有正式提交与判题；Skill 只编排选择、阅读锚点、文件内练习和独立验证。讲义、练习、来源和追问纸允许形成任意深度的有根纸张树，但纸张关系只是可恢复 UI 状态。来源指令不执行，练习答案不进入模型观察，打开和阅读不升级掌握。详见 `docs/implementation/GUIDED_LEARNING_FILE_PAPERS.md`。
+
 Contract impact（`2026-08-27.4`）：教学方法继续采用 `SkillSpec v2` 单一权威。费曼 Skill 新增注册表声明的四轴校准和确定性表面诊断；Tutor 模型只渲染当前指令，不拥有状态、缺口事实或掌握判定。`learning_skill_calibration_updated` 与 `learning_skill_teach_back_diagnostic_updated` 均为零 Kernel target，只有正式独立验证可以沿 EvidenceEvent/reducer 写入五核。前端校准项继续由注册表生成，不建立第二套常量。
 
 Contract impact（`2026-08-27.2`）：路径 ACI 的职责不变，但外部证据和路线顺序被收紧。Harness 固定执行 `exact -> conditional fuzzy -> clarify | external research -> evidence gate -> proposal`；`propose_personal_path_node` 的模型 schema 不再接受 URL，只有刚刚执行的搜索结果能通过受信元数据进入提案器。路线规划由确定性硬前置闭包和拓扑排序控制，`co_learning` 不制造先后关系。以上变化不新增 Agent、Kernel writer 或事件类型。
@@ -256,6 +258,27 @@ EvidenceEvent 网关。
 `RemediationCase`、`ReviewSchedule` 摘要和当前项目已处理来源的知识领域；不得包含提交正文、答案、
 solution 或测试用例。有提示与独立成功、原题与变式、任务完成与掌握必须保持可区分。项目来源领域
 只能约束当前项目的路线与讲解，不能写入 Knowledge 或替代 Practice 证据。
+
+`read_active_learning_file` 只在当前页面确实打开一个受管文件纸张时进入本轮 Tool allow-list。其输入为空，
+由 Harness 从 `ContextEnvelope.activeArtifact` 解析 learner-owned artifact；模型不能传任意文件 ID 绕过
+scope。讲义返回当前版本正文与来源，练习只返回题面和学习者可见状态，来源返回有界 chunk、provenance
+与 `untrusted_source_content` 边界。Harness 对同一回合的当前纸张最多自动读取一次；切换纸张后才允许读取
+新的 artifact。普通自由讨论不应为了“可能有用”而同时读取五核、学习工作区、联网搜索和当前文件。
+
+`learning_file_study` 的编排契约是：
+
+```text
+selecting_learning_artifact（引导态）
+  -> reading_with_anchor（阅读态，可在当前文件内小循环）
+  -> practicing_in_file（练习态，答案隔离）
+  -> verification_ready（验证态，进入正式独立验证）
+```
+
+- 每轮主对话 SHOULD 只有一个自然问题或行动邀请，工具轨迹在回答旁轻量展示，文件正文留在纸张。
+- 文件不存在时，先复用已有受管文件；生成新讲义/练习是有副作用行动，遵守 Action Board 确认策略。
+- 纸张可以挂在主消息或任意现有纸张下；打开子纸继承祖先上下文，但只把有界摘要送入模型。
+- 删除非主纸张时，子纸重挂到被删纸的父节点；非法父引用、重复 ID 和环在恢复时确定性修复。
+- 阅读完成、生成完成或任务流程完成都不是掌握；只有正式 Attempt 能进入 Knowledge / Practice。
 
 生产路径 MUST 只有这一个模型/工具循环；历史预调用工具函数不得参与 Tutor 回合。模型提出最终回答后，
 确定性 verifier MUST 检查展示协议、未确认写入声明、无证据掌握声明、未解释的工具失败和搜索引用。

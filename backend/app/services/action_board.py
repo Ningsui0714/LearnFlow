@@ -86,6 +86,11 @@ ACTION_BOARD = {
             ("recommend_learning_resources", "run_vnext_learning_plan"),
         ),
         ActionDefinition(
+            "read_active_learning_file", "读取当前纸张中的学习文件", "none", "none",
+            {},
+            ("open_selection_followup", "attach_learning_file_to_chat"),
+        ),
+        ActionDefinition(
             "read_project_roadmap", "读取当前项目关卡图", "none", "none",
             {},
             ("revise_project_roadmap", "navigate_checkpoint"),

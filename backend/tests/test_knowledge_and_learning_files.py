@@ -52,6 +52,23 @@ def test_personal_source_library_is_context_not_mastery(tmp_path, monkeypatch):
         assert source["chunk_count"] > 0
         assert {item["label"] for item in source["knowledge_domains"]} >= {"Kernel Methods", "RBF kernel"}
 
+        paper = client.get(f"/api/knowledge-library/sources/{source_id}/paper")
+        assert paper.status_code == 200, paper.text
+        assert paper.json()["sections"]
+        assert paper.json()["sections"][0]["provenance"]["source_id"] == source_id
+        assert paper.json()["mastery_inference"] is False
+        assert "不可信" in paper.json()["trust_boundary"]
+        source_opened = client.post(
+            f"/api/learning-files/source/{source_id}/opened",
+            json={"conversation_id": "source-paper-chat", "sheet_id": "source-paper"},
+        )
+        source_attached = client.post(
+            f"/api/learning-files/source/{source_id}/attached",
+            json={"conversation_id": "source-paper-chat", "sheet_id": "source-child-paper"},
+        )
+        assert source_opened.status_code == source_attached.status_code == 200
+        assert source_attached.json()["mastery_unchanged"] is True
+
         context = client.get("/api/knowledge-library/context", params={"query": "RBF kernel"})
         assert context.status_code == 200, context.text
         assert context.json()["excerpts"]
@@ -80,7 +97,10 @@ def test_personal_source_library_is_context_not_mastery(tmp_path, monkeypatch):
             async with async_session() as db:
                 event_ids = list((await db.execute(select(EvidenceEvent.id).where(
                     EvidenceEvent.learner_id == learner_id,
-                    EvidenceEvent.event_type.in_({"knowledge_source_added", "knowledge_source_processed"}),
+                    EvidenceEvent.event_type.in_({
+                        "knowledge_source_added", "knowledge_source_processed",
+                        "learning_file_opened", "learning_file_attached_to_chat",
+                    }),
                 ))).scalars().all())
                 return len(list((await db.execute(select(KernelMutation.id).where(
                     KernelMutation.event_id.in_(event_ids),

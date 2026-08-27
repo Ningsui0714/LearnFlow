@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.database import get_db
 from app.models.learning import LearningTask
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Lecture, Project, Roadmap
-from app.services.auth import CurrentLearner, get_current_learner, require_owned_checkpoint, require_owned_exercise
+from app.services.auth import CurrentLearner, get_current_learner, require_owned_checkpoint, require_owned_exercise, require_owned_source
 from app.services.learning_runtime import record_event
 from app.services.learning_tasks import learning_task_view, materialize_learning_task
 from app.services.dynamic_practice import (
@@ -495,11 +495,18 @@ async def _record_file_access(
             raise HTTPException(400, "讲义引用无效") from error
         project_id, checkpoint_id = project.id, checkpoint.id
         artifact_id = lecture.id
-    else:
+    elif kind == "practice":
         practice = await get_practice_file(ref, current, db)
         project_id = practice.get("project_id")
         checkpoint_id = practice.get("checkpoint_id")
         artifact_id = practice.get("id") or ref
+    else:
+        try:
+            source = await require_owned_source(db, current.learner.id, int(ref))
+        except ValueError as error:
+            raise HTTPException(400, "资料引用无效") from error
+        project_id, checkpoint_id = source.project_id, None
+        artifact_id = source.id
     client_key = str(data.get("client_event_id") or f"{event_type}:{kind}:{ref}:{data.get('conversation_id', '')}")[:160]
     await record_event(
         db, event_type=event_type, source="ui",
@@ -525,7 +532,7 @@ async def record_learning_file_opened(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    if kind not in {"lecture", "practice"}:
+    if kind not in {"lecture", "practice", "source"}:
         raise HTTPException(400, "文件类型无效")
     return await _record_file_access(db, current, event_type="learning_file_opened", kind=kind, ref=ref, data=data)
 
@@ -538,7 +545,7 @@ async def record_learning_file_attached(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    if kind not in {"lecture", "practice"}:
+    if kind not in {"lecture", "practice", "source"}:
         raise HTTPException(400, "文件类型无效")
     return await _record_file_access(db, current, event_type="learning_file_attached_to_chat", kind=kind, ref=ref, data=data)
 

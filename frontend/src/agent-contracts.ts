@@ -56,6 +56,12 @@ export type AgentContextEnvelope = {
   current: {
     userMessage: string
     selection?: string
+    activeArtifact?: {
+      kind: 'lecture' | 'practice' | 'source'
+      ref: string
+      title: string
+      projectId?: number
+    }
     learningTask?: LearningTaskTutorContext
     learningPlan?: LearningPlanTutorContext
   }
@@ -117,6 +123,12 @@ export type AgentTurnRequest = {
   messages: TutorContextMessage[]
   toolChoice: TutorToolChoice
   selectionContext?: string
+  activeArtifactContext?: {
+    kind: 'lecture' | 'practice' | 'source'
+    ref: string
+    title: string
+    projectId?: number
+  }
   learningTaskContext?: LearningTaskTutorContext
   learningPlanContext?: LearningPlanTutorContext
   learnerPathState?: LearnerPathState

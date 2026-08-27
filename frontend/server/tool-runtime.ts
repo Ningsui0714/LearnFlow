@@ -318,6 +318,18 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
+    name: 'read_active_learning_file',
+    title: '读取当前纸张文件',
+    description: '精确读取当前纸张绑定的讲义、练习或一般资料。讲义与资料返回有来源正文；练习保持答案隔离。只读，不改变掌握状态。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'propose_project_roadmap',
     title: '提出项目关卡路线',
     description: '仅供当前项目 Tutor 创建或修订关卡 DAG。已开始关卡必须原样保留，只有未开始关卡可增删改排；只产生待确认提案。',
@@ -566,6 +578,12 @@ export type TutorAgentToolRuntimeOptions = {
   formalDomainKnowledgeContext?: unknown
   formalReviewContext?: unknown
   formalProjectContext?: AgentProjectContext
+  activeArtifactContext?: {
+    kind: 'lecture' | 'practice' | 'source'
+    ref: string
+    title: string
+    projectId?: number
+  }
   backendBase?: string
   requestCookie?: string
 }
@@ -815,6 +833,76 @@ async function callFormalPracticeApi(
   return payload
 }
 
+async function readActiveLearningFile(options: TutorAgentToolRuntimeOptions) {
+  const artifact = options.activeArtifactContext
+  if (!artifact) throw new Error('当前纸张没有绑定学习文件')
+  if (!options.backendBase) throw new Error('正式学习文件后端未连接')
+  const path = artifact.kind === 'lecture'
+    ? `/api/learning-files/lecture/${encodeURIComponent(artifact.ref)}`
+    : artifact.kind === 'practice'
+      ? `/api/learning-files/practice/${encodeURIComponent(artifact.ref)}`
+      : `/api/knowledge-library/sources/${encodeURIComponent(artifact.ref)}/paper`
+  const response = await fetch(`${options.backendBase}${path}`, {
+    headers: options.requestCookie ? { Cookie: options.requestCookie } : {},
+    signal: AbortSignal.timeout(20_000),
+  })
+  const payload = await response.json().catch(() => ({})) as any
+  if (!response.ok) {
+    const detail = typeof payload.detail === 'string' ? payload.detail : payload.error
+    throw new Error(compactText(detail || `学习文件服务返回 ${response.status}`, 500))
+  }
+  if (artifact.kind === 'lecture') {
+    return {
+      authority: 'managed_lecture_file',
+      artifact,
+      title: compactText(payload.title, 240),
+      version: payload.version,
+      sections: (Array.isArray(payload.sections) ? payload.sections : []).slice(0, 18).map((section: any, index: number) => ({
+        index,
+        title: compactText(section.title, 220),
+        content: compactText(section.content, 5000),
+        keywords: Array.isArray(section.keywords) ? section.keywords.slice(0, 12) : [],
+      })),
+      provenance: payload.provenance || {},
+      mastery_inference: false,
+    }
+  }
+  if (artifact.kind === 'practice') {
+    return {
+      authority: 'answer_safe_practice_file',
+      artifact,
+      title: compactText(payload.title, 240),
+      practice_kind: payload.practice_kind,
+      description: compactText(payload.description, 1600),
+      questions: (Array.isArray(payload.questions) ? payload.questions : []).slice(0, 16).map((question: any, index: number) => ({
+        index,
+        id: question.id,
+        q_type: question.q_type,
+        difficulty: question.difficulty,
+        target_skill: compactText(question.target_skill, 240),
+        question: compactText(question.question, 2400),
+        options: Array.isArray(question.options) ? question.options.slice(0, 12).map((item: unknown) => compactText(item, 800)) : [],
+        code: compactText(question.code, 4000),
+      })),
+      answers_hidden: true,
+      mastery_inference: false,
+    }
+  }
+  return {
+    authority: 'learner_owned_untrusted_source',
+    artifact,
+    title: compactText(payload.name, 240),
+    sections: (Array.isArray(payload.sections) ? payload.sections : []).slice(0, 24).map((section: any) => ({
+      title: compactText(section.title, 220),
+      content: compactText(section.content, 5000),
+      provenance: section.provenance || {},
+    })),
+    content_truncated: Boolean(payload.content_truncated),
+    trust_boundary: compactText(payload.trust_boundary, 500),
+    mastery_inference: false,
+  }
+}
+
 async function callAssessmentBlueprintApi(
   options: TutorAgentToolRuntimeOptions,
   body: Record<string, unknown>,
@@ -1054,6 +1142,22 @@ export async function executeTutorAgentTool(
           durationMs: Date.now() - startedAt,
         },
         observation: { authority: 'managed_learning_file', project: project.project, file },
+      }
+    }
+
+    if (name === 'read_active_learning_file') {
+      const file = await readActiveLearningFile(options)
+      const artifact = options.activeArtifactContext!
+      return {
+        run: {
+          ...base, kind: 'file', status: 'completed', title: '读取当前纸张',
+          detail: artifact.kind === 'practice'
+            ? `已读取“${artifact.title}”的题面与结构，答案继续隔离。`
+            : `已读取“${artifact.title}”的正文与来源定位。`,
+          observationSummary: `${artifact.kind} · ${artifact.ref}`,
+          durationMs: Date.now() - startedAt,
+        },
+        observation: file,
       }
     }
 

@@ -122,6 +122,13 @@ import type { AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
 import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
+import {
+  deletePaperSheet,
+  paperAncestorChain,
+  sanitizePaperSheets,
+  type PaperArtifact,
+  type PaperSheet,
+} from './paper-workbench'
 import './styles.css'
 
 type Message = {
@@ -153,16 +160,7 @@ type LiveTurn = {
   startedAt: number
 }
 
-type FollowUpSheet = {
-  id: string
-  title: string
-  quote: string
-  sourceMessageId: string
-  parentSheetId: string
-  messages: Message[]
-  createdAt: number
-  artifact?: { kind: 'lecture' | 'practice'; ref: string; title: string }
-}
+type FollowUpSheet = PaperSheet<Message>
 
 type PendingSheetDelete = {
   conversationId: string
@@ -236,6 +234,7 @@ const ReviewWorkbenchPage = lazy(() => import('./ReviewWorkbenchPage'))
 const LearningFilesPage = lazy(() => import('./LearningFilesPage'))
 const LectureFilePage = lazy(() => import('./LectureFilePage'))
 const PracticeFilePage = lazy(() => import('./PracticeFilePage'))
+const SourceFilePage = lazy(() => import('./SourceFilePage'))
 const ProjectsPage = lazy(() => import('./ProjectsPage'))
 const ProjectWorkspacePage = lazy(() => import('./ProjectWorkspacePage'))
 const ProjectContextPanel = lazy(() => import('./ProjectContextPanel'))
@@ -419,10 +418,12 @@ function restoreState(): PersistedState {
   try {
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') as Partial<PersistedState> | null
     if (!value || !Array.isArray(value.conversations) || value.conversations.length === 0) return initialState()
-    const conversations = value.conversations.map(conversation => ({
+    const conversations = value.conversations.map(conversation => {
+      const sheets = sanitizePaperSheets<Message>(conversation.sheets)
+      return {
       ...conversation,
       mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
-      sheets: Array.isArray(conversation.sheets) ? conversation.sheets : [],
+      sheets,
       learningTasks: Array.isArray(conversation.learningTasks) ? conversation.learningTasks : [],
       learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
       learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
@@ -431,10 +432,10 @@ function restoreState(): PersistedState {
       projectSources: Array.isArray(conversation.projectSources) ? conversation.projectSources : [],
       preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
-        || (Array.isArray(conversation.sheets) && conversation.sheets.some(sheet => sheet.id === conversation.activeSheetId))
+        || sheets.some(sheet => sheet.id === conversation.activeSheetId)
         ? conversation.activeSheetId || 'main'
         : 'main',
-    }))
+    }})
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
       ? value.tabs.filter(tab => ['settings', 'projects', 'project', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
@@ -505,16 +506,7 @@ function paperPreview(messages: Message[]) {
 
 function inheritedContextMessages(conversation: Conversation) {
   if (conversation.activeSheetId === 'main') return conversation.messages
-  const chain: FollowUpSheet[] = []
-  const seen = new Set<string>()
-  let current = activeSheet(conversation)
-  while (current && !seen.has(current.id)) {
-    chain.unshift(current)
-    seen.add(current.id)
-    current = current.parentSheetId === 'main'
-      ? undefined
-      : conversation.sheets.find(sheet => sheet.id === current?.parentSheetId)
-  }
+  const chain = paperAncestorChain(conversation.sheets, conversation.activeSheetId)
   return [...conversation.messages, ...chain.flatMap(sheet => sheet.messages)]
 }
 
@@ -1003,18 +995,12 @@ function App() {
       ...previous,
       conversations: previous.conversations.map(conversation => {
         if (conversation.id !== conversationId) return conversation
-        const target = conversation.sheets.find(sheet => sheet.id === sheetId)
-        if (!target) return conversation
-        const parentSheetId = target.parentSheetId === 'main'
-          || conversation.sheets.some(sheet => sheet.id === target.parentSheetId && sheet.id !== sheetId)
-          ? target.parentSheetId
-          : 'main'
+        const result = deletePaperSheet(conversation.sheets, sheetId)
+        if (result.sheets === conversation.sheets) return conversation
         return {
           ...conversation,
-          activeSheetId: conversation.activeSheetId === sheetId ? parentSheetId : conversation.activeSheetId,
-          sheets: conversation.sheets
-            .filter(sheet => sheet.id !== sheetId)
-            .map(sheet => sheet.parentSheetId === sheetId ? { ...sheet, parentSheetId } : sheet),
+          activeSheetId: conversation.activeSheetId === sheetId ? result.parentSheetId : conversation.activeSheetId,
+          sheets: result.sheets,
           updatedAt: Date.now(),
         }
       }),
@@ -1166,7 +1152,7 @@ function App() {
   }
 
   const attachLearningFileToConversation = (
-    file: { kind: 'lecture' | 'practice'; ref: string; title: string },
+    file: PaperArtifact,
     preferredConversationId?: string,
     anchor?: { sourceMessageId?: string; parentSheetId?: string },
   ) => {
@@ -1178,7 +1164,7 @@ function App() {
     const sheet: FollowUpSheet = {
       id: uid('sheet'),
       title: file.title.slice(0, 28),
-      quote: `${file.kind === 'lecture' ? '讲义' : '练习'}：${file.title}`,
+      quote: `${file.kind === 'lecture' ? '讲义' : file.kind === 'practice' ? '练习' : '资料'}：${file.title}`,
       sourceMessageId: anchor?.sourceMessageId || '',
       parentSheetId: anchor?.parentSheetId || conversation.activeSheetId || 'main',
       messages: [],
@@ -1202,6 +1188,15 @@ function App() {
       conversation_id: conversation.id,
       sheet_id: sheet.id,
     }).catch(() => undefined)
+  }
+
+  const attachSourceToConversation = (conversation: Conversation, source: Pick<FormalKnowledgeSource, 'id' | 'name'>) => {
+    attachLearningFileToConversation({
+      kind: 'source',
+      ref: String(source.id),
+      title: source.name,
+      projectId: conversation.projectId,
+    }, conversation.id, { parentSheetId: conversation.activeSheetId })
   }
 
   const openLearningFile = (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => {
@@ -1589,6 +1584,7 @@ function App() {
         messages: contextMessages,
         toolChoice: toolChoices[draftKey] || 'auto',
         selectionContext: activeSheet(conversation)?.quote,
+        activeArtifactContext: activeSheet(conversation)?.artifact,
         learningTaskContext: learningProjection ? learningTaskTutorContext(learningProjection) : undefined,
         learningPlanContext: planningProjection ? learningPlanTutorContext(planningProjection) : undefined,
         learnerPathState: formalSnapshotForTurn
@@ -2287,7 +2283,7 @@ function App() {
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
     const pages = [
-      { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '', sourceMessageId: '' },
+      { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '', sourceMessageId: '', artifact: undefined as PaperArtifact | undefined },
       ...conversation.sheets.map((item, index) => ({
         id: item.id,
         title: `${index + 1}. ${item.title}`,
@@ -2295,6 +2291,7 @@ function App() {
         messages: item.messages,
         parentSheetId: item.parentSheetId,
         sourceMessageId: item.sourceMessageId,
+        artifact: item.artifact,
       })),
     ]
     const pageIndex = Math.max(0, pages.findIndex(page => page.id === sheetId))
@@ -2325,7 +2322,7 @@ function App() {
         <li key={page.id}>
           <div className={`paper-tree-card-wrap${page.id === sheetId ? ' paper-tree-card-active' : ''}`}>
             <button type="button" className="paper-tree-card" onClick={() => setActiveSheet(conversation.id, page.id)}>
-              <span>{page.parentSheetId === 'main' ? 'FROM CONVERSATION' : 'FROM PAPER'}</span>
+              <span>{page.artifact ? page.artifact.kind === 'lecture' ? '讲义纸张' : page.artifact.kind === 'practice' ? '练习纸张' : '资料纸张' : page.parentSheetId === 'main' ? '来自主对话' : '来自另一张纸'}</span>
               <strong>{page.title}</strong>
               <p>{page.quote || paperPreview(page.messages)}</p>
               <small>{page.messages.length} 条内容{page.id === sheetId ? ' · 当前纸张' : ''}</small>
@@ -2527,12 +2524,29 @@ function App() {
                 <div className={hasWorkbench ? `paper-sheet${sheet?.artifact ? ' paper-sheet-artifact' : ''}` : 'conversation-page-content'}>
                   {sheet?.artifact?.kind === 'lecture' && (
                     <Suspense fallback={<div className="page-loading">正在打开讲义纸张…</div>}>
-                      <LectureFilePage lectureId={Number(sheet.artifact.ref)} embedded conversationId={conversation.id} sheetId={sheet.id} />
+                      <LectureFilePage lectureId={Number(sheet.artifact.ref)} embedded conversationId={conversation.id} sheetId={sheet.id} onFollowUp={() => {
+                        const quote = globalThis.getSelection()?.toString().replace(/\s+/g, ' ').trim() || `继续追问讲义“${sheet.artifact?.title || '当前讲义'}”`
+                        createFollowUpSheet(conversation.id, `artifact:lecture:${sheet.artifact?.ref}`, quote)
+                        globalThis.getSelection()?.removeAllRanges()
+                      }} />
                     </Suspense>
                   )}
                   {sheet?.artifact?.kind === 'practice' && (
                     <Suspense fallback={<div className="page-loading">正在打开练习纸张…</div>}>
-                      <PracticeFilePage practiceRef={sheet.artifact.ref} embedded conversationId={conversation.id} sheetId={sheet.id} />
+                      <PracticeFilePage practiceRef={sheet.artifact.ref} embedded conversationId={conversation.id} sheetId={sheet.id} onFollowUp={() => {
+                        const quote = globalThis.getSelection()?.toString().replace(/\s+/g, ' ').trim() || `继续追问练习“${sheet.artifact?.title || '当前练习'}”`
+                        createFollowUpSheet(conversation.id, `artifact:practice:${sheet.artifact?.ref}`, quote)
+                        globalThis.getSelection()?.removeAllRanges()
+                      }} />
+                    </Suspense>
+                  )}
+                  {sheet?.artifact?.kind === 'source' && (
+                    <Suspense fallback={<div className="page-loading">正在打开资料纸张…</div>}>
+                      <SourceFilePage sourceId={Number(sheet.artifact.ref)} embedded conversationId={conversation.id} sheetId={sheet.id} onFollowUp={() => {
+                        const quote = globalThis.getSelection()?.toString().replace(/\s+/g, ' ').trim() || `继续追问资料“${sheet.artifact?.title || '当前资料'}”`
+                        createFollowUpSheet(conversation.id, `artifact:source:${sheet.artifact?.ref}`, quote)
+                        globalThis.getSelection()?.removeAllRanges()
+                      }} />
                     </Suspense>
                   )}
                   {sheet && !sheet.artifact && (
@@ -2768,9 +2782,9 @@ function App() {
             {attachedSources.length > 0 && (
               <div className="conversation-source-chips" aria-label={conversation.projectId ? '项目来源' : '本对话资料'}>
                 {attachedSources.map(source => (
-                  <span key={source.id} title={source.name}>
+                  <span key={source.id} title={`${source.name} · 点击作为纸张打开`}>
                     <i>{source.type === 'file' ? '文' : '链'}</i>
-                    <strong>{source.name}</strong>
+                    <button type="button" className="source-chip-open" onClick={() => attachSourceToConversation(conversation, source)}><strong>{source.name}</strong></button>
                     <button type="button" onClick={() => { void detachDomainSource(conversation.id, source.id) }} aria-label={`移除资料${source.name}`}>×</button>
                   </span>
                 ))}
@@ -3060,6 +3074,10 @@ function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearnin
   const icon = run.kind === 'memory' ? '◇' : run.kind === 'domain' || run.kind === 'file' ? '▤' : run.kind === 'project' ? '◈' : run.kind === 'path' ? '⌁' : run.kind === 'search' ? '⌕' : run.kind === 'image' ? '▧' : '▶'
   const pathPlanConfirmed = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === activePathPlanId)
   const pathPlanBusy = Boolean(run.pathPlanProposal && run.pathPlanProposal.id === pathPlanBusyId)
+  const actionableLearningFile: { kind: 'lecture' | 'practice'; ref: string; title: string } | undefined =
+    run.learningFile && (run.learningFile.kind === 'lecture' || run.learningFile.kind === 'practice')
+      ? { kind: run.learningFile.kind, ref: run.learningFile.ref, title: run.learningFile.title }
+      : undefined
   const roleLabel: Record<NonNullable<TutorToolRun['sources']>[number]['role'], string> = {
     standard: '规范', reference: '参考', textbook: '教材', course: '课程',
     definition: '定义', research: '研究', example: '实例', discussion: '讨论',
@@ -3077,10 +3095,10 @@ function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearnin
         <i>{run.status === 'running' ? '…' : run.status === 'completed' ? '✓' : '!'}</i>
       </header>
       <p>{run.detail}</p>
-      {run.learningFile && (
+      {actionableLearningFile && (
         <div className="tool-learning-file-actions">
-          <button type="button" onClick={() => onOpenLearningFile(run.learningFile!)}>打开{run.learningFile.kind === 'practice' ? '练习' : '讲义'}</button>
-          <button type="button" onClick={() => onAttachLearningFile(run.learningFile!, sourceMessageId)}>放到新纸上</button>
+          <button type="button" onClick={() => onOpenLearningFile(actionableLearningFile)}>打开{actionableLearningFile.kind === 'practice' ? '练习' : '讲义'}</button>
+          <button type="button" onClick={() => onAttachLearningFile(actionableLearningFile, sourceMessageId)}>放到新纸上</button>
           <small>也可以拖到纸张桌面</small>
         </div>
       )}

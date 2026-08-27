@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-27.6`）：带领学习新增 `learning_file_study` 教学 Skill，按“选择学习文件 → 带锚点阅读 → 在正式练习文件中作答 → 独立验证”确定性推进。模型新增唯一目标级只读 ACI `read_active_learning_file`，只读取当前打开纸张对应的讲义、练习或来源正文；练习投影固定隔离答案，来源正文固定标记为不可信输入。纸张升级为可嵌套的 UI 工作空间，子纸可挂在主对话消息、讲义、练习、来源或追问纸下；纸张只保存 artifact ref、父子关系和分支消息，不成为文件权威、对话权威或学习者状态。生成、打开、附着、阅读和纸张整理均不形成掌握；正式练习提交仍唯一经过 `LearningAttempt -> EvidenceEvent -> five_kernel_reducer`。本次新增来源纸张只读 API、Action Board 读取能力和向后兼容的纸张修复器，没有数据库迁移、事件 schema 或 Kernel writer 变化。实现与评测见 `docs/implementation/GUIDED_LEARNING_FILE_PAPERS.md` 和 `docs/validation/2026-08-27-guided-learning-paper-evaluation.md`。
+
 Contract impact（`2026-08-27.5`）：计算机知识检索升级为 Search Harness v2。模型仍只看两个目标级只读 ACI：`search_computer_knowledge` 负责 quick/standard/deep 的有界多角度召回、混合确定性重排、覆盖审计和最多一次补搜；`read_web_evidence` 只读取本轮候选中的精确 HTTPS URL，并返回相关原文片段。Provider 熔断、缓存、隐私清理、来源分层、MMR 去冗余、时效评分和研究简报均是 Harness 内部机制，不扩张工具面。两工具都为零 Kernel target；搜索、读取、研究简报和引用均不是学习掌握证据。旧 `{query}` 调用保持兼容，三类主 Agent、五核、事件 schema、数据库和状态机均不变。实现与评测见 `docs/implementation/SEARCH_HARNESS_IMPLEMENTATION.md`、`docs/validation/2026-08-27-search-harness-evaluation.md`。
 
 Contract impact（`2026-08-27.4`）：`SkillSpec v2` 增加可声明的校准维度；费曼复述以受众层次、认知要求、支架强度和表征方式进行显式校准，并产生零 Kernel target 的 `TeachBackDiagnostic`。诊断只保存学习者原话、表面覆盖和一个待验证候选缺口；修订最多围绕该缺口循环两次，最终只能进入独立验证。稳定 Skill/状态 ID、三类主 Agent、五核 schema、评分、纠错和唯一 reducer 写入链均不变。详细契约见 `docs/SKILL_ENGINEERING.md` 与 `docs/CONVERSATION_SKILL_RUNTIME.md`。
@@ -258,9 +260,15 @@ Contract impact：注册表版本提升到 `2026-08-25.6`，新增 capability
 vNext 只读能力登记，没有新增 EventContract 或 Kernel writer。
 
 vNext 的教学状态采用单向包含关系：`Tutor 主状态 -> 已绑定 Learning Skill -> 当前 Skill 步骤子状态`。
-首批四个 Skill 都只能绑定 `guided_learning`；选择 Skill 只能让下一轮进入带领学习态，不能在自由态
+已登记的教学 Skill 都只能绑定 `guided_learning`；选择 Skill 只能让下一轮进入带领学习态，不能在自由态
 或简单讲解态中独立运行。`vnext_learning_skill_step_entered` 同时投影步骤与可见子状态，例如
 `带领学习态 · 引导态`；循环事件保持本步和本子状态。页面与 Tutor LLM 只读该投影，均无权自行转换。
+
+`learning_file_study` 是文件驱动的第五种教学 Skill。其状态固定为
+`selecting_learning_artifact -> reading_with_anchor -> practicing_in_file -> verification_ready`。Tutor 每轮只围绕
+当前纸张给出一个阅读锚点、一个问题或一个下一步动作；正文留在文件纸张，不在主对话重复粘贴。没有正式
+文件时只能推荐复用已有文件或提出待确认的生成行动，不能假装已经打开文件。切到练习阶段后由 Practice
+Agent 与正式提交入口负责判题，Tutor 和 Skill runtime 均不能查看隐藏答案或自行升级掌握。
 
 Contract impact：注册表版本提升到 `2026-08-25.7`。此次只把既有 Skill 步骤收紧为显式子状态契约，
 复用既有 `vnext_learning_skill_step_entered` 和浏览器本地事件队列；稳定 Skill ID、EventContract、

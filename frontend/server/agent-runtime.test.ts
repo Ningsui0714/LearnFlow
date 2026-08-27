@@ -111,8 +111,8 @@ test('Tutor runs a bounded observe-act-observe loop and preserves tool results',
 
   assert.match(result.reply, /线性代数/)
   assert.equal(result.trace.modelRounds, 2)
-  assert.equal(result.trace.toolCalls, 2) // observe 阶段的五核 + 模型选择的路径读取
-  assert.deepEqual(result.toolRuns.map(run => run.kind), ['memory', 'path'])
+  assert.equal(result.trace.toolCalls, 1) // 普通解释不预读五核，只保留模型真正需要的路径读取
+  assert.deepEqual(result.toolRuns.map(run => run.kind), ['path'])
   assert.ok(requests[0].body.tools.length >= 3)
   assert.ok(requests[1].body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'path-call'))
 })
@@ -613,6 +613,44 @@ test('a chat can explicitly ground the turn in its attached domain sources', asy
   assert.equal(result.toolRuns.filter(run => run.kind === 'domain').length, 1)
   assert.match(result.toolRuns.find(run => run.kind === 'domain')?.detail || '', /1 个已处理来源/)
   assert.match(result.reply, /附加的 MDP 笔记/)
+})
+
+test('an active paper is observed exactly once and becomes bounded Tutor context', async () => {
+  const requests: any[] = []
+  const calls: string[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'simple_explain',
+    messages: [{ role: 'user', content: '这里的第二段为什么强调形状不变？' }],
+    toolChoice: 'auto',
+    activeArtifactContext: { kind: 'lecture', ref: '17', title: 'QKV 与形状流动' },
+    generate: async () => 'unused',
+    executeTool: async (name, _args, _options, meta) => {
+      calls.push(name)
+      assert.equal(name, 'read_active_learning_file')
+      return {
+        run: {
+          id: 'active-file', kind: 'file', toolName: name, toolCallId: meta?.callId,
+          status: 'completed', title: '读取当前纸张', detail: '已读取当前讲义正文。',
+          observationSummary: 'lecture · 17', durationMs: 1,
+        },
+        observation: {
+          authority: 'managed_learning_file', kind: 'lecture', ref: '17',
+          title: 'QKV 与形状流动', sections: [{ title: '形状流动', content: '线性投影改变最后一维，但保留 batch 与 token 维。' }],
+          mastery_inference: false,
+        },
+      }
+    },
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '这里保留的是 batch 与 token 两个轴；线性层只映射最后一个特征维。' } }] }
+    },
+  })
+  assert.deepEqual(calls, ['read_active_learning_file'])
+  assert.deepEqual(result.toolRuns.map(run => run.kind), ['file'])
+  assert.match(JSON.stringify(requests[0].body), /线性投影改变最后一维/)
+  assert.match(result.reply, /batch 与 token/)
 })
 
 test('review questions receive answer-free proficiency and memory observations', async () => {
