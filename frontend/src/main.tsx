@@ -35,6 +35,7 @@ import {
   type LearningTaskProjection,
 } from './learning'
 import VisualArtifact from './VisualArtifact'
+import { humanizeLearningFileReferences } from './learning-file-message'
 import {
   TOOL_CHOICE_LABELS,
   type TutorToolChoice,
@@ -227,6 +228,7 @@ const TASKS_TAB: WorkspaceTab = { id: 'tasks', kind: 'tasks', title: '学习任�
 const REVIEW_TAB: WorkspaceTab = { id: 'review', kind: 'review', title: '复习' }
 const LEARNING_FILES_TAB: WorkspaceTab = { id: 'learning-files', kind: 'learning-files', title: '讲义与练习' }
 const MarkdownContent = lazy(() => import('./MarkdownContent'))
+const LearningFileMessagePreview = lazy(() => import('./LearningFileMessagePreview'))
 const LearningPathPage = lazy(() => import('./LearningPathPage'))
 const LearnerProfilePage = lazy(() => import('./LearnerProfilePage'))
 const LearningTasksPage = lazy(() => import('./LearningTasksPage'))
@@ -3096,11 +3098,13 @@ function ToolRunCard({ run, sourceMessageId, onOpenLearningFile, onAttachLearnin
       </header>
       <p>{run.detail}</p>
       {actionableLearningFile && (
-        <div className="tool-learning-file-actions">
-          <button type="button" onClick={() => onOpenLearningFile(actionableLearningFile)}>打开{actionableLearningFile.kind === 'practice' ? '练习' : '讲义'}</button>
-          <button type="button" onClick={() => onAttachLearningFile(actionableLearningFile, sourceMessageId)}>放到新纸上</button>
-          <small>也可以拖到纸张桌面</small>
-        </div>
+        <Suspense fallback={<div className="learning-file-preview-loading">正在展开文件开头…</div>}>
+          <LearningFileMessagePreview
+            file={actionableLearningFile}
+            onOpen={() => onOpenLearningFile(actionableLearningFile)}
+            onAttach={() => onAttachLearningFile(actionableLearningFile, sourceMessageId)}
+          />
+        </Suspense>
       )}
       {run.pathProposal && (
         <div className="path-proposal-card">
@@ -3317,7 +3321,13 @@ function MessageList({ messages, onQuoteFollowUp, onOpenLearningFile, onAttachLe
                 <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
               ) : (
                 <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>
-                  <MarkdownContent content={message.content} />
+                  <MarkdownContent content={humanizeLearningFileReferences(
+                    message.content,
+                    (message.toolRuns || []).flatMap(run => run.learningFile
+                      && (run.learningFile.kind === 'lecture' || run.learningFile.kind === 'practice')
+                      ? [{ kind: run.learningFile.kind, ref: run.learningFile.ref, title: run.learningFile.title }]
+                      : []),
+                  )} />
                 </Suspense>
               )}
             </div>
