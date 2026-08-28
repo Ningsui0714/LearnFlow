@@ -31,6 +31,12 @@ export type VisualArtifact = {
   title: string
   subtitle: string
   steps: VisualStep[]
+  specVersion?: string
+  domain?: 'computer' | 'mathematics' | 'general'
+  abstraction?: string
+  renderer?: string
+  quality?: { score: number; issues: string[]; repaired: boolean }
+  fallbackUsed?: boolean
 }
 
 export type TutorToolRun = {

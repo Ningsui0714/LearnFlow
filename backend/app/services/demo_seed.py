@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.learning import Learner, LearnerProfile, LearningAttempt, UserAccount
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Lecture, Project, Roadmap
+from app.services.demo_code_grader import seeded_demo_assessment_metadata
 from app.services.learning_runtime import create_attempt, ensure_kernel_states, record_event
 from app.services.remediation import create_remediation_case
 from app.services.review import apply_assessment_result
@@ -226,6 +227,7 @@ async def seed_competition_demo(db: AsyncSession) -> dict:
                 "mode": "practice",
                 "learning_target": "修复空集合边界条件",
                 "evidence_target": {"practice": "retry_then_variant"},
+                **seeded_demo_assessment_metadata(),
                 "variant": {
                     "type": "predict_output",
                     "validated": True,
@@ -236,6 +238,11 @@ async def seed_competition_demo(db: AsyncSession) -> dict:
             },
         )
         db.add(exercise)
+    else:
+        exercise.assessment_meta = {
+            **dict(exercise.assessment_meta or {}),
+            **seeded_demo_assessment_metadata(),
+        }
 
     await db.flush()
 

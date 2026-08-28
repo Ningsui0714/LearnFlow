@@ -147,7 +147,8 @@ function toolDecisionReason(call: AgentToolCall) {
     generate_similar_practice: '需要检查迁移而不是重复原题，因此生成同构但不相同的练习',
     inspect_practice_quality: '题目投入学习前先检查结构、答案确定性和目标覆盖',
     generate_learning_lecture: '当前概念需要一份可留存、可作为纸张展开的讲义',
-    generate_learning_visual: '文字不足以表达当前关系或过程，因此补充图解或动画',
+    generate_learning_diagram: '文字不足以同时表达当前对象与关系，因此补充一张可检查的结构图解',
+    generate_learning_animation: '当前机制包含不可交换的状态变化，因此用可暂停的逐帧动画呈现',
   }
   const definition = TUTOR_AGENT_TOOL_DEFINITIONS.find(tool => tool.name === call.name)
   return compactDecisionText(reasons[call.name], `为完成当前学习动作，调用“${definition?.title || call.name}”取得结构化观察`)
@@ -444,8 +445,8 @@ function explicitToolCall(choice: TutorToolChoice, message: string, projectScope
   }
   return {
     id: `explicit-visual-${Date.now()}`,
-    name: 'generate_learning_visual',
-    arguments: { query: message, kind: choice },
+    name: choice === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram',
+    arguments: { query: message },
   }
 }
 

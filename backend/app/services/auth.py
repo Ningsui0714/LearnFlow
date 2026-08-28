@@ -1,19 +1,33 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import binascii
 import hashlib
 import hmac
+import ipaddress
+import math
 import secrets
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import lru_cache
+from urllib.parse import urlsplit
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from argon2.low_level import Type
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import Depends, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.database import get_db
-from app.models.learning import AuthSession, Learner, LearnerProfile, UserAccount
+from app.db.database import async_session, get_db
+from app.models.learning import (
+    AuthLoginAttempt, AuthSession, Learner, LearnerProfile, UserAccount,
+)
 from app.models.project import (
     ArtifactAnnotation, Checkpoint, Exercise, LectureNote, ProcessAnimation, Project, Roadmap,
     Source, Task,
@@ -26,37 +40,299 @@ class CurrentLearner:
     learner: Learner
     profile: LearnerProfile
     is_dev_login: bool = False
+    session_id: int | None = None
+    auth_method: str = "internal"
+
+
+@dataclass(frozen=True)
+class PasswordVerification:
+    valid: bool
+    needs_upgrade: bool = False
+    scheme: str = "unknown"
+
+
+class PasswordKDFBusy(RuntimeError):
+    pass
+
+
+class ModelCredentialEncryptionUnavailable(RuntimeError):
+    pass
+
+
+class ModelCredentialDecryptionError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class EncryptedModelCredential:
+    ciphertext: str
+    nonce: str
+    key_hint: str
+    version: int
+
+
+INVALID_LOGIN_DETAIL = "用户名或密码错误"
+LOGIN_BACKOFF_DETAIL = "登录暂不可用，请稍后重试"
+CSRF_HEADER_NAME = "x-csrf-token"
+RUNTIME_BRIDGE_HEADER_NAME = "x-learnflow-runtime-bridge-token"
+_CSRF_CONTEXT = b"learnflow.session.csrf.v1"
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_KDF_LIMITER = threading.BoundedSemaphore(max(1, settings.auth_kdf_max_concurrency))
+_MODEL_CREDENTIAL_PURPOSE = "model-provider-api-key"
+_RUNTIME_BRIDGE_PATH = "/api/auth/model-credential/internal/resolve"
+_RUNTIME_BRIDGE_SENTINEL = "learnflow-runtime-bridge-unconfigured-sentinel"
+_NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
 
 def normalize_username(username: str) -> str:
     return username.strip().casefold()
 
 
+@lru_cache(maxsize=8)
+def _configured_password_hasher(
+    time_cost: int,
+    memory_cost: int,
+    parallelism: int,
+) -> PasswordHasher:
+    return PasswordHasher(
+        time_cost=max(1, time_cost),
+        memory_cost=max(8 * max(1, parallelism), memory_cost),
+        parallelism=max(1, parallelism),
+        hash_len=32,
+        salt_len=16,
+        type=Type.ID,
+    )
+
+
+def _password_hasher() -> PasswordHasher:
+    return _configured_password_hasher(
+        int(settings.auth_argon2_time_cost),
+        int(settings.auth_argon2_memory_cost_kib),
+        int(settings.auth_argon2_parallelism),
+    )
+
+
+@lru_cache(maxsize=8)
+def _configured_dummy_hash(
+    time_cost: int,
+    memory_cost: int,
+    parallelism: int,
+) -> str:
+    return _configured_password_hasher(
+        time_cost,
+        memory_cost,
+        parallelism,
+    ).hash("learnflow-login-timing-sentinel")
+
+
+def _dummy_password_hash() -> str:
+    return _configured_dummy_hash(
+        int(settings.auth_argon2_time_cost),
+        int(settings.auth_argon2_memory_cost_kib),
+        int(settings.auth_argon2_parallelism),
+    )
+
+
 def hash_password(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1, dklen=32)
-    return "scrypt$16384$8$1$" + base64.urlsafe_b64encode(salt).decode() + "$" + base64.urlsafe_b64encode(digest).decode()
+    """Return an Argon2id PHC string for all newly written credentials."""
+    return _password_hasher().hash(password)
 
 
-def verify_password(password: str, encoded: str | None) -> bool:
-    if not encoded:
-        return False
+def _verify_legacy_scrypt(password: str, encoded: str) -> bool:
     try:
         algorithm, n, r, p, salt_text, digest_text = encoded.split("$", 5)
         if algorithm != "scrypt":
             return False
-        salt = base64.urlsafe_b64decode(salt_text.encode())
+        n_value, r_value, p_value = int(n), int(r), int(p)
+        if (n_value, r_value, p_value) != (2**14, 8, 1):
+            return False
+        decoded_salt = base64.urlsafe_b64decode(salt_text.encode())
         expected = base64.urlsafe_b64decode(digest_text.encode())
+        if len(decoded_salt) != 16 or len(expected) != 32:
+            return False
         actual = hashlib.scrypt(
-            password.encode("utf-8"), salt=salt, n=int(n), r=int(r), p=int(p), dklen=len(expected),
+            password.encode("utf-8"),
+            salt=decoded_salt,
+            n=n_value,
+            r=r_value,
+            p=p_value,
+            dklen=len(expected),
         )
         return hmac.compare_digest(actual, expected)
-    except (TypeError, ValueError):
+    except (binascii.Error, MemoryError, TypeError, ValueError, OverflowError):
         return False
+
+
+def _verify_password_details(password: str, encoded: str | None) -> PasswordVerification:
+    if not encoded:
+        return PasswordVerification(False)
+    if encoded.startswith("$argon2"):
+        try:
+            valid = bool(_password_hasher().verify(encoded, password))
+        except VerifyMismatchError:
+            return PasswordVerification(False, scheme="argon2id")
+        except (InvalidHashError, VerificationError):
+            return PasswordVerification(False)
+        return PasswordVerification(
+            valid,
+            needs_upgrade=valid and _password_hasher().check_needs_rehash(encoded),
+            scheme="argon2id",
+        )
+    if encoded.startswith("scrypt$"):
+        valid = _verify_legacy_scrypt(password, encoded)
+        return PasswordVerification(valid, needs_upgrade=valid, scheme="scrypt")
+    return PasswordVerification(False)
+
+
+def verify_password(password: str, encoded: str | None) -> bool:
+    return _verify_password_details(password, encoded).valid
+
+
+def _run_bounded_kdf(operation, *args):
+    acquired = _KDF_LIMITER.acquire(
+        timeout=max(0.1, float(settings.auth_kdf_queue_timeout_seconds))
+    )
+    if not acquired:
+        raise PasswordKDFBusy("password KDF queue is full")
+    try:
+        return operation(*args)
+    finally:
+        _KDF_LIMITER.release()
+
+
+async def hash_password_async(password: str) -> str:
+    return await asyncio.to_thread(_run_bounded_kdf, hash_password, password)
+
+
+def _verify_password_candidate(
+    password: str,
+    encoded: str | None,
+) -> PasswordVerification:
+    """Verify a real or sentinel hash without exposing account existence."""
+    dummy_hash = _dummy_password_hash()
+    candidate = encoded or dummy_hash
+    result = _verify_password_details(password, candidate)
+    if encoded is None:
+        return PasswordVerification(False, scheme=result.scheme)
+    return result
+
+
+async def verify_password_async(
+    password: str,
+    encoded: str | None,
+) -> PasswordVerification:
+    return await asyncio.to_thread(
+        _run_bounded_kdf,
+        _verify_password_candidate,
+        password,
+        encoded,
+    )
 
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _base64url_decode(value: str) -> bytes:
+    raw = value.encode("ascii")
+    padded = raw + (b"=" * (-len(raw) % 4))
+    return base64.b64decode(padded, altchars=b"-_", validate=True)
+
+
+def _model_credential_kek() -> tuple[bytes, int]:
+    configured = str(settings.auth_api_key_kek or "").strip()
+    version = int(settings.auth_api_key_kek_version or 0)
+    if not configured:
+        raise ModelCredentialEncryptionUnavailable(
+            "AUTH_API_KEY_KEK is not configured"
+        )
+    try:
+        key = _base64url_decode(configured)
+    except (binascii.Error, UnicodeEncodeError, ValueError) as exc:
+        raise ModelCredentialEncryptionUnavailable(
+            "AUTH_API_KEY_KEK is not valid URL-safe base64"
+        ) from exc
+    if len(key) != 32 or version < 1:
+        raise ModelCredentialEncryptionUnavailable(
+            "AUTH_API_KEY_KEK must encode 32 bytes and its version must be positive"
+        )
+    return key, version
+
+
+def _model_credential_aad(account_id: int, version: int) -> bytes:
+    return (
+        "learnflow|purpose="
+        f"{_MODEL_CREDENTIAL_PURPOSE}|account_id={int(account_id)}|version={int(version)}"
+    ).encode("utf-8")
+
+
+def _model_credential_hint(api_key: str) -> str:
+    if len(api_key) < 12:
+        return "••••"
+    return f"{api_key[:3]}…{api_key[-4:]}"
+
+
+def model_credential_configured(account: UserAccount) -> bool:
+    return bool(
+        account.api_key_ciphertext
+        and account.api_key_nonce
+        and account.api_key_hint
+        and account.api_key_encryption_version
+    )
+
+
+def encrypt_model_credential(account_id: int, api_key: str) -> EncryptedModelCredential:
+    plaintext = api_key.strip()
+    if not plaintext:
+        raise ValueError("model credential is empty")
+    kek, version = _model_credential_kek()
+    nonce = secrets.token_bytes(12)
+    ciphertext = AESGCM(kek).encrypt(
+        nonce,
+        plaintext.encode("utf-8"),
+        _model_credential_aad(account_id, version),
+    )
+    return EncryptedModelCredential(
+        ciphertext=_base64url_encode(ciphertext),
+        nonce=_base64url_encode(nonce),
+        key_hint=_model_credential_hint(plaintext),
+        version=version,
+    )
+
+
+def decrypt_model_credential(account: UserAccount) -> str:
+    if not model_credential_configured(account):
+        raise ModelCredentialDecryptionError("model credential is not configured")
+    try:
+        kek, configured_version = _model_credential_kek()
+        stored_version = int(account.api_key_encryption_version)
+        if stored_version != configured_version:
+            raise ModelCredentialDecryptionError("model credential KEK version mismatch")
+        nonce = _base64url_decode(str(account.api_key_nonce))
+        ciphertext = _base64url_decode(str(account.api_key_ciphertext))
+        if len(nonce) != 12 or len(ciphertext) < 16:
+            raise ModelCredentialDecryptionError("invalid model credential envelope")
+        plaintext = AESGCM(kek).decrypt(
+            nonce,
+            ciphertext,
+            _model_credential_aad(account.id, stored_version),
+        )
+        return plaintext.decode("utf-8")
+    except ModelCredentialEncryptionUnavailable:
+        raise
+    except ModelCredentialDecryptionError:
+        raise
+    except (binascii.Error, InvalidTag, UnicodeDecodeError, UnicodeEncodeError, ValueError) as exc:
+        raise ModelCredentialDecryptionError("model credential authentication failed") from exc
+
+
+def _csrf_token(session_token: str) -> str:
+    digest = hmac.new(session_token.encode("utf-8"), _CSRF_CONTEXT, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
 async def create_auth_session(
@@ -64,11 +340,20 @@ async def create_auth_session(
 ) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.utcnow()
+    absolute_expires_at = now + timedelta(days=max(1, settings.auth_session_days))
+    idle_expires_at = min(
+        absolute_expires_at,
+        now + timedelta(minutes=max(1, settings.auth_session_idle_minutes)),
+    )
     db.add(AuthSession(
         user_id=account.id,
         token_hash=_token_hash(token),
         is_dev_login=is_dev_login,
-        expires_at=now + timedelta(days=settings.auth_session_days),
+        auth_epoch=int(account.auth_epoch or 0),
+        csrf_token_hash=_token_hash(_csrf_token(token)),
+        absolute_expires_at=absolute_expires_at,
+        idle_expires_at=idle_expires_at,
+        expires_at=absolute_expires_at,
         last_seen_at=now,
     ))
     account.last_login_at = now
@@ -89,7 +374,198 @@ def set_auth_cookie(response: Response, token: str):
 
 
 def clear_auth_cookie(response: Response):
-    response.delete_cookie(settings.auth_cookie_name, path="/")
+    response.delete_cookie(
+        settings.auth_cookie_name,
+        path="/",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def valid_desktop_request(request: Request) -> bool:
+    supplied = request.headers.get("x-learnflow-desktop-token", "")
+    return bool(
+        settings.desktop_mode
+        and settings.desktop_token
+        and supplied
+        and hmac.compare_digest(supplied, settings.desktop_token)
+    )
+
+
+def _desktop_bearer_token(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer ") and valid_desktop_request(request):
+        token = authorization[7:].strip()
+        return token or None
+    return None
+
+
+def is_loopback_request(request: Request) -> bool:
+    peer_host = str(request.client.host if request.client else "").strip()
+    # Starlette's in-process TestClient has no network peer.  It is accepted as
+    # a loopback surrogate only after the explicit dev/demo flag is checked.
+    if peer_host == "testclient":
+        return (request.url.hostname or "").casefold() == "testserver"
+    try:
+        peer_is_loopback = ipaddress.ip_address(
+            peer_host.split("%", 1)[0]
+        ).is_loopback
+    except ValueError:
+        return False
+    if not peer_is_loopback:
+        return False
+    request_host = (request.url.hostname or "").strip().casefold()
+    if request_host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(request_host.split("%", 1)[0]).is_loopback
+    except ValueError:
+        return False
+
+
+def _normalized_origin(value: str) -> str | None:
+    try:
+        parsed = urlsplit(value.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    default_port = 80 if parsed.scheme == "http" else 443
+    port = port or default_port
+    suffix = "" if port == default_port else f":{port}"
+    return f"{parsed.scheme}://{parsed.hostname.casefold()}{suffix}"
+
+
+def _allowed_browser_origins(request: Request) -> set[str]:
+    allowed = {
+        normalized
+        for origin in settings.cors_origins_list
+        if (normalized := _normalized_origin(origin)) is not None
+    }
+    host = request.headers.get("host", "")
+    if host:
+        request_origin = _normalized_origin(f"{request.url.scheme}://{host}")
+        if request_origin:
+            allowed.add(request_origin)
+    return allowed
+
+
+def _validate_browser_source(request: Request) -> None:
+    fetch_site = request.headers.get("sec-fetch-site", "").strip().casefold()
+    if fetch_site == "cross-site" or fetch_site not in {
+        "", "same-origin", "same-site", "none",
+    }:
+        raise HTTPException(403, "请求验证失败")
+    origin = request.headers.get("origin", "").strip()
+    if origin:
+        normalized = _normalized_origin(origin)
+        if normalized is None or normalized not in _allowed_browser_origins(request):
+            raise HTTPException(403, "请求验证失败")
+
+
+def require_runtime_bridge_request(request: Request) -> None:
+    """Authorize the server-only credential resolver without logging secrets.
+
+    The fixed-size digests keep comparison constant-time even for missing or
+    differently sized supplied values.  Browser provenance headers are rejected
+    so possessing a normal LearnFlow session is never sufficient to invoke the
+    plaintext resolver from frontend code.
+    """
+    configured = str(settings.auth_runtime_bridge_token or "").strip()
+    supplied = request.headers.get(RUNTIME_BRIDGE_HEADER_NAME, "").strip()
+    expected = configured or _RUNTIME_BRIDGE_SENTINEL
+    supplied_digest = hashlib.sha256(supplied.encode("utf-8")).digest()
+    expected_digest = hashlib.sha256(expected.encode("utf-8")).digest()
+    token_matches = hmac.compare_digest(supplied_digest, expected_digest)
+
+    if len(configured) < 32:
+        raise HTTPException(
+            503,
+            "运行时凭据桥接不可用：请配置 AUTH_RUNTIME_BRIDGE_TOKEN（至少 32 字符）",
+            headers=_NO_STORE_HEADERS,
+        )
+    browser_metadata = any(
+        request.headers.get(name, "").strip()
+        for name in (
+            "origin",
+            "sec-fetch-site",
+            "sec-fetch-mode",
+            "sec-fetch-dest",
+            "sec-fetch-user",
+        )
+    )
+    if browser_metadata or not supplied or not token_matches:
+        raise HTTPException(
+            403,
+            "运行时凭据桥接验证失败",
+            headers=_NO_STORE_HEADERS,
+        )
+
+
+def _csrf_bootstrap_path(path: str) -> bool:
+    if path in {"/api/auth/login", "/api/auth/register", "/api/demo/login"}:
+        return True
+    return path.startswith("/api/dev/accounts/") and path.endswith("/login")
+
+
+def _is_unannotated_in_process_test_request(request: Request) -> bool:
+    """Preserve legacy TestClient calls without creating a network bypass.
+
+    Starlette synthesizes the otherwise impossible peer/host pair below.  As
+    soon as a security test supplies Origin, Fetch Metadata, or a CSRF header,
+    the request is evaluated by the production policy.
+    """
+    return bool(
+        request.client
+        and request.client.host == "testclient"
+        and (request.url.hostname or "").casefold() == "testserver"
+        and not request.headers.get("origin")
+        and not request.headers.get("sec-fetch-site")
+        and not request.headers.get(CSRF_HEADER_NAME)
+    )
+
+
+async def enforce_browser_request_security(request: Request) -> None:
+    """Enforce browser provenance and session-bound CSRF on unsafe methods."""
+    if request.method.upper() not in _UNSAFE_METHODS:
+        return
+    if request.url.path == _RUNTIME_BRIDGE_PATH:
+        require_runtime_bridge_request(request)
+        return
+    if _desktop_bearer_token(request):
+        return
+    if _is_unannotated_in_process_test_request(request):
+        return
+    _validate_browser_source(request)
+    if _csrf_bootstrap_path(request.url.path):
+        return
+    raw_token = request.cookies.get(settings.auth_cookie_name)
+    if not raw_token:
+        return
+    supplied_csrf = request.headers.get(CSRF_HEADER_NAME, "").strip()
+    if not supplied_csrf:
+        raise HTTPException(403, "请求验证失败")
+    now = datetime.utcnow()
+    async with async_session() as db:
+        session = (await db.execute(
+            select(AuthSession)
+            .join(UserAccount, UserAccount.id == AuthSession.user_id)
+            .where(
+                AuthSession.token_hash == _token_hash(raw_token),
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > now,
+                AuthSession.absolute_expires_at > now,
+                AuthSession.idle_expires_at > now,
+                AuthSession.auth_epoch == UserAccount.auth_epoch,
+                UserAccount.status == "active",
+            )
+        )).scalar_one_or_none()
+    if not session or not hmac.compare_digest(
+        session.csrf_token_hash or "", _token_hash(supplied_csrf),
+    ):
+        raise HTTPException(403, "请求验证失败")
 
 
 async def current_learner_from_request(
@@ -98,10 +574,9 @@ async def current_learner_from_request(
     *,
     required: bool = True,
 ) -> CurrentLearner | None:
-    raw_token = request.cookies.get(settings.auth_cookie_name)
-    authorization = request.headers.get("authorization", "")
-    if not raw_token and authorization.lower().startswith("bearer ") and valid_desktop_request(request):
-        raw_token = authorization[7:].strip()
+    bearer_token = _desktop_bearer_token(request)
+    raw_token = bearer_token or request.cookies.get(settings.auth_cookie_name)
+    auth_method = "desktop_bearer" if bearer_token else "cookie"
     if not raw_token:
         if required:
             raise HTTPException(401, "请先登录")
@@ -116,6 +591,9 @@ async def current_learner_from_request(
             AuthSession.token_hash == _token_hash(raw_token),
             AuthSession.revoked_at.is_(None),
             AuthSession.expires_at > now,
+            AuthSession.absolute_expires_at > now,
+            AuthSession.idle_expires_at > now,
+            AuthSession.auth_epoch == UserAccount.auth_epoch,
             UserAccount.status == "active",
         )
     )).first()
@@ -124,36 +602,136 @@ async def current_learner_from_request(
             raise HTTPException(401, "登录已失效")
         return None
     session, account, learner, profile = row
-    # Authentication is an observation, not an application write.  Updating
-    # last_seen_at in this shared dependency made every nominal GET acquire a
-    # SQLite write lock when the endpoint later autoflushed.  The session's
-    # issuance/login timestamp remains the durable activity marker; explicit
-    # auth lifecycle operations own any future audit updates.
+    last_seen = session.last_seen_at or session.created_at or now
+    if (now - last_seen).total_seconds() >= max(
+        1, settings.auth_session_touch_interval_seconds,
+    ):
+        session.last_seen_at = now
+        session.idle_expires_at = min(
+            session.absolute_expires_at,
+            now + timedelta(minutes=max(1, settings.auth_session_idle_minutes)),
+        )
+        await db.commit()
     return CurrentLearner(
         account=account, learner=learner, profile=profile,
         is_dev_login=bool(session.is_dev_login),
-    )
-
-
-def valid_desktop_request(request: Request) -> bool:
-    supplied = request.headers.get("x-learnflow-desktop-token", "")
-    return bool(
-        settings.desktop_mode
-        and settings.desktop_token
-        and supplied
-        and hmac.compare_digest(supplied, settings.desktop_token)
+        session_id=session.id,
+        auth_method=auth_method,
     )
 
 
 def auth_token_from_request(request: Request) -> str | None:
-    raw = request.cookies.get(settings.auth_cookie_name)
-    if raw:
-        return raw
-    authorization = request.headers.get("authorization", "")
-    if authorization.lower().startswith("bearer ") and valid_desktop_request(request):
-        token = authorization[7:].strip()
-        return token or None
-    return None
+    return _desktop_bearer_token(request) or request.cookies.get(settings.auth_cookie_name)
+
+
+async def csrf_token_from_request(request: Request, db: AsyncSession) -> str:
+    _validate_browser_source(request)
+    raw_token = request.cookies.get(settings.auth_cookie_name)
+    if not raw_token:
+        raise HTTPException(401, "请先登录")
+    token = _csrf_token(raw_token)
+    now = datetime.utcnow()
+    session = (await db.execute(
+        select(AuthSession)
+        .join(UserAccount, UserAccount.id == AuthSession.user_id)
+        .where(
+            AuthSession.token_hash == _token_hash(raw_token),
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > now,
+            AuthSession.absolute_expires_at > now,
+            AuthSession.idle_expires_at > now,
+            AuthSession.auth_epoch == UserAccount.auth_epoch,
+            UserAccount.status == "active",
+        )
+    )).scalar_one_or_none()
+    if not session or not hmac.compare_digest(
+        session.csrf_token_hash or "", _token_hash(token),
+    ):
+        raise HTTPException(401, "登录已失效")
+    return token
+
+
+def login_request_keys(request: Request, normalized_username: str) -> tuple[str, str]:
+    account_key = hashlib.sha256(
+        f"account:{normalized_username}".encode("utf-8")
+    ).hexdigest()
+    peer = str(request.client.host if request.client else "unknown").strip().casefold()
+    ip_key = hashlib.sha256(f"peer:{peer}".encode("utf-8")).hexdigest()
+    return account_key, ip_key
+
+
+def _failure_delay(failure_count: int, free_failures: int) -> int:
+    if failure_count <= max(0, free_failures):
+        return 0
+    exponent = min(20, failure_count - max(0, free_failures) - 1)
+    return min(
+        max(1, settings.auth_login_backoff_max_seconds),
+        max(1, settings.auth_login_backoff_base_seconds) * (2 ** exponent),
+    )
+
+
+async def _attempt_stats(
+    db: AsyncSession,
+    column,
+    key: str,
+    cutoff: datetime,
+) -> tuple[int, datetime | None]:
+    count, latest = (await db.execute(select(
+        func.count(AuthLoginAttempt.id),
+        func.max(AuthLoginAttempt.attempted_at),
+    ).where(column == key, AuthLoginAttempt.attempted_at >= cutoff))).one()
+    return int(count or 0), latest
+
+
+async def login_backoff_seconds(
+    db: AsyncSession,
+    account_key: str,
+    ip_key: str,
+    *,
+    now: datetime | None = None,
+) -> int:
+    now = now or datetime.utcnow()
+    cutoff = now - timedelta(seconds=max(1, settings.auth_login_window_seconds))
+    account_count, account_latest = await _attempt_stats(
+        db, AuthLoginAttempt.account_key_hash, account_key, cutoff,
+    )
+    ip_count, ip_latest = await _attempt_stats(
+        db, AuthLoginAttempt.ip_key_hash, ip_key, cutoff,
+    )
+    waits = []
+    for count, latest, free in (
+        (account_count, account_latest, settings.auth_login_account_free_failures),
+        (ip_count, ip_latest, settings.auth_login_ip_free_failures),
+    ):
+        delay = _failure_delay(count, free)
+        if delay and latest:
+            waits.append(max(0, math.ceil((latest + timedelta(seconds=delay) - now).total_seconds())))
+    return max(waits, default=0)
+
+
+async def record_login_failure(
+    db: AsyncSession,
+    account_key: str,
+    ip_key: str,
+) -> int:
+    now = datetime.utcnow()
+    cutoff = now - timedelta(seconds=max(1, settings.auth_login_window_seconds))
+    await db.execute(delete(AuthLoginAttempt).where(AuthLoginAttempt.attempted_at < cutoff))
+    db.add(AuthLoginAttempt(
+        account_key_hash=account_key,
+        ip_key_hash=ip_key,
+        attempted_at=now,
+    ))
+    await db.flush()
+    delay = await login_backoff_seconds(db, account_key, ip_key, now=now)
+    await db.commit()
+    return delay
+
+
+async def clear_login_failures(db: AsyncSession, account_key: str) -> None:
+    await db.execute(delete(AuthLoginAttempt).where(
+        AuthLoginAttempt.account_key_hash == account_key,
+    ))
 
 
 async def get_current_learner(
@@ -161,6 +739,14 @@ async def get_current_learner(
     db: AsyncSession = Depends(get_db),
 ) -> CurrentLearner:
     return await current_learner_from_request(request, db, required=True)
+
+
+async def require_admin(
+    current: CurrentLearner = Depends(get_current_learner),
+) -> CurrentLearner:
+    if current.account.role != "admin":
+        raise HTTPException(403, "需要管理员权限")
+    return current
 
 
 async def load_current_learner(db: AsyncSession, learner_id: int) -> CurrentLearner:

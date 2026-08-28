@@ -8,6 +8,8 @@
 
 短期状态用于当前教学决策，长期模块和声明只在对应核的证据门槛满足后形成。尤其是 `human` 的情绪/负荷默认短期有效，`knowledge` 的掌握需要评分证据，`practice` 的独立能力优先需要无辅助和变式证据。同一概念下至少两条由学习者明确提交、经结构化复核的自述可以形成“接触范围” Module/Claim，但验证状态必须保持 `self_reported`，不得出现掌握、独立完成或迁移结论。合成器可以明确写“缺乏掌握证据”或“不代表掌握”作为边界；这种否定句不得被掌握关键词检查误拒绝。
 
+会话内 Human 适配只接受学习者的明确表达。`vnext_human_adaptation_requested` 把当前节奏、表征、负荷、挫败或支持请求写成 8 小时有效的短期状态；`transient_expires_at` 与 provenance 辅助字段不生成事实，其他临时 Human Fact 固定 `consumption_status=excluded`，不会进入 Module/Claim。ContextPacket 进一步丢弃 Human 原文与深层节点，只输出诸如“放慢节奏，每次推进一个步骤”的类型化指令。普通“不懂”“不会”、答错和停顿仍只按 Knowledge/Practice 证据处理。
+
 ## 分核内容模型
 
 五个核共用可追溯的数据骨架，但不共用同一种内容模板。注册表为每个核声明

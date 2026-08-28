@@ -1,6 +1,8 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional, List
 from datetime import datetime
+
+from app.services.source_locator import SOURCE_LOCATOR
 
 
 # ── Project ──
@@ -42,6 +44,25 @@ class ProjectDetail(BaseModel):
 class SourceCreate(BaseModel):
     type: str  # github, url, file
     url: str = ""
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def normalize_source_type(cls, value: object) -> str:
+        normalized = str(value or "").strip().casefold()
+        if normalized not in {"github", "url", "file"}:
+            raise ValueError("来源类型只支持 github、url 或上传文件")
+        return normalized
+
+    @model_validator(mode="after")
+    def normalize_remote_location(self) -> "SourceCreate":
+        # ``file`` remains here only so the route can return its existing
+        # upload-endpoint guidance. It is never dereferenced from this model.
+        if self.type == "file":
+            return self
+        reference = SOURCE_LOCATOR.normalize_remote_source(self.type, self.url)
+        self.type = reference.source_type
+        self.url = reference.location
+        return self
 
 
 class SourceOut(BaseModel):

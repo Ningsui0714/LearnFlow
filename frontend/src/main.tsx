@@ -1,9 +1,13 @@
 import { FormEvent, Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { initializeRuntimeClient, isDesktopRuntime } from './runtime-client.ts'
+import {
+  initializeRuntimeClient,
+  isolateLegacyWorkspaceCache,
+  isDesktopRuntime,
+  learnerWorkspaceStorageKey,
+} from './runtime-client.ts'
 import {
   isTutorMode,
-  requestTutorEnvironmentStatus,
   requestTutorReply,
   resolveTutorMode,
   TUTOR_MODE_LABELS,
@@ -36,11 +40,14 @@ import {
 } from './learning'
 import VisualArtifact from './VisualArtifact'
 import { humanizeLearningFileReferences } from './learning-file-message'
+import { detectHumanAdaptationSignals } from './human-adaptation'
 import {
-  TOOL_CHOICE_LABELS,
   type TutorToolChoice,
   type TutorToolRun,
 } from './tooling'
+import ComposerCapabilityPicker from './ComposerCapabilityPicker'
+import AuthGate, { type AuthGateSession } from './AuthGate'
+import AccountModelSettings from './AccountModelSettings'
 import {
   activeLearningPlanProjection,
   closeLearningPlan,
@@ -225,7 +232,6 @@ type PersistedState = {
   learningPath: LearnerPathState
 }
 
-const STORAGE_KEY = 'learnflow.vnext.workspace.v1'
 const SETTINGS_TAB: WorkspaceTab = { id: 'settings', kind: 'settings', title: '设置' }
 const PROJECTS_TAB: WorkspaceTab = { id: 'projects', kind: 'projects', title: '学习项目' }
 const LEARNING_PATH_TAB: WorkspaceTab = { id: 'learning-path', kind: 'learning-path', title: '学习路径' }
@@ -427,9 +433,10 @@ function initialState(): PersistedState {
   }
 }
 
-function restoreState(): PersistedState {
+function restoreState(learnerId: number): PersistedState {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') as Partial<PersistedState> | null
+    isolateLegacyWorkspaceCache(localStorage)
+    const value = JSON.parse(localStorage.getItem(learnerWorkspaceStorageKey(learnerId)) || 'null') as Partial<PersistedState> | null
     if (!value || !Array.isArray(value.conversations) || value.conversations.length === 0) return initialState()
     const conversations = value.conversations.map(conversation => {
       const sheets = sanitizePaperSheets<Message>(conversation.sheets)
@@ -538,18 +545,16 @@ function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
   return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
-function App() {
-  const [workspace, setWorkspace] = useState<PersistedState>(restoreState)
+function App({ auth }: { auth: AuthGateSession }) {
+  const [workspace, setWorkspace] = useState<PersistedState>(() => restoreState(auth.account.learner_id))
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [toolChoices, setToolChoices] = useState<Record<string, TutorToolChoice>>({})
-  const [settingsSaved, setSettingsSaved] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
   const [paperDeskView, setPaperDeskView] = useState<PaperDeskView | null>(null)
   const [pendingTurns, setPendingTurns] = useState<Record<string, TutorMode>>({})
   const [liveTurns, setLiveTurns] = useState<Record<string, LiveTurn>>({})
-  const [tutorEnvironment, setTutorEnvironment] = useState({ checking: true, configured: false, source: '' })
   const [formalConnection, setFormalConnection] = useState<FormalRuntimeConnection>({ status: 'connecting', detail: '正在连接正式五核事件链' })
   const [formalSnapshot, setFormalSnapshot] = useState<FormalLearnerSnapshot>()
   const [formalBusyKey, setFormalBusyKey] = useState('')
@@ -576,16 +581,13 @@ function App() {
     : undefined
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace))
-  }, [workspace])
-
-  useEffect(() => {
-    let active = true
-    requestTutorEnvironmentStatus().then(status => {
-      if (active) setTutorEnvironment({ checking: false, ...status })
-    })
-    return () => { active = false }
-  }, [])
+    try {
+      localStorage.setItem(learnerWorkspaceStorageKey(auth.account.learner_id), JSON.stringify(workspace))
+    } catch {
+      // The formal backend remains authoritative when browser storage is
+      // unavailable or over quota.
+    }
+  }, [auth.account.learner_id, workspace])
 
   const refreshFormalProjects = () => {
     void listFormalProjects()
@@ -1526,6 +1528,26 @@ function App() {
           const session = await persistGlobalConversation(conversation)
           formalSessionId = session?.id
         }
+        const humanAdaptationSignals = detectHumanAdaptationSignals(content)
+        for (const [index, signal] of humanAdaptationSignals.entries()) {
+          await syncFormalEvent({
+            id: `human-adaptation:${clientTurnId}:${index}`,
+            type: 'vnext_human_adaptation_requested',
+            at: now + index,
+            detail: '学习者明确提出当前教学适配需求',
+            payload: {
+              signal_kind: signal.signalKind,
+              value: signal.value,
+              strength: signal.strength,
+              explicit: signal.explicit,
+              evidence_quote: signal.evidenceQuote,
+              conversation_id: conversationId,
+              session_id: formalSessionId,
+              project_id: conversation.projectId,
+              checkpoint_id: conversation.checkpointId,
+            },
+          })
+        }
         if (mode === 'guided_learning' && learningProjection) {
           if (!formalSessionId) {
             const session = await createFormalTutorSession(true, {
@@ -1936,7 +1958,6 @@ function App() {
   }
 
   const updateSettings = (patch: Partial<SettingsState>) => {
-    setSettingsSaved(false)
     setWorkspace(previous => ({ ...previous, settings: { ...previous.settings, ...patch } }))
   }
 
@@ -2258,38 +2279,18 @@ function App() {
           <div className="settings-intro">
             <span className="eyebrow">SETTINGS</span>
             <h1>设置</h1>
-            <p>四种 Tutor 状态共用模型连接；五核、学习路径与任务队列使用下方正式后端事件链。</p>
+            <p>账号、模型凭据和浏览器缓存都以当前 learner 为边界；五核、学习路径与任务队列继续使用正式后端事件链。</p>
           </div>
-          <form className="settings-card" onSubmit={event => { event.preventDefault(); setSettingsSaved(true) }}>
-            <div className="settings-card-heading"><span>01</span><div><h2>模型连接</h2><p>支持 OpenAI 兼容的 Chat Completions 或 Responses 地址。</p></div></div>
-            <label>
-              <span>Base URL</span>
-              <input value={workspace.settings.baseUrl} onChange={event => updateSettings({ baseUrl: event.target.value })} placeholder="https://api.example.com/v1" />
-            </label>
-            <label>
-              <span>模型名称</span>
-              <input value={workspace.settings.model} onChange={event => updateSettings({ model: event.target.value })} placeholder="例如 model-name" />
-            </label>
-            <div className={`environment-key ${tutorEnvironment.configured ? 'environment-key-ready' : 'environment-key-missing'}`}>
-              <span className="environment-key-icon">{tutorEnvironment.checking ? '…' : tutorEnvironment.configured ? '✓' : '!'}</span>
-              <div>
-                <span>API Key</span>
-                <strong>{tutorEnvironment.checking ? '正在检查本地环境' : tutorEnvironment.configured ? '本地环境已配置' : '本地环境未配置'}</strong>
-                <small>
-                  {tutorEnvironment.configured
-                    ? `来源：${tutorEnvironment.source}。Key 只由本地服务读取，不会发送到页面。`
-                    : '在 frontend/.env.local 中设置 LEARNFLOW_API_KEY，然后重启服务。'}
-                </small>
-              </div>
-            </div>
-            <div className="settings-actions">
-              <button type="submit">保存界面配置</button>
-              <span className={settingsSaved ? 'save-status save-status-visible' : 'save-status'}>✓ 已保存</span>
-            </div>
-          </form>
+          <AccountModelSettings
+            account={auth.account}
+            baseUrl={workspace.settings.baseUrl}
+            model={workspace.settings.model}
+            onConnectionChange={updateSettings}
+            onSignOut={auth.signOut}
+          />
           <section className="settings-card profile-settings-card" aria-labelledby="formal-profile-title">
             <div className="settings-card-heading">
-              <span>02</span>
+              <span>{auth.account.role === 'admin' ? '04' : '03'}</span>
               <div>
                 <h2 id="formal-profile-title">正式学习者状态</h2>
                 <p>{formalConnection.status === 'connected' ? `已连接 ${formalConnection.learner?.display_name || '当前学习者'}；所有写入经过 EvidenceEvent 与 reducer。` : formalConnection.detail}</p>
@@ -2837,7 +2838,7 @@ function App() {
               rows={2}
             />
             <div className="composer-footer">
-              <div className="composer-tools">
+              <div className="composer-tools composer-tools-capability">
                 <details className="source-attachment-menu">
                   <summary role="button" aria-label="给当前对话添加资料" title="添加本地文件或 URL">
                     ＋资料{attachedSources.length > 0 ? ` ${attachedSources.length}` : ''}
@@ -2892,27 +2893,20 @@ function App() {
                     onClick={() => setConversationMode(conversation.id, 'learning_plan')}
                   >学习规划</button>
                 </div>
-                <label className="skill-choice" title="学习方法只在带领学习态运行；选择后下一条消息会建立任务">
-                  <span>方法</span>
-                  <select
-                    aria-label="学习方法"
-                    value={activeTaskProjection?.skillId || (conversation.mode === 'guided_learning' ? conversation.preferredSkillId || 'auto' : 'auto')}
-                    disabled={Boolean(pendingMode) || taskProjection?.status === 'paused'}
-                    onChange={event => selectLearningSkill(conversation.id, event.target.value)}
-                  >
-                    <option value="auto" disabled={Boolean(activeTaskProjection)}>自动选择</option>
-                    {(Object.keys(LEARNING_SKILLS) as LearningSkillId[]).map(skillId => (
-                      <option key={skillId} value={skillId}>{LEARNING_SKILLS[skillId].name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="tool-choice">
-                  <span>工具</span>
-                  <select value={toolChoices[draftKey] || 'auto'} disabled={Boolean(pendingMode)} onChange={event => setToolChoices(previous => ({ ...previous, [draftKey]: event.target.value as TutorToolChoice }))}>
-                    {(Object.keys(TOOL_CHOICE_LABELS) as TutorToolChoice[]).map(choice => <option key={choice} value={choice} disabled={choice === 'domain' && attachedSources.length === 0}>{choice === 'domain' && conversation.projectId ? '项目来源' : TOOL_CHOICE_LABELS[choice]}</option>)}
-                  </select>
-                </label>
-                <span>Shift + Enter 换行</span>
+                <ComposerCapabilityPicker
+                  isGuidedLearning={Boolean(activeTaskProjection) || conversation.mode === 'guided_learning'}
+                  skillChoice={activeTaskProjection?.skillId || (conversation.mode === 'guided_learning' ? conversation.preferredSkillId || 'auto' : 'auto')}
+                  skillAutoDisabled={Boolean(activeTaskProjection)}
+                  skillDisabled={Boolean(pendingMode) || taskProjection?.status === 'paused'}
+                  formalSkillRunActive={Boolean(activeTaskProjection?.task.formalSkillRunId)}
+                  toolChoice={toolChoices[draftKey] || 'auto'}
+                  toolDisabled={Boolean(pendingMode)}
+                  sourceCount={attachedSources.length}
+                  sourceKind={conversation.projectId ? 'project' : 'conversation'}
+                  onSkillChange={choice => selectLearningSkill(conversation.id, choice)}
+                  onToolChange={choice => setToolChoices(previous => ({ ...previous, [draftKey]: choice }))}
+                />
+                <span className="composer-shortcut-hint">Shift + Enter 换行</span>
               </div>
               <button type="submit" disabled={Boolean(pendingMode) || !(drafts[draftKey] || '').trim()} aria-label={pendingMode ? 'Tutor 回复中' : '发送消息'}>{pendingMode ? '…' : '↑'}</button>
             </div>
@@ -3003,8 +2997,8 @@ function App() {
           </div>
           <div className="sidebar-footer">
             <button type="button" className="sidebar-user-button" onClick={() => openTab(PROFILE_TAB)}>
-              <span className="sidebar-profile-avatar">现</span>
-              <span><strong>{formalSnapshot?.learner.display_name || '学习者'}</strong><small>{formalConnection.status === 'connected' ? '画像已连接' : '画像离线'}</small></span>
+              <span className="sidebar-profile-avatar">{auth.account.display_name.slice(0, 1)}</span>
+              <span><strong>{auth.account.display_name}</strong><small>{formalConnection.status === 'connected' ? `@${auth.account.username} · 画像已连接` : `@${auth.account.username} · 画像离线`}</small></span>
             </button>
             <button type="button" className="sidebar-settings-button" onClick={() => openTab(SETTINGS_TAB)} aria-label="打开设置">⚙</button>
           </div>
@@ -3426,4 +3420,8 @@ const rootElement = document.getElementById('root')!
 const rootScope = globalThis as typeof globalThis & { __learnflowRoot?: Root }
 const root = rootScope.__learnflowRoot || createRoot(rootElement)
 rootScope.__learnflowRoot = root
-void initializeRuntimeClient().then(() => root.render(<App />))
+void initializeRuntimeClient().then(() => root.render(
+  <AuthGate>
+    {auth => <App key={`learner:${auth.account.learner_id}`} auth={auth} />}
+  </AuthGate>,
+))

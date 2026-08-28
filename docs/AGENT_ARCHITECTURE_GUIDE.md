@@ -5,6 +5,14 @@
 > 当前状态：常驻 Tutor、统一 Learning Task、双队列、可验证微学习、五核运行时、项目提案、Action Board、多用户隔离和记忆图谱均已有实现
 > 权威入口：职责变更必须同时更新 `backend/app/services/architecture_registry.py`、本文与对应测试；维护边界和变更流程见 `docs/ARCHITECTURE_AUTHORITY.md`
 
+Contract impact（`2026-08-28.6`）：seeded competition demo 的唯一固定 Python 纠错题由内部版本化 AST 合同判题，不启动解释器，也不复用生产代码执行工具。只有演示模式、来源、grader ID、合同 SHA-256 与固定测试集全部匹配才会返回结果；其他题继续进入默认拒绝的通用代码执行策略。该结果只在正式提交后形成 Attempt/EvidenceEvent，并保留 `execution_performed=false`，不能被解释为任意代码已在沙箱中运行。
+
+Contract impact（`2026-08-28.5`）：确定性 reducer 在实现旁显式导出 `REDUCER_EVENT_TYPES`，注册表据此逐项验证非空 target Event，而不是从声明清单或源码文本猜测 handler。`code_executor` 的稳定 ID 不变，但对外名称收紧为 `Policy-gated Local Code Executor`：默认及生产模式不可用，开发者只有显式选择 `trusted_local_process` 才能运行主机进程；该模式不声称隔离文件系统、网络或密钥。生成代码、运行成功和测试结果仍不自动成为学习掌握证据。
+
+Contract impact（`2026-08-28.4`）：Tool、Product Skill、Workbench、Capability 与 Event 的“已登记”和“可用”被明确分开。每个发布项都有 `implemented / optional_unimplemented / deprecated` lifecycle；内部 `implemented` 项必须绑定真实 Python symbol、FastAPI route 或仓库内静态可核验的 frontend component/handler。前端校验不动态导入 TypeScript。`schema_valid` 只校验契约结构与交叉引用，`implementation_valid` 才解析 binding，`valid` 要求两者同时成立；旧 `errors` 保持兼容。没有运行入口的外部 workflow/星辰条目以及无 handler 的资源能力不会进入 available 能力。非空 target Event 必须声明 payload version 与 reducer binding；该版本会在运行时缺少独立 `REDUCER_EVENT_TYPES` 时诚实失败，`2026-08-28.5` 已补齐该实现契约。
+
+Contract impact（`2026-08-28.3`）：Human 的会话内适配采用“显式文本规则 → 带 scope EvidenceEvent → 确定性 reducer → 8 小时临时状态 → 安全 ContextPacket 指令”。Tutor 可据此调整步幅、表征、信息量和支持方式，但不得看到 Human 原始敏感记忆，也不得把一次错误、不会作答或低分推断成情绪、人格、能力或固定学习风格。类型化信号发生在本轮观察装配之前，因此同一轮即可生效；事件幂等且只经正式五核链写入。
+
 Contract impact（`2026-08-28.1`）：Learning Design 的教学交付投影拆为 Knowledge 输入契约、教学包成熟度和原子任务就绪度。Knowledge 只通过可选、answer-free、scoped `ContextPacket` 提供起点与缺口；缺失时通用包仍可生成。包成熟度只看既有教学资产，任务就绪度只组合 learner-owned LearningTask 与包阶段，并允许最小讲解、仅带领学习或仅练习等透明软降级。旧 `delivery_readiness` 顶层摘要保持兼容；没有新表、事件、Agent、Skill、五核写入或掌握语义变化。详见 `docs/implementation/TEACHING_DELIVERY_AND_VIDEO_HARNESS.md`。
 
 Contract impact（`2026-08-27.8`）：Learning Design 在现有 Checkpoint 上执行轻量 Teaching Contract 门禁和可重建 `delivery_readiness`，不建立新表或第二套学习状态。教学生成失败时由确定性 fallback 保证仍有可继续学习的最小产物。视频推荐作为 `learning_resource_curation`、`learning_file_study` 与 `evidence_grounded_teaching` 可组合的两级 ACI：先搜索候选，再核验本轮候选字幕和时间点；底层 Bilibili/YouTube/字幕/ASR 适配器不直接暴露。任何候选、视频观看或字幕读取都不形成掌握证据。详见 `docs/implementation/TEACHING_DELIVERY_AND_VIDEO_HARNESS.md`。
@@ -511,8 +519,9 @@ MUST 持久挂在任务上；生成材料本身 MUST NOT 完成 learn 或改变�
 
 ### 8.3 对话 Session、学习 Skill 与可验证工作台
 
-`/agent/:sessionId` 是 global Tutor 的独立对话主界面，并包含模式条、当前任务计划、文件入口
-和选中文字追问等轻量工作台能力。一个学习者可以拥有多段并列对话；
+`/chat/:conversationId` 是 canonical frontend 中已绑定的 Tutor 独立对话主界面，并包含模式条、
+当前任务计划、文件入口和选中文字追问等轻量工作台能力。`/agent/:sessionId` 对应的
+`global_tutor` 稳定工作台 ID 已标记为 `deprecated`，不能作为当前可用 route。一个学习者可以拥有多段并列对话；
 项目是可由对话创建、进入或挂载的长期上下文，工作台则是 Skill 在需要时生成的结构化
 附件。前端不得以固定学习方法表单替代 Session，也不得让右侧上下文 Tutor 与独立对话
 同时竞争主输入。
@@ -545,10 +554,11 @@ Tutor Session -> confirmed SkillRun + LearningTask -> bounded dialogue
   -> MicroLearningRun -> graded attempts / remediation / review
 ```
 
-`/learn/:runId` 是 Tutor 所有、由对话按需产生的学习文件工作台附件，内部依次调用 Learning
-Design 和 Practice 能力，不新增第四个主 Agent。只有明确请求“15 分钟、微学习或可验证
-学习”才自动启动；普通“帮我学”留在当前对话。文件页 MUST 使用 LearningTask 的
-`origin_navigation` 返回原 Chat/关卡，并以原 `session_id` 打开同一 Tutor 历史。
+`/learn/:runId` 是未来由对话按需产生的学习文件附件契约，但 canonical frontend 当前没有
+route/component binding，因此 `focused_learning` lifecycle 为 `optional_unimplemented`，不得对用户
+宣称可直接打开。现有闭环由 `/chat/:conversationId`、`/tasks`、`/learning-files`、正式练习文件与
+`/review` 承载。未来实现独立附件时仍由 Tutor 所有，不新增第四个主 Agent，并 MUST 使用
+LearningTask 的 `origin_navigation` 返回原 Chat/关卡、以原 `session_id` 打开同一 Tutor 历史。
 
 ```text
 start_micro_learning
@@ -582,15 +592,17 @@ start_micro_learning
 
 ### 8.4 用户成长工作台
 
-`/growth` 是 Tutor 所有的只读用户投影，把个人资料、五核当前状态、Memory Fact
-依据、复习待办、重大事件和 Badge 组合为一个“我的成长”空间。它不是新的画像权威，
-也不增加 Kernel、Agent 或写入路径；所有数据继续来自既有权威表与确定性投影。
+`/learner-profile` 是 canonical frontend 中已实现的 Tutor 只读画像入口。`/growth` 描述的是把个人
+资料、五核当前状态、Memory Fact 依据、复习待办、重大事件和 Badge 组合为“我的成长”的候选形态，
+但当前没有 route/component binding，`learner_growth` lifecycle 为 `optional_unimplemented`。候选页面
+不得进入 available 工作台；即使未来实现，它也不是新的画像权威，不增加 Kernel、Agent 或写入路径。
 
 面向学习者时，五核名称必须转换为“正在进行、理解情况、实践表现、学习节奏、目标与
 兴趣”等行动语言；证据等级转换为“你告诉我的、学习中验证过、根据学习记录”等来源
 说明。原始置信度、节点 ID、predicate、provenance 和 JSON 不得出现在默认体验中。
 学习者可以归档或恢复系统当前参考的记忆，但归档不能删除原始 EvidenceEvent、历史
-Attempt、重大事件或 Badge。`/profile` 与 `/memory` 只作为旧地址兼容并跳转到对应页签。
+Attempt、重大事件或 Badge。`/profile` 与 `/memory` 只保留 `deprecated` 稳定声明；当前 frontend
+没有 redirect binding，不得把兼容意图写成已实现跳转。
 
 ### 8.5 桌面文件工作台
 
@@ -857,19 +869,22 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 
 ## 16. 前端空间与责任
 
-| 页面 | 主要责任 |
+| 已实现页面 | 主要责任 |
 |---|---|
-| `/agent` | 打开最近一段独立 global 对话，首次使用时创建 Session |
-| `/agent/:sessionId` | 四模式独立学习对话、轻量工作台、会话级 Skill、原子任务与文件入口 |
+| `/chat/:conversationId` | Tutor 独立对话、轻量工作台、会话级 Skill、原子任务与文件入口 |
 | `/tasks` | Learning Task 纯管理队列；支持排序、暂停、恢复、移除和返回原 Chat/关卡 |
-| `/learn/:runId` | 讲义、引导练习和独立验证的文件工作台；复用原 Session Tutor 并返回来源 |
 | `/review` | 独立复习队列、确定性调度、判题与纠错闭环 |
 | `/projects` | 项目组合、待创建提案和项目管理 |
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |
-| `/projects/:id/checkpoints/:id` | 正式讲义、关卡学习与选中内容追问 |
-| `/projects/:id/checkpoints/:id/exercises` | 概念验证、代码实践与尝试结果 |
-| `/growth` | 当前状态、下一步、成长成就、可管理记忆、可读依据与个人资料 |
-| `/profile`、`/memory` | 旧地址兼容；分别跳转到 `/growth` 的资料与记忆页签 |
+| `/learning-path` | 官方与个人学习路径图、节点检索和确认管理 |
+| `/learner-profile` | 五核只读画像、可追溯依据与明确资料管理 |
+| `/learning-files` | 正式讲义与练习文件目录 |
+| `/files/lecture/:lectureId` | 讲义文件阅读与批注 |
+| `/files/practice/:practiceRef` | 答案隔离的练习文件与正式提交 |
+
+`/agent/:sessionId`、旧关卡 lecture/assessment、独立 RemediationPanel、`/profile` 与 `/memory`
+均为 `deprecated` 稳定声明；`/learn/:runId` 与 `/growth` 为 `optional_unimplemented`。它们没有
+canonical frontend binding，不得出现在 available 工作台或被文档描述为当前可用页面。
 
 页面只显示用户能理解和行动的信息。内部 Kernel 名称、工具 handler、路由权重和原始 JSON 不应直接暴露在主要学习体验中。
 
@@ -970,6 +985,9 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 
 新增 Agent、工具、事件或页面流程时，至少回答以下问题：
 
+- 发布 lifecycle 是 `implemented`、`optional_unimplemented` 还是 `deprecated`？如果是
+  `implemented`，对应的 Python symbol、FastAPI route 或静态 frontend component/handler binding 在哪里？
+- `schema_valid` 与 `implementation_valid` 是否分别通过？不能用清单内 owner、路径字符串或源码文本命中替代实现校验。
 - 它属于全局 Tutor、项目 Tutor、关卡还是领域 Agent？
 - 它是教学回复、无副作用提案、同步 action 还是异步 action？
 - 用户是否已经明确授权副作用？
@@ -977,6 +995,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 - 是否需要幂等键，重复请求应返回什么？
 - 成功结果的真实来源是什么？失败时如何降级？
 - 它产生哪种 EvidenceEvent？是否需要 LearningAttempt？
+- EventContract 有非空 Kernel target 时，payload version 与 reducer event-set binding 是否齐全？
 - 哪个 Kernel 可以更新，允许的字段是什么？
 - 这个行为是接触、辅助、独立证明还是迁移证明？
 - 是否会改变 checkpoint 状态，依据是否足够？

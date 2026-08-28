@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.learning import (
     AgentSession, LearnerProfile, LearningSkillRun, LearningTask, MicroLearningRun,
 )
+from app.models.project import Checkpoint, Project, Roadmap
 from app.services.architecture_registry import (
     learning_skill_runtime_contract,
     selectable_learning_skill,
@@ -25,6 +26,7 @@ from app.services.learning_runtime import record_event
 
 
 SKILL_RUNTIME_VERSION = "atomic-learning-skill-runtime-v6"
+SUPPORT_TURN_BUDGET = 3
 RUNTIME_SKILL_IDS = (
     "guided_explanation",
     "socratic_dialogue",
@@ -607,6 +609,55 @@ def _support_step(
     }
 
 
+def _support_budget_exit_step(
+    step: dict[str, Any],
+    *,
+    support_count: int,
+) -> dict[str, Any]:
+    """Expose deterministic exits when support has reached its hard budget."""
+    support_exit = {
+        "status": "required",
+        "reason": "support_budget_exhausted",
+        "support_count": support_count,
+        "support_budget": SUPPORT_TURN_BUDGET,
+        "mastery_unchanged": True,
+        "options": [
+            {
+                "action": "narrow_goal",
+                "label": "缩小目标",
+                "description": "只保留当前目标中一个可检查的关系，再开始新的有界回合。",
+            },
+            {
+                "action": "switch_method",
+                "label": "换一种方法",
+                "description": "暂停当前方法，显式选择另一种已登记学习方法。",
+            },
+            {
+                "action": "pause",
+                "label": "暂停",
+                "description": "保留当前位置，稍后由学习者主动恢复。",
+            },
+        ],
+    }
+    return {
+        **step,
+        "directive": (
+            f"{step['directive']} 本方法的 support 回合已达到确定性上限 "
+            f"{SUPPORT_TURN_BUDGET}；保持当前状态，不得自动通过、不得进入验证。"
+            "最后必须给出三个结构化出口：缩小目标、换一种方法、暂停，并等待学习者选择。"
+        ),
+        "fallback": (
+            f"{step['fallback']}\n\n当前方法的支架回合已达到上限，状态不会自动通过。"
+            "请选择下一步：1）缩小目标；2）换一种方法；3）暂停。"
+        ),
+        "flow_note": (
+            f"support 回合已达到上限 {SUPPORT_TURN_BUDGET}；"
+            "当前步骤与掌握状态均未推进，等待学习者选择结构化出口。"
+        ),
+        "support_exit": support_exit,
+    }
+
+
 def _next_step(skill_id: str, current_state: str, goal: str) -> dict[str, Any]:
     if skill_id == "guided_explanation":
         rows = {
@@ -855,7 +906,10 @@ def transition_learning_skill_turn(
             "orientation_example_choice"
         )
     support_only = response_signal != "attempt"
-    next_support_count = support_count + (1 if support_only else 0)
+    next_support_count = min(
+        SUPPORT_TURN_BUDGET,
+        max(0, int(support_count or 0)) + (1 if support_only else 0),
+    )
     next_diagnostic = dict(teach_back_diagnostic or {})
     next_gap_loop_count = max(0, int(gap_loop_count or 0))
     if skill_id == "feynman_dialogue" and support_only and response_signal in {
@@ -884,6 +938,11 @@ def transition_learning_skill_turn(
         if support_only else
         _next_step(skill_id, current_state, goal)
     )
+    if support_only and next_support_count >= SUPPORT_TURN_BUDGET:
+        next_step = _support_budget_exit_step(
+            next_step,
+            support_count=next_support_count,
+        )
     next_turn_count = turn_count + (0 if support_only else 1)
     if skill_id == "feynman_dialogue" and not support_only:
         preserve_gap = current_state != "awaiting_teach_back"
@@ -929,6 +988,8 @@ def transition_learning_skill_turn(
         "response_signal": response_signal,
         "support_only": support_only,
         "support_count": next_support_count,
+        "support_budget": SUPPORT_TURN_BUDGET,
+        "support_exit": dict(next_step.get("support_exit") or {}),
         "turn_count": next_turn_count,
         "calibration": normalized_calibration,
         "teach_back_diagnostic": next_diagnostic,
@@ -961,15 +1022,101 @@ async def latest_skill_run(
     )).scalar_one_or_none()
 
 
+async def _validate_session_scope(
+    db: AsyncSession,
+    session: AgentSession,
+) -> tuple[Project | None, Checkpoint | None]:
+    """Validate the persisted session and its exact learner-owned scope."""
+    persisted = (await db.execute(select(AgentSession).where(
+        AgentSession.id == session.id,
+        AgentSession.learner_id == session.learner_id,
+        AgentSession.status == "active",
+    ))).scalar_one_or_none()
+    if (
+        not persisted
+        or persisted.session_type != session.session_type
+        or persisted.project_id != session.project_id
+        or persisted.checkpoint_id != session.checkpoint_id
+    ):
+        raise RuntimeError("unsupported_scope")
+
+    if session.session_type == "global":
+        if session.project_id is not None or session.checkpoint_id is not None:
+            raise RuntimeError("unsupported_scope")
+        return None, None
+
+    if session.session_type == "project":
+        if session.project_id is None or session.checkpoint_id is not None:
+            raise RuntimeError("unsupported_scope")
+        project = (await db.execute(select(Project).where(
+            Project.id == session.project_id,
+            Project.learner_id == session.learner_id,
+            Project.visibility != "deleted",
+        ))).scalar_one_or_none()
+        if not project:
+            raise RuntimeError("unsupported_scope")
+        return project, None
+
+    if session.session_type == "checkpoint":
+        if session.project_id is None or session.checkpoint_id is None:
+            raise RuntimeError("unsupported_scope")
+        row = (await db.execute(
+            select(Checkpoint, Roadmap, Project)
+            .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
+            .join(Project, Project.id == Roadmap.project_id)
+            .where(
+                Checkpoint.id == session.checkpoint_id,
+                Roadmap.project_id == session.project_id,
+                Project.id == session.project_id,
+                Project.learner_id == session.learner_id,
+                Project.visibility != "deleted",
+            )
+        )).first()
+        if not row:
+            raise RuntimeError("unsupported_scope")
+        return row[2], row[0]
+
+    raise RuntimeError("unsupported_scope")
+
+
+def _task_matches_session_scope(task: LearningTask, session: AgentSession) -> bool:
+    return bool(
+        task.learner_id == session.learner_id
+        and task.session_id == session.id
+        and task.project_id == session.project_id
+        and task.checkpoint_id == session.checkpoint_id
+    )
+
+
+async def validate_learning_skill_run_scope(
+    db: AsyncSession,
+    *,
+    session: AgentSession,
+    run: LearningSkillRun,
+) -> None:
+    """Require learner, session, project, checkpoint and linked-task ownership."""
+    await _validate_session_scope(db, session)
+    if run.learner_id != session.learner_id or run.session_id != session.id:
+        raise RuntimeError("unsupported_scope")
+    if run.learning_task_id:
+        task = await db.get(LearningTask, run.learning_task_id)
+        if not task or not _task_matches_session_scope(task, session):
+            raise RuntimeError("unsupported_scope")
+
+
 async def _linked_learning_task(
     db: AsyncSession, run: LearningSkillRun,
 ) -> LearningTask | None:
     if not run.learning_task_id:
         return None
-    return (await db.execute(select(LearningTask).where(
+    task = (await db.execute(select(LearningTask).where(
         LearningTask.id == run.learning_task_id,
         LearningTask.learner_id == run.learner_id,
     ))).scalar_one_or_none()
+    session = await db.get(AgentSession, run.session_id)
+    if not task or not session or not _task_matches_session_scope(task, session):
+        return None
+    return task
 
 
 async def _advance_linked_task(
@@ -979,7 +1126,13 @@ async def _advance_linked_task(
     action: str,
     operation_id: str,
 ) -> LearningTask | None:
+    session = await db.get(AgentSession, run.session_id)
+    if not session:
+        raise RuntimeError("unsupported_scope")
+    await validate_learning_skill_run_scope(db, session=session, run=run)
     task = await _linked_learning_task(db, run)
+    if run.learning_task_id and not task:
+        raise RuntimeError("unsupported_scope")
     if not task:
         return None
     from app.services.learning_tasks import advance_learning_task_from_skill
@@ -1001,42 +1154,68 @@ async def _ensure_atomic_learning_task(
     source: str,
 ) -> LearningTask:
     """Attach one learner-visible atomic task to the SkillRun."""
-    linked = await _linked_learning_task(db, run)
-    if linked:
-        return linked
-    existing = (await db.execute(select(LearningTask).where(
-        LearningTask.learner_id == run.learner_id,
-        LearningTask.session_id == session.id,
-        LearningTask.objective == run.goal,
-        LearningTask.status.in_({"queued", "active", "paused"}),
-    ).order_by(LearningTask.id.desc()).limit(1))).scalar_one_or_none()
-    if existing:
-        run.learning_task_id = existing.id
-        task = existing
-    else:
-        from app.services.learning_tasks import create_learning_task
+    _project, checkpoint = await _validate_session_scope(db, session)
+    if run.learner_id != session.learner_id or run.session_id != session.id:
+        raise RuntimeError("unsupported_scope")
 
-        skill = selectable_learning_skill(run.skill_id)
-        task, _ = await create_learning_task(
+    task: LearningTask
+    if run.learning_task_id:
+        linked = await db.get(LearningTask, run.learning_task_id)
+        if not linked or not _task_matches_session_scope(linked, session):
+            raise RuntimeError("unsupported_scope")
+        task = linked
+    elif checkpoint:
+        from app.services.learning_tasks import ensure_checkpoint_learning_task
+
+        task = await ensure_checkpoint_learning_task(
             db,
             learner_id=run.learner_id,
+            checkpoint=checkpoint,
             session_id=session.id,
-            title=f"{skill.name if skill else '学习方法'}：{run.goal}"[:255],
-            objective=run.goal,
-            client_request_id=f"skill-task:{run.id}",
-            origin_kind="skill",
-            created_by=source,
-            status="active",
-            estimated_minutes=20,
-            preferred_skills=[run.skill_id],
-            success_criteria=[
-                "完成本方法的有界引导",
-                "完成至少一次无提示独立验证",
-                "把合格评估转交复习队列",
-            ],
-            source_refs=[{"type": "learning_skill_run", "id": run.id}],
         )
+        if not _task_matches_session_scope(task, session):
+            raise RuntimeError("unsupported_scope")
         run.learning_task_id = task.id
+    else:
+        existing = (await db.execute(select(LearningTask).where(
+            LearningTask.learner_id == run.learner_id,
+            LearningTask.session_id == session.id,
+            LearningTask.project_id == session.project_id,
+            LearningTask.checkpoint_id == session.checkpoint_id,
+            LearningTask.objective == run.goal,
+            LearningTask.status.in_({"queued", "active", "paused"}),
+        ).order_by(LearningTask.id.desc()).limit(1))).scalar_one_or_none()
+        if existing:
+            task = existing
+            run.learning_task_id = existing.id
+        else:
+            from app.services.learning_tasks import create_learning_task
+
+            skill = selectable_learning_skill(run.skill_id)
+            task, _ = await create_learning_task(
+                db,
+                learner_id=run.learner_id,
+                session_id=session.id,
+                project_id=session.project_id,
+                checkpoint_id=session.checkpoint_id,
+                title=f"{skill.name if skill else '学习方法'}：{run.goal}"[:255],
+                objective=run.goal,
+                client_request_id=f"skill-task:{run.id}",
+                origin_kind="skill",
+                created_by=source,
+                status="active",
+                estimated_minutes=20,
+                preferred_skills=[run.skill_id],
+                success_criteria=[
+                    "完成本方法的有界引导",
+                    "完成至少一次无提示独立验证",
+                    "把合格评估转交复习队列",
+                ],
+                source_refs=[{"type": "learning_skill_run", "id": run.id}],
+            )
+            if not _task_matches_session_scope(task, session):
+                raise RuntimeError("unsupported_scope")
+            run.learning_task_id = task.id
     if task.status == "queued":
         await _advance_linked_task(
             db, run, action="start", operation_id=f"attach-{run.id}",
@@ -1062,9 +1241,15 @@ async def _record_run_event(
     client_event_id: str,
     source: str = "skill_runtime",
 ) -> None:
+    session = await db.get(AgentSession, run.session_id)
+    if not session:
+        raise RuntimeError("unsupported_scope")
+    await validate_learning_skill_run_scope(db, session=session, run=run)
     await record_event(
         db,
         learner_id=run.learner_id,
+        project_id=session.project_id,
+        checkpoint_id=session.checkpoint_id,
         session_id=run.session_id,
         event_type=event_type,
         source=source,
@@ -1095,8 +1280,7 @@ async def create_learning_skill_run(
     client_request_id: str,
     source: str = "user",
 ) -> tuple[LearningSkillRun, bool]:
-    if session.session_type != "global":
-        raise RuntimeError("unsupported_scope")
+    await _validate_session_scope(db, session)
     if skill_id not in RUNTIME_SKILL_IDS or not selectable_learning_skill(skill_id):
         raise RuntimeError("unsupported_skill")
     normalized_goal = _learning_goal(goal, skill_id)
@@ -1108,20 +1292,25 @@ async def create_learning_skill_run(
         LearningSkillRun.client_request_id == request_key,
     ))).scalar_one_or_none()
     if existing:
+        await validate_learning_skill_run_scope(db, session=session, run=existing)
         if not existing.learning_task_id:
             await _ensure_atomic_learning_task(
                 db, session=session, run=existing, source=source,
             )
+        await validate_learning_skill_run_scope(db, session=session, run=existing)
         return existing, False
 
     current = await active_skill_run(db, session)
     if current and current.skill_id == skill_id and current.goal == normalized_goal:
+        await validate_learning_skill_run_scope(db, session=session, run=current)
         if not current.learning_task_id:
             await _ensure_atomic_learning_task(
                 db, session=session, run=current, source=source,
             )
+        await validate_learning_skill_run_scope(db, session=session, run=current)
         return current, False
     if current:
+        await validate_learning_skill_run_scope(db, session=session, run=current)
         previous_state = current.state
         current.status = "paused"
         current.state = "paused"
@@ -1167,6 +1356,8 @@ async def create_learning_skill_run(
         "mastery_claim": "none",
         "entry_mode": "grounded" if grounded_entry else "standard",
         "support_count": 0,
+        "support_budget": SUPPORT_TURN_BUDGET,
+        "support_exit": {},
         "last_response_signal": "opening",
         "flow_note": (
             "先建立可回答的知识起点，再进入单步追问。"
@@ -1230,6 +1421,7 @@ async def pause_active_skill_run_for_selection(
     current = await active_skill_run(db, session)
     if not current or selected_skill_id == current.skill_id:
         return current
+    await validate_learning_skill_run_scope(db, session=session, run=current)
     previous_state = current.state
     current.status = "paused"
     current.state = "paused"
@@ -1254,6 +1446,38 @@ async def pause_active_skill_run_for_selection(
     return current
 
 
+def current_learning_skill_turn_plan(
+    run: LearningSkillRun,
+    *,
+    started: bool = False,
+) -> dict[str, Any]:
+    """Project the already-decided render plan without advancing the run."""
+    data = dict(run.run_data or {})
+    response_signal = str(data.get("last_response_signal") or "")
+    return {
+        "started": started,
+        "directive": str(data.get("next_directive") or ""),
+        "fallback": str(data.get("next_prompt") or ""),
+        "response_signal": response_signal,
+        "support_only": response_signal not in {"", "opening", "attempt"},
+        "support_count": int(data.get("support_count") or 0),
+        "support_budget": int(data.get("support_budget") or SUPPORT_TURN_BUDGET),
+        "support_exit": dict(data.get("support_exit") or {}),
+        "run_version": run.version,
+    }
+
+
+def is_learning_skill_opening_turn(run: LearningSkillRun, message: str) -> bool:
+    """Recognize the learner message that only opened an already-created run."""
+    data = dict(run.run_data or {})
+    return bool(
+        run.status == "active"
+        and run.turn_count == 0
+        and not list(data.get("responses") or [])
+        and _learning_goal(message, run.skill_id) == run.goal
+    )
+
+
 async def prepare_learning_skill_turn(
     db: AsyncSession,
     *,
@@ -1262,8 +1486,14 @@ async def prepare_learning_skill_turn(
     message: str,
     message_id: int,
     client_turn_id: str | None,
+    expected_run_id: int | None = None,
 ) -> tuple[LearningSkillRun, dict[str, Any]]:
+    await _validate_session_scope(db, session)
     current = await active_skill_run(db, session)
+    if expected_run_id is not None and (
+        not current or current.id != expected_run_id or current.skill_id != skill_id
+    ):
+        raise RuntimeError("invalid_state")
     if not current or current.skill_id != skill_id:
         run, _ = await create_learning_skill_run(
             db,
@@ -1273,16 +1503,13 @@ async def prepare_learning_skill_turn(
             client_request_id=client_turn_id or f"message-{message_id}",
             source="user",
         )
-        data = dict(run.run_data or {})
-        return run, {
-            "started": True,
-            "directive": data.get("next_directive", ""),
-            "fallback": data.get("next_prompt", ""),
-        }
+        return run, current_learning_skill_turn_plan(run, started=True)
+
+    await validate_learning_skill_run_scope(db, session=session, run=current)
 
     if current.status == "verification":
         return current, {
-            "started": False,
+            **current_learning_skill_turn_plan(current),
             "directive": "独立验证已经创建。回答当前问题前，提醒学习者打开或继续验证附件。",
             "fallback": "独立验证已经准备好。请打开下方验证卡继续；完成后这里会自动记录本轮结果。",
         }
@@ -1308,12 +1535,7 @@ async def prepare_learning_skill_turn(
     turn_key = f"turn:{session.id}:{client_turn_id or message_id}"
     history = list(current.action_log or [])
     if turn_key in history:
-        data = dict(current.run_data or {})
-        return current, {
-            "started": False,
-            "directive": data.get("next_directive", ""),
-            "fallback": data.get("next_prompt", ""),
-        }
+        return current, current_learning_skill_turn_plan(current)
     if current.state in {"verification_ready", "verification_in_progress", "completed"}:
         if current.state == "verification_ready":
             await _advance_linked_task(
@@ -1322,14 +1544,25 @@ async def prepare_learning_skill_turn(
                 action="complete_learn",
                 operation_id="verification-ready",
             )
-        data = dict(current.run_data or {})
         return current, {
-            "started": False,
-            "directive": data.get("next_directive", "停止追加教学问题，邀请学习者进入独立验证。"),
-            "fallback": data.get("next_prompt", "请开始独立验证，完成后再继续讨论。"),
+            **current_learning_skill_turn_plan(current),
+            "directive": str((current.run_data or {}).get(
+                "next_directive", "停止追加教学问题，邀请学习者进入独立验证。",
+            )),
+            "fallback": str((current.run_data or {}).get(
+                "next_prompt", "请开始独立验证，完成后再继续讨论。",
+            )),
         }
 
     data = dict(current.run_data or {})
+    if (
+        int(data.get("support_count") or 0) >= SUPPORT_TURN_BUDGET
+        and learner_response_signal(message) != "attempt"
+    ):
+        # The learner message and its EvidenceEvent still exist, but the formal
+        # support loop is closed: reuse the persisted exit plan without another
+        # SkillRun transition, version bump, or model-owned state decision.
+        return current, current_learning_skill_turn_plan(current)
     previous_state = current.state
     transition = transition_learning_skill_turn(
         skill_id=current.skill_id,
@@ -1365,6 +1598,8 @@ async def prepare_learning_skill_turn(
         "next_prompt": transition["fallback"],
         "mastery_claim": "none",
         "support_count": support_count,
+        "support_budget": int(transition["support_budget"]),
+        "support_exit": dict(transition.get("support_exit") or {}),
         "last_response_signal": response_signal,
         "flow_note": transition.get(
             "flow_note",
@@ -1390,6 +1625,9 @@ async def prepare_learning_skill_turn(
             "message_id": message_id,
             "response_signal": response_signal,
             "support_only": support_only,
+            "support_count": support_count,
+            "support_budget": int(transition["support_budget"]),
+            "support_exit": dict(transition.get("support_exit") or {}),
             "mastery_unchanged": True,
         },
         client_event_id=f"learning-skill-run:{current.id}:{turn_key}:advanced",
@@ -1429,11 +1667,7 @@ async def prepare_learning_skill_turn(
             action="complete_learn",
             operation_id=f"turn-{current.turn_count}",
         )
-    return current, {
-        "started": False,
-        "directive": transition["directive"],
-        "fallback": transition["fallback"],
-    }
+    return current, current_learning_skill_turn_plan(current)
 
 
 async def reconcile_learning_skill_run(
@@ -1517,6 +1751,7 @@ async def learning_skill_run_view(
     skill = selectable_learning_skill(run.skill_id)
     workflow = WORKFLOWS.get(run.skill_id, {})
     data = dict(run.run_data or {})
+    session = await db.get(AgentSession, run.session_id)
     micro = await db.get(MicroLearningRun, run.micro_learning_run_id) if run.micro_learning_run_id else None
     task = await _linked_learning_task(db, run)
     total_steps = int(workflow.get("total_steps") or 4)
@@ -1544,6 +1779,11 @@ async def learning_skill_run_view(
             "description": skill.description if skill else "",
         },
         "runtime_version": run.skill_version,
+        "scope": {
+            "session_id": run.session_id,
+            "project_id": session.project_id if session and session.learner_id == run.learner_id else None,
+            "checkpoint_id": session.checkpoint_id if session and session.learner_id == run.learner_id else None,
+        },
         "goal": run.goal,
         "status": run.status,
         "state": run.state,
@@ -1553,6 +1793,8 @@ async def learning_skill_run_view(
         "turn_count": run.turn_count,
         "turn_budget": run.turn_budget,
         "support_count": int(data.get("support_count") or 0),
+        "support_budget": int(data.get("support_budget") or SUPPORT_TURN_BUDGET),
+        "support_exit": dict(data.get("support_exit") or {}),
         "gap_loop_count": int(data.get("gap_loop_count") or 0),
         "calibration": calibration,
         "calibration_axes": calibration_axes,
@@ -1610,6 +1852,82 @@ async def latest_learning_skill_run_view(
     return await learning_skill_run_view(db, await latest_skill_run(db, session))
 
 
+async def _materialize_skill_verification(
+    db: AsyncSession,
+    *,
+    task: LearningTask,
+    run: LearningSkillRun,
+    client_action_id: str,
+    education_stage: str,
+    background: str,
+) -> MicroLearningRun:
+    """Create a verification artifact without moving the origin task's scope."""
+    from app.services.learning_tasks import RUNTIME_VERSION as LEARNING_TASK_RUNTIME_VERSION
+    from app.services.micro_learning import create_micro_learning_run
+
+    request_id = f"skill-run-{run.id}-{client_action_id}"
+    micro = await create_micro_learning_run(
+        db,
+        learner_id=task.learner_id,
+        goal=task.objective,
+        source_text="",
+        client_request_id=request_id,
+        education_stage=education_stage,
+        background=background,
+        source="learning_task",
+        attach_learning_task=False,
+        learning_task_id=task.id,
+    )
+    if micro.learner_id != task.learner_id:
+        raise RuntimeError("unsupported_scope")
+
+    task.micro_learning_run_id = micro.id
+    state = dict(task.execution_state or {})
+    state["verification_handoff"] = {
+        "micro_learning_run_id": micro.id,
+        "project_id": micro.project_id,
+        "checkpoint_id": micro.checkpoint_id,
+        "session_id": micro.session_id,
+        "status": "in_progress",
+    }
+    task.execution_state = state
+    task.action_log = [
+        *list(task.action_log or []),
+        {
+            "client_action_id": request_id,
+            "action": "materialize",
+            "at": datetime.utcnow().isoformat(),
+            "micro_learning_run_id": micro.id,
+        },
+    ][-200:]
+    task.version += 1
+    await record_event(
+        db,
+        learner_id=task.learner_id,
+        project_id=task.project_id,
+        checkpoint_id=task.checkpoint_id,
+        session_id=task.session_id,
+        event_type="learning_task_materialized",
+        source="learning_task",
+        payload={
+            "learning_task_id": task.id,
+            "runtime_version": LEARNING_TASK_RUNTIME_VERSION,
+            "micro_learning_run_id": micro.id,
+            "source_mode": "topic",
+            "verification_scope": state["verification_handoff"],
+            "mastery_unchanged": True,
+        },
+        provenance={
+            "learning_task_id": task.id,
+            "skill_run_id": run.id,
+            "decision_owner": "deterministic_skill_runtime",
+        },
+        artifact_refs=[{"type": "micro_learning_run", "id": micro.id}],
+        client_event_id=f"learning-task:{task.id}:materialized:{request_id}",
+    )
+    return micro
+
+
 async def act_on_learning_skill_run(
     db: AsyncSession,
     *,
@@ -1621,6 +1939,10 @@ async def act_on_learning_skill_run(
     background: str = "",
     calibration_patch: dict[str, Any] | None = None,
 ) -> tuple[LearningSkillRun, MicroLearningRun | None]:
+    session = await db.get(AgentSession, run.session_id)
+    if not session:
+        raise RuntimeError("unsupported_scope")
+    await validate_learning_skill_run_scope(db, session=session, run=run)
     history = list(run.action_log or [])
     action_key = f"action:{client_action_id}"
     if action_key in history:
@@ -1671,9 +1993,6 @@ async def act_on_learning_skill_run(
         event_type = "learning_skill_run_resumed"
         event_payload = {"resume_state": run.state, "reason": "learner"}
     elif action == "start_verification" and run.status == "active" and run.state == "verification_ready":
-        session = await db.get(AgentSession, run.session_id)
-        if not session or session.learner_id != run.learner_id:
-            raise RuntimeError("unsupported_scope")
         task = await _ensure_atomic_learning_task(
             db, session=session, run=run, source="user",
         )
@@ -1684,20 +2003,14 @@ async def act_on_learning_skill_run(
         await _advance_linked_task(
             db, run, action="complete_learn", operation_id="verification-handoff",
         )
-        from app.services.learning_tasks import materialize_learning_task
-
-        task = await materialize_learning_task(
+        micro = await _materialize_skill_verification(
             db,
             task=task,
-            source_text="",
-            expected_version=task.version,
-            client_request_id=f"skill-run-{run.id}-{client_action_id}",
+            run=run,
+            client_action_id=client_action_id,
             education_stage=education_stage,
             background=background,
         )
-        micro = await db.get(MicroLearningRun, task.micro_learning_run_id)
-        if not micro:
-            raise RuntimeError("invalid_state")
         run.micro_learning_run_id = micro.id
         run.status = "verification"
         run.state = "verification_in_progress"

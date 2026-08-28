@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 
-from app.services.architecture_registry import registry_manifest, validate_registry
+from app.services.architecture_registry import (
+    registry_manifest,
+    registry_validation_report,
+)
 
 
 router = APIRouter(prefix="/architecture", tags=["Architecture Authority"])
@@ -13,5 +16,4 @@ async def get_architecture_registry():
 
 @router.get("/validate")
 async def validate_architecture_registry():
-    errors = validate_registry()
-    return {"valid": not errors, "errors": errors}
+    return registry_validation_report()

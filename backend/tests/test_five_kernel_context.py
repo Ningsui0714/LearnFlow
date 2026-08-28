@@ -221,9 +221,15 @@ def test_transient_human_memory_does_not_cross_session_scope():
                 project_id=project.id,
                 checkpoint_id=checkpoint.id,
                 session_id=first.id,
-                event_type="user_message",
+                event_type="vnext_human_adaptation_requested",
                 source="user",
-                payload={"text": "这题太难了，我有点跟不上"},
+                payload={
+                    "signal_kind": "frustration",
+                    "value": "acknowledge_and_reduce_scope",
+                    "strength": 0.9,
+                    "explicit": True,
+                    "evidence_quote": "这题太难了，我有点跟不上",
+                },
             )
             await db.commit()
             first_packet = await build_five_kernel_context(
@@ -246,8 +252,14 @@ def test_transient_human_memory_does_not_cross_session_scope():
             return first_packet, second_packet
 
     first_packet, second_packet = asyncio.run(scenario())
-    assert any(item["memory_kind"] in {"affect", "load"} for item in first_packet["items"])
-    assert not any(item["memory_kind"] in {"affect", "load"} for item in second_packet["items"])
+    assert first_packet["adaptation_directives"]
+    assert any(
+        "缩小" in item["instruction"] or "挫败" in item["instruction"]
+        for item in first_packet["adaptation_directives"]
+    )
+    assert second_packet["adaptation_directives"] == []
+    assert all(item["kernel"] != "human" for item in first_packet["items"])
+    assert all(item["kernel"] != "human" for item in second_packet["items"])
     second_human = second_packet["kernel_heads"]["human"]
     assert "frustrated" not in str(second_human)
     assert "cognitive_load" not in str(second_human)

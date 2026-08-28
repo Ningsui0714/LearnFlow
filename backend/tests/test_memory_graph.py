@@ -92,6 +92,81 @@ def test_event_dual_write_creates_cross_kernel_facts_and_sparse_edges():
     assert after_first == after_second
 
 
+def test_project_acceptance_and_completion_have_registered_kernel_reducers():
+    async def scenario():
+        await init_db()
+        async with async_session() as db:
+            learner = Learner(key=_key("project-contract"), display_name="Project Contract")
+            db.add(learner)
+            await db.flush()
+            project = Project(learner_id=learner.id, name="可靠智能体")
+            db.add(project)
+            await db.flush()
+
+            await record_event(
+                db,
+                learner_id=learner.id,
+                project_id=project.id,
+                event_type="project_proposal_accepted",
+                source="user",
+                payload={
+                    "proposal_id": 17,
+                    "project_id": project.id,
+                    "learning_goal": "完成一个可验证的可靠智能体",
+                },
+                provenance={"explicit_click": True},
+                client_event_id=_key("proposal-accepted"),
+            )
+            accepted_projection = await get_kernel_projection(db, learner.id)
+            accepted_structure = accepted_projection["structure"]
+            accepted_value = accepted_projection["value"]
+
+            await record_event(
+                db,
+                learner_id=learner.id,
+                project_id=project.id,
+                event_type="project_completed",
+                source="runtime",
+                payload={
+                    "project_id": project.id,
+                    "name": project.name,
+                    "checkpoint_count": 4,
+                },
+                provenance={"rule": "all_non_archived_checkpoints_completed"},
+                client_event_id=_key("project-completed"),
+            )
+            completed_projection = await get_kernel_projection(db, learner.id)
+            completed_structure = completed_projection["structure"]
+            completed_value = completed_projection["value"]
+            completed_practice = completed_projection["practice"]
+            return (
+                project.id,
+                accepted_structure,
+                accepted_value,
+                completed_structure,
+                completed_value,
+                completed_practice,
+            )
+
+    (
+        project_id,
+        accepted_structure,
+        accepted_value,
+        completed_structure,
+        completed_value,
+        completed_practice,
+    ) = asyncio.run(scenario())
+    assert accepted_structure["short_term"]["proposal_status"] == "accepted"
+    assert accepted_structure["short_term"]["active_project_id"] == project_id
+    assert accepted_value["short_term"]["goal_status"] == "accepted"
+    assert accepted_value["short_term"]["confirmed_goal"].startswith("完成一个")
+    assert completed_structure["short_term"]["project_status"] == "completed"
+    assert completed_structure["long_term"]["project_graph"][str(project_id)]["status"] == "completed"
+    assert completed_value["short_term"]["goal_status"] == "completed"
+    assert completed_practice["short_term"]["last_project_checkpoint_count"] == 4
+    assert completed_practice["long_term"]["completed_projects"][str(project_id)]["checkpoint_count"] == 4
+
+
 def test_explicit_concept_self_reports_form_exposure_only_knowledge_claim():
     async def scenario():
         await init_db()

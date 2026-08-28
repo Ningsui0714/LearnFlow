@@ -20,7 +20,13 @@ from app.services.learning_runtime import (
     apply_semantic_observations, create_attempt, evaluate_checkpoint_status,
     get_kernel_projection, record_event,
 )
-from app.services.learning_skill_runtime import learner_response_signal, transition_learning_skill_turn
+from app.services.learning_skill_runtime import (
+    SKILL_RUNTIME_VERSION,
+    SUPPORT_TURN_BUDGET,
+    learner_response_signal,
+    transition_learning_skill_turn,
+)
+from app.services.learning_tasks import ensure_checkpoint_learning_task
 from app.services.profile import memory_projection
 from app.services.task_manager import manager
 from app.services.auth import load_current_learner
@@ -39,6 +45,9 @@ def client():
         assert accounts.status_code == 200
         legacy = next(item for item in accounts.json() if item["username"] == "legacy-demo")
         assert test_client.post(f"/api/dev/accounts/{legacy['id']}/login").status_code == 200
+        csrf = test_client.get("/api/auth/csrf")
+        assert csrf.status_code == 200
+        test_client.headers["x-csrf-token"] = csrf.json()["csrf_token"]
         yield test_client
 
 
@@ -202,6 +211,66 @@ def test_independent_global_chats_invoke_registered_session_skills(client: TestC
         "selected_skill_id": "imaginary_skill",
     })
     assert invalid.status_code == 400
+
+
+def test_checkpoint_session_creation_recovers_the_unique_scope_winner(client: TestClient):
+    async def exercise_conflict_path():
+        async with async_session() as db:
+            project = Project(
+                learner_id=1,
+                name=f"并发关卡会话 {uuid.uuid4().hex[:8]}",
+                description="验证关卡 Tutor 的幂等创建",
+                project_kind="apprenticeship",
+                visibility="visible",
+            )
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={}, conversation_history=[])
+            db.add(roadmap)
+            await db.flush()
+            checkpoint = Checkpoint(
+                roadmap_id=roadmap.id,
+                title="唯一关卡",
+                description="并发请求只应得到一个会话",
+                order=1,
+                prerequisites=[],
+                learning_status="not_started",
+            )
+            db.add(checkpoint)
+            await db.flush()
+            first = await get_or_create_session(
+                db,
+                learner_id=1,
+                session_type="checkpoint",
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+            )
+            first_id = first.id
+            await db.commit()
+
+        async with async_session() as db:
+            replay = await get_or_create_session(
+                db,
+                learner_id=1,
+                session_type="checkpoint",
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+                create_new=True,
+            )
+            replay_id = replay.id
+            count = len(list((await db.execute(select(AgentSession).where(
+                AgentSession.learner_id == 1,
+                AgentSession.project_id == project.id,
+                AgentSession.checkpoint_id == checkpoint.id,
+                AgentSession.session_type == "checkpoint",
+                AgentSession.status == "active",
+            ))).scalars()))
+            await db.commit()
+            return first_id, replay_id, count
+
+    first_id, replay_id, count = asyncio.run(exercise_conflict_path())
+    assert replay_id == first_id
+    assert count == 1
 
 
 def test_vnext_global_chat_is_cross_browser_authority_without_kernel_evidence(client: TestClient):
@@ -689,6 +758,417 @@ def test_vnext_skill_turn_endpoint_advances_once_without_second_model_answer(cli
     assert len(messages) == 2
     assert all(message.meta_data["model_answer_generated"] is False for message in messages)
     assert len(events) == 2
+    assert mutations == []
+
+
+def test_skill_turn_plan_is_consumed_once_by_tutor_render(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "")
+    session_id = new_session(client)
+    opening_message = "请用最小例子解释闭包如何捕获变量"
+    started = client.post(f"/api/agent/sessions/{session_id}/skill-runs", json={
+        "skill_id": "guided_explanation",
+        "goal": opening_message,
+        "client_request_id": f"single-advance-{uuid.uuid4().hex}",
+    })
+    assert started.status_code == 200, started.text
+    opening_run = started.json()["active_skill_run"]
+    assert opening_run["runtime_version"] == SKILL_RUNTIME_VERSION
+
+    # Legacy Tutor clients omit prepared_skill_turn_id. The message that merely
+    # opened an already-created run must render its opening plan without advancing.
+    opening_render = client.post(f"/api/agent/sessions/{session_id}/turns", json={
+        "message": opening_message,
+        "selected_skill_id": "guided_explanation",
+        "client_turn_id": f"legacy-opening-{uuid.uuid4().hex}",
+    })
+    assert opening_render.status_code == 200, opening_render.text
+    assert opening_render.json()["active_skill_run"]["version"] == opening_run["version"]
+    assert opening_render.json()["active_skill_run"]["turn_count"] == 0
+
+    learner_reply = "闭包保留了创建它时可访问的变量环境，所以之后仍能读取那个变量。"
+    formal_turn_id = f"formal-turn-{uuid.uuid4().hex}"
+    prepared = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{opening_run['id']}/turns",
+        json={
+            "message": learner_reply,
+            "expected_version": opening_run["version"],
+            "client_turn_id": formal_turn_id,
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    prepared_body = prepared.json()
+    advanced_run = prepared_body["active_skill_run"]
+    prepared_message_id = prepared_body["prepared_skill_turn_id"]
+    assert advanced_run["turn_count"] == 1
+    assert prepared_body["turn_plan"]["run_version"] == advanced_run["version"]
+
+    render_id = f"tutor-render-{uuid.uuid4().hex}"
+    render_payload = {
+        "message": learner_reply,
+        "selected_skill_id": "guided_explanation",
+        "client_turn_id": render_id,
+        "prepared_skill_turn_id": prepared_message_id,
+    }
+    rendered = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json=render_payload,
+    )
+    replayed = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json=render_payload,
+    )
+    assert rendered.status_code == replayed.status_code == 200
+    assert rendered.json()["prepared_skill_turn_id"] == prepared_message_id
+    assert rendered.json()["active_skill_run"]["version"] == advanced_run["version"]
+    assert rendered.json()["active_skill_run"]["turn_count"] == 1
+    assert replayed.json() == rendered.json()
+
+    async def audit_single_record():
+        async with async_session() as db:
+            messages = list((await db.execute(select(AgentMessage).where(
+                AgentMessage.session_id == session_id,
+                AgentMessage.role == "user",
+                AgentMessage.content == learner_reply,
+            ))).scalars().all())
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+                EvidenceEvent.event_type == "learning_skill_run_advanced",
+            ))).scalars().all())
+            user_events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+                EvidenceEvent.event_type == "user_message",
+            ))).scalars().all())
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id.in_([event.id for event in events]),
+            ))).scalars().all()) if events else []
+            return messages, events, user_events, mutations
+
+    messages, events, user_events, mutations = asyncio.run(audit_single_record())
+    assert len(messages) == 1
+    assert messages[0].id == prepared_message_id
+    assert render_id in messages[0].meta_data["tutor_render_client_turn_ids"]
+    assert len(events) == 1
+    assert events[0].payload["message_id"] == prepared_message_id
+    assert len([
+        event for event in user_events
+        if (event.provenance or {}).get("message_id") == prepared_message_id
+    ]) == 1
+    assert mutations == []
+
+
+def test_legacy_tutor_render_auto_consumes_latest_prepared_skill_turn(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "")
+    session_id = new_session(client)
+    started = client.post(f"/api/agent/sessions/{session_id}/skill-runs", json={
+        "skill_id": "socratic_dialogue",
+        "goal": "理解哈希冲突",
+        "client_request_id": f"legacy-prepared-{uuid.uuid4().hex}",
+    })
+    assert started.status_code == 200, started.text
+    run = started.json()["active_skill_run"]
+    learner_reply = "冲突表示不同输入得到相同桶位置，需要额外规则区分它们。"
+    formal_turn_id = f"legacy-formal-{uuid.uuid4().hex}"
+    prepared = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": learner_reply,
+            "expected_version": run["version"],
+            "client_turn_id": formal_turn_id,
+        },
+    )
+    assert prepared.status_code == 200, prepared.text
+    prepared_body = prepared.json()
+
+    legacy_render_id = f"legacy-render-{uuid.uuid4().hex}"
+    legacy_payload = {
+        "message": learner_reply,
+        "selected_skill_id": "socratic_dialogue",
+        "client_turn_id": legacy_render_id,
+    }
+    rendered = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json=legacy_payload,
+    )
+    replayed_render = client.post(
+        f"/api/agent/sessions/{session_id}/turns",
+        json=legacy_payload,
+    )
+    replayed_formal = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": learner_reply,
+            "expected_version": run["version"],
+            "client_turn_id": formal_turn_id,
+        },
+    )
+    assert rendered.status_code == replayed_render.status_code == 200
+    assert replayed_formal.status_code == 200, replayed_formal.text
+    assert rendered.json()["active_skill_run"]["version"] == prepared_body["active_skill_run"]["version"]
+    assert rendered.json()["active_skill_run"]["turn_count"] == 1
+    assert replayed_render.json() == rendered.json()
+    assert replayed_formal.json()["created"] is False
+    assert replayed_formal.json()["prepared_skill_turn_id"] == prepared_body["prepared_skill_turn_id"]
+    assert replayed_formal.json()["turn_plan"] == prepared_body["turn_plan"]
+
+
+def test_scoped_skill_runs_reuse_checkpoint_task_and_preserve_ownership(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr("app.services.tutor_service.settings.llm_api_key", "")
+    monkeypatch.setattr("app.services.learning_tasks.settings.llm_api_key", "")
+
+    async def seed_scopes():
+        async with async_session() as db:
+            learner_id = await legacy_learner_id()
+            project = Project(
+                learner_id=learner_id,
+                name=f"Skill scope {uuid.uuid4().hex[:8]}",
+            )
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={})
+            db.add(roadmap)
+            await db.flush()
+            checkpoint = Checkpoint(
+                roadmap_id=roadmap.id,
+                title="事务隔离关卡",
+                description="解释隔离级别的可见性边界",
+                order=1,
+            )
+            db.add(checkpoint)
+            await db.flush()
+            checkpoint_task = await ensure_checkpoint_learning_task(
+                db,
+                learner_id=learner_id,
+                checkpoint=checkpoint,
+                session_id=None,
+            )
+            await db.commit()
+            return project.id, checkpoint.id, checkpoint_task.id
+
+    project_id, checkpoint_id, existing_task_id = asyncio.run(seed_scopes())
+    project_session = client.post("/api/agent/sessions", json={
+        "session_type": "project",
+        "project_id": project_id,
+        "create_new": True,
+    })
+    checkpoint_session = client.post("/api/agent/sessions", json={
+        "session_type": "checkpoint",
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+        "create_new": True,
+    })
+    assert project_session.status_code == checkpoint_session.status_code == 200
+    project_session_id = project_session.json()["id"]
+    checkpoint_session_id = checkpoint_session.json()["id"]
+
+    project_started = client.post(
+        f"/api/agent/sessions/{project_session_id}/skill-runs",
+        json={
+            "skill_id": "guided_explanation",
+            "goal": "解释项目中的事务边界",
+            "client_request_id": f"project-skill-{uuid.uuid4().hex}",
+        },
+    )
+    checkpoint_started = client.post(
+        f"/api/agent/sessions/{checkpoint_session_id}/skill-runs",
+        json={
+            "skill_id": "socratic_dialogue",
+            "goal": "解释隔离级别的可见性边界",
+            "client_request_id": f"checkpoint-skill-{uuid.uuid4().hex}",
+        },
+    )
+    assert project_started.status_code == 200, project_started.text
+    assert checkpoint_started.status_code == 200, checkpoint_started.text
+    project_run = project_started.json()["active_skill_run"]
+    checkpoint_run = checkpoint_started.json()["active_skill_run"]
+    assert project_run["scope"] == {
+        "session_id": project_session_id,
+        "project_id": project_id,
+        "checkpoint_id": None,
+    }
+    assert project_run["learning_task"]["id"] != existing_task_id
+    assert checkpoint_run["scope"] == {
+        "session_id": checkpoint_session_id,
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+    }
+    assert checkpoint_run["learning_task"]["id"] == existing_task_id
+
+    for index in range(3):
+        advanced = client.post(
+            f"/api/agent/sessions/{checkpoint_session_id}/skill-runs/{checkpoint_run['id']}/turns",
+            json={
+                "message": f"这是第 {index + 1} 个可检查的隔离边界解释。",
+                "expected_version": checkpoint_run["version"],
+                "client_turn_id": f"checkpoint-step-{index}-{uuid.uuid4().hex}",
+            },
+        )
+        assert advanced.status_code == 200, advanced.text
+        checkpoint_run = advanced.json()["active_skill_run"]
+    assert checkpoint_run["state"] == "verification_ready"
+    verification = client.post(
+        f"/api/agent/sessions/{checkpoint_session_id}/skill-runs/{checkpoint_run['id']}/actions",
+        json={
+            "action": "start_verification",
+            "expected_version": checkpoint_run["version"],
+            "client_action_id": f"checkpoint-verify-{uuid.uuid4().hex}",
+        },
+    )
+    assert verification.status_code == 200, verification.text
+    checkpoint_run = verification.json()["active_skill_run"]
+    assert checkpoint_run["state"] == "verification_in_progress"
+    assert checkpoint_run["learning_task"]["id"] == existing_task_id
+    assert checkpoint_run["scope"] == {
+        "session_id": checkpoint_session_id,
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+    }
+
+    wrong_session = client.post(
+        f"/api/agent/sessions/{project_session_id}/skill-runs/{checkpoint_run['id']}/turns",
+        json={
+            "message": "这条消息不能跨会话推进",
+            "expected_version": checkpoint_run["version"],
+            "client_turn_id": f"wrong-session-{uuid.uuid4().hex}",
+        },
+    )
+    wrong_checkpoint = client.post(
+        f"/api/agent/sessions/{checkpoint_session_id}/turns",
+        json={
+            "message": "这条消息不能跨关卡",
+            "project_id": project_id,
+            "checkpoint_id": checkpoint_id + 999_999,
+        },
+    )
+    assert wrong_session.status_code == 404
+    assert wrong_checkpoint.status_code == 409
+
+    async def audit_scopes():
+        async with async_session() as db:
+            project_task = await db.get(LearningTask, project_run["learning_task"]["id"])
+            checkpoint_task = await db.get(LearningTask, existing_task_id)
+            project_events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == project_session_id,
+                EvidenceEvent.event_type.in_({
+                    "learning_skill_selected", "learning_skill_run_started",
+                }),
+            ))).scalars().all())
+            checkpoint_events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == checkpoint_session_id,
+                EvidenceEvent.event_type.in_({
+                    "learning_skill_selected", "learning_skill_run_started",
+                }),
+            ))).scalars().all())
+            return project_task, checkpoint_task, project_events, checkpoint_events
+
+    project_task, checkpoint_task, project_events, checkpoint_events = asyncio.run(audit_scopes())
+    assert (project_task.learner_id, project_task.session_id) == (
+        checkpoint_task.learner_id, project_session_id,
+    )
+    assert (project_task.project_id, project_task.checkpoint_id) == (project_id, None)
+    assert checkpoint_task.session_id == checkpoint_session_id
+    assert (checkpoint_task.project_id, checkpoint_task.checkpoint_id) == (
+        project_id, checkpoint_id,
+    )
+    assert project_events and all(
+        (event.project_id, event.checkpoint_id) == (project_id, None)
+        for event in project_events
+    )
+    assert checkpoint_events and all(
+        (event.project_id, event.checkpoint_id) == (project_id, checkpoint_id)
+        for event in checkpoint_events
+    )
+
+
+def test_support_turn_budget_has_structured_exit_without_auto_pass(
+    client: TestClient,
+):
+    session_id = new_session(client)
+    started = client.post(f"/api/agent/sessions/{session_id}/skill-runs", json={
+        "skill_id": "worked_example_fading",
+        "goal": "用二分查找定位边界",
+        "client_request_id": f"support-budget-{uuid.uuid4().hex}",
+    })
+    assert started.status_code == 200, started.text
+    run = started.json()["active_skill_run"]
+    initial_state = run["state"]
+    final_turn_id = ""
+    final_response = None
+    for index in range(SUPPORT_TURN_BUDGET):
+        final_turn_id = f"support-budget-{index}-{uuid.uuid4().hex}"
+        final_response = client.post(
+            f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+            json={
+                "message": "我不知道",
+                "expected_version": run["version"],
+                "client_turn_id": final_turn_id,
+            },
+        )
+        assert final_response.status_code == 200, final_response.text
+        run = final_response.json()["active_skill_run"]
+
+    assert run["runtime_version"] == SKILL_RUNTIME_VERSION
+    assert run["state"] == initial_state
+    assert run["turn_count"] == 0
+    assert run["support_count"] == run["support_budget"] == SUPPORT_TURN_BUDGET
+    assert run["can_start_verification"] is False
+    assert run["support_exit"]["reason"] == "support_budget_exhausted"
+    assert run["support_exit"]["mastery_unchanged"] is True
+    assert [item["action"] for item in run["support_exit"]["options"]] == [
+        "narrow_goal", "switch_method", "pause",
+    ]
+    assert final_response.json()["turn_plan"]["support_exit"] == run["support_exit"]
+
+    blocked = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": "我还是不知道，请再讲一次",
+            "expected_version": run["version"],
+            "client_turn_id": f"support-budget-blocked-{uuid.uuid4().hex}",
+        },
+    )
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["created"] is True
+    assert blocked.json()["active_skill_run"]["version"] == run["version"]
+    assert blocked.json()["active_skill_run"]["state"] == initial_state
+    assert blocked.json()["turn_plan"]["support_exit"] == run["support_exit"]
+
+    duplicate = client.post(
+        f"/api/agent/sessions/{session_id}/skill-runs/{run['id']}/turns",
+        json={
+            "message": "我不知道",
+            "expected_version": run["version"] - 1,
+            "client_turn_id": final_turn_id,
+        },
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["created"] is False
+    assert duplicate.json()["active_skill_run"]["version"] == run["version"]
+
+    async def audit_support_boundary():
+        async with async_session() as db:
+            stored = await db.get(LearningSkillRun, run["id"])
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.session_id == session_id,
+                EvidenceEvent.event_type == "learning_skill_run_advanced",
+            ))).scalars().all())
+            mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id.in_([event.id for event in events]),
+            ))).scalars().all()) if events else []
+            return stored, events, mutations
+
+    stored, events, mutations = asyncio.run(audit_support_boundary())
+    assert stored.run_data["mastery_claim"] == "none"
+    assert len(events) == SUPPORT_TURN_BUDGET
+    assert all(event.payload["mastery_unchanged"] is True for event in events)
     assert mutations == []
 
 

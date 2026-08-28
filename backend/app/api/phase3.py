@@ -16,7 +16,7 @@ from app.models.learning import LearningAttempt, LearningTask
 from app.models.project import (
     Checkpoint, Exercise, ExerciseDraft, ConceptQuestion, Task, Roadmap,
 )
-from app.schemas.project import ExerciseOut, CodeRunRequest, CodeRunResult
+from app.schemas.project import ExerciseOut, CodeRunRequest
 from app.services.code_executor import execute_code
 from app.services.code_agent import CodeAgent
 from app.services.concept_agent import ConceptAgent
@@ -26,9 +26,30 @@ from app.services.auth import (
 )
 from app.services.profile import evaluate_project_badge
 from app.services.workspace_files import sync_managed_layout_for_project
+from app.services.execution_policy import (
+    ExecutionPolicyError,
+    execution_policy_status,
+    require_trusted_local_execution,
+)
 from langchain_core.messages import HumanMessage
 
 router = APIRouter()
+
+
+def _execution_result_fields(result: dict) -> dict:
+    return {
+        "execution_policy": result.get("execution_policy", "disabled"),
+        "execution_boundary": result.get("execution_boundary", "not_executed"),
+        "requested_boundary": result.get("requested_boundary", "trusted_local_process"),
+        "filesystem_isolation": bool(result.get("filesystem_isolation", False)),
+        "network_isolation": bool(result.get("network_isolation", False)),
+        "secrets_isolation": bool(result.get("secrets_isolation", False)),
+        "environment_sanitization": result.get("environment_sanitization", "allowlist_only"),
+        "timed_out": bool(result.get("timed_out", False)),
+        "output_limited": bool(result.get("output_limited", False)),
+        "error_code": result.get("error_code"),
+        "limits": dict(result.get("limits") or {}),
+    }
 
 
 # ── Exercise CRUD ──
@@ -195,7 +216,7 @@ async def put_exercise_draft(
 
 # ── Code Execution ──
 
-@router.post("/exercises/{exercise_id}/run", response_model=CodeRunResult)
+@router.post("/exercises/{exercise_id}/run")
 async def run_code(
     exercise_id: int,
     req: CodeRunRequest,
@@ -223,15 +244,25 @@ async def run_code(
                 merged.append(f)
         res = run_project(exercise_id, merged, exercise.entrypoint or "main.py",
                           exercise.requirements or [])
-        return CodeRunResult(
-            stdout=res["stdout"], stderr=res["stderr"],
-            passed=res["exit_code"] == 0, elapsed=res["elapsed"], env=res["env"],
-        )
+        return {
+            "stdout": res["stdout"],
+            "stderr": res["stderr"],
+            "passed": res["exit_code"] == 0,
+            "elapsed": res["elapsed"],
+            "env": res["env"],
+            **_execution_result_fields(res),
+        }
 
     # Classic single-file mode
     res = execute_code(req.code)
-    return CodeRunResult(stdout=res["stdout"], stderr=res["stderr"],
-                         passed=res["exit_code"] == 0, elapsed=res["elapsed"])
+    return {
+        "stdout": res["stdout"],
+        "stderr": res["stderr"],
+        "passed": res["exit_code"] == 0,
+        "elapsed": res["elapsed"],
+        "env": {},
+        **_execution_result_fields(res),
+    }
 
 
 # ── Project-mode: env status (pilot) ──
@@ -245,11 +276,15 @@ async def exercise_env_status(
     """Report runtime env readiness for a project-mode exercise."""
     exercise = await require_owned_exercise(db, current.learner.id, exercise_id)
     from app.services import project_runner
+    policy = execution_policy_status()
+    runtime_present = project_runner.venv_ready()
     return {
-        "ready": project_runner.venv_ready(),
+        "ready": bool(policy["enabled"] and runtime_present),
+        "runtime_present": runtime_present,
         "requirements": exercise.requirements or [],
         "installed": project_runner.installed_requirements(),
         "has_files": bool(exercise.files),
+        **policy,
     }
 
 
@@ -744,6 +779,7 @@ async def submit_exercise(
             return {**dict(replay.result or {}), "attempt_id": replay.id, "idempotent_replay": True}
 
     effective_code = req.code
+    execution_fields = require_trusted_local_execution("formal_exercise_submission")
 
     async def persist_attempt(response: dict, passed_ok: bool):
         from app.services.learning_runtime import (
@@ -793,7 +829,17 @@ async def submit_exercise(
                 "passed": passed_ok,
                 "assistance_level": req.assistance_level or "none",
             },
-            provenance={"grader": exercise.judge_mode or "test_cases"},
+            provenance={
+                "grader": exercise.judge_mode or "test_cases",
+                "execution_policy": response.get("execution_policy", "disabled"),
+                "execution_boundary": response.get("execution_boundary", "not_executed"),
+                "filesystem_isolation": bool(response.get("filesystem_isolation", False)),
+                "network_isolation": bool(response.get("network_isolation", False)),
+                "secrets_isolation": bool(response.get("secrets_isolation", False)),
+                "environment_sanitization": response.get(
+                    "environment_sanitization", "allowlist_only",
+                ),
+            },
             client_event_id=f"attempt:{attempt.id}:evaluated",
         )
         from app.services.remediation import (
@@ -860,6 +906,11 @@ async def submit_exercise(
     # Project-mode judging: run the whole project, check stdout
     if (exercise.files or []) and exercise.judge_mode == "stdout_check":
         from app.services.project_runner import run_project, check_stdout
+        if not str((exercise.judge_config or {}).get("pattern") or "").strip():
+            raise ExecutionPolicyError(
+                code="code_assessment_unsupported",
+                message="项目题缺少确定性的 stdout 判题规则，无法形成学习证据。",
+            )
         client = {f.get("name"): f for f in req.files if f.get("name")}
         merged = []
         for f in (exercise.files or []):
@@ -874,7 +925,7 @@ async def submit_exercise(
             response = {"passed": 0, "total": 1, "results": [
                 {"passed": False, "expected": "正常运行", "actual": f"退出码 {res['exit_code']}",
                  "stderr": res["stderr"][:200]}
-            ], "error": None}
+            ], "error": None, **_execution_result_fields(res)}
             response["attempt_id"], response["remediation"] = await persist_attempt(response, False)
             return response
         check = check_stdout(res["stdout"], exercise.judge_config or {})
@@ -884,15 +935,17 @@ async def submit_exercise(
         response = {"passed": 1 if check["passed"] else 0, "total": 1,
                 "results": [{"passed": check["passed"], "expected": check["expected"],
                               "actual": check["actual"], "detail": check["detail"]}],
-                "stdout": res["stdout"][-1000:]}
+                "stdout": res["stdout"][-1000:],
+                **_execution_result_fields(res)}
         response["attempt_id"], response["remediation"] = await persist_attempt(response, bool(check["passed"]))
         return response
 
     test_cases = exercise.test_cases or []
     if not test_cases:
-        response = {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}
-        response["attempt_id"], response["remediation"] = await persist_attempt(response, False)
-        return response
+        raise ExecutionPolicyError(
+            code="code_assessment_unsupported",
+            message="该题没有确定性测试用例，无法形成学习证据。",
+        )
 
     from app.services.exercise_agent import ExerciseAgent
     results = ExerciseAgent.verify_exercise(effective_code, test_cases)
@@ -900,7 +953,12 @@ async def submit_exercise(
     if passed == len(results) and passed > 0:
         from app.services.progress import record_exercise_solved
         await record_exercise_solved(exercise.checkpoint_id, exercise.id, db=db)
-    response = {"passed": passed, "total": len(results), "results": results}
+    response = {
+        "passed": passed,
+        "total": len(results),
+        "results": results,
+        **execution_fields,
+    }
     response["attempt_id"], response["remediation"] = await persist_attempt(
         response, passed == len(results) and passed > 0
     )

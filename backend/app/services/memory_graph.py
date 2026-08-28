@@ -44,7 +44,13 @@ RELATION_TYPES = (
     "ENABLES",
     "CONSOLIDATED_INTO",
 )
-TRANSIENT_HUMAN_KEYS = {"affect", "cognitive_load", "attention", "frustration", "support_need"}
+TRANSIENT_HUMAN_KEYS = {
+    "affect", "cognitive_load", "attention", "frustration", "support_need",
+    "pace_adjustment", "format_request",
+}
+NON_MEMORY_PATCH_KEYS = {
+    "transient_expires_at", "adaptation_source", "adaptation_scope",
+}
 BOUNDARY_EVENTS = {
     "project_created", "project_imported", "project_selected", "roadmap_applied", "roadmap_revised", "checkpoint_entered",
     "checkpoint_completed", "project_completed", "vnext_personal_path_node_added",
@@ -158,6 +164,8 @@ def _fact_pairs(mutation: KernelMutation) -> list[tuple[str, str, Any]]:
     seen: set[tuple[str, str]] = set()
     for scope, values in (("short_term", short), ("long_term", long)):
         for key, value in values.items():
+            if key in NON_MEMORY_PATCH_KEYS:
+                continue
             marker = (key, json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
             if marker in seen:
                 continue

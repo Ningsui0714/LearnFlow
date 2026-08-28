@@ -6,6 +6,7 @@ API routes for Phase 1 features:
 from fastapi import APIRouter, Depends, HTTPException, Body
 import json
 import os
+from pathlib import Path
 import shutil
 from app.core.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,7 @@ from app.schemas.project import (
 from app.services.chunker import SourceProcessor
 from app.services.roadmap_agent import RoadmapAgent
 from app.services.learning_runtime import get_kernel_projection
+from app.services.source_locator import SOURCE_LOCATOR, SourceLocationError
 from app.services.source_knowledge import repository_knowledge_domains
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_project,
@@ -110,14 +112,52 @@ def _count_images(persist_dir: str) -> int:
     return count
 
 
-def _source_input(source: Source) -> str:
-    """Resolve the processing input without treating it as a workspace file."""
+def _source_processing_args(source: Source, learner_id: int) -> tuple[str, str, str | None]:
+    """Return a normalized remote location or an exact managed upload path.
+
+    Legacy ``file`` rows without server-owned upload metadata fail closed. A
+    stored path is accepted only when it resolves to the expected
+    learner/project/source upload directory and exact original filename.
+    """
     if source.type == "file":
-        upload = dict(source.meta_data or {}).get("upload") or {}
+        metadata = source.meta_data
+        upload = metadata.get("upload") if isinstance(metadata, dict) else None
+        if not isinstance(upload, dict):
+            raise SourceLocationError(
+                "unmanaged_file_source",
+                "旧文件来源缺少可信上传元数据，必须重新上传后再处理",
+            )
         stored_path = upload.get("stored_path")
-        if stored_path:
-            return stored_path
-    return source.url
+        original_filename = str(upload.get("original_filename") or "")
+        safe_filename = Path(original_filename.replace("\\", "/")).name
+        if (
+            not stored_path
+            or not safe_filename
+            or safe_filename in {".", ".."}
+            or safe_filename != original_filename
+            or "\x00" in safe_filename
+        ):
+            raise SourceLocationError(
+                "unmanaged_file_source",
+                "旧文件来源缺少可信上传元数据，必须重新上传后再处理",
+            )
+        managed_root = (
+            Path(settings.source_uploads_dir).expanduser()
+            / str(learner_id)
+            / str(source.project_id)
+            / str(source.id)
+        )
+        managed_path = SOURCE_LOCATOR.resolve_managed_file(stored_path, managed_root)
+        expected_path = SOURCE_LOCATOR.resolve_managed_file(managed_root / safe_filename, managed_root)
+        if managed_path != expected_path:
+            raise SourceLocationError(
+                "unmanaged_file_source",
+                "文件来源路径与服务端上传记录不一致",
+            )
+        return "file", str(managed_path), str(managed_root)
+
+    reference = SOURCE_LOCATOR.normalize_remote_source(source.type, source.url)
+    return reference.source_type, reference.location, None
 
 
 # ── Source Processing ──
@@ -132,6 +172,16 @@ async def process_source(
     """Fetch and chunk a source."""
     await require_owned_project(db, current.learner.id, project_id)
     source = await require_owned_source(db, current.learner.id, source_id, project_id)
+
+    try:
+        safe_type, safe_location, managed_file_root = _source_processing_args(
+            source, current.learner.id,
+        )
+    except SourceLocationError as exc:
+        source.status = "failed"
+        source.error = str(exc)
+        await db.commit()
+        raise HTTPException(status_code=400, detail=exc.detail()) from exc
 
     # Update status
     source.status = "processing"
@@ -153,7 +203,12 @@ async def process_source(
 
     try:
         # Process the source (now returns {chunks, source_meta})
-        result_data = await chunker.process_source(source.type, _source_input(source), persist_dir=persist_dir)
+        result_data = await chunker.process_source(
+            safe_type,
+            safe_location,
+            persist_dir=persist_dir,
+            managed_file_root=managed_file_root,
+        )
         chunks_data = result_data["chunks"]
         source_meta = result_data.get("source_meta", {})
         source_meta["source_cache_dir"] = persist_dir
@@ -196,7 +251,7 @@ async def process_source(
         try:
             meta = dict(source.meta_data or {})
             ra = dict(meta.get("repo_analysis") or {})
-            if (source.type == "github" and ra.get("dir_groups")
+            if (safe_type == "github" and ra.get("dir_groups")
                     and not ra.get("file_summaries")
                     and settings.llm_api_key and settings.llm_api_key != "***"):
                 summaries = await _generate_file_summaries(db, source)
@@ -211,6 +266,11 @@ async def process_source(
         return {"status": "ok", "chunk_count": len(chunks_data),
                 "affected_checkpoints": affected_cp_ids}
 
+    except SourceLocationError as e:
+        source.status = "failed"
+        source.error = str(e)
+        await db.commit()
+        raise HTTPException(status_code=400, detail=e.detail()) from e
     except Exception as e:
         source.status = "failed"
         source.error = str(e)
@@ -485,6 +545,9 @@ async def process_all_sources(
     errors = []
     for source in sources:
         try:
+            safe_type, safe_location, managed_file_root = _source_processing_args(
+                source, current.learner.id,
+            )
             source.status = "processing"
             await db.commit()
 
@@ -501,7 +564,12 @@ async def process_all_sources(
             os.makedirs(persist_dir, exist_ok=True)
 
             # New: returns {chunks, source_meta}
-            result_data = await chunker.process_source(source.type, _source_input(source), persist_dir=persist_dir)
+            result_data = await chunker.process_source(
+                safe_type,
+                safe_location,
+                persist_dir=persist_dir,
+                managed_file_root=managed_file_root,
+            )
             chunks_data = result_data["chunks"]
             source_meta = result_data.get("source_meta", {})
             source_meta["source_cache_dir"] = persist_dir
@@ -539,7 +607,7 @@ async def process_all_sources(
             try:
                 meta = dict(source.meta_data or {})
                 ra = dict(meta.get("repo_analysis") or {})
-                if (source.type == "github" and ra.get("dir_groups")
+                if (safe_type == "github" and ra.get("dir_groups")
                         and not ra.get("file_summaries")
                         and settings.llm_api_key and settings.llm_api_key != "***"):
                     summaries = await _generate_file_summaries(db, source)

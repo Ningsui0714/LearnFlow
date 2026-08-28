@@ -34,9 +34,11 @@ from app.services.chat_modes import chat_mode_view, enter_chat_mode
 from app.services.learning_skill_runtime import (
     act_on_learning_skill_run,
     create_learning_skill_run,
+    current_learning_skill_turn_plan,
     latest_learning_skill_run_view,
     learning_skill_run_view,
     prepare_learning_skill_turn,
+    validate_learning_skill_run_scope,
 )
 from app.services.project_proposals import (
     list_session_proposals, proposal_view, set_proposal_status,
@@ -279,7 +281,7 @@ def _skill_run_error(error: RuntimeError) -> HTTPException:
     if message == "invalid_state":
         return HTTPException(409, "当前步骤不能执行这个操作")
     if message == "unsupported_scope":
-        return HTTPException(400, "对话内学习方法目前只在独立学习对话中运行")
+        return HTTPException(400, "学习方法的学习者、项目、关卡或会话作用域不匹配")
     if message == "unsupported_skill":
         return HTTPException(400, "这个学习方法当前没有可恢复工作流")
     if message == "missing_goal":
@@ -313,6 +315,8 @@ async def start_learning_skill_run(
         await record_event(
             db,
             learner_id=session.learner_id,
+            project_id=session.project_id,
+            checkpoint_id=session.checkpoint_id,
             session_id=session.id,
             event_type="learning_skill_selected",
             source="user",
@@ -375,6 +379,7 @@ async def update_learning_skill_run(
     if not run:
         raise HTTPException(404, "学习方法记录不存在")
     try:
+        await validate_learning_skill_run_scope(db, session=session, run=run)
         run, micro = await act_on_learning_skill_run(
             db,
             run=run,
@@ -433,6 +438,10 @@ async def advance_learning_skill_turn(
     ))).scalar_one_or_none()
     if not run:
         raise HTTPException(404, "学习方法记录不存在")
+    try:
+        await validate_learning_skill_run_scope(db, session=session, run=run)
+    except RuntimeError as error:
+        raise _skill_run_error(error) from error
 
     message_key = f"vnext-skill-turn:{session.id}:{request.client_turn_id}"[:160]
     existing_message = (await db.execute(select(AgentMessage).where(
@@ -440,9 +449,18 @@ async def advance_learning_skill_turn(
         AgentMessage.session_id == session.id,
     ))).scalar_one_or_none()
     if existing_message:
+        existing_meta = dict(existing_message.meta_data or {})
+        if (
+            existing_message.content != request.message
+            or existing_meta.get("learning_skill_run_id") != run.id
+        ):
+            raise HTTPException(409, "client_turn_id 已用于另一条学习方法消息")
+        stored_plan = dict(existing_meta.get("learning_skill_turn_plan") or {})
         return {
             "session_id": session.id,
             "active_skill_run": await learning_skill_run_view(db, run),
+            "turn_plan": stored_plan or current_learning_skill_turn_plan(run),
+            "prepared_skill_turn_id": existing_message.id,
             "created": False,
         }
     if run.version != request.expected_version:
@@ -462,6 +480,25 @@ async def advance_learning_skill_turn(
     db.add(learner_message)
     await db.flush()
     try:
+        user_event = await record_event(
+            db,
+            learner_id=session.learner_id,
+            project_id=session.project_id,
+            checkpoint_id=session.checkpoint_id,
+            session_id=session.id,
+            event_type="user_message",
+            source="user",
+            payload={
+                "text": request.message,
+                "learning_task_id": run.learning_task_id,
+                "interaction_scope": "learning_task_conversation",
+            },
+            confidence=0.25 if request.message.strip().lower() in {
+                "懂了", "明白了", "会了", "got it", "understood",
+            } else 1.0,
+            provenance={"message_id": learner_message.id},
+            client_event_id=f"message:{learner_message.id}:user",
+        )
         advanced, turn_plan = await prepare_learning_skill_turn(
             db,
             session=session,
@@ -469,14 +506,23 @@ async def advance_learning_skill_turn(
             message=request.message,
             message_id=learner_message.id,
             client_turn_id=request.client_turn_id,
+            expected_run_id=run.id,
         )
     except RuntimeError as error:
         raise _skill_run_error(error) from error
+    learner_message.meta_data = {
+        **dict(learner_message.meta_data or {}),
+        "user_event_id": user_event.id,
+        "learning_skill_turn_plan": turn_plan,
+        "prepared_skill_turn_id": learner_message.id,
+        "prepared_run_version": advanced.version,
+    }
     await db.commit()
     return {
         "session_id": session.id,
         "active_skill_run": await learning_skill_run_view(db, advanced),
         "turn_plan": turn_plan,
+        "prepared_skill_turn_id": learner_message.id,
         "created": True,
     }
 
@@ -648,10 +694,13 @@ async def tutor_turn(
             selected_action_id=data.selected_action_id,
             selected_skill_id=data.selected_skill_id,
             client_turn_id=data.client_turn_id,
+            prepared_skill_turn_id=data.prepared_skill_turn_id,
             context=data.context,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise _skill_run_error(exc) from exc
 
 
 @router.get("/project-proposals/{proposal_id}")

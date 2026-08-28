@@ -14,6 +14,7 @@ from app.models.learning import (
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Project
 from app.schemas.review import ReviewActionRequest, ReviewReflectionRequest, ReviewSubmitRequest
 from app.services.auth import CurrentLearner, get_current_learner
+from app.services.demo_code_grader import grade_seeded_demo_code
 from app.services.learning_runtime import create_attempt, record_event
 from app.services.remediation import (
     apply_retry_result, create_remediation_case, serialize_case, submit_variant,
@@ -661,6 +662,9 @@ async def _grade_code(exercise: Exercise, code: str, files: list[dict]) -> dict[
     test_cases = exercise.test_cases or []
     if not test_cases:
         return {"passed": 0, "total": 0, "results": [], "error": "该题没有测试用例"}
+    seeded_demo_result = grade_seeded_demo_code(exercise, code)
+    if seeded_demo_result is not None:
+        return seeded_demo_result
     from app.services.exercise_agent import ExerciseAgent
     results = ExerciseAgent.verify_exercise(code, test_cases)
     return {
@@ -860,7 +864,8 @@ async def submit_review_item(
         },
         confidence=0.8 if unknown else 1.0,
         provenance={
-            "grader": "deterministic_review_contract",
+            "grader": str(stored_result.get("grader_id") or "deterministic_review_contract"),
+            "execution_performed": stored_result.get("execution_performed"),
             "policy_version": "review-policy-v1",
         },
         client_event_id=f"review-attempt:{attempt.id}:evaluated",

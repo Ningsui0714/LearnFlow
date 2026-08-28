@@ -8,8 +8,12 @@ from sqlalchemy import select
 
 from app.db.database import async_session
 from app.main import app
-from app.models.learning import Learner, LearningAttempt, RemediationCase, ReviewSchedule
+from app.models.learning import (
+    AgentSession, EvidenceEvent, KernelMutation, KernelState, Learner, LearningAttempt,
+    MemoryFact, MemoryNode, RemediationCase, ReviewSchedule,
+)
 from app.models.project import Checkpoint, Project, Roadmap, Source
+from app.services.learning_runtime import record_event
 from app.services.personal_concept_graph import extract_self_report
 from app.services.personal_concept_graph import concept_client_event_id
 
@@ -406,3 +410,156 @@ def test_explicit_profile_edit_routes_human_and_value_through_reducer(client: Te
     assert human["long_term"]["learning_preferences"]["preferred_modes"] == ["可视化", "定义后直接举例", "代码"]
     assert value["long_term"]["focus_areas"] == ["机器学习", "Agent", "强化学习"]
     assert value["long_term"]["career_goal"].startswith("优先探索 Agent 工程")
+
+
+def test_explicit_human_adaptation_is_scoped_transient_and_answer_free(client: TestClient):
+    async def seed_scope():
+        async with async_session() as db:
+            learner_id = (await db.execute(select(Learner.id).where(
+                Learner.key == "local-default",
+            ))).scalar_one()
+            suffix = uuid.uuid4().hex[:8]
+            project = Project(learner_id=learner_id, name=f"human-scope-{suffix}")
+            db.add(project)
+            await db.flush()
+            roadmap = Roadmap(project_id=project.id, raw_json={})
+            db.add(roadmap)
+            await db.flush()
+            checkpoint = Checkpoint(roadmap_id=roadmap.id, title="显式节奏适配", order=1)
+            db.add(checkpoint)
+            await db.flush()
+            session = AgentSession(
+                learner_id=learner_id,
+                session_type="checkpoint",
+                project_id=project.id,
+                checkpoint_id=checkpoint.id,
+                title="人因核测试",
+            )
+            db.add(session)
+            await db.commit()
+            return learner_id, project.id, checkpoint.id, session.id
+
+    learner_id, project_id, checkpoint_id, session_id = asyncio.run(seed_scope())
+    quote = "这里讲得太快了，请慢一点"
+    client_event_id = eid("human-adaptation")
+    response = client.post("/api/learner-state/events", json={
+        "event_type": "vnext_human_adaptation_requested",
+        "client_event_id": client_event_id,
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+        "session_id": session_id,
+        "payload": {
+            "signal_kind": "pace_adjustment",
+            "value": "slower",
+            "strength": 0.9,
+            "explicit": True,
+            "evidence_quote": quote,
+        },
+    })
+    assert response.status_code == 200, response.text
+
+    snapshot = client.get("/api/learner-state/snapshot").json()
+    human = snapshot["kernels"]["human"]["short_term"]
+    assert human["pace_adjustment"] == "slower"
+    assert human["support_need"] == "reduce_pacing"
+    assert human["transient_expires_at"]
+
+    packet_response = client.get("/api/learner-state/context", params={
+        "query": "继续当前学习",
+        "purpose": "checkpoint_tutor",
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+        "session_id": session_id,
+    })
+    assert packet_response.status_code == 200, packet_response.text
+    packet = packet_response.json()
+    instructions = [item["instruction"] for item in packet["adaptation_directives"]]
+    assert any("放慢节奏" in item for item in instructions)
+    assert quote not in str(packet)
+    assert all(item["kernel"] != "human" for item in packet["items"])
+
+    async def inspect_event_chain():
+        async with async_session() as db:
+            event = (await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.learner_id == learner_id,
+                EvidenceEvent.client_event_id == f"{learner_id}:{client_event_id}",
+            ))).scalar_one()
+            assert (event.project_id, event.checkpoint_id, event.session_id) == (
+                project_id, checkpoint_id, session_id,
+            )
+            assert event.provenance["self_report"] is True
+            mutation = (await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id == event.id,
+                KernelMutation.kernel_name == "human",
+            ))).scalar_one()
+            assert "transient_expires_at" in mutation.patch["short_term"]
+            fact_rows = list((await db.execute(
+                select(MemoryFact, MemoryNode)
+                .join(MemoryNode, MemoryNode.id == MemoryFact.node_id)
+                .where(MemoryFact.source_mutation_id == mutation.id)
+            )).all())
+            assert fact_rows
+            assert all(fact.predicate not in {"transient_expires_at", "adaptation_source"} for fact, _ in fact_rows)
+            assert all(node.valid_to is not None for _, node in fact_rows)
+
+    asyncio.run(inspect_event_chain())
+
+    async def expire_current_adaptation():
+        async with async_session() as db:
+            state = (await db.execute(select(KernelState).where(
+                KernelState.learner_id == learner_id,
+                KernelState.kernel_name == "human",
+            ))).scalar_one()
+            short_term = dict(state.short_term or {})
+            short_term["transient_expires_at"] = (datetime.utcnow() - timedelta(seconds=1)).isoformat()
+            state.short_term = short_term
+            await db.commit()
+
+    asyncio.run(expire_current_adaptation())
+    expired_packet = client.get("/api/learner-state/context", params={
+        "query": "继续当前学习",
+        "purpose": "checkpoint_tutor",
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+        "session_id": session_id,
+    })
+    assert expired_packet.status_code == 200, expired_packet.text
+    assert all(
+        "放慢节奏" not in item["instruction"]
+        for item in expired_packet.json()["adaptation_directives"]
+    )
+
+    mismatch = client.post("/api/learner-state/events", json={
+        "event_type": "vnext_human_adaptation_requested",
+        "client_event_id": eid("human-scope-mismatch"),
+        "project_id": project_id + 100000,
+        "checkpoint_id": checkpoint_id,
+        "payload": {
+            "signal_kind": "format_request", "value": "visual", "explicit": True,
+        },
+    })
+    assert mismatch.status_code == 400
+
+
+def test_ordinary_uncertainty_does_not_infer_human_state():
+    async def inspect():
+        async with async_session() as db:
+            learner_id = (await db.execute(select(Learner.id).where(
+                Learner.key == "local-default",
+            ))).scalar_one()
+            event = await record_event(
+                db,
+                learner_id=learner_id,
+                event_type="user_message",
+                source="test",
+                payload={"text": "我不会这道题，也不懂反向传播"},
+                client_event_id=eid("uncertainty-not-human"),
+            )
+            await db.commit()
+            human_mutations = list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id == event.id,
+                KernelMutation.kernel_name == "human",
+            ))).scalars().all())
+            assert human_mutations == []
+
+    asyncio.run(inspect())

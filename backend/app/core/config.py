@@ -100,7 +100,10 @@ class Settings(BaseSettings):
     memory_auto_synthesis_enabled: bool = True
     github_token: str = ""
     github_resource_search_enabled: bool = True
-    dev_test_login_enabled: bool = True
+    # Passwordless account switching is a local development/demo affordance.
+    # Production starts closed and the route also verifies the socket peer is
+    # loopback before exposing account metadata or issuing a session.
+    dev_test_login_enabled: bool = False
     competition_demo_mode: bool = False
     # Desktop sidecar mode. Keep disabled in browser/server deployments.
     desktop_mode: bool = False
@@ -109,8 +112,29 @@ class Settings(BaseSettings):
     local_agent_default_timeout_seconds: int = 900
     local_agent_max_output_bytes: int = 2 * 1024 * 1024
     auth_cookie_name: str = "learnflow_session"
+    # The existing setting remains the absolute browser-session lifetime.
     auth_session_days: int = 7
+    auth_session_idle_minutes: int = 120
+    auth_session_touch_interval_seconds: int = 60
     auth_cookie_secure: bool = False
+    auth_argon2_time_cost: int = 3
+    auth_argon2_memory_cost_kib: int = 65_536
+    auth_argon2_parallelism: int = 4
+    auth_kdf_max_concurrency: int = 2
+    auth_kdf_queue_timeout_seconds: float = 15.0
+    auth_login_window_seconds: int = 15 * 60
+    auth_login_account_free_failures: int = 3
+    auth_login_ip_free_failures: int = 20
+    auth_login_backoff_base_seconds: int = 2
+    auth_login_backoff_max_seconds: int = 5 * 60
+    # URL-safe base64 for exactly 32 random bytes. It is a deployment secret,
+    # never persisted in the application database or returned by an API.
+    auth_api_key_kek: str = Field(default="", repr=False)
+    auth_api_key_kek_version: int = 1
+    # Server-only capability used by the vNext Tutor proxy to resolve the
+    # currently authenticated account's encrypted provider credential.  It
+    # must never be embedded in or forwarded to browser code.
+    auth_runtime_bridge_token: str = Field(default="", repr=False)
 
     # Embedding
     embedding_backend: str = "local"  # local | api

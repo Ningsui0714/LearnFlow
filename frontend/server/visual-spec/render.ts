@@ -1,0 +1,313 @@
+import type { VisualArtifact } from '../../src/tooling.ts'
+import {
+  RENDERER_VERSION,
+  type CodeTraceSemantic,
+  type DataStructureSemantic,
+  type DerivationSemantic,
+  type FunctionSemantic,
+  type LearningVisualQuality,
+  type LearningVisualFrame,
+  type LearningVisualSpec,
+  type LegacyLearningVisualFrame,
+  type LegacyLearningVisualSpec,
+  type ProbabilitySemantic,
+  type ProtocolSequenceSemantic,
+  type ReadableLearningVisualSpec,
+  type ReadableVisualStep,
+  type ReplayableVisualArtifact,
+  type StateMachineSemantic,
+  type SystemStructureSemantic,
+  type TensorShapeFlowSemantic,
+  type TransformationSemantic,
+  type VisualPoint,
+  type VisualStateSnapshot,
+} from './types.ts'
+import { describePatch, inspectLearningVisualSpec, replayAnimation } from './runtime.ts'
+
+type RenderResult = { svg: string; collisions: number; outOfBounds: number }
+type GraphNode = { id: string; label: string; detail?: string }
+type GraphEdge = { id: string; from: string; to: string; label?: string }
+
+function escapeXml(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+}
+
+function wrapLabel(value: string, size = 11) {
+  const characters = Array.from(value)
+  const lines: string[] = []
+  for (let index = 0; index < characters.length; index += size) lines.push(characters.slice(index, index + size).join(''))
+  return lines.slice(0, 3)
+}
+
+function svgTextLines(value: string, x: number, y: number, options: { size?: number; weight?: number; color?: string; anchor?: 'start' | 'middle' | 'end'; lineLength?: number } = {}) {
+  const size = options.size ?? 13
+  const anchor = options.anchor ?? 'middle'
+  const lines = wrapLabel(value, options.lineLength ?? 12)
+  const start = y - ((lines.length - 1) * (size + 3)) / 2
+  return `<text x="${x}" y="${start}" text-anchor="${anchor}" font-size="${size}" font-weight="${options.weight ?? 650}" fill="${options.color ?? '#203a30'}">${lines.map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : size + 3}">${escapeXml(line)}</tspan>`).join('')}</text>`
+}
+
+function svgShell(title: string, description: string, body: string, stateCue = '') {
+  return `<svg viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg" role="img"><title>${escapeXml(title)}</title><desc>${escapeXml(description)}</desc><defs><marker id="lf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#667d71"></path></marker><linearGradient id="lf-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fbf9"></stop><stop offset="1" stop-color="#eef5f1"></stop></linearGradient></defs><rect x="6" y="6" width="788" height="438" rx="24" fill="url(#lf-bg)" stroke="#d9e5de"></rect>${body}${stateCue ? `<rect x="22" y="405" width="756" height="28" rx="9" fill="#fff7df" stroke="#e1bd67"></rect>${svgTextLines(`状态变化：${stateCue}`, 35, 423, { anchor: 'start', size: 11, weight: 700, color: '#684e12', lineLength: 90 })}` : ''}</svg>`
+}
+
+function graphSvg(title: string, description: string, nodes: GraphNode[], edges: GraphEdge[], state: VisualStateSnapshot, stateCue = ''): RenderResult {
+  const columns = Math.min(4, Math.max(1, nodes.length))
+  const rows = Math.ceil(nodes.length / columns)
+  const xGap = columns === 1 ? 0 : 640 / Math.max(1, columns - 1)
+  const yGap = rows === 1 ? 0 : 250 / Math.max(1, rows - 1)
+  const layout = new Map(nodes.map((node, index) => {
+    const requestedPosition = state.positions[node.id]
+    return [node.id, {
+      x: requestedPosition?.[0] ?? (columns === 1 ? 400 : 80 + (index % columns) * xGap),
+      y: requestedPosition?.[1] ?? (rows === 1 ? 210 : 92 + Math.floor(index / columns) * yGap),
+    }]
+  }))
+  let outOfBounds = 0
+  for (const item of layout.values()) if (item.x < 72 || item.x > 728 || item.y < 58 || item.y > 366) outOfBounds += 1
+  let collisions = 0
+  const positioned = Array.from(layout.values())
+  for (let left = 0; left < positioned.length; left += 1) {
+    for (let right = left + 1; right < positioned.length; right += 1) {
+      if (Math.abs(positioned[left].x - positioned[right].x) < 132 && Math.abs(positioned[left].y - positioned[right].y) < 82) collisions += 1
+    }
+  }
+  const edgeSvg = edges.map(edge => {
+    const from = layout.get(edge.from)
+    const to = layout.get(edge.to)
+    if (!from || !to) throw new Error(`visual_render_dangling_relation:${edge.id}`)
+    const active = state.activeIds.includes(edge.id)
+    const middleX = (from.x + to.x) / 2
+    const middleY = (from.y + to.y) / 2
+    return `<g><path d="M ${from.x} ${from.y} L ${to.x} ${to.y}" fill="none" stroke="${active ? '#765000' : '#7b9185'}" stroke-width="${active ? 4 : 2}" ${active ? 'stroke-dasharray="8 4"' : ''} marker-end="url(#lf-arrow)"></path>${edge.label ? svgTextLines(`${active ? '当前：' : ''}${edge.label}`, middleX, middleY - 10, { size: 10, color: '#53665c', lineLength: 18 }) : ''}</g>`
+  }).join('')
+  const nodeSvg = nodes.map(node => {
+    const item = layout.get(node.id)!
+    const active = state.activeIds.includes(node.id) || state.currentStateId === node.id || state.activeLineId === node.id
+    return `<g><rect x="${item.x - 62}" y="${item.y - 34}" width="124" height="68" rx="16" fill="${active ? '#fff1c9' : '#ffffff'}" stroke="${active ? '#765000' : '#68887a'}" stroke-width="${active ? 3 : 1.7}" ${active ? 'stroke-dasharray="7 3"' : ''}></rect>${active ? `<rect x="${item.x - 26}" y="${item.y - 48}" width="52" height="18" rx="9" fill="#765000"></rect>${svgTextLines('当前', item.x, item.y - 36, { size: 9, color: '#fff', lineLength: 6 })}` : ''}${svgTextLines(node.label, item.x, item.y - (node.detail ? 7 : 0), { size: 13, lineLength: 11 })}${node.detail ? svgTextLines(node.detail, item.x, item.y + 16, { size: 9, weight: 500, color: '#697b72', lineLength: 18 }) : ''}</g>`
+  }).join('')
+  return { svg: svgShell(title, description, edgeSvg + nodeSvg, stateCue), collisions, outOfBounds }
+}
+
+function protocolSvg(spec: LearningVisualSpec & { semantic: ProtocolSequenceSemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
+  const xGap = spec.semantic.participants.length === 1 ? 0 : 620 / Math.max(1, spec.semantic.participants.length - 1)
+  const xFor = new Map(spec.semantic.participants.map((item, index) => [item.id, 90 + index * xGap]))
+  const participants = spec.semantic.participants.map(item => {
+    const x = xFor.get(item.id)!
+    return `<rect x="${x - 58}" y="38" width="116" height="44" rx="14" fill="#fff" stroke="#68887a" stroke-width="1.8"></rect>${svgTextLines(item.label, x, 60, { size: 12, lineLength: 10 })}<line x1="${x}" y1="82" x2="${x}" y2="382" stroke="#9aaba2" stroke-width="1.5" stroke-dasharray="5 5"></line>`
+  }).join('')
+  const messageYs: number[] = []
+  const messages = spec.semantic.messages.map((message, index) => {
+    const from = xFor.get(message.from)
+    const to = xFor.get(message.to)
+    if (from === undefined || to === undefined) throw new Error(`visual_render_dangling_message:${message.id}`)
+    const y = 125 + index * Math.min(74, 235 / Math.max(1, spec.semantic.messages.length - 1))
+    messageYs.push(y)
+    const emitted = state.emittedMessageIds.includes(message.id)
+    const current = state.activeIds.includes(message.id)
+    const label = `${message.order}. ${message.label}${current ? '（当前步骤）' : emitted ? '（已发送）' : '（待发送）'}`
+    return `<g opacity="${emitted || current ? 1 : 0.42}"><path d="M ${from} ${y} L ${to} ${y}" fill="none" stroke="${current ? '#765000' : '#6f887b'}" stroke-width="${current ? 4 : 2}" ${current ? 'stroke-dasharray="8 4"' : ''} marker-end="url(#lf-arrow)"></path>${svgTextLines(label, (from + to) / 2, y - 12, { size: 10, color: current ? '#6c4700' : '#52675c', lineLength: 24 })}</g>`
+  }).join('')
+  const participantXs = Array.from(xFor.values())
+  let collisions = 0
+  for (let left = 0; left < participantXs.length; left += 1) {
+    for (let right = left + 1; right < participantXs.length; right += 1) if (Math.abs(participantXs[left] - participantXs[right]) < 116) collisions += 1
+  }
+  for (let index = 1; index < messageYs.length; index += 1) if (messageYs[index] - messageYs[index - 1] < 24) collisions += 1
+  return { svg: svgShell(spec.title, spec.accessibility.summary, participants + messages, stateCue), collisions, outOfBounds: 0 }
+}
+
+function codeTraceSvg(spec: LearningVisualSpec & { semantic: CodeTraceSemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
+  const lines = spec.semantic.lines.slice(0, 16)
+  const lineHeight = Math.min(25, 300 / Math.max(1, lines.length))
+  const lineSvg = lines.map((line, index) => {
+    const y = 72 + index * lineHeight
+    const active = state.activeLineId === line.id || state.activeIds.includes(line.id)
+    return `<rect x="28" y="${y - 16}" width="474" height="${lineHeight - 2}" rx="6" fill="${active ? '#fff0c5' : index % 2 ? '#f6f8f7' : '#fff'}" stroke="${active ? '#765000' : 'none'}" ${active ? 'stroke-dasharray="6 3"' : ''}></rect>${svgTextLines(`${active ? '▶' : ' '} ${line.number}  ${line.text}`, 42, y, { anchor: 'start', size: 10.5, weight: active ? 750 : 520, lineLength: 64 })}`
+  }).join('')
+  const variables = spec.semantic.variables.map((variable, index) => `<rect x="530" y="${62 + index * 45}" width="236" height="34" rx="9" fill="#fff" stroke="#ccd9d2"></rect>${svgTextLines(`${variable.name} = ${String(state.values[variable.id] ?? variable.initialValue)}`, 548, 80 + index * 45, { anchor: 'start', size: 11, lineLength: 28 })}`).join('')
+  const stackLabels = state.stack.map(frameId => spec.semantic.stackFrames.find(item => item.id === frameId)?.functionName || frameId)
+  const outOfBounds = spec.semantic.variables.filter((_, index) => 62 + index * 45 + 34 > 395).length
+  return { svg: svgShell(spec.title, spec.accessibility.summary, lineSvg + variables + svgTextLines(`调用栈：${stackLabels.length ? stackLabels.join(' → ') : '空'}`, 548, 346, { anchor: 'start', size: 10, lineLength: 30 }), stateCue), collisions: 0, outOfBounds }
+}
+
+function dataStructureGraph(semantic: DataStructureSemantic, state: VisualStateSnapshot) {
+  const nodes = semantic.items.map(item => {
+    const pointerLabels = semantic.pointers.filter(pointer => (state.pointers[pointer.id] ?? pointer.targetId) === item.id).map(pointer => pointer.label)
+    const position = state.positions[item.id]
+    const value = state.values[item.id] ?? item.value
+    const details = [item.index === undefined ? '' : `索引 ${item.index}`, value === undefined ? '' : `值 ${String(value)}`, pointerLabels.length ? `指针 ${pointerLabels.join('/')}` : '', position ? `位置 (${position[0]}, ${position[1]})` : ''].filter(Boolean)
+    return { id: item.id, label: item.label, detail: details.join(' · ') }
+  })
+  return { nodes, edges: semantic.links.map(item => ({ id: item.id, from: item.from, to: item.to, label: item.kind })) }
+}
+
+function tensorSvg(spec: LearningVisualSpec & { semantic: TensorShapeFlowSemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
+  const nodes: GraphNode[] = [
+    ...spec.semantic.tensors.map(tensor => ({ id: tensor.id, label: tensor.label, detail: `[${(state.tensorShapes[tensor.id] || tensor.shape).join(' × ')}]${tensor.dtype ? ` · ${tensor.dtype}` : ''}` })),
+    ...spec.semantic.operations.map(operation => ({ id: operation.id, label: operation.label, detail: '确定性算子' })),
+  ]
+  const edges: GraphEdge[] = []
+  for (const operation of spec.semantic.operations) {
+    operation.inputIds.forEach((inputId, index) => edges.push({ id: `${operation.id}_in_${index}`, from: inputId, to: operation.id, label: '输入' }))
+    operation.outputIds.forEach((outputId, index) => edges.push({ id: `${operation.id}_out_${index}`, from: operation.id, to: outputId, label: '输出' }))
+  }
+  return graphSvg(spec.title, spec.accessibility.summary, nodes, edges, state, stateCue)
+}
+
+function chartBounds(series: VisualPoint[][]) {
+  const all = series.flat()
+  const xs = all.map(item => item[0])
+  const ys = all.map(item => item[1])
+  let minX = Math.min(...xs); let maxX = Math.max(...xs); let minY = Math.min(...ys); let maxY = Math.max(...ys)
+  if (minX === maxX) { minX -= 1; maxX += 1 }
+  if (minY === maxY) { minY -= 1; maxY += 1 }
+  return { minX, maxX, minY, maxY }
+}
+
+function chartSvg(title: string, description: string, series: Array<{ id: string; label: string; points: VisualPoint[] }>, state: VisualStateSnapshot, stateCue: string, domains?: { x: VisualPoint; y: VisualPoint }): RenderResult {
+  const actualSeries = series.map(item => ({ ...item, points: state.series[item.id] || item.points }))
+  const bounds = domains ? { minX: domains.x[0], maxX: domains.x[1], minY: domains.y[0], maxY: domains.y[1] } : chartBounds(actualSeries.map(item => item.points))
+  const x = (value: number) => 70 + ((value - bounds.minX) / (bounds.maxX - bounds.minX)) * 650
+  const y = (value: number) => 365 - ((value - bounds.minY) / (bounds.maxY - bounds.minY)) * 285
+  const grid = `<line x1="70" y1="365" x2="720" y2="365" stroke="#50675b" stroke-width="2"></line><line x1="70" y1="80" x2="70" y2="365" stroke="#50675b" stroke-width="2"></line>${svgTextLines(String(bounds.minX), 70, 385, { size: 9 })}${svgTextLines(String(bounds.maxX), 720, 385, { size: 9 })}${svgTextLines(String(bounds.maxY), 52, 84, { size: 9 })}`
+  const colors = ['#176c96', '#8a4c97', '#765000', '#26754f']
+  const paths = actualSeries.map((item, index) => {
+    const pathData = item.points.map((itemPoint, pointIndex) => `${pointIndex ? 'L' : 'M'} ${x(itemPoint[0]).toFixed(2)} ${y(itemPoint[1]).toFixed(2)}`).join(' ')
+    const active = state.activeIds.includes(item.id)
+    return `<path d="${pathData}" fill="none" stroke="${colors[index % colors.length]}" stroke-width="${active ? 4 : 2.6}" ${active ? 'stroke-dasharray="8 4"' : ''}></path>${svgTextLines(`${index + 1}. ${item.label}${active ? '（当前）' : ''}`, 560, 40 + index * 18, { anchor: 'start', size: 10, color: colors[index % colors.length], lineLength: 24 })}`
+  }).join('')
+  return { svg: svgShell(title, description, grid + paths, stateCue), collisions: 0, outOfBounds: 0 }
+}
+
+function probabilitySvg(spec: LearningVisualSpec & { semantic: ProbabilitySemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
+  const pointValues = spec.semantic.samples.map(item => [item.x, typeof state.values[item.id] === 'number' ? state.values[item.id] as number : item.y] as VisualPoint)
+  const chart = chartSvg(spec.title, spec.accessibility.summary, [{ id: 'probability', label: spec.semantic.mode.toUpperCase(), points: pointValues }], state, stateCue)
+  if (spec.semantic.mode !== 'pmf') return chart
+  const bounds = chartBounds([pointValues])
+  const x = (value: number) => 70 + ((value - bounds.minX) / (bounds.maxX - bounds.minX)) * 650
+  const y = (value: number) => 365 - ((value - bounds.minY) / (bounds.maxY - bounds.minY)) * 285
+  const stems = pointValues.map(item => `<line x1="${x(item[0])}" y1="365" x2="${x(item[0])}" y2="${y(item[1])}" stroke="#176c96" stroke-width="4"></line><circle cx="${x(item[0])}" cy="${y(item[1])}" r="5" fill="#fff" stroke="#176c96" stroke-width="3"></circle>`).join('')
+  return { ...chart, svg: chart.svg.replace('</svg>', `${stems}</svg>`) }
+}
+
+function derivationSvg(spec: LearningVisualSpec & { semantic: DerivationSemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
+  const rows = spec.semantic.steps.map((step, index) => {
+    const expression = state.expressions[step.id] || step.expression
+    const active = state.activeIds.includes(step.id)
+    const relation = step.relation === 'equals' ? '=' : step.relation === 'implies' ? '⇒' : step.relation === 'approximately' ? '≈' : '≔'
+    return `<rect x="45" y="${50 + index * 44}" width="710" height="34" rx="10" fill="${active ? '#fff0c8' : '#fff'}" stroke="${active ? '#765000' : '#d4ded8'}" ${active ? 'stroke-dasharray="7 3"' : ''}></rect>${svgTextLines(`${index + 1}. ${relation} ${expression}${active ? '（当前变化）' : ''}`, 62, 68 + index * 44, { anchor: 'start', size: 12, lineLength: 64 })}`
+  }).join('')
+  return { svg: svgShell(spec.title, spec.accessibility.summary, rows, stateCue), collisions: 0, outOfBounds: 0 }
+}
+
+function semanticGraph(spec: LearningVisualSpec, state: VisualStateSnapshot): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const semantic = spec.semantic
+  if (semantic.type === 'state_machine') return { nodes: semantic.states.map(item => ({ id: item.id, label: item.label, detail: item.initial ? '初始状态' : item.terminal ? '终止状态' : undefined })), edges: semantic.transitions.map(item => ({ id: item.id, from: item.from, to: item.to, label: `${item.event}${item.guard ? ` / ${item.guard}` : ''}` })) }
+  if (semantic.type === 'data_structure') return dataStructureGraph(semantic, state)
+  if (semantic.type === 'system_structure') return { nodes: semantic.entities.map(item => ({ id: item.id, label: item.label, detail: item.detail })), edges: semantic.relations }
+  if (semantic.type === 'math_structure') return { nodes: semantic.terms.map(item => ({ id: item.id, label: item.label, detail: item.detail })), edges: semantic.relations }
+  return { nodes: [], edges: [] }
+}
+
+function renderSpec(spec: LearningVisualSpec, state: VisualStateSnapshot, stateCue = ''): RenderResult {
+  if (spec.semantic.type === 'protocol_sequence') return protocolSvg(spec as LearningVisualSpec & { semantic: ProtocolSequenceSemantic }, state, stateCue)
+  if (spec.semantic.type === 'code_trace') return codeTraceSvg(spec as LearningVisualSpec & { semantic: CodeTraceSemantic }, state, stateCue)
+  if (spec.semantic.type === 'tensor_shape_flow') return tensorSvg(spec as LearningVisualSpec & { semantic: TensorShapeFlowSemantic }, state, stateCue)
+  if (spec.semantic.type === 'function') {
+    const semantic = spec.semantic as FunctionSemantic
+    return chartSvg(spec.title, spec.accessibility.summary, semantic.series, state, stateCue, { x: semantic.axes.xDomain, y: semantic.axes.yDomain })
+  }
+  if (spec.semantic.type === 'probability') return probabilitySvg(spec as LearningVisualSpec & { semantic: ProbabilitySemantic }, state, stateCue)
+  if (spec.semantic.type === 'transformation') {
+    const semantic = spec.semantic as TransformationSemantic
+    return chartSvg(spec.title, spec.accessibility.summary, semantic.objects.map(item => ({ id: item.id, label: item.label, points: state.series[item.id] || item.points })), state, stateCue)
+  }
+  if (spec.semantic.type === 'derivation') return derivationSvg(spec as LearningVisualSpec & { semantic: DerivationSemantic }, state, stateCue)
+  const graph = semanticGraph(spec, state)
+  return graphSvg(spec.title, spec.accessibility.summary, graph.nodes, graph.edges, state, stateCue)
+}
+
+function renderLegacySpec(spec: LegacyLearningVisualSpec, frame?: LegacyLearningVisualFrame): RenderResult {
+  const state: VisualStateSnapshot = { activeIds: [...(frame?.activeNodeIds || []), ...(frame?.activeRelationIds || [])], values: {}, pointers: {}, positions: {}, tensorShapes: {}, expressions: {}, series: {}, stack: [], emittedMessageIds: [] }
+  return graphSvg(spec.title, `${spec.title}。旧版视觉以只读兼容模式呈现。`, spec.nodes.map(node => ({ id: node.id, label: node.label, detail: node.detail })), spec.relations, state, frame ? `旧版故事板：${frame.title}。此帧只有高亮信息，不代表已验证的状态变化。` : '旧版静态图解')
+}
+
+function frameDescription(frame: LearningVisualFrame) {
+  return `${frame.title}：${frame.narration}。${frame.patches.map(describePatch).join('；')}`
+}
+
+export function visualSpecToArtifact(spec: ReadableLearningVisualSpec): { artifact: ReplayableVisualArtifact; quality: LearningVisualQuality } {
+  let quality = inspectLearningVisualSpec(spec)
+  if (quality.status === 'rejected') throw new Error(`visual_spec_quality_gate:${quality.issues.join(',')}`)
+  const rendered: RenderResult[] = []
+  const steps: ReadableVisualStep[] = []
+  const descriptions: string[] = []
+  let artifactKind: VisualArtifact['kind'] = 'image'
+
+  if (spec.version === 'learnflow.visual.v1') {
+    const frames: Array<LegacyLearningVisualFrame | undefined> = spec.kind === 'animation' && spec.frames.length ? spec.frames : [undefined]
+    for (const frame of frames) {
+      const result = renderLegacySpec(spec, frame)
+      const description = frame ? `${frame.title}：${frame.narration || '旧版高亮帧'}` : `${spec.title}：旧版静态图解`
+      rendered.push(result)
+      descriptions.push(description)
+      steps.push({ title: frame?.title || spec.title, text: description, svg: result.svg, stateDescription: description })
+    }
+  } else if (spec.kind === 'diagram') {
+    const result = renderSpec(spec, spec.state, '稳定单状态图解')
+    const description = `${spec.title}：${spec.accessibility.summary}`
+    rendered.push(result)
+    descriptions.push(description)
+    steps.push({ title: spec.title, text: spec.subtitle || spec.explanation, svg: result.svg, stateDescription: description })
+  } else {
+    artifactKind = 'animation'
+    const initial = renderSpec(spec, spec.initialState, '初始状态：尚未应用任何动画补丁')
+    rendered.push(initial)
+    descriptions.push(`初始状态：${spec.accessibility.summary}`)
+    steps.push({ title: '初始状态', text: spec.accessibility.summary, svg: initial.svg, durationMs: 1200, stateDescription: descriptions[0] })
+    const replay = replayAnimation(spec)
+    spec.frames.forEach((frame, index) => {
+      const description = frameDescription(frame)
+      const result = renderSpec(spec, replay.states[index], description)
+      rendered.push(result)
+      descriptions.push(description)
+      steps.push({ title: frame.title, text: description, svg: result.svg, durationMs: frame.durationMs, stateDescription: description })
+    })
+  }
+
+  const collisions = rendered.reduce((total, item) => total + item.collisions, 0)
+  const outOfBounds = rendered.reduce((total, item) => total + item.outOfBounds, 0)
+  if (collisions || outOfBounds) {
+    const issues = [...quality.issues]
+    if (collisions) issues.push(`layout_collisions:${collisions}`)
+    if (outOfBounds) issues.push(`layout_out_of_bounds:${outOfBounds}`)
+    throw new Error(`visual_spec_quality_gate:${issues.join(',')}`)
+  }
+  quality = { ...quality, layout: { collisions, outOfBounds } }
+  const generation = spec.generation
+  const readable = spec.version === 'learnflow.visual.v1'
+    ? { summary: `${spec.title}：旧版视觉兼容读取。`, readingOrder: spec.nodes.map(item => item.id), frameDescriptions: descriptions, nonColorStateCue: '旧版高亮帧明确标记为故事板，不声称语义状态变化。' }
+    : { summary: spec.accessibility.summary, readingOrder: spec.accessibility.readingOrder, frameDescriptions: descriptions, nonColorStateCue: spec.accessibility.nonColorStateCue }
+  const artifact: ReplayableVisualArtifact = {
+    kind: artifactKind,
+    title: spec.title,
+    subtitle: spec.subtitle,
+    steps,
+    specVersion: spec.version,
+    domain: spec.domain === 'general' ? undefined : spec.domain,
+    abstraction: spec.abstraction,
+    renderer: RENDERER_VERSION,
+    quality,
+    fallbackUsed: generation.source !== 'model_plan' || generation.degraded,
+    status: generation.degraded ? 'degraded' : 'usable',
+    degraded: generation.degraded,
+    degradedTo: generation.degradedTo,
+    modelError: generation.modelError,
+    plannerSucceeded: generation.plannerSucceeded,
+    provenance: spec.provenance,
+    readable,
+    replay: { spec, rendererVersion: RENDERER_VERSION },
+  }
+  return { artifact, quality }
+}

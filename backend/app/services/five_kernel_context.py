@@ -46,6 +46,11 @@ ALERT_KINDS = {
     "blocker", "gap", "misconception", "retention", "affect", "load",
     "support_need", "feedback", "remediation",
 }
+HUMAN_TRANSIENT_KEYS = {
+    "affect", "cognitive_load", "frustration", "support_need",
+    "pace_adjustment", "format_request", "adaptation_source",
+    "adaptation_scope", "transient_expires_at",
+}
 
 
 @dataclass(frozen=True)
@@ -220,8 +225,55 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _active_human_short_term(value: dict[str, Any]) -> dict[str, Any]:
+    """Hide expired turn-level adaptation without mutating authoritative state."""
+    short = dict(value or {})
+    raw_expiry = str(short.get("transient_expires_at") or "").strip()
+    if not raw_expiry:
+        return short
+    try:
+        expiry = datetime.fromisoformat(raw_expiry.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        # Malformed TTL metadata must fail closed: do not keep sensitive or
+        # potentially stale current-context adaptation alive indefinitely.
+        expiry = datetime.min
+    if expiry <= datetime.utcnow():
+        for key in HUMAN_TRANSIENT_KEYS:
+            short.pop(key, None)
+    return short
+
+
+def _scoped_human_states(
+    value: dict[str, Any], *, project_id: int | None,
+    checkpoint_id: int | None, session_id: int | None,
+) -> dict[str, Any]:
+    """Keep turn-level adaptation inside the exact context that produced it."""
+    states = dict(value or {})
+    if states.get("adaptation_source") != "explicit_current_context":
+        return states
+    raw_scope = states.get("adaptation_scope")
+    if not isinstance(raw_scope, dict):
+        for key in HUMAN_TRANSIENT_KEYS:
+            states.pop(key, None)
+        return states
+    requested = {
+        "project_id": project_id,
+        "checkpoint_id": checkpoint_id,
+        "session_id": session_id,
+    }
+    normalized_scope = {
+        key: _optional_int(raw_scope.get(key)) for key in requested
+    }
+    if any(normalized_scope[key] != requested[key] for key in requested):
+        for key in HUMAN_TRANSIENT_KEYS:
+            states.pop(key, None)
+    return states
+
+
 def _head_summary(kernel_name: str, state: KernelState) -> str:
     short = dict(state.short_term or {})
+    if kernel_name == "human":
+        short = _active_human_short_term(short)
     long = dict(state.long_term or {})
     preferred = {
         "structure": ("active_learning_path_plan", "path_position", "current_task", "current_blocker", "resume_anchor"),
@@ -249,23 +301,95 @@ def _head_summary(kernel_name: str, state: KernelState) -> str:
 
 def _facet_states(kernel_name: str, state: KernelState) -> dict[str, Any]:
     short = dict(state.short_term or {})
+    if kernel_name == "human":
+        short = _active_human_short_term(short)
+    long = dict(state.long_term or {})
     keys = {
         "structure": ("active_learning_path_plan", "active_project_id", "active_checkpoint_id", "current_blocker"),
         "knowledge": ("pending_question", "recent_errors", "active_concepts"),
-        "human": ("affect", "cognitive_load", "support_need"),
+        "human": (
+            "affect", "cognitive_load", "support_need", "pace_adjustment",
+            "format_request", "pace_preference", "format_preference",
+            "preferred_modes", "adaptation_source", "adaptation_scope",
+        ),
         "value": ("current_priority", "current_motivation", "goal_status"),
         "practice": ("assistance_level", "artifact_state", "remediation_status"),
     }[kernel_name]
     result: dict[str, Any] = {}
     for key in keys:
         value = short.get(key)
+        if value in (None, "", [], {}) and kernel_name == "human":
+            value = long.get(key)
+            if value in (None, "", [], {}) and key in {"pace_preference", "format_preference", "preferred_modes"}:
+                value = dict(long.get("learning_preferences") or {}).get(key)
         if value in (None, "", [], {}):
             continue
-        if isinstance(value, (dict, list)):
+        if key == "adaptation_scope" and isinstance(value, dict):
+            # Scope is machine-readable control metadata. Compacting it into a
+            # display string would make the exact-session comparison fail
+            # closed for the very session that produced the adaptation.
+            result[key] = dict(value)
+        elif isinstance(value, (dict, list)):
             result[key] = _compact(value, 180)
         else:
             result[key] = value
     return result
+
+
+def _human_adaptation_directives(states: dict[str, Any]) -> list[dict[str, str]]:
+    """Convert Human state into compact teaching directives without raw sensitive text."""
+    directives: list[dict[str, str]] = []
+
+    def add(kind: str, instruction: str, source: str = "current_context") -> None:
+        if instruction and all(item["instruction"] != instruction for item in directives):
+            directives.append({"kind": kind, "instruction": instruction, "source": source})
+
+    pace = str(states.get("pace_adjustment") or states.get("pace_preference") or "")
+    if pace == "slower":
+        add("pace", "放慢节奏；一次只推进一个小步骤，并在继续前留出回应空间")
+    elif pace == "faster":
+        add("pace", "加快节奏；压缩已知铺垫，但不要跳过验证边界")
+
+    format_value = str(states.get("format_request") or states.get("format_preference") or "")
+    format_instructions = {
+        "visual": "优先使用图示或空间化表征，并同时提供可读文字说明",
+        "example": "定义后立即给一个最小、可检查的例子",
+        "code": "定义后给最小可运行代码，并解释关键输出",
+        "steps": "把当前动作拆成清楚的编号步骤，每次只处理一个决策点",
+        "concise": "减少铺垫和重复，只保留当前任务必需信息",
+        "alternative": "不要重复当前讲法；改用另一种表征后再检查理解",
+    }
+    if format_value in format_instructions:
+        add("format", format_instructions[format_value])
+
+    modes = states.get("preferred_modes")
+    if isinstance(modes, list):
+        safe_modes = {str(item).casefold() for item in modes}
+        if safe_modes & {"visual", "visualization", "图示", "可视化"}:
+            add("format", format_instructions["visual"], "confirmed_preference")
+        if safe_modes & {"example", "examples", "示例"}:
+            add("format", format_instructions["example"], "confirmed_preference")
+        if safe_modes & {"code", "代码"}:
+            add("format", format_instructions["code"], "confirmed_preference")
+
+    load = states.get("cognitive_load")
+    if isinstance(load, (int, float)) and float(load) >= 0.7:
+        add("load", "降低单轮信息量，先收紧目标并确认当前最小阻碍")
+    if str(states.get("affect") or "") == "frustrated":
+        add("support", "先简短承认当前受阻，再缩小任务；不要推断人格或长期能力")
+
+    support = str(states.get("support_need") or "")
+    support_instructions = {
+        "reduce_pacing": "放慢节奏并减少单轮新概念数量",
+        "increase_pacing": "加快节奏但保留独立验证",
+        "reduce_chunk_size": "把内容切成更小块，并在每块后让学习者回应",
+        "switch_explanation_mode": "切换表征方式，不要原样重复上一段解释",
+        "acknowledge_and_reduce_scope": "先回应当前困难，再将任务缩成一个可完成动作",
+        "repeat_key_point": "只重述关键点，并换一个例子检查理解",
+    }
+    if support in support_instructions:
+        add("support", support_instructions[support])
+    return directives[:6]
 
 
 async def refresh_kernel_head(
@@ -355,7 +479,19 @@ async def ensure_kernel_heads(db: AsyncSession, learner_id: int) -> list[KernelH
         if not state:
             continue
         head = head_map.get(kernel_name)
-        if not head or int(head.source_kernel_version or 0) != int(state.version or 0):
+        expired_human_projection = False
+        if kernel_name == "human" and head:
+            projected = dict((head.facets or {}).get("states") or {})
+            active = _active_human_short_term(dict(state.short_term or {}))
+            expired_human_projection = any(
+                key in projected and key not in active
+                for key in HUMAN_TRANSIENT_KEYS - {"transient_expires_at", "adaptation_source"}
+            )
+        if (
+            not head
+            or int(head.source_kernel_version or 0) != int(state.version or 0)
+            or expired_human_projection
+        ):
             head_map[kernel_name] = await refresh_kernel_head(db, learner_id, kernel_name)
     return [head_map[name] for name in KERNEL_NAMES if name in head_map]
 
@@ -534,7 +670,7 @@ async def build_five_kernel_context(
     head_facts, _, _ = await _node_metadata(db, raw_head_refs)
     hidden_refs = {
         node.id for node in referenced_nodes
-        if not _in_scope(
+        if node.kernel_name == "human" or not _in_scope(
             node, policy, project_id=project_id, checkpoint_id=checkpoint_id,
             session_id=session_id,
         ) or _sensitive_node(node, head_facts.get(node.id))
@@ -555,7 +691,21 @@ async def build_five_kernel_context(
             focus_refs + alert_refs + working_refs + stable_refs
         ))
         scoped_nodes = [referenced_map[ref] for ref in ordered_refs]
-        summary = "；".join(node.text for node in scoped_nodes[:3])[:420]
+        head_states = dict((head.facets or {}).get("states") or {})
+        if head.kernel_name == "human":
+            head_states = _scoped_human_states(
+                head_states,
+                project_id=project_id,
+                checkpoint_id=checkpoint_id,
+                session_id=session_id,
+            )
+            summary = "；".join(
+                item["instruction"] for item in _human_adaptation_directives(head_states)
+            )[:420]
+            head_states.pop("adaptation_source", None)
+            head_states.pop("adaptation_scope", None)
+        else:
+            summary = "；".join(node.text for node in scoped_nodes[:3])[:420]
         subjects = list(dict.fromkeys(node.subject_key for node in scoped_nodes))[:8]
         head_payload[head.kernel_name] = {
             "summary": summary,
@@ -565,7 +715,7 @@ async def build_five_kernel_context(
             "stable_refs": stable_refs,
             "facets": {
                 "subjects": subjects,
-                "states": {
+                "states": head_states if head.kernel_name == "human" else {
                     "active_memory_kinds": list(dict.fromkeys(
                         node.memory_kind for node in scoped_nodes
                     ))[:8],
@@ -610,6 +760,11 @@ async def build_five_kernel_context(
     excluded_sensitive = 0
     excluded_scope = 0
     for node in nodes:
+        # Human facts may be sensitive even when their compact directive is
+        # safe.  Tutor receives only the typed adaptation directives below.
+        if node.kernel_name == "human":
+            excluded_sensitive += 1
+            continue
         if not _in_scope(
             node, policy, project_id=project_id, checkpoint_id=checkpoint_id,
             session_id=session_id,
@@ -659,7 +814,13 @@ async def build_five_kernel_context(
     items: list[dict[str, Any]] = []
     # The personal concept graph is part of the Agent packet, not an unbudgeted
     # attachment added by an API route after retrieval has finished.
-    used_tokens = _token_estimate(head_payload) + _token_estimate(concept_context)
+    adaptation_directives = _human_adaptation_directives(
+        dict((head_payload.get("human") or {}).get("facets", {}).get("states") or {})
+    )
+    used_tokens = (
+        _token_estimate(head_payload) + _token_estimate(concept_context)
+        + _token_estimate(adaptation_directives)
+    )
     for score, _, node, reasons in ranked:
         candidate = _serialize_item(
             node, score=score, reasons=reasons, fact=facts.get(node.id),
@@ -735,6 +896,7 @@ async def build_five_kernel_context(
             "items": items,
             "paths": relation_paths,
             "personal_concept_graph": concept_context,
+            "adaptation_directives": adaptation_directives,
         })
 
     # One-hop paths are discovered after item selection.  Trim the least
@@ -809,6 +971,7 @@ async def build_five_kernel_context(
         "items": items,
         "relation_paths": relation_paths,
         "personal_concept_graph": concept_context,
+        "adaptation_directives": adaptation_directives,
         "missing_facets": missing_facets,
         "conflicts": conflicts,
         "omitted": {
@@ -828,6 +991,7 @@ async def build_five_kernel_context(
                 "items": items,
                 "paths": relation_paths,
                 "personal_concept_graph": concept_context,
+                "adaptation_directives": adaptation_directives,
             }),
             "answer_free": True,
             "retrieval_order": ["exact_scope", "subject_and_lexical", "one_hop_relations"],

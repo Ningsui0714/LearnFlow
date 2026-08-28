@@ -8,16 +8,23 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import importlib
 import json
+from pathlib import Path
+import re
 from typing import Any
 
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-28.1"
+REGISTRY_VERSION = "2026-08-28.6"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
+# The generated frontend SkillSpec did not change in this registry release.
+# Keep its source revision stable until that projection itself is regenerated.
+FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION = "2026-08-28.3"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
+LIFECYCLE_STATES = ("implemented", "optional_unimplemented", "deprecated")
 
 # This is the canonical allow-list used by Tutor semantic observations. The
 # runtime imports it instead of maintaining a second copy.
@@ -32,7 +39,8 @@ SEMANTIC_MEMORY_KEYS = {
     },
     "human": {
         "affect", "cognitive_load", "attention", "frustration",
-        "pace_preference", "format_preference", "support_need",
+        "pace_preference", "format_preference", "pace_adjustment",
+        "format_request", "support_need",
     },
     "value": {
         "current_priority", "current_motivation", "goal_candidate",
@@ -178,6 +186,28 @@ class EventContract:
     kernel_targets: tuple[str, ...]
     evidence_role: str
     origin: str = "learnflow"
+    payload_version: str | None = None
+    reducer_binding: str | None = None
+
+
+@dataclass(frozen=True)
+class ImplementationBinding:
+    id: str
+    kind: str
+    module: str = ""
+    symbol: str = ""
+    path: str = ""
+    method: str = ""
+    route: str = ""
+    endpoint: str = ""
+    member: str = ""
+
+
+@dataclass(frozen=True)
+class PublicationContract:
+    lifecycle: str
+    bindings: tuple[str, ...] = ()
+    note: str = ""
 
 
 # Three primary contracts are responsibility families, not three competing
@@ -314,8 +344,12 @@ TOOLS = {
                      (), (), "Checkpoint.learning_contract -> ready | ready_with_gaps | fallback_ready; one bounded model revision then deterministic minimum teaching artifact"),
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
-        ToolContract("safe_visual_generation", "Safe Learning Visual Generator", "learning_design_agent", "vnext", "artifact",
-                     (), (), "validated graph plan -> sanitized static SVG or deterministic SVG frames"),
+        ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
+                     (), (), "typed VisualSpec -> deterministic layout/state timeline -> quality gate -> sanitized SVG; model failure uses bounded semantic fallback"),
+        ToolContract("learning_diagram_generator", "Learning Diagram Generator", "learning_design_agent", "vnext", "artifact",
+                     (), (), "computer/math abstraction selection -> validated VisualSpec -> deterministic static SVG; zero learner-state write"),
+        ToolContract("learning_animation_generator", "Learning Animation Generator", "learning_design_agent", "vnext", "artifact",
+                     (), (), "state-changing computer/math process -> validated VisualSpec frames -> deterministic inspectable SVG timeline; zero learner-state write"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
@@ -396,7 +430,16 @@ TOOLS = {
                      ("knowledge", "practice"), (), "LearningAttempt + EvidenceEvent"),
         ToolContract("process_animation", "Process Animation", "learning_design_agent", "learnflow", "artifact",
                      ("knowledge", "human")),
-        ToolContract("code_executor", "Sandboxed Code Executor", "practice_agent", "learnflow", "assessment"),
+        ToolContract(
+            "code_executor",
+            "Policy-gated Local Code Executor",
+            "practice_agent",
+            "learnflow",
+            "assessment",
+            (),
+            (),
+            "unsupported by default; explicit development-only trusted_local_process mode discloses that host filesystem, network, and secrets are not isolated",
+        ),
         ToolContract("deterministic_assessment", "Deterministic Assessment", "practice_agent", "learnflow", "assessment"),
         ToolContract("deterministic_remediation", "RemediationStrategy", "practice_agent", "fused", "policy",
                      ("knowledge", "human", "practice"), (), "EvidenceEvent"),
@@ -441,7 +484,7 @@ TOOLS = {
 # policy and adapter objects remain service-side infrastructure.
 TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
-        "action_board", "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation",
+        "action_board", "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "learning_diagram_generator", "learning_animation_generator",
         "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
         "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
@@ -458,7 +501,7 @@ TOOL_INTERFACE_ROLES = {
     }},
     **{tool_id: "harness" for tool_id in {
         "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime", "vnext_learning_path_graph_reader",
-        "selection_followup_context", "vnext_learning_task_runtime",
+        "safe_visual_generation", "selection_followup_context", "vnext_learning_task_runtime",
         "vnext_learning_plan_runtime", "micro_learning_orchestrator",
         "learning_skill_runtime", "learning_task_runtime", "learning_task_planner",
         "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
@@ -480,7 +523,7 @@ TOOL_MODEL_EXPOSURE = {
     tool_id: (
         "vnext_native"
         if tool_id in {
-            "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation",
+            "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "learning_diagram_generator", "learning_animation_generator",
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
@@ -955,7 +998,7 @@ WORKBENCHES = {
                            "draft_learning_project", "create_project", "manage_learning_tasks",
                            "plan_learning_task", "run_learning_task", "delete_conversation")),
         WorkbenchContract("vnext_chat", "LearnFlow Chat + Selection Follow-up Desk", "/chat/:conversationId", "tutor_agent",
-                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_visual", "open_selection_followup",
+                          ("coordinate_vnext_agent_turn", "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_diagram", "generate_learning_animation", "open_selection_followup",
                            "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
                            "read_vnext_learning_workspace",
                            "manage_domain_knowledge_sources", "read_domain_knowledge", "read_active_learning_file", "recommend_learning_resources",
@@ -1025,7 +1068,8 @@ CAPABILITY_OWNERS = {
     "read_web_evidence": ("learning_design_agent", "web_evidence_reader", "vnext_chat"),
     "search_learning_videos": ("learning_design_agent", "learning_video_search", "vnext_chat"),
     "inspect_learning_video": ("learning_design_agent", "learning_video_inspector", "vnext_chat"),
-    "generate_learning_visual": ("learning_design_agent", "safe_visual_generation", "vnext_chat"),
+    "generate_learning_diagram": ("learning_design_agent", "learning_diagram_generator", "vnext_chat"),
+    "generate_learning_animation": ("learning_design_agent", "learning_animation_generator", "vnext_chat"),
     "open_selection_followup": ("tutor_agent", "selection_followup_context", "vnext_chat"),
     "run_vnext_learning_task": ("tutor_agent", "vnext_learning_task_runtime", "vnext_chat"),
     "run_vnext_learning_plan": ("tutor_agent", "vnext_learning_plan_runtime", "vnext_chat"),
@@ -1114,13 +1158,22 @@ def _event(event_id: str, capability: str, targets: tuple[str, ...], role: str,
            origin: str = "learnflow") -> EventContract:
     owner, default_tool, default_workbench = CAPABILITY_OWNERS[capability]
     return EventContract(event_id, owner, capability, tool or default_tool,
-                         workbench or default_workbench, targets, role, origin)
+                         workbench or default_workbench, targets, role, origin,
+                         EVENT_SCHEMA_VERSION if targets else None,
+                         f"reducer:{event_id}" if targets else None)
 
 
 EVENTS = {
     item.id: item for item in (
         _event("chat_mode_entered", "coordinate_chat_mode", (), "operational_context"),
         _event("learning_action_segment_completed", "coordinate_chat_mode", ("structure", "knowledge", "value"), "learning_action_projection"),
+        _event(
+            "vnext_human_adaptation_requested",
+            "coordinate_vnext_agent_turn",
+            ("human",),
+            "explicit_transient_adaptation",
+            origin="vnext",
+        ),
         _event("vnext_learning_task_created", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
         _event("vnext_learning_task_started", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
         _event("vnext_learning_task_phase_entered", "run_vnext_learning_task", (), "local_operational", origin="vnext"),
@@ -1243,12 +1296,547 @@ EVENTS = {
 }
 
 
-def capability_manifest() -> list[dict[str, Any]]:
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
+_PYTHON_BINDING_TARGETS = {
+    "py:action_board.execute": ("app.services.tutor_service", "execute_action"),
+    "py:tutor.process_turn": ("app.services.tutor_service", "process_turn"),
+    "py:tutor.context": ("app.services.tutor_service", "get_session_state_summary"),
+    "py:tutor.search_projects": ("app.services.tutor_service", "search_learning_projects"),
+    "py:tutor.draft_project": ("app.services.tutor_service", "draft_learning_project"),
+    "py:tutor.finalize_task": ("app.services.tutor_service", "finalize_action_for_task"),
+    "py:chat_modes.classify": ("app.services.chat_modes", "classify_chat_mode"),
+    "py:teaching_contract.evaluate": ("app.services.teaching_contract", "evaluate_teaching_contract"),
+    "py:delivery_readiness.read": ("app.services.delivery_readiness", "checkpoint_delivery_readiness"),
+    "py:checkpoint.context": ("app.services.checkpoint_context", "build_checkpoint_tutor_context"),
+    "py:source.processor": ("app.services.chunker", "SourceProcessor"),
+    "py:source.domains": ("app.services.source_knowledge", "derive_source_knowledge_domains"),
+    "py:roadmap.agent": ("app.services.roadmap_agent", "RoadmapAgent"),
+    "py:lecture.agent": ("app.services.lecture_agent", "LectureAgent"),
+    "py:concept.agent": ("app.services.concept_agent", "ConceptAgent"),
+    "py:exercise.agent": ("app.services.exercise_agent", "ExerciseAgent"),
+    "py:animation.agent": ("app.services.animation_agent", "AnimationAgent"),
+    "py:code.execute": ("app.services.code_executor", "execute_code"),
+    "py:assessment.create": ("app.services.assessment_design", "create_assessment_blueprint"),
+    "py:practice.create": ("app.services.dynamic_practice", "create_practice_set"),
+    "py:practice.grade": ("app.services.dynamic_practice", "grade_structured_response"),
+    "py:remediation.strategy": ("app.services.remediation", "RemediationStrategy"),
+    "py:review.schedule": ("app.services.review", "apply_assessment_result"),
+    "py:review.context": ("app.services.review", "build_review_tutor_context"),
+    "py:review.proficiency": ("app.services.review_proficiency", "build_concept_proficiency"),
+    "py:evidence.record": ("app.services.learning_runtime", "record_event"),
+    "py:reducer.reduce": ("app.services.learning_runtime", "_reduce_event"),
+    "py:memory_graph.create": ("app.services.memory_graph", "create_facts_for_mutation"),
+    "py:kernel_head.refresh": ("app.services.five_kernel_context", "refresh_kernel_head"),
+    "py:five_kernel.context": ("app.services.five_kernel_context", "build_five_kernel_context"),
+    "py:learning_skill.prepare": ("app.services.learning_skill_runtime", "prepare_learning_skill_turn"),
+    "py:learning_skill.create": ("app.services.learning_skill_runtime", "create_learning_skill_run"),
+    "py:learning_task.reconcile": ("app.services.learning_tasks", "reconcile_learning_task"),
+    "py:learning_task.plan": ("app.services.learning_tasks", "generate_learning_task_plan"),
+    "py:micro_learning.create": ("app.services.micro_learning", "create_micro_learning_run"),
+    "py:micro_learning.analyze": ("app.services.micro_learning", "analyze_teach_back"),
+    "py:workspace.delete_conversation": ("app.services.workspace_lifecycle", "delete_conversation_workspace"),
+    "py:workspace.delete_project": ("app.services.workspace_lifecycle", "delete_project_workspace"),
+    "py:workspace.scan": ("app.services.workspace_files", "scan_workspace_tree"),
+    "py:local_agent.create": ("app.services.local_agent_broker", "create_run_for_action"),
+    "py:demo.seed": ("app.services.demo_seed", "seed_competition_demo"),
+    "py:demo.grade_seeded_code": ("app.services.demo_code_grader", "grade_seeded_demo_code"),
+    "py:task.manager": ("app.services.task_manager", "TaskManager"),
+    "py:personal_concept_graph.build": ("app.services.personal_concept_graph", "build_personal_concept_graph"),
+    "py:profile.growth": ("app.services.profile", "growth_projection"),
+    "py:project_resources.search": ("app.services.project_proposals", "start_resource_search"),
+}
+
+
+_PYTHON_MEMBER_BINDING_TARGETS = {
+    f"py:learning_skill_runtime:{skill_id}": (
+        "app.services.learning_skill_runtime", "RUNTIME_SKILL_IDS", skill_id,
+    )
+    for skill_id in (
+        "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+        "worked_example_fading", "learning_file_study",
+    )
+}
+
+
+_API_BINDING_TARGETS = {
+    "api:agent.sync_vnext_session": ("app.api.agent", "/agent/sessions/{session_id}/vnext", "PUT", "sync_vnext_session"),
+    "api:agent.start_skill_run": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs", "POST", "start_learning_skill_run"),
+    "api:agent.advance_skill_turn": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs/{run_id}/turns", "POST", "advance_learning_skill_turn"),
+    "api:agent.skill_action": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs/{run_id}/actions", "POST", "update_learning_skill_run"),
+    "api:agent.tutor_turn": ("app.api.agent", "/agent/sessions/{session_id}/turns", "POST", "tutor_turn"),
+    "api:agent.delete_session": ("app.api.agent", "/agent/sessions/{session_id}", "DELETE", "delete_session"),
+    "api:agent.patch_proposal": ("app.api.agent", "/agent/project-proposals/{proposal_id}", "PATCH", "patch_project_proposal"),
+    "api:agent.accept_proposal": ("app.api.agent", "/agent/project-proposals/{proposal_id}/accept", "POST", "accept_project_proposal"),
+    "api:learner_state.workspace": ("app.api.learner_state", "/learner-state/agent-workspace-context", "GET", "get_agent_workspace_context"),
+    "api:learner_state.event": ("app.api.learner_state", "/learner-state/events", "POST", "sync_learner_event"),
+    "api:learner_state.context": ("app.api.learner_state", "/learner-state/context", "GET", "get_learner_context"),
+    "api:learner_state.concept_graph": ("app.api.learner_state", "/learner-state/concept-graph", "GET", "get_personal_concept_graph"),
+    "api:learner_state.concept_statement": ("app.api.learner_state", "/learner-state/concept-graph/statements", "POST", "record_concept_statement"),
+    "api:learner_state.path_status": ("app.api.learner_state", "/learner-state/learning-path/status", "POST", "set_learning_path_status"),
+    "api:learner_state.personal_node": ("app.api.learner_state", "/learner-state/learning-path/personal-nodes", "POST", "add_personal_learning_path_node"),
+    "api:learner_state.path_plan": ("app.api.learner_state", "/learner-state/learning-path/plans", "POST", "commit_learning_path_plan"),
+    "api:learner_state.value_claim": ("app.api.learner_state", "/learner-state/value-claims/confirm", "POST", "confirm_value_claim"),
+    "api:knowledge_library.context": ("app.api.knowledge_library", "/knowledge-library/context", "GET", "read_library_context"),
+    "api:knowledge_library.add_url": ("app.api.knowledge_library", "/knowledge-library/sources/url", "POST", "add_library_url"),
+    "api:learning_files.list": ("app.api.learning_files", "/learning-files", "GET", "list_learning_files"),
+    "api:learning_files.generate": ("app.api.learning_files", "/learning-files/tasks/{task_id}/generate", "POST", "generate_task_learning_files"),
+    "api:learning_files.practice_generate": ("app.api.learning_files", "/learning-files/practice/generate", "POST", "generate_dynamic_practice_file"),
+    "api:learning_files.quality": ("app.api.learning_files", "/learning-files/practice/{practice_ref}/quality", "POST", "inspect_dynamic_practice_quality"),
+    "api:learning_files.open": ("app.api.learning_files", "/learning-files/{kind}/{ref}/opened", "POST", "record_learning_file_opened"),
+    "api:learning_files.attach": ("app.api.learning_files", "/learning-files/{kind}/{ref}/attached", "POST", "record_learning_file_attached"),
+    "api:vnext_projects.list": ("app.api.vnext_projects", "/vnext-projects", "GET", "list_vnext_projects"),
+    "api:vnext_projects.create": ("app.api.vnext_projects", "/vnext-projects", "POST", "create_vnext_project"),
+    "api:vnext_projects.context": ("app.api.vnext_projects", "/vnext-projects/{project_id}/agent-context", "GET", "get_project_agent_context"),
+    "api:vnext_projects.apply_roadmap": ("app.api.vnext_projects", "/vnext-projects/{project_id}/roadmap/apply", "POST", "apply_vnext_roadmap"),
+    "api:vnext_projects.revise_roadmap": ("app.api.vnext_projects", "/vnext-projects/{project_id}/roadmap", "PUT", "revise_vnext_roadmap"),
+    "api:vnext_projects.create_session": ("app.api.vnext_projects", "/vnext-projects/{project_id}/sessions", "POST", "create_project_free_session"),
+    "api:assessment_blueprint.propose": ("app.api.assessment_design", "/assessment-blueprints", "POST", "propose_assessment_blueprint"),
+    "api:memory.feedback": ("app.api.memory", "/memory/claims/{claim_id}/feedback", "POST", "submit_claim_feedback"),
+    "api:profile.update": ("app.api.profile", "/profile", "PATCH", "update_profile"),
+    "api:profile.growth": ("app.api.profile", "/profile/growth", "GET", "get_growth"),
+    "api:projects.create": ("app.api.projects", "/projects", "POST", "create_project"),
+    "api:projects.delete": ("app.api.projects", "/projects/{project_id}", "DELETE", "delete_project"),
+    "api:projects.add_source": ("app.api.projects", "/projects/{project_id}/sources", "POST", "add_source"),
+    "api:projects.roadmap": ("app.api.projects", "/projects/{project_id}/roadmap", "GET", "get_roadmap"),
+    "api:learning_tasks.list": ("app.api.learning_tasks", "/learning-tasks", "GET", "list_learning_tasks"),
+    "api:learning_tasks.create": ("app.api.learning_tasks", "/learning-tasks", "POST", "create_task"),
+    "api:learning_tasks.action": ("app.api.learning_tasks", "/learning-tasks/{task_id}/actions", "POST", "task_action"),
+    "api:learning_tasks.replan": ("app.api.learning_tasks", "/learning-tasks/{task_id}/replan", "POST", "replan_task"),
+    "api:micro_learning.create": ("app.api.micro_learning", "/micro-learning/runs", "POST", "create_run"),
+    "api:micro_learning.advance": ("app.api.micro_learning", "/micro-learning/runs/{run_id}/advance", "POST", "advance"),
+    "api:micro_learning.teach_back": ("app.api.micro_learning", "/micro-learning/runs/{run_id}/teach-back", "POST", "teach_back"),
+    "api:review.context": ("app.api.review", "/review/agent-context", "GET", "review_agent_context"),
+    "api:review.reflection": ("app.api.review", "/review/items/{schedule_id}/reflections", "POST", "record_review_reflection"),
+    "api:review.submit": ("app.api.review", "/review/items/{schedule_id}/submit", "POST", "submit_review_item"),
+    "api:review.defer": ("app.api.review", "/review/items/{schedule_id}/defer", "POST", "defer_review_item"),
+    "api:remediation.explain": ("app.api.remediation", "/remediation/{case_id}/explanations", "POST", "change_remediation_explanation"),
+    "api:remediation.variant": ("app.api.remediation", "/remediation/{case_id}/variant/submit", "POST", "evaluate_remediation_variant"),
+    "api:phase2.generate_lecture": ("app.api.phase2", "/checkpoints/{checkpoint_id}/lecture/generate", "POST", "generate_lecture_task"),
+    "api:phase2.ask": ("app.api.phase2", "/checkpoints/{checkpoint_id}/ask", "POST", "ask_question"),
+    "api:phase2.put_lecture": ("app.api.phase2", "/checkpoints/{checkpoint_id}/lecture", "PUT", "put_lecture"),
+    "api:phase3.generate_concepts": ("app.api.phase3", "/checkpoints/{checkpoint_id}/concepts/generate", "POST", "generate_concepts"),
+    "api:phase3.submit_concept": ("app.api.phase3", "/checkpoints/{checkpoint_id}/concepts/{question_id}/submit", "POST", "submit_concept"),
+    "api:phase3.submit_exercise": ("app.api.phase3", "/exercises/{exercise_id}/submit", "POST", "submit_exercise"),
+    "api:workspace.link": ("app.api.workspace", "/projects/{project_id}/workspace/link", "POST", "link_workspace"),
+    "api:workspace.tree": ("app.api.workspace", "/projects/{project_id}/workspace/tree", "GET", "workspace_tree"),
+    "api:workspace.propose": ("app.api.workspace", "/projects/{project_id}/workspace/operations/propose", "POST", "propose_workspace_operation"),
+    "api:workspace.confirm": ("app.api.workspace", "/projects/{project_id}/workspace/operations/{operation_id}/confirm", "POST", "confirm_workspace_operation"),
+    "api:local_agent.inspect": ("app.api.local_agent", "/local-agent/runs/{run_id}", "GET", "get_local_agent_run"),
+    "api:local_agent.cancel": ("app.api.local_agent", "/local-agent/runs/{run_id}/cancel", "POST", "cancel_local_agent_run"),
+    "api:local_agent.apply": ("app.api.local_agent", "/local-agent/runs/{run_id}/apply", "POST", "apply_local_agent_run"),
+    "api:demo.status": ("app.api.auth", "/demo/status", "GET", "competition_demo_status"),
+}
+
+
+_FRONTEND_HANDLER_TARGETS = {
+    "frontend:agent_runtime.run": ("frontend/server/agent-runtime.ts", "runTutorAgentTurn", ""),
+    "frontend:visual.generate": ("frontend/server/learning-visual-spec.ts", "generateLearningVisual", ""),
+    "frontend:paper.ancestors": ("frontend/src/paper-workbench.ts", "paperAncestorChain", ""),
+    "frontend:learning.create": ("frontend/src/learning.ts", "createLearningTask", ""),
+    "frontend:planning.create": ("frontend/src/planning.ts", "createLearningPlan", ""),
+    "frontend:path.read": ("frontend/src/learning-path-graph.ts", "readLearningPathGraph", ""),
+    "frontend:path.lookup": ("frontend/src/learning-path-graph.ts", "lookupLearningPathGraph", ""),
+    "frontend:path.search": ("frontend/src/learning-path-graph.ts", "searchLearningPathGraph", ""),
+    "frontend:path.propose_node": ("frontend/src/learning-path-graph.ts", "buildPersonalNodeProposal", ""),
+    "frontend:path.plan": ("frontend/src/learning-path-graph.ts", "buildLearningPathPlanProposal", ""),
+    "frontend:profile.read": ("frontend/src/five-kernel-profile.ts", "readFiveKernelProfile", ""),
+    "frontend:desktop.runtime": ("frontend/src/runtime-client.ts", "initializeRuntimeClient", ""),
+    **{
+        f"frontend:tool:{tool_name}": (
+            "frontend/server/tool-runtime.ts", "executeTutorAgentTool", tool_name,
+        )
+        for tool_name in (
+            "read_learner_context", "read_learning_workspace", "read_domain_knowledge",
+            "read_active_learning_file", "read_project_workspace", "read_project_sources",
+            "read_project_learning_file", "read_project_roadmap", "propose_project_roadmap",
+            "propose_project_learning_files", "search_computer_knowledge", "read_web_evidence",
+            "search_learning_videos", "inspect_learning_video", "generate_learning_diagram",
+            "generate_learning_animation", "design_assessment_blueprint",
+            "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
+            "lookup_learning_path_node", "search_learning_path_graph",
+            "propose_personal_path_node", "read_review_context",
+        )
+    },
+}
+
+
+_FRONTEND_COMPONENT_TARGETS = {
+    "workbench:vnext_chat": ("frontend/src/main.tsx", "App", "/chat/"),
+    "workbench:vnext_learning_path": ("frontend/src/LearningPathPage.tsx", "LearningPathPage", "/learning-path"),
+    "workbench:vnext_profile": ("frontend/src/LearnerProfilePage.tsx", "LearnerProfilePage", "/learner-profile"),
+    "workbench:vnext_learning_files": ("frontend/src/LearningFilesPage.tsx", "LearningFilesPage", "/learning-files"),
+    "workbench:vnext_projects": ("frontend/src/ProjectsPage.tsx", "ProjectsPage", "/projects"),
+    "workbench:vnext_lecture_file": ("frontend/src/LectureFilePage.tsx", "LectureFilePage", "/files/lecture/"),
+    "workbench:vnext_practice_file": ("frontend/src/PracticeFilePage.tsx", "PracticeFilePage", "/files/practice/"),
+    "workbench:learning_tasks": ("frontend/src/LearningTasksPage.tsx", "LearningTasksPage", "/tasks"),
+    "workbench:project_tutor": ("frontend/src/ProjectWorkspacePage.tsx", "ProjectWorkspacePage", "/projects/"),
+    "workbench:review": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
+    "workbench:competition_demo": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
+    "workbench:desktop_workspace": ("frontend/src/main.tsx", "App", ""),
+}
+
+
+IMPLEMENTATION_BINDINGS = {
+    **{
+        binding_id: ImplementationBinding(
+            binding_id, "python_symbol", module=module, symbol=symbol,
+        )
+        for binding_id, (module, symbol) in _PYTHON_BINDING_TARGETS.items()
+    },
+    **{
+        binding_id: ImplementationBinding(
+            binding_id, "python_collection_member", module=module,
+            symbol=symbol, member=member,
+        )
+        for binding_id, (module, symbol, member) in _PYTHON_MEMBER_BINDING_TARGETS.items()
+    },
+    **{
+        binding_id: ImplementationBinding(
+            binding_id, "api_route", module=module, symbol="router",
+            route=route, method=method, endpoint=endpoint,
+        )
+        for binding_id, (module, route, method, endpoint) in _API_BINDING_TARGETS.items()
+    },
+    **{
+        binding_id: ImplementationBinding(
+            binding_id, "frontend_handler", path=path, symbol=symbol, member=member,
+        )
+        for binding_id, (path, symbol, member) in _FRONTEND_HANDLER_TARGETS.items()
+    },
+    **{
+        binding_id: ImplementationBinding(
+            binding_id, "frontend_component", path=path, symbol=symbol, route=route,
+        )
+        for binding_id, (path, symbol, route) in _FRONTEND_COMPONENT_TARGETS.items()
+    },
+    **{
+        event.reducer_binding: ImplementationBinding(
+            event.reducer_binding or "", "reducer_event",
+            module="app.services.learning_runtime", symbol="REDUCER_EVENT_TYPES",
+            member=event.id,
+        )
+        for event in EVENTS.values() if event.reducer_binding
+    },
+}
+
+
+_TOOL_BINDING_IDS = {
+    "action_board": ("py:action_board.execute",),
+    "tutor_context": ("py:tutor.context",),
+    "chat_mode_runtime": ("py:chat_modes.classify",),
+    "vnext_agent_turn_runtime": ("frontend:agent_runtime.run",),
+    "vnext_chat_session_store": ("api:agent.sync_vnext_session",),
+    "computer_knowledge_search": ("frontend:tool:search_computer_knowledge",),
+    "web_evidence_reader": ("frontend:tool:read_web_evidence",),
+    "learning_video_search": ("frontend:tool:search_learning_videos",),
+    "learning_video_inspector": ("frontend:tool:inspect_learning_video",),
+    "teaching_contract_gate": ("py:teaching_contract.evaluate",),
+    "checkpoint_delivery_readiness": ("py:delivery_readiness.read",),
+    "safe_visual_generation": ("frontend:visual.generate",),
+    "learning_diagram_generator": ("frontend:tool:generate_learning_diagram",),
+    "learning_animation_generator": ("frontend:tool:generate_learning_animation",),
+    "selection_followup_context": ("frontend:paper.ancestors",),
+    "vnext_learning_task_runtime": ("py:learning_skill.prepare",),
+    "vnext_learning_plan_runtime": ("frontend:planning.create",),
+    "vnext_five_kernel_profile_reader": ("py:five_kernel.context",),
+    "vnext_learning_workspace_reader": ("api:learner_state.workspace",),
+    "domain_knowledge_reader": ("api:knowledge_library.context",),
+    "learning_file_service": ("api:learning_files.list",),
+    "active_learning_file_reader": ("frontend:tool:read_active_learning_file",),
+    "assessment_blueprint_builder": ("py:assessment.create",),
+    "dynamic_practice_generator": ("py:practice.create",),
+    "similar_practice_generator": ("frontend:tool:generate_similar_practice",),
+    "practice_quality_inspector": ("api:learning_files.quality",),
+    "project_workspace_reader": ("api:vnext_projects.context",),
+    "project_source_reader": ("frontend:tool:read_project_sources",),
+    "project_learning_file_reader": ("frontend:tool:read_project_learning_file",),
+    "project_roadmap_reader": ("frontend:tool:read_project_roadmap",),
+    "project_roadmap_proposer": ("frontend:tool:propose_project_roadmap",),
+    "project_learning_file_proposer": ("frontend:tool:propose_project_learning_files",),
+    "vnext_learning_path_graph_reader": ("frontend:path.read",),
+    "vnext_learning_path_exact_reader": ("frontend:path.lookup",),
+    "vnext_learning_path_fuzzy_reader": ("frontend:path.search",),
+    "vnext_personal_path_node_proposer": ("frontend:path.propose_node",),
+    "vnext_learning_path_planner": ("frontend:path.plan",),
+    "vnext_learning_path_plan_manager": ("api:learner_state.path_plan",),
+    "personal_concept_graph_reader": ("api:learner_state.concept_graph",),
+    "concept_self_report_gateway": ("api:learner_state.concept_statement",),
+    "vnext_personal_path_node_runtime": ("api:learner_state.path_status", "api:learner_state.personal_node"),
+    "learner_memory_manager": ("api:memory.feedback",),
+    "vnext_five_kernel_explicit_editor": ("api:profile.update", "api:learner_state.value_claim"),
+    "workspace_lifecycle": ("py:workspace.delete_conversation", "py:workspace.delete_project"),
+    "checkpoint_context": ("py:checkpoint.context",),
+    "source_ingestion": ("py:source.processor",),
+    "repository_knowledge_domains": ("py:source.domains",),
+    "hierarchical_rag": ("py:lecture.agent",),
+    "content_generation": ("py:roadmap.agent", "py:lecture.agent", "py:concept.agent", "py:exercise.agent"),
+    "micro_learning_orchestrator": ("py:micro_learning.create",),
+    "learning_skill_runtime": ("py:learning_skill.create",),
+    "learning_task_runtime": ("py:learning_task.reconcile",),
+    "learning_task_planner": ("py:learning_task.plan",),
+    "teach_back_analyzer": ("py:micro_learning.analyze",),
+    "process_animation": ("py:animation.agent",),
+    "code_executor": ("py:code.execute",),
+    "deterministic_assessment": ("py:practice.grade",),
+    "deterministic_remediation": ("py:remediation.strategy",),
+    "review_scheduler": ("py:review.schedule",),
+    "review_proficiency_projector": ("py:review.proficiency",),
+    "review_context_reader": ("py:review.context",),
+    "review_reflection_gateway": ("api:review.reflection",),
+    "evidence_ledger": ("py:evidence.record",),
+    "five_kernel_reducer": ("py:reducer.reduce",),
+    "memory_graph": ("py:memory_graph.create",),
+    "kernel_head_projector": ("py:kernel_head.refresh",),
+    "five_kernel_retriever": ("py:five_kernel.context",),
+    "context_packet_assembler": ("py:five_kernel.context",),
+    "seeded_demo": ("py:demo.seed", "py:demo.grade_seeded_code", "api:demo.status"),
+    "task_runtime": ("py:task.manager",),
+    "workspace_file_service": ("py:workspace.scan",),
+    "managed_artifact_service": ("api:phase2.put_lecture",),
+    "local_agent_broker": ("py:local_agent.create",),
+}
+
+
+_OPTIONAL_TOOL_NOTES = {
+    "workflow_gateway": "No Mock/Xingchen workflow runtime entry point exists in this repository.",
+    "workflow_validator": "No workflow builder or validator implementation exists in this repository.",
+}
+
+
+TOOL_PUBLICATIONS = {
+    tool_id: PublicationContract(
+        "optional_unimplemented" if tool_id in _OPTIONAL_TOOL_NOTES else "implemented",
+        () if tool_id in _OPTIONAL_TOOL_NOTES else _TOOL_BINDING_IDS.get(tool_id, ()),
+        _OPTIONAL_TOOL_NOTES.get(tool_id, ""),
+    )
+    for tool_id in TOOLS
+}
+
+
+_SKILL_BINDING_IDS = {
+    "intent_and_handoff": ("py:tutor.process_turn",),
+    **{
+        skill_id: (f"py:learning_skill_runtime:{skill_id}",)
+        for skill_id in (
+            "guided_explanation", "socratic_dialogue", "feynman_dialogue",
+            "worked_example_fading", "learning_file_study",
+        )
+    },
+    "checkpoint_tutoring": ("py:checkpoint.context",),
+    "atomic_learning_loop": ("py:learning_task.reconcile",),
+    "verified_micro_learning": ("py:micro_learning.create",),
+    "feynman_teach_back": ("py:micro_learning.analyze",),
+    "learning_path_planning": ("frontend:path.plan", "py:roadmap.agent"),
+    "learning_resource_curation": ("frontend:agent_runtime.run", "frontend:tool:search_computer_knowledge"),
+    "project_apprenticeship_orchestration": ("api:vnext_projects.context", "api:vnext_projects.apply_roadmap"),
+    "evidence_grounded_teaching": ("py:lecture.agent",),
+    "practice_verification": ("api:phase3.submit_concept", "api:phase3.submit_exercise"),
+    "assessment_blueprint_design": ("py:assessment.create",),
+    "dynamic_practice_loop": ("py:practice.create", "py:practice.grade"),
+    "remediation_loop": ("py:remediation.strategy",),
+    "spaced_review": ("py:review.schedule", "py:review.proficiency"),
+    "learner_memory_synthesis": ("py:memory_graph.create", "py:five_kernel.context"),
+    "workspace_file_management": ("api:workspace.link", "api:workspace.confirm"),
+    "managed_learning_file_playback": ("api:learning_files.list", "api:phase2.put_lecture"),
+    "local_agent_delegation": ("py:local_agent.create", "api:local_agent.apply"),
+}
+
+
+SKILL_PUBLICATIONS = {
+    skill_id: PublicationContract(
+        "optional_unimplemented" if skill_id == "external_workflow_rendering" else "implemented",
+        () if skill_id == "external_workflow_rendering" else _SKILL_BINDING_IDS.get(skill_id, ()),
+        (
+            "The optional external workflow adapter has no runtime entry point."
+            if skill_id == "external_workflow_rendering" else ""
+        ),
+    )
+    for skill_id in SKILLS
+}
+
+
+_WORKBENCH_LIFECYCLES = {
+    "global_tutor": ("deprecated", "Replaced by the canonical /chat/:conversationId frontend."),
+    "focused_learning": ("optional_unimplemented", "The /learn/:runId frontend surface is not routed by the canonical frontend."),
+    "lecture": ("deprecated", "The legacy checkpoint lecture surface is replaced by project and lecture-file workbenches."),
+    "assessment": ("deprecated", "The legacy checkpoint assessment surface is replaced by practice-file and review workbenches."),
+    "remediation": ("deprecated", "Remediation is integrated into practice and review; no standalone RemediationPanel component is published."),
+    "learner_growth": ("optional_unimplemented", "The /growth frontend surface is not routed by the canonical frontend."),
+    "profile": ("deprecated", "Legacy /profile redirect is not a canonical frontend workbench."),
+    "memory": ("deprecated", "Legacy /memory redirect is not a canonical frontend workbench."),
+    "xingchen_studio": ("optional_unimplemented", "No Xingchen Studio runtime or repository-owned route exists."),
+}
+
+
+WORKBENCH_PUBLICATIONS = {
+    workbench_id: PublicationContract(
+        _WORKBENCH_LIFECYCLES.get(workbench_id, ("implemented", ""))[0],
+        (
+            () if workbench_id in _WORKBENCH_LIFECYCLES
+            else (f"workbench:{workbench_id}",)
+        ),
+        _WORKBENCH_LIFECYCLES.get(workbench_id, ("implemented", ""))[1],
+    )
+    for workbench_id in WORKBENCHES
+}
+
+
+_OPTIONAL_CAPABILITY_NOTES = {
+    "recommend_learning_resources": "No standalone recommendation handler commits this declared capability; the underlying readers remain available.",
+    "search_learning_resources": "No Action Board execution branch or dedicated API route implements this capability.",
+}
+
+
+CAPABILITY_PUBLICATIONS = {
+    capability: PublicationContract(
+        "optional_unimplemented" if capability in _OPTIONAL_CAPABILITY_NOTES else "implemented",
+        (
+            () if capability in _OPTIONAL_CAPABILITY_NOTES
+            else TOOL_PUBLICATIONS[tool].bindings
+        ),
+        _OPTIONAL_CAPABILITY_NOTES.get(capability, ""),
+    )
+    for capability, (_, tool, _) in CAPABILITY_OWNERS.items()
+}
+
+
+EVENT_PUBLICATIONS = {
+    event.id: PublicationContract(
+        CAPABILITY_PUBLICATIONS[event.capability].lifecycle,
+        tuple(dict.fromkeys((
+            *CAPABILITY_PUBLICATIONS[event.capability].bindings,
+            *((event.reducer_binding,) if event.reducer_binding else ()),
+        ))),
+        CAPABILITY_PUBLICATIONS[event.capability].note,
+    )
+    for event in EVENTS.values()
+}
+
+
+PUBLICATIONS = {
+    "tools": TOOL_PUBLICATIONS,
+    "skills": SKILL_PUBLICATIONS,
+    "workbenches": WORKBENCH_PUBLICATIONS,
+    "capabilities": CAPABILITY_PUBLICATIONS,
+    "events": EVENT_PUBLICATIONS,
+}
+
+
+def _frontend_symbol_pattern(symbol: str) -> re.Pattern[str]:
+    escaped = re.escape(symbol)
+    return re.compile(
+        rf"\b(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+        rf"(?:function|class|const)\s+{escaped}\b"
+    )
+
+
+def _binding_failure(
+    binding: ImplementationBinding,
+    source_cache: dict[str, str],
+) -> str | None:
+    try:
+        if binding.kind in {"python_symbol", "python_collection_member", "reducer_event"}:
+            module = importlib.import_module(binding.module)
+            target: Any = module
+            for part in binding.symbol.split("."):
+                target = getattr(target, part)
+            if binding.kind in {"python_collection_member", "reducer_event"}:
+                if binding.member not in target:
+                    return f"{binding.module}.{binding.symbol} does not declare {binding.member}"
+            return None
+        if binding.kind == "api_route":
+            module = importlib.import_module(binding.module)
+            router = getattr(module, binding.symbol)
+            endpoint = getattr(module, binding.endpoint)
+            for route in router.routes:
+                if (
+                    getattr(route, "path", None) == binding.route
+                    and binding.method.upper() in (getattr(route, "methods", set()) or set())
+                    and getattr(route, "endpoint", None) is endpoint
+                ):
+                    return None
+            return (
+                f"{binding.module}.{binding.endpoint} is not bound to "
+                f"{binding.method.upper()} {binding.route}"
+            )
+        if binding.kind in {"frontend_handler", "frontend_component"}:
+            path = _REPOSITORY_ROOT / binding.path
+            if not path.is_file():
+                return f"frontend source does not exist: {binding.path}"
+            source = source_cache.setdefault(binding.path, path.read_text(encoding="utf-8"))
+            if not _frontend_symbol_pattern(binding.symbol).search(source):
+                return f"frontend symbol {binding.symbol} is missing from {binding.path}"
+            if binding.member and not re.search(
+                rf"(['\"])({re.escape(binding.member)})\1", source,
+            ):
+                return f"frontend handler {binding.symbol} does not declare {binding.member}"
+            if binding.route and binding.route not in source:
+                # Route ownership lives in main.tsx, while lazily loaded page
+                # components remain independently inspectable.
+                route_source_path = "frontend/src/main.tsx"
+                route_source = source_cache.setdefault(
+                    route_source_path,
+                    (_REPOSITORY_ROOT / route_source_path).read_text(encoding="utf-8"),
+                )
+                if binding.route not in route_source:
+                    return f"frontend route marker {binding.route} is not wired in main.tsx"
+            return None
+        return f"unknown implementation binding kind: {binding.kind}"
+    except Exception as exc:  # Validation must report a broken binding, not fail the endpoint.
+        return f"{binding.kind} binding could not be resolved: {exc}"
+
+
+def implementation_binding_failures() -> dict[str, str]:
+    failures: dict[str, str] = {}
+    source_cache: dict[str, str] = {}
+    for binding_id, binding in IMPLEMENTATION_BINDINGS.items():
+        failure = _binding_failure(binding, source_cache)
+        if failure:
+            failures[binding_id] = failure
+    return failures
+
+
+def publication_available(
+    category: str,
+    item_id: str,
+    *,
+    binding_failures: dict[str, str] | None = None,
+) -> bool:
+    publication = PUBLICATIONS[category][item_id]
+    if publication.lifecycle != "implemented":
+        return False
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
+    return all(binding_id not in failures for binding_id in publication.bindings)
+
+
+def _publication_fields(
+    category: str,
+    item_id: str,
+    binding_failures: dict[str, str],
+) -> dict[str, Any]:
+    publication = PUBLICATIONS[category][item_id]
+    return {
+        "lifecycle": publication.lifecycle,
+        "binding_ids": list(publication.bindings),
+        "available": publication_available(
+            category, item_id, binding_failures=binding_failures,
+        ),
+        "lifecycle_note": publication.note,
+    }
+
+
+def capability_manifest(
+    binding_failures: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
     result = []
     for capability, spec in sorted(ACTION_BOARD.items()):
         owner, tool, workbench = CAPABILITY_OWNERS.get(capability, ("unassigned", "unassigned", "unassigned"))
         row = asdict(spec)
         row.update({"owner_agent": owner, "tool": tool, "workbench": workbench})
+        row.update(_publication_fields("capabilities", capability, failures))
         result.append(row)
     return result
 
@@ -1257,7 +1845,10 @@ def selectable_learning_skill_manifest() -> list[dict[str, Any]]:
     """Return the learner-facing portion of registered conversational skills."""
     result = []
     for skill in SKILLS.values():
-        if not skill.learner_selectable:
+        if (
+            not skill.learner_selectable
+            or SKILL_PUBLICATIONS[skill.id].lifecycle != "implemented"
+        ):
             continue
         result.append({
             "id": skill.id,
@@ -1281,7 +1872,7 @@ def frontend_learning_skill_manifest() -> dict[str, Any]:
     """Deterministic frontend projection generated from the registry authority."""
     return {
         "schema_version": SKILL_SPEC_VERSION,
-        "registry_version": REGISTRY_VERSION,
+        "registry_version": FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION,
         "generated_from": "backend/app/services/architecture_registry.py",
         "skills": {
             item["id"]: item
@@ -1295,8 +1886,11 @@ def chat_mode_manifest() -> list[dict[str, Any]]:
     return [asdict(item) for item in CHAT_MODES.values()]
 
 
-def tool_manifest() -> list[dict[str, Any]]:
+def tool_manifest(
+    binding_failures: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Return tool contracts with their Agent-interface role and exposure policy."""
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
     result = []
     for tool in TOOLS.values():
         row = asdict(tool)
@@ -1304,16 +1898,45 @@ def tool_manifest() -> list[dict[str, Any]]:
             "interface_role": TOOL_INTERFACE_ROLES[tool.id],
             "model_exposure": TOOL_MODEL_EXPOSURE[tool.id],
         })
+        row.update(_publication_fields("tools", tool.id, failures))
         result.append(row)
     return result
 
 
-def skill_manifest() -> list[dict[str, Any]]:
+def skill_manifest(
+    binding_failures: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """Return skills without conflating local pedagogy with multi-capability playbooks."""
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
     result = []
     for skill in SKILLS.values():
         row = asdict(skill)
         row["skill_kind"] = SKILL_KINDS[skill.id]
+        row.update(_publication_fields("skills", skill.id, failures))
+        result.append(row)
+    return result
+
+
+def workbench_manifest(
+    binding_failures: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
+    result = []
+    for workbench in WORKBENCHES.values():
+        row = asdict(workbench)
+        row.update(_publication_fields("workbenches", workbench.id, failures))
+        result.append(row)
+    return result
+
+
+def event_manifest(
+    binding_failures: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
+    result = []
+    for event in EVENTS.values():
+        row = asdict(event)
+        row.update(_publication_fields("events", event.id, failures))
         result.append(row)
     return result
 
@@ -1369,6 +1992,49 @@ def validate_registry() -> list[str]:
         errors.append("only ACI tools may be exposed as native model tools")
     if set(SKILL_KINDS) != set(SKILLS):
         errors.append("every skill contract must have exactly one skill kind")
+    publication_items = {
+        "tools": set(TOOLS),
+        "skills": set(SKILLS),
+        "workbenches": set(WORKBENCHES),
+        "capabilities": set(ACTION_BOARD),
+        "events": set(EVENTS),
+    }
+    if set(PUBLICATIONS) != set(publication_items):
+        errors.append("publication registry must cover tools, skills, workbenches, capabilities and events")
+    for category, expected_ids in publication_items.items():
+        publications = PUBLICATIONS.get(category, {})
+        if set(publications) != expected_ids:
+            errors.append(f"publication registry does not exactly cover {category}")
+        for item_id, publication in publications.items():
+            if publication.lifecycle not in LIFECYCLE_STATES:
+                errors.append(f"invalid publication lifecycle: {category}:{item_id}")
+            if publication.lifecycle == "implemented" and not publication.bindings:
+                errors.append(f"implemented publication lacks binding: {category}:{item_id}")
+            if publication.lifecycle != "implemented" and not publication.note:
+                errors.append(f"non-implemented publication lacks lifecycle note: {category}:{item_id}")
+            for binding_id in publication.bindings:
+                if binding_id not in IMPLEMENTATION_BINDINGS:
+                    errors.append(
+                        f"publication references unknown implementation binding: "
+                        f"{category}:{item_id}:{binding_id}"
+                    )
+    binding_requirements = {
+        "python_symbol": ("module", "symbol"),
+        "python_collection_member": ("module", "symbol", "member"),
+        "api_route": ("module", "symbol", "method", "route", "endpoint"),
+        "frontend_handler": ("path", "symbol"),
+        "frontend_component": ("path", "symbol"),
+        "reducer_event": ("module", "symbol", "member"),
+    }
+    for binding_id, binding in IMPLEMENTATION_BINDINGS.items():
+        if binding.id != binding_id:
+            errors.append(f"implementation binding key/id mismatch: {binding_id}")
+        requirements = binding_requirements.get(binding.kind)
+        if requirements is None:
+            errors.append(f"invalid implementation binding kind: {binding_id}:{binding.kind}")
+            continue
+        if any(not getattr(binding, field) for field in requirements):
+            errors.append(f"implementation binding lacks required fields: {binding_id}")
     for event in EVENTS.values():
         if event.owner_agent not in AGENTS or event.capability not in ACTION_BOARD:
             errors.append(f"invalid event owner/capability: {event.id}")
@@ -1376,6 +2042,29 @@ def validate_registry() -> list[str]:
             errors.append(f"invalid event tool/workbench: {event.id}")
         if set(event.kernel_targets) - set(KERNEL_NAMES):
             errors.append(f"invalid event kernel target: {event.id}")
+        publication = EVENT_PUBLICATIONS[event.id]
+        if publication.lifecycle != CAPABILITY_PUBLICATIONS[event.capability].lifecycle:
+            errors.append(f"event lifecycle differs from capability lifecycle: {event.id}")
+        if event.kernel_targets:
+            if event.payload_version != EVENT_SCHEMA_VERSION:
+                errors.append(f"targeted event lacks current payload version: {event.id}")
+            if not event.reducer_binding:
+                errors.append(f"targeted event lacks reducer binding: {event.id}")
+            else:
+                reducer_binding = IMPLEMENTATION_BINDINGS.get(event.reducer_binding)
+                if (
+                    not reducer_binding
+                    or reducer_binding.kind != "reducer_event"
+                    or reducer_binding.member != event.id
+                ):
+                    errors.append(f"invalid reducer binding for targeted event: {event.id}")
+                if event.reducer_binding not in publication.bindings:
+                    errors.append(f"event publication omits reducer binding: {event.id}")
+        elif event.payload_version or event.reducer_binding:
+            errors.append(f"zero-target event must not declare a reducer binding: {event.id}")
+    for workbench in WORKBENCHES.values():
+        if set(workbench.capabilities) - set(ACTION_BOARD):
+            errors.append(f"workbench references unknown capability: {workbench.id}")
     for skill in SKILLS.values():
         if skill.owner_agent not in AGENTS or set(skill.tools) - set(TOOLS):
             errors.append(f"invalid skill contract: {skill.id}")
@@ -1405,6 +2094,60 @@ def validate_registry() -> list[str]:
     return errors
 
 
+def validate_implementation(
+    binding_failures: dict[str, str] | None = None,
+) -> list[str]:
+    """Resolve implementation bindings independently from registry schema checks."""
+    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
+    errors: list[str] = []
+    missing_reducer_export = [
+        binding_id
+        for binding_id, failure in failures.items()
+        if (
+            IMPLEMENTATION_BINDINGS[binding_id].kind == "reducer_event"
+            and "has no attribute 'REDUCER_EVENT_TYPES'" in failure
+        )
+    ]
+    if missing_reducer_export:
+        event_ids = {
+            IMPLEMENTATION_BINDINGS[binding_id].member
+            for binding_id in missing_reducer_export
+        }
+        examples = [
+            event_id
+            for event_id in ("project_proposal_accepted", "project_completed")
+            if event_id in event_ids
+        ]
+        suffix = f" (including {', '.join(examples)})" if examples else ""
+        errors.append(
+            "app.services.learning_runtime does not export REDUCER_EVENT_TYPES; "
+            f"cannot verify reducer handlers for {len(event_ids)} targeted events{suffix}"
+        )
+    skipped = set(missing_reducer_export)
+    for binding_id, failure in sorted(failures.items()):
+        if binding_id not in skipped:
+            errors.append(f"{binding_id}: {failure}")
+    return errors
+
+
+def registry_validation_report(
+    binding_failures: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    schema_issues = validate_registry()
+    implementation_issues = validate_implementation(binding_failures)
+    issues = [*schema_issues, *implementation_issues]
+    return {
+        "schema_valid": not schema_issues,
+        "implementation_valid": not implementation_issues,
+        "valid": not issues,
+        "schema_issues": schema_issues,
+        "implementation_issues": implementation_issues,
+        "issues": issues,
+        # Backward-compatible alias used by existing demo and validation clients.
+        "errors": issues,
+    }
+
+
 def normalize_event_provenance(
     event_type: str,
     source: str,
@@ -1431,9 +2174,13 @@ def normalize_event_provenance(
 
 
 def registry_manifest() -> dict[str, Any]:
+    binding_failures = implementation_binding_failures()
+    validation = registry_validation_report(binding_failures)
+    capabilities = capability_manifest(binding_failures)
     payload = {
         "version": REGISTRY_VERSION,
         "event_schema": EVENT_SCHEMA_VERSION,
+        "lifecycle_states": list(LIFECYCLE_STATES),
         "authority": {
             "kernel_source_of_truth": "EvidenceEvent ledger",
             "kernel_write_path": "EvidenceEvent -> five_kernel_reducer -> KernelMutation",
@@ -1464,12 +2211,31 @@ def registry_manifest() -> dict[str, Any]:
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],
         "kernels": [asdict(item) for item in KERNELS.values()],
-        "capabilities": capability_manifest(),
-        "tools": tool_manifest(),
-        "skills": skill_manifest(),
-        "workbenches": [asdict(item) for item in WORKBENCHES.values()],
-        "important_events": [asdict(item) for item in EVENTS.values()],
-        "validation_errors": validate_registry(),
+        "capabilities": capabilities,
+        "available_capabilities": [
+            item["capability"] for item in capabilities if item["available"]
+        ],
+        "tools": tool_manifest(binding_failures),
+        "skills": skill_manifest(binding_failures),
+        "workbenches": workbench_manifest(binding_failures),
+        "important_events": event_manifest(binding_failures),
+        "implementation_bindings": [
+            {
+                **asdict(binding),
+                "valid": binding_id not in binding_failures,
+                "issue": binding_failures.get(binding_id),
+            }
+            for binding_id, binding in sorted(IMPLEMENTATION_BINDINGS.items())
+        ],
+        "schema_valid": validation["schema_valid"],
+        "implementation_valid": validation["implementation_valid"],
+        "valid": validation["valid"],
+        "schema_issues": validation["schema_issues"],
+        "implementation_issues": validation["implementation_issues"],
+        "issues": validation["issues"],
+        "errors": validation["errors"],
+        # Backward-compatible alias retained for registry consumers.
+        "validation_errors": validation["issues"],
     }
     digest_input = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     payload["digest"] = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()

@@ -37,7 +37,8 @@ ContextPacket 是只读投影，不是第二份记忆。它必须公开 scope、
 | Capability | Tool | 谁决定 | 副作用与确认 |
 |---|---|---|---|
 | 搜索计算机知识 | `computer_knowledge_search` | Learning Design | 只读，无五核写入 |
-| 生成图解或动画 | `safe_visual_generation` | Learning Design | 只生成受管产物，无掌握证据 |
+| 生成静态学习图解 | `learning_diagram_generator` | Learning Design | 共享 VisualSpec，确定性 SVG，无掌握证据 |
+| 生成逐帧学习动画 | `learning_animation_generator` | Learning Design | 共享 VisualSpec 时间线，确定性 SVG 帧，无掌握证据 |
 | 执行原子学习任务 | `vnext_learning_task_runtime` | Tutor + 确定性 Skill runtime | 流程事件可恢复；完成不等于掌握 |
 | 形成长期路线提案 | `vnext_learning_path_planner` | Learning Design 的确定性图规划器 | 只生成 proposal，LLM 只解释 |
 | 形成个人路径节点候选 | `vnext_personal_path_node_proposer` | Tutor 在确认 graph gap 且取得来源后调用 | 只生成 proposal；重复检查；不改 mastery |

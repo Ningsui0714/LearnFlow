@@ -7,21 +7,29 @@ normal project list.
 
 from __future__ import annotations
 
-import ipaddress
 import re
+from dataclasses import replace
 from pathlib import Path
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.api.phase1 import process_source as process_project_source
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.project import Chunk, Project, Source
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_source
+from app.services.file_formats import (
+    DEFAULT_EXTRACTION_BUDGET,
+    FORMAT_REGISTRY_VERSION,
+    FileFormatError,
+    extract_path,
+    validate_declared_format,
+)
 from app.services.learning_runtime import record_event
+from app.services.source_locator import SOURCE_LOCATOR, SourceLocationError
 from app.services.source_knowledge import derive_source_knowledge_domains
 
 
@@ -51,21 +59,11 @@ async def _library_project(db: AsyncSession, learner_id: int) -> Project:
 
 
 def _validate_public_url(raw: str) -> tuple[str, str]:
-    value = str(raw or "").strip()
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise HTTPException(400, "只支持可公开访问的 http(s) URL")
-    hostname = parsed.hostname.casefold()
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(".local"):
-        raise HTTPException(400, "不能把本机或局域网地址作为远程知识来源")
     try:
-        address = ipaddress.ip_address(hostname)
-        if not address.is_global:
-            raise HTTPException(400, "不能把私有、回环或保留地址作为远程知识来源")
-    except ValueError:
-        pass
-    source_type = "github" if hostname in {"github.com", "www.github.com"} else "url"
-    return value[:4000], source_type
+        reference = SOURCE_LOCATOR.classify_remote_source(raw)
+    except SourceLocationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail()) from exc
+    return reference.location, reference.source_type
 
 
 def _source_view(source: Source, chunk_count: int = 0) -> dict:
@@ -80,6 +78,7 @@ def _source_view(source: Source, chunk_count: int = 0) -> dict:
         "error": source.error or "",
         "chunk_count": chunk_count,
         "knowledge_domains": list(meta.get("knowledge_domains") or []),
+        "format": dict(meta.get("format_validation") or {}),
         "created_at": source.created_at.isoformat() if source.created_at else None,
         "mastery_inference": False,
     }
@@ -178,10 +177,15 @@ async def upload_library_source(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    project = await _library_project(db, current.learner.id)
     filename = Path((file.filename or "").replace("\\", "/")).name
     if not filename or filename in {".", ".."} or "\x00" in filename:
         raise HTTPException(400, "上传文件名无效")
+    try:
+        validate_declared_format(filename, file.content_type)
+    except FileFormatError as exc:
+        await file.close()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+    project = await _library_project(db, current.learner.id)
     source = Source(
         project_id=project.id, type="file", url=filename, role="auxiliary",
         meta_data={"upload": {"original_filename": filename, "content_type": file.content_type or ""}},
@@ -197,14 +201,40 @@ async def upload_library_source(
             while chunk := await file.read(1024 * 1024):
                 total += len(chunk)
                 if total > settings.max_source_upload_bytes:
-                    raise HTTPException(413, "上传文件不能超过 25 MB")
+                    error = FileFormatError(
+                        "file_budget_exceeded",
+                        f"上传文件不能超过 {settings.max_source_upload_bytes} 字节",
+                        status_code=413,
+                    )
+                    raise HTTPException(status_code=error.status_code, detail=error.detail())
                 handle.write(chunk)
-        source.meta_data = {"upload": {
-            "original_filename": filename,
-            "content_type": file.content_type or "",
-            "size_bytes": total,
-            "stored_path": str(stored_path),
-        }}
+        upload_budget = replace(
+            DEFAULT_EXTRACTION_BUDGET,
+            max_file_bytes=min(
+                DEFAULT_EXTRACTION_BUDGET.max_file_bytes,
+                int(settings.max_source_upload_bytes),
+            ),
+        )
+        try:
+            extraction = await run_in_threadpool(
+                extract_path,
+                stored_path,
+                filename=filename,
+                content_type=file.content_type,
+                budget=upload_budget,
+            )
+        except FileFormatError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+        source.meta_data = {
+            "upload": {
+                "original_filename": filename,
+                "content_type": file.content_type or "",
+                "size_bytes": total,
+                "stored_path": str(stored_path),
+            },
+            "format_registry_version": FORMAT_REGISTRY_VERSION,
+            "format_validation": extraction.metadata(),
+        }
         await record_event(
             db, event_type="knowledge_source_added", source="ui",
             learner_id=current.learner.id, project_id=project.id,

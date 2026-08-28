@@ -13,7 +13,9 @@ from app.main import app
 from app.models.learning import Learner
 from app.models.project import Checkpoint, Lecture, Project, Roadmap, Task
 from app.services.lecture_agent import normalize_lecture_section_titles, resolve_lecture_section_title
+from app.services.execution_policy import EXECUTION_ENV_VAR, EXECUTION_POLICY_VAR
 from app.services.task_manager import manager, update_task
+from app.services import task_runners
 
 
 @pytest.fixture(scope="module")
@@ -129,6 +131,42 @@ def test_task_event_stream_releases_sqlite_reads_before_background_writes():
     updated = asyncio.run(exercise_stream())
     assert updated is not None
     assert updated.progress["message"] == "完成"
+
+
+def test_exercise_generation_refuses_model_code_verification_by_default(monkeypatch):
+    checkpoint_id, learner_id = asyncio.run(_seed_checkpoint())
+    monkeypatch.delenv(EXECUTION_ENV_VAR, raising=False)
+    monkeypatch.delenv(EXECUTION_POLICY_VAR, raising=False)
+
+    async def forbidden_context(*args, **kwargs):
+        raise AssertionError("disabled policy must fail before model/content work")
+
+    monkeypatch.setattr(task_runners, "_load_lecture_context", forbidden_context)
+
+    async def scenario():
+        async with async_session() as db:
+            task = Task(
+                learner_id=learner_id,
+                checkpoint_id=checkpoint_id,
+                type="exercise_generate",
+                status="queued",
+                payload={"checkpoint_id": checkpoint_id},
+                progress={},
+            )
+            db.add(task)
+            await db.commit()
+            await db.refresh(task)
+            task_id = task.id
+        await task_runners.run_exercise_generation(task_id)
+        async with async_session() as db:
+            stored = await db.get(Task, task_id)
+            return stored.status, dict(stored.error or {}), dict(stored.result or {})
+
+    status, error, result = asyncio.run(scenario())
+    assert status == "failed"
+    assert error["code"] == "code_execution_unsupported"
+    assert error["execution_boundary"] == "not_executed"
+    assert result["status"] == "unsupported"
 
 
 def test_singleton_source_filename_uses_checkpoint_title_for_display():

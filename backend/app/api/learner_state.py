@@ -45,6 +45,7 @@ SYNC_EVENT_TYPES = {
     "vnext_learning_skill_looped",
     "vnext_learning_task_learner_replied",
     "vnext_learning_support_requested",
+    "vnext_human_adaptation_requested",
     "vnext_learning_skill_selected",
     "vnext_learning_task_paused",
     "vnext_learning_task_resumed",
@@ -65,6 +66,9 @@ class LearnerEventRequest(BaseModel):
     client_event_id: str = Field(min_length=4, max_length=160)
     payload: dict[str, Any] = Field(default_factory=dict)
     occurred_at: datetime | None = None
+    project_id: int | None = Field(default=None, ge=1)
+    checkpoint_id: int | None = Field(default=None, ge=1)
+    session_id: int | None = Field(default=None, ge=1)
 
     @field_validator("event_type")
     @classmethod
@@ -507,17 +511,30 @@ async def sync_learner_event(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    event = await record_event(
-        db,
-        learner_id=current.learner.id,
-        event_type=request.event_type,
-        source="vnext",
-        payload=request.payload,
-        occurred_at=request.occurred_at,
-        confidence=1.0,
-        provenance={"vnext_sync": True},
-        client_event_id=request.client_event_id,
-    )
+    try:
+        event = await record_event(
+            db,
+            learner_id=current.learner.id,
+            event_type=request.event_type,
+            source="vnext",
+            project_id=request.project_id,
+            checkpoint_id=request.checkpoint_id,
+            session_id=request.session_id,
+            payload=request.payload,
+            occurred_at=request.occurred_at,
+            confidence=1.0,
+            provenance={
+                "vnext_sync": True,
+                **(
+                    {"self_report": True, "explicit_current_context": True}
+                    if request.event_type == "vnext_human_adaptation_requested"
+                    else {}
+                ),
+            },
+            client_event_id=request.client_event_id,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
     await db.commit()
     return {"event_id": event.id, "learner_seq": event.learner_seq}
 

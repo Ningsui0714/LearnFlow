@@ -33,7 +33,7 @@ ACTION_BOARD = {
             {},
             ("read_vnext_five_kernel_profile", "read_vnext_learning_workspace",
              "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph", "read_review_context",
-             "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_visual"),
+             "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_diagram", "generate_learning_animation"),
         ),
         ActionDefinition(
             "search_computer_knowledge", "检索计算机知识来源", "none", "explicit_or_auto",
@@ -66,7 +66,12 @@ ACTION_BOARD = {
             ("generate_learning_files", "design_assessment_blueprint", "run_vnext_learning_task"),
         ),
         ActionDefinition(
-            "generate_learning_visual", "生成安全学习图解或动画", "artifact", "explicit_or_auto",
+            "generate_learning_diagram", "生成安全学习图解", "artifact", "explicit_or_auto",
+            {},
+            (),
+        ),
+        ActionDefinition(
+            "generate_learning_animation", "生成安全学习动画", "artifact", "explicit_or_auto",
             {},
             (),
         ),
@@ -78,7 +83,7 @@ ACTION_BOARD = {
         ActionDefinition(
             "run_vnext_learning_task", "在 vNext 对话中编排原子学习任务", "context", "explicit_or_click",
             {},
-            ("search_computer_knowledge", "read_web_evidence", "generate_learning_visual"),
+            ("search_computer_knowledge", "read_web_evidence", "generate_learning_diagram", "generate_learning_animation"),
         ),
         ActionDefinition(
             "run_vnext_learning_plan", "在 vNext 对话中形成项目雏形或发展方向草案", "proposal", "explicit_or_auto",

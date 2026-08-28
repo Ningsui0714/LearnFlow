@@ -3,6 +3,7 @@ import asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import KernelState, LearnerBadge, LearningLifeEvent
@@ -151,7 +152,7 @@ def test_two_cookie_clients_are_strictly_isolated():
         assert asyncio.run(kernel_owners()) == {alice_learner, bob_learner}
 
 
-def test_login_password_session_and_dev_switching():
+def test_login_password_session_and_dev_switching(monkeypatch):
     with TestClient(app) as client:
         assert client.get("/api/auth/status").json() == {"authenticated": False}
         created = client.post("/api/auth/register", json=registration(
@@ -175,6 +176,7 @@ def test_login_password_session_and_dev_switching():
         assert logged_in.json()["is_dev_login"] is False
         assert client.get("/api/settings").status_code == 404
 
+        monkeypatch.setattr(settings, "dev_test_login_enabled", True)
         switched = client.post(f"/api/dev/accounts/{account_id}/login")
         assert switched.status_code == 200
         assert switched.json()["is_dev_login"] is True

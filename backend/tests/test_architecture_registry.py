@@ -1,14 +1,23 @@
+import asyncio
+import hashlib
 import json
 from pathlib import Path
 
+from app.api.architecture import validate_architecture_registry
+from app.services import learning_runtime
 from app.services.action_board import ACTION_BOARD
 from app.services.architecture_registry import (
     AGENTS,
     CHAT_MODES,
     CAPABILITY_OWNERS,
+    EVENT_SCHEMA_VERSION,
     EVENTS,
+    IMPLEMENTATION_BINDINGS,
     KERNELS,
     KERNEL_NAMES,
+    LIFECYCLE_STATES,
+    PUBLICATIONS,
+    REGISTRY_VERSION,
     SKILLS,
     SKILL_KINDS,
     SKILL_SPEC_VERSION,
@@ -18,9 +27,12 @@ from app.services.architecture_registry import (
     WORKBENCHES,
     normalize_event_provenance,
     registry_manifest,
+    registry_validation_report,
     chat_mode_manifest,
     frontend_learning_skill_manifest,
+    implementation_binding_failures,
     selectable_learning_skill_manifest,
+    validate_implementation,
     validate_registry,
 )
 
@@ -31,8 +43,22 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert manifest["validation_errors"] == []
+    assert REGISTRY_VERSION == "2026-08-28.6"
+    assert manifest["schema_valid"] is True
+    assert manifest["valid"] is (
+        manifest["schema_valid"] and manifest["implementation_valid"]
+    )
+    assert manifest["validation_errors"] == manifest["issues"] == manifest["errors"]
     assert len(manifest["digest"]) == 64
+    manifest_without_digest = dict(manifest)
+    digest = manifest_without_digest.pop("digest")
+    digest_input = json.dumps(
+        manifest_without_digest,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert digest == hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
     assert manifest["authority"]["memory_projection"] == (
         "KernelMutation -> MemoryFact -> versioned MemoryModule -> MemoryClaim"
     )
@@ -55,6 +81,101 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert KERNELS["practice"].claim_mode == "performance_claims"
 
 
+def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable():
+    manifest = registry_manifest()
+    assert tuple(manifest["lifecycle_states"]) == LIFECYCLE_STATES
+    for category in ("tools", "skills", "workbenches", "capabilities", "important_events"):
+        for row in manifest[category]:
+            assert row["lifecycle"] in LIFECYCLE_STATES
+            assert isinstance(row["binding_ids"], list)
+            assert isinstance(row["available"], bool)
+            if row["lifecycle"] == "implemented":
+                assert row["binding_ids"]
+            else:
+                assert row["available"] is False
+                assert row["lifecycle_note"]
+
+    tools = {row["id"]: row for row in manifest["tools"]}
+    skills = {row["id"]: row for row in manifest["skills"]}
+    workbenches = {row["id"]: row for row in manifest["workbenches"]}
+    capabilities = {row["capability"]: row for row in manifest["capabilities"]}
+    assert tools["workflow_gateway"]["lifecycle"] == "optional_unimplemented"
+    assert tools["workflow_validator"]["lifecycle"] == "optional_unimplemented"
+    assert skills["external_workflow_rendering"]["lifecycle"] == "optional_unimplemented"
+    assert workbenches["xingchen_studio"]["lifecycle"] == "optional_unimplemented"
+    assert capabilities["recommend_learning_resources"]["lifecycle"] == "optional_unimplemented"
+    assert capabilities["search_learning_resources"]["lifecycle"] == "optional_unimplemented"
+    assert "recommend_learning_resources" not in manifest["available_capabilities"]
+    assert "search_learning_resources" not in manifest["available_capabilities"]
+    assert tools["action_board"]["binding_ids"] == ["py:action_board.execute"]
+    assert workbenches["vnext_chat"]["binding_ids"] == ["workbench:vnext_chat"]
+
+
+def test_targeted_events_declare_payload_and_explicit_reducer_bindings():
+    for event in EVENTS.values():
+        if not event.kernel_targets:
+            assert event.payload_version is None
+            assert event.reducer_binding is None
+            continue
+        assert event.payload_version == EVENT_SCHEMA_VERSION
+        assert event.reducer_binding == f"reducer:{event.id}"
+        binding = IMPLEMENTATION_BINDINGS[event.reducer_binding]
+        assert binding.kind == "reducer_event"
+        assert binding.module == "app.services.learning_runtime"
+        assert binding.symbol == "REDUCER_EVENT_TYPES"
+        assert binding.member == event.id
+        assert event.reducer_binding in PUBLICATIONS["events"][event.id].bindings
+
+    assert EVENTS["project_proposal_accepted"].reducer_binding == (
+        "reducer:project_proposal_accepted"
+    )
+    assert EVENTS["project_completed"].reducer_binding == "reducer:project_completed"
+
+
+def test_implementation_validation_requires_reducer_export_and_checks_members(monkeypatch):
+    targeted_event_types = frozenset(
+        event.id for event in EVENTS.values() if event.kernel_targets
+    )
+
+    monkeypatch.delattr(learning_runtime, "REDUCER_EVENT_TYPES", raising=False)
+    missing_export = validate_implementation()
+    assert len(missing_export) == 1
+    assert "REDUCER_EVENT_TYPES" in missing_export[0]
+    assert "project_proposal_accepted" in missing_export[0]
+    assert "project_completed" in missing_export[0]
+
+    monkeypatch.setattr(
+        learning_runtime,
+        "REDUCER_EVENT_TYPES",
+        targeted_event_types - {"project_completed"},
+        raising=False,
+    )
+    missing_handler = validate_implementation()
+    assert any("reducer:project_completed" in issue for issue in missing_handler)
+
+    monkeypatch.setattr(
+        learning_runtime,
+        "REDUCER_EVENT_TYPES",
+        targeted_event_types,
+        raising=False,
+    )
+    assert implementation_binding_failures() == {}
+    report = registry_validation_report()
+    assert report["schema_valid"] is True
+    assert report["implementation_valid"] is True
+    assert report["valid"] is True
+    assert report["issues"] == report["errors"] == []
+
+
+def test_architecture_validate_keeps_legacy_fields_and_split_validity():
+    report = asyncio.run(validate_architecture_registry())
+    assert {"schema_valid", "implementation_valid", "issues", "valid", "errors"} <= set(report)
+    assert report["errors"] == report["issues"]
+    assert report["valid"] is (
+        report["schema_valid"] and report["implementation_valid"]
+    )
+
+
 def test_chat_modes_are_tutor_postures_with_registered_action_projection():
     assert all(item.owner_agent == "tutor_agent" for item in CHAT_MODES.values())
     assert "coordinate_chat_mode" in ACTION_BOARD
@@ -65,6 +186,9 @@ def test_chat_modes_are_tutor_postures_with_registered_action_projection():
     assert EVENTS["learning_action_segment_completed"].kernel_targets == (
         "structure", "knowledge", "value",
     )
+    assert EVENTS["vnext_human_adaptation_requested"].kernel_targets == ("human",)
+    assert EVENTS["vnext_human_adaptation_requested"].evidence_role == "explicit_transient_adaptation"
+    assert {"pace_adjustment", "format_request"} <= set(KERNELS["human"].short_term_keys)
     assert WORKBENCHES["learning_tasks"].capabilities == ("manage_learning_tasks",)
     assert WORKBENCHES["focused_learning"].name == "Learning Artifact Workbench"
 
@@ -85,7 +209,7 @@ def test_workspace_deletion_is_registered_as_zero_target_lifecycle():
 
 def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert {
-        "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation", "selection_followup_context",
+        "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation", "learning_diagram_generator", "learning_animation_generator", "selection_followup_context",
         "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
         "vnext_learning_workspace_reader",
         "vnext_learning_path_graph_reader", "vnext_learning_path_exact_reader",
@@ -101,7 +225,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert WORKBENCHES["vnext_chat"].surface == "/chat/:conversationId"
     assert set(WORKBENCHES["vnext_chat"].capabilities) == {
         "coordinate_vnext_agent_turn",
-        "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_visual", "open_selection_followup",
+        "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_diagram", "generate_learning_animation", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
             "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
                 "read_active_learning_file", "validate_teaching_contract", "read_checkpoint_delivery_readiness",
@@ -172,7 +296,7 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert all(
         TOOLS[tool_id].writes_kernels == ()
         for tool_id in {
-            "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation", "selection_followup_context",
+            "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "safe_visual_generation", "learning_diagram_generator", "learning_animation_generator", "selection_followup_context",
             "vnext_learning_task_runtime", "vnext_learning_plan_runtime", "vnext_five_kernel_profile_reader",
             "vnext_learning_workspace_reader", "review_context_reader",
             "domain_knowledge_reader", "learning_file_service",

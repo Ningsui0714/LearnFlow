@@ -14,6 +14,7 @@ from sqlalchemy import select
 from app.db.database import async_session
 from app.models.project import Task, Checkpoint, Roadmap, Project, Chunk, CheckpointChunk, Lecture, LectureVersion, ConceptQuestion, Exercise, Source
 from app.services.lecture_agent import LectureAgent, resolve_lecture_section_title
+from app.services.execution_policy import execution_policy_status, unsupported_detail
 
 
 async def run_source_ingestion(task_id: int):
@@ -70,7 +71,12 @@ def _section_dict(title: str, content: str, keywords, questions) -> dict:
     }
 
 
-# ── T6: image path rewrite + matplotlib rendering ──
+# ── T6: image path rewrite + deterministic visual fallback ──
+
+MODEL_VISUAL_FALLBACK = (
+    "\n> **视觉说明（unsupported）：** 为避免执行模型生成代码，本图未运行；"
+    "请参考正文、ASCII 示意或已验证的来源图片。\n"
+)
 
 def _rewrite_image_paths(content: str, source_file: str, source_id: int,
                          persist_dir: str = "", all_source_ids: list = None) -> str:
@@ -114,42 +120,25 @@ def _rewrite_image_paths(content: str, source_file: str, source_id: int,
     return content
 
 
-def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> str:
-    """Execute a matplotlib code block → save png → return absolute URL (or '')."""
-    import subprocess as _sp
-    import tempfile as _tf
-    import time as _time
-    gen_dir = os.path.join(persist_dir, "generated")
-    os.makedirs(gen_dir, exist_ok=True)
-    out_name = f"fig_{int(_time.time() * 1000)}_{idx}.png"
-    out_path = os.path.join(gen_dir, out_name)
-    script = (
-        "import matplotlib\n"
-        "matplotlib.use('Agg')\n"
-        "import matplotlib.pyplot as plt\n"
-        f"{code}\n"
-        f"plt.savefig({out_path!r}, dpi=120, bbox_inches='tight')\n"
+def _render_matplotlib_block(code: str, persist_dir: str, idx: int) -> dict:
+    """Permanently refuse model-generated plotting code and return fallback."""
+    del code, persist_dir, idx
+    print(
+        "[lecture_visual] status=unsupported "
+        "code=model_generated_matplotlib_execution_unsupported "
+        "execution_boundary=not_executed "
+        "filesystem_isolation=false network_isolation=false secrets_isolation=false",
+        flush=True,
     )
-    with _tf.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-        f.write(script)
-        fpath = f.name
-    try:
-        # Use the project venv when available, or the packaged sidecar's
-        # explicit script mode when running from the desktop bundle.
-        from app.services.code_executor import _python_command
-        proc = _sp.run(_python_command(fpath), capture_output=True, text=True, timeout=45)
-        if proc.returncode != 0 or not os.path.exists(out_path):
-            print(f"[matplotlib] render failed: {proc.stderr[-200:]}")
-            return ""
-        return f"/api/sources/{os.path.basename(persist_dir)}/files/generated/{out_name}"
-    except Exception as e:
-        print(f"[matplotlib] render error: {type(e).__name__}: {str(e)[:150]}")
-        return ""
-    finally:
-        try:
-            os.unlink(fpath)
-        except OSError:
-            pass
+    return {
+        "status": "unsupported",
+        "code": "model_generated_matplotlib_execution_unsupported",
+        "execution_boundary": "not_executed",
+        "filesystem_isolation": False,
+        "network_isolation": False,
+        "secrets_isolation": False,
+        "markdown": MODEL_VISUAL_FALLBACK,
+    }
 
 
 def _repair_markdown_fences(content: str) -> str:
@@ -203,17 +192,16 @@ def _repair_markdown_fences(content: str) -> str:
 
 def _postprocess_section(content: str, source_file: str, source_id: int,
                          persist_dir: str, all_source_ids: list = None) -> str:
-    """Repair Markdown, rewrite image paths and render matplotlib blocks."""
+    """Repair Markdown, rewrite images, and replace executable visual blocks."""
     import re as _re
     if not content:
         return content
 
-    # Render matplotlib blocks → replace with image reference
+    # Model-generated plotting code is permanently unsupported, including in
+    # trusted-local development. Replace it with a deterministic explanation.
     def _fix_mpl(m):
-        url = _render_matplotlib_block(m.group(1), persist_dir, 0)
-        if url:
-            return f"\n![示意图]({url})\n"
-        return "\n*（示意图渲染失败）*\n"
+        result = _render_matplotlib_block(m.group(1), persist_dir, 0)
+        return result["markdown"]
 
     content = _re.sub(r"```matplotlib\s*\n(.*?)```", _fix_mpl, content, flags=_re.DOTALL)
     content = _repair_markdown_fences(content)
@@ -497,7 +485,7 @@ async def run_lecture_generation(task_id: int):
                     content = fallback["content"]
                     section_delivery_state = "fallback_ready"
             questions = agent._extract_questions(content)
-            # T6: rewrite image paths + render matplotlib blocks
+            # T6: rewrite image paths + refuse executable visual blocks
             content = _postprocess_section(
                 content, ps.get("source_file", ""), main_source_id or 0,
                 persist_dir, all_source_ids)
@@ -1040,7 +1028,7 @@ async def run_concept_generation(task_id: int):
 # ── T8: exercise generation (blueprint → verify) ──
 
 async def run_exercise_generation(task_id: int):
-    """Generate coding exercises with executable verification (T8)."""
+    """Generate exercises only when trusted-local verification is enabled."""
     task = await update_task(task_id, status="running", started_at=datetime.utcnow())
     if not task:
         return
@@ -1050,6 +1038,23 @@ async def run_exercise_generation(task_id: int):
                           error={"code": "internal", "message": "payload 缺少 checkpoint_id",
                                  "guidance": "内部错误", "retryable": False},
                           finished_at=datetime.utcnow())
+        return
+
+    policy = execution_policy_status()
+    if not policy["enabled"]:
+        refusal = unsupported_detail()
+        await update_task(
+            task_id,
+            status="failed",
+            error={
+                **refusal,
+                "guidance": "该生成流程需要运行模型生成的参考代码；生产策略下不支持。",
+                "retryable": False,
+            },
+            result=refusal,
+            progress={"current": 0, "total": 0, "message": "代码验证不受支持"},
+            finished_at=datetime.utcnow(),
+        )
         return
 
     checkpoint, user_level, chunks, brief = await _load_lecture_context(checkpoint_id)
@@ -1146,7 +1151,7 @@ async def run_exercise_generation(task_id: int):
         task_id, status="completed",
         progress={"current": len(exercises), "total": len(exercises),
                   "message": f"完成！{len(exercises)} 道题通过验证"},
-        result={"exercises_count": len(exercises)},
+        result={"exercises_count": len(exercises), **policy},
         finished_at=datetime.utcnow(),
     )
 

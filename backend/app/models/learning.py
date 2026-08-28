@@ -2,8 +2,9 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, Integer, String, Text, JSON, Float, ForeignKey, DateTime, Boolean,
-    UniqueConstraint,
+    CheckConstraint, Index, UniqueConstraint, text,
 )
+from sqlalchemy.orm import synonym
 
 from app.db.database import Base
 
@@ -19,18 +20,106 @@ class Learner(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-class UserAccount(Base):
-    __tablename__ = "user_accounts"
+def _next_account_number(context) -> int:
+    """Allocate a stable public account number without relying on process state.
+
+    SQLite serializes the sequence-row update, so concurrent app processes cannot
+    hand out the same positive number.  Number zero is reserved for the exact,
+    non-demo ``ryan`` account and is assigned explicitly by registration/backfill.
+    The fallback here also preserves that rule for internal account creators such
+    as the seeded demo service.
+    """
+    connection = context.connection
+    params = context.get_current_parameters()
+    normalized = str(params.get("username_normalized") or "").strip().casefold()
+    is_legacy_demo = bool(params.get("is_legacy_demo"))
+    if normalized == "ryan" and not is_legacy_demo:
+        occupied = connection.execute(text(
+            "SELECT 1 FROM user_accounts WHERE account_number = 0 LIMIT 1"
+        )).scalar_one_or_none()
+        if occupied is None:
+            return 0
+
+    if connection.dialect.name == "sqlite":
+        connection.execute(text(
+            "INSERT OR IGNORE INTO auth_account_number_sequences "
+            "(id, next_number, updated_at) "
+            "SELECT 1, "
+            "COALESCE(MAX(CASE WHEN account_number >= 1 THEN account_number END), 0) + 1, "
+            "CURRENT_TIMESTAMP FROM user_accounts"
+        ))
+    else:
+        existing = connection.execute(text(
+            "SELECT next_number FROM auth_account_number_sequences WHERE id = 1"
+        )).scalar_one_or_none()
+        if existing is None:
+            maximum = connection.execute(text(
+                "SELECT COALESCE(MAX(account_number), 0) FROM user_accounts "
+                "WHERE account_number >= 1"
+            )).scalar_one()
+            connection.execute(
+                text(
+                    "INSERT INTO auth_account_number_sequences "
+                    "(id, next_number, updated_at) VALUES (1, :next_number, CURRENT_TIMESTAMP)"
+                ),
+                {"next_number": int(maximum or 0) + 1},
+            )
+    allocated = connection.execute(text(
+        "UPDATE auth_account_number_sequences "
+        "SET next_number = next_number + 1, updated_at = CURRENT_TIMESTAMP "
+        "WHERE id = 1 RETURNING next_number - 1"
+    )).scalar_one()
+    return int(allocated)
+
+
+class AuthAccountNumberSequence(Base):
+    __tablename__ = "auth_account_number_sequences"
 
     id = Column(Integer, primary_key=True)
+    next_number = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class UserAccount(Base):
+    __tablename__ = "user_accounts"
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'admin')", name="ck_user_accounts_role"),
+        CheckConstraint(
+            "(api_key_ciphertext IS NULL AND api_key_nonce IS NULL "
+            "AND api_key_hint IS NULL AND api_key_encryption_version IS NULL) OR "
+            "(api_key_ciphertext IS NOT NULL AND api_key_nonce IS NOT NULL "
+            "AND api_key_hint IS NOT NULL AND api_key_encryption_version IS NOT NULL)",
+            name="ck_user_accounts_api_key_envelope",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    account_number = Column(
+        Integer, nullable=False, unique=True, index=True, default=_next_account_number,
+    )
     username = Column(String(32), nullable=False)
     username_normalized = Column(String(32), nullable=False, unique=True, index=True)
+    normalized_username = synonym("username_normalized")
     password_hash = Column(Text, nullable=True)
+    password_version = Column(Integer, default=1, nullable=False)
+    auth_epoch = Column(Integer, default=0, nullable=False)
+    must_change_password = Column(Boolean, default=False, nullable=False)
+    role = Column(String(20), default="user", nullable=False, index=True)
     status = Column(String(20), default="active", nullable=False, index=True)
     is_legacy_demo = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)
+    password_changed_at = Column(DateTime, nullable=True)
+    password_upgraded_at = Column(DateTime, nullable=True)
+    # Per-account provider credentials are envelope-encrypted.  Plaintext is
+    # never represented by a mapped attribute and the deployment KEK lives
+    # only in environment-backed Settings.
+    api_key_ciphertext = Column(Text, nullable=True)
+    api_key_nonce = Column(String(32), nullable=True)
+    api_key_hint = Column(String(32), nullable=True)
+    api_key_encryption_version = Column(Integer, nullable=True)
+    api_key_updated_at = Column(DateTime, nullable=True)
 
 
 class AuthSession(Base):
@@ -40,10 +129,32 @@ class AuthSession(Base):
     user_id = Column(Integer, ForeignKey("user_accounts.id"), nullable=False, index=True)
     token_hash = Column(String(64), nullable=False, unique=True, index=True)
     is_dev_login = Column(Boolean, default=False, nullable=False)
+    auth_epoch = Column(Integer, default=0, nullable=False, index=True)
+    csrf_token_hash = Column(String(64), nullable=False)
+    absolute_expires_at = Column(DateTime, nullable=False, index=True)
+    idle_expires_at = Column(DateTime, nullable=False, index=True)
+    # Compatibility projection retained for clients and migrations that still
+    # refer to the former single expiry.  New sessions set it to the absolute
+    # deadline and authorization checks enforce all three boundaries.
     expires_at = Column(DateTime, nullable=False, index=True)
     last_seen_at = Column(DateTime, default=datetime.utcnow)
     revoked_at = Column(DateTime, nullable=True, index=True)
+    revoked_reason = Column(String(80), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuthLoginAttempt(Base):
+    __tablename__ = "auth_login_attempts"
+    __table_args__ = (
+        Index("ix_auth_login_attempts_account_time", "account_key_hash", "attempted_at"),
+        Index("ix_auth_login_attempts_ip_time", "ip_key_hash", "attempted_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    # Raw usernames and network addresses are intentionally not retained.
+    account_key_hash = Column(String(64), nullable=False)
+    ip_key_hash = Column(String(64), nullable=False)
+    attempted_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class LearnerProfile(Base):

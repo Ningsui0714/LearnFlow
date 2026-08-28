@@ -1,22 +1,66 @@
+import ipaddress
+import time
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.config import (
+    normalize_openai_base_url,
+    openai_chat_provider_kwargs,
+    settings,
+)
 from app.db.database import get_db
 from app.models.learning import AuthSession, Learner, LearnerProfile, UserAccount
 from app.models.project import Project
-from app.schemas.auth import LoginRequest, RegisterRequest
-from app.services.auth import (
-    CurrentLearner, auth_token_from_request, clear_auth_cookie, create_auth_session,
-    current_learner_from_request, get_current_learner, hash_password, normalize_username, set_auth_cookie,
-    valid_desktop_request, verify_password,
+from app.schemas.auth import (
+    AdminAccountProjection,
+    AuthenticatedAccountResponse,
+    CsrfTokenResponse,
+    LoginRequest,
+    LogoutResponse,
+    ModelCredentialMetadata,
+    ModelCredentialResolveResponse,
+    ModelCredentialTestRequest,
+    ModelCredentialTestResponse,
+    ModelCredentialUpdateRequest,
+    PasswordChangeRequest,
+    RegisterRequest,
 )
+from app.services.auth import (
+    INVALID_LOGIN_DETAIL,
+    LOGIN_BACKOFF_DETAIL,
+    CurrentLearner,
+    ModelCredentialDecryptionError,
+    ModelCredentialEncryptionUnavailable,
+    PasswordKDFBusy,
+    clear_auth_cookie,
+    clear_login_failures,
+    create_auth_session,
+    csrf_token_from_request,
+    current_learner_from_request,
+    decrypt_model_credential,
+    encrypt_model_credential,
+    get_current_learner,
+    hash_password_async,
+    is_loopback_request,
+    login_backoff_seconds,
+    login_request_keys,
+    model_credential_configured,
+    normalize_username,
+    record_login_failure,
+    require_admin,
+    require_runtime_bridge_request,
+    set_auth_cookie,
+    valid_desktop_request,
+    verify_password_async,
+)
+from app.services.demo_seed import DEMO_USERNAME, demo_manifest
 from app.services.learning_runtime import ensure_kernel_states, record_event
 from app.services.profile import award_career_goal
-from app.services.demo_seed import DEMO_USERNAME, demo_manifest
 
 
 router = APIRouter(tags=["Authentication"])
@@ -26,9 +70,13 @@ dev_router = APIRouter(prefix="/dev", tags=["Development"])
 def _account_view(current: CurrentLearner, desktop_auth_token: str | None = None) -> dict:
     result = {
         "id": current.account.id,
+        "account_number": current.account.account_number,
         "username": current.account.username,
         "display_name": current.learner.display_name,
         "learner_id": current.learner.id,
+        "role": current.account.role,
+        "status": current.account.status,
+        "must_change_password": bool(current.account.must_change_password),
         "is_legacy_demo": bool(current.account.is_legacy_demo),
         "profile": {
             "education_stage": current.profile.education_stage,
@@ -47,7 +95,82 @@ def _account_view(current: CurrentLearner, desktop_auth_token: str | None = None
     return result
 
 
-@router.post("/auth/register")
+def _model_credential_view(account: UserAccount) -> ModelCredentialMetadata:
+    configured = model_credential_configured(account)
+    return ModelCredentialMetadata(
+        configured=configured,
+        key_hint=str(account.api_key_hint or "") if configured else "",
+        updated_at=account.api_key_updated_at,
+    )
+
+
+def _raise_model_credential_kek_error() -> None:
+    raise HTTPException(
+        503,
+        "账户模型凭据加密不可用：请配置 AUTH_API_KEY_KEK（32 字节 URL-safe Base64）",
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
+def _validated_model_base_url(value: str) -> str:
+    normalized = normalize_openai_base_url(value)
+    try:
+        parsed = urlsplit(normalized)
+        port = parsed.port
+    except ValueError:
+        raise HTTPException(422, "模型服务地址无效") from None
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.fragment
+        or port is not None and not 1 <= port <= 65535
+    ):
+        raise HTTPException(422, "模型服务地址无效")
+    if parsed.scheme == "http":
+        host = parsed.hostname.casefold()
+        try:
+            loopback = ipaddress.ip_address(host.split("%", 1)[0]).is_loopback
+        except ValueError:
+            loopback = host == "localhost"
+        if not loopback:
+            raise HTTPException(422, "非本机模型服务必须使用 HTTPS")
+    return normalized
+
+
+def _raise_kdf_busy() -> None:
+    raise HTTPException(
+        503,
+        "认证服务繁忙，请稍后重试",
+        headers={"Retry-After": "1"},
+    )
+
+
+def _raise_login_backoff(seconds: int) -> None:
+    raise HTTPException(
+        429,
+        LOGIN_BACKOFF_DETAIL,
+        headers={"Retry-After": str(max(1, seconds))},
+    )
+
+
+async def _reject_login(
+    db: AsyncSession,
+    account_key: str,
+    ip_key: str,
+) -> None:
+    delay = await record_login_failure(db, account_key, ip_key)
+    if delay:
+        _raise_login_backoff(delay)
+    raise HTTPException(401, INVALID_LOGIN_DETAIL)
+
+
+@router.post(
+    "/auth/register",
+    response_model=AuthenticatedAccountResponse,
+    response_model_exclude_none=True,
+)
 async def register(
     data: RegisterRequest,
     request: Request,
@@ -60,60 +183,76 @@ async def register(
     )).scalar_one_or_none()
     if existing:
         raise HTTPException(409, "用户名已存在")
-    account = UserAccount(
-        username=data.username.strip(),
-        username_normalized=normalized,
-        password_hash=hash_password(data.password),
-    )
+    try:
+        password_hash = await hash_password_async(data.password)
+    except PasswordKDFBusy:
+        _raise_kdf_busy()
+
+    # Public account zero is a compatibility identity, not the database PK.
+    # Only the exact normalized, non-demo Ryan account may receive it.
+    account_kwargs = {
+        "username": data.username.strip(),
+        "username_normalized": normalized,
+        "password_hash": password_hash,
+        "password_version": 1,
+        "must_change_password": False,
+    }
+    if normalized == "ryan":
+        account_kwargs.update(account_number=0, role="admin")
+    account = UserAccount(**account_kwargs)
     db.add(account)
-    await db.flush()
-    learner = Learner(
-        user_id=account.id,
-        key=f"user-{account.id}",
-        display_name=data.display_name.strip(),
-    )
-    db.add(learner)
-    await db.flush()
-    profile = LearnerProfile(
-        learner_id=learner.id,
-        education_stage=data.education_stage,
-        background=data.background.strip(),
-        focus_areas=data.focus_areas,
-        weekly_hours=data.weekly_hours,
-        preferred_modes=data.preferred_modes,
-        career_goal=data.career_goal.strip(),
-        career_goal_status=data.career_goal_status,
-    )
-    db.add(profile)
-    await ensure_kernel_states(db, learner.id)
-    registration_event = await record_event(
-        db,
-        learner_id=learner.id,
-        event_type="registration_profile_completed",
-        source="registration",
-        payload={
-            "education_stage": profile.education_stage,
-            "background": profile.background,
-            "focus_areas": profile.focus_areas,
-            "weekly_hours": profile.weekly_hours,
-            "preferred_modes": profile.preferred_modes,
-            "career_goal": profile.career_goal,
-            "career_goal_status": profile.career_goal_status,
-        },
-        confidence=1.0,
-        provenance={"self_report": True},
-        client_event_id="registration-profile",
-    )
-    if profile.career_goal and profile.career_goal_status == "confirmed":
-        await award_career_goal(
+    try:
+        await db.flush()
+        learner = Learner(
+            user_id=account.id,
+            key=f"user-{account.id}",
+            display_name=data.display_name.strip(),
+        )
+        db.add(learner)
+        await db.flush()
+        profile = LearnerProfile(
+            learner_id=learner.id,
+            education_stage=data.education_stage,
+            background=data.background.strip(),
+            focus_areas=data.focus_areas,
+            weekly_hours=data.weekly_hours,
+            preferred_modes=data.preferred_modes,
+            career_goal=data.career_goal.strip(),
+            career_goal_status=data.career_goal_status,
+        )
+        db.add(profile)
+        await ensure_kernel_states(db, learner.id)
+        registration_event = await record_event(
             db,
             learner_id=learner.id,
-            career_goal=profile.career_goal,
+            event_type="registration_profile_completed",
+            source="registration",
+            payload={
+                "education_stage": profile.education_stage,
+                "background": profile.background,
+                "focus_areas": profile.focus_areas,
+                "weekly_hours": profile.weekly_hours,
+                "preferred_modes": profile.preferred_modes,
+                "career_goal": profile.career_goal,
+                "career_goal_status": profile.career_goal_status,
+            },
             confidence=1.0,
-            source_event_id=registration_event.id,
+            provenance={"self_report": True},
+            client_event_id="registration-profile",
         )
-    token = await create_auth_session(db, account)
-    await db.commit()
+        if profile.career_goal and profile.career_goal_status == "confirmed":
+            await award_career_goal(
+                db,
+                learner_id=learner.id,
+                career_goal=profile.career_goal,
+                confidence=1.0,
+                source_event_id=registration_event.id,
+            )
+        token = await create_auth_session(db, account)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, "用户名已存在") from None
     set_auth_cookie(response, token)
     return _account_view(
         CurrentLearner(account, learner, profile),
@@ -121,21 +260,56 @@ async def register(
     )
 
 
-@router.post("/auth/login")
+@router.post(
+    "/auth/login",
+    response_model=AuthenticatedAccountResponse,
+    response_model_exclude_none=True,
+)
 async def login(
     data: LoginRequest,
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
+    normalized = normalize_username(data.username)
+    account_key, ip_key = login_request_keys(request, normalized)
+    delay = await login_backoff_seconds(db, account_key, ip_key)
+    if delay:
+        _raise_login_backoff(delay)
+
     account = (await db.execute(select(UserAccount).where(
-        UserAccount.username_normalized == normalize_username(data.username),
-        UserAccount.status == "active",
+        UserAccount.username_normalized == normalized,
     ))).scalar_one_or_none()
-    if not account or not verify_password(data.password, account.password_hash):
-        raise HTTPException(401, "用户名或密码错误")
-    learner = (await db.execute(select(Learner).where(Learner.user_id == account.id))).scalar_one()
-    profile = await db.get(LearnerProfile, learner.id)
+    eligible_hash = (
+        account.password_hash
+        if account is not None and account.status == "active"
+        else None
+    )
+    try:
+        verification = await verify_password_async(data.password, eligible_hash)
+    except PasswordKDFBusy:
+        _raise_kdf_busy()
+    if not verification.valid or account is None:
+        await _reject_login(db, account_key, ip_key)
+
+    identity = (await db.execute(
+        select(Learner, LearnerProfile)
+        .join(LearnerProfile, LearnerProfile.learner_id == Learner.id)
+        .where(Learner.user_id == account.id)
+    )).first()
+    if identity is None:
+        await _reject_login(db, account_key, ip_key)
+    learner, profile = identity
+
+    if verification.needs_upgrade:
+        try:
+            account.password_hash = await hash_password_async(data.password)
+        except PasswordKDFBusy:
+            _raise_kdf_busy()
+        account.password_version = max(1, int(account.password_version or 0)) + 1
+        account.password_upgraded_at = datetime.utcnow()
+
+    await clear_login_failures(db, account_key)
     token = await create_auth_session(db, account)
     await db.commit()
     set_auth_cookie(response, token)
@@ -145,22 +319,230 @@ async def login(
     )
 
 
-@router.post("/auth/logout")
-async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    raw = auth_token_from_request(request)
-    if raw:
-        from app.services.auth import _token_hash
-        session = (await db.execute(select(AuthSession).where(
-            AuthSession.token_hash == _token_hash(raw), AuthSession.revoked_at.is_(None),
-        ))).scalar_one_or_none()
-        if session:
+@router.get("/auth/csrf", response_model=CsrfTokenResponse)
+async def csrf_token(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    _current: CurrentLearner = Depends(get_current_learner),
+):
+    token = await csrf_token_from_request(request, db)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Vary"] = "Cookie"
+    return CsrfTokenResponse(csrf_token=token)
+
+
+@router.get("/auth/model-credential", response_model=ModelCredentialMetadata)
+async def get_model_credential(
+    response: Response,
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    response.headers["Cache-Control"] = "no-store"
+    return _model_credential_view(current.account)
+
+
+@router.put("/auth/model-credential", response_model=ModelCredentialMetadata)
+async def put_model_credential(
+    data: ModelCredentialUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    api_key = data.api_key.strip()
+    if not api_key:
+        return _model_credential_view(current.account)
+    try:
+        envelope = encrypt_model_credential(current.account.id, api_key)
+    except ModelCredentialEncryptionUnavailable:
+        _raise_model_credential_kek_error()
+    current.account.api_key_ciphertext = envelope.ciphertext
+    current.account.api_key_nonce = envelope.nonce
+    current.account.api_key_hint = envelope.key_hint
+    current.account.api_key_encryption_version = envelope.version
+    current.account.api_key_updated_at = datetime.utcnow()
+    await db.commit()
+    return _model_credential_view(current.account)
+
+
+@router.delete("/auth/model-credential", response_model=ModelCredentialMetadata)
+async def delete_model_credential(
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    current.account.api_key_ciphertext = None
+    current.account.api_key_nonce = None
+    current.account.api_key_hint = None
+    current.account.api_key_encryption_version = None
+    current.account.api_key_updated_at = datetime.utcnow()
+    await db.commit()
+    return _model_credential_view(current.account)
+
+
+@router.post(
+    "/auth/model-credential/test",
+    response_model=ModelCredentialTestResponse,
+)
+async def test_model_credential(
+    data: ModelCredentialTestRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    if not model_credential_configured(current.account):
+        raise HTTPException(409, "尚未配置账户模型凭据")
+    try:
+        api_key = decrypt_model_credential(current.account)
+    except ModelCredentialEncryptionUnavailable:
+        _raise_model_credential_kek_error()
+    except ModelCredentialDecryptionError:
+        raise HTTPException(
+            500,
+            "账户模型凭据无法解密，请检查 KEK 版本或密文完整性",
+        ) from None
+
+    base_url = _validated_model_base_url(
+        data.base_url.strip() or settings.llm_base_url
+    )
+    model = data.model.strip() or settings.llm_model
+    if not model:
+        raise HTTPException(422, "模型名称不能为空")
+    try:
+        from openai import AsyncOpenAI
+
+        started = time.perf_counter()
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        provider_response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "只回复 OK"}],
+            max_tokens=16,
+            timeout=15,
+            **openai_chat_provider_kwargs(
+                base_url,
+                model,
+                thinking_enabled=False,
+            ),
+        )
+        latency_ms = round((time.perf_counter() - started) * 1000)
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        error_name = type(exc).__name__.casefold()
+        if status_code in {401, 403} or "authentication" in error_name:
+            raise HTTPException(400, "模型凭据验证失败") from None
+        if status_code == 404:
+            raise HTTPException(400, "模型或服务地址不可用") from None
+        if "timeout" in error_name:
+            raise HTTPException(400, "模型服务连接超时") from None
+        raise HTTPException(400, "模型服务连接测试失败") from None
+    return ModelCredentialTestResponse(
+        status="ok",
+        model=str(getattr(provider_response, "model", None) or model),
+        latency_ms=latency_ms,
+    )
+
+
+@router.post(
+    "/auth/model-credential/internal/resolve",
+    response_model=ModelCredentialResolveResponse,
+    include_in_schema=False,
+)
+async def resolve_model_credential_for_runtime(
+    request: Request,
+    response: Response,
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    # This is intentionally checked both by the request-security middleware and
+    # here so direct route invocation cannot bypass the server-only boundary.
+    require_runtime_bridge_request(request)
+    if not model_credential_configured(current.account):
+        raise HTTPException(
+            409,
+            "尚未配置账户模型凭据",
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+    try:
+        api_key = decrypt_model_credential(current.account)
+    except ModelCredentialEncryptionUnavailable:
+        _raise_model_credential_kek_error()
+    except ModelCredentialDecryptionError:
+        raise HTTPException(
+            500,
+            "账户模型凭据无法解密，请检查 KEK 版本或密文完整性",
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        ) from None
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return ModelCredentialResolveResponse(
+        api_key=api_key,
+        key_hint=str(current.account.api_key_hint or ""),
+        version=int(current.account.api_key_encryption_version),
+    )
+
+
+@router.post(
+    "/auth/password",
+    response_model=AuthenticatedAccountResponse,
+    response_model_exclude_none=True,
+)
+async def change_password(
+    data: PasswordChangeRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    try:
+        verification = await verify_password_async(
+            data.current_password,
+            current.account.password_hash,
+        )
+        if not verification.valid:
+            raise HTTPException(401, "当前密码错误")
+        replacement_hash = await hash_password_async(data.new_password)
+    except PasswordKDFBusy:
+        _raise_kdf_busy()
+
+    now = datetime.utcnow()
+    current.account.password_hash = replacement_hash
+    current.account.password_version = max(
+        1, int(current.account.password_version or 0),
+    ) + 1
+    current.account.auth_epoch = int(current.account.auth_epoch or 0) + 1
+    current.account.must_change_password = False
+    current.account.password_changed_at = now
+    await db.execute(update(AuthSession).where(
+        AuthSession.user_id == current.account.id,
+        AuthSession.revoked_at.is_(None),
+    ).values(
+        revoked_at=now,
+        revoked_reason="password_changed",
+    ))
+    token = await create_auth_session(db, current.account)
+    await db.commit()
+    set_auth_cookie(response, token)
+    return _account_view(
+        current,
+        token if valid_desktop_request(request) else None,
+    )
+
+
+@router.post("/auth/logout", response_model=LogoutResponse)
+async def logout(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    if current.session_id is not None:
+        session = await db.get(AuthSession, current.session_id)
+        if session is not None and session.revoked_at is None:
             session.revoked_at = datetime.utcnow()
+            session.revoked_reason = "logout"
             await db.commit()
     clear_auth_cookie(response)
     return {"status": "ok"}
 
 
-@router.get("/auth/me")
+@router.get(
+    "/auth/me",
+    response_model=AuthenticatedAccountResponse,
+    response_model_exclude_none=True,
+)
 async def me(current: CurrentLearner = Depends(get_current_learner)):
     return _account_view(current)
 
@@ -177,6 +559,65 @@ async def auth_status(
     return {"authenticated": True, **_account_view(current)}
 
 
+@router.get("/admin/accounts", response_model=list[AdminAccountProjection])
+async def admin_accounts(
+    db: AsyncSession = Depends(get_db),
+    _admin: CurrentLearner = Depends(require_admin),
+):
+    credential_configured = case((and_(
+        UserAccount.api_key_ciphertext.is_not(None),
+        UserAccount.api_key_nonce.is_not(None),
+        UserAccount.api_key_hint.is_not(None),
+        UserAccount.api_key_encryption_version.is_not(None),
+    ), True), else_=False).label("api_key_configured")
+    rows = (await db.execute(
+        select(
+            UserAccount.account_number,
+            UserAccount.username,
+            func.coalesce(Learner.display_name, UserAccount.username).label("display_name"),
+            UserAccount.role,
+            UserAccount.status,
+            UserAccount.created_at,
+            UserAccount.updated_at,
+            UserAccount.last_login_at,
+            credential_configured,
+            func.count(Project.id).label("project_count"),
+        )
+        .outerjoin(Learner, Learner.user_id == UserAccount.id)
+        .outerjoin(Project, and_(
+            Project.learner_id == Learner.id,
+            Project.visibility != "deleted",
+        ))
+        .group_by(
+            UserAccount.account_number,
+            UserAccount.username,
+            Learner.display_name,
+            UserAccount.role,
+            UserAccount.status,
+            UserAccount.created_at,
+            UserAccount.updated_at,
+            UserAccount.last_login_at,
+            UserAccount.api_key_ciphertext,
+            UserAccount.api_key_nonce,
+            UserAccount.api_key_hint,
+            UserAccount.api_key_encryption_version,
+        )
+        .order_by(UserAccount.account_number.asc())
+    )).all()
+    return [AdminAccountProjection(
+        account_number=row.account_number,
+        username=row.username,
+        display_name=row.display_name,
+        role=row.role,
+        status=row.status,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        last_login_at=row.last_login_at,
+        project_count=int(row.project_count or 0),
+        api_key_configured=bool(row.api_key_configured),
+    ) for row in rows]
+
+
 @router.get("/demo/status")
 async def competition_demo_status():
     return {"enabled": settings.competition_demo_mode, "offline": True}
@@ -188,7 +629,7 @@ async def competition_demo_login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    if not settings.competition_demo_mode:
+    if not settings.competition_demo_mode or not is_loopback_request(request):
         raise HTTPException(404, "Not found")
     account = (await db.execute(select(UserAccount).where(
         UserAccount.username_normalized == DEMO_USERNAME,
@@ -222,14 +663,20 @@ async def competition_demo_manifest(
     return manifest
 
 
-def _require_dev():
-    if not settings.dev_test_login_enabled:
+def _require_dev(request: Request) -> None:
+    if not (
+        (settings.dev_test_login_enabled or settings.competition_demo_mode)
+        and is_loopback_request(request)
+    ):
         raise HTTPException(404, "Not found")
 
 
 @dev_router.get("/accounts")
-async def list_dev_accounts(db: AsyncSession = Depends(get_db)):
-    _require_dev()
+async def list_dev_accounts(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _require_dev(request)
     rows = (await db.execute(
         select(UserAccount, Learner, func.count(Project.id))
         .join(Learner, Learner.user_id == UserAccount.id)
@@ -238,12 +685,14 @@ async def list_dev_accounts(db: AsyncSession = Depends(get_db)):
             Project.visibility == "visible",
         ))
         .group_by(UserAccount.id, Learner.id)
-        .order_by(UserAccount.created_at.asc())
+        .order_by(UserAccount.account_number.asc())
     )).all()
     return [{
         "id": account.id,
+        "account_number": account.account_number,
         "username": account.username,
         "display_name": learner.display_name,
+        "role": account.role,
         "created_at": account.created_at.isoformat() if account.created_at else None,
         "last_login_at": account.last_login_at.isoformat() if account.last_login_at else None,
         "project_count": project_count or 0,
@@ -258,11 +707,13 @@ async def dev_login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    _require_dev()
+    _require_dev(request)
     account = await db.get(UserAccount, account_id)
     if not account or account.status != "active":
         raise HTTPException(404, "Account not found")
-    learner = (await db.execute(select(Learner).where(Learner.user_id == account.id))).scalar_one_or_none()
+    learner = (await db.execute(select(Learner).where(
+        Learner.user_id == account.id,
+    ))).scalar_one_or_none()
     profile = await db.get(LearnerProfile, learner.id) if learner else None
     if not learner or not profile:
         raise HTTPException(404, "Account not found")

@@ -11,6 +11,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import openai_chat_provider_kwargs, settings
@@ -42,11 +43,14 @@ from app.services.architecture_registry import (
 )
 from app.services.learning_skill_runtime import (
     RUNTIME_SKILL_IDS,
+    current_learning_skill_turn_plan,
+    is_learning_skill_opening_turn,
     learning_skill_run_view,
     latest_learning_skill_run_view,
     pause_active_skill_run_for_selection,
     prepare_learning_skill_turn,
     recommend_learning_skill,
+    validate_learning_skill_run_scope,
 )
 from app.services.model_latency import (
     InteractiveModelBudgetExceeded,
@@ -767,7 +771,7 @@ async def get_or_create_session(
                 }
             else:
                 context_summary = {"role": "project_tutor"}
-        session = AgentSession(
+        candidate = AgentSession(
             learner_id=learner_id,
             session_type=session_type,
             project_id=project_id,
@@ -779,8 +783,27 @@ async def get_or_create_session(
             status="active",
             context_summary=context_summary,
         )
-        db.add(session)
-        await db.flush()
+        if session_type == "checkpoint":
+            # The database owns checkpoint-session uniqueness.  Two project
+            # workspace reads can legitimately race after both observe no
+            # active session; isolate the losing insert in a savepoint, then
+            # reuse the committed winner without rolling back unrelated work
+            # in the outer request transaction.
+            try:
+                async with db.begin_nested():
+                    db.add(candidate)
+                    await db.flush()
+                session = candidate
+            except IntegrityError:
+                session = (await db.execute(
+                    query.order_by(AgentSession.updated_at.desc()).limit(1)
+                )).scalar_one_or_none()
+                if session is None:
+                    raise
+        else:
+            session = candidate
+            db.add(session)
+            await db.flush()
     await _ensure_project_welcome_message(db, session)
     return session
 
@@ -2373,6 +2396,140 @@ async def finalize_proposal_acceptance(
     )
 
 
+def _is_prepared_skill_message(message: AgentMessage | None) -> bool:
+    meta = dict((message.meta_data if message else None) or {})
+    return bool(
+        message
+        and message.role == "user"
+        and meta.get("source") == "vnext_agent_turn_runtime"
+        and meta.get("model_answer_generated") is False
+        and isinstance(meta.get("learning_skill_run_id"), int)
+    )
+
+
+async def _turn_replay_message(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    client_turn_id: str | None,
+) -> AgentMessage | None:
+    if not client_turn_id:
+        return None
+    direct = (await db.execute(select(AgentMessage).where(
+        AgentMessage.session_id == session_id,
+        AgentMessage.idempotency_key == f"{session_id}:{client_turn_id}",
+    ))).scalar_one_or_none()
+    if direct:
+        return direct
+    recent = list((await db.execute(select(AgentMessage).where(
+        AgentMessage.session_id == session_id,
+        AgentMessage.role == "user",
+    ).order_by(AgentMessage.id.desc()).limit(40))).scalars().all())
+    return next((
+        item for item in recent
+        if client_turn_id in list(
+            dict(item.meta_data or {}).get("tutor_render_client_turn_ids") or []
+        )
+    ), None)
+
+
+async def _resolve_prepared_skill_turn(
+    db: AsyncSession,
+    *,
+    session: AgentSession,
+    message: str,
+    prepared_skill_turn_id: int | None,
+    replay_message: AgentMessage | None,
+) -> tuple[AgentMessage, LearningSkillRun, dict[str, Any]] | None:
+    candidate: AgentMessage | None = None
+    explicit = prepared_skill_turn_id is not None
+    if explicit:
+        candidate = (await db.execute(select(AgentMessage).where(
+            AgentMessage.id == prepared_skill_turn_id,
+            AgentMessage.session_id == session.id,
+            AgentMessage.role == "user",
+        ))).scalar_one_or_none()
+    elif _is_prepared_skill_message(replay_message):
+        candidate = replay_message
+    else:
+        latest = (await db.execute(select(AgentMessage).where(
+            AgentMessage.session_id == session.id,
+        ).order_by(AgentMessage.id.desc()).limit(1))).scalar_one_or_none()
+        if _is_prepared_skill_message(latest) and not dict(
+            latest.meta_data or {}
+        ).get("turn_response"):
+            candidate = latest
+
+    if not candidate:
+        if explicit:
+            raise ValueError("prepared_skill_turn_id 不属于当前 Tutor 会话")
+        return None
+    if not _is_prepared_skill_message(candidate) or candidate.content != message:
+        raise ValueError("prepared Skill turn 与本轮学习者消息不匹配")
+
+    meta = dict(candidate.meta_data or {})
+    run_id = int(meta["learning_skill_run_id"])
+    run = (await db.execute(select(LearningSkillRun).where(
+        LearningSkillRun.id == run_id,
+        LearningSkillRun.learner_id == session.learner_id,
+        LearningSkillRun.session_id == session.id,
+    ))).scalar_one_or_none()
+    if not run:
+        raise ValueError("prepared Skill turn 的正式运行不存在")
+    await validate_learning_skill_run_scope(db, session=session, run=run)
+    plan = dict(meta.get("learning_skill_turn_plan") or {})
+    return candidate, run, plan or current_learning_skill_turn_plan(run)
+
+
+async def _user_message_event(
+    db: AsyncSession,
+    *,
+    session: AgentSession,
+    user_message: AgentMessage,
+    message: str,
+    learning_task_id: int | None,
+) -> EvidenceEvent:
+    meta = dict(user_message.meta_data or {})
+    event_id = meta.get("user_event_id")
+    if isinstance(event_id, int):
+        existing = (await db.execute(select(EvidenceEvent).where(
+            EvidenceEvent.id == event_id,
+            EvidenceEvent.learner_id == session.learner_id,
+            EvidenceEvent.project_id == session.project_id,
+            EvidenceEvent.checkpoint_id == session.checkpoint_id,
+            EvidenceEvent.session_id == session.id,
+            EvidenceEvent.event_type == "user_message",
+        ))).scalar_one_or_none()
+        if existing and (existing.provenance or {}).get("message_id") == user_message.id:
+            return existing
+    event = await record_event(
+        db,
+        event_type="user_message",
+        source="user",
+        learner_id=session.learner_id,
+        project_id=session.project_id,
+        checkpoint_id=session.checkpoint_id,
+        session_id=session.id,
+        payload={
+            "text": message,
+            "learning_task_id": learning_task_id,
+            "interaction_scope": (
+                "learning_task_conversation" if learning_task_id else "conversation"
+            ),
+        },
+        confidence=0.25 if message.strip().lower() in {
+            "懂了", "明白了", "会了", "got it", "understood",
+        } else 1.0,
+        provenance={"message_id": user_message.id},
+        client_event_id=f"message:{user_message.id}:user",
+    )
+    user_message.meta_data = {
+        **meta,
+        "user_event_id": event.id,
+    }
+    return event
+
+
 async def process_turn(
     db: AsyncSession,
     session: AgentSession,
@@ -2383,21 +2540,49 @@ async def process_turn(
     selected_action_id: int | None = None,
     selected_skill_id: str | None = None,
     client_turn_id: str | None = None,
+    prepared_skill_turn_id: int | None = None,
     context: dict | None = None,
 ) -> dict:
-    replay_message = None
-    if client_turn_id:
-        replay_message = (await db.execute(select(AgentMessage).where(
-            AgentMessage.session_id == session.id,
-            AgentMessage.idempotency_key == f"{session.id}:{client_turn_id}",
-        ))).scalar_one_or_none()
-        cached_response = dict((replay_message.meta_data or {}).get("turn_response") or {}) if replay_message else {}
-        if cached_response:
-            return cached_response
+    replay_message = await _turn_replay_message(
+        db,
+        session_id=session.id,
+        client_turn_id=client_turn_id,
+    )
+    prepared_skill_turn = await _resolve_prepared_skill_turn(
+        db,
+        session=session,
+        message=message,
+        prepared_skill_turn_id=prepared_skill_turn_id,
+        replay_message=replay_message,
+    )
+    if prepared_skill_turn:
+        if replay_message and replay_message.id != prepared_skill_turn[0].id:
+            raise ValueError("client_turn_id 与 prepared Skill turn 不匹配")
+        prepared_response = dict(
+            (prepared_skill_turn[0].meta_data or {}).get("turn_response") or {}
+        )
+        if prepared_response:
+            return prepared_response
+    cached_response = (
+        dict((replay_message.meta_data or {}).get("turn_response") or {})
+        if replay_message else {}
+    )
+    if cached_response:
+        return cached_response
 
     active_learning_skill, learning_skill_changed = _select_session_learning_skill(
-        session, selected_skill_id, message,
+        session,
+        selected_skill_id or (prepared_skill_turn[1].skill_id if prepared_skill_turn else None),
+        message,
     )
+    if (
+        prepared_skill_turn
+        and (
+            not active_learning_skill
+            or active_learning_skill["id"] != prepared_skill_turn[1].skill_id
+        )
+    ):
+        raise ValueError("prepared Skill turn 与当前选择的学习方法不匹配")
 
     if session.session_type == "checkpoint":
         if project_id is not None and project_id != session.project_id:
@@ -2420,6 +2605,12 @@ async def process_turn(
             raise ValueError("关卡 Tutor 作用域不可修改")
         if checkpoint.learning_status in (None, "", "not_started"):
             checkpoint.learning_status = "in_progress"
+    if prepared_skill_turn:
+        await validate_learning_skill_run_scope(
+            db,
+            session=session,
+            run=prepared_skill_turn[1],
+        )
 
     incoming_context = context or {}
     candidate_sources_completed = incoming_context.get("interaction") == "candidate_sources_completed"
@@ -2455,7 +2646,19 @@ async def process_turn(
             proposal_id=proposal_id if isinstance(proposal_id, int) else None,
             source_selection_completed=True,
         )
-    if replay_message:
+    if prepared_skill_turn:
+        user_message = prepared_skill_turn[0]
+        prepared_meta = dict(user_message.meta_data or {})
+        render_ids = list(prepared_meta.get("tutor_render_client_turn_ids") or [])
+        if client_turn_id and client_turn_id not in render_ids:
+            render_ids.append(client_turn_id)
+        user_message.meta_data = {
+            **message_context,
+            **prepared_meta,
+            "tutor_render_client_turn_ids": render_ids[-12:],
+        }
+        user_event = None
+    elif replay_message:
         user_message = replay_message
         user_event = None
     else:
@@ -2481,22 +2684,12 @@ async def process_turn(
     ).limit(1))).scalar_one_or_none()
     if not user_event:
         active_learning_task_id = active_learning_task.id if active_learning_task else None
-        user_event = await record_event(
-            db, event_type="user_message", source="user",
-            learner_id=session.learner_id,
-            project_id=session.project_id, checkpoint_id=session.checkpoint_id,
-            session_id=session.id, payload={
-                "text": message,
-                "learning_task_id": active_learning_task_id,
-                "interaction_scope": (
-                    "learning_task_conversation" if active_learning_task_id else "conversation"
-                ),
-            },
-            confidence=0.25 if message.strip().lower() in {
-                "懂了", "明白了", "会了", "got it", "understood",
-            } else 1.0,
-            provenance={"message_id": user_message.id},
-            client_event_id=f"message:{user_message.id}:user",
+        user_event = await _user_message_event(
+            db,
+            session=session,
+            user_message=user_message,
+            message=message,
+            learning_task_id=active_learning_task_id,
         )
     latest_skill_run = (await db.execute(select(LearningSkillRun).where(
         LearningSkillRun.learner_id == session.learner_id,
@@ -2580,7 +2773,9 @@ async def process_turn(
     proposal_for_action: LearningProjectProposal | None = None
     pending = await db.get(AgentAction, session.pending_action_id) if session.pending_action_id else None
     learning_phase = await _effective_learning_flow_phase(db, session)
-    if candidate_sources_completed:
+    if prepared_skill_turn:
+        pass
+    elif candidate_sources_completed:
         pass
     elif selected_action_id:
         candidate = (await db.execute(select(AgentAction).where(
@@ -2859,18 +3054,36 @@ async def process_turn(
     skill_run = None
     skill_turn_plan: dict[str, Any] | None = None
     if (
-        session.session_type == "global"
-        and active_learning_skill
+        active_learning_skill
         and active_learning_skill["id"] in RUNTIME_SKILL_IDS
     ):
-        skill_run, skill_turn_plan = await prepare_learning_skill_turn(
-            db,
-            session=session,
-            skill_id=active_learning_skill["id"],
-            message=message,
-            message_id=user_message.id,
-            client_turn_id=client_turn_id,
-        )
+        if prepared_skill_turn:
+            skill_run = prepared_skill_turn[1]
+            skill_turn_plan = prepared_skill_turn[2]
+        elif (
+            latest_skill_run
+            and latest_skill_run.skill_id == active_learning_skill["id"]
+            and is_learning_skill_opening_turn(latest_skill_run, message)
+        ):
+            await validate_learning_skill_run_scope(
+                db,
+                session=session,
+                run=latest_skill_run,
+            )
+            skill_run = latest_skill_run
+            skill_turn_plan = current_learning_skill_turn_plan(
+                latest_skill_run,
+                started=True,
+            )
+        else:
+            skill_run, skill_turn_plan = await prepare_learning_skill_turn(
+                db,
+                session=session,
+                skill_id=active_learning_skill["id"],
+                message=message,
+                message_id=user_message.id,
+                client_turn_id=client_turn_id,
+            )
     skill_run_view = await learning_skill_run_view(db, skill_run) if skill_run else None
     recommendation_candidate = (
         recommend_learning_skill(message)
@@ -2996,6 +3209,7 @@ async def process_turn(
             "proposal_id": proposal_update.id if proposal_update else None,
             "learning_skill": active_learning_skill,
             "learning_skill_run": visible_skill_run_view,
+            "prepared_skill_turn_id": user_message.id if prepared_skill_turn else None,
             "skill_recommendation": skill_recommendation,
             "learning_task_id": (
                 learning_task_proposal.get("id") if learning_task_proposal else None
@@ -3034,6 +3248,7 @@ async def process_turn(
         "chat_mode": current_chat_mode,
         "active_skill": active_learning_skill,
         "active_skill_run": visible_skill_run_view,
+        "prepared_skill_turn_id": user_message.id if prepared_skill_turn else None,
         "skill_recommendation": skill_recommendation,
         "message": reply,
         "state_summary": state,

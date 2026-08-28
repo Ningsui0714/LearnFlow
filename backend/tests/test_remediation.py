@@ -3,12 +3,13 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.database import async_session
 from app.main import app
-from app.models.learning import EvidenceEvent, KernelState, Learner
+from app.models.learning import EvidenceEvent, KernelMutation, KernelState, Learner, LearningAttempt
 from app.models.project import Checkpoint, ConceptQuestion, Exercise, Project, Roadmap
+from app.services.execution_policy import EXECUTION_ENV_VAR, EXECUTION_POLICY_VAR
 from app.services.remediation import RemediationStrategy
 
 
@@ -71,6 +72,11 @@ async def _seed_items():
         db.add_all([question, exercise])
         await db.commit()
         return checkpoint.id, question.id, exercise.id, learner_id
+
+
+def _enable_trusted_local_execution(monkeypatch):
+    monkeypatch.setenv(EXECUTION_ENV_VAR, "development")
+    monkeypatch.setenv(EXECUTION_POLICY_VAR, "trusted_local_process")
 
 
 def test_remediation_strategy_is_deterministic_and_avoids_rejected_modes():
@@ -163,7 +169,93 @@ def test_concept_wrong_retry_variant_and_evidence_writeback(client: TestClient):
     assert human_state["last_effective_explanation_mode"] == switched.json()["current_delivery_mode"]
 
 
-def test_exercise_wrong_then_retry_uses_same_case(client: TestClient):
+def test_disabled_exercise_execution_returns_503_without_evidence(
+    client: TestClient,
+    monkeypatch,
+):
+    checkpoint_id, _, exercise_id, learner_id = asyncio.run(_seed_items())
+    monkeypatch.delenv(EXECUTION_ENV_VAR, raising=False)
+    monkeypatch.delenv(EXECUTION_POLICY_VAR, raising=False)
+
+    run = client.post(
+        f"/api/exercises/{exercise_id}/run",
+        json={"code": "print(2)"},
+    )
+    submitted = client.post(
+        f"/api/exercises/{exercise_id}/submit",
+        json={"code": "print(2)", "client_submission_id": uuid.uuid4().hex},
+    )
+
+    assert run.status_code == submitted.status_code == 503
+    for response in (run, submitted):
+        detail = response.json()["detail"]
+        assert detail["code"] == "code_execution_unsupported"
+        assert detail["status"] == "unsupported"
+        assert detail["execution_boundary"] == "not_executed"
+
+    async def evidence_counts():
+        async with async_session() as db:
+            attempts = await db.scalar(select(func.count(LearningAttempt.id)).where(
+                LearningAttempt.learner_id == learner_id,
+                LearningAttempt.checkpoint_id == checkpoint_id,
+                LearningAttempt.item_type == "exercise",
+                LearningAttempt.item_id == exercise_id,
+            ))
+            events = list((await db.execute(select(EvidenceEvent.id).where(
+                EvidenceEvent.learner_id == learner_id,
+                EvidenceEvent.checkpoint_id == checkpoint_id,
+                EvidenceEvent.event_type == "exercise_attempt_evaluated",
+            ))).scalars().all())
+            mutations = 0
+            if events:
+                mutations = int(await db.scalar(select(func.count(KernelMutation.id)).where(
+                    KernelMutation.event_id.in_(events),
+                )) or 0)
+            return int(attempts or 0), len(events), mutations
+
+    assert asyncio.run(evidence_counts()) == (0, 0, 0)
+
+
+def test_missing_code_assessment_contract_does_not_create_failure_evidence(
+    client: TestClient,
+    monkeypatch,
+):
+    checkpoint_id, _, exercise_id, learner_id = asyncio.run(_seed_items())
+    _enable_trusted_local_execution(monkeypatch)
+
+    async def remove_tests():
+        async with async_session() as db:
+            exercise = await db.get(Exercise, exercise_id)
+            exercise.test_cases = []
+            await db.commit()
+
+    asyncio.run(remove_tests())
+    response = client.post(
+        f"/api/exercises/{exercise_id}/submit",
+        json={"code": "print(2)", "client_submission_id": uuid.uuid4().hex},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "code_assessment_unsupported"
+
+    async def evidence_counts():
+        async with async_session() as db:
+            attempts = await db.scalar(select(func.count(LearningAttempt.id)).where(
+                LearningAttempt.learner_id == learner_id,
+                LearningAttempt.checkpoint_id == checkpoint_id,
+                LearningAttempt.item_id == exercise_id,
+            ))
+            events = await db.scalar(select(func.count(EvidenceEvent.id)).where(
+                EvidenceEvent.learner_id == learner_id,
+                EvidenceEvent.checkpoint_id == checkpoint_id,
+                EvidenceEvent.event_type == "exercise_attempt_evaluated",
+            ))
+            return int(attempts or 0), int(events or 0)
+
+    assert asyncio.run(evidence_counts()) == (0, 0)
+
+
+def test_exercise_wrong_then_retry_uses_same_case(client: TestClient, monkeypatch):
+    _enable_trusted_local_execution(monkeypatch)
     _, _, exercise_id, _ = asyncio.run(_seed_items())
     wrong = client.post(
         f"/api/exercises/{exercise_id}/submit",

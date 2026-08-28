@@ -6,33 +6,61 @@ import re
 import json
 import shutil
 import tempfile
-import subprocess
+from pathlib import Path, PurePosixPath
 from typing import List, Optional, Dict
-from urllib.parse import urlparse
 
-import httpx
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from bs4 import BeautifulSoup
+
+from app.services.file_formats import (
+    DEFAULT_EXTRACTION_BUDGET,
+    FORMAT_REGISTRY_VERSION,
+    UNTRUSTED_SOURCE_BOUNDARY,
+    FileFormatError,
+    extract_bytes,
+    extract_path,
+    format_id_for_filename,
+    is_source_filename,
+    source_extensions,
+)
+from app.services.source_locator import SOURCE_LOCATOR, SourceLocationError, SourceLocator
+
+
+_GIT_CLONE_FALLBACK_CODES = {
+    "git_unavailable",
+    "git_clone_failed",
+    "git_clone_timeout",
+    "git_clone_budget_exceeded",
+}
 
 
 class SourceProcessor:
     """Process sources and produce tagged chunks + directory metadata."""
 
-    def __init__(self, chunk_size: int = 2000, chunk_overlap: int = 200):
+    def __init__(
+        self,
+        chunk_size: int = 2000,
+        chunk_overlap: int = 200,
+        *,
+        source_locator: SourceLocator | None = None,
+    ):
         self.splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             separators=["\n## ", "\n### ", "\n#### ", "\n", ". ", " ", ""],
         )
+        self.source_locator = source_locator or SOURCE_LOCATOR
 
     # ── URL Handling ──
 
     async def fetch_url(self, url: str) -> str:
         headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 LearnFlow/1.0"}
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            html = resp.text
+        response = await self.source_locator.fetch(
+            url,
+            headers=headers,
+            max_response_bytes=5 * 1024 * 1024,
+        )
+        html = response.text(max_characters=DEFAULT_EXTRACTION_BUDGET.max_characters * 2)
         soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
             tag.decompose()
@@ -43,14 +71,7 @@ class SourceProcessor:
     # ── GitHub Handling ──
 
     def _parse_gh_url(self, url: str) -> tuple:
-        clean = urlparse(url)._replace(query="").geturl()
-        path = urlparse(clean).path.strip("/")
-        if path.endswith(".git"):
-            path = path[:-4]
-        parts = path.split("/")
-        if len(parts) < 2:
-            raise ValueError(f"Invalid GitHub URL: {url}")
-        return parts[0], parts[1]
+        return self.source_locator.github_coordinates(url)
 
     async def fetch_github_readme(self, repo_url: str) -> str:
         owner, repo = self._parse_gh_url(repo_url)
@@ -62,14 +83,20 @@ class SourceProcessor:
             f"https://api.github.com/repos/{owner}/{repo}/readme",
         ]
         headers = {"User-Agent": "LearnFlow/1.0", "Accept": "application/vnd.github.v3.raw"}
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            for u in urls:
-                try:
-                    resp = await client.get(u, headers=headers)
-                    if resp.status_code == 200:
-                        return resp.text
-                except Exception:
-                    continue
+        for candidate in urls:
+            try:
+                response = await self.source_locator.fetch(
+                    candidate,
+                    headers=headers,
+                    max_response_bytes=5 * 1024 * 1024,
+                    raise_for_status=False,
+                )
+                if response.status_code == 200:
+                    return response.text(max_characters=DEFAULT_EXTRACTION_BUDGET.max_characters)
+            except SourceLocationError:
+                raise
+            except Exception:
+                continue
         raise ValueError(f"Could not fetch README for {repo_url}")
 
     # ── Clone + Extract + Analyze ──
@@ -83,12 +110,8 @@ class SourceProcessor:
                 "translations", "translated_images", "i18n", "locales", "locale"}
         return name in skip or (name.startswith(".") and name not in {".", ".ci", ".devcontainer"})
 
-    _READABLE_EXTS = {
-        ".md", ".markdown", ".rst", ".txt", ".csv", ".py", ".ipynb", ".yaml", ".yml",
-        ".toml", ".cfg", ".ini", ".json", ".xml", ".html", ".css", ".js",
-        ".sh", ".bash", ".c", ".cpp", ".h", ".hpp", ".java",
-        ".rs", ".go", ".rb", ".php", ".swift", ".tex", ".bib",
-    }
+    # Compatibility alias for callers/tests; the registry is the authority.
+    _READABLE_EXTS = set(source_extensions())
 
     _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"}
 
@@ -97,6 +120,58 @@ class SourceProcessor:
         ext = f".{fname.split('.')[-1].lower()}" if "." in fname else ""
         return ext in self._IMAGE_EXTS or fname.lower() in {"readme.md", "readme.rst"} or ext in {".md", ".markdown", ".rst"}
 
+    @staticmethod
+    def _extraction_meta(
+        *,
+        files: list[dict],
+        warnings: list[str],
+        input_bytes: int,
+        truncated: bool,
+        ignored_unsupported: int = 0,
+    ) -> dict:
+        """Return bounded provenance without turning source content into evidence."""
+        visible_warnings = warnings[:100]
+        if len(warnings) > len(visible_warnings):
+            visible_warnings.append(f"另有 {len(warnings) - len(visible_warnings)} 条解析告警未展开")
+        return {
+            "format_registry_version": FORMAT_REGISTRY_VERSION,
+            "format_ids": sorted({str(item.get("format_id")) for item in files if item.get("format_id")}),
+            "extracted_files": files[:100],
+            "extracted_file_count": len(files),
+            "ignored_unsupported_file_count": ignored_unsupported,
+            "input_bytes": input_bytes,
+            "truncated": truncated,
+            "warnings": visible_warnings,
+            "trust_boundary": UNTRUSTED_SOURCE_BOUNDARY,
+            "mastery_inference": False,
+            "execution_performed": False,
+        }
+
+    @staticmethod
+    def _append_extracted_block(
+        text_parts: list[str],
+        logical_name: str,
+        content: str,
+        current_characters: int,
+    ) -> tuple[int, bool]:
+        safe_name = re.sub(r"[\x00\r\n]", "�", str(logical_name))[:1000]
+        safe_content = re.sub(
+            r"(?m)^(=== .+? ===)$",
+            r"\\\1",
+            content.strip(),
+        )
+        block = f"=== {safe_name} ===\n{safe_content}\n"
+        remaining = DEFAULT_EXTRACTION_BUDGET.max_characters - current_characters
+        if remaining <= 0:
+            return current_characters, True
+        clipped = len(block) > remaining
+        if clipped:
+            block = block[:remaining]
+        if block.strip():
+            text_parts.append(block)
+            current_characters += len(block)
+        return current_characters, clipped
+
     async def clone_and_extract(self, repo_url: str, persist_dir: str = None) -> dict:
         """
         Clone repo and return:
@@ -104,78 +179,156 @@ class SourceProcessor:
           dir_tree: directory structure {path: {"type":"file"|"dir", "size":int}}
           readme_content: raw README text
         """
-        clean_url = urlparse(repo_url)._replace(query="").geturl()
+        clean_url = self.source_locator.normalize_github_url(repo_url)
         dir_tree = {}
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = subprocess.run(
-                ["git", "clone", "--depth", "1", clean_url, tmpdir],
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode != 0:
-                raise ValueError(f"Git clone failed: {result.stderr[:200]}")
+            await self.source_locator.clone_github(clean_url, tmpdir)
 
-            text_parts = []
+            text_parts: list[str] = []
             readme_text = ""
+            extraction_warnings: list[str] = []
+            extracted_files: list[dict] = []
+            examined_files = 0
+            ignored_unsupported = 0
+            input_bytes = 0
+            output_characters = 0
+            extraction_truncated = False
+            file_limit_reported = False
+            output_limit_reported = False
+            repository_entries = 0
+            entry_limit_reported = False
 
             for root, dirs, files in os.walk(tmpdir):
                 # Filter dirs
-                dirs[:] = [d for d in dirs if not self._skip_dir(d)]
+                safe_dirs = [
+                    directory for directory in dirs
+                    if not self._skip_dir(directory)
+                    and not (Path(root) / directory).is_symlink()
+                ]
+                remaining_entries = DEFAULT_EXTRACTION_BUDGET.max_container_entries - repository_entries
+                if remaining_entries <= 0:
+                    dirs[:] = []
+                    extraction_truncated = True
+                    if not entry_limit_reported:
+                        extraction_warnings.append("repository_entry_budget_exceeded: 仓库目录条目超过预算")
+                        entry_limit_reported = True
+                    break
+                dirs[:] = safe_dirs[:remaining_entries]
                 rel_dir = os.path.relpath(root, tmpdir)
                 if rel_dir == ".":
                     rel_dir = ""
                 for d in dirs:
+                    repository_entries += 1
                     dir_path = f"{rel_dir}/{d}" if rel_dir else d
                     dir_tree[dir_path] = {"type": "dir"}
 
                 for fname in files:
-                    ext = f".{fname.split('.')[-1].lower()}" if "." in fname else ""
+                    if repository_entries >= DEFAULT_EXTRACTION_BUDGET.max_container_entries:
+                        extraction_truncated = True
+                        if not entry_limit_reported:
+                            extraction_warnings.append("repository_entry_budget_exceeded: 仓库目录条目超过预算")
+                            entry_limit_reported = True
+                        dirs[:] = []
+                        break
+                    repository_entries += 1
                     rel_path = f"{rel_dir}/{fname}" if rel_dir else fname
                     fpath = os.path.join(root, fname)
+                    if Path(fpath).is_symlink():
+                        extraction_warnings.append(f"{rel_path}: symlink_ignored: 仓库符号链接不会被解引用")
+                        continue
                     try:
                         fsize = os.path.getsize(fpath)
                     except OSError:
+                        extraction_warnings.append(f"{rel_path}: file_unreadable: 无法读取文件大小")
                         continue
 
                     dir_tree[rel_path] = {"type": "file", "size": fsize}
 
-                    # Track README separately
-                    if fname.lower() == "readme.md":
-                        try:
-                            with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                                readme_text = f.read()
-                        except Exception:
-                            pass
-
-                    if ext not in self._READABLE_EXTS and fname.lower() not in {
-                        "readme.md", "readme.rst", "makefile", "dockerfile",
-                    }:
+                    if not is_source_filename(fname):
+                        ignored_unsupported += 1
                         continue
-                    if fsize > 500 * 1024:
+                    if examined_files >= DEFAULT_EXTRACTION_BUDGET.max_files:
+                        extraction_truncated = True
+                        if not file_limit_reported:
+                            extraction_warnings.append(
+                                "repository_file_budget_exceeded: 可解析文件数量超过预算"
+                            )
+                            file_limit_reported = True
                         continue
+                    if output_characters >= DEFAULT_EXTRACTION_BUDGET.max_characters:
+                        extraction_truncated = True
+                        if not output_limit_reported:
+                            extraction_warnings.append(
+                                "repository_character_budget_exceeded: 累计抽取字符超过预算"
+                            )
+                            output_limit_reported = True
+                        continue
+                    examined_files += 1
+                    if input_bytes + fsize > DEFAULT_EXTRACTION_BUDGET.max_total_input_bytes:
+                        extraction_truncated = True
+                        extraction_warnings.append(
+                            f"{rel_path}: total_input_budget_exceeded: 仓库累计输入大小超过预算"
+                        )
+                        continue
+                    input_bytes += fsize
 
                     try:
-                        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
-                            content = f.read()
-                        if len(content.strip()) < 20:
-                            continue
-                        text_parts.append(f"=== {rel_path} ===\n{content}\n")
-                    except (UnicodeDecodeError, OSError):
+                        extracted = extract_path(fpath, filename=fname)
+                    except FileFormatError as exc:
+                        extraction_warnings.append(f"{rel_path}: {exc.code}: {exc}")
                         continue
+                    content = extracted.text
+                    if fname.casefold() in {"readme.md", "readme.rst", "readme.markdown"}:
+                        readme_text = content
+                    output_characters, clipped = self._append_extracted_block(
+                        text_parts, rel_path, content, output_characters,
+                    )
+                    extraction_truncated = extraction_truncated or extracted.truncated or clipped
+                    extraction_warnings.extend(
+                        f"{rel_path}: extraction_warning: {warning}"
+                        for warning in extracted.warnings
+                    )
+                    extracted_files.append({
+                        "path": rel_path,
+                        "format_id": extracted.detected.format_id,
+                        "encoding": extracted.detected.encoding,
+                        "truncated": extracted.truncated or clipped,
+                        "counters": extracted.counters,
+                    })
 
             # Persist images + markdown into the repo cache (T6)
             if persist_dir:
                 os.makedirs(persist_dir, exist_ok=True)
+                persisted_scan_entries = 0
                 for root, dirs, files in os.walk(tmpdir):
-                    dirs[:] = [d for d in dirs if not self._skip_dir(d)]
+                    safe_dirs = [
+                        directory for directory in dirs
+                        if not self._skip_dir(directory)
+                        and not (Path(root) / directory).is_symlink()
+                    ]
+                    remaining_entries = (
+                        DEFAULT_EXTRACTION_BUDGET.max_container_entries - persisted_scan_entries
+                    )
+                    if remaining_entries <= 0:
+                        dirs[:] = []
+                        break
+                    dirs[:] = safe_dirs[:remaining_entries]
+                    persisted_scan_entries += len(dirs)
                     rel_dir = os.path.relpath(root, tmpdir)
                     if rel_dir == ".":
                         rel_dir = ""
                     for fname in files:
+                        if persisted_scan_entries >= DEFAULT_EXTRACTION_BUDGET.max_container_entries:
+                            dirs[:] = []
+                            break
+                        persisted_scan_entries += 1
                         if not self._should_persist(fname):
                             continue
                         rel_path = f"{rel_dir}/{fname}" if rel_dir else fname
                         src = os.path.join(root, fname)
+                        if Path(src).is_symlink():
+                            continue
                         try:
                             if os.path.getsize(src) > 5 * 1024 * 1024:
                                 continue
@@ -189,12 +342,20 @@ class SourceProcessor:
                             pass
 
             if not text_parts:
-                raise ValueError(f"No readable content found in {repo_url}")
+                reason = extraction_warnings[0] if extraction_warnings else "没有注册表支持的来源文件"
+                raise ValueError(f"No readable content found in {repo_url}: {reason}")
 
             return {
-                "text": "\n".join(text_parts),
+                "text": "".join(text_parts),
                 "dir_tree": dir_tree,
                 "readme": readme_text,
+                "extraction_meta": self._extraction_meta(
+                    files=extracted_files,
+                    warnings=extraction_warnings,
+                    input_bytes=input_bytes,
+                    truncated=extraction_truncated,
+                    ignored_unsupported=ignored_unsupported,
+                ),
             }
 
     # ── Chunk with Tags ──
@@ -364,6 +525,11 @@ class SourceProcessor:
                 "meta": {
                     "source_type": source_type,
                     "file": file_path,
+                    "format_registry_version": FORMAT_REGISTRY_VERSION,
+                    "format_id": format_id_for_filename(file_path),
+                    "source_trust": "untrusted",
+                    "mastery_inference": False,
+                    "execution_performed": False,
                     "headings": headings[:20],
                     "heading_chain": chain[:20],
                     "topic_hints": self._extract_topic_hints(text),
@@ -386,6 +552,11 @@ class SourceProcessor:
                 "meta": {
                     "source_type": source_type,
                     "file": file_path,
+                    "format_registry_version": FORMAT_REGISTRY_VERSION,
+                    "format_id": format_id_for_filename(file_path),
+                    "source_trust": "untrusted",
+                    "mastery_inference": False,
+                    "execution_performed": False,
                     "headings": [],
                     "heading_chain": [],
                     "topic_hints": self._extract_topic_hints(fc),
@@ -573,20 +744,30 @@ class SourceProcessor:
 
     # ── Full Pipeline ──
 
-    async def process_source(self, source_type: str, url: str, persist_dir: str = None) -> dict:
+    async def process_source(
+        self,
+        source_type: str,
+        url: str,
+        persist_dir: str = None,
+        *,
+        managed_file_root: str | None = None,
+    ) -> dict:
         """
         Full pipeline: fetch → extract → analyze → chunk.
         Returns {chunks: [...], source_meta: {...}}.
         """
-        if source_type == "file":
-            # Local application-data paths are not URLs. Preserve filename
-            # characters such as '?' instead of parsing them as a query.
-            clean_url = url
+        normalized_type = str(source_type or "").strip().casefold()
+        source_type = normalized_type
+        if normalized_type == "file":
+            # Only callers that already proved this path belongs to the exact
+            # server-managed upload root may opt into local file processing.
+            clean_url = str(self.source_locator.resolve_managed_file(url, managed_file_root))
+        elif normalized_type in {"github", "url"}:
+            reference = self.source_locator.normalize_remote_source(normalized_type, url)
+            source_type = reference.source_type
+            clean_url = reference.location
         else:
-            parsed = urlparse(url)
-            clean_url = parsed._replace(query="").geturl().rstrip("/")
-        if source_type not in {"github", "file"} and "github.com" in clean_url:
-            source_type = "github"
+            raise ValueError(f"unsupported_source_type: {source_type}")
 
         if source_type == "github":
             try:
@@ -612,121 +793,311 @@ class SourceProcessor:
                     "total_files": dir_analysis["total_files"],
                     "structure_confidence": confidence,
                     "structure_logic": logic,
+                    **result.get("extraction_meta", {}),
                 }
 
                 chunks = self.chunk_text(text, source_type="github")
                 return {"chunks": chunks, "source_meta": source_meta}
 
-            except ValueError:
+            except ValueError as clone_error:
+                if (
+                    isinstance(clone_error, SourceLocationError)
+                    and clone_error.code not in _GIT_CLONE_FALLBACK_CODES
+                ):
+                    raise
                 try:
-                    text = await self._fetch_github_via_api(clean_url)
-                except Exception:
+                    fallback = await self._fetch_github_via_api(clean_url)
+                    text = fallback["text"]
+                    source_meta = {
+                        **fallback.get("extraction_meta", {}),
+                        "ingestion_fallback": "github_api_tarball",
+                        "clone_error": f"{type(clone_error).__name__}: {str(clone_error)[:400]}",
+                    }
+                except SourceLocationError:
+                    raise
+                except Exception as api_error:
                     text = await self.fetch_github_readme(clean_url)
+                    text = re.sub(r"(?m)^(=== .+? ===)$", r"\\\1", text)
+                    clipped = len(text) > DEFAULT_EXTRACTION_BUDGET.max_characters
+                    text = text[:DEFAULT_EXTRACTION_BUDGET.max_characters]
+                    source_meta = self._extraction_meta(
+                        files=[{
+                            "path": "README",
+                            "format_id": "markdown",
+                            "encoding": "http-decoded",
+                            "truncated": clipped,
+                            "counters": {"characters": len(text)},
+                        }],
+                        warnings=[
+                            f"git_clone_fallback: {type(clone_error).__name__}: {str(clone_error)[:300]}",
+                            f"github_api_fallback: {type(api_error).__name__}: {str(api_error)[:300]}",
+                        ],
+                        input_bytes=len(text.encode("utf-8")),
+                        truncated=clipped,
+                    )
+                    source_meta["ingestion_fallback"] = "github_readme"
                 chunks = self.chunk_text(text, source_type="github")
-                return {"chunks": chunks, "source_meta": {}}
+                return {"chunks": chunks, "source_meta": source_meta}
         elif source_type == "file":
             # Uploaded reference file: read from the private source store.
             # This path is never a linked project workspace path.
-            import os as _os
-            base = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
-            raw = clean_url
-            if not _os.path.isabs(raw):
-                raw = _os.path.join(base, raw)
-            if not _os.path.exists(raw):
-                raise ValueError(f"本地路径不存在: {raw}")
+            raw = Path(clean_url)
 
-            text_parts = []
+            text_parts: list[str] = []
+            extraction_warnings: list[str] = []
+            extracted_files: list[dict] = []
+            ignored_unsupported = 0
+            examined_files = 0
+            input_bytes = 0
+            output_characters = 0
+            extraction_truncated = False
+            file_limit_reported = False
+            output_limit_reported = False
             skip_dirs = {"node_modules", "__pycache__", ".git", ".venv", "venv", "runtime", "dist", "build", "data"}
-            paths = []
-            if _os.path.isdir(raw):
-                for root, dirs, files in _os.walk(raw):
-                    dirs[:] = [d for d in dirs if d not in skip_dirs]
+            paths: list[Path] = []
+            is_directory = raw.is_dir()
+            if is_directory:
+                scanned_entries = 0
+                for root, dirs, files in os.walk(raw):
+                    safe_dirs = [
+                        directory for directory in dirs
+                        if directory not in skip_dirs
+                        and not (Path(root) / directory).is_symlink()
+                    ]
+                    remaining_entries = (
+                        DEFAULT_EXTRACTION_BUDGET.max_container_entries - scanned_entries
+                    )
+                    if remaining_entries <= 0:
+                        dirs[:] = []
+                        extraction_truncated = True
+                        extraction_warnings.append(
+                            "directory_entry_budget_exceeded: 受管来源目录条目超过预算"
+                        )
+                        break
+                    dirs[:] = safe_dirs[:remaining_entries]
+                    scanned_entries += len(dirs)
                     for fn in sorted(files):
+                        if scanned_entries >= DEFAULT_EXTRACTION_BUDGET.max_container_entries:
+                            extraction_truncated = True
+                            extraction_warnings.append(
+                                "directory_entry_budget_exceeded: 受管来源目录条目超过预算"
+                            )
+                            dirs[:] = []
+                            break
+                        scanned_entries += 1
                         if fn.startswith("."):
                             continue
-                        paths.append(_os.path.join(root, fn))
+                        paths.append(Path(root) / fn)
             else:
                 paths = [raw]
 
             for p in sorted(paths):
-                ext = f".{p.split('.')[-1].lower()}" if "." in p else ""
-                if ext == ".pdf":
-                    try:
-                        from pypdf import PdfReader
-                        pages = PdfReader(p).pages
-                        content = "\n".join(page.extract_text() or "" for page in pages)
-                    except Exception as exc:
-                        raise ValueError(f"无法读取 PDF 文件 {p}: {exc}") from exc
-                    if len(content.strip()) >= 20:
-                        text_parts.append(f"=== {os.path.basename(p)} ===\n{content}\n")
+                logical_name = p.relative_to(raw).as_posix() if is_directory else p.name
+                if p.is_symlink():
+                    extraction_warnings.append(f"{logical_name}: symlink_ignored: 受管来源符号链接不会被解引用")
                     continue
-                if ext == ".docx":
-                    try:
-                        from docx import Document
-                        document = Document(p)
-                        content = "\n".join(paragraph.text for paragraph in document.paragraphs)
-                    except Exception as exc:
-                        raise ValueError(f"无法读取 DOCX 文件 {p}: {exc}") from exc
-                    if len(content.strip()) >= 20:
-                        text_parts.append(f"=== {os.path.basename(p)} ===\n{content}\n")
+                if is_directory and not is_source_filename(p.name):
+                    ignored_unsupported += 1
                     continue
-                if ext not in self._READABLE_EXTS and ext not in {".md", ".py", ".txt", ".json"}:
+                if examined_files >= DEFAULT_EXTRACTION_BUDGET.max_files:
+                    extraction_truncated = True
+                    if not file_limit_reported:
+                        extraction_warnings.append("directory_file_budget_exceeded: 可解析文件数量超过预算")
+                        file_limit_reported = True
                     continue
+                if output_characters >= DEFAULT_EXTRACTION_BUDGET.max_characters:
+                    extraction_truncated = True
+                    if not output_limit_reported:
+                        extraction_warnings.append("directory_character_budget_exceeded: 累计抽取字符超过预算")
+                        output_limit_reported = True
+                    continue
+                examined_files += 1
                 try:
-                    with open(p, encoding="utf-8", errors="replace") as fh:
-                        content = fh.read()
-                    if len(content.strip()) < 20:
-                        continue
-                    rel = _os.path.relpath(p, raw if _os.path.isdir(raw) else _os.path.dirname(raw))
-                    text_parts.append(f"=== {rel} ===\n{content}\n")
-                except Exception:
+                    file_size = p.stat().st_size
+                except OSError as exc:
+                    message = f"{logical_name}: file_unreadable: {type(exc).__name__}"
+                    if not is_directory:
+                        raise ValueError(message) from exc
+                    extraction_warnings.append(message)
                     continue
+                if input_bytes + file_size > DEFAULT_EXTRACTION_BUDGET.max_total_input_bytes:
+                    extraction_truncated = True
+                    extraction_warnings.append(
+                        f"{logical_name}: total_input_budget_exceeded: 目录累计输入大小超过预算"
+                    )
+                    continue
+                input_bytes += file_size
+                try:
+                    extracted = extract_path(p, filename=p.name)
+                except FileFormatError as exc:
+                    message = f"{logical_name}: {exc.code}: {exc}"
+                    if not is_directory:
+                        raise ValueError(message) from exc
+                    extraction_warnings.append(message)
+                    continue
+                output_characters, clipped = self._append_extracted_block(
+                    text_parts, logical_name, extracted.text, output_characters,
+                )
+                extraction_truncated = extraction_truncated or extracted.truncated or clipped
+                extraction_warnings.extend(
+                    f"{logical_name}: extraction_warning: {warning}"
+                    for warning in extracted.warnings
+                )
+                extracted_files.append({
+                    "path": logical_name,
+                    "format_id": extracted.detected.format_id,
+                    "encoding": extracted.detected.encoding,
+                    "truncated": extracted.truncated or clipped,
+                    "counters": extracted.counters,
+                })
 
             if not text_parts:
-                raise ValueError(f"No readable content in {raw}")
-            text = "\n".join(text_parts)
+                reason = extraction_warnings[0] if extraction_warnings else "没有注册表支持的来源文件"
+                raise ValueError(f"No readable content in {raw}: {reason}")
+            text = "".join(text_parts)
             chunks = self.chunk_text(text, source_type="file")
-            return {"chunks": chunks, "source_meta": {"local_path": raw}}
+            return {"chunks": chunks, "source_meta": {
+                "local_path": str(raw),
+                **self._extraction_meta(
+                    files=extracted_files,
+                    warnings=extraction_warnings,
+                    input_bytes=input_bytes,
+                    truncated=extraction_truncated,
+                    ignored_unsupported=ignored_unsupported,
+                ),
+            }}
         else:
             text = await self.fetch_url(clean_url)
+            text = re.sub(r"(?m)^(=== .+? ===)$", r"\\\1", text)
+            clipped = len(text) > DEFAULT_EXTRACTION_BUDGET.max_characters
+            text = text[:DEFAULT_EXTRACTION_BUDGET.max_characters]
             chunks = self.chunk_text(text, source_type="url")
-            return {"chunks": chunks, "source_meta": {}}
+            return {"chunks": chunks, "source_meta": self._extraction_meta(
+                files=[],
+                warnings=[],
+                input_bytes=len(text.encode("utf-8")),
+                truncated=clipped,
+            )}
 
-    async def _fetch_github_via_api(self, repo_url: str) -> str:
+    async def _fetch_github_via_api(self, repo_url: str) -> dict:
         """Fallback: download repo as tarball via GitHub API."""
         import tarfile, io
 
         owner, repo = self._parse_gh_url(repo_url)
         tarball_url = f"https://api.github.com/repos/{owner}/{repo}/tarball"
         headers = {"User-Agent": "LearnFlow/1.0", "Accept": "application/vnd.github.v3+json"}
-        async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
-            resp = await client.get(tarball_url, headers=headers)
-            resp.raise_for_status()
-            data = resp.content
+        response = await self.source_locator.fetch(
+            tarball_url,
+            headers=headers,
+            max_response_bytes=DEFAULT_EXTRACTION_BUDGET.max_total_input_bytes,
+            total_timeout_seconds=60.0,
+        )
+        data = response.body
 
-        text_parts = []
+        if len(data) > DEFAULT_EXTRACTION_BUDGET.max_total_input_bytes:
+            raise ValueError("github_tarball_budget_exceeded: GitHub 压缩传输包超过输入预算")
+
+        text_parts: list[str] = []
+        extraction_warnings: list[str] = []
+        extracted_files: list[dict] = []
+        ignored_unsupported = 0
+        examined_files = 0
+        input_bytes = 0
+        output_characters = 0
+        extraction_truncated = False
+        file_limit_reported = False
+        output_limit_reported = False
         skip_parts = {"node_modules", "__pycache__", ".git", ".github", "build", "dist", "venv", ".venv", "env"}
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            for member in tar.getmembers():
-                if member.isdir() or member.size > 500 * 1024:
-                    continue
-                parts_path = member.name.split("/")
-                if any(p in skip_parts for p in parts_path):
-                    continue
-                ext = f".{member.name.split('.')[-1].lower()}" if "." in member.name else ""
-                if ext not in self._READABLE_EXTS:
-                    continue
-                try:
-                    f = tar.extractfile(member)
-                    if f is None:
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+                for member_number, member in enumerate(tar, start=1):
+                    if member_number > DEFAULT_EXTRACTION_BUDGET.max_container_entries:
+                        extraction_truncated = True
+                        extraction_warnings.append("container_entry_budget_exceeded: GitHub 归档条目超过预算")
+                        break
+                    if not member.isfile():
                         continue
-                    content = f.read().decode("utf-8", errors="replace")
-                    if len(content.strip()) < 20:
+                    if "\x00" in member.name or "\n" in member.name or "\r" in member.name:
+                        extraction_warnings.append("unsafe_archive_path: GitHub 归档包含不安全文件名")
                         continue
-                    text_parts.append(f"=== {member.name} ===\n{content}\n")
-                except Exception:
-                    continue
+                    logical_path = PurePosixPath(member.name)
+                    if logical_path.is_absolute() or ".." in logical_path.parts:
+                        extraction_warnings.append(f"{member.name[:200]}: unsafe_archive_path")
+                        continue
+                    if any(part in skip_parts for part in logical_path.parts):
+                        continue
+                    if not is_source_filename(member.name):
+                        ignored_unsupported += 1
+                        continue
+                    if examined_files >= DEFAULT_EXTRACTION_BUDGET.max_files:
+                        extraction_truncated = True
+                        if not file_limit_reported:
+                            extraction_warnings.append("repository_file_budget_exceeded: 可解析文件数量超过预算")
+                            file_limit_reported = True
+                        continue
+                    if output_characters >= DEFAULT_EXTRACTION_BUDGET.max_characters:
+                        extraction_truncated = True
+                        if not output_limit_reported:
+                            extraction_warnings.append(
+                                "repository_character_budget_exceeded: 累计抽取字符超过预算"
+                            )
+                            output_limit_reported = True
+                        continue
+                    examined_files += 1
+                    if member.size > DEFAULT_EXTRACTION_BUDGET.max_file_bytes:
+                        extraction_warnings.append(
+                            f"{member.name}: file_budget_exceeded: 单文件超过解析预算"
+                        )
+                        extraction_truncated = True
+                        continue
+                    if input_bytes + member.size > DEFAULT_EXTRACTION_BUDGET.max_total_input_bytes:
+                        extraction_warnings.append(
+                            f"{member.name}: total_input_budget_exceeded: 仓库累计输入大小超过预算"
+                        )
+                        extraction_truncated = True
+                        continue
+                    input_bytes += member.size
+                    handle = tar.extractfile(member)
+                    if handle is None:
+                        extraction_warnings.append(f"{member.name}: file_unreadable: 无法读取归档成员")
+                        continue
+                    member_data = handle.read(DEFAULT_EXTRACTION_BUDGET.max_file_bytes + 1)
+                    if len(member_data) != member.size:
+                        extraction_warnings.append(f"{member.name}: corrupt_archive_member: 成员大小不一致")
+                        continue
+                    try:
+                        extracted = extract_bytes(member_data, member.name)
+                    except FileFormatError as exc:
+                        extraction_warnings.append(f"{member.name}: {exc.code}: {exc}")
+                        continue
+                    output_characters, clipped = self._append_extracted_block(
+                        text_parts, member.name, extracted.text, output_characters,
+                    )
+                    extraction_truncated = extraction_truncated or extracted.truncated or clipped
+                    extraction_warnings.extend(
+                        f"{member.name}: extraction_warning: {warning}"
+                        for warning in extracted.warnings
+                    )
+                    extracted_files.append({
+                        "path": member.name,
+                        "format_id": extracted.detected.format_id,
+                        "encoding": extracted.detected.encoding,
+                        "truncated": extracted.truncated or clipped,
+                        "counters": extracted.counters,
+                    })
+        except (tarfile.TarError, OSError) as exc:
+            raise ValueError(f"corrupt_github_tarball: {type(exc).__name__}") from exc
 
         if not text_parts:
-            raise ValueError(f"No readable content via API for {repo_url}")
-        return "\n".join(text_parts)
+            reason = extraction_warnings[0] if extraction_warnings else "没有注册表支持的来源文件"
+            raise ValueError(f"No readable content via API for {repo_url}: {reason}")
+        return {
+            "text": "".join(text_parts),
+            "extraction_meta": self._extraction_meta(
+                files=extracted_files,
+                warnings=extraction_warnings,
+                input_bytes=input_bytes,
+                truncated=extraction_truncated,
+                ignored_unsupported=ignored_unsupported,
+            ),
+        }

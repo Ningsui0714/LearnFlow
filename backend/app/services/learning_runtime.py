@@ -30,6 +30,38 @@ PUBLIC_EVENT_TYPES = {
     "hint_requested", "code_review_requested", "learning_feedback",
 }
 
+# Machine-readable implementation contract for the deterministic reducer.
+# Keep this set beside the reducer implementation (never generate it from the
+# architecture registry): the registry may declare candidate events, while
+# this set states which event names the runtime actually handles today.
+REDUCER_EVENT_TYPES = frozenset({
+    "vnext_human_adaptation_requested",
+    "memory_correction_confirmed", "memory_correction_added", "memory_correction_retracted",
+    "vnext_value_claim_proposal_accepted",
+    "vnext_learning_path_plan_committed", "vnext_learning_path_plan_revised",
+    "vnext_learning_path_plan_archived", "vnext_learning_path_node_status_set",
+    "vnext_personal_path_node_added", "vnext_personal_path_node_removed",
+    "learning_action_segment_completed", "micro_learning_started",
+    "registration_profile_completed", "learner_concept_statement_recorded",
+    "learner_concept_observation_recorded", "learner_concept_relation_recorded",
+    "career_goal_confirmed", "profile_updated",
+    "project_proposal_created", "project_proposal_revised",
+    "project_proposal_user_edited", "project_proposal_reopened",
+    "project_proposal_dismissed", "project_proposal_accepted",
+    "project_created", "project_selected", "project_imported", "project_completed",
+    "roadmap_discussed", "roadmap_applied", "roadmap_revised",
+    "source_added", "source_processing", "source_processed", "source_failed",
+    "checkpoint_entered", "lecture_generated", "lecture_viewed",
+    "micro_learning_card_viewed", "teach_back_analyzed", "user_message",
+    "hint_requested", "code_review_requested", "explanation_requested",
+    "remediation_started", "remediation_mode_rejected",
+    "remediation_explanation_requested", "remediation_retry_evaluated",
+    "remediation_variant_evaluated", "remediation_completed",
+    "review_reflection_recorded", "review_attempt_evaluated",
+    "concept_attempt_evaluated", "exercise_attempt_evaluated",
+    "transfer_attempt_evaluated", "tool_failed", "task_failed",
+})
+
 
 async def get_default_learner(db: AsyncSession) -> Learner:
     learner = (await db.execute(
@@ -91,31 +123,60 @@ async def record_event(
         learner_id = (await get_default_learner(db)).id
     await ensure_kernel_states(db, learner_id)
 
+    owned_project_id: int | None = None
     if project_id is not None:
         owner = (await db.execute(select(Project.id).where(
             Project.id == project_id, Project.learner_id == learner_id,
         ))).scalar_one_or_none()
         if not owner:
             raise ValueError("项目不属于当前学习者")
+        owned_project_id = int(owner)
+    checkpoint_project_id: int | None = None
     if checkpoint_id is not None:
-        owner = (await db.execute(
-            select(Checkpoint.id)
+        owned_checkpoint = (await db.execute(
+            select(Checkpoint.id, Roadmap.project_id)
             .join(Roadmap, Roadmap.id == Checkpoint.roadmap_id)
             .join(Project, Project.id == Roadmap.project_id)
             .where(
                 Checkpoint.id == checkpoint_id,
                 Project.learner_id == learner_id,
             )
-        )).scalar_one_or_none()
-        if not owner:
+        )).one_or_none()
+        if not owned_checkpoint:
             raise ValueError("检查点不属于当前学习者")
+        checkpoint_project_id = int(owned_checkpoint.project_id)
+        if owned_project_id is not None and checkpoint_project_id != owned_project_id:
+            raise ValueError("检查点不属于所声明的项目")
     if session_id is not None:
-        owner = (await db.execute(select(AgentSession.id).where(
+        owned_session = (await db.execute(select(AgentSession).where(
             AgentSession.id == session_id,
             AgentSession.learner_id == learner_id,
         ))).scalar_one_or_none()
-        if not owner:
+        if not owned_session:
             raise ValueError("Tutor 会话不属于当前学习者")
+        # A global Tutor session is deliberately allowed to reference any
+        # project owned by the same learner while planning or handing off. A
+        # project Tutor may reference checkpoints inside its own project. Only
+        # bound project/checkpoint sessions require exact scope equality.
+        if (
+            project_id is not None
+            and owned_session.session_type in {"project", "checkpoint"}
+            and owned_session.project_id != project_id
+        ):
+            raise ValueError("Tutor 会话不属于所声明的项目")
+        if (
+            checkpoint_id is not None
+            and owned_session.session_type == "checkpoint"
+            and owned_session.checkpoint_id != checkpoint_id
+        ):
+            raise ValueError("Tutor 会话不属于所声明的检查点")
+        if (
+            owned_session.checkpoint_id is not None
+            and owned_session.project_id is not None
+            and checkpoint_project_id is not None
+            and checkpoint_project_id != owned_session.project_id
+        ):
+            raise ValueError("Tutor 会话的项目与检查点关系无效")
 
     if client_event_id:
         scoped_event_id = f"{learner_id}:{client_event_id}"
@@ -220,6 +281,52 @@ async def _apply_patch(
 async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
     p = dict(event.payload or {})
     et = event.event_type
+
+    if et == "vnext_human_adaptation_requested":
+        signal_kind = str(p.get("signal_kind") or "").strip()
+        value = str(p.get("value") or "").strip()[:80]
+        strength = max(0.0, min(float(p.get("strength") or 0.7), 1.0))
+        valid_kinds = {
+            "pace_adjustment", "format_request", "cognitive_load",
+            "frustration", "support_need",
+        }
+        if signal_kind not in valid_kinds or not bool(p.get("explicit", True)):
+            return
+        expires_at = (datetime.utcnow() + timedelta(hours=8)).isoformat()
+        patch: dict[str, Any] = {
+            "transient_expires_at": expires_at,
+            "adaptation_source": "explicit_current_context",
+            "adaptation_scope": {
+                "project_id": event.project_id,
+                "checkpoint_id": event.checkpoint_id,
+                "session_id": event.session_id,
+            },
+        }
+        if signal_kind == "pace_adjustment" and value in {"slower", "faster"}:
+            patch["pace_adjustment"] = value
+            patch["support_need"] = "reduce_pacing" if value == "slower" else "increase_pacing"
+        elif signal_kind == "format_request" and value in {
+            "visual", "example", "code", "steps", "concise", "alternative",
+        }:
+            patch["format_request"] = value
+            if value == "alternative":
+                patch["support_need"] = "switch_explanation_mode"
+        elif signal_kind == "cognitive_load":
+            patch["cognitive_load"] = max(0.6, strength)
+            patch["support_need"] = value or "reduce_chunk_size"
+        elif signal_kind == "frustration":
+            patch["affect"] = "frustrated"
+            patch["frustration"] = max(0.6, strength)
+            patch["support_need"] = value or "acknowledge_and_reduce_scope"
+        elif signal_kind == "support_need" and value:
+            patch["support_need"] = value
+        else:
+            return
+        await _apply_patch(
+            db, event, "human", patch,
+            "学习者明确表达了当前教学适配需求；该指令限时有效，不形成性格、诊断或固定学习风格结论",
+        )
+        return
 
     if et in {
         "memory_correction_confirmed",
@@ -725,6 +832,35 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             )
         return
 
+    if et == "project_proposal_accepted":
+        project_id = event.project_id or p.get("project_id")
+        proposal_id = p.get("proposal_id")
+        await _apply_patch(
+            db,
+            event,
+            "structure",
+            {
+                "active_proposal_id": proposal_id,
+                "proposal_status": "accepted",
+                "active_project_id": project_id,
+            },
+            "学习者明确接受项目提案；只确认学习结构，不推断掌握",
+        )
+        if p.get("learning_goal"):
+            await _apply_patch(
+                db,
+                event,
+                "value",
+                {
+                    "current_priority": p.get("learning_goal"),
+                    "confirmed_goal": p.get("learning_goal"),
+                    "goal_status": "accepted",
+                    "proposal_id": proposal_id,
+                },
+                "学习者明确接受项目目标，目标由候选转为已确认",
+            )
+        return
+
     if et in {"project_created", "project_selected", "project_imported"}:
         project_id = event.project_id or p.get("project_id")
         project = (await db.execute(select(Project).where(
@@ -751,14 +887,74 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
              }},
             "项目上下文发生变化", long_patch=long_patch,
         )
-        if et == "project_created" and p.get("learning_goal"):
+        learning_goal = p.get("learning_goal") or p.get("goal")
+        if et == "project_created" and learning_goal:
             await _apply_patch(
                 db, event, "value",
-                {"current_priority": p.get("learning_goal"),
-                 "goal_candidate": p.get("learning_goal"),
+                {"current_priority": learning_goal,
+                 "goal_candidate": learning_goal,
                  "relevance_reason": p.get("expected_outcome", "")},
                 "学习者明确创建项目，目标进入价值核；不推断掌握",
             )
+        return
+
+    if et == "project_completed":
+        project_id = event.project_id or p.get("project_id")
+        project_name = str(p.get("name") or "")
+        checkpoint_count = int(p.get("checkpoint_count") or 0)
+
+        structure_state = await _kernel(db, event.learner_id, "structure")
+        project_graph = dict((structure_state.long_term or {}).get("project_graph") or {})
+        project_entry = dict(project_graph.get(str(project_id)) or {})
+        project_entry.update({
+            "name": project_name or project_entry.get("name", ""),
+            "status": "completed",
+            "checkpoint_count": checkpoint_count,
+        })
+        project_graph[str(project_id)] = project_entry
+        await _apply_patch(
+            db,
+            event,
+            "structure",
+            {
+                "active_project_id": project_id,
+                "current_task": "项目复盘与迁移",
+                "project_status": "completed",
+            },
+            "全部非归档关卡已完成，项目结构进入完成态",
+            long_patch={"project_graph": project_graph},
+        )
+
+        await _apply_patch(
+            db,
+            event,
+            "value",
+            {
+                "completed_project_id": project_id,
+                "completed_project_name": project_name,
+                "goal_status": "completed",
+            },
+            "学习者完成已选择的项目目标；不据此推断后续职业取向",
+        )
+
+        practice_state = await _kernel(db, event.learner_id, "practice")
+        completed_projects = dict((practice_state.long_term or {}).get("completed_projects") or {})
+        completed_projects[str(project_id)] = {
+            "name": project_name,
+            "checkpoint_count": checkpoint_count,
+            "source_event_id": event.id,
+        }
+        await _apply_patch(
+            db,
+            event,
+            "practice",
+            {
+                "last_completed_project_id": project_id,
+                "last_project_checkpoint_count": checkpoint_count,
+            },
+            "项目全部关卡已完成，记录实践历程；产物质量与迁移能力仍需独立证据",
+            long_patch={"completed_projects": completed_projects},
+        )
         return
 
     if et == "roadmap_discussed":
@@ -954,7 +1150,7 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
                 db, event, "human",
                 {"affect": "frustrated", "cognitive_load": 0.85,
                  "frustration": 0.8,
-                 "transient_expires_at": (datetime.utcnow() + timedelta(hours=2)).isoformat()},
+                 "transient_expires_at": (datetime.utcnow() + timedelta(hours=8)).isoformat()},
                 "用户表达了短期学习负荷",
             )
         if any(word in text for word in ("想学", "目标", "为了", "计划", "掌握")) or "i want to learn" in lower:
@@ -1556,7 +1752,11 @@ async def get_kernel_projection(db: AsyncSession, learner_id: int | None = None)
         if state.kernel_name == "human" and short.get("transient_expires_at"):
             try:
                 if datetime.fromisoformat(short["transient_expires_at"]) < now:
-                    for key in ("affect", "cognitive_load", "attention", "frustration"):
+                    for key in (
+                        "affect", "cognitive_load", "attention", "frustration",
+                        "support_need", "pace_adjustment", "format_request",
+                        "adaptation_source", "adaptation_scope", "transient_expires_at",
+                    ):
                         short.pop(key, None)
             except (TypeError, ValueError):
                 pass

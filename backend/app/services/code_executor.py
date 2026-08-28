@@ -1,19 +1,20 @@
-"""
-Code execution sandbox.
-
-Runs Python code in a subprocess with resource limits.
-"""
-import subprocess
-import tempfile
+"""Fail-closed Python execution for explicitly trusted local development."""
 import os
-import signal
 import sys
-import time
-from typing import Dict, Optional
+import tempfile
+from typing import Dict
+
+from app.services.execution_policy import (
+    ExecutionPolicyError,
+    require_trusted_local_execution,
+    run_trusted_local_process,
+)
 
 
 MAX_EXECUTION_TIME = 10  # seconds
 MAX_OUTPUT_SIZE = 100 * 1024  # 100KB
+MAX_CODE_SIZE = 256 * 1024  # bytes
+MAX_INPUT_SIZE = 64 * 1024  # bytes
 
 
 def _python_command(script_path: str) -> list[str]:
@@ -45,70 +46,66 @@ def execute_code(
     test_input: str = "",
     timeout: int = MAX_EXECUTION_TIME,
 ) -> Dict:
-    """
-    Execute Python code in a subprocess sandbox.
+    """Execute Python in an ordinary host process only under explicit policy.
 
     Returns:
-        {"stdout": str, "stderr": str, "exit_code": int, "timed_out": bool}
+        A bounded process result that truthfully identifies the host boundary
+        and the lack of filesystem, network, or secrets isolation.
     """
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, encoding="utf-8"
-    ) as f:
-        f.write(code)
-        fpath = f.name
+    policy_fields = require_trusted_local_execution("python_code_execution")
+    code_bytes = str(code or "").encode("utf-8")
+    input_bytes = str(test_input or "").encode("utf-8")
+    if len(code_bytes) > MAX_CODE_SIZE:
+        raise ExecutionPolicyError(
+            code="code_size_limit_exceeded",
+            message=f"代码超过允许的 {MAX_CODE_SIZE} 字节上限。",
+            status_code=413,
+        )
+    if len(input_bytes) > MAX_INPUT_SIZE:
+        raise ExecutionPolicyError(
+            code="input_size_limit_exceeded",
+            message=f"标准输入超过允许的 {MAX_INPUT_SIZE} 字节上限。",
+            status_code=413,
+        )
+    try:
+        requested_timeout = float(timeout)
+    except (TypeError, ValueError):
+        requested_timeout = float(MAX_EXECUTION_TIME)
+    effective_timeout = min(max(requested_timeout, 0.1), float(MAX_EXECUTION_TIME))
 
     try:
-        start = time.time()
-        process = subprocess.Popen(
-            _python_command(fpath),
-            stdin=subprocess.PIPE if test_input else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            preexec_fn=(
-                (lambda: signal.alarm(timeout + 1))
-                if os.name != "nt" and hasattr(signal, "alarm")
-                else None
-            ),
-        )
-
-        try:
-            stdout, stderr = process.communicate(
-                input=test_input if test_input else None,
-                timeout=timeout,
+        with tempfile.TemporaryDirectory(
+            prefix="learnflow-code-",
+            ignore_cleanup_errors=True,
+        ) as workdir:
+            fpath = os.path.join(workdir, "main.py")
+            with open(fpath, "w", encoding="utf-8") as script:
+                script.write(str(code or ""))
+            result = run_trusted_local_process(
+                _python_command(fpath),
+                operation="python_code_execution",
+                cwd=workdir,
+                input_text=str(test_input or ""),
+                timeout=effective_timeout,
+                max_output_bytes=MAX_OUTPUT_SIZE,
+                policy_fields=policy_fields,
             )
-            timed_out = False
-        except subprocess.TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate()
-            timed_out = True
-
-        elapsed = time.time() - start
-
-        # Truncate output
-        if len(stdout) > MAX_OUTPUT_SIZE:
-            stdout = stdout[:MAX_OUTPUT_SIZE] + "\n... (输出截断)"
-        if len(stderr) > MAX_OUTPUT_SIZE:
-            stderr = stderr[:MAX_OUTPUT_SIZE] + "\n... (输出截断)"
-
-        return {
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": process.returncode,
-            "timed_out": timed_out,
-            "elapsed": round(elapsed, 2),
-        }
-
-    except Exception as e:
-        return {
-            "stdout": "",
-            "stderr": f"执行错误: {str(e)}",
-            "exit_code": -1,
-            "timed_out": False,
-            "elapsed": 0,
-        }
-    finally:
-        try:
-            os.unlink(fpath)
-        except OSError:
-            pass
+            if not result.get("started"):
+                raise ExecutionPolicyError(
+                    code=str(result.get("error_code") or "process_start_failed"),
+                    message="本地开发执行进程未能启动。",
+                )
+            result["limits"] = {
+                "timeout_seconds": effective_timeout,
+                "max_output_bytes": MAX_OUTPUT_SIZE,
+                "max_code_bytes": MAX_CODE_SIZE,
+                "max_input_bytes": MAX_INPUT_SIZE,
+            }
+            return result
+    except ExecutionPolicyError:
+        raise
+    except Exception as exc:
+        raise ExecutionPolicyError(
+            code="execution_preparation_failed",
+            message=f"本地开发执行准备失败: {type(exc).__name__}。",
+        ) from exc

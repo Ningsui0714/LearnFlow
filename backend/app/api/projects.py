@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, Integer
 from typing import List
@@ -14,6 +15,13 @@ from app.schemas.project import (
 )
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_project
 from app.core.config import settings
+from app.services.file_formats import (
+    DEFAULT_EXTRACTION_BUDGET,
+    FORMAT_REGISTRY_VERSION,
+    FileFormatError,
+    extract_path,
+    validate_declared_format,
+)
 
 router = APIRouter()
 
@@ -161,6 +169,11 @@ async def upload_source(
     filename = Path((file.filename or "").replace("\\", "/")).name
     if not filename or filename in {".", ".."} or "\x00" in filename:
         raise HTTPException(400, "上传文件名无效")
+    try:
+        validate_declared_format(filename, file.content_type)
+    except FileFormatError as exc:
+        await file.close()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
 
     source = Source(
         project_id=project_id,
@@ -189,15 +202,32 @@ async def upload_source(
                     break
                 total += len(chunk)
                 if total > settings.max_source_upload_bytes:
-                    raise HTTPException(413, "上传文件不能超过 25 MB")
+                    error = FileFormatError(
+                        "file_budget_exceeded",
+                        f"上传文件不能超过 {settings.max_source_upload_bytes} 字节",
+                        status_code=413,
+                    )
+                    raise HTTPException(status_code=error.status_code, detail=error.detail())
                 handle.write(chunk)
+        try:
+            extraction = await run_in_threadpool(
+                extract_path,
+                stored_path,
+                filename=filename,
+                content_type=file.content_type,
+                budget=DEFAULT_EXTRACTION_BUDGET,
+            )
+        except FileFormatError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
         source.meta_data = {
             "upload": {
                 "original_filename": filename,
                 "content_type": file.content_type or "",
                 "size_bytes": total,
                 "stored_path": str(stored_path),
-            }
+            },
+            "format_registry_version": FORMAT_REGISTRY_VERSION,
+            "format_validation": extraction.metadata(),
         }
         from app.services.learning_runtime import record_event
         await record_event(

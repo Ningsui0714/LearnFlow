@@ -112,7 +112,7 @@ function errorText(payload: unknown, fallback: string) {
 }
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
+  const response = await runtimeFetch(url, {
     ...init,
     credentials: 'include',
     headers: {
@@ -187,3 +187,4 @@ export async function recordReviewReflection(
     }),
   })
 }
+import { runtimeFetch } from './runtime-client.ts'

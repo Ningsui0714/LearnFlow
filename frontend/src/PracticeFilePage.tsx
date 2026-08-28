@@ -5,6 +5,7 @@ import {
   submitFormalConceptAnswer,
   submitFormalExercise,
 } from './formal-runtime'
+import CodePaperWorkbench, { type CodePaperResult, type CodePaperSourceFile } from './CodePaperWorkbench'
 
 type Props = {
   practiceRef: string
@@ -23,23 +24,33 @@ export default function PracticeFilePage({ practiceRef, embedded, inline, conver
   const [responses, setResponses] = useState<Record<number, string>>({})
   const [reflections, setReflections] = useState<Record<number, { blocker: string; helpfulFormat: string }>>({})
   const [results, setResults] = useState<Record<number, { correct: boolean; answer_indexes: number[]; expected_response?: unknown }>>({})
-  const [code, setCode] = useState('')
-  const [codeResult, setCodeResult] = useState<{ passed: boolean; stdout?: string; stderr?: string }>()
+  const [codeResult, setCodeResult] = useState<CodePaperResult>()
   const [busy, setBusy] = useState('')
-  const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [actionError, setActionError] = useState('')
   useEffect(() => {
     let alive = true
+    setFile(undefined)
+    setLoadError('')
+    setActionError('')
+    setAnswers({})
+    setResponses({})
+    setReflections({})
+    setResults({})
+    setCodeResult(undefined)
+    setBusy('')
     void loadPracticeFile(practiceRef).then(result => {
       if (!alive) return
-      setFile(result); setCode(result.starter_code || '')
+      setFile(result)
       if (!inline) void recordLearningFileAccess('practice', practiceRef, 'opened', { conversation_id: conversationId, sheet_id: sheetId }).catch(() => undefined)
-    }).catch(failure => alive && setError(failure instanceof Error ? failure.message : '练习读取失败'))
+    }).catch(failure => alive && setLoadError(failure instanceof Error ? failure.message : '练习读取失败'))
     return () => { alive = false }
   }, [practiceRef, conversationId, sheetId, inline])
-  if (error) return <div className="formal-inline-error">{error}</div>
+  if (loadError) return <div className="formal-inline-error" role="alert">{loadError}</div>
   if (!file) return <div className="page-loading">正在打开正式练习…</div>
   const submitQuestion = async (questionId: number) => {
     setBusy(`question:${questionId}`)
+    setActionError('')
     try {
       const question = file.questions?.find(item => item.id === questionId)
       const structured = ['single', 'multi', 'judge', 'ordered_blocks'].includes(question?.q_type || '')
@@ -60,15 +71,22 @@ export default function PracticeFilePage({ practiceRef, embedded, inline, conver
       })
       setResults(previous => ({ ...previous, [questionId]: result }))
     }
-    catch (failure) { setError(failure instanceof Error ? failure.message : '提交失败') }
+    catch (failure) { setActionError(failure instanceof Error ? failure.message : '提交失败') }
     finally { setBusy('') }
   }
-  const submitCode = async () => {
+  const submitCode = async (code: string) => {
     if (!file.id) return
     setBusy('code')
+    setActionError('')
+    setCodeResult(undefined)
     try { setCodeResult(await submitFormalExercise(file.id, code)) }
-    catch (failure) { setError(failure instanceof Error ? failure.message : '代码评估失败') }
+    catch (failure) { setActionError(failure instanceof Error ? failure.message : '代码评估失败') }
     finally { setBusy('') }
+  }
+  const codePractice = file as typeof file & {
+    files?: CodePaperSourceFile[]
+    entrypoint?: string
+    requirements?: string[]
   }
   return (
     <section className={`practice-file-workbench${embedded ? ' learning-file-embedded' : ''}${inline ? ' learning-file-inline' : ''}`}>
@@ -79,7 +97,9 @@ export default function PracticeFilePage({ practiceRef, embedded, inline, conver
           {onAttach && !embedded && <button type="button" onClick={() => onAttach({ kind: 'practice', ref: file.ref, title: file.title })}>放到对话纸张</button>}
         </div>
       </header>
-      {file.practice_kind !== 'exercise' ? <div className="practice-question-list">{(file.questions || []).map((question, index) => {
+      {file.practice_kind !== 'exercise' ? <>
+        {actionError && <div className="formal-inline-error" role="alert">{actionError}</div>}
+        <div className="practice-question-list">{(file.questions || []).map((question, index) => {
         const selected = answers[question.id] || []
         const result = results[question.id]
         const selectionType = ['single', 'multi', 'judge'].includes(question.q_type)
@@ -106,7 +126,21 @@ export default function PracticeFilePage({ practiceRef, embedded, inline, conver
           <button type="button" disabled={!hasResponse || Boolean(result) || Boolean(busy)} onClick={() => void submitQuestion(question.id)}>{busy === `question:${question.id}` ? '正在判定…' : result ? result.correct ? '回答正确' : '再想一想' : '提交作答'}</button>
           {result && <p className={result.correct ? 'practice-correct' : 'practice-wrong'}>{result.correct ? '回答正确。可以继续下一题，稍后再用变式确认。' : '这次还没有通过。具体错误已经保留，可在对话中继续纠正。'}</p>}
         </article>
-      })}</div> : <div className="code-practice-surface"><p>{file.description}</p><textarea value={code} onChange={event => setCode(event.target.value)} spellCheck={false} /><button type="button" disabled={Boolean(busy) || !code.trim()} onClick={() => void submitCode()}>{busy === 'code' ? '正在沙箱判题…' : '提交代码并验证'}</button>{codeResult && <pre className={codeResult.passed ? 'practice-correct' : 'practice-wrong'}>{codeResult.passed ? '全部验证通过' : '验证未通过'}{codeResult.stdout ? `\n${codeResult.stdout}` : ''}{codeResult.stderr ? `\n${codeResult.stderr}` : ''}</pre>}</div>}
+      })}</div></> : <CodePaperWorkbench
+        key={file.ref}
+        description={file.description}
+        starterCode={file.starter_code}
+        files={codePractice.files}
+        entrypoint={codePractice.entrypoint}
+        requirements={codePractice.requirements}
+        hints={file.hints}
+        busy={busy === 'code'}
+        error={actionError}
+        result={codeResult}
+        inline={inline}
+        onOpenPaper={onOpenPaper}
+        onSubmitCode={submitCode}
+      />}
     </section>
   )
 }

@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import text, select, func, Integer, event
 from pathlib import Path
+from datetime import datetime, timedelta
 import os
 import shutil
 import sqlite3
@@ -51,8 +52,27 @@ EXTRA_COLUMNS = {
     "learners": [
         ("user_id", "INTEGER"),
     ],
+    "user_accounts": [
+        ("account_number", "INTEGER"),
+        ("role", "TEXT DEFAULT 'user'"),
+        ("password_version", "INTEGER DEFAULT 1"),
+        ("auth_epoch", "INTEGER DEFAULT 0"),
+        ("must_change_password", "BOOLEAN DEFAULT 0"),
+        ("password_changed_at", "DATETIME"),
+        ("password_upgraded_at", "DATETIME"),
+        ("api_key_ciphertext", "TEXT"),
+        ("api_key_nonce", "TEXT"),
+        ("api_key_hint", "TEXT"),
+        ("api_key_encryption_version", "INTEGER"),
+        ("api_key_updated_at", "DATETIME"),
+    ],
     "auth_sessions": [
         ("is_dev_login", "BOOLEAN DEFAULT 0"),
+        ("auth_epoch", "INTEGER DEFAULT 0"),
+        ("csrf_token_hash", "TEXT"),
+        ("absolute_expires_at", "DATETIME"),
+        ("idle_expires_at", "DATETIME"),
+        ("revoked_reason", "TEXT"),
     ],
     "checkpoints": [
         ("brief", "TEXT"),        # CheckpointBrief handoff contract (T2)
@@ -150,6 +170,7 @@ LEARNING_TASK_RUNTIME_MIGRATION = "v15-learning-task-runtime"
 ATOMIC_LEARNING_SKILL_MIGRATION = "v16-atomic-learning-skill-runtime"
 PERSONAL_CONCEPT_GRAPH_MIGRATION = "v17-personal-concept-learning-graph"
 ASSESSMENT_BLUEPRINT_MIGRATION = "v18-assessment-blueprint-rubric"
+AUTH_PHASE_A_MIGRATION = "v19-auth-rbac-phase-a"
 
 
 def _sqlite_path() -> Path | None:
@@ -533,6 +554,42 @@ def _backup_before_memory_module_versioning_migration():
     print(f"[migrate] backup created: {backup_path}")
 
 
+def _backup_before_auth_phase_a_migration():
+    path = _sqlite_path()
+    if (
+        not path or not path.exists() or path.stat().st_size == 0
+        or _migration_applied(path, AUTH_PHASE_A_MIGRATION)
+    ):
+        return
+    backup_dir = path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_path = backup_dir / f"{path.stem}-pre-auth-phase-a-v19{path.suffix}"
+    if backup_path.exists():
+        return
+    required = path.stat().st_size + 64 * 1024 * 1024
+    if shutil.disk_usage(path.parent).free < required:
+        raise RuntimeError(
+            f"数据库迁移需要至少 {required // (1024 * 1024)}MB 可用空间来创建安全备份"
+        )
+    temp_path = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    temp_path.unlink(missing_ok=True)
+    source = sqlite3.connect(path)
+    destination = sqlite3.connect(temp_path)
+    try:
+        source.backup(destination)
+        check = destination.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise RuntimeError("数据库迁移备份完整性检查失败")
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+    finally:
+        destination.close()
+        source.close()
+    os.replace(temp_path, backup_path)
+    print(f"[migrate] backup created: {backup_path}")
+
+
 async def _ensure_columns():
     async with engine.begin() as conn:
         for table, cols in EXTRA_COLUMNS.items():
@@ -548,6 +605,10 @@ async def _ensure_columns():
             ("ix_projects_project_kind", "projects", "project_kind"),
             ("ix_projects_visibility", "projects", "visibility"),
             ("ix_learners_user_id", "learners", "user_id"),
+            ("ix_user_accounts_role", "user_accounts", "role"),
+            ("ix_auth_sessions_auth_epoch", "auth_sessions", "auth_epoch"),
+            ("ix_auth_sessions_absolute_expires_at", "auth_sessions", "absolute_expires_at"),
+            ("ix_auth_sessions_idle_expires_at", "auth_sessions", "idle_expires_at"),
             ("ix_checkpoints_learning_status", "checkpoints", "learning_status"),
             ("ix_tasks_agent_action_id", "tasks", "agent_action_id"),
             ("ix_tasks_learner_id", "tasks", "learner_id"),
@@ -942,6 +1003,159 @@ async def _backfill_user_isolation():
         print(f"[migrate] applied {USER_ISOLATION_MIGRATION}")
 
 
+async def _repair_missing_auth_account_numbers(db: AsyncSession) -> int:
+    """Repair accounts inserted by a pre-v19 process after the migration ran.
+
+    Rolling local upgrades can briefly leave an old server connected to a
+    database whose nullable compatibility column already exists.  Such a
+    process can insert an account without a public number.  Reconciliation is
+    deliberately idempotent and preserves zero exclusively for the exact Ryan
+    account; all other rows receive monotonically increasing positive numbers.
+    """
+    from app.models.learning import AuthAccountNumberSequence, UserAccount
+
+    missing = list((await db.execute(
+        select(UserAccount)
+        .where(UserAccount.account_number.is_(None))
+        .order_by(UserAccount.created_at.asc(), UserAccount.id.asc())
+    )).scalars().all())
+    if not missing:
+        return 0
+
+    maximum = (await db.execute(
+        select(func.max(UserAccount.account_number)).where(
+            UserAccount.account_number >= 1,
+        )
+    )).scalar_one_or_none()
+    sequence = await db.get(AuthAccountNumberSequence, 1)
+    next_number = max(
+        1,
+        int(maximum or 0) + 1,
+        int(sequence.next_number or 1) if sequence is not None else 1,
+    )
+    zero_owner = (await db.execute(
+        select(UserAccount.id).where(UserAccount.account_number == 0)
+    )).scalar_one_or_none()
+
+    for account in missing:
+        is_ryan = (
+            account.username_normalized == "ryan"
+            and not bool(account.is_legacy_demo)
+        )
+        if is_ryan and zero_owner is None:
+            account.account_number = 0
+            account.role = "admin"
+            zero_owner = account.id
+            continue
+        account.account_number = next_number
+        account.role = account.role or "user"
+        next_number += 1
+
+    if sequence is None:
+        db.add(AuthAccountNumberSequence(id=1, next_number=next_number))
+    else:
+        sequence.next_number = next_number
+    await db.flush()
+    return len(missing)
+
+
+async def _backfill_auth_phase_a():
+    """Install deterministic account numbers, RBAC defaults, and session bounds.
+
+    Legacy sessions cannot satisfy the new session-bound CSRF contract because
+    their raw token is intentionally unavailable.  They are therefore revoked
+    rather than silently grandfathered into a weaker authorization path.
+    """
+    from app.models.learning import (
+        AuthAccountNumberSequence, AuthSession, SchemaMigration, UserAccount,
+    )
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == AUTH_PHASE_A_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            repaired = await _repair_missing_auth_account_numbers(db)
+            if repaired:
+                await db.commit()
+                print(f"[migrate] repaired {repaired} missing account numbers")
+            return
+
+        accounts = list((await db.execute(
+            select(UserAccount).order_by(UserAccount.created_at.asc(), UserAccount.id.asc())
+        )).scalars().all())
+
+        # Move every row out of the public range first.  This makes a retry
+        # deterministic even when a previous attempt stopped after assigning a
+        # subset and a uniqueness index already exists.
+        for account in accounts:
+            account.account_number = -(int(account.id) + 1)
+        await db.flush()
+
+        ryan_account = next((
+            account for account in accounts
+            if account.username_normalized == "ryan" and not bool(account.is_legacy_demo)
+        ), None)
+        next_number = 1
+        for account in accounts:
+            if account is ryan_account:
+                account.account_number = 0
+                account.role = "admin"
+            else:
+                account.account_number = next_number
+                account.role = "user"
+                next_number += 1
+            has_password = bool(account.password_hash)
+            account.password_version = (
+                max(int(account.password_version or 0), 1) if has_password else 0
+            )
+            account.auth_epoch = int(account.auth_epoch or 0)
+            account.must_change_password = not has_password
+        await db.flush()
+
+        sequence = await db.get(AuthAccountNumberSequence, 1)
+        if sequence is None:
+            sequence = AuthAccountNumberSequence(id=1, next_number=next_number)
+            db.add(sequence)
+        else:
+            sequence.next_number = next_number
+
+        epochs = {account.id: int(account.auth_epoch or 0) for account in accounts}
+        now = datetime.utcnow()
+        sessions = list((await db.execute(select(AuthSession))).scalars().all())
+        for session in sessions:
+            absolute = session.absolute_expires_at or session.expires_at
+            if absolute is None:
+                absolute = (session.created_at or now) + timedelta(days=settings.auth_session_days)
+            last_seen = session.last_seen_at or session.created_at or now
+            idle = session.idle_expires_at or min(
+                absolute,
+                last_seen + timedelta(minutes=settings.auth_session_idle_minutes),
+            )
+            session.absolute_expires_at = absolute
+            session.idle_expires_at = min(absolute, idle)
+            session.expires_at = absolute
+            session.auth_epoch = epochs.get(session.user_id, 0)
+            if not session.csrf_token_hash and session.revoked_at is None:
+                session.revoked_at = now
+                session.revoked_reason = "auth_phase_a_migration"
+
+        await db.flush()
+        await db.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_user_accounts_account_number "
+            "ON user_accounts (account_number)"
+        ))
+        await db.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_user_accounts_role ON user_accounts (role)"
+        ))
+        db.add(SchemaMigration(version=AUTH_PHASE_A_MIGRATION))
+        await db.commit()
+        print(
+            f"[migrate] applied {AUTH_PHASE_A_MIGRATION}: "
+            f"{len(accounts)} accounts, {len(sessions)} legacy sessions inspected"
+        )
+
+
 async def _backfill_inspectable_memory_graph():
     from app.models.learning import SchemaMigration
     from app.services.memory_graph import backfill_memory_graph
@@ -1273,6 +1487,7 @@ async def init_db():
     _backup_before_review_workbench_migration()
     _backup_before_five_kernel_memory_fabric_migration()
     _backup_before_memory_module_versioning_migration()
+    _backup_before_auth_phase_a_migration()
     async with engine.begin() as conn:
         from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
@@ -1280,6 +1495,7 @@ async def init_db():
     await _backfill_five_kernel()
     await _mark_project_proposal_migration()
     await _backfill_user_isolation()
+    await _backfill_auth_phase_a()
     await _backfill_inspectable_memory_graph()
     await _mark_desktop_workspace_migration()
     await _mark_checkpoint_tutor_migration()

@@ -49,6 +49,7 @@ class TutorTurnRequest(BaseModel):
     selected_action_id: Optional[int] = None
     selected_skill_id: Optional[str] = Field(default=None, max_length=80)
     client_turn_id: Optional[str] = Field(default=None, min_length=3, max_length=160)
+    prepared_skill_turn_id: Optional[int] = Field(default=None, ge=1)
     context: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -58,6 +59,7 @@ class LearningSkillRunCreateRequest(BaseModel):
         "socratic_dialogue",
         "feynman_dialogue",
         "worked_example_fading",
+        "learning_file_study",
     ]
     goal: str = Field(min_length=2, max_length=300)
     client_request_id: str = Field(min_length=8, max_length=120)

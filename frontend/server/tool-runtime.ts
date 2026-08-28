@@ -17,6 +17,7 @@ import {
 } from './learning-video-harness.ts'
 import type { LearningTaskTutorContext } from '../src/learning.ts'
 import type { LearningPlanTutorContext } from '../src/planning.ts'
+import { generateLearningVisual } from './learning-visual-spec.ts'
 import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentToolDefinition } from '../src/agent-contracts.ts'
 import type { AgentProjectContext, ProjectCheckpointProposal } from '../src/project.ts'
 import {
@@ -117,103 +118,6 @@ function extractJson(raw: string) {
   const end = source.lastIndexOf('}')
   if (start < 0 || end <= start) throw new Error('模型没有返回可解析的 JSON 对象')
   return JSON.parse(source.slice(start, end + 1)) as any
-}
-
-type DiagramNode = { id: string; label: string; x: number; y: number; shape: 'box' | 'circle' }
-type DiagramEdge = { from: string; to: string; label: string; dashed: boolean }
-
-function escapeXml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-function cleanDiagram(payload: any) {
-  const rawNodes = Array.isArray(payload?.nodes) ? payload.nodes.slice(0, 10) : []
-  const nodes: DiagramNode[] = rawNodes.map((node: any, index: number) => ({
-    id: compactText(node?.id || `n${index + 1}`, 24).replace(/[^A-Za-z0-9_-]/g, '') || `n${index + 1}`,
-    label: compactText(node?.label || `节点 ${index + 1}`, 28),
-    x: Math.max(10, Math.min(90, Number(node?.x) || 15 + (index % 4) * 23)),
-    y: Math.max(12, Math.min(88, Number(node?.y) || 24 + Math.floor(index / 4) * 34)),
-    shape: node?.shape === 'circle' ? 'circle' : 'box',
-  }))
-  const nodeIds = new Set(nodes.map(node => node.id))
-  const edges: DiagramEdge[] = (Array.isArray(payload?.edges) ? payload.edges : []).slice(0, 16)
-    .map((edge: any) => ({
-      from: compactText(edge?.from, 24).replace(/[^A-Za-z0-9_-]/g, ''),
-      to: compactText(edge?.to, 24).replace(/[^A-Za-z0-9_-]/g, ''),
-      label: compactText(edge?.label, 26),
-      dashed: Boolean(edge?.dashed),
-    })).filter((edge: DiagramEdge) => nodeIds.has(edge.from) && nodeIds.has(edge.to) && edge.from !== edge.to)
-  if (nodes.length < 2) throw new Error('视觉结构至少需要两个节点')
-  return { nodes, edges }
-}
-
-function renderDiagramSvg(diagram: { nodes: DiagramNode[]; edges: DiagramEdge[] }, activeNodes: string[] = [], activeEdges: string[] = []) {
-  const nodeMap = new Map(diagram.nodes.map(node => [node.id, node]))
-  const activeNodeSet = new Set(activeNodes)
-  const activeEdgeSet = new Set(activeEdges)
-  const toPoint = (node: DiagramNode) => ({ x: node.x * 8, y: node.y * 4.5 })
-  const edgeMarkup = diagram.edges.map(edge => {
-    const from = nodeMap.get(edge.from)!
-    const to = nodeMap.get(edge.to)!
-    const p1 = toPoint(from), p2 = toPoint(to)
-    const key = `${edge.from}->${edge.to}`
-    const active = activeEdgeSet.has(key)
-    const stroke = active ? '#d8921d' : '#8fa79a'
-    const width = active ? 3.5 : 2
-    const dash = edge.dashed ? ' stroke-dasharray="7 5"' : ''
-    const label = edge.label
-      ? `<text x="${(p1.x + p2.x) / 2}" y="${(p1.y + p2.y) / 2 - 8}" text-anchor="middle" font-size="13" font-weight="600" fill="#53675d" paint-order="stroke" stroke="#ffffff" stroke-width="5">${escapeXml(edge.label)}</text>`
-      : ''
-    return `<g><line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="${stroke}" stroke-width="${width}" marker-end="url(#arrow)"${dash}></line>${label}</g>`
-  }).join('')
-  const nodeMarkup = diagram.nodes.map(node => {
-    const point = toPoint(node)
-    const active = activeNodeSet.has(node.id)
-    const fill = active ? '#fff1c9' : '#edf7f1'
-    const stroke = active ? '#d8921d' : '#2f8060'
-    const shape = node.shape === 'circle'
-      ? `<circle cx="${point.x}" cy="${point.y}" r="43" fill="${fill}" stroke="${stroke}" stroke-width="${active ? 3 : 2}"></circle>`
-      : `<rect x="${point.x - 68}" y="${point.y - 31}" width="136" height="62" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${active ? 3 : 2}"></rect>`
-    return `<g>${shape}<text x="${point.x}" y="${point.y + 5}" text-anchor="middle" font-size="14" font-weight="700" fill="#244438">${escapeXml(node.label)}</text></g>`
-  }).join('')
-  return sanitizeSvg(`<svg viewBox="0 0 800 450"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#698176"></path></marker></defs><rect x="8" y="8" width="784" height="434" rx="18" fill="#fbfdfb" stroke="#e2e9e4"></rect>${edgeMarkup}${nodeMarkup}</svg>`)
-}
-
-async function generateVisual(kind: 'image' | 'animation', request: string, generate: GenerateText): Promise<{ artifact: VisualArtifact; explanation: string }> {
-  const common = `你是计算机知识可视化设计器。只输出紧凑 JSON，不输出 SVG、Mermaid、代码围栏或额外文字。nodes 使用 2-10 个节点，每个节点是 {"id":"ascii-id","label":"短中文标签","x":10到90,"y":12到88,"shape":"box或circle"}；edges 是 {"from":"节点id","to":"节点id","label":"短标签","dashed":false}。节点坐标要避免重叠，连线应表达真正关系。`
-  const instructions = kind === 'image'
-    ? `${common}\n格式：{"title":"...","subtitle":"...","nodes":[...],"edges":[...],"explanation":"配合图解的简明 Markdown 讲解"}。优先表达概念关系、数据流、空间结构或对比；explanation 先给必要解释，再说明阅读顺序。`
-    : `${common}\n格式：{"title":"...","subtitle":"...","nodes":[...],"edges":[...],"explanation":"不超过120字的Markdown讲解"}。这是过程动画计划：edges 必须 3-6 条并严格按发生顺序排列，每条 edge 的 label 是该帧动作；节点布局在所有帧保持不变。`
-  const generated = await generate(instructions, `学习者请求：\n${request.slice(0, 1800)}`, 58_000)
-  const payload = extractJson(generated)
-  const title = compactText(payload.title, 120) || (kind === 'image' ? '知识图解' : '过程动画')
-  const subtitle = compactText(payload.subtitle, 220)
-  let steps: VisualStep[] = []
-  if (kind === 'image') {
-    const diagram = cleanDiagram(payload)
-    steps = [{ title: '', text: '', svg: renderDiagramSvg(diagram) }]
-  } else {
-    const diagram = cleanDiagram(payload)
-    steps = diagram.edges.slice(0, 6).map((activeEdge, index) => {
-      const from = activeEdge.from, to = activeEdge.to
-      const frameDiagram = {
-        nodes: diagram.nodes,
-        edges: diagram.edges.map(edge => edge.from === from && edge.to === to
-          ? edge
-          : { ...edge, label: '' }),
-      }
-      return {
-        title: `第 ${index + 1} 步：${activeEdge.label || '状态推进'}`,
-        text: `${diagram.nodes.find(node => node.id === from)?.label || from} → ${diagram.nodes.find(node => node.id === to)?.label || to}${activeEdge.label ? `：${activeEdge.label}` : ''}`,
-        svg: renderDiagramSvg(frameDiagram, [from, to], [`${from}->${to}`]),
-      }
-    }).filter(step => step.svg)
-  }
-  if (kind === 'animation' && steps.length < 3) throw new Error('动画有效步骤不足 3 帧')
-  const artifact = { kind, title, subtitle, steps }
-  const explanation = String(payload.explanation || '').trim().slice(0, 5000)
-    || `已生成“${title}”。${kind === 'animation' ? '播放时请观察每一步中高亮状态和连接关系的变化。' : '请按图中的标签和箭头顺序阅读概念关系。'}`
-  return { artifact, explanation }
 }
 
 export function autoToolKinds(message: string): Array<'search' | 'image' | 'animation'> {
@@ -514,18 +418,32 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
-    name: 'generate_learning_visual',
-    title: '生成学习图解或动画',
-    description: '把适合视觉表达的机制、结构或过程生成经过 SVG 白名单校验的静态图解或分步动画。',
+    name: 'generate_learning_diagram',
+    title: '生成学习图解',
+    description: '把结构、关系、对比、数据流或数学关系规划为 VisualSpec，再由确定性布局器生成安全 SVG。适合一眼看清整体；不用于需要观察状态随时间变化的过程。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '需要可视化的概念、过程和教学目的' },
-        kind: { type: 'string', enum: ['image', 'animation'], description: '静态图解或分步动画' },
       },
-      required: ['query', 'kind'],
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'generate_learning_animation',
+    title: '生成学习动画',
+    description: '把有机械因果、状态转移或逐步计算的过程规划为 VisualSpec 时间线，再由确定性渲染器生成身份稳定、可暂停逐帧检查的安全 SVG 动画。不适合静态关系时才调用。',
+    toolClass: 'communication',
+    risk: 'artifact',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: '需要演示的过程、状态变化和教学目的' },
+      },
+      required: ['query'],
       additionalProperties: false,
     },
   },
@@ -1531,20 +1449,37 @@ export async function executeTutorAgentTool(
       }
     }
 
-    if (name === 'generate_learning_visual') {
-      const kind = args.kind === 'animation' ? 'animation' : 'image'
-      const visual = await generateVisual(kind, query, options.generate)
+    if (name === 'generate_learning_diagram' || name === 'generate_learning_animation' || name === 'generate_learning_visual') {
+      const requestedKind = name === 'generate_learning_animation' || args.kind === 'animation' ? 'animation' : 'diagram'
+      const visual = await generateLearningVisual(requestedKind, query, options.generate)
+      const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
+      const degradedLabel = visual.degraded
+        ? `；已如实降级为${effectiveKind === 'animation' ? '确定性动画' : '静态图解'}`
+        : ''
       return {
         run: {
-          ...base, kind, status: 'completed', title: kind === 'image' ? '生成知识图解' : '生成过程动画',
-          detail: kind === 'image' ? '已生成并通过 SVG 白名单校验。' : `已生成 ${visual.artifact.steps.length} 个安全 SVG 步骤。`,
+          ...base,
+          kind: effectiveKind === 'diagram' ? 'image' : 'animation',
+          status: 'completed',
+          title: requestedKind === 'diagram' ? '生成知识图解' : '生成过程动画',
+          detail: `${effectiveKind === 'diagram' ? '图解' : `${visual.artifact.steps.length} 帧动画`}已通过结构、布局与 SVG 安全门；质量分 ${visual.quality.score}${degradedLabel}。`,
           observationSummary: visual.artifact.title,
           durationMs: Date.now() - startedAt,
           artifact: visual.artifact,
         },
         observation: {
           authority: 'validated_learning_artifact',
-          artifact: { kind, title: visual.artifact.title, subtitle: visual.artifact.subtitle, stepCount: visual.artifact.steps.length },
+          artifact: {
+            requestedKind,
+            effectiveKind,
+            degraded: visual.degraded,
+            degradedTo: visual.degradedTo,
+            title: visual.artifact.title,
+            subtitle: visual.artifact.subtitle,
+            stepCount: visual.artifact.steps.length,
+            abstraction: visual.artifact.abstraction,
+            quality: visual.quality,
+          },
           guidance: '最终回答解释怎样阅读产物，不重复输出 SVG',
         },
         directReply: visual.explanation,

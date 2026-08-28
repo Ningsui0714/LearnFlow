@@ -20,6 +20,7 @@ from app.models.project import (
     ArtifactAnnotation, Checkpoint, Exercise, Lecture, LectureVersion,
     Project, Roadmap, Task, WorkspaceOperation,
 )
+from app.services.execution_policy import EXECUTION_ENV_VAR, EXECUTION_POLICY_VAR
 
 
 DESKTOP_TOKEN = "workspace-test-token"
@@ -637,6 +638,8 @@ def test_managed_learning_files_drafts_annotations_and_formal_evidence_are_separ
     tmp_path, monkeypatch,
 ):
     enable_desktop(monkeypatch)
+    monkeypatch.setenv(EXECUTION_ENV_VAR, "development")
+    monkeypatch.setenv(EXECUTION_POLICY_VAR, "trusted_local_process")
     root = tmp_path / "runtime-project"
     root.mkdir()
     script = root / "answer.py"
@@ -739,6 +742,8 @@ def test_managed_learning_files_drafts_annotations_and_formal_evidence_are_separ
         assert loaded_draft.json()["code"] == "print(2)"
         run = client.post(f"/api/exercises/{exercise_id}/run", json={"code": "print(2)", "files": []})
         assert run.status_code == 200
+        assert run.json()["execution_boundary"] == "trusted_local_process"
+        assert run.json()["filesystem_isolation"] is False
 
         submission_id = "formal-bound-submit-1"
         submitted = client.post(
@@ -749,6 +754,8 @@ def test_managed_learning_files_drafts_annotations_and_formal_evidence_are_separ
         )
         assert submitted.status_code == 200, submitted.text
         assert submitted.json()["passed"] == 1
+        assert submitted.json()["execution_boundary"] == "trusted_local_process"
+        assert submitted.json()["network_isolation"] is False
         replay = client.post(
             f"/api/exercises/{exercise_id}/submit",
             json={

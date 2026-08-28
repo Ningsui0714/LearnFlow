@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { resolve } from 'node:path'
 import {
   buildProviderRequest,
   errorFromTutorProviderResponse,
@@ -14,13 +15,10 @@ import { runTutorAgentTurn } from './server/agent-runtime.ts'
 import { readProviderStream } from './server/provider-stream.ts'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
+import { createAccountCredentialResolver, type ModelCredential } from './server/account-model-credential.ts'
+import { buildBackendProxyHeaders } from './server/backend-proxy-security.ts'
 
-type KeyConfiguration = {
-  apiKey: string
-  source: string
-}
-
-function loadTutorKey(mode: string): KeyConfiguration {
+function loadTutorKey(mode: string): ModelCredential {
   const localEnv = loadEnv(mode, process.cwd(), '')
   const candidates: Array<[string, string | undefined]> = [
     ['启动环境', process.env.LEARNFLOW_API_KEY],
@@ -28,6 +26,17 @@ function loadTutorKey(mode: string): KeyConfiguration {
   ]
   const match = candidates.find(([, value]) => value && value !== 'sk-your-key-here')
   return { apiKey: match?.[1]?.trim() || '', source: match?.[0] || '' }
+}
+
+function loadRuntimeBridgeToken(mode: string) {
+  const frontendEnv = loadEnv(mode, process.cwd(), '')
+  const backendEnv = loadEnv(mode, resolve(process.cwd(), '../backend'), '')
+  return String(
+    process.env.AUTH_RUNTIME_BRIDGE_TOKEN
+      || backendEnv.AUTH_RUNTIME_BRIDGE_TOKEN
+      || frontendEnv.AUTH_RUNTIME_BRIDGE_TOKEN
+      || '',
+  ).trim()
 }
 
 function loadSearchConfiguration(mode: string): SearchProviderConfiguration {
@@ -117,12 +126,20 @@ function sendStreamEvent(response: any, payload: unknown) {
 }
 
 function tutorProxy(mode: string, backendBase: string): Plugin {
-  const keyConfiguration = loadTutorKey(mode)
+  const legacyKeyConfiguration = loadTutorKey(mode)
+  const runtimeBridgeToken = loadRuntimeBridgeToken(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
+  const resolveAccountKey = createAccountCredentialResolver({
+    mode,
+    backendBase,
+    runtimeBridgeToken,
+    legacyDevelopmentCredential: legacyKeyConfiguration,
+  })
 
   const callProvider = async (options: {
     endpoint: string
     body: unknown
+    apiKey?: string
     timeoutMs?: number
     onTextDelta?: (delta: string) => void
   }) => {
@@ -136,7 +153,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(keyConfiguration.apiKey ? { Authorization: `Bearer ${keyConfiguration.apiKey}` } : {}),
+          ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
         },
         body: JSON.stringify(requestBody),
         signal: controller.signal,
@@ -183,10 +200,19 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         sendJson(response, 405, { error: '只允许 GET' })
         return
       }
-      sendJson(response, 200, {
-        configured: Boolean(keyConfiguration.apiKey),
-        source: keyConfiguration.source,
-      })
+      try {
+        const keyConfiguration = await resolveAccountKey(request)
+        sendJson(response, 200, {
+          configured: Boolean(keyConfiguration.apiKey),
+          source: keyConfiguration.source,
+        })
+      } catch (error) {
+        sendJson(response, 503, {
+          configured: false,
+          source: '账户凭据服务不可用',
+          error: error instanceof Error ? error.message : '账户凭据服务不可用',
+        })
+      }
       return
     }
 
@@ -264,6 +290,22 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
 
+      const providerUrl = new URL(baseUrl)
+      const localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
+      if (!localProvider && providerUrl.protocol !== 'https:') {
+        throw new Error('非本机模型服务必须使用 HTTPS，避免账户密钥明文传输。')
+      }
+      if (providerUrl.username || providerUrl.password) {
+        throw new Error('Base URL 不能内嵌账号或密码。')
+      }
+      const keyConfiguration = await resolveAccountKey(request)
+      const invokeProvider = (providerRequest: {
+        endpoint: string
+        body: unknown
+        timeoutMs?: number
+        onTextDelta?: (delta: string) => void
+      }) => callProvider({ ...providerRequest, apiKey: keyConfiguration.apiKey })
+
       const messages = Array.isArray(input.messages)
         ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
             if (!message || typeof message !== 'object') return false
@@ -283,10 +325,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         toolChoice,
       })
 
-      const providerUrl = new URL(baseUrl)
-      const localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
       if (!localProvider && !keyConfiguration.apiKey) {
-        throw new Error('本地环境没有 API Key。请在 frontend/.env.local 设置 LEARNFLOW_API_KEY，然后重启服务。')
+        throw new Error('当前账号尚未配置模型 API Key。请在账号设置中保存并测试连接。')
       }
 
       const latestMessage = [...messages].reverse().find(message => message.role === 'user')?.content || ''
@@ -398,7 +438,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           messages: [{ role: 'user', content: inputText }],
           maxTokens: Math.max(400, Math.min(7_000, Number(maxTokens) || 1_200)),
         })
-        const payload = await callProvider({ ...request, timeoutMs: timeoutMs || 32_000 })
+        const payload = await invokeProvider({ ...request, timeoutMs: timeoutMs || 32_000 })
         const text = textFromTutorProviderResponse(payload)
         if (!text) throw new Error('模型没有返回可用的生成内容')
         return text
@@ -429,7 +469,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
         generate,
         searchConfiguration,
-        invokeProvider: callProvider,
+        invokeProvider,
         observe: streamResponse ? event => sendStreamEvent(response, event) : undefined,
       })
       console.info('[tutor] turn completed', {
@@ -492,11 +532,11 @@ function backendApiProxy(backendBase: string): Plugin {
         : multipart ? await readRawBody(request) : JSON.stringify(await readJsonBody(request))
       const upstream = await fetch(`${backendBase}${requestUrl.pathname}${requestUrl.search}`, {
         method,
-        headers: {
-          ...(body ? { 'Content-Type': multipart ? incomingContentType : 'application/json' } : {}),
-          ...(request.headers.cookie ? { Cookie: request.headers.cookie } : {}),
-          ...(request.headers.authorization ? { Authorization: request.headers.authorization } : {}),
-        },
+        headers: buildBackendProxyHeaders(request.headers, {
+          bodyPresent: Boolean(body),
+          multipart,
+          contentType: incomingContentType,
+        }),
         body,
         signal: AbortSignal.timeout(30_000),
       })

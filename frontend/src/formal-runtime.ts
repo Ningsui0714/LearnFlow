@@ -8,7 +8,12 @@ import type {
 } from './learning-path-graph'
 import type { PlanningEvent, ValueClaimProposal } from './planning'
 import type { FormalProjectWorkspace, ProjectRoadmapProposal } from './project'
-import { captureRuntimeAuth, runtimeFetch } from './runtime-client.ts'
+import {
+  activateRuntimeAuth,
+  captureRuntimeAuth,
+  clearRuntimeAuth,
+  runtimeFetch,
+} from './runtime-client.ts'
 
 export type KernelName = 'structure' | 'knowledge' | 'human' | 'value' | 'practice'
 export type FormalRuntimeStatus = 'connecting' | 'connected' | 'offline' | 'auth_required'
@@ -100,6 +105,19 @@ export type FormalKnowledgeSource = {
   error: string
   chunk_count: number
   knowledge_domains: Array<{ label: string; evidence: string; summary?: string }>
+  format?: {
+    registry_version?: string
+    format_id?: string
+    format_label?: string
+    content_type?: string
+    size_bytes?: number
+    previewable?: boolean
+    extractable?: boolean
+    source_eligible?: boolean
+    execution_performed?: false
+    warnings?: string[]
+    counters?: Record<string, number>
+  }
   created_at?: string | null
   mastery_inference: false
 }
@@ -345,18 +363,101 @@ export type FormalRuntimeConnection = {
   learner?: FormalLearner
 }
 
-type DevAccount = {
+export type FormalAuthenticatedProfile = {
+  education_stage: string
+  background: string
+  focus_areas: string[]
+  weekly_hours: number
+  preferred_modes: string[]
+  career_goal: string
+  career_goal_status: string
+}
+
+export type FormalAccount = {
   id: number
-  display_name: string
+  account_number: number
   username: string
+  display_name: string
+  learner_id: number
+  role: 'user' | 'admin'
+  status: string
+  must_change_password: boolean
+  is_legacy_demo: boolean
+  profile: FormalAuthenticatedProfile
+  dev_test_login_enabled: boolean
+  is_dev_login: boolean
+  desktop_auth_token?: string
+}
+
+export type FormalAuthStatus = {
+  authenticated: false
+  dev_test_login_enabled?: boolean
+} | ({ authenticated: true } & FormalAccount)
+
+export type FormalDemoStatus = {
+  enabled: boolean
+  offline: boolean
+}
+
+export type FormalRegistrationInput = {
+  username: string
+  password: string
+  display_name: string
+  education_stage: 'middle_school' | 'high_school' | 'undergraduate' | 'graduate' | 'working' | 'other'
+  background: string
+  focus_areas: string[]
+  weekly_hours: number
+  preferred_modes: string[]
+  career_goal?: string
+  career_goal_status?: 'exploring' | 'confirmed'
+}
+
+export type FormalDevAccount = {
+  id: number
+  account_number: number
+  username: string
+  display_name: string
+  role: 'user' | 'admin'
   last_login_at?: string | null
   is_legacy_demo?: boolean
+}
+
+export type FormalModelCredentialMetadata = {
+  configured: boolean
+  key_hint: string
+  updated_at?: string | null
+}
+
+export type FormalModelCredentialTestResult = {
+  status: 'ok'
+  model: string
+  latency_ms: number
+}
+
+export type FormalAdminAccount = {
+  account_number: number
+  username: string
+  display_name: string
+  role: 'user' | 'admin'
+  status: string
+  created_at?: string | null
+  updated_at?: string | null
+  last_login_at?: string | null
+  project_count: number
+  api_key_configured: boolean
 }
 
 function errorText(payload: unknown, fallback: string) {
   if (payload && typeof payload === 'object') {
     const detail = (payload as Record<string, unknown>).detail || (payload as Record<string, unknown>).error
     if (typeof detail === 'string' && detail.trim()) return detail
+    if (Array.isArray(detail)) {
+      const messages = detail.flatMap(item => item && typeof item === 'object'
+        && typeof (item as Record<string, unknown>).msg === 'string'
+        ? [String((item as Record<string, unknown>).msg)]
+        : [])
+      if (messages.length > 0) return messages.join('；')
+    }
   }
   return fallback
 }
@@ -384,7 +485,10 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let payload: unknown = null
   try { payload = text ? JSON.parse(text) : null } catch { payload = text }
   captureRuntimeAuth(payload)
-  if (!response.ok) throw new FormalRequestError(response.status, errorText(payload, `请求失败（${response.status}）`))
+  if (!response.ok) {
+    if (response.status === 401) identityInitialization = undefined
+    throw new FormalRequestError(response.status, errorText(payload, `请求失败（${response.status}）`))
+  }
   return payload as T
 }
 
@@ -394,49 +498,137 @@ async function formRequest<T>(url: string, form: FormData): Promise<T> {
   let payload: unknown = null
   try { payload = text ? JSON.parse(text) : null } catch { payload = text }
   captureRuntimeAuth(payload)
-  if (!response.ok) throw new FormalRequestError(response.status, errorText(payload, `请求失败（${response.status}）`))
+  if (!response.ok) {
+    if (response.status === 401) identityInitialization = undefined
+    throw new FormalRequestError(response.status, errorText(payload, `请求失败（${response.status}）`))
+  }
   return payload as T
 }
 
 export async function listFormalDevAccounts() {
-  return jsonRequest<DevAccount[]>('/api/dev/accounts')
+  return jsonRequest<FormalDevAccount[]>('/api/dev/accounts')
 }
 
-let identityInitialization: Promise<Record<string, unknown>> | undefined
+let identityInitialization: Promise<FormalAccount> | undefined
+let demoLoginInitialization: Promise<FormalAccount> | undefined
 
-export async function loginFormalDevAccount(accountId: number) {
-  const account = await jsonRequest<Record<string, unknown>>(`/api/dev/accounts/${accountId}/login`, { method: 'POST' })
+export function activateFormalIdentity(account: FormalAccount) {
+  activateRuntimeAuth(account)
   identityInitialization = Promise.resolve(account)
   return account
 }
 
-async function establishFormalIdentity() {
-  try {
-    const demo = await jsonRequest<{ enabled?: boolean }>('/api/demo/status')
-    if (demo.enabled) {
-      return jsonRequest<Record<string, unknown>>('/api/demo/login', { method: 'POST' })
-    }
-  } catch {
-    // A normal server may deliberately hide the demo endpoints. Continue with
-    // the current authenticated learner or the explicit development picker.
+export function invalidateFormalIdentity(clearRuntime = true) {
+  identityInitialization = undefined
+  demoLoginInitialization = undefined
+  if (clearRuntime) clearRuntimeAuth()
+}
+
+export async function getFormalAuthStatus() {
+  return jsonRequest<FormalAuthStatus>('/api/auth/status')
+}
+
+export async function getFormalDemoStatus() {
+  return jsonRequest<FormalDemoStatus>('/api/demo/status')
+}
+
+export function loginFormalDemoAccount() {
+  if (!demoLoginInitialization) {
+    clearRuntimeAuth()
+    demoLoginInitialization = jsonRequest<FormalAccount>('/api/demo/login', { method: 'POST' })
+      .then(activateFormalIdentity)
+      .catch(error => {
+        demoLoginInitialization = undefined
+        throw error
+      })
   }
-  const status = await jsonRequest<Record<string, unknown>>('/api/auth/status')
-  if (status.authenticated === true) return status
-  const accounts = await listFormalDevAccounts()
-  const candidates = [...accounts].sort((left, right) => {
-    if (Boolean(left.is_legacy_demo) !== Boolean(right.is_legacy_demo)) return left.is_legacy_demo ? 1 : -1
-    return String(right.last_login_at || '').localeCompare(String(left.last_login_at || ''))
+  return demoLoginInitialization
+}
+
+export async function loginFormalAccount(username: string, password: string) {
+  demoLoginInitialization = undefined
+  clearRuntimeAuth()
+  const account = await jsonRequest<FormalAccount>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
   })
-  if (!candidates[0]) throw new Error('正式后端还没有可用学习者，请先注册或启用开发账号')
-  return loginFormalDevAccount(candidates[0].id)
+  return activateFormalIdentity(account)
+}
+
+export async function registerFormalAccount(input: FormalRegistrationInput) {
+  demoLoginInitialization = undefined
+  clearRuntimeAuth()
+  const account = await jsonRequest<FormalAccount>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+  return activateFormalIdentity(account)
+}
+
+export async function loginFormalDevAccount(accountId: number) {
+  demoLoginInitialization = undefined
+  clearRuntimeAuth()
+  const account = await jsonRequest<FormalAccount>(`/api/dev/accounts/${accountId}/login`, { method: 'POST' })
+  return activateFormalIdentity(account)
+}
+
+export async function logoutFormalAccount() {
+  await jsonRequest<{ status: 'ok' }>('/api/auth/logout', { method: 'POST' })
+  invalidateFormalIdentity()
+}
+
+export async function loadFormalModelCredential() {
+  return jsonRequest<FormalModelCredentialMetadata>('/api/auth/model-credential')
+}
+
+export async function saveFormalModelCredential(apiKey: string) {
+  return jsonRequest<FormalModelCredentialMetadata>('/api/auth/model-credential', {
+    method: 'PUT',
+    body: JSON.stringify({ api_key: apiKey }),
+  })
+}
+
+export async function deleteFormalModelCredential() {
+  return jsonRequest<FormalModelCredentialMetadata>('/api/auth/model-credential', {
+    method: 'DELETE',
+  })
+}
+
+export async function testFormalModelCredential(baseUrl: string, model: string) {
+  return jsonRequest<FormalModelCredentialTestResult>('/api/auth/model-credential/test', {
+    method: 'POST',
+    body: JSON.stringify({ base_url: baseUrl, model }),
+  })
+}
+
+export async function listFormalAdminAccounts() {
+  const accounts = await jsonRequest<FormalAdminAccount[]>('/api/admin/accounts')
+  return accounts.map(account => ({
+    account_number: account.account_number,
+    username: account.username,
+    display_name: account.display_name,
+    role: account.role,
+    status: account.status,
+    created_at: account.created_at,
+    updated_at: account.updated_at,
+    last_login_at: account.last_login_at,
+    project_count: account.project_count,
+    api_key_configured: account.api_key_configured,
+  }))
 }
 
 async function ensureFormalIdentity() {
   if (!identityInitialization) {
-    identityInitialization = establishFormalIdentity().catch(error => {
-      identityInitialization = undefined
-      throw error
-    })
+    identityInitialization = getFormalAuthStatus()
+      .then(status => {
+        if (!status.authenticated) throw new FormalRequestError(401, '请先登录')
+        activateRuntimeAuth(status)
+        return status
+      })
+      .catch(error => {
+        identityInitialization = undefined
+        throw error
+      })
   }
   return identityInitialization
 }
@@ -464,7 +656,7 @@ export async function bootstrapFormalRuntime(): Promise<{ connection: FormalRunt
     const detail = error instanceof Error ? error.message : '正式后端暂不可用'
     return {
       connection: {
-        status: /学习者|登录|认证/.test(detail) ? 'auth_required' : 'offline',
+        status: error instanceof FormalRequestError && error.status === 401 ? 'auth_required' : 'offline',
         detail,
       },
     }
@@ -473,7 +665,7 @@ export async function bootstrapFormalRuntime(): Promise<{ connection: FormalRunt
 
 export async function syncFormalEvent(event: LearningEvent | PlanningEvent | {
   id: string
-  type: 'chat_mode_entered' | 'learning_action_segment_completed'
+  type: 'chat_mode_entered' | 'learning_action_segment_completed' | 'vnext_human_adaptation_requested'
   at: number
   detail: string
   payload?: Record<string, unknown>

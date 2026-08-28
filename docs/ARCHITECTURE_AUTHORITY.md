@@ -2,6 +2,14 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-28.6`）：隔离 seeded demo 的固定 `safe_average` 代码题新增版本化 AST 判题合同。它只在 competition demo、题目来源、grader ID、合同摘要和固定测试集全部匹配时启用，不执行、导入或求值用户代码；普通代码题仍遵循默认关闭的 `code_executor` 策略。判题结果明确携带 `execution_performed=false` 与合同来源，随后仍只能通过正式 Attempt 和 EvidenceEvent 进入五核。稳定 Agent、Tool、Event、Kernel schema 和生产执行边界均保持兼容。
+
+Contract impact（`2026-08-28.5`）：`learning_runtime.py` 现在在 reducer 实现旁维护独立、可机读的 `REDUCER_EVENT_TYPES`，注册表可以逐项证明带 Kernel target 的 EventContract 具有真实 handler；该集合不得从注册表反向生成。代码执行工具改名为 `Policy-gated Local Code Executor`：生产和默认配置均拒绝执行，只有显式开发配置 `trusted_local_process` 才允许主机进程，并必须披露文件系统、网络和密钥没有隔离。名称与契约不再声称存在并未实现的沙箱。Human 当前适配额外保存产生它的 project/checkpoint/session scope；ContextPacket 只有精确匹配时才消费，且该行政字段不会巩固为记忆。稳定工具 ID、事件 ID、五核 schema 与写入链保持兼容。
+
+Contract impact（`2026-08-28.4`）：注册表发布项增加 `implemented / optional_unimplemented / deprecated` lifecycle 与可解析 implementation binding；Python symbol、FastAPI route 在运行时解析，前端 component/handler 只做仓库内静态 symbol/route 核验，不动态导入前端。`schema_valid` 只回答清单与契约是否自洽，`implementation_valid` 回答所有绑定是否真实可解析，`valid` 仅在两者都为真时为真；旧 `errors` 与 `validation_errors` 字段保留为合并问题列表。`optional_unimplemented` 不进入 `available_capabilities`。没有仓库运行入口的 `workflow_gateway`、`workflow_validator`、`external_workflow_rendering`、`xingchen_studio` 以及两个无独立 handler 的资源能力被明确降为可选未实现，旧稳定 ID 保留。所有非空 Kernel target 的 EventContract 声明 payload version 与 reducer binding；该版本会在运行时尚未导出 `REDUCER_EVENT_TYPES` 时诚实报告实现校验失败，后续 `2026-08-28.5` 已补齐独立事件集合。向后兼容迁移方式是：只检查清单的消费者改读 `schema_valid`，发布门禁继续读更严格的 `valid`。
+
+Contract impact（`2026-08-28.3`）：vNext 新增唯一的显式、临时 Human 适配事件 `vnext_human_adaptation_requested`。浏览器只把“慢一点、换种讲法、当前过载或挫败、明确重复请求”等直接表达归一为带 learner/project/checkpoint/session scope 的类型化信号；普通答错、停顿、“不会”与“不懂”不推断 Human。reducer 只写 8 小时有效的 `pace_adjustment / format_request / cognitive_load / affect / support_need`，行政过期字段不生成 MemoryFact，临时事实不参与 Module 合成。Agent ContextPacket 只得到安全适配指令，不得到 Human 原文或深层敏感节点。该变化向后兼容，未新增表、主 Agent、模型可调用写工具或掌握语义。
+
 Contract impact（`2026-08-28.1`）：教学交付明确拆成三个轻量层次。`Checkpoint.learning_contract.knowledge_input_contract` 只声明 Learning Design 可选读取 `learning_design` ContextPolicy 产生的 answer-free Knowledge 投影，用于起点、示例、难度和缺口覆盖；缺失时允许通用教学包继续，且始终零 Kernel write。`delivery_readiness.package_readiness` 只从 Source/Lecture/Question/Exercise/Assessment 重建教学资产成熟度，不再依赖 LearningTask；`task_readiness` 再把 learner-owned LearningTask 状态与包成熟度组合成可进入阶段和软降级方式。旧顶层 `overall/sources/content/guided_learning/practice/verification/gaps` 保留为兼容摘要。没有新表、事件、Agent、Skill 或 Kernel writer，任务开始/完成和包成熟度均不表示掌握。
 
 Contract impact（`2026-08-27.8`）：关卡现有 `Checkpoint.learning_contract` 增加向后兼容的 Teaching Contract v1 规范化与确定性门禁，状态仅为 `ready / ready_with_gaps / fallback_ready`；模型最多修订一次，仍不合格时发布包含目标、核心事实、最小示例、下一步和缺口的答案安全降级讲解，不允许空交付。`delivery_readiness` 作为该字段中的只读、可重建投影，完全由既有 Source/Chunk、Lecture、ConceptQuestion/Exercise、AssessmentBlueprint/Rubric 与 LearningTask 计算，不复用学习者 `learning_status`，也不表示掌握。规划态资源策展新增两个目标级只读 ACI：`search_learning_videos` 返回 `discovered` 候选，`inspect_learning_video` 只接受本轮候选 ID 并返回字幕/ASR 状态、相关时间点、目标覆盖缺口与答案泄露风险。平台 API、字幕获取和离线目录属于 Harness 内部适配器；搜索、核验和观看均为零 Kernel target。三类主 Agent、EvidenceEvent、五核 reducer、评分和掌握语义均不变，无数据库迁移。
@@ -31,7 +39,7 @@ Contract impact（`2026-08-26.21`）：新增 learner-owned 领域知识底座�
 3. `learning_runtime.py` 与 `memory_graph.py`：事件归约、五核投影与记忆图谱的运行实现。
 4. 领域模块和页面文档：只能细化，不得重新定义上述权威。
 
-运行中的注册表可以从 `GET /api/architecture/registry` 查看；`GET /api/architecture/validate` 返回是否发生注册漂移。注册表包含内容摘要 `digest`，方便演示环境和验收记录固定版本。
+运行中的注册表可以从 `GET /api/architecture/registry` 查看；`GET /api/architecture/validate` 分别返回 `schema_valid`、`implementation_valid`、合并的 `issues`，并保留旧 `valid/errors` 字段，其中 `valid = schema_valid && implementation_valid`。注册表包含覆盖 lifecycle 与 binding 声明的内容摘要 `digest`，方便演示环境和验收记录固定版本。清单中存在一条记录、owner 或互相引用，不再足以证明它可用。
 
 ## 2. 三类主 Agent 契约
 
@@ -247,7 +255,7 @@ Contract impact：注册表版本提升到 `2026-08-26.16`。扩展既有
 `vnext_learning_workspace_reader` 的只读输出和新增 answer-free 查询端点；稳定工具、Capability、
 事件、数据库 schema、五核 reducer 与 writer 均保持兼容，没有新增模型可调用写工具。
 
-正式前端 `frontend/` 登记三个零 Kernel 写入能力：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_visual` 只接受结构化图计划，由本地代码生成消毒后的静态 SVG 或确定性 SVG 帧；`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
+正式前端 `frontend/` 的零 Kernel 写入能力包括：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_diagram` 与 `generate_learning_animation` 共享版本化 `VisualSpec`：模型只规划计算机或数学知识的语义对象，确定性代码负责布局、时间线、质量门、SVG 安全与即时降级；前者呈现静态关系，后者只呈现有真实状态变化的逐帧过程。`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
 
@@ -475,7 +483,9 @@ LearningTask 与受管学习文件。只有 `project_tutor` Session 能通过 `p
 
 ### 可验证微学习与流程投影
 
-`/agent` 与 `/agent/:sessionId` 是独立学习对话空间。学习者可以拥有多段 global Session，
+当前已实现的独立学习对话入口是 `/chat/:conversationId`；`global_tutor` 的旧
+`/agent/:sessionId` 声明只保留稳定 ID 且 lifecycle 为 `deprecated`，不得列入可用工作台。
+学习者可以拥有多段 global Session，
 项目则是对话可以创建、进入或挂载的长期上下文，不是开始学习前的必选入口。清晰讲解、
 苏格拉底追问、费曼复述和示例渐隐等学习方法由当前 Session 调用；选择结果保存在 Session 上，
 `learning_skill_selected` 只记录零 Kernel target 的操作事实，不构成偏好巩固或掌握证据。
@@ -493,27 +503,28 @@ LLM 决定。运行事件及任务同步事件的 Kernel target 全部为空；
 调用必须先建立知识起点。SkillRun 与其绑定的 LearningTask 是同一闭环的教学状态和任务状态，
 在对话中不得渲染成两套并行下一步。
 
-`/learn/:runId` 是 Learning Task 可以按需物化的学习文件工作台附件，由 Tutor 控制 Agent 所有，并通过
-`verified_micro_learning` 产品技能编排学习设计、费曼复述诊断、确定性判题、既有纠错
-和复习调度。明确的“15 分钟/微学习/可验证学习”请求可以直接启动它；普通原子学习则先
-形成 Learning Task，由 Tutor 在原对话中自由教学，必要时再物化该附件。附件中的 Tutor
-必须复用原 `session_id`；使用后主返回锚点也是原对话或原关卡。它不是第四类主
-Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/session scope，标记为
-`task_artifact/internal`，不出现在真实项目列表中，用户无需先配置项目。
+`/learn/:runId` 仍是未来 Learning Task 文件附件的设计契约，但 canonical frontend 当前没有
+该 route 或 component binding，因此 `focused_learning` lifecycle 为 `optional_unimplemented`，
+不得声称“可以直接启动”或列入可用工作台。现有 LearningTask、SkillRun、MicroLearningRun、
+正式学习文件与判题服务仍可由已实现的 `/chat/:conversationId`、`/tasks`、`/learning-files`
+和练习/复习工作台编排；未来实现独立附件时必须复用原 `session_id` 和返回锚点，并补上真实
+frontend binding 后才能提升为 `implemented`。
 
 `MicroLearningRun` 只保存可恢复步骤和 answer-free 的 UI 投影。题目结果以 `LearningAttempt` 和 `concept_attempt_evaluated` 为权威，纠错以 `RemediationCase` 为权威，后续计划以 `ReviewSchedule` 为投影。`teach_back_analyzed` 只写诊断缺口并固定 `mastery_unchanged`；`micro_learning_completed` 是零 kernel target 的运行里程碑。微学习题在同一轮的多次正确不能直接形成稳定掌握，跨时间稳定规则仍由 `review-policy-v1` 裁决。微学习契约见 `docs/MICRO_LEARNING_MVP.md`，对话 Skill 运行契约见 `docs/CONVERSATION_SKILL_RUNTIME.md`。
 
 ### 用户成长只读投影
 
-`/growth` 将个人资料、五核当前状态、Memory Fact 依据、复习待办、重大事件和 Badge
-合并为用户可理解的“我的成长”工作台。它只读取现有权威数据，不创建第二套画像，
-不直接写 `KernelState`，也不改变掌握、评分、纠错或复习策略。
+已实现的学习者只读入口是 `/learner-profile`。`/growth` 仍描述把个人资料、五核当前状态、
+Memory Fact 依据、复习待办、重大事件和 Badge 合并为“我的成长”的候选产品形态，但 canonical
+frontend 当前没有该 route，所以 `learner_growth` lifecycle 为 `optional_unimplemented`，不得作为
+可用页面发布。该投影即使未来实现也只能读取现有权威数据，不创建第二套画像，不直接写
+`KernelState`，也不改变掌握、评分、纠错或复习策略。
 
 默认界面使用“正在进行、理解情况、实践表现、学习节奏、目标与兴趣”等用户语言，
 不展示 Kernel 名称、节点 ID、predicate、原始置信度或 JSON。归档和恢复仍走已有
 `memory_archived` / `memory_restored` 事件链；这只改变后续是否参考该内容，不删除
-历史 EvidenceEvent、Attempt、重大事件或 Badge。`/profile` 与 `/memory` 保留为兼容
-跳转，避免旧书签和已保存工作区标签失效。
+历史 EvidenceEvent、Attempt、重大事件或 Badge。`/profile` 与 `/memory` 只保留 deprecated
+稳定声明；canonical frontend 当前没有这两个 redirect binding，不能宣称旧书签一定可跳转。
 
 ## 4. 两个维护域
 
@@ -532,7 +543,7 @@ Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/se
 
 - Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
-- `/agent/:sessionId` 带轻量工作台的独立对话、`/tasks` 纯管理任务队列、`/learn/:runId` 学习文件附件、项目、讲义、练习、纠错、全局复习、`/growth` 我的成长、demo 等工作台。
+- 已实现的 `/chat/:conversationId`、`/tasks`、`/learning-files`、项目、讲义文件、练习文件、全局复习、画像和 demo 工作台，以及明确标为 optional/deprecated 的候选或兼容工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
 
 ### 重合区处理
@@ -545,12 +556,12 @@ Agent；内部创建的单关卡 Project 只提供 learner/project/checkpoint/se
 
 新增工具、产品技能、工作台或重要事件时：
 
-1. 在 `architecture_registry.py` 声明稳定 ID、owner、origin 和允许的五核读取范围。
+1. 在 `architecture_registry.py` 声明稳定 ID、owner、origin、lifecycle 和允许的五核读取范围；`implemented` 必须引用可验证 binding，候选能力使用 `optional_unimplemented`，退役兼容项使用 `deprecated`。
 2. 复用或新增 Action Board capability，明确 side effect、确认策略和 evidence target。
-3. 为重要行为注册 EventContract；所有写入经过 `record_event`。
-4. 若需要五核变化，在 reducer 中增加确定性规则与测试。
+3. 为重要行为注册 EventContract；所有写入经过 `record_event`。非空 Kernel target 还必须声明 payload version 与指向显式 reducer 事件集合的 binding。
+4. 若需要五核变化，在 reducer 中增加确定性规则、维护可机读的 reducer 事件导出并补测试；注册表不得通过搜索源码文本推断 handler 存在。
 5. 外部工作流输出先校验为 LearnFlow artifact；不得直接写五核或决定纠错状态。
-6. 更新架构/融合/比赛文档，提升注册表版本，并运行注册漂移、后端、前端与 demo 验收。
+6. 更新架构/融合/比赛文档，提升注册表版本，并分别检查 `schema_valid` 与 `implementation_valid`，再运行后端、前端与 demo 验收。
 
 破坏性接口调整必须保留迁移说明。仅增加讲法、模型或供应商 adapter，不应改变 EvidenceEvent 和五核语义。
 

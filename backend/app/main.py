@@ -1,7 +1,8 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.db.database import init_db
@@ -28,6 +29,7 @@ from app.api.knowledge_library import router as knowledge_library_router
 from app.api.learning_files import router as learning_files_router
 from app.api.vnext_projects import router as vnext_projects_router
 from app.api.assessment_design import router as assessment_design_router
+from app.services.auth import enforce_browser_request_security
 
 
 @asynccontextmanager
@@ -63,6 +65,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def browser_request_security(request: Request, call_next):
+    try:
+        await enforce_browser_request_security(request)
+    except HTTPException as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
+    response = await call_next(request)
+    if request.url.path == "/api/auth/model-credential/internal/resolve":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 app.include_router(health_router)
 app.include_router(projects_router, prefix="/api")

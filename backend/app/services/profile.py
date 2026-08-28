@@ -377,7 +377,11 @@ async def evaluate_project_badge(
             project_id=project_id,
             event_type="project_completed",
             source="runtime",
-            payload={"project_id": project_id, "name": project.name},
+            payload={
+                "project_id": project_id,
+                "name": project.name,
+                "checkpoint_count": total,
+            },
             confidence=1.0,
             provenance={"rule": "all_non_archived_checkpoints_completed"},
             client_event_id=dedupe,
