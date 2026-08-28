@@ -9,6 +9,7 @@ import {
   listFormalAdminAccounts,
   loginFormalAccount,
   loginFormalDemoAccount,
+  registerFormalAccount,
   saveFormalModelCredential,
 } from '../src/formal-runtime.ts'
 import {
@@ -67,6 +68,37 @@ test('web login is explicit and does not probe or silently select development ac
       password: 'a password with spaces',
     })
     assert.equal(calls[0].headers.has('X-CSRF-Token'), false)
+  } finally {
+    globalThis.fetch = originalFetch
+    invalidateFormalIdentity()
+  }
+})
+
+test('registration validation errors are presented without framework prefixes', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    detail: [{ msg: 'Value error, 密码至少 8 位，并包含至少两类字符' }],
+  }), {
+    status: 422,
+    headers: { 'Content-Type': 'application/json' },
+  })) as typeof fetch
+  try {
+    await assert.rejects(
+      registerFormalAccount({
+        username: 'learner-b',
+        password: 'abcdefgh',
+        display_name: '学习者 B',
+        education_stage: 'working',
+        background: '工程背景',
+        focus_areas: ['Agent'],
+        weekly_hours: 5,
+        preferred_modes: ['练习'],
+        career_goal: '',
+        career_goal_status: 'exploring',
+      }),
+      error => error instanceof Error
+        && error.message === '密码至少 8 位，并包含至少两类字符',
+    )
   } finally {
     globalThis.fetch = originalFetch
     invalidateFormalIdentity()

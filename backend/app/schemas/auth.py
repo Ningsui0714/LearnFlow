@@ -1,6 +1,6 @@
 from datetime import datetime
+import re
 from typing import Literal
-import unicodedata
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -12,32 +12,30 @@ CareerGoalStatus = Literal["exploring", "confirmed"]
 AccountRole = Literal["user", "admin"]
 
 
-_COMMON_PASSWORDS = frozenset({
-    "123456789012345",
-    "abcdefghijklmno",
-    "adminadminadminadmin",
-    "correct horse battery staple",
-    "iloveyouiloveyou",
-    "letmeinletmeinletmein",
-    "password1234567",
-    "qwertyuiopasdfgh",
-})
-
-
-def _password_lookup_key(password: str) -> str:
-    normalized = unicodedata.normalize("NFKC", password).casefold()
-    return " ".join(normalized.split())
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_POLICY_MESSAGE = (
+    "密码至少 8 位，并包含大写字母、小写字母、数字、特殊字符中的至少两类"
+)
+_PASSWORD_CATEGORY_PATTERNS = (
+    re.compile(r"[A-Z]"),
+    re.compile(r"[a-z]"),
+    re.compile(r"[0-9]"),
+    re.compile(r"[^A-Za-z0-9\s]"),
+)
 
 
 def validate_new_password(password: str) -> str:
-    if _password_lookup_key(password) in _COMMON_PASSWORDS:
-        raise ValueError("密码过于常见，请使用更独特的长密码")
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError(PASSWORD_POLICY_MESSAGE)
+    category_count = sum(bool(pattern.search(password)) for pattern in _PASSWORD_CATEGORY_PATTERNS)
+    if category_count < 2:
+        raise ValueError(PASSWORD_POLICY_MESSAGE)
     return password
 
 
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
-    password: str = Field(min_length=15, max_length=128)
+    password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=128)
     display_name: str = Field(min_length=1, max_length=40)
     education_stage: EducationStage
     background: str = Field(min_length=1, max_length=500)
@@ -104,7 +102,7 @@ class LogoutResponse(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=128)
-    new_password: str = Field(min_length=15, max_length=128)
+    new_password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=128)
 
     @field_validator("new_password")
     @classmethod

@@ -328,25 +328,32 @@ def test_auth_startup_repairs_account_inserted_by_an_old_process(tmp_path):
     assert len({item["account_number"] for item in accounts.values()}) == len(accounts)
 
 
-def test_password_policy_unicode_and_argon2id_hash_only_storage():
+def test_password_policy_two_categories_and_argon2id_hash_only_storage():
     with TestClient(app) as raw_client:
         client = browser(raw_client)
-        common = client.post(
+        one_category = client.post(
             "/api/auth/register",
             json=registration(
-                "common_password_rejected",
+                "one_category_rejected",
                 password="correct horse battery staple",
             ),
         )
-        assert common.status_code == 422
+        assert one_category.status_code == 422
         assert client.post(
             "/api/auth/register",
-            json=registration("short_password_rejected", password="12345678901234"),
+            json=registration("short_password_rejected", password="Abc123!"),
         ).status_code == 422
         assert client.post(
             "/api/auth/register",
             json=registration("long_password_rejected", password="密" * 129),
         ).status_code == 422
+
+        minimum_valid = client.post(
+            "/api/auth/register",
+            json=registration("minimum_valid_password", password="abcdefg1"),
+        )
+        assert minimum_valid.status_code == 200, minimum_valid.text
+        client.cookies.clear()
 
         password = "LearnFlow-安全密码-2026!"
         created = client.post(

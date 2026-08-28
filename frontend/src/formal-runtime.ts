@@ -454,7 +454,7 @@ function errorText(payload: unknown, fallback: string) {
     if (Array.isArray(detail)) {
       const messages = detail.flatMap(item => item && typeof item === 'object'
         && typeof (item as Record<string, unknown>).msg === 'string'
-        ? [String((item as Record<string, unknown>).msg)]
+        ? [String((item as Record<string, unknown>).msg).replace(/^Value error,\s*/i, '')]
         : [])
       if (messages.length > 0) return messages.join('；')
     }

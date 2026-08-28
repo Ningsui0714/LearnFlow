@@ -18,6 +18,7 @@ import {
   type FormalRegistrationInput,
 } from './formal-runtime.ts'
 import styles from './AuthGate.module.css'
+import { PASSWORD_MIN_LENGTH, PASSWORD_POLICY_MESSAGE, passwordPolicyError } from './password-policy.ts'
 
 export type AuthGateSession = {
   account: FormalAccount
@@ -152,8 +153,9 @@ export default function AuthGate({ children }: AuthGateProps) {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
     const password = rawField(data, 'password')
-    if (password.length < 15) {
-      setError('密码至少需要 15 个字符。')
+    const policyError = passwordPolicyError(password)
+    if (policyError) {
+      setError(policyError)
       return
     }
     if (password !== rawField(data, 'password_confirmation')) {
@@ -228,10 +230,10 @@ export default function AuthGate({ children }: AuthGateProps) {
     <main className={styles.shell}>
       <section className={styles.hero}>
         <div className={styles.brand}><span className={styles.brandMark}>LF</span><strong>LearnFlow</strong></div>
-        <p className={styles.eyebrow}>YOUR PRIVATE LEARNING WORKSPACE</p>
+        <p className={styles.eyebrow}>你的专属学习空间</p>
         <h1>每个账号，一段独立的学习旅程。</h1>
-        <p className={styles.heroCopy}>登录后才会载入该 learner 的对话、页签和学习缓存。无法归属的旧浏览器缓存会被保留为 legacy，不会自动导入任何账号。</p>
-        <div className={styles.securityNote}><span>↗</span><p><strong>Web 使用 HTTP-only 会话 Cookie</strong><small>页面不保存会话令牌，也不会把模型 API Key 写入 localStorage。</small></p></div>
+        <p className={styles.heroCopy}>从一次提问到一段长期计划，LearnFlow 会陪你延续理解、练习与成长。</p>
+        <div className={styles.securityNote}><span>↗</span><p><strong>学习记录只属于你</strong><small>登录后继续上一次学习，不同账号彼此独立。</small></p></div>
       </section>
 
       <section className={styles.card} aria-labelledby="auth-title">
@@ -250,7 +252,7 @@ export default function AuthGate({ children }: AuthGateProps) {
           </form>
         ) : (
           <form className={styles.form} onSubmit={submitRegistration}>
-            <header><p className={styles.eyebrow}>CREATE ACCOUNT</p><h2 id="auth-title">建立独立学习档案</h2><span>注册资料会进入服务端 learner 画像；密码至少 15 个字符。</span></header>
+            <header><p className={styles.eyebrow}>创建账号</p><h2 id="auth-title">建立独立学习档案</h2><span>填写基本信息，创建你的专属学习空间。</span></header>
             <div className={styles.grid}>
               <label><span>用户名</span><input name="username" autoComplete="username" required minLength={3} maxLength={32} pattern={"[A-Za-z0-9_\\-]+"} title="仅支持字母、数字、下划线和连字符" /></label>
               <label><span>显示名称</span><input name="display_name" autoComplete="name" required maxLength={40} /></label>
@@ -262,9 +264,10 @@ export default function AuthGate({ children }: AuthGateProps) {
             <label><span>偏好的学习方式</span><input name="preferred_modes" required defaultValue="讲解，练习" /></label>
             <label><span>职业目标（可选）</span><input name="career_goal" maxLength={200} placeholder="可以稍后在画像中完善" /></label>
             <div className={styles.grid}>
-              <label><span>密码</span><input name="password" type="password" autoComplete="new-password" required minLength={15} maxLength={128} /></label>
-              <label><span>确认密码</span><input name="password_confirmation" type="password" autoComplete="new-password" required minLength={15} maxLength={128} /></label>
+              <label><span>密码</span><input name="password" type="password" autoComplete="new-password" required minLength={PASSWORD_MIN_LENGTH} maxLength={128} title={PASSWORD_POLICY_MESSAGE} /></label>
+              <label><span>确认密码</span><input name="password_confirmation" type="password" autoComplete="new-password" required minLength={PASSWORD_MIN_LENGTH} maxLength={128} title={PASSWORD_POLICY_MESSAGE} /></label>
             </div>
+            <p className={styles.passwordHint}>{PASSWORD_POLICY_MESSAGE}</p>
             {error ? <p className={styles.error} role="alert">{error}</p> : null}
             <button className={styles.primary} type="submit" disabled={busy}>{busy ? '正在创建…' : '创建账号并进入'}</button>
           </form>
