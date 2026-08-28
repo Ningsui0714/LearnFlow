@@ -114,6 +114,12 @@ export type AgentTaskQueueItem = {
   status: string
   sourceType?: string
   sourceId?: string
+  version?: number
+  artifactRefs?: Array<{
+    kind?: string
+    ref?: string | number
+    title?: string
+  }>
   updatedAt?: string
 }
 

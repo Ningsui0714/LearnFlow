@@ -17,12 +17,11 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-28.6"
+REGISTRY_VERSION = "2026-08-28.7"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
-# The generated frontend SkillSpec did not change in this registry release.
-# Keep its source revision stable until that projection itself is regenerated.
-FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION = "2026-08-28.3"
+# The learner-facing SkillSpec changed in this registry release.
+FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION = "2026-08-28.4"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 LIFECYCLE_STATES = ("implemented", "optional_unimplemented", "deprecated")
 
@@ -384,8 +383,8 @@ TOOLS = {
                      ("structure",), (), "project_tutor session only -> current versioned checkpoint DAG including editability; empty graph is a valid observation"),
         ToolContract("project_roadmap_proposer", "Project Tutor Roadmap Proposal Tool", "tutor_agent", "vnext", "proposal",
                      ("structure", "knowledge", "human", "value"), (), "project_tutor session only + exact project theme + scoped sources/context -> typed create/revision proposal; only not-started nodes may change and explicit learner confirmation is required"),
-        ToolContract("project_learning_file_proposer", "Project Learning File Generation Proposal Tool", "learning_design_agent", "vnext", "proposal",
-                     ("knowledge", "human"), (), "checkpoint LearningTask + available sources -> lecture/practice generation proposal; user-triggered materialization and no mastery inference"),
+        ToolContract("project_learning_file_proposer", "Learning File Generation Proposal Harness", "learning_design_agent", "vnext", "proposal",
+                     ("knowledge", "human"), (), "current formal LearningTask + managed artifact refs -> reuse existing lecture/practice or a confirmation-required generation proposal; project scope is used when available; user-triggered materialization and no mastery inference"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "compatibility dispatcher over exact then conditional fuzzy retrieval; not model-visible; self-report is never Knowledge mastery"),
         ToolContract("vnext_learning_path_exact_reader", "vNext Exact Learning Path Node Reader", "tutor_agent", "vnext", "read",
@@ -728,8 +727,8 @@ PEDAGOGICAL_SKILL_RUNTIMES = {
     "learning_file_study": _skill_runtime(
         SkillStateContract(
             "selecting_learning_artifact", "选择学习文件", "选文件", "guidance", "引导态",
-            "围绕原子目标选择已有讲义/练习，缺少时才提出生成。",
-            "先回应学习者的问题，再读取工作区文件引用；优先复用已有文件。只提出一个打开或生成动作，不在聊天里复制整份内容。",
+            "用极短直接介绍建立起点，然后把主体学习交给已有或待确认生成的完整讲义与练习。",
+            "先用不超过三句话直接回答学习者当下问题，再读取工作区文件引用；优先复用已有文件，缺少时由 Harness 给出一次讲义+练习生成确认卡。聊天不展开完整课程、不列资源菜单；除非学习者明确要求外部资源，不搜索网页或视频。",
             "打开讲义", loop_instruction="缩小目标并只保留一个最相关文件；不为推进流程重复生成。",
         ),
         SkillStateContract(
@@ -866,8 +865,9 @@ SKILLS = {
             learner_selectable=True,
             description="让讲义负责承载内容、练习负责正式作答，对话负责带路和反馈。",
             invocation_prompt=(
-                "当前对话已选择“讲义与练习共学”。先回应学习者当下问题，再查看现有讲义与练习；"
-                "优先复用已有文件，缺少时才提出生成且等待确认。讲义、练习和资料必须在纸张中打开，"
+                "当前对话已选择“讲义与练习共学”。初始回复先用不超过三句话直接介绍当前概念，随后立即"
+                "查看现有讲义与练习；优先复用已有文件，缺少时由 Harness 形成讲义+练习生成确认卡并等待确认。"
+                "学习者未明确要求外部资源时，不搜索网页或视频，不给资源选择菜单。讲义、练习和资料必须在纸张中打开，"
                 "可以成为当前纸张的子纸张；聊天只给阅读锚点、最小支架和证据复盘，不复制整份文件。"
                 "练习答案必须隔离，正式提交由 Practice Agent 确定性判定；阅读、生成和提示作答都不能宣布掌握。"
             ),

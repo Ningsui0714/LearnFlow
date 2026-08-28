@@ -22,13 +22,13 @@ export type ProjectRoadmapProposal = {
 }
 
 export type ProjectLearningFileProposal = {
-  schema_version: 'vnext.project-file-proposal.v1'
-  project_id: number
-  checkpoint_id: number
+  schema_version: 'vnext.project-file-proposal.v1' | 'vnext.learning-file-proposal.v2'
+  project_id?: number
+  checkpoint_id?: number
   learning_task_id: number
   checkpoint_title: string
   file_kinds: Array<'lecture' | 'practice'>
-  source_strategy: 'project_sources_first'
+  source_strategy: 'project_sources_first' | 'task_sources_first'
   confirmation_required: true
   mastery_unchanged: true
 }

@@ -1676,6 +1676,26 @@ function App({ auth }: { auth: AuthGateSession }) {
           status: task.status,
           sourceType: task.origin_kind,
           sourceId: task.source_refs[0] ? JSON.stringify(task.source_refs[0]).slice(0, 160) : undefined,
+          version: task.version,
+          artifactRefs: task.artifact_refs.flatMap(ref => {
+            const type = typeof ref.type === 'string' ? ref.type : ''
+            const logicalTitle = typeof ref.logical_filename === 'string'
+              ? ref.logical_filename.replace(/\.lf(?:lecture|exercise)$/i, '')
+              : task.objective
+            if (type === 'managed_lecture' && typeof ref.id === 'number') {
+              return [{ kind: 'lecture', ref: ref.id, title: logicalTitle }]
+            }
+            if (type === 'concept_question_set' && task.checkpoint_id) {
+              return [{ kind: 'practice', ref: `questions-${task.checkpoint_id}`, title: logicalTitle }]
+            }
+            if (type === 'managed_exercise' && typeof ref.id === 'number') {
+              return [{ kind: 'practice', ref: `exercise-${ref.id}`, title: logicalTitle }]
+            }
+            if ((ref.kind === 'lecture' || ref.kind === 'practice') && (typeof ref.ref === 'string' || typeof ref.ref === 'number')) {
+              return [{ kind: ref.kind, ref: ref.ref, title: typeof ref.title === 'string' ? ref.title : logicalTitle }]
+            }
+            return []
+          }),
           updatedAt: task.updated_at || undefined,
         })),
         knowledgeDomains: [],
@@ -2176,10 +2196,10 @@ function App({ auth }: { auth: AuthGateSession }) {
       const snapshot = await loadFormalLearnerSnapshot(true)
       const task = snapshot.learning_tasks.find(item => item.id === proposal.learning_task_id)
       if (!task) throw new Error('正式学习任务已经变化，请刷新项目后重试')
-      await generateFormalLearningFiles(task)
+      const updated = await generateFormalLearningFiles(task)
       const library = await loadLearningFiles()
       const matching = [...library.lectures, ...library.practices]
-        .filter(item => item.checkpoint_id === proposal.checkpoint_id)
+        .filter(item => item.checkpoint_id === updated.checkpoint_id)
       const preferred = matching.find(item => item.kind === 'lecture') || matching[0]
       await refreshFormalSnapshot(true)
       if (preferred) {
@@ -3172,7 +3192,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile,
         <div className="project-tool-proposal project-file-proposal">
           <span>学习文件提案 · 尚未生成</span>
           <strong>{run.projectLearningFileProposal.checkpoint_title}</strong>
-          <p>{run.projectLearningFileProposal.file_kinds.join(' + ')} · 优先使用当前项目来源 · 生成不等于掌握</p>
+          <p>{run.projectLearningFileProposal.file_kinds.join(' + ')} · {run.projectLearningFileProposal.source_strategy === 'project_sources_first' ? '优先使用当前项目来源' : '优先使用任务已有资料'} · 生成不等于掌握</p>
           <button type="button" disabled={projectBusyKey === `project-file:${run.projectLearningFileProposal.learning_task_id}`} onClick={() => onAcceptProjectLearningFile(run.projectLearningFileProposal!)}>
             {projectBusyKey === `project-file:${run.projectLearningFileProposal.learning_task_id}` ? '正在生成并保存…' : '确认生成，并作为纸张加入对话'}
           </button>

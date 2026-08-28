@@ -1,6 +1,6 @@
 {
   "schema_version": "learnflow.skill.v2",
-  "registry_version": "2026-08-28.3",
+  "registry_version": "2026-08-28.4",
   "generated_from": "backend/app/services/architecture_registry.py",
   "skills": {
     "guided_explanation": {
@@ -612,8 +612,8 @@
             "short_title": "选文件",
             "substate_id": "guidance",
             "substate_label": "引导态",
-            "instructional_objective": "围绕原子目标选择已有讲义/练习，缺少时才提出生成。",
-            "tutor_instruction": "先回应学习者的问题，再读取工作区文件引用；优先复用已有文件。只提出一个打开或生成动作，不在聊天里复制整份内容。",
+            "instructional_objective": "用极短直接介绍建立起点，然后把主体学习交给已有或待确认生成的完整讲义与练习。",
+            "tutor_instruction": "先用不超过三句话直接回答学习者当下问题，再读取工作区文件引用；优先复用已有文件，缺少时由 Harness 给出一次讲义+练习生成确认卡。聊天不展开完整课程、不列资源菜单；除非学习者明确要求外部资源，不搜索网页或视频。",
             "next_action": "打开讲义",
             "accepted_signals": [
               "attempt"

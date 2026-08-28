@@ -168,6 +168,16 @@ function deterministicTutorFallback(input: TutorAgentRuntimeInput, runs: TutorTo
     : ''
   if (input.mode === 'guided_learning' && input.learningTaskContext) {
     const task = input.learningTaskContext
+    if (task.skillId === 'learning_file_study' && task.stepId === 'selecting_learning_artifact') {
+      const hasExistingFile = runs.some(run => run.learningFile)
+      const hasProposal = runs.some(run => run.projectLearningFileProposal)
+      const handoff = hasExistingFile
+        ? '我已经把现有的完整学习文件放在本轮卡片里；打开后，我们从第一处阅读锚点开始。'
+        : hasProposal
+          ? '本轮确认卡会生成完整讲义与练习；确认后，主要学习会在文件纸张中进行。'
+          : '当前还没有可打开的正式学习文件；我会保留任务位置，等文件可用后从讲义开始。'
+      return `先抓住一个起点：${task.objective}会被拆成“核心概念、最小例子、正式练习”三部分。${handoff}${failureNote}`
+    }
     const formalPrompt = task.authority === 'formal_learning_task' && task.stepInstruction.trim()
       ? task.stepInstruction.trim()
       : ''
@@ -186,7 +196,10 @@ export function repairTutorDraftForObservedGaps(reply: string, runs: TutorToolRu
 
   const unresolvedFailures = runs.filter(run => (
     run.status === 'failed'
-    && !runs.some(candidate => candidate.kind === run.kind && candidate.status === 'completed')
+    && !runs.some(candidate => (
+      (run.toolName ? candidate.toolName === run.toolName : candidate.kind === run.kind)
+      && candidate.status === 'completed'
+    ))
   ))
   if (
     unresolvedFailures.length
@@ -400,6 +413,9 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '读取工具可自主调用；项目路线和文件工具只产生 learner-visible proposal，绝不直接写入。',
     '联网搜索先用 search_computer_knowledge 取得候选证据、覆盖缺口和来源状态；需要据此陈述精确机制、版本行为、日期、数值或排错结论时，再用 read_web_evidence 读取最相关的 1-3 个候选页面。搜索摘要不等于已读全文。',
     '视频推荐先用 search_learning_videos 取得 discovered 候选；推荐前必须用 inspect_learning_video 核验本轮候选的字幕、时间点、目标覆盖和内容缺口。元数据、播放量、搜索或观看都不是掌握证据；metadata_only 候选只能标为待核验。',
+    envelope.current.learningTask?.skillId === 'learning_file_study'
+      ? '当前是文件共学：聊天只做不超过一个短段落的直接导入，再把主体交给完整讲义与练习。不要在聊天中展开完整课程、资源清单或多选菜单；Harness 已负责复用文件或提供生成确认卡。除非学习者明确要求外部资源，否则不得搜索网页或视频。'
+      : '',
     'quick 只用于单一事实，standard 用于普通讲解、比较、实现与排错，deep 只用于论文综述、项目调研或多来源复杂决策。deep 仍有查询、页面和补搜预算，不能无限研究。',
     '搜索或读取返回 partial、empty、coverage gaps、circuit_open 时必须在回答中显式保留证据缺口；不得用模型常识伪装成已检索证据。',
     '评估目标、题型组合或成功条件不清时，先调用 design_assessment_blueprint；它返回可检查的蓝图与确定性量表，但不评分。动态习题工具只可在带领学习态且绑定正式 LearningTask/Checkpoint 时调用；生成题目是零目标 artifact 事件，不得声称形成掌握。需要动态练习、诊断或变式验证时，可生成正式练习文件，再让学习者在答案安全工作台提交。',
@@ -412,9 +428,15 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
   ].join('\n')
 }
 
+function hasExplicitExternalResourceRequest(input: TutorAgentRuntimeInput) {
+  const message = [...input.messages].reverse().find(item => item.role === 'user')?.content || ''
+  return input.toolChoice !== 'auto'
+    || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|视频|b站|bilibili|youtube|来源|论文|文档|仓库|官网|最新)/i.test(message)
+}
+
 function availableTools(input: TutorAgentRuntimeInput) {
   const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
-  return TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
+  const tools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
     (!['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node'].includes(tool.name) || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
@@ -427,6 +449,16 @@ function availableTools(input: TutorAgentRuntimeInput) {
       || Boolean(input.formalProjectContext?.checkpoint_id) && input.mode === 'guided_learning' && Boolean(input.learningTaskContext))
     && (tool.name !== 'inspect_practice_quality' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
   ))
+  const fileStudy = input.mode === 'guided_learning' && input.learningTaskContext?.skillId === 'learning_file_study'
+  if (!fileStudy || hasExplicitExternalResourceRequest(input)) return tools
+  const allowed = new Set(['generate_learning_diagram', 'generate_learning_animation'])
+  if (input.learningTaskContext?.stepId === 'practicing_in_file') {
+    allowed.add('design_assessment_blueprint')
+    allowed.add('generate_dynamic_practice')
+    allowed.add('generate_similar_practice')
+    allowed.add('inspect_practice_quality')
+  }
+  return tools.filter(tool => allowed.has(tool.name))
 }
 
 function explicitToolCall(choice: TutorToolChoice, message: string, projectScoped = false): AgentToolCall | undefined {
@@ -472,8 +504,10 @@ export function verifyTutorTurnOutcome(options: {
     (options.mode === 'guided_learning' || Boolean(options.learningTaskContext))
     && masteryClaim
   ) violations.push('unsupported_mastery_claim')
-  const failedKinds = new Set(options.toolRuns.filter(run => run.status === 'failed').map(run => run.kind))
-  const unresolvedFailure = [...failedKinds].some(kind => !options.toolRuns.some(run => run.kind === kind && run.status === 'completed'))
+  const failedKeys = new Set(options.toolRuns.filter(run => run.status === 'failed').map(run => run.toolName || `kind:${run.kind}`))
+  const unresolvedFailure = [...failedKeys].some(key => !options.toolRuns.some(run => (
+    (run.toolName || `kind:${run.kind}`) === key && run.status === 'completed'
+  )))
   if (unresolvedFailure && !/(?:失败|暂时|无法|未能|没有拿到|资料缺口|证据不足|连接问题)/i.test(reply)) {
     violations.push('hidden_tool_failure')
   }
@@ -504,6 +538,17 @@ export function verifyTutorTurnOutcome(options: {
   const unsupportedHistoryInference = /(?:说明|所以|因此|可见)?[^。！!？?\n]{0,18}(?:你(?:是|这)?[^。！!？?\n]{0,8})?(?:第一次(?:正式)?学|从未(?:学|练习)|没有(?:学过|练习过))/i.test(reply)
     && !/(?:记录|数据|当前作用域|这里)[^。！!？?\n]{0,18}(?:没有|暂无|未找到|不可见)/i.test(reply)
   if (noScopedAttempts && unsupportedHistoryInference) violations.push('unsupported_learning_history_claim')
+  const fileSelection = options.learningTaskContext?.skillId === 'learning_file_study'
+    && options.learningTaskContext.stepId === 'selecting_learning_artifact'
+  if (fileSelection && options.learningTaskContext?.formalTaskId) {
+    const hasFileHandoff = options.toolRuns.some(run => run.learningFile || run.projectLearningFileProposal)
+    if (!hasFileHandoff) violations.push('missing_learning_file_handoff')
+    if (reply.length > 520) violations.push('learning_file_chat_overflow')
+  }
+  const unverifiedVideo = options.toolRuns.some(run => run.toolName === 'inspect_learning_video' && run.status !== 'completed')
+  if (unverifiedVideo && /(?:推荐|很适合|值得看|优先看|建议看|可以看)/i.test(reply)) {
+    violations.push('unverified_video_recommendation')
+  }
   return { valid: violations.length === 0, violations }
 }
 
@@ -530,8 +575,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let pathFuzzyPending = false
   let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
   let currentVideoCandidates: LearningVideoCandidate[] = []
-  const explicitlyRequestsExternalResources = input.toolChoice !== 'auto'
-    || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|来源|论文|文档|仓库|官网|最新)/i.test(latestMessage)
+  const explicitlyRequestsExternalResources = hasExplicitExternalResourceRequest(input)
 
   const record = (event: Omit<AgentTrajectoryEvent, 'sequence' | 'at'>) => {
     const recorded = { ...event, sequence: ++sequence, at: Date.now() }
@@ -694,7 +738,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
 
   record({ phase: 'observe', detail: '开始组装本轮观察空间', status: 'started' })
-  const needsLearnerContext = input.mode === 'guided_learning'
+  const selectingLearningFile = input.mode === 'guided_learning'
+    && input.learningTaskContext?.skillId === 'learning_file_study'
+    && input.learningTaskContext.stepId === 'selecting_learning_artifact'
+  const needsLearnerContext = (input.mode === 'guided_learning' && !selectingLearningFile)
     || input.mode === 'learning_plan'
     || /(?:根据我|适合我|我的基础|我的情况|我之前|我学过|我不会|我总是|记得我|偏好|目标|熟练度|掌握度|薄弱|错题)/i.test(latestMessage)
   if (needsLearnerContext) {
@@ -708,6 +755,21 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
     await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
+  }
+  if (
+    selectingLearningFile
+    && input.learningTaskContext?.formalTaskId
+    && !input.activeArtifactContext
+    && !runs.some(run => run.learningFile)
+  ) {
+    await execute({
+      id: `prepare-learning-files-${id}`,
+      name: 'propose_project_learning_files',
+      arguments: {
+        learning_task_id: input.learningTaskContext.formalTaskId,
+        file_kinds: ['lecture', 'practice'],
+      },
+    })
   }
   if (input.activeArtifactContext) {
     await execute({ id: `observe-active-file-${id}`, name: 'read_active_learning_file', arguments: {} })

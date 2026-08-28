@@ -2,6 +2,8 @@
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
+Contract impact（`2026-08-28.7`）：`learning_file_study` 的首步收紧为“至多三句话直接导入 → 正式学习文件交接”。Harness 先从当前正式 LearningTask 的 `artifact_refs` 复用讲义/练习；缺少时复用既有 `generate_learning_files` 确认策略形成一次讲义+练习确认卡。未明确请求外部资源时，当前 Skill 的模型工具面不包含网页搜索、网页读取或视频搜索/核验；视频核验只有元数据时禁止正向推荐。没有新增模型工具、Agent、EventContract、Kernel writer 或掌握语义；旧项目文件提案 schema 继续兼容，新增 v2 提案只把同一确认能力用于未绑定项目的正式原子任务。
+
 Contract impact（`2026-08-28.6`）：隔离 seeded demo 的固定 `safe_average` 代码题新增版本化 AST 判题合同。它只在 competition demo、题目来源、grader ID、合同摘要和固定测试集全部匹配时启用，不执行、导入或求值用户代码；普通代码题仍遵循默认关闭的 `code_executor` 策略。判题结果明确携带 `execution_performed=false` 与合同来源，随后仍只能通过正式 Attempt 和 EvidenceEvent 进入五核。稳定 Agent、Tool、Event、Kernel schema 和生产执行边界均保持兼容。
 
 Contract impact（`2026-08-28.5`）：`learning_runtime.py` 现在在 reducer 实现旁维护独立、可机读的 `REDUCER_EVENT_TYPES`，注册表可以逐项证明带 Kernel target 的 EventContract 具有真实 handler；该集合不得从注册表反向生成。代码执行工具改名为 `Policy-gated Local Code Executor`：生产和默认配置均拒绝执行，只有显式开发配置 `trusted_local_process` 才允许主机进程，并必须披露文件系统、网络和密钥没有隔离。名称与契约不再声称存在并未实现的沙箱。Human 当前适配额外保存产生它的 project/checkpoint/session scope；ContextPacket 只有精确匹配时才消费，且该行政字段不会巩固为记忆。稳定工具 ID、事件 ID、五核 schema 与写入链保持兼容。

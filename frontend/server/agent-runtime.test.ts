@@ -10,6 +10,7 @@ import {
   verifyTutorTurnOutcome,
 } from './agent-runtime.ts'
 import { createInitialLearnerPathState } from '../src/learning-path-graph.ts'
+import { createLearningTask, learningTaskTutorContext, projectLearningTask } from '../src/learning.ts'
 import { executeTutorAgentTool } from './tool-runtime.ts'
 
 test('guided learning receives a larger but still bounded runtime budget', () => {
@@ -757,6 +758,88 @@ test('an active paper is observed exactly once and becomes bounded Tutor context
   assert.deepEqual(result.toolRuns.map(run => run.kind), ['file'])
   assert.match(JSON.stringify(requests[0].body), /线性投影改变最后一维/)
   assert.match(result.reply, /batch 与 token/)
+})
+
+test('learning file study uses a short artifact-first harness instead of resource search', async () => {
+  const created = createLearningTask('什么是聚类，能做什么', 100, [], 'learning_file_study')
+  const learningTaskContext = {
+    ...learningTaskTutorContext(projectLearningTask(created.task, created.events)),
+    authority: 'formal_learning_task' as const,
+    formalTaskId: 42,
+  }
+  const requests: any[] = []
+  const executions: string[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'guided_learning',
+    messages: [{ role: 'user', content: '什么是聚类，能做什么' }],
+    toolChoice: 'auto', learningTaskContext,
+    taskQueue: [{ id: 42, objective: '什么是聚类，能做什么', status: 'active', version: 2, artifactRefs: [] }],
+    generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      executions.push(name)
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{
+        id: 'wrong-video-route', function: { name: 'search_learning_videos', arguments: '{"target":"聚类入门"}' },
+      }] } }] }
+      return { choices: [{ message: { content: '聚类就是在没有现成标签时，按相似性把数据自动分组；常用于用户分群、文档归类和异常发现。完整概念、例子与练习放到学习文件里继续。' } }] }
+    },
+  })
+
+  assert.deepEqual(executions, ['read_learning_workspace', 'propose_project_learning_files'])
+  assert.equal(result.toolRuns.some(run => run.kind === 'search' || run.kind === 'video'), false)
+  assert.ok(result.toolRuns.some(run => run.projectLearningFileProposal?.learning_task_id === 42))
+  assert.ok(result.trace.events.some(event => event.status === 'blocked' && /search_learning_videos/.test(event.detail)))
+  assert.doesNotMatch(JSON.stringify(requests[0].body.tools), /search_learning_videos|search_computer_knowledge|read_web_evidence/)
+  assert.ok(result.reply.length < 220)
+})
+
+test('learning file study reuses an existing lecture before proposing generation', async () => {
+  const created = createLearningTask('理解聚类', 100, [], 'learning_file_study')
+  const learningTaskContext = {
+    ...learningTaskTutorContext(projectLearningTask(created.task, created.events)),
+    authority: 'formal_learning_task' as const,
+    formalTaskId: 43,
+  }
+  const executions: string[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'guided_learning',
+    messages: [{ role: 'user', content: '带我学习聚类' }], toolChoice: 'auto', learningTaskContext,
+    taskQueue: [{
+      id: 43, objective: '理解聚类', status: 'active', artifactRefs: [
+        { kind: 'lecture', ref: 17, title: '聚类：从相似性到分组' },
+        { kind: 'practice', ref: 'questions-9', title: '聚类概念练习' },
+      ],
+    }],
+    generate: async () => 'unused',
+    executeTool: async (name, args, options, meta) => {
+      executions.push(name)
+      return executeTutorAgentTool(name, args, options, meta)
+    },
+    invokeProvider: async () => ({ choices: [{ message: { content: '聚类先解决“没有标签时怎样发现数据结构”。现有讲义已经放在卡片里，打开后先看“相似性如何定义”这一节。' } }] }),
+  })
+
+  assert.deepEqual(executions, ['read_learning_workspace'])
+  assert.equal(result.toolRuns[0].learningFile?.ref, '17')
+  assert.equal(result.toolRuns.some(run => run.projectLearningFileProposal), false)
+})
+
+test('metadata-only video inspection cannot support a positive recommendation', () => {
+  const created = createLearningTask('理解聚类', 100, [], 'learning_file_study')
+  const learningTaskContext = learningTaskTutorContext(projectLearningTask(created.task, created.events))
+  const checked = verifyTutorTurnOutcome({
+    reply: '我推荐这个视频，它很适合你。', mode: 'guided_learning', learningTaskContext,
+    toolRuns: [{
+      id: 'inspect', kind: 'video', status: 'failed', title: '核验学习视频内容', detail: '只有元数据',
+      durationMs: 1, toolName: 'inspect_learning_video', observationSummary: 'metadata_only',
+    }],
+  })
+  assert.equal(checked.valid, false)
+  assert.ok(checked.violations.includes('unverified_video_recommendation'))
 })
 
 test('review questions receive answer-free proficiency and memory observations', async () => {

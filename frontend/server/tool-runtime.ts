@@ -271,17 +271,18 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   },
   {
     name: 'propose_project_learning_files',
-    title: '提出生成讲义与练习',
-    description: '为当前关卡正式学习任务提出讲义/练习生成操作。只产生待确认操作，不直接生成文件。',
+    title: '准备完整讲义与练习',
+    description: '为当前正式学习任务准备讲义/练习生成确认卡。Harness 在文件共学的选文件步骤优先复用已有文件；确实缺少时才调用。只产生待确认操作，不直接生成文件。',
     toolClass: 'collaboration',
     risk: 'proposal',
     inputSchema: {
       type: 'object',
       properties: {
-        checkpoint_id: { type: 'integer', description: '当前项目中的关卡 ID' },
+        learning_task_id: { type: 'integer', description: '当前正式 LearningTask ID' },
+        checkpoint_id: { type: 'integer', description: '已有项目关卡时可传当前关卡 ID' },
         file_kinds: { type: 'array', items: { type: 'string', enum: ['lecture', 'practice'] } },
       },
-      required: ['checkpoint_id', 'file_kinds'],
+      required: ['file_kinds'],
       additionalProperties: false,
     },
   },
@@ -941,8 +942,16 @@ export async function executeTutorAgentTool(
         objective: compactText(task.objective, 220),
         status: compactText(task.status, 40),
         sourceType: compactText(task.sourceType, 60),
+        artifactRefs: (task.artifactRefs || []).slice(0, 8).map(ref => ({
+          kind: compactText(ref.kind, 30),
+          ref: typeof ref.ref === 'number' ? ref.ref : compactText(ref.ref, 180),
+          title: compactText(ref.title, 180),
+        })),
         updatedAt: task.updatedAt,
       }))
+      const currentTask = queue.find(task => task.id === Number(options.learningTaskContext?.formalTaskId || 0))
+      const currentArtifact = currentTask?.artifactRefs.find(ref => ref.kind === 'lecture')
+        || currentTask?.artifactRefs.find(ref => ref.kind === 'practice')
       const formalDomains = (formal?.knowledge_domains || []).map((domain: any) => ({
         id: String(domain.id || '').slice(0, 120),
         title: compactText(domain.title, 100),
@@ -970,6 +979,13 @@ export async function executeTutorAgentTool(
           detail: `已读取当前任务/规划绑定与 ${queue.length} 个正式队列任务；${formal ? `${formal.recent_attempts.length} 次近期尝试、${formal.open_remediations.length} 个开放纠错` : '实践/复习投影暂不可用'}；${domains.length ? `当前项目有 ${domains.length} 个来源知识领域` : '当前对话未绑定项目知识领域'}。`,
           observationSummary: `${queue.length} 个正式任务 / ${formal?.recent_attempts.length || 0} 次尝试 / ${domains.length} 个项目知识领域`,
           durationMs: Date.now() - startedAt,
+          ...(currentArtifact && (currentArtifact.kind === 'lecture' || currentArtifact.kind === 'practice') && currentArtifact.ref ? {
+            learningFile: {
+              kind: currentArtifact.kind,
+              ref: String(currentArtifact.ref),
+              title: currentArtifact.title || options.learningTaskContext?.objective || '学习文件',
+            },
+          } : {}),
         },
         observation: {
           authority: formal?.authority || 'formal_task_queue_plus_scoped_workspace_projection',
@@ -1190,22 +1206,35 @@ export async function executeTutorAgentTool(
 
     if (name === 'propose_project_learning_files') {
       const project = compactProjectContext(options.formalProjectContext)
-      if (!project) throw new Error('当前对话没有正式项目 scope')
-      const checkpointId = Number(args.checkpoint_id)
-      const task = project.learning_tasks.find((item: any) => Number(item.checkpoint_id) === checkpointId)
-      const checkpoint = project.roadmap.checkpoints.find((item: any) => Number(item.id) === checkpointId)
-      if (!task || !checkpoint) throw new Error('关卡没有绑定正式学习任务')
+      const requestedTaskId = Number(args.learning_task_id || options.learningTaskContext?.formalTaskId || 0)
+      const checkpointId = Number(args.checkpoint_id || options.formalProjectContext?.checkpoint_id || 0)
+      const task = project?.learning_tasks.find((item: any) => (
+        requestedTaskId ? Number(item.id) === requestedTaskId : Number(item.checkpoint_id) === checkpointId
+      ))
+      const checkpoint = project?.roadmap.checkpoints.find((item: any) => Number(item.id) === checkpointId)
+      const learningTaskId = Number((task as any)?.id || requestedTaskId)
+      if (!learningTaskId || learningTaskId !== Number(options.learningTaskContext?.formalTaskId || learningTaskId)) {
+        throw new Error('当前对话没有可确认的正式学习任务')
+      }
       const fileKinds = [...new Set((Array.isArray(args.file_kinds) ? args.file_kinds : [])
         .filter((item): item is 'lecture' | 'practice' => item === 'lecture' || item === 'practice'))]
       if (!fileKinds.length) throw new Error('至少选择讲义或练习中的一种')
-      const proposal = {
+      const proposal = project && task && checkpoint ? {
         schema_version: 'vnext.project-file-proposal.v1' as const,
         project_id: project.project.id,
         checkpoint_id: checkpointId,
-        learning_task_id: Number((task as any).id),
+        learning_task_id: learningTaskId,
         checkpoint_title: compactText((checkpoint as any).title, 255),
         file_kinds: fileKinds,
         source_strategy: 'project_sources_first' as const,
+        confirmation_required: true as const,
+        mastery_unchanged: true as const,
+      } : {
+        schema_version: 'vnext.learning-file-proposal.v2' as const,
+        learning_task_id: learningTaskId,
+        checkpoint_title: compactText(options.learningTaskContext?.objective || '当前学习任务', 255),
+        file_kinds: fileKinds,
+        source_strategy: 'task_sources_first' as const,
         confirmation_required: true as const,
         mastery_unchanged: true as const,
       }
