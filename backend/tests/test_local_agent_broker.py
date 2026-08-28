@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import time
 
 from fastapi.testclient import TestClient
@@ -20,6 +24,55 @@ from app.services.local_agent_broker import CodexCliAdapter
 
 DESKTOP_TOKEN = "local-agent-test-token"
 HEADERS = {"X-LearnFlow-Desktop-Token": DESKTOP_TOKEN}
+
+
+def run_git(root: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    git = shutil.which("git")
+    assert git, "Git is required for local Agent isolation tests"
+    controlled_env = dict(os.environ)
+    controlled_env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull})
+    if env:
+        controlled_env.update(env)
+    result = subprocess.run(
+        [git, "-C", str(root), *args], check=True, capture_output=True, text=True,
+        env=controlled_env,
+    )
+    return result.stdout.strip()
+
+
+def commit_all(root: Path, message: str, timestamp: str) -> str:
+    run_git(root, "add", "-A", "--", ".")
+    commit_env = {
+        "GIT_AUTHOR_NAME": "Source Author",
+        "GIT_AUTHOR_EMAIL": "source@example.test",
+        "GIT_COMMITTER_NAME": "Source Author",
+        "GIT_COMMITTER_EMAIL": "source@example.test",
+        "GIT_AUTHOR_DATE": timestamp,
+        "GIT_COMMITTER_DATE": timestamp,
+    }
+    run_git(
+        root, "-c", "commit.gpgSign=false", "commit", "--quiet", "--no-verify",
+        "-m", message, env=commit_env,
+    )
+    return run_git(root, "rev-parse", "HEAD")
+
+
+def initialize_git_repository(root: Path) -> None:
+    root.mkdir(parents=True)
+    run_git(root, "init", "--quiet")
+
+
+def git_state(root: Path) -> dict[str, str]:
+    index_text = run_git(root, "rev-parse", "--git-path", "index")
+    index_path = Path(index_text)
+    if not index_path.is_absolute():
+        index_path = root / index_path
+    index_digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
+    return {
+        "head": run_git(root, "rev-parse", "HEAD"),
+        "index_sha256": index_digest,
+        "reflog": run_git(root, "reflog", "show", "--all", "--format=%H%x09%gD%x09%gs"),
+    }
 
 
 def registration(username: str):
@@ -85,6 +138,161 @@ def wait_for_run(client: TestClient, run_id: int) -> dict:
     raise AssertionError("local Agent run did not finish")
 
 
+def test_safe_snapshot_records_git_secrets_symlinks_and_manifest(tmp_path):
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / ".git").write_text("gitdir: /must/not/be/copied\n", encoding="utf-8")
+    (root / ".env").write_text("SECRET=never-copy\n", encoding="utf-8")
+    (root / "private.pem").write_text("private-key\n", encoding="utf-8")
+    nested = root / "nested"
+    (nested / ".git").mkdir(parents=True)
+    (nested / ".git" / "config").write_text("source git metadata\n", encoding="utf-8")
+    source_file = root / "src" / "main.py"
+    source_file.parent.mkdir()
+    source_file.write_text("print('safe')\n", encoding="utf-8")
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("outside\n", encoding="utf-8")
+    symlink_created = True
+    try:
+        (root / "linked-secret").symlink_to(outside)
+    except OSError:
+        symlink_created = False
+
+    destination = tmp_path / "snapshot"
+    manifest = broker._copy_safe_snapshot(root, destination)
+    second_manifest = broker._copy_safe_snapshot(root, tmp_path / "snapshot-again")
+
+    assert set(manifest["included"]) == {"src/main.py"}
+    assert (destination / "src" / "main.py").read_text(encoding="utf-8") == "print('safe')\n"
+    assert not (destination / ".git").exists()
+    assert not (destination / "nested" / ".git").exists()
+    assert not (destination / ".env").exists()
+    assert not (destination / "private.pem").exists()
+    if symlink_created:
+        assert not (destination / "linked-secret").exists()
+
+    skipped = {(entry["path"], entry["reason"]) for entry in manifest["skipped"]}
+    assert (".git", "git_metadata") in skipped
+    assert ("nested/.git", "git_metadata") in skipped
+    assert (".env", "secret") in skipped
+    assert ("private.pem", "secret") in skipped
+    if symlink_created:
+        assert ("linked-secret", "link_or_reparse") in skipped
+    summary = manifest["summary"]
+    assert summary["source_git_metadata_included"] is False
+    assert summary["included_file_count"] == 1
+    assert summary["included_total_bytes"] == len(b"print('safe')\n")
+    assert len(summary["manifest_sha256"]) == 64
+    assert summary["manifest_sha256"] == second_manifest["summary"]["manifest_sha256"]
+
+
+def test_snapshot_enforces_file_count_and_total_byte_budgets(tmp_path, monkeypatch):
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / "a.txt").write_bytes(b"aaaa")
+    (root / "b.txt").write_bytes(b"bbbb")
+    (root / "c.txt").write_bytes(b"c")
+
+    monkeypatch.setattr(broker, "MAX_SNAPSHOT_FILES", 1)
+    monkeypatch.setattr(broker, "MAX_SNAPSHOT_TOTAL_BYTES", 100)
+    count_manifest = broker._copy_safe_snapshot(root, tmp_path / "count-limited")
+    assert set(count_manifest["included"]) == {"a.txt"}
+    assert count_manifest["summary"]["included_file_count"] == 1
+    assert count_manifest["summary"]["skipped_by_reason"]["file_count_budget_exceeded"] == 2
+    assert count_manifest["summary"]["limits"]["max_file_count"] == 1
+
+    monkeypatch.setattr(broker, "MAX_SNAPSHOT_FILES", 10)
+    monkeypatch.setattr(broker, "MAX_SNAPSHOT_TOTAL_BYTES", 5)
+    byte_manifest = broker._copy_safe_snapshot(root, tmp_path / "byte-limited")
+    assert set(byte_manifest["included"]) == {"a.txt", "c.txt"}
+    assert byte_manifest["summary"]["included_total_bytes"] == 5
+    assert byte_manifest["summary"]["skipped_by_reason"]["total_bytes_budget_exceeded"] == 1
+    assert byte_manifest["summary"]["limits"]["max_total_bytes"] == 5
+
+
+def test_regular_git_repository_uses_fresh_deterministic_baseline(tmp_path, monkeypatch):
+    source = tmp_path / "source-repository"
+    initialize_git_repository(source)
+    tracked = source / "tracked.txt"
+    tracked.write_text("first\n", encoding="utf-8")
+    first_source_commit = commit_all(source, "source first", "2024-01-01T00:00:00+00:00")
+    tracked.write_text("second\n", encoding="utf-8")
+    (source / ".gitignore").write_text("dirty.txt\n", encoding="utf-8")
+    source_head = commit_all(source, "source second", "2024-01-02T00:00:00+00:00")
+    assert first_source_commit != source_head
+    run_git(source, "remote", "add", "origin", "https://example.invalid/source.git")
+    (source / "dirty.txt").write_text("current disk snapshot\n", encoding="utf-8")
+    before = git_state(source)
+    monkeypatch.setattr(settings, "local_agent_runs_dir", str(tmp_path / "runs"))
+
+    isolation, isolated_worktree, manifest = asyncio.run(broker._prepare_isolation(source, 101))
+    _, second_worktree, second_manifest = asyncio.run(broker._prepare_isolation(source, 102))
+
+    assert not (isolation / "base" / ".git").exists()
+    assert (isolated_worktree / ".git").is_dir()
+    assert run_git(isolated_worktree, "remote") == ""
+    assert run_git(isolated_worktree, "rev-list", "--count", "HEAD") == "1"
+    assert source_head not in run_git(isolated_worktree, "rev-list", "--all")
+    assert run_git(isolated_worktree, "branch", "--show-current") == broker.ISOLATED_GIT_BRANCH
+    assert run_git(
+        isolated_worktree, "show", "-s", "--format=%an|%ae|%at|%s", "HEAD",
+    ) == (
+        "LearnFlow Broker|broker@localhost|946684800|"
+        "LearnFlow isolated baseline"
+    )
+    assert (isolated_worktree / "tracked.txt").read_text(encoding="utf-8") == "second\n"
+    assert (isolated_worktree / "dirty.txt").read_text(encoding="utf-8") == "current disk snapshot\n"
+    assert run_git(isolated_worktree, "ls-files", "--error-unmatch", "dirty.txt") == "dirty.txt"
+    assert manifest["git"]["source_history_included"] is False
+    assert manifest["git"]["remote_count"] == 0
+    assert manifest["git"]["baseline_commit"] == second_manifest["git"]["baseline_commit"]
+    assert run_git(second_worktree, "remote") == ""
+    assert manifest["summary"]["skipped_by_reason"]["git_metadata"] == 1
+    assert git_state(source) == before
+    assert run_git(source, "remote", "get-url", "origin") == "https://example.invalid/source.git"
+
+
+def test_real_git_worktree_does_not_mutate_source_git_state(tmp_path, monkeypatch):
+    repository = tmp_path / "repository"
+    initialize_git_repository(repository)
+    (repository / "tracked.txt").write_text("source worktree\n", encoding="utf-8")
+    source_commit = commit_all(repository, "source baseline", "2024-02-01T00:00:00+00:00")
+    run_git(repository, "remote", "add", "origin", "https://example.invalid/worktree.git")
+
+    linked = tmp_path / "linked-worktree"
+    run_git(repository, "worktree", "add", "--quiet", "-b", "linked-branch", str(linked))
+    assert (linked / ".git").is_file()
+    git_pointer_before = (linked / ".git").read_text(encoding="utf-8")
+    source_git_dir = Path(git_pointer_before.removeprefix("gitdir:").strip()).resolve()
+    (linked / "untracked.txt").write_text("included current file\n", encoding="utf-8")
+    (linked / ".env").write_text("SECRET=not-in-snapshot\n", encoding="utf-8")
+    before = git_state(linked)
+    monkeypatch.setattr(settings, "local_agent_runs_dir", str(tmp_path / "runs"))
+
+    isolation, isolated_worktree, manifest = asyncio.run(broker._prepare_isolation(linked, 201))
+
+    assert (linked / ".git").read_text(encoding="utf-8") == git_pointer_before
+    assert git_state(linked) == before
+    assert before["head"] == source_commit
+    assert not (isolation / "base" / ".git").exists()
+    assert (isolated_worktree / ".git").is_dir()
+    isolated_git_dir = Path(run_git(isolated_worktree, "rev-parse", "--absolute-git-dir")).resolve()
+    assert isolated_git_dir.is_relative_to(isolated_worktree.resolve())
+    assert isolated_git_dir != source_git_dir
+    assert run_git(isolated_worktree, "remote") == ""
+    assert run_git(isolated_worktree, "rev-list", "--count", "HEAD") == "1"
+    assert source_commit not in run_git(isolated_worktree, "rev-list", "--all")
+    assert (isolated_worktree / "untracked.txt").read_text(encoding="utf-8") == "included current file\n"
+    assert not (isolated_worktree / ".env").exists()
+    assert manifest["summary"]["skipped_by_reason"]["git_metadata"] == 1
+    assert manifest["summary"]["skipped_by_reason"]["secret"] == 1
+    isolated_control_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in (isolated_git_dir / "config", isolated_git_dir / "HEAD", isolated_git_dir / "logs" / "HEAD")
+    )
+    assert str(source_git_dir) not in isolated_control_text
+
+
 def test_seeded_agent_requires_two_confirmations_and_writes_zero_kernel_events(tmp_path, monkeypatch):
     enable_desktop_demo(monkeypatch, tmp_path / "runs")
     root = tmp_path / "workspace"
@@ -130,6 +338,10 @@ def test_seeded_agent_requires_two_confirmations_and_writes_zero_kernel_events(t
         finished = wait_for_run(client, run_id)
         assert finished["status"] == "completed", finished
         assert finished["result"]["requires_second_confirmation"] is True
+        assert finished["result"]["snapshot"]["summary"]["source_git_metadata_included"] is False
+        assert finished["result"]["snapshot"]["summary"]["included_file_count"] == 1
+        assert finished["result"]["snapshot"]["git"]["source_history_included"] is False
+        assert finished["result"]["snapshot"]["git"]["remote_count"] == 0
         assert finished["changed_files"][0]["path"] == "learnflow-seeded-agent.md"
         assert not (root / "learnflow-seeded-agent.md").exists()
 
@@ -299,6 +511,10 @@ def test_profile_contract_rejects_fake_shell_templates_and_false_network_claims(
         })
         assert missing.status_code == 200
         assert missing.json()["last_probe"]["available"] is False
+        assert missing.json()["last_probe"]["network_policy"] == "unmanaged"
+        assert missing.json()["last_probe"]["network_boundary_enforced"] is False
+        assert missing.json()["last_probe"]["host_read_policy"] == "unmanaged"
+        assert missing.json()["last_probe"]["host_read_boundary_enforced"] is False
 
 
 def test_codex_adapter_uses_fixed_argument_array_without_shell(monkeypatch, tmp_path):

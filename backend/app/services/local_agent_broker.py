@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 import difflib
 import json
@@ -40,7 +40,13 @@ EXCLUDED_DIRECTORIES = {
     "node_modules", "dist", "build", "coverage", "target",
 }
 MAX_COPY_BYTES = 20 * 1024 * 1024
+MAX_SNAPSHOT_FILES = 20_000
+MAX_SNAPSHOT_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_RECORDED_SKIPPED_ENTRIES = 2_000
 MAX_DIFF_BYTES = 2 * 1024 * 1024
+SNAPSHOT_MANIFEST_VERSION = "learnflow.local-agent-snapshot.v1"
+ISOLATED_GIT_BRANCH = "learnflow-isolated"
+ISOLATED_GIT_BASELINE_DATE = "2000-01-01T00:00:00+00:00"
 
 _tasks: dict[int, asyncio.Task] = {}
 _processes: dict[int, asyncio.subprocess.Process] = {}
@@ -111,6 +117,8 @@ class CodexCliAdapter:
                 "sandbox_policy": "workspace_write",
                 "network_policy": "unmanaged",
                 "network_boundary_enforced": False,
+                "host_read_policy": "unmanaged",
+                "host_read_boundary_enforced": False,
                 "probed_at": datetime.utcnow().isoformat(),
             }
         except (LocalAgentError, OSError, asyncio.TimeoutError) as exc:
@@ -118,6 +126,8 @@ class CodexCliAdapter:
                 "available": False, "authenticated": False,
                 "message": str(exc)[:300], "network_policy": "unmanaged",
                 "network_boundary_enforced": False,
+                "host_read_policy": "unmanaged",
+                "host_read_boundary_enforced": False,
                 "probed_at": datetime.utcnow().isoformat(),
             }
 
@@ -206,6 +216,7 @@ class DeterministicFakeAdapter:
             "available": True, "authenticated": True, "version": "seeded-demo-v1",
             "sandbox_policy": "workspace_write", "network_policy": "managed_off",
             "network_boundary_enforced": True, "probed_at": datetime.utcnow().isoformat(),
+            "host_read_policy": "managed_off", "host_read_boundary_enforced": True,
         }
 
     async def start(
@@ -258,9 +269,49 @@ def _is_reparse(info: os.stat_result) -> bool:
     return bool(flag and getattr(info, "st_file_attributes", 0) & flag)
 
 
-def _iter_safe_source_files(root: Path):
+def _is_git_metadata(relative: str) -> bool:
+    return any(part.casefold() == ".git" for part in PurePosixPath(relative).parts)
+
+
+def _directory_skip_reason(relative: str, path: Path, info: os.stat_result) -> str | None:
+    name = PurePosixPath(relative).name.casefold()
+    if _is_git_metadata(relative):
+        return "git_metadata"
+    if name in EXCLUDED_DIRECTORIES:
+        return "excluded_directory"
+    if _is_secret(relative):
+        return "secret"
+    if path.is_symlink() or _is_reparse(info):
+        return "link_or_reparse"
+    if not stat.S_ISDIR(info.st_mode):
+        return "non_directory_entry"
+    return None
+
+
+def _file_skip_reason(relative: str, path: Path, info: os.stat_result) -> str | None:
+    if _is_git_metadata(relative):
+        return "git_metadata"
+    if _is_secret(relative):
+        return "secret"
+    if _is_managed_learning_descriptor(relative):
+        return "managed_learning_descriptor"
+    if path.is_symlink() or _is_reparse(info):
+        return "link_or_reparse"
+    if not stat.S_ISREG(info.st_mode):
+        return "non_regular_file"
+    if info.st_size > MAX_COPY_BYTES:
+        return "file_size_budget_exceeded"
+    return None
+
+
+def _walk_safe_source_files(
+    root: Path,
+    on_skip: Callable[[str, str, str, int | None], None] | None = None,
+) -> Iterator[tuple[str, Path, os.stat_result]]:
     for directory, names, files in os.walk(root, topdown=True, followlinks=False):
         current = Path(directory)
+        names.sort(key=lambda value: (value.casefold(), value))
+        files.sort(key=lambda value: (value.casefold(), value))
         safe_names = []
         for name in names:
             child = current / name
@@ -268,11 +319,13 @@ def _iter_safe_source_files(root: Path):
             try:
                 info = child.stat(follow_symlinks=False)
             except OSError:
+                if on_skip:
+                    on_skip(relative, "directory", "stat_failed", None)
                 continue
-            if (
-                name.casefold() in EXCLUDED_DIRECTORIES or _is_secret(relative)
-                or child.is_symlink() or _is_reparse(info)
-            ):
+            reason = _directory_skip_reason(relative, child, info)
+            if reason:
+                if on_skip:
+                    on_skip(relative, "directory", reason, None)
                 continue
             safe_names.append(name)
         names[:] = safe_names
@@ -282,34 +335,253 @@ def _iter_safe_source_files(root: Path):
             try:
                 info = source.stat(follow_symlinks=False)
             except OSError:
+                if on_skip:
+                    on_skip(relative, "file", "stat_failed", None)
                 continue
-            if (
-                _is_secret(relative) or _is_managed_learning_descriptor(relative)
-                or source.is_symlink() or _is_reparse(info)
-                or not source.is_file() or info.st_size > MAX_COPY_BYTES
-            ):
+            reason = _file_skip_reason(relative, source, info)
+            if reason:
+                if on_skip:
+                    on_skip(relative, "file", reason, info.st_size)
                 continue
-            yield relative, source
+            yield relative, source, info
 
 
-def _copy_safe_snapshot(source_root: Path, destination: Path) -> None:
+def _iter_safe_source_files(root: Path) -> Iterator[tuple[str, Path]]:
+    for relative, source, _ in _walk_safe_source_files(root):
+        yield relative, source
+
+
+def _manifest_digest(
+    included: dict[str, dict], skipped: list[dict], skipped_by_reason: dict[str, int],
+) -> str:
+    payload = {
+        "version": SNAPSHOT_MANIFEST_VERSION,
+        "included": included,
+        "skipped": skipped,
+        "skipped_by_reason": dict(sorted(skipped_by_reason.items())),
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256_bytes(encoded)
+
+
+def _copy_safe_snapshot(source_root: Path, destination: Path) -> dict:
+    if source_root.name.casefold() == ".git":
+        raise LocalAgentError(409, "不能把 Git 元数据目录作为 Agent 工作区", "git_metadata_root")
+
     destination.mkdir(parents=True, exist_ok=True)
-    for relative, source in _iter_safe_source_files(source_root):
+    included: dict[str, dict] = {}
+    skipped: list[dict] = []
+    skipped_by_reason: dict[str, int] = {}
+
+    def record_skip(relative: str, kind: str, reason: str, size: int | None) -> None:
+        skipped_by_reason[reason] = skipped_by_reason.get(reason, 0) + 1
+        if len(skipped) >= MAX_RECORDED_SKIPPED_ENTRIES:
+            return
+        entry: dict[str, object] = {"path": relative, "kind": kind, "reason": reason}
+        if size is not None:
+            entry["size"] = size
+        skipped.append(entry)
+
+    candidates: list[tuple[str, Path, int]] = []
+    planned_bytes = 0
+    for relative, source, info in _walk_safe_source_files(source_root, record_skip):
+        if len(candidates) >= MAX_SNAPSHOT_FILES:
+            record_skip(relative, "file", "file_count_budget_exceeded", info.st_size)
+            continue
+        if planned_bytes + info.st_size > MAX_SNAPSHOT_TOTAL_BYTES:
+            record_skip(relative, "file", "total_bytes_budget_exceeded", info.st_size)
+            continue
+        candidates.append((relative, source, info.st_size))
+        planned_bytes += info.st_size
+
+    included_total_bytes = 0
+    for relative, source, planned_size in candidates:
         target = destination.joinpath(*PurePosixPath(relative).parts)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target, follow_symlinks=False)
+        try:
+            shutil.copy2(source, target, follow_symlinks=False)
+            copied_info = target.stat(follow_symlinks=False)
+            if target.is_symlink() or _is_reparse(copied_info) or not stat.S_ISREG(copied_info.st_mode):
+                target.unlink(missing_ok=True)
+                record_skip(relative, "file", "source_changed_during_snapshot", planned_size)
+                continue
+            raw = target.read_bytes()
+        except OSError:
+            target.unlink(missing_ok=True)
+            record_skip(relative, "file", "copy_failed", planned_size)
+            continue
+        if len(raw) != planned_size:
+            target.unlink(missing_ok=True)
+            record_skip(relative, "file", "source_changed_during_snapshot", planned_size)
+            continue
+
+        is_text = len(raw) <= MAX_TEXT_BYTES and b"\x00" not in raw
+        if is_text:
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                is_text = False
+        included[relative] = {
+            "sha256": sha256_bytes(raw), "size": len(raw), "is_text": is_text,
+        }
+        included_total_bytes += len(raw)
+
+    skipped_entry_count = sum(skipped_by_reason.values())
+    summary = {
+        "included_file_count": len(included),
+        "included_total_bytes": included_total_bytes,
+        "skipped_entry_count": skipped_entry_count,
+        "recorded_skipped_entry_count": len(skipped),
+        "skipped_entries_truncated": skipped_entry_count - len(skipped),
+        "skipped_by_reason": dict(sorted(skipped_by_reason.items())),
+        "skipped_directory_descendants_enumerated": False,
+        "source_git_metadata_included": False,
+        "limits": {
+            "max_file_bytes": MAX_COPY_BYTES,
+            "max_file_count": MAX_SNAPSHOT_FILES,
+            "max_total_bytes": MAX_SNAPSHOT_TOTAL_BYTES,
+            "max_recorded_skipped_entries": MAX_RECORDED_SKIPPED_ENTRIES,
+        },
+    }
+    summary["manifest_sha256"] = _manifest_digest(included, skipped, skipped_by_reason)
+    return {
+        "version": SNAPSHOT_MANIFEST_VERSION,
+        "included": included,
+        "skipped": skipped,
+        "summary": summary,
+    }
 
 
-async def _run_command(*args: str, cwd: Path | None = None, timeout: int = 60) -> tuple[int, str]:
+def _copy_manifest_snapshot(base: Path, destination: Path, manifest: dict) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for relative, metadata in sorted((manifest.get("included") or {}).items()):
+        if _is_git_metadata(relative):
+            raise LocalAgentError(500, "快照 manifest 包含禁止的 Git 元数据", "snapshot_integrity_failed")
+        source = base.joinpath(*PurePosixPath(relative).parts)
+        target = destination.joinpath(*PurePosixPath(relative).parts)
+        try:
+            source_info = source.stat(follow_symlinks=False)
+            if source.is_symlink() or _is_reparse(source_info) or not stat.S_ISREG(source_info.st_mode):
+                raise OSError("unsafe baseline entry")
+            raw = source.read_bytes()
+            if len(raw) != metadata.get("size") or sha256_bytes(raw) != metadata.get("sha256"):
+                raise OSError("baseline digest mismatch")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target, follow_symlinks=False)
+            copied = target.read_bytes()
+            if sha256_bytes(copied) != metadata.get("sha256"):
+                raise OSError("worktree digest mismatch")
+        except OSError as exc:
+            raise LocalAgentError(
+                500, f"无法复制已验证快照文件：{relative}", "snapshot_integrity_failed",
+            ) from exc
+
+
+async def _run_command(
+    *args: str, cwd: Path | None = None, timeout: int = 60,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str]:
+    process: asyncio.subprocess.Process | None = None
     try:
         process = await asyncio.create_subprocess_exec(
             *args, cwd=str(cwd) if cwd else None, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT, env=_subprocess_environment(),
+            stderr=asyncio.subprocess.STDOUT, env=env or _subprocess_environment(),
         )
         output, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
         return process.returncode or 0, output.decode("utf-8", errors="replace")[:4000]
-    except (OSError, asyncio.TimeoutError) as exc:
+    except asyncio.TimeoutError:
+        if process and process.returncode is None:
+            process.kill()
+            await process.wait()
+        return 1, f"command timed out after {timeout}s"
+    except OSError as exc:
         return 1, str(exc)
+
+
+def _isolated_git_environment() -> dict[str, str]:
+    env = _subprocess_environment()
+    env.update({
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_AUTHOR_NAME": "LearnFlow Broker",
+        "GIT_AUTHOR_EMAIL": "broker@localhost",
+        "GIT_COMMITTER_NAME": "LearnFlow Broker",
+        "GIT_COMMITTER_EMAIL": "broker@localhost",
+        "GIT_AUTHOR_DATE": ISOLATED_GIT_BASELINE_DATE,
+        "GIT_COMMITTER_DATE": ISOLATED_GIT_BASELINE_DATE,
+    })
+    return env
+
+
+async def _run_git_checked(
+    git: str, *args: str, cwd: Path, env: dict[str, str], timeout: int = 60,
+) -> str:
+    return_code, output = await _run_command(git, *args, cwd=cwd, timeout=timeout, env=env)
+    if return_code != 0:
+        raise LocalAgentError(
+            500, f"无法创建安全的隔离 Git 基线：{output[:300]}", "isolation_git_failed",
+        )
+    return output.strip()
+
+
+async def _initialize_isolated_git_repository(isolation: Path, worktree: Path) -> dict:
+    git = shutil.which("git")
+    if not git:
+        return {
+            "initialized": False,
+            "reason": "git_unavailable",
+            "source_history_included": False,
+            "remote_count": 0,
+        }
+
+    template = isolation / "git-template"
+    template.mkdir(parents=True, exist_ok=True)
+    env = _isolated_git_environment()
+    await _run_git_checked(git, "init", "--quiet", f"--template={template}", cwd=worktree, env=env)
+    await _run_git_checked(
+        git, "symbolic-ref", "HEAD", f"refs/heads/{ISOLATED_GIT_BRANCH}",
+        cwd=worktree, env=env,
+    )
+    await _run_git_checked(git, "config", "--local", "core.autocrlf", "false", cwd=worktree, env=env)
+    await _run_git_checked(git, "config", "--local", "core.filemode", "false", cwd=worktree, env=env)
+    await _run_git_checked(git, "config", "--local", "commit.gpgSign", "false", cwd=worktree, env=env)
+    # The baseline must cover every included snapshot file, including files ignored
+    # by a source .gitignore. Source Git policy is data, not isolation policy.
+    await _run_git_checked(git, "add", "-A", "--force", "--", ".", cwd=worktree, env=env)
+    await _run_git_checked(
+        git, "commit", "--quiet", "--allow-empty", "--no-verify",
+        "-m", "LearnFlow isolated baseline", cwd=worktree, env=env,
+    )
+
+    git_dir_text = await _run_git_checked(git, "rev-parse", "--absolute-git-dir", cwd=worktree, env=env)
+    git_dir = Path(git_dir_text)
+    if not git_dir.is_absolute():
+        git_dir = worktree / git_dir
+    try:
+        git_dir.resolve(strict=True).relative_to(worktree.resolve(strict=True))
+    except (OSError, ValueError) as exc:
+        raise LocalAgentError(
+            500, "隔离 Git 元数据越过了任务工作目录", "isolation_gitdir_escape",
+        ) from exc
+
+    remotes = await _run_git_checked(git, "remote", cwd=worktree, env=env)
+    if remotes:
+        raise LocalAgentError(500, "隔离 Git 仓库意外包含 remote", "isolation_remote_present")
+    baseline_commit = await _run_git_checked(git, "rev-parse", "HEAD", cwd=worktree, env=env)
+    history_count = await _run_git_checked(git, "rev-list", "--count", "HEAD", cwd=worktree, env=env)
+    if history_count != "1":
+        raise LocalAgentError(500, "隔离 Git 仓库包含来源历史", "isolation_history_present")
+    return {
+        "initialized": True,
+        "branch": ISOLATED_GIT_BRANCH,
+        "baseline_commit": baseline_commit,
+        "baseline_date": ISOLATED_GIT_BASELINE_DATE,
+        "source_history_included": False,
+        "remote_count": 0,
+        "git_dir": ".git",
+    }
 
 
 async def _prepare_isolation(root: Path, run_id: int) -> tuple[Path, Path, dict]:
@@ -321,36 +593,9 @@ async def _prepare_isolation(root: Path, run_id: int) -> tuple[Path, Path, dict]
         isolation = Path(tempfile.mkdtemp(prefix=f"learnflow-agent-{run_id}-"))
     base = isolation / "base"
     worktree = isolation / "worktree"
-    _copy_safe_snapshot(root, base)
-
-    cloned = False
-    if (root / ".git").is_dir() and shutil.which("git"):
-        return_code, _ = await _run_command(
-            shutil.which("git") or "git", "clone", "--no-hardlinks", "--no-local",
-            str(root), str(worktree), timeout=120,
-        )
-        cloned = return_code == 0
-    if not cloned:
-        worktree.mkdir(parents=True, exist_ok=True)
-    # The working tree always reflects the current disk snapshot, including dirty files.
-    for child in list(worktree.iterdir()):
-        if child.name == ".git":
-            continue
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink(missing_ok=True)
-    _copy_safe_snapshot(root, worktree)
-    if shutil.which("git"):
-        git = shutil.which("git") or "git"
-        if not (worktree / ".git").exists():
-            await _run_command(git, "init", cwd=worktree)
-        await _run_command(git, "-c", "user.name=LearnFlow Broker", "-c", "user.email=broker@localhost", "add", "-A", cwd=worktree)
-        await _run_command(
-            git, "-c", "user.name=LearnFlow Broker", "-c", "user.email=broker@localhost",
-            "commit", "--allow-empty", "-m", "LearnFlow isolated baseline", cwd=worktree,
-        )
-    manifest = _snapshot_manifest(base)
+    manifest = _copy_safe_snapshot(root, base)
+    _copy_manifest_snapshot(base, worktree, manifest)
+    manifest["git"] = await _initialize_isolated_git_repository(isolation, worktree)
     return isolation, worktree, manifest
 
 
@@ -452,10 +697,15 @@ def _collect_changes(base: Path, worktree: Path) -> tuple[list[dict], str, list[
 
 def _prompt_for(run: LocalAgentRun, profile: LocalAgentProfile) -> str:
     constraints = "\n".join(f"- {item}" for item in (run.constraints or [])) or "- 无附加约束"
+    snapshot = dict((run.base_manifest or {}).get("summary") or {})
+    included_count = int(snapshot.get("included_file_count") or 0)
+    skipped_count = int(snapshot.get("skipped_entry_count") or 0)
+    snapshot_digest = str(snapshot.get("manifest_sha256") or "unknown")
     return f"""你是由 LearnFlow Tutor 委派的本地代码 Agent。只在当前隔离工作目录内完成任务。
 
 任务类型：{run.task_type}
 目标：{run.goal}
+快照摘要：包含 {included_count} 个文件，记录 {skipped_count} 个省略项，manifest SHA-256 为 {snapshot_digest}。
 约束：
 {constraints}
 
@@ -464,7 +714,8 @@ def _prompt_for(run: LocalAgentRun, profile: LocalAgentProfile) -> str:
 - 不创建或修改 LearnFlow 讲义、练习、五核画像或数据库。
 - 不提交、推送或发布；不要请求用户交互。
 - 运行必要测试，并在最终结果中简要说明修改、测试与风险。
-- 联网策略显示为 {profile.network_policy}；不要声称 LearnFlow 已强制断网，除非适配器明确提供该能力。
+- 当前目录是安全筛选后的部分快照；不要假定被省略的文件不存在于真实项目。
+- 联网策略显示为 {profile.network_policy}。Codex 的网络和同主机读取边界均未受管；这些限制是行为约束，不是 Broker 对 OS 隔离的保证。
 """
 
 
@@ -504,6 +755,7 @@ async def ensure_seeded_profile(db: AsyncSession, learner_id: int) -> LocalAgent
             "available": True, "authenticated": True, "version": "seeded-demo-v1",
             "sandbox_policy": "workspace_write", "network_policy": "managed_off",
             "network_boundary_enforced": True,
+            "host_read_policy": "managed_off", "host_read_boundary_enforced": True,
         },
     )
     db.add(profile)
@@ -560,6 +812,8 @@ async def create_run_for_action(
             "sandbox_policy": profile.sandbox_policy,
             "network_policy": profile.network_policy,
             "network_boundary_enforced": profile.adapter == "deterministic_fake",
+            "host_read_policy": "managed_off" if profile.adapter == "deterministic_fake" else "unmanaged",
+            "host_read_boundary_enforced": profile.adapter == "deterministic_fake",
         },
     )
     db.add(run)
@@ -632,6 +886,11 @@ async def execute_run(run_id: int) -> None:
             isolation, worktree, manifest = await _prepare_isolation(root, run.id)
             run.isolation_root = str(isolation)
             run.base_manifest = manifest
+            snapshot_result = {
+                "summary": dict(manifest.get("summary") or {}),
+                "git": dict(manifest.get("git") or {}),
+            }
+            run.result = {**dict(run.result or {}), "snapshot": snapshot_result}
             run.status = "running"
             run.started_at = datetime.utcnow()
             await append_run_event(db, run.id, "started", {
@@ -639,6 +898,9 @@ async def execute_run(run_id: int) -> None:
                 "sandbox_policy": profile.sandbox_policy,
                 "network_policy": profile.network_policy,
                 "network_boundary_enforced": bool(probe.get("network_boundary_enforced")),
+                "host_read_policy": probe.get("host_read_policy") or "unmanaged",
+                "host_read_boundary_enforced": bool(probe.get("host_read_boundary_enforced")),
+                "snapshot": snapshot_result,
             })
             await db.commit()
 
