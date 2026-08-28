@@ -53,6 +53,18 @@ def normalize_lecture_section_titles(checkpoint_title: str, sections: List[Dict]
         normalized.append(item)
     return normalized
 
+
+def _knowledge_design_text(brief: Optional[Dict]) -> str:
+    value = dict((brief or {}).get("knowledge_input") or {})
+    if value.get("status") != "available":
+        return "（无可用知识起点；按通用教学包生成并保留显式缺口。）"
+    safe = {
+        "summary": value.get("summary") or "",
+        "facets": dict(value.get("facets") or {}),
+        "observations": list(value.get("observations") or [])[:6],
+    }
+    return json.dumps(safe, ensure_ascii=False)[:3200]
+
 PLAN_PROMPT = """你是学习内容专家。你需要为某个学习关卡规划一份讲义大纲。
 
 ## 学习关卡
@@ -60,6 +72,9 @@ PLAN_PROMPT = """你是学习内容专家。你需要为某个学习关卡规划
 
 ## 学生水平
 {user_level}
+
+## 学习者知识起点（answer-free，只用于选择起点与难度，可能为空）
+{learner_knowledge_context}
 
 ## 用户反馈（重新生成时提供的个人要求，如无则忽略）
 {user_feedback}
@@ -94,6 +109,9 @@ STRUCTURED_PLAN_PROMPT = """你是学习内容专家。你需要为某个学习�
 
 ## 学生水平
 {user_level}
+
+## 学习者知识起点（answer-free，只用于选择起点与难度，可能为空）
+{learner_knowledge_context}
 
 ## 用户反馈（重新生成时提供的个人要求，如无则忽略）
 {user_feedback}
@@ -148,6 +166,9 @@ GENERATE_SECTION_PROMPT = """你是学习内容专家。根据大纲生成完整
 
 ## 用户反馈（重新生成时提供的个人要求，如无则忽略）
 {user_feedback}
+
+## 学习者知识起点（answer-free，只用于例子、支架和难度，可能为空）
+{learner_knowledge_context}
 
 ## 生成要求
 1. 用 **markdown 格式** 输出
@@ -376,6 +397,7 @@ class LectureAgent:
             checkpoint_title=checkpoint_title,
             checkpoint_description=checkpoint_description,
             user_level=user_level,
+            learner_knowledge_context=_knowledge_design_text(brief),
             structure_logic=f"{logic} —— {template}",
             skeleton="\n".join(skeleton_text) or "（无骨架信息，请按主题自行规划 4-8 节）",
             user_feedback=feedback or "（无）",
@@ -573,6 +595,7 @@ class LectureAgent:
             checkpoint_title=checkpoint_title,
             checkpoint_description=checkpoint_description,
             user_level=user_level,
+            learner_knowledge_context=_knowledge_design_text(brief),
             chunk_context=ctx,
             user_feedback=feedback or "（无）",
         )
@@ -653,6 +676,7 @@ class LectureAgent:
             keywords=", ".join(section.get("keywords", [])),
             goal=section.get("goal", ""),
             chunk_context=ctx,
+            learner_knowledge_context=_knowledge_design_text(brief),
             user_feedback=feedback or "（无）",
         )
 

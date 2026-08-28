@@ -95,7 +95,11 @@ def test_confirmed_roadmap_creates_checkpoint_sessions_and_formal_tasks(client: 
     assert all(item["learning_task"]["project_id"] == project["id"] for item in checkpoints)
     assert all(item["learning_contract"]["schema_version"] == "learnflow.teaching-contract.v1" for item in checkpoints)
     assert all(item["learning_contract"]["teaching_gate"]["status"] == "ready_with_gaps" for item in checkpoints)
+    assert all(item["learning_contract"]["knowledge_input_contract"]["mode"] == "optional_read_only" for item in checkpoints)
     assert all(item["learning_contract"]["delivery_readiness"]["overall"] == "outline_only" for item in checkpoints)
+    assert all(item["learning_contract"]["delivery_readiness"]["package_readiness"]["overall"] == "outline_only" for item in checkpoints)
+    assert all(item["learning_contract"]["delivery_readiness"]["task_readiness"]["overall"] == "runnable_with_fallback" for item in checkpoints)
+    assert all(item["learning_contract"]["delivery_readiness"]["task_readiness"]["available_phases"] == ["learn"] for item in checkpoints)
     assert all(item["learning_contract"]["delivery_readiness"]["mastery_inference"] is False for item in checkpoints)
 
     context = client.get(

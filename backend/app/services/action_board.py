@@ -61,9 +61,9 @@ ACTION_BOARD = {
             ("read_checkpoint_delivery_readiness",),
         ),
         ActionDefinition(
-            "read_checkpoint_delivery_readiness", "读取关卡确定性交付成熟度", "none", "none",
+            "read_checkpoint_delivery_readiness", "读取教学包与原子任务就绪度", "none", "none",
             {},
-            ("generate_learning_files", "design_assessment_blueprint"),
+            ("generate_learning_files", "design_assessment_blueprint", "run_vnext_learning_task"),
         ),
         ActionDefinition(
             "generate_learning_visual", "生成安全学习图解或动画", "artifact", "explicit_or_auto",

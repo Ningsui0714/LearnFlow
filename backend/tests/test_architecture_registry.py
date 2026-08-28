@@ -39,6 +39,9 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert "one active version" in manifest["authority"]["module_versioning"]
     assert "startup queue reconciliation" in manifest["authority"]["memory_consolidation"]
     assert "shared Tutor deadline" in manifest["authority"]["interactive_model_latency"]
+    assert manifest["authority"]["teaching_delivery_projection"].startswith(
+        "optional answer-free Knowledge ContextPacket"
+    )
     assert manifest["authority"]["frontend_authority"].startswith("frontend/ is the only product frontend")
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [
@@ -250,6 +253,9 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert TOOL_MODEL_EXPOSURE["learning_video_inspector"] == "vnext_native"
     assert TOOL_INTERFACE_ROLES["teaching_contract_gate"] == "policy"
     assert TOOL_INTERFACE_ROLES["checkpoint_delivery_readiness"] == "projection"
+    assert "package readiness" in TOOLS["checkpoint_delivery_readiness"].write_path
+    assert "task readiness" in TOOLS["checkpoint_delivery_readiness"].write_path
+    assert TOOLS["checkpoint_delivery_readiness"].reads_kernels == ()
     assert TOOL_MODEL_EXPOSURE["web_evidence_reader"] == "vnext_native"
     assert TOOL_INTERFACE_ROLES["vnext_agent_turn_runtime"] == "harness"
     assert TOOL_INTERFACE_ROLES["five_kernel_reducer"] == "projection"

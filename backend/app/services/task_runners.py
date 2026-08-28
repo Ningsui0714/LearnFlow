@@ -221,7 +221,7 @@ def _postprocess_section(content: str, source_file: str, source_id: int,
     return content
 
 
-async def _load_lecture_context(checkpoint_id: int):
+async def _load_lecture_context(checkpoint_id: int, learner_id: int | None = None):
     """Load checkpoint + project level + scope chunks for a checkpoint."""
     async with async_session() as db:
         checkpoint = (await db.execute(
@@ -249,7 +249,34 @@ async def _load_lecture_context(checkpoint_id: int):
         )).scalars().all()
         chunks = [{"id": c.id, "source_id": c.source_id, "content": c.content, "meta": c.meta_data or {}} for c in chunks_raw]
 
-        return checkpoint, user_level, chunks, (checkpoint.brief or {})
+        brief = dict(checkpoint.brief or {})
+        knowledge_input = {
+            "status": "unavailable",
+            "summary": "",
+            "facets": {},
+            "observations": [],
+            "mastery_inference": False,
+        }
+        if learner_id is not None:
+            try:
+                from app.services.five_kernel_context import build_five_kernel_context
+                from app.services.teaching_contract import knowledge_design_input_from_context
+                packet = await build_five_kernel_context(
+                    db,
+                    learner_id=learner_id,
+                    policy="learning_design",
+                    project_id=roadmap.project_id if roadmap else None,
+                    checkpoint_id=checkpoint.id,
+                    subject_keys=[f"checkpoint:{checkpoint.id}"],
+                    query=f"{checkpoint.title} {checkpoint.description or ''}",
+                )
+                knowledge_input = knowledge_design_input_from_context(packet)
+            except Exception:
+                # Learner context is an optional design enhancement.  Memory
+                # projection trouble must not block a generic teaching package.
+                pass
+        brief["knowledge_input"] = knowledge_input
+        return checkpoint, user_level, chunks, brief
 
 
 async def run_lecture_generation(task_id: int):
@@ -272,7 +299,9 @@ async def run_lecture_generation(task_id: int):
                           finished_at=datetime.utcnow())
         return
 
-    checkpoint, user_level, chunks, brief = await _load_lecture_context(checkpoint_id)
+    checkpoint, user_level, chunks, brief = await _load_lecture_context(
+        checkpoint_id, learner_id=task.learner_id,
+    )
 
     # T6: derive repo-file cache dir from the main source
     from app.core.config import settings as _settings

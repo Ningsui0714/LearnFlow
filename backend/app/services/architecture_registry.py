@@ -14,7 +14,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-27.8"
+REGISTRY_VERSION = "2026-08-28.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v2"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
@@ -312,8 +312,8 @@ TOOLS = {
                      (), (), "candidate ID from current search -> subtitle/ASR availability + timestamped relevant segments + outcome gaps + answer-leak audit; zero learner-state write"),
         ToolContract("teaching_contract_gate", "Deterministic Teaching Contract Gate", "learning_design_agent", "learnflow", "policy",
                      (), (), "Checkpoint.learning_contract -> ready | ready_with_gaps | fallback_ready; one bounded model revision then deterministic minimum teaching artifact"),
-        ToolContract("checkpoint_delivery_readiness", "Checkpoint Delivery Readiness Projection", "learning_design_agent", "learnflow", "projection",
-                     (), (), "existing Source/Lecture/Question/Exercise/Assessment/LearningTask objects -> rebuildable delivery readiness; never learner progress or mastery"),
+        ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
+                     (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Safe Learning Visual Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "validated graph plan -> sanitized static SVG or deterministic SVG frames"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
@@ -1443,6 +1443,7 @@ def registry_manifest() -> dict[str, Any]:
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
             "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
+            "teaching_delivery_projection": "optional answer-free Knowledge ContextPacket -> Teaching Contract design input; existing teaching assets -> package readiness; learner-owned LearningTask + package readiness -> task readiness; all projections are soft, rebuildable and never mastery",
             "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",

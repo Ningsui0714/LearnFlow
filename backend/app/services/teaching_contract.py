@@ -10,9 +10,20 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from app.services.architecture_registry import SEMANTIC_MEMORY_KEYS
+
 
 TEACHING_CONTRACT_SCHEMA = "learnflow.teaching-contract.v1"
 TEACHING_GATE_POLICY = "teaching-contract-gate.v1"
+KNOWLEDGE_INPUT_SCHEMA = "learnflow.knowledge-input-contract.v1"
+KNOWLEDGE_INPUT_POLICY = "teaching-knowledge-input.v1"
+DEFAULT_KNOWLEDGE_FACETS = (
+    "active_concepts",
+    "knowledge_gap",
+    "pending_question",
+    "misconceptions",
+    "recent_errors",
+)
 
 
 def _text(value: Any, limit: int = 1600) -> str:
@@ -50,6 +61,73 @@ def _source_refs(values: Any) -> tuple[list[dict[str, Any]], list[str]]:
     return normalized, errors
 
 
+def normalize_knowledge_input_contract(value: Any) -> dict[str, Any]:
+    """Keep learner knowledge optional, scoped, answer-free and read-only.
+
+    Learning Design may use a scoped ContextPacket to choose the starting
+    point, examples and practice difficulty.  Missing learner context never
+    blocks a generic package, and this contract can never become a kernel
+    writer or mastery shortcut.
+    """
+    raw = dict(value) if isinstance(value, dict) else {}
+    requested = _texts(raw.get("facets"), limit=12, item_limit=80)
+    allowed = SEMANTIC_MEMORY_KEYS["knowledge"]
+    facets = [item for item in requested if item in allowed]
+    if not facets:
+        facets = list(DEFAULT_KNOWLEDGE_FACETS)
+    return {
+        "schema_version": KNOWLEDGE_INPUT_SCHEMA,
+        "policy_version": KNOWLEDGE_INPUT_POLICY,
+        "source": "scoped_answer_free_context_packet",
+        "context_policy": "learning_design",
+        "mode": "optional_read_only",
+        "facets": facets,
+        "use_for": ["starting_point", "example_selection", "practice_difficulty", "gap_coverage"],
+        "missing_behavior": "generic_package_with_explicit_gaps",
+        "writes_kernels": [],
+        "mastery_inference": False,
+    }
+
+
+def knowledge_design_input_from_context(packet: Any) -> dict[str, Any]:
+    """Extract a bounded Knowledge-only design hint from an answer-free packet."""
+    if not isinstance(packet, dict) or (packet.get("manifest") or {}).get("answer_free") is not True:
+        return {
+            "status": "unavailable",
+            "summary": "",
+            "facets": {},
+            "observations": [],
+            "mastery_inference": False,
+        }
+    head = dict((packet.get("kernel_heads") or {}).get("knowledge") or {})
+    allowed_facets = SEMANTIC_MEMORY_KEYS["knowledge"]
+    facets = {
+        key: value for key, value in dict(head.get("facets") or {}).items()
+        if key in allowed_facets
+    }
+    observations = []
+    for item in packet.get("items") or []:
+        if not isinstance(item, dict) or item.get("kernel") != "knowledge":
+            continue
+        text = _text(item.get("text") or item.get("summary"), 320)
+        if text:
+            observations.append({
+                "kind": _text(item.get("memory_kind") or item.get("kind"), 60),
+                "text": text,
+            })
+        if len(observations) >= 6:
+            break
+    summary = _text(head.get("summary"), 800)
+    return {
+        "status": "available" if summary or facets or observations else "empty",
+        "snapshot_id": _text(packet.get("snapshot_id"), 80),
+        "summary": summary,
+        "facets": facets,
+        "observations": observations,
+        "mastery_inference": False,
+    }
+
+
 def normalize_teaching_contract(
     contract: Any,
     *,
@@ -67,6 +145,9 @@ def normalize_teaching_contract(
         "must_preserve": _texts(raw.get("must_preserve")),
         "avoid": _texts(raw.get("avoid")),
         "source_refs": refs,
+        "knowledge_input_contract": normalize_knowledge_input_contract(
+            raw.get("knowledge_input_contract")
+        ),
     }
     # Preserve the established roadmap/task API while making the new contract
     # readable by old clients.
