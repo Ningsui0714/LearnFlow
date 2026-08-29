@@ -63,6 +63,7 @@ class LearningSkillRunCreateRequest(BaseModel):
     ]
     goal: str = Field(min_length=2, max_length=300)
     client_request_id: str = Field(min_length=8, max_length=120)
+    domain_source_ids: list[int] = Field(default_factory=list, max_length=20)
 
     @field_validator("goal", "client_request_id", mode="before")
     @classmethod
@@ -93,6 +94,7 @@ class LearningSkillRunTurnRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     expected_version: int = Field(ge=1)
     client_turn_id: str = Field(min_length=8, max_length=120)
+    domain_source_ids: list[int] = Field(default_factory=list, max_length=20)
 
     @field_validator("message", "client_turn_id", mode="before")
     @classmethod

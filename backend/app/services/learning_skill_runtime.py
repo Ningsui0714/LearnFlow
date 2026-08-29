@@ -15,7 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.learning import (
-    AgentSession, LearnerProfile, LearningSkillRun, LearningTask, MicroLearningRun,
+    AgentMessage, AgentSession, LearnerProfile, LearningSkillRun, LearningTask,
+    MicroLearningRun,
 )
 from app.models.project import Checkpoint, Project, Roadmap
 from app.services.architecture_registry import (
@@ -1192,6 +1193,10 @@ async def _ensure_atomic_learning_task(
             from app.services.learning_tasks import create_learning_task
 
             skill = selectable_learning_skill(run.skill_id)
+            source_refs = [{"type": "learning_skill_run", "id": run.id}]
+            origin_message_id = int(dict(run.run_data or {}).get("origin_message_id") or 0)
+            if origin_message_id:
+                source_refs.append({"type": "conversation_message", "id": origin_message_id})
             task, _ = await create_learning_task(
                 db,
                 learner_id=run.learner_id,
@@ -1211,7 +1216,7 @@ async def _ensure_atomic_learning_task(
                     "完成至少一次无提示独立验证",
                     "把合格评估转交复习队列",
                 ],
-                source_refs=[{"type": "learning_skill_run", "id": run.id}],
+                source_refs=source_refs,
             )
             if not _task_matches_session_scope(task, session):
                 raise RuntimeError("unsupported_scope")
@@ -1230,6 +1235,61 @@ async def _ensure_atomic_learning_task(
         "task_contract": "learn -> practice -> verify -> consolidate",
     }
     return task
+
+
+async def _attach_skill_domain_context(
+    db: AsyncSession,
+    *,
+    run: LearningSkillRun,
+    message_id: int,
+) -> None:
+    """Bind the real prompt and a scoped domain packet to the formal task."""
+    task = await _linked_learning_task(db, run)
+    if not task:
+        return
+    refs = [dict(item) for item in list(task.source_refs or []) if isinstance(item, dict)]
+    message_ref = {"type": "conversation_message", "id": message_id}
+    if message_id and message_ref not in refs:
+        refs.append(message_ref)
+    message = await db.get(AgentMessage, message_id) if message_id else None
+    message_source_ids = [
+        int(item) for item in list(dict(message.meta_data or {}).get("domain_source_ids") or [])
+        if str(item).isdigit() and int(item) > 0
+    ] if message else []
+    run_source_ids = [
+        int(item) for item in list(dict(run.run_data or {}).get("domain_source_ids") or [])
+        if str(item).isdigit() and int(item) > 0
+    ]
+    source_ids = list(dict.fromkeys([*message_source_ids, *run_source_ids]))
+    from app.services.domain_knowledge import compile_domain_knowledge_packet
+    packet = await compile_domain_knowledge_packet(
+        db,
+        learner_id=run.learner_id,
+        query=run.goal,
+        kind="guided_skill",
+        source_ids=source_ids or None,
+        project_id=task.project_id,
+        checkpoint_id=task.checkpoint_id,
+        session_id=task.session_id,
+        learning_task_id=task.id,
+        skill_id=run.skill_id,
+    )
+    packet_ref = {"type": "domain_knowledge_packet", "id": packet.id}
+    refs = [item for item in refs if item.get("type") != "domain_knowledge_packet"]
+    refs.append(packet_ref)
+    task.source_refs = refs[:20]
+    task.execution_state = {
+        **dict(task.execution_state or {}),
+        "domain_knowledge_packet_id": packet.id,
+        "domain_knowledge_status": packet.status,
+        "domain_knowledge_gaps": list(packet.unresolved_gaps or []),
+    }
+    run.run_data = {
+        **dict(run.run_data or {}),
+        "origin_message_id": message_id,
+        "domain_knowledge_packet_id": packet.id,
+        "domain_knowledge_status": packet.status,
+    }
 
 
 async def _record_run_event(
@@ -1279,6 +1339,7 @@ async def create_learning_skill_run(
     goal: str,
     client_request_id: str,
     source: str = "user",
+    domain_source_ids: list[int] | None = None,
 ) -> tuple[LearningSkillRun, bool]:
     await _validate_session_scope(db, session)
     if skill_id not in RUNTIME_SKILL_IDS or not selectable_learning_skill(skill_id):
@@ -1359,6 +1420,7 @@ async def create_learning_skill_run(
         "support_budget": SUPPORT_TURN_BUDGET,
         "support_exit": {},
         "last_response_signal": "opening",
+        "domain_source_ids": list(domain_source_ids or [])[:20],
         "flow_note": (
             "先建立可回答的知识起点，再进入单步追问。"
             if grounded_entry else
@@ -1392,6 +1454,7 @@ async def create_learning_skill_run(
     await _ensure_atomic_learning_task(
         db, session=session, run=run, source=source,
     )
+    await _attach_skill_domain_context(db, run=run, message_id=0)
     await _record_run_event(
         db, run, "learning_skill_run_started",
         payload={"source": source, "turn_budget": run.turn_budget},
@@ -1487,6 +1550,7 @@ async def prepare_learning_skill_turn(
     message_id: int,
     client_turn_id: str | None,
     expected_run_id: int | None = None,
+    domain_source_ids: list[int] | None = None,
 ) -> tuple[LearningSkillRun, dict[str, Any]]:
     await _validate_session_scope(db, session)
     current = await active_skill_run(db, session)
@@ -1502,10 +1566,13 @@ async def prepare_learning_skill_turn(
             goal=message,
             client_request_id=client_turn_id or f"message-{message_id}",
             source="user",
+            domain_source_ids=domain_source_ids,
         )
+        await _attach_skill_domain_context(db, run=run, message_id=message_id)
         return run, current_learning_skill_turn_plan(run, started=True)
 
     await validate_learning_skill_run_scope(db, session=session, run=current)
+    await _attach_skill_domain_context(db, run=current, message_id=message_id)
 
     if current.status == "verification":
         return current, {

@@ -40,6 +40,40 @@ class Source(Base):
 
     project = relationship("Project", back_populates="sources")
     chunks = relationship("Chunk", back_populates="source", cascade="all, delete-orphan")
+    versions = relationship(
+        "SourceVersion", back_populates="source", cascade="all, delete-orphan",
+        order_by="SourceVersion.version",
+    )
+
+
+class SourceVersion(Base):
+    """Immutable, inspectable content version for one learner-owned source."""
+
+    __tablename__ = "source_versions"
+    __table_args__ = (
+        UniqueConstraint("source_id", "version", name="uq_source_version_number"),
+        UniqueConstraint("source_id", "content_hash", name="uq_source_version_hash"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False, default=1)
+    content_hash = Column(String(64), nullable=False, index=True)
+    source_role = Column(String(30), nullable=False, default="learner_context", index=True)
+    authority_tier = Column(String(30), nullable=False, default="learner_owned", index=True)
+    version_label = Column(String(120), default="")
+    published_at = Column(DateTime, nullable=True)
+    effective_at = Column(DateTime, nullable=True)
+    retrieved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    freshness_class = Column(String(30), nullable=False, default="stable", index=True)
+    status = Column(String(30), nullable=False, default="active", index=True)
+    health = Column(JSON, default=dict)
+    provenance = Column(JSON, default=dict)
+    inspection = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    source = relationship("Source", back_populates="versions")
+    chunks = relationship("Chunk", back_populates="source_version")
 
 
 class Chunk(Base):
@@ -47,13 +81,45 @@ class Chunk(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
+    source_version_id = Column(Integer, ForeignKey("source_versions.id"), nullable=True, index=True)
     index = Column(Integer, nullable=False)
     content = Column(Text, nullable=False)
     tokens = Column(Integer, default=0)
     meta_data = Column(JSON, default=dict)
 
     source = relationship("Source", back_populates="chunks")
+    source_version = relationship("SourceVersion", back_populates="chunks")
     checkpoints = relationship("CheckpointChunk", back_populates="chunk", cascade="all, delete-orphan")
+
+
+class DomainKnowledgePacket(Base):
+    """Versioned domain truth projection; never learner mastery authority."""
+
+    __tablename__ = "domain_knowledge_packets"
+    __table_args__ = (
+        UniqueConstraint("learner_id", "input_fingerprint", name="uq_domain_packet_input"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
+    checkpoint_id = Column(Integer, ForeignKey("checkpoints.id"), nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("agent_sessions.id"), nullable=True, index=True)
+    learning_task_id = Column(Integer, ForeignKey("learning_tasks.id"), nullable=True, index=True)
+    kind = Column(String(30), nullable=False, default="explanation", index=True)
+    subject_key = Column(String(255), nullable=False, default="", index=True)
+    domain_brief = Column(JSON, default=dict)
+    source_version_refs = Column(JSON, default=list)
+    knowledge_units = Column(JSON, default=dict)
+    coverage = Column(JSON, default=dict)
+    freshness = Column(JSON, default=dict)
+    conflicts = Column(JSON, default=list)
+    unresolved_gaps = Column(JSON, default=list)
+    status = Column(String(30), nullable=False, default="draft", index=True)
+    policy_version = Column(String(60), nullable=False, default="domain-knowledge-packet-v1")
+    input_fingerprint = Column(String(64), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class Roadmap(Base):

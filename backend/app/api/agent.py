@@ -308,6 +308,7 @@ async def start_learning_skill_run(
             goal=request.goal,
             client_request_id=request.client_request_id,
             source="user",
+            domain_source_ids=request.domain_source_ids,
         )
     except RuntimeError as error:
         raise _skill_run_error(error) from error
@@ -474,6 +475,7 @@ async def advance_learning_skill_turn(
             "source": "vnext_agent_turn_runtime",
             "learning_skill_run_id": run.id,
             "model_answer_generated": False,
+            "domain_source_ids": list(request.domain_source_ids or [])[:20],
         },
         idempotency_key=message_key,
     )
@@ -507,6 +509,7 @@ async def advance_learning_skill_turn(
             message_id=learner_message.id,
             client_turn_id=request.client_turn_id,
             expected_run_id=run.id,
+            domain_source_ids=request.domain_source_ids,
         )
     except RuntimeError as error:
         raise _skill_run_error(error) from error

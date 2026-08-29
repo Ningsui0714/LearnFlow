@@ -23,7 +23,7 @@ from app.models.learning import (
     LearningAttempt, LearningTask, MicroLearningRun, RemediationCase, ReviewSchedule,
 )
 from app.models.project import (
-    Checkpoint, ConceptQuestion, Lecture, LectureVersion, Project, Roadmap,
+    Checkpoint, ConceptQuestion, DomainKnowledgePacket, Lecture, LectureVersion, Project, Roadmap,
 )
 from app.services.learning_runtime import create_attempt, record_event
 from app.services.model_latency import (
@@ -362,7 +362,9 @@ async def generate_micro_learning_artifact(
         return fallback
 
 
-def _lecture_sections(card: dict[str, Any]) -> list[dict[str, Any]]:
+def _lecture_sections(
+    card: dict[str, Any], domain_packet: DomainKnowledgePacket | None = None,
+) -> list[dict[str, Any]]:
     key_points = "\n".join(
         f"{index}. {point}" for index, point in enumerate(card.get("key_points") or [], start=1)
     )
@@ -373,12 +375,133 @@ def _lecture_sections(card: dict[str, Any]) -> list[dict[str, Any]]:
         f"## 容易混淆\n\n{card.get('common_confusion', '')}\n\n"
         f"## 完成标准\n\n{card.get('success_criteria', '')}"
     )
+    citations = [] if not domain_packet else [
+        dict(item) for item in list(domain_packet.source_version_refs or [])[:20]
+    ]
     return [{
         "title": card.get("title") or "微学习卡",
         "content": content,
         "keywords": list(card.get("target_concepts") or []),
         "questions": [],
+        "domain_knowledge_packet_id": domain_packet.id if domain_packet else None,
+        "domain_knowledge_fingerprint": domain_packet.input_fingerprint if domain_packet else "",
+        "source_refs": citations,
     }]
+
+
+def _ground_artifact_in_packet(
+    artifact: dict[str, Any], goal: str, packet: DomainKnowledgePacket,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Make the teachable content a deterministic projection of cited units."""
+    units = dict(packet.knowledge_units or {})
+    claims = [
+        _clean(item.get("statement"), 700) for item in list(units.get("claims") or [])
+        if isinstance(item, dict) and _clean(item.get("statement"), 700)
+    ]
+    relations = [
+        _clean(item.get("statement"), 700) for item in list(units.get("relations") or [])
+        if isinstance(item, dict) and _clean(item.get("statement"), 700)
+    ]
+    examples = [
+        _clean(item.get("statement"), 1400) for item in list(units.get("examples") or [])
+        if isinstance(item, dict) and _clean(item.get("statement"), 1400)
+    ]
+    misconceptions = [
+        _clean(item.get("statement"), 1000) for item in list(units.get("misconceptions") or [])
+        if isinstance(item, dict) and _clean(item.get("statement"), 1000)
+    ]
+    concepts = [
+        _clean(item.get("label"), 80) for item in list(units.get("concepts") or [])
+        if isinstance(item, dict) and _clean(item.get("label"), 80)
+    ]
+    card = dict(artifact.get("card") or {})
+    supported_points = list(dict.fromkeys([*relations, *claims]))[:5]
+    if len(supported_points) >= 3:
+        card["key_points"] = supported_points
+    if examples:
+        card["example"] = examples[0]
+    if misconceptions:
+        card["common_confusion"] = misconceptions[0]
+    if concepts:
+        card["target_concepts"] = concepts[:5]
+    card["title"] = _clean(card.get("title"), 180) or f"15 分钟弄懂：{packet.subject_key}"
+    card["objective"] = f"能够解释“{packet.subject_key or goal}”的机制与边界，并在新情境中独立判断。"
+    card["success_criteria"] = "独立复述核心因果、完成一个完整例子，并通过不泄露答案的变式验证。"
+    # A model-free generic shell may supply the JSON shape, but once a ready
+    # Packet exists both the teaching text and assessment targets must be
+    # rebuilt from cited claims.  This prevents the old command-shaped
+    # scaffold from leaking into a published lecture or practice set.
+    assessment_claims = list(dict.fromkeys([*relations, *claims]))[:3]
+    if len(assessment_claims) >= 2:
+        first, second = assessment_claims[:2]
+        artifact["questions"] = [
+            {
+                "q_type": "single",
+                "difficulty": "easy",
+                "learning_target": concepts[0] if concepts else packet.subject_key,
+                "evidence_claim": first,
+                "question": "根据本次讲义，下面哪一项是来源直接支持的关键结论？",
+                "options": [
+                    first,
+                    "只要记住主题名称，就等同于理解了其中的机制。",
+                    "这个结论在任何条件和边界下都不会改变。",
+                    "无需阅读来源或完成例子，也可以直接宣布掌握。",
+                ],
+                "answer_indexes": [0],
+                "explanation": first,
+                "variant": {
+                    "type": "concept_choice",
+                    "validated": True,
+                    "prompt": "换一个情境后，哪项关系仍与讲义中的机制一致？",
+                    "options": [second, "只有原句的措辞可以作为判断依据。", "条件变化不会影响结论。"],
+                    "answer_indexes": [0],
+                },
+            },
+            {
+                "q_type": "single",
+                "difficulty": "medium",
+                "learning_target": concepts[1] if len(concepts) > 1 else packet.subject_key,
+                "evidence_claim": second,
+                "question": "哪一项最准确地补全了讲义中的机制或条件关系？",
+                "options": [
+                    second,
+                    "它只是一个术语定义，与条件、因果和例子都无关。",
+                    "出现一个反例也不会改变它的适用范围。",
+                    "模型生成过答案本身就是独立验证证据。",
+                ],
+                "answer_indexes": [0],
+                "explanation": second,
+                "variant": {
+                    "type": "concept_choice",
+                    "validated": True,
+                    "prompt": "如果适用条件发生变化，应该如何判断？",
+                    "options": ["重新检查讲义给出的边界与机制。", "仍机械套用原结论。", "只比较关键词是否相同。"],
+                    "answer_indexes": [0],
+                },
+            },
+        ]
+    artifact = {
+        **artifact,
+        "card": card,
+        "generation": {
+            "mode": "packet_grounded",
+            "reason": "compiled_from_cited_domain_knowledge",
+            "source": f"domain_knowledge_packet:{packet.id}",
+        },
+    }
+    brief = {
+        "schema_version": "learnflow.teaching-content-brief.v1",
+        "domain_knowledge_packet_id": packet.id,
+        "domain_knowledge_fingerprint": packet.input_fingerprint,
+        "subject": packet.subject_key,
+        "objective": card["objective"],
+        "taught_claims": supported_points,
+        "example": card.get("example", ""),
+        "misconception": card.get("common_confusion", ""),
+        "assessment_targets": list(card.get("target_concepts") or []),
+        "source_version_refs": list(packet.source_version_refs or [])[:20],
+    }
+    return artifact, brief
 
 
 async def create_micro_learning_run(
@@ -393,6 +516,7 @@ async def create_micro_learning_run(
     source: str = "ui",
     attach_learning_task: bool = True,
     learning_task_id: int | None = None,
+    domain_packet: DomainKnowledgePacket | None = None,
 ) -> MicroLearningRun:
     existing = (await db.execute(select(MicroLearningRun).where(
         MicroLearningRun.learner_id == learner_id,
@@ -404,9 +528,20 @@ async def create_micro_learning_run(
             await attach_micro_learning_task(db, run=existing)
         return existing
 
+    if domain_packet is None:
+        from app.services.domain_knowledge import compile_domain_knowledge_packet
+        domain_packet = await compile_domain_knowledge_packet(
+            db, learner_id=learner_id, query=goal, kind="teaching_artifact",
+            learning_task_id=learning_task_id,
+        )
+    if domain_packet.learner_id != learner_id or domain_packet.status not in {"ready", "ready_with_gaps"}:
+        raise RuntimeError("domain_knowledge_blocked")
     artifact = await generate_micro_learning_artifact(
         goal=goal, source_text=source_text,
         education_stage=education_stage, background=background,
+    )
+    artifact, teaching_content_brief = _ground_artifact_in_packet(
+        artifact, goal, domain_packet,
     )
     card = artifact["card"]
     project = Project(
@@ -429,6 +564,32 @@ async def create_micro_learning_run(
     )
     db.add(roadmap)
     await db.flush()
+    from app.services.teaching_contract import normalize_teaching_contract
+    teaching_contract = normalize_teaching_contract({
+        "version": WORKFLOW_VERSION,
+        "objective": card["objective"],
+        "outcomes": [card["success_criteria"]],
+        "must_preserve": list(card.get("key_points") or [])[:8],
+        "source_refs": [
+            {"type": "source_version", "id": item.get("source_version_id")}
+            for item in list(domain_packet.source_version_refs or [])
+            if item.get("source_version_id")
+        ],
+        "knowledge_input_contract": {
+            "domain_packet": {
+                "id": domain_packet.id,
+                "status": domain_packet.status,
+                "input_fingerprint": domain_packet.input_fingerprint,
+                "coverage": domain_packet.coverage,
+                "source_version_refs": domain_packet.source_version_refs,
+                "unresolved_gaps": domain_packet.unresolved_gaps,
+            },
+        },
+        "completion": "workflow completion is not stable mastery",
+        "verification": "independent graded concept attempts plus remediation when needed",
+    }, objective=card["objective"])
+    if teaching_contract["teaching_gate"]["status"] == "blocked_knowledge":
+        raise RuntimeError("domain_knowledge_blocked")
     checkpoint = Checkpoint(
         roadmap_id=roadmap.id,
         title=card["title"],
@@ -439,18 +600,15 @@ async def create_micro_learning_run(
             "goal": goal,
             "mode": "verified_micro_learning",
             "source_type": "provided_text" if source_text else "topic",
+            "teaching_content_brief": teaching_content_brief,
         },
-        learning_contract={
-            "version": WORKFLOW_VERSION,
-            "completion": "workflow completion is not stable mastery",
-            "verification": "independent graded concept attempts plus remediation when needed",
-        },
+        learning_contract=teaching_contract,
     )
     db.add(checkpoint)
     await db.flush()
     db.add(Lecture(
         checkpoint_id=checkpoint.id,
-        sections=_lecture_sections(card),
+        sections=_lecture_sections(card, domain_packet),
         status="published",
         version=1,
     ))
@@ -473,6 +631,10 @@ async def create_micro_learning_run(
                 "evidence_claim": question["evidence_claim"],
                 "targets": list(card.get("target_concepts") or []),
                 "variant": question["variant"],
+                "domain_knowledge_packet_id": domain_packet.id,
+                "domain_knowledge_fingerprint": domain_packet.input_fingerprint,
+                "source_refs": list(domain_packet.source_version_refs or [])[:20],
+                "teaching_content_brief": teaching_content_brief,
             },
             order=order,
         )
@@ -750,9 +912,23 @@ async def regenerate_learning_artifact(
     }
 
     checkpoint = await db.get(Checkpoint, run.checkpoint_id)
+    domain_packet = None
     if checkpoint:
         checkpoint.title = _clean(card.get("title"), 255)
         checkpoint.description = _clean(card.get("objective"), 2_000)
+        packet_id = int(dict(
+            dict(checkpoint.learning_contract or {}).get("knowledge_input_contract") or {}
+        ).get("domain_packet", {}).get("id") or 0)
+        domain_packet = await db.get(DomainKnowledgePacket, packet_id) if packet_id else None
+        if domain_packet and domain_packet.status in {"ready", "ready_with_gaps"}:
+            artifact, teaching_content_brief = _ground_artifact_in_packet(
+                artifact, run.goal, domain_packet,
+            )
+            card = artifact["card"]
+            checkpoint.brief = {
+                **dict(checkpoint.brief or {}),
+                "teaching_content_brief": teaching_content_brief,
+            }
     lecture = (await db.execute(select(Lecture).where(
         Lecture.checkpoint_id == run.checkpoint_id,
     ))).scalar_one_or_none()
@@ -764,13 +940,13 @@ async def regenerate_learning_artifact(
             reason="micro_learning_regenerate_before",
             idempotency_key=f"micro-learning:{run.id}:regenerate:{client_request_id}",
         ))
-        lecture.sections = _lecture_sections(card)
+        lecture.sections = _lecture_sections(card, domain_packet)
         lecture.status = "published"
         lecture.version = int(lecture.version or 1) + 1
     else:
         db.add(Lecture(
             checkpoint_id=run.checkpoint_id,
-            sections=_lecture_sections(card),
+            sections=_lecture_sections(card, domain_packet),
             status="published",
             version=1,
         ))
@@ -797,6 +973,11 @@ async def regenerate_learning_artifact(
             "evidence_claim": question["evidence_claim"],
             "targets": list(card.get("target_concepts") or []),
             "variant": question["variant"],
+            **({
+                "domain_knowledge_packet_id": domain_packet.id,
+                "domain_knowledge_fingerprint": domain_packet.input_fingerprint,
+                "source_refs": list(domain_packet.source_version_refs or [])[:20],
+            } if domain_packet else {}),
         }
         row.order = order
         if row.id is None:

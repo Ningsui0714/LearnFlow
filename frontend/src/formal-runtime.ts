@@ -1023,6 +1023,32 @@ export async function removeFormalProjectSource(projectId: number, sourceId: num
   return jsonRequest<{ status: string }>(`/api/vnext-projects/${projectId}/sources/${sourceId}`, { method: 'DELETE' })
 }
 
+export async function proposeFormalProjectKnowledgeBaseline(projectId: number, sourceIds: number[], query = '') {
+  await ensureFormalIdentity()
+  return jsonRequest<{ proposal: Record<string, any>; requires_confirmation: true }>(
+    `/api/vnext-projects/${projectId}/knowledge-baseline/proposals`, {
+      method: 'POST', body: JSON.stringify({ source_ids: sourceIds.slice(0, 30), query }),
+    },
+  )
+}
+
+export async function confirmFormalProjectKnowledgeBaseline(projectId: number, packetId: number) {
+  await ensureFormalIdentity()
+  return jsonRequest<{ baseline: Record<string, any>; mastery_unchanged: true }>(
+    `/api/vnext-projects/${projectId}/knowledge-baseline/${packetId}/confirm`, { method: 'POST' },
+  )
+}
+
+export async function updateFormalProjectSourceHealth(
+  projectId: number, sourceId: number,
+  action: 'quarantine' | 'restore' | 'mark_stale' | 'mark_conflicted', reason = '',
+) {
+  await ensureFormalIdentity()
+  return jsonRequest<Record<string, unknown>>(`/api/vnext-projects/${projectId}/sources/${sourceId}/health`, {
+    method: 'POST', body: JSON.stringify({ action, reason }),
+  })
+}
+
 export async function loadFormalTutorSession(sessionId: number) {
   return jsonRequest<FormalTutorSession>(`/api/agent/sessions/${sessionId}`)
 }
@@ -1032,6 +1058,7 @@ export async function startFormalLearningSkillRun(
   skillId: LearningSkillId,
   goal: string,
   clientRequestId: string,
+  domainSourceIds: number[] = [],
 ) {
   return jsonRequest<{
     session_id: number
@@ -1043,6 +1070,7 @@ export async function startFormalLearningSkillRun(
       skill_id: skillId,
       goal,
       client_request_id: clientRequestId,
+      domain_source_ids: domainSourceIds.slice(0, 20),
     }),
   })
 }
@@ -1053,6 +1081,7 @@ export async function advanceFormalLearningSkillTurn(
   message: string,
   expectedVersion: number,
   clientTurnId: string,
+  domainSourceIds: number[] = [],
 ) {
   return jsonRequest<{
     session_id: number
@@ -1065,6 +1094,7 @@ export async function advanceFormalLearningSkillTurn(
       message,
       expected_version: expectedVersion,
       client_turn_id: clientTurnId,
+      domain_source_ids: domainSourceIds.slice(0, 20),
     }),
   })
 }

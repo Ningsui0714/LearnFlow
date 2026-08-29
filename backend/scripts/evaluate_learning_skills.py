@@ -114,7 +114,7 @@ def main() -> int:
     report = {
         "evaluation_scope": "engineering_readiness_not_learning_effect",
         "case_count": len(cases),
-        "candidate": "atomic_learning_skill_runtime_v5_skill_spec_v2",
+        "candidate": "atomic_learning_skill_runtime_v6_skill_spec_v3",
         "baseline": "prompt_only_guided_explanation",
         "candidate_metrics": candidate_metrics,
         "baseline_metrics": baseline_metrics,

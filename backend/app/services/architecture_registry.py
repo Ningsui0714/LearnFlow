@@ -17,11 +17,11 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-28.7"
+REGISTRY_VERSION = "2026-08-29.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
-SKILL_SPEC_VERSION = "learnflow.skill.v2"
+SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
-FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION = "2026-08-28.4"
+FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION = "2026-08-29.1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 LIFECYCLE_STATES = ("implemented", "optional_unimplemented", "deprecated")
 
@@ -141,6 +141,7 @@ class SkillRuntimeContract:
     evidence_policy: str
     failure_policy: str
     eval_suite: str
+    knowledge_requirements: dict[str, Any]
     calibration_axes: tuple[SkillCalibrationAxisContract, ...] = ()
     maturity: str = "production_candidate"
 
@@ -340,7 +341,13 @@ TOOLS = {
         ToolContract("learning_video_inspector", "Current-turn Learning Video Inspector", "learning_design_agent", "vnext", "read",
                      (), (), "candidate ID from current search -> subtitle/ASR availability + timestamped relevant segments + outcome gaps + answer-leak audit; zero learner-state write"),
         ToolContract("teaching_contract_gate", "Deterministic Teaching Contract Gate", "learning_design_agent", "learnflow", "policy",
-                     (), (), "Checkpoint.learning_contract -> ready | ready_with_gaps | fallback_ready; one bounded model revision then deterministic minimum teaching artifact"),
+                     (), (), "DomainKnowledgePacketRef + TeachingContentBrief -> ready | ready_with_gaps | blocked_knowledge; blocked knowledge never publishes a generic scaffold"),
+        ToolContract("source_version_runtime", "Immutable Source Version Runtime", "learning_design_agent", "learnflow", "harness",
+                     (), (), "learner-owned Source + inspected content hash -> immutable SourceVersion + version-bound Chunk history; zero learner-state write"),
+        ToolContract("domain_knowledge_packet_compiler", "Scoped Domain Knowledge Packet Compiler", "learning_design_agent", "learnflow", "harness",
+                     (), (), "DomainBrief + uploaded/project/curated/temporary evidence -> versioned claim-level DomainKnowledgePacket with source closure, coverage, freshness and conflicts; zero learner-state write"),
+        ToolContract("source_integrity_monitor", "Source Integrity and Freshness Monitor", "learning_design_agent", "learnflow", "policy",
+                     (), (), "hash/version/freshness/injection/conflict checks -> active | stale | conflicted | quarantined | superseded; affected packets become stale without changing mastery"),
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
@@ -504,12 +511,14 @@ TOOL_INTERFACE_ROLES = {
         "vnext_learning_plan_runtime", "micro_learning_orchestrator",
         "learning_skill_runtime", "learning_task_runtime", "learning_task_planner",
         "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
+        "source_version_runtime", "domain_knowledge_packet_compiler",
     }},
     **{tool_id: "projection" for tool_id in {
         "review_scheduler", "review_proficiency_projector", "five_kernel_reducer", "memory_graph", "kernel_head_projector", "checkpoint_delivery_readiness",
     }},
     "deterministic_remediation": "policy",
     "teaching_contract_gate": "policy",
+    "source_integrity_monitor": "policy",
     "vnext_chat_session_store": "adapter",
     "workflow_gateway": "adapter",
     "workflow_validator": "adapter",
@@ -552,6 +561,7 @@ def _skill_runtime(
     required_context: tuple[str, ...] = (
         "scoped_learning_task", "learner_reply_signal", "answer_free_context_packet",
     ),
+    knowledge_requirements: dict[str, Any] | None = None,
 ) -> SkillRuntimeContract:
     return SkillRuntimeContract(
         version="atomic-learning-skill-runtime-v6",
@@ -573,6 +583,17 @@ def _skill_runtime(
             "requests stay on the current state with bounded support; never auto-pass"
         ),
         eval_suite="learning-skill-dialogue-v2",
+        knowledge_requirements=knowledge_requirements or {
+            "required_slots": (
+                "definition", "mechanism", "example", "boundary",
+                "misconception", "assessment_basis",
+            ),
+            "minimum_authority_tiers": ("official", "curated", "academic", "learner_owned"),
+            "freshness": "task_dependent",
+            "minimum_coverage": 1.0,
+            "formal_publish_requires_packet": True,
+            "missing_behavior": "preserve_skill_progress_and_block_artifact_publication",
+        },
         calibration_axes=calibration_axes,
     )
 
@@ -767,7 +788,7 @@ SKILLS = {
                       "structured intent + auditable action/handoff", "Action Board"),
         SkillContract(
             "guided_explanation", "清晰讲解", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+            ("tutor_context", "context_packet_assembler", "domain_knowledge_packet_compiler", "learning_skill_runtime",
              "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
              "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
             "task-linked explanation -> example -> self-explanation -> verified workbench handoff",
@@ -787,7 +808,7 @@ SKILLS = {
         ),
         SkillContract(
             "socratic_dialogue", "苏格拉底追问", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+            ("tutor_context", "context_packet_assembler", "domain_knowledge_packet_compiler", "learning_skill_runtime",
              "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
              "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
             "task-linked bounded one-question-at-a-time dialogue -> verified workbench handoff",
@@ -809,7 +830,7 @@ SKILLS = {
         ),
         SkillContract(
             "feynman_dialogue", "费曼复述", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+            ("tutor_context", "context_packet_assembler", "domain_knowledge_packet_compiler", "learning_skill_runtime",
              "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
              "teach_back_analyzer", "deterministic_assessment", "deterministic_remediation",
              "review_scheduler"),
@@ -833,7 +854,7 @@ SKILLS = {
         ),
         SkillContract(
             "worked_example_fading", "示例渐隐", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+            ("tutor_context", "context_packet_assembler", "domain_knowledge_packet_compiler", "learning_skill_runtime",
              "learning_task_runtime", "learning_task_planner", "micro_learning_orchestrator",
              "deterministic_assessment", "deterministic_remediation", "review_scheduler"),
             "task-linked subgoal-labeled example -> faded completion -> independent verification",
@@ -853,7 +874,7 @@ SKILLS = {
         ),
         SkillContract(
             "learning_file_study", "讲义与练习共学", "tutor_agent",
-            ("tutor_context", "context_packet_assembler", "learning_skill_runtime",
+            ("tutor_context", "context_packet_assembler", "domain_knowledge_packet_compiler", "learning_skill_runtime",
              "learning_task_runtime", "learning_task_planner", "vnext_learning_workspace_reader",
              "active_learning_file_reader", "project_learning_file_reader",
              "project_learning_file_proposer", "learning_file_service",
@@ -1217,8 +1238,13 @@ EVENTS = {
         _event("learning_task_resumed", "run_learning_task", (), "operational"),
         _event("learning_task_phase_completed", "run_learning_task", (), "operational_milestone"),
         _event("learning_task_materialized", "run_learning_task", (), "artifact_handoff"),
+        _event("learning_task_knowledge_blocked", "run_learning_task", (), "knowledge_gate_block", origin="vnext"),
         _event("knowledge_source_added", "manage_domain_knowledge_sources", (), "artifact_ingest", origin="vnext"),
         _event("knowledge_source_processed", "manage_domain_knowledge_sources", (), "artifact_indexed", origin="vnext"),
+        _event("web_evidence_captured", "manage_domain_knowledge_sources", (), "temporary_versioned_evidence", origin="vnext"),
+        _event("project_knowledge_baseline_proposed", "manage_domain_knowledge_sources", (), "source_baseline_proposal", origin="vnext"),
+        _event("project_knowledge_baseline_confirmed", "manage_domain_knowledge_sources", (), "confirmed_source_baseline", origin="vnext"),
+        _event("knowledge_source_health_changed", "manage_domain_knowledge_sources", (), "source_integrity_state", origin="vnext"),
         _event("learning_file_generated", "generate_learning_files", (), "artifact", origin="vnext"),
         _event("assessment_blueprint_proposed", "design_assessment_blueprint", (), "validated_assessment_proposal", tool="assessment_blueprint_builder", workbench="vnext_chat", origin="vnext"),
         _event("practice_file_generated", "generate_dynamic_practice", (), "validated_uncalibrated_artifact", tool="dynamic_practice_generator", workbench="vnext_chat", origin="vnext"),
@@ -1308,6 +1334,9 @@ _PYTHON_BINDING_TARGETS = {
     "py:tutor.finalize_task": ("app.services.tutor_service", "finalize_action_for_task"),
     "py:chat_modes.classify": ("app.services.chat_modes", "classify_chat_mode"),
     "py:teaching_contract.evaluate": ("app.services.teaching_contract", "evaluate_teaching_contract"),
+    "py:source_version.ensure": ("app.services.domain_knowledge", "ensure_source_version"),
+    "py:domain_packet.compile": ("app.services.domain_knowledge", "compile_domain_knowledge_packet"),
+    "py:source_integrity.inspect": ("app.services.domain_knowledge", "inspect_source_chunks"),
     "py:delivery_readiness.read": ("app.services.delivery_readiness", "checkpoint_delivery_readiness"),
     "py:checkpoint.context": ("app.services.checkpoint_context", "build_checkpoint_tutor_context"),
     "py:source.processor": ("app.services.chunker", "SourceProcessor"),
@@ -1379,6 +1408,7 @@ _API_BINDING_TARGETS = {
     "api:learner_state.path_plan": ("app.api.learner_state", "/learner-state/learning-path/plans", "POST", "commit_learning_path_plan"),
     "api:learner_state.value_claim": ("app.api.learner_state", "/learner-state/value-claims/confirm", "POST", "confirm_value_claim"),
     "api:knowledge_library.context": ("app.api.knowledge_library", "/knowledge-library/context", "GET", "read_library_context"),
+    "api:knowledge_library.web_evidence": ("app.api.knowledge_library", "/knowledge-library/web-evidence", "POST", "capture_web_evidence"),
     "api:knowledge_library.add_url": ("app.api.knowledge_library", "/knowledge-library/sources/url", "POST", "add_library_url"),
     "api:learning_files.list": ("app.api.learning_files", "/learning-files", "GET", "list_learning_files"),
     "api:learning_files.generate": ("app.api.learning_files", "/learning-files/tasks/{task_id}/generate", "POST", "generate_task_learning_files"),
@@ -1389,6 +1419,10 @@ _API_BINDING_TARGETS = {
     "api:vnext_projects.list": ("app.api.vnext_projects", "/vnext-projects", "GET", "list_vnext_projects"),
     "api:vnext_projects.create": ("app.api.vnext_projects", "/vnext-projects", "POST", "create_vnext_project"),
     "api:vnext_projects.context": ("app.api.vnext_projects", "/vnext-projects/{project_id}/agent-context", "GET", "get_project_agent_context"),
+    "api:vnext_projects.baseline": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-baseline", "GET", "read_project_knowledge_baseline"),
+    "api:vnext_projects.baseline_propose": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-baseline/proposals", "POST", "propose_project_knowledge_baseline"),
+    "api:vnext_projects.baseline_confirm": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-baseline/{packet_id}/confirm", "POST", "confirm_project_knowledge_baseline"),
+    "api:vnext_projects.source_health": ("app.api.vnext_projects", "/vnext-projects/{project_id}/sources/{source_id}/health", "POST", "update_project_source_health"),
     "api:vnext_projects.apply_roadmap": ("app.api.vnext_projects", "/vnext-projects/{project_id}/roadmap/apply", "POST", "apply_vnext_roadmap"),
     "api:vnext_projects.revise_roadmap": ("app.api.vnext_projects", "/vnext-projects/{project_id}/roadmap", "PUT", "revise_vnext_roadmap"),
     "api:vnext_projects.create_session": ("app.api.vnext_projects", "/vnext-projects/{project_id}/sessions", "POST", "create_project_free_session"),
@@ -1533,6 +1567,9 @@ _TOOL_BINDING_IDS = {
     "learning_video_search": ("frontend:tool:search_learning_videos",),
     "learning_video_inspector": ("frontend:tool:inspect_learning_video",),
     "teaching_contract_gate": ("py:teaching_contract.evaluate",),
+    "source_version_runtime": ("py:source_version.ensure",),
+    "domain_knowledge_packet_compiler": ("py:domain_packet.compile", "api:knowledge_library.web_evidence"),
+    "source_integrity_monitor": ("py:source_integrity.inspect", "api:vnext_projects.source_health"),
     "checkpoint_delivery_readiness": ("py:delivery_readiness.read",),
     "safe_visual_generation": ("frontend:visual.generate",),
     "learning_diagram_generator": ("frontend:tool:generate_learning_diagram",),
@@ -2074,8 +2111,13 @@ def validate_registry() -> list[str]:
         if skill.learner_selectable:
             runtime = skill.runtime
             if not runtime or runtime.version != "atomic-learning-skill-runtime-v6":
-                errors.append(f"learner-selectable skill lacks SkillSpec v2 runtime: {skill.id}")
+                errors.append(f"learner-selectable skill lacks atomic runtime: {skill.id}")
                 continue
+            requirements = dict(runtime.knowledge_requirements or {})
+            if not requirements.get("required_slots") or not requirements.get("formal_publish_requires_packet"):
+                errors.append(f"learner-selectable skill lacks knowledge requirements: {skill.id}")
+            if not 0 < float(requirements.get("minimum_coverage") or 0) <= 1:
+                errors.append(f"invalid skill knowledge coverage: {skill.id}")
             state_ids = [state.id for state in runtime.states]
             if len(state_ids) != len(set(state_ids)) or runtime.initial_state not in state_ids:
                 errors.append(f"invalid skill state graph: {skill.id}")
@@ -2190,7 +2232,8 @@ def registry_manifest() -> dict[str, Any]:
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
             "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
-            "teaching_delivery_projection": "optional answer-free Knowledge ContextPacket -> Teaching Contract design input; existing teaching assets -> package readiness; learner-owned LearningTask + package readiness -> task readiness; all projections are soft, rebuildable and never mastery",
+            "teaching_delivery_projection": "DomainBrief -> versioned SourceVersion evidence -> DomainKnowledgePacket -> TeachingContentBrief -> lecture/practice; formal publication blocks on critical knowledge gaps while learner Knowledge remains a separate answer-free design hint",
+            "domain_knowledge_authority": "Source identity + immutable SourceVersion/Chunk history -> scoped DomainKnowledgePacket; this source-truth plane is read-only to learner kernels and cannot imply mastery",
             "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",
@@ -2205,7 +2248,7 @@ def registry_manifest() -> dict[str, Any]:
             "frontend_authority": "frontend/ is the only product frontend; former vNext stable IDs remain compatibility identifiers, not a second runtime; web and Tauri use the same build and formal API contracts",
             "tool_ontology": "ACI tools are Agent-callable affordances; harness, projection, policy and adapter objects are service-side infrastructure",
             "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
-            "skill_spec_authority": "SkillSpec v2 in architecture_registry.py -> backend runtime + generated frontend manifest; no handwritten frontend workflow copy",
+            "skill_spec_authority": "SkillSpec v3 with knowledge_requirements in architecture_registry.py -> backend runtime + generated frontend manifest; no handwritten frontend workflow copy",
             "assessment_design_authority": "AssessmentBlueprint + Rubric are versioned learner-scoped proposals; generation is zero-target and deterministic grading remains Practice Agent authority",
         },
         "agents": [asdict(item) for item in AGENTS.values()],

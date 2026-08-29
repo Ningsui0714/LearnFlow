@@ -1,6 +1,6 @@
 {
-  "schema_version": "learnflow.skill.v2",
-  "registry_version": "2026-08-28.4",
+  "schema_version": "learnflow.skill.v3",
+  "registry_version": "2026-08-29.1",
   "generated_from": "backend/app/services/architecture_registry.py",
   "skills": {
     "guided_explanation": {
@@ -17,7 +17,7 @@
         "目标主要是程序性步骤练习"
       ],
       "atomic_task_capable": true,
-      "spec_version": "learnflow.skill.v2",
+      "spec_version": "learnflow.skill.v3",
       "runtime": {
         "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
@@ -116,6 +116,26 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "knowledge_requirements": {
+          "required_slots": [
+            "definition",
+            "mechanism",
+            "example",
+            "boundary",
+            "misconception",
+            "assessment_basis"
+          ],
+          "minimum_authority_tiers": [
+            "official",
+            "curated",
+            "academic",
+            "learner_owned"
+          ],
+          "freshness": "task_dependent",
+          "minimum_coverage": 1.0,
+          "formal_publish_requires_packet": true,
+          "missing_behavior": "preserve_skill_progress_and_block_artifact_publication"
+        },
         "calibration_axes": [],
         "maturity": "production_candidate"
       }
@@ -134,7 +154,7 @@
         "学习者明确要求直接解释"
       ],
       "atomic_task_capable": true,
-      "spec_version": "learnflow.skill.v2",
+      "spec_version": "learnflow.skill.v3",
       "runtime": {
         "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
@@ -233,6 +253,26 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "knowledge_requirements": {
+          "required_slots": [
+            "definition",
+            "mechanism",
+            "example",
+            "boundary",
+            "misconception",
+            "assessment_basis"
+          ],
+          "minimum_authority_tiers": [
+            "official",
+            "curated",
+            "academic",
+            "learner_owned"
+          ],
+          "freshness": "task_dependent",
+          "minimum_coverage": 1.0,
+          "formal_publish_requires_packet": true,
+          "missing_behavior": "preserve_skill_progress_and_block_artifact_publication"
+        },
         "calibration_axes": [],
         "maturity": "production_candidate"
       }
@@ -251,7 +291,7 @@
         "程序性任务只需要先看步骤示范"
       ],
       "atomic_task_capable": true,
-      "spec_version": "learnflow.skill.v2",
+      "spec_version": "learnflow.skill.v3",
       "runtime": {
         "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
@@ -353,6 +393,26 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "knowledge_requirements": {
+          "required_slots": [
+            "definition",
+            "mechanism",
+            "example",
+            "boundary",
+            "misconception",
+            "assessment_basis"
+          ],
+          "minimum_authority_tiers": [
+            "official",
+            "curated",
+            "academic",
+            "learner_owned"
+          ],
+          "freshness": "task_dependent",
+          "minimum_coverage": 1.0,
+          "formal_publish_requires_packet": true,
+          "missing_behavior": "preserve_skill_progress_and_block_artifact_publication"
+        },
         "calibration_axes": [
           {
             "id": "audience_level",
@@ -480,7 +540,7 @@
         "已经能独立完成且只需迁移验证"
       ],
       "atomic_task_capable": true,
-      "spec_version": "learnflow.skill.v2",
+      "spec_version": "learnflow.skill.v3",
       "runtime": {
         "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
@@ -579,6 +639,26 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "knowledge_requirements": {
+          "required_slots": [
+            "definition",
+            "mechanism",
+            "example",
+            "boundary",
+            "misconception",
+            "assessment_basis"
+          ],
+          "minimum_authority_tiers": [
+            "official",
+            "curated",
+            "academic",
+            "learner_owned"
+          ],
+          "freshness": "task_dependent",
+          "minimum_coverage": 1.0,
+          "formal_publish_requires_packet": true,
+          "missing_behavior": "preserve_skill_progress_and_block_artifact_publication"
+        },
         "calibration_axes": [],
         "maturity": "production_candidate"
       }
@@ -598,7 +678,7 @@
         "当前任务无法形成可验证练习"
       ],
       "atomic_task_capable": true,
-      "spec_version": "learnflow.skill.v2",
+      "spec_version": "learnflow.skill.v3",
       "runtime": {
         "version": "atomic-learning-skill-runtime-v6",
         "bound_chat_modes": [
@@ -700,6 +780,26 @@
         "evidence_policy": "coaching turns and self-report are zero-target; only existing independently graded attempts, remediation and review may support capability evidence",
         "failure_policy": "missing, acknowledgement, skip, no-prior-knowledge and direct-explanation requests stay on the current state with bounded support; never auto-pass",
         "eval_suite": "learning-skill-dialogue-v2",
+        "knowledge_requirements": {
+          "required_slots": [
+            "definition",
+            "mechanism",
+            "example",
+            "boundary",
+            "misconception",
+            "assessment_basis"
+          ],
+          "minimum_authority_tiers": [
+            "official",
+            "curated",
+            "academic",
+            "learner_owned"
+          ],
+          "freshness": "task_dependent",
+          "minimum_coverage": 1.0,
+          "formal_publish_requires_packet": true,
+          "missing_behavior": "preserve_skill_progress_and_block_artifact_publication"
+        },
         "calibration_axes": [],
         "maturity": "production_candidate"
       }

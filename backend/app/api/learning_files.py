@@ -467,14 +467,15 @@ async def generate_task_learning_files(
         status = 409 if message == "version_conflict" else 400
         raise HTTPException(status, message) from error
     view = await learning_task_view(db, task)
-    await record_event(
-        db, event_type="learning_file_generated", source="learning_task_runtime",
-        learner_id=current.learner.id, session_id=task.session_id,
-        project_id=task.project_id, checkpoint_id=task.checkpoint_id,
-        payload={"task_id": task.id, "artifact_refs": view.get("artifact_refs", []), "mastery_unchanged": True},
-        provenance={"endpoint": "POST /api/learning-files/tasks/{id}/generate"},
-        client_event_id=f"learning-files:task:{task.id}:{client_request_id}",
-    )
+    if view.get("artifact_refs"):
+        await record_event(
+            db, event_type="learning_file_generated", source="learning_task_runtime",
+            learner_id=current.learner.id, session_id=task.session_id,
+            project_id=task.project_id, checkpoint_id=task.checkpoint_id,
+            payload={"task_id": task.id, "artifact_refs": view.get("artifact_refs", []), "mastery_unchanged": True},
+            provenance={"endpoint": "POST /api/learning-files/tasks/{id}/generate"},
+            client_event_id=f"learning-files:task:{task.id}:{client_request_id}",
+        )
     await db.commit()
     return view
 

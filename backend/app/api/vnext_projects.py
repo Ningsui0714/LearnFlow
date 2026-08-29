@@ -7,6 +7,7 @@ never lets model output mutate learner state without an explicit user action.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 from pathlib import Path
 
@@ -17,8 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
 from app.models.learning import AgentSession, EvidenceEvent, LearningTask
-from app.models.project import Checkpoint, Chunk, ConceptQuestion, Exercise, Lecture, Project, Roadmap, Source
-from app.services.auth import CurrentLearner, get_current_learner, require_owned_project
+from app.models.project import (
+    Checkpoint, Chunk, ConceptQuestion, DomainKnowledgePacket, Exercise, Lecture,
+    Project, Roadmap, Source, SourceVersion,
+)
+from app.services.auth import CurrentLearner, get_current_learner, require_owned_project, require_owned_source
+from app.services.domain_knowledge import (
+    compile_domain_knowledge_packet, freshness_due, mark_packets_stale_for_source_version,
+    packet_view,
+)
 from app.services.five_kernel_context import build_five_kernel_context
 from app.services.learning_runtime import record_event
 from app.services.learning_tasks import act_on_learning_task, ensure_all_checkpoint_learning_tasks, learning_task_view
@@ -74,6 +82,16 @@ class ProjectSessionCreateRequest(BaseModel):
     client_action_id: str = Field(min_length=4, max_length=160)
 
 
+class KnowledgeBaselineProposalRequest(BaseModel):
+    query: str = Field(default="", max_length=1800)
+    source_ids: list[int] = Field(default_factory=list, max_length=30)
+
+
+class SourceHealthRequest(BaseModel):
+    action: Literal["quarantine", "restore", "mark_stale", "mark_conflicted"]
+    reason: str = Field(default="", max_length=500)
+
+
 def _project_spec(project: Project) -> dict[str, Any]:
     raw = str(project.description or "")
     objective, _, expected = raw.partition("\n\n预期产物：")
@@ -95,7 +113,11 @@ async def _source_views(db: AsyncSession, project_id: int) -> list[dict[str, Any
         .group_by(Source.id)
         .order_by(Source.created_at.desc())
     )).all()
-    return [{
+    views = []
+    for source, count in rows:
+        active_version_id = int(dict(source.meta_data or {}).get("active_source_version_id") or 0)
+        version = await db.get(SourceVersion, active_version_id) if active_version_id else None
+        views.append({
         "id": source.id,
         "type": source.type,
         "name": source.url,
@@ -104,8 +126,16 @@ async def _source_views(db: AsyncSession, project_id: int) -> list[dict[str, Any
         "status": source.status,
         "error": source.error or "",
         "chunk_count": int(count or 0),
+        "active_version": None if not version else {
+            "id": version.id, "version": version.version, "status": version.status,
+            "content_hash": version.content_hash, "authority_tier": version.authority_tier,
+            "freshness_class": version.freshness_class,
+            "retrieved_at": version.retrieved_at.isoformat() if version.retrieved_at else None,
+            "refresh_due": freshness_due(version), "health": version.health,
+        },
         "mastery_inference": False,
-    } for source, count in rows]
+        })
+    return views
 
 
 async def _file_views(db: AsyncSession, project_id: int) -> dict[str, list[dict[str, Any]]]:
@@ -159,24 +189,29 @@ def _query_terms(value: str) -> list[str]:
 
 async def _project_source_excerpts(db: AsyncSession, project_id: int, query: str) -> list[dict[str, Any]]:
     rows = (await db.execute(
-        select(Chunk, Source).join(Source, Source.id == Chunk.source_id).where(
+        select(Chunk, Source, SourceVersion)
+        .join(Source, Source.id == Chunk.source_id)
+        .join(SourceVersion, SourceVersion.id == Chunk.source_version_id)
+        .where(
             Source.project_id == project_id, Source.status == "processed",
-        ).order_by(Chunk.source_id, Chunk.index).limit(240)
+            SourceVersion.status.in_({"active", "conflicted", "stale"}),
+        ).order_by(Chunk.source_id, SourceVersion.version.desc(), Chunk.index).limit(240)
     )).all()
     terms = _query_terms(query)
     ranked: list[tuple[int, Chunk, Source]] = []
-    for chunk, source in rows:
+    for chunk, source, version in rows:
         lowered = (chunk.content or "").lower()
         score = sum(1 for term in terms if term in lowered)
         if score or not terms:
-            ranked.append((score, chunk, source))
+            ranked.append((score, chunk, source, version))
     ranked.sort(key=lambda item: (-item[0], item[2].id, item[1].index))
     return [{
         "source_id": source.id, "source_name": source.url, "chunk_id": chunk.id,
         "excerpt": (chunk.content or "")[:1800], "relevance_score": score,
         "provenance": {"source_type": source.type, "chunk_index": chunk.index},
         "untrusted": True, "mastery_inference": False,
-    } for score, chunk, source in ranked[:8]]
+        "source_version_id": version.id,
+    } for score, chunk, source, version in ranked[:8]]
 
 
 async def _learning_file_previews(db: AsyncSession, project_id: int) -> list[dict[str, Any]]:
@@ -204,6 +239,17 @@ async def _learning_file_previews(db: AsyncSession, project_id: int) -> list[dic
         "answers_hidden": True, "mastery_inference": False,
     } for item in exercises)
     return previews[:16]
+
+
+async def _latest_project_baseline(
+    db: AsyncSession, learner_id: int, project_id: int,
+) -> DomainKnowledgePacket | None:
+    return (await db.execute(select(DomainKnowledgePacket).where(
+        DomainKnowledgePacket.learner_id == learner_id,
+        DomainKnowledgePacket.project_id == project_id,
+        DomainKnowledgePacket.kind == "project_baseline",
+        DomainKnowledgePacket.status != "draft",
+    ).order_by(DomainKnowledgePacket.updated_at.desc(), DomainKnowledgePacket.id.desc()).limit(1))).scalar_one_or_none()
 
 
 async def _workspace_view(db: AsyncSession, learner_id: int, project: Project) -> dict[str, Any]:
@@ -259,6 +305,7 @@ async def _workspace_view(db: AsyncSession, learner_id: int, project: Project) -
             })
     free_sessions = [item for item in project_sessions if
                      (item.context_summary or {}).get("role") == "project_free"]
+    baseline = await _latest_project_baseline(db, learner_id, project.id)
     return {
         "schema_version": SCHEMA_VERSION,
         "project": _project_spec(project),
@@ -269,6 +316,7 @@ async def _workspace_view(db: AsyncSession, learner_id: int, project: Project) -
             "checkpoints": checkpoints,
         },
         "sources": await _source_views(db, project.id),
+        "knowledge_baseline": packet_view(baseline, compact=True) if baseline else None,
         "files": await _file_views(db, project.id),
         "free_sessions": [{"session_id": item.id, "title": item.title} for item in free_sessions],
         "boundaries": {
@@ -697,6 +745,7 @@ async def get_project_agent_context(
         LearningTask.learner_id == current.learner.id,
         LearningTask.project_id == project.id,
     ).order_by(LearningTask.queue_position, LearningTask.id))).scalars().all())
+    baseline = await _latest_project_baseline(db, current.learner.id, project.id)
     response = {
         "schema_version": SCHEMA_VERSION,
         "project": _project_spec(project), "checkpoint_id": checkpoint_id,
@@ -704,6 +753,7 @@ async def get_project_agent_context(
         "learning_tasks": [await learning_task_view(db, task) for task in tasks],
         "sources": sources, "learning_files": files,
         "source_excerpts": await _project_source_excerpts(db, project.id, query or project.name),
+        "domain_knowledge_packet": packet_view(baseline, compact=True) if baseline else None,
         "learning_file_previews": await _learning_file_previews(db, project.id),
         "five_kernel_context": context,
         "tool_policy": {
@@ -718,3 +768,139 @@ async def get_project_agent_context(
     }
     await db.commit()
     return response
+
+
+@router.get("/{project_id}/knowledge-baseline")
+async def read_project_knowledge_baseline(
+    project_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await require_owned_project(db, current.learner.id, project_id)
+    packet = await _latest_project_baseline(db, current.learner.id, project.id)
+    return {
+        "project": _project_spec(project),
+        "baseline": packet_view(packet, compact=True) if packet else None,
+        "promotion_policy": "本轮证据可自动使用；进入项目固定来源基线必须由学习者确认。",
+    }
+
+
+@router.post("/{project_id}/knowledge-baseline/proposals")
+async def propose_project_knowledge_baseline(
+    project_id: int,
+    data: KnowledgeBaselineProposalRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await require_owned_project(db, current.learner.id, project_id)
+    source_ids = data.source_ids or [
+        item.id for item in list((await db.execute(select(Source).where(
+            Source.project_id == project.id, Source.status == "processed",
+        ).order_by(Source.id))).scalars().all())
+    ]
+    if source_ids:
+        owned = set((await db.execute(select(Source.id).where(
+            Source.project_id == project.id, Source.id.in_(source_ids),
+        ))).scalars().all())
+        if owned != set(source_ids):
+            raise HTTPException(400, "来源基线只能引用当前项目中已拥有的来源")
+    packet = await compile_domain_knowledge_packet(
+        db,
+        learner_id=current.learner.id,
+        query=data.query or f"{project.name} {project.description}",
+        kind="project_baseline",
+        source_ids=source_ids,
+        project_id=project.id,
+        initial_status="draft",
+    )
+    await record_event(
+        db, learner_id=current.learner.id, project_id=project.id,
+        event_type="project_knowledge_baseline_proposed", source="domain_knowledge_harness",
+        payload={"packet_id": packet.id, "source_ids": source_ids, "mastery_unchanged": True},
+        provenance={"endpoint": "POST /api/vnext-projects/{id}/knowledge-baseline/proposals"},
+        client_event_id=f"project-knowledge-baseline:{packet.id}:proposed",
+    )
+    await db.commit()
+    return {"proposal": packet_view(packet), "requires_confirmation": True}
+
+
+@router.post("/{project_id}/knowledge-baseline/{packet_id}/confirm")
+async def confirm_project_knowledge_baseline(
+    project_id: int,
+    packet_id: int,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_owned_project(db, current.learner.id, project_id)
+    packet = (await db.execute(select(DomainKnowledgePacket).where(
+        DomainKnowledgePacket.id == packet_id,
+        DomainKnowledgePacket.learner_id == current.learner.id,
+        DomainKnowledgePacket.project_id == project_id,
+        DomainKnowledgePacket.kind == "project_baseline",
+    ))).scalar_one_or_none()
+    if not packet:
+        raise HTTPException(404, "来源基线提案不存在")
+    if packet.status == "draft":
+        gate_status = str(dict(packet.coverage or {}).get("gate_status") or "blocked")
+        if gate_status not in {"ready", "ready_with_gaps"}:
+            raise HTTPException(
+                409,
+                {"message": "来源基线尚有关键缺口，不能确认为正式基线", "gaps": packet.unresolved_gaps},
+            )
+        packet.status = gate_status
+        packet.updated_at = datetime.utcnow()
+    await record_event(
+        db, learner_id=current.learner.id, project_id=project_id,
+        event_type="project_knowledge_baseline_confirmed", source="user",
+        payload={"packet_id": packet.id, "status": packet.status, "mastery_unchanged": True},
+        provenance={"explicit_click": True},
+        client_event_id=f"project-knowledge-baseline:{packet.id}:confirmed",
+    )
+    await db.commit()
+    return {"baseline": packet_view(packet), "mastery_unchanged": True}
+
+
+@router.post("/{project_id}/sources/{source_id}/health")
+async def update_project_source_health(
+    project_id: int,
+    source_id: int,
+    data: SourceHealthRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_owned_project(db, current.learner.id, project_id)
+    source = await require_owned_source(db, current.learner.id, source_id, project_id)
+    version_id = int(dict(source.meta_data or {}).get("active_source_version_id") or 0)
+    version = await db.get(SourceVersion, version_id) if version_id else None
+    if not version:
+        raise HTTPException(409, "来源尚未形成可维护的内容版本")
+    target = {
+        "quarantine": "quarantined", "restore": "active",
+        "mark_stale": "stale", "mark_conflicted": "conflicted",
+    }[data.action]
+    version.status = target
+    version.health = {
+        **dict(version.health or {}), "status": target,
+        "reason": data.reason or f"user_{data.action}", "user_confirmed": True,
+    }
+    source.status = "quarantined" if target == "quarantined" else "processed"
+    if target in {"quarantined", "stale", "conflicted"}:
+        await mark_packets_stale_for_source_version(
+            db, version.id, reason=data.reason or f"user_{data.action}",
+            packet_status="quarantined" if target == "quarantined" else "stale",
+        )
+    await record_event(
+        db, learner_id=current.learner.id, project_id=project_id,
+        event_type="knowledge_source_health_changed", source="user",
+        payload={
+            "source_id": source.id, "source_version_id": version.id,
+            "status": target, "reason": data.reason, "mastery_unchanged": True,
+        },
+        provenance={"explicit_click": True},
+        client_event_id=f"knowledge-source:{source.id}:health:{target}:{version.id}",
+    )
+    await db.commit()
+    return {
+        "source_id": source.id, "source_version_id": version.id,
+        "status": target, "health": version.health, "mastery_unchanged": True,
+    }

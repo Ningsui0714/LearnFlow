@@ -4,7 +4,10 @@ import {
   createFormalProjectFreeSession,
   loadFormalProject,
   processFormalProjectSource,
+  proposeFormalProjectKnowledgeBaseline,
+  confirmFormalProjectKnowledgeBaseline,
   removeFormalProjectSource,
+  updateFormalProjectSourceHealth,
   uploadFormalProjectFile,
 } from './formal-runtime'
 import type { FormalLearningFileRef, FormalLearningTask } from './formal-runtime'
@@ -26,6 +29,7 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [url, setUrl] = useState('')
+  const [baselineProposal, setBaselineProposal] = useState<Record<string, any>>()
   const fileInput = useRef<HTMLInputElement>(null)
 
   const refresh = async () => {
@@ -77,6 +81,40 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
     finally { setBusy('') }
   }
 
+  const proposeBaseline = async () => {
+    if (!workspace) return
+    setBusy('baseline')
+    try {
+      const result = await proposeFormalProjectKnowledgeBaseline(
+        projectId, workspace.sources.filter(source => source.status === 'processed').map(source => source.id),
+        `${workspace.project.name} ${workspace.project.objective}`,
+      )
+      setBaselineProposal(result.proposal)
+      setError('')
+    } catch (failure) { setError(failure instanceof Error ? failure.message : '来源基线生成失败') }
+    finally { setBusy('') }
+  }
+
+  const confirmBaseline = async () => {
+    if (!baselineProposal?.id) return
+    setBusy('baseline-confirm')
+    try {
+      await confirmFormalProjectKnowledgeBaseline(projectId, Number(baselineProposal.id))
+      setBaselineProposal(undefined)
+      await refresh()
+    } catch (failure) { setError(failure instanceof Error ? failure.message : '来源基线确认失败') }
+    finally { setBusy('') }
+  }
+
+  const changeSourceHealth = async (sourceId: number, action: 'quarantine' | 'restore' | 'mark_stale') => {
+    setBusy(`health:${sourceId}`)
+    try {
+      await updateFormalProjectSourceHealth(projectId, sourceId, action, action === 'mark_stale' ? '学习者标记内容可能过时' : '')
+      await refresh()
+    } catch (failure) { setError(failure instanceof Error ? failure.message : '来源健康状态更新失败') }
+    finally { setBusy('') }
+  }
+
   const addFreeChat = async () => {
     if (!workspace) return
     setBusy('free')
@@ -118,10 +156,15 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
       )}
       {workspace && activeTab === 'sources' && (
         <div className="project-drawer-body">
+          <section className="project-knowledge-baseline" aria-label="项目来源基线">
+            <div className="project-drawer-section-title"><strong>来源基线</strong><button type="button" disabled={busy === 'baseline' || !workspace.sources.some(source => source.status === 'processed')} onClick={() => void proposeBaseline()}>{workspace.knowledge_baseline ? '重新核验' : '生成基线'}</button></div>
+            {workspace.knowledge_baseline ? <p>状态 {String(workspace.knowledge_baseline.status)} · 覆盖 {Math.round(Number(workspace.knowledge_baseline.coverage?.ratio || 0) * 100)}% · {Array.isArray(workspace.knowledge_baseline.source_version_refs) ? workspace.knowledge_baseline.source_version_refs.length : 0} 个固定版本</p> : <p>确认后，项目 Tutor、路线与学习文件将共享这组版本化来源。</p>}
+            {baselineProposal && <div className="project-baseline-proposal"><p>候选覆盖 {Math.round(Number(baselineProposal.coverage?.ratio || 0) * 100)}%；缺口：{(baselineProposal.unresolved_gaps || []).join('、') || '无'}</p><button type="button" disabled={busy === 'baseline-confirm' || String(baselineProposal.coverage?.gate_status || 'blocked') === 'blocked'} onClick={() => void confirmBaseline()}>{String(baselineProposal.coverage?.gate_status || 'blocked') === 'blocked' ? '需先补齐权威来源' : '确认作为项目基线'}</button></div>}
+          </section>
           <div className="project-source-compact-add"><input value={url} onChange={event => setUrl(event.target.value)} placeholder="教材、文档或仓库 URL" /><button type="button" disabled={!url.trim() || busy === 'url'} onClick={() => void addUrl()}>添加</button></div>
           <button type="button" className="project-upload-compact" onClick={() => fileInput.current?.click()} disabled={busy === 'upload'}>＋ 上传本地文件</button>
           <input ref={fileInput} hidden type="file" onChange={event => void upload(event.target.files?.[0])} />
-          <div className="project-drawer-list source-drawer-list">{workspace.sources.map(source => <article key={source.id}><div><strong>{source.name}</strong><span>{source.status === 'processed' ? `${source.chunk_count} 个可用片段` : '等待处理'}</span></div>{source.status !== 'processed' && <button type="button" disabled={busy.includes(String(source.id))} onClick={() => void mutateSource(source.id, 'process')}>处理</button>}<button type="button" className="drawer-remove" disabled={busy.includes(String(source.id))} onClick={() => { if (confirm(`移除来源“${source.name}”？`)) void mutateSource(source.id, 'remove') }}>移除</button></article>)}</div>
+          <div className="project-drawer-list source-drawer-list">{workspace.sources.map(source => <article key={source.id}><div><strong>{source.name}</strong><span>{source.status === 'processed' ? `${source.chunk_count} 个版本化片段 · v${Number(source.active_version?.version || 1)} · ${String(source.active_version?.status || 'active')}` : source.status === 'quarantined' ? '已隔离，不参与新讲解' : '等待处理'}</span></div>{!['processed', 'quarantined'].includes(source.status) && <button type="button" disabled={busy.includes(String(source.id))} onClick={() => void mutateSource(source.id, 'process')}>处理</button>}{source.status === 'processed' && <button type="button" disabled={busy.includes(String(source.id))} onClick={() => void changeSourceHealth(source.id, 'mark_stale')}>标记过时</button>}{source.status === 'processed' && <button type="button" disabled={busy.includes(String(source.id))} onClick={() => void changeSourceHealth(source.id, 'quarantine')}>隔离</button>}{source.status === 'quarantined' && <button type="button" disabled={busy.includes(String(source.id))} onClick={() => void changeSourceHealth(source.id, 'restore')}>恢复</button>}<button type="button" className="drawer-remove" disabled={busy.includes(String(source.id))} onClick={() => { if (confirm(`移除来源“${source.name}”？`)) void mutateSource(source.id, 'remove') }}>移除</button></article>)}</div>
           {!workspace.sources.length && <p className="project-drawer-empty">还没有项目来源。上传文件或添加 URL 后，项目 Tutor 会优先使用它们。</p>}
         </div>
       )}

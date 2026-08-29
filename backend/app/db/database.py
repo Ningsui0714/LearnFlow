@@ -85,6 +85,9 @@ EXTRA_COLUMNS = {
     "sources": [
         ("role", "TEXT"),        # T10: main | auxiliary
     ],
+    "chunks": [
+        ("source_version_id", "INTEGER"),
+    ],
     "lectures": [
         ("plan", "TEXT"),        # T10: persisted section plan (resume stability)
         ("concept_graph", "TEXT"),  # concept map {nodes, edges}
@@ -171,6 +174,7 @@ ATOMIC_LEARNING_SKILL_MIGRATION = "v16-atomic-learning-skill-runtime"
 PERSONAL_CONCEPT_GRAPH_MIGRATION = "v17-personal-concept-learning-graph"
 ASSESSMENT_BLUEPRINT_MIGRATION = "v18-assessment-blueprint-rubric"
 AUTH_PHASE_A_MIGRATION = "v19-auth-rbac-phase-a"
+DOMAIN_KNOWLEDGE_MIGRATION = "v20-domain-knowledge-supply"
 
 
 def _sqlite_path() -> Path | None:
@@ -1351,6 +1355,60 @@ async def _mark_assessment_blueprint_migration():
         print(f"[migrate] applied {ASSESSMENT_BLUEPRINT_MIGRATION}")
 
 
+async def _backfill_domain_knowledge_supply():
+    """Create immutable version 1 records for legacy processed sources."""
+    from app.models.learning import SchemaMigration
+    from app.models.project import Chunk, Source, SourceVersion
+    from app.services.domain_knowledge import inspect_source_chunks, source_content_hash
+
+    async with async_session() as db:
+        applied = (await db.execute(select(SchemaMigration).where(
+            SchemaMigration.version == DOMAIN_KNOWLEDGE_MIGRATION
+        ))).scalar_one_or_none()
+        if applied:
+            return
+        created = 0
+        sources = list((await db.execute(select(Source).where(
+            Source.status.in_({"processed", "quarantined"}),
+        ).order_by(Source.id))).scalars().all())
+        for source in sources:
+            chunks = list((await db.execute(select(Chunk).where(
+                Chunk.source_id == source.id,
+            ).order_by(Chunk.index))).scalars().all())
+            if not chunks:
+                continue
+            payload = [{
+                "index": item.index, "content": item.content,
+                "meta": dict(item.meta_data or {}),
+            } for item in chunks]
+            digest = source_content_hash(payload)
+            version = (await db.execute(select(SourceVersion).where(
+                SourceVersion.source_id == source.id,
+                SourceVersion.content_hash == digest,
+            ))).scalar_one_or_none()
+            if not version:
+                inspection = inspect_source_chunks(payload)
+                version = SourceVersion(
+                    source_id=source.id, version=1, content_hash=digest,
+                    source_role="learner_context", authority_tier="learner_owned",
+                    freshness_class="stable",
+                    status="quarantined" if inspection["quarantined"] else "active",
+                    health={"status": "blocked" if inspection["quarantined"] else "healthy"},
+                    provenance={"source_id": source.id, "migration": DOMAIN_KNOWLEDGE_MIGRATION},
+                    inspection=inspection,
+                )
+                db.add(version)
+                await db.flush()
+                created += 1
+            for chunk in chunks:
+                if chunk.source_version_id is None:
+                    chunk.source_version_id = version.id
+            source.meta_data = {**dict(source.meta_data or {}), "active_source_version_id": version.id}
+        db.add(SchemaMigration(version=DOMAIN_KNOWLEDGE_MIGRATION))
+        await db.commit()
+        print(f"[migrate] applied {DOMAIN_KNOWLEDGE_MIGRATION}: {created} source versions")
+
+
 async def _backfill_learning_task_runtime():
     """Create learner-visible task projections for existing checkpoints/runs."""
     from app.models.learning import SchemaMigration
@@ -1510,3 +1568,4 @@ async def init_db():
     await _backfill_atomic_learning_skill_runtime()
     await _backfill_personal_concept_graph()
     await _mark_assessment_blueprint_migration()
+    await _backfill_domain_knowledge_supply()

@@ -414,7 +414,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '联网搜索先用 search_computer_knowledge 取得候选证据、覆盖缺口和来源状态；需要据此陈述精确机制、版本行为、日期、数值或排错结论时，再用 read_web_evidence 读取最相关的 1-3 个候选页面。搜索摘要不等于已读全文。',
     '视频推荐先用 search_learning_videos 取得 discovered 候选；推荐前必须用 inspect_learning_video 核验本轮候选的字幕、时间点、目标覆盖和内容缺口。元数据、播放量、搜索或观看都不是掌握证据；metadata_only 候选只能标为待核验。',
     envelope.current.learningTask?.skillId === 'learning_file_study'
-      ? '当前是文件共学：聊天只做不超过一个短段落的直接导入，再把主体交给完整讲义与练习。不要在聊天中展开完整课程、资源清单或多选菜单；Harness 已负责复用文件或提供生成确认卡。除非学习者明确要求外部资源，否则不得搜索网页或视频。'
+      ? '当前是文件共学：聊天只做不超过一个短段落的直接导入，再把主体交给完整讲义与练习。不要在聊天中展开完整课程、资源清单或多选菜单；Harness 已负责复用文件或提供生成确认卡。只有学习者明确要求外部资源，或 DomainKnowledgePacket 显示关键覆盖、时效或冲突缺口时，才可搜索网页；视频仍需学习者明确要求。'
       : '',
     'quick 只用于单一事实，standard 用于普通讲解、比较、实现与排错，deep 只用于论文综述、项目调研或多来源复杂决策。deep 仍有查询、页面和补搜预算，不能无限研究。',
     '搜索或读取返回 partial、empty、coverage gaps、circuit_open 时必须在回答中显式保留证据缺口；不得用模型常识伪装成已检索证据。',
@@ -434,6 +434,34 @@ function hasExplicitExternalResourceRequest(input: TutorAgentRuntimeInput) {
     || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|视频|b站|bilibili|youtube|来源|论文|文档|仓库|官网|最新)/i.test(message)
 }
 
+function compactKnowledgeGate(input: TutorAgentRuntimeInput) {
+  const personal = input.formalDomainKnowledgeContext && typeof input.formalDomainKnowledgeContext === 'object'
+    ? (input.formalDomainKnowledgeContext as any).domain_knowledge_packet : null
+  const project = input.formalProjectContext?.domain_knowledge_packet
+  const packet = project || personal
+  const observed = Boolean(input.formalProjectContext || input.formalDomainKnowledgeContext)
+  if (!packet || typeof packet !== 'object') return { observed, status: 'unavailable', gaps: ['missing_packet'], conflicts: 0 }
+  return {
+    observed: true,
+    status: String((packet as any).status || 'unavailable'),
+    gaps: Array.isArray((packet as any).unresolved_gaps) ? (packet as any).unresolved_gaps : [],
+    conflicts: Array.isArray((packet as any).conflicts) ? (packet as any).conflicts.length : 0,
+  }
+}
+
+function shouldAutoSupplementKnowledge(input: TutorAgentRuntimeInput, message: string) {
+  if (!['simple_explain', 'guided_learning', 'learning_plan'].includes(input.mode)) return false
+  const gate = compactKnowledgeGate(input)
+  const currentRisk = /(?:最新|当前版本|截至|论文|政策|价格|行业现状|发布|变更|迁移|精确数值|官方行为)/i.test(message)
+  const correction = /(?:不对|错了|过时|不准确|重新核验|来源冲突)/i.test(message)
+  if (input.activeArtifactContext && !currentRisk && !correction) return false
+  return currentRisk || correction
+    || gate.observed && (
+      !['ready', 'ready_with_gaps'].includes(gate.status)
+      || gate.gaps.length > 0 || gate.conflicts > 0
+    )
+}
+
 function availableTools(input: TutorAgentRuntimeInput) {
   const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
   const tools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
@@ -451,7 +479,18 @@ function availableTools(input: TutorAgentRuntimeInput) {
   ))
   const fileStudy = input.mode === 'guided_learning' && input.learningTaskContext?.skillId === 'learning_file_study'
   if (!fileStudy || hasExplicitExternalResourceRequest(input)) return tools
-  const allowed = new Set(['generate_learning_diagram', 'generate_learning_animation'])
+  const gate = compactKnowledgeGate(input)
+  const knowledgeSupplementNeeded = gate.observed && (
+    !['ready', 'ready_with_gaps'].includes(gate.status) || gate.gaps.length > 0 || gate.conflicts > 0
+  )
+  const allowed = new Set([
+    'read_domain_knowledge', 'read_project_sources',
+    'generate_learning_diagram', 'generate_learning_animation',
+  ])
+  if (knowledgeSupplementNeeded) {
+    allowed.add('search_computer_knowledge')
+    allowed.add('read_web_evidence')
+  }
   if (input.learningTaskContext?.stepId === 'practicing_in_file') {
     allowed.add('design_assessment_blueprint')
     allowed.add('generate_dynamic_practice')
@@ -749,6 +788,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
   if (input.formalProjectContext) {
     await execute({ id: `observe-project-${id}`, name: 'read_project_workspace', arguments: { query: latestMessage } })
+    if (['simple_explain', 'guided_learning', 'learning_plan'].includes(input.mode)) {
+      await execute({ id: `observe-project-sources-${id}`, name: 'read_project_sources', arguments: { query: latestMessage } })
+    }
     if (input.formalProjectContext.tool_policy?.roadmap_tool_access === 'project_tutor' && input.mode === 'learning_plan') {
       await execute({ id: `observe-roadmap-${id}`, name: 'read_project_roadmap', arguments: { query: latestMessage } })
     }
@@ -774,8 +816,20 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   if (input.activeArtifactContext) {
     await execute({ id: `observe-active-file-${id}`, name: 'read_active_learning_file', arguments: {} })
   }
-  if (input.formalDomainKnowledgeContext && input.mode === 'learning_plan' && input.toolChoice === 'auto') {
+  if (input.formalDomainKnowledgeContext && ['simple_explain', 'guided_learning', 'learning_plan'].includes(input.mode) && input.toolChoice === 'auto') {
     await execute({ id: `observe-domain-${id}`, name: 'read_domain_knowledge', arguments: { query: latestMessage } })
+  }
+  if (input.toolChoice === 'auto' && shouldAutoSupplementKnowledge(input, latestMessage)) {
+    const sources = await execute({
+      id: `auto-knowledge-search-${id}`, name: 'search_computer_knowledge',
+      arguments: { query: latestMessage, depth: /(?:论文|研究|综述|全面|深度)/i.test(latestMessage) ? 'deep' : 'standard' },
+    })
+    for (const [index, source] of sources.filter(item => item.url).slice(0, 2).entries()) {
+      await execute({
+        id: `auto-knowledge-read-${id}-${index + 1}`, name: 'read_web_evidence',
+        arguments: { url: source.url, query: latestMessage },
+      }, sources)
+    }
   }
   if (input.mode === 'learning_plan' && input.learnerPathState) {
     await execute({ id: `observe-path-exact-${id}`, name: 'lookup_learning_path_node', arguments: { query: latestMessage } })

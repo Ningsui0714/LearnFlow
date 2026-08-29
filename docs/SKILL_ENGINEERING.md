@@ -10,7 +10,7 @@ LearnFlow 的 Skill 是一个由主 Agent 拥有、在明确状态中运行、�
 
 机器权威是 `architecture_registry.py` 中的 `SkillContract + SkillRuntimeContract`。前端清单由 `backend/scripts/export_learning_skill_manifest.py` 生成；前后端不得各自维护另一套步骤。
 
-## 2. SkillSpec v2 最小字段
+## 2. SkillSpec v3 最小字段
 
 每个可运行教学 Skill 必须声明：
 
@@ -20,6 +20,7 @@ LearnFlow 的 Skill 是一个由主 Agent 拥有、在明确状态中运行、�
 4. turn budget、循环与失败策略；
 5. 允许的 EventContract、证据边界、独立验证交接；
 6. eval suite 与成熟度。
+7. `knowledge_requirements`：所需定义、机制、例子、边界、误解与评估依据，权威层级、时效等级和最低覆盖。Skill 只消费 Harness 编译的 `DomainKnowledgePacket`，不自己决定来源已充分。
 
 需要因人或因任务调整的 Skill 还必须把校准维度声明在 `calibration_axes`，而不是把“难度”藏在
 Prompt 中。费曼复述当前声明四个正交维度：受众层次、认知要求、支架强度和表征方式。学习者

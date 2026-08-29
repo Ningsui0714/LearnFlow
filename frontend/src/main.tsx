@@ -1563,6 +1563,7 @@ function App({ auth }: { auth: AuthGateSession }) {
               learningProjection.skillId,
               binding.objective,
               `vnext-skill:${binding.id}`.slice(0, 120),
+              conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
             )
             formalSkillRun = started.active_skill_run
           } else {
@@ -1572,6 +1573,7 @@ function App({ auth }: { auth: AuthGateSession }) {
               content,
               binding.formalSkillRunVersion,
               clientTurnId,
+              conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
             )
             formalSkillRun = advanced.active_skill_run
           }

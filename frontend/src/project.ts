@@ -69,7 +69,9 @@ export type FormalProjectWorkspace = {
     error: string
     chunk_count: number
     mastery_inference: false
+    active_version?: Record<string, unknown> | null
   }>
+  knowledge_baseline?: Record<string, any> | null
   files: { lectures: FormalLearningFileRef[]; practices: FormalLearningFileRef[] }
   free_sessions: Array<{ session_id: number; title: string }>
   boundaries: Record<string, boolean>
@@ -84,6 +86,7 @@ export type AgentProjectContext = {
   sources: FormalProjectWorkspace['sources']
   learning_files: FormalProjectWorkspace['files']
   source_excerpts: Array<Record<string, unknown>>
+  domain_knowledge_packet?: Record<string, unknown> | null
   learning_file_previews: Array<Record<string, unknown>>
   five_kernel_context: unknown
   tool_policy: Record<string, unknown>

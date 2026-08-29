@@ -4,10 +4,10 @@
 
 ```text
 本地文件 / URL / GitHub
-  -> learner-owned Source
-  -> 处理为 Chunk + KnowledgeDomain
-  -> read_domain_knowledge（只读、带 provenance、不可信内容边界）
-  -> 规划态资源策展 / Tutor 讲解上下文
+  -> learner-owned Source -> immutable SourceVersion -> version-bound Chunk
+  -> DomainBrief + 来源健康检查
+  -> DomainKnowledgePacket（Claim 绑定 version/chunk/locator）
+  -> 规划态资源策展 / Tutor 讲解 / TeachingContentBrief
 
 LearningTask
   -> 显式“生成讲义与练习”
@@ -20,7 +20,8 @@ LearningTask
 
 ## 对象权威
 
-- 领域知识底座复用正式 `Project -> Source -> Chunk`。每个 learner 有一个 `project_kind=knowledge_library`、`visibility=internal` 的隐藏 Project，纯粹作为权限与存储边界，不是课程项目，也不显示为独立页面。学习者从 Chat 输入区给当前对话附加文件或 URL；Tutor 只读取该对话明确附加的 source id。
+- 领域知识底座复用正式 `Project -> Source -> SourceVersion -> Chunk`。每个 learner 有一个 `project_kind=knowledge_library`、`visibility=internal` 的隐藏 Project，纯粹作为权限与存储边界。当前对话明确附加的 source id 优先进入工作集；即使词面得分低也不会被静默丢弃。其余个人库只按主题相关性补缺。
+- `DomainKnowledgePacket` 是任务级事实投影，不是第二套学习者画像，也不是掌握证据。
 - 讲义权威仍是 `Lecture`；练习权威仍是 `ConceptQuestion` 与 `Exercise`。`.lflecture` / `.lfexercise` 是逻辑文件名，不复制数据库内容。
 - 对话纸张只保存 `{kind, ref, title}`，打开时由服务端重新检查 learner ownership，并返回答案安全视图。
 
@@ -38,6 +39,10 @@ LearningTask
 | 事件 | Kernel target | 含义 |
 |---|---:|---|
 | `knowledge_source_added/processed` | 无 | 资料进入上下文空间 |
+| `web_evidence_captured` | 无 | 已读网页原文进入临时版本化证据 |
+| `project_knowledge_baseline_proposed/confirmed` | 无 | 项目来源基线提案与用户确认 |
+| `knowledge_source_health_changed` | 无 | 过期、冲突、隔离或恢复的完整性事实 |
+| `learning_task_knowledge_blocked` | 无 | 任务保留，但知识不足时不发布教学产物 |
 | `learning_file_generated/opened/attached_to_chat` | 无 | 产物与 UI 审计 |
 | `practice_file_generated/practice_variant_generated` | 无 | 已通过静态门但尚未校准的练习产物 |
 | `practice_quality_inspected` | 无 | 题目质量观察，不是学生表现 |

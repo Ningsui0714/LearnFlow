@@ -33,6 +33,7 @@ from app.models.learning import (
 from app.models.project import (
     Checkpoint,
     ConceptQuestion,
+    DomainKnowledgePacket,
     Exercise,
     Lecture,
     Project,
@@ -1578,6 +1579,27 @@ async def _resolved_task_source_text(
         return explicit_source_text.strip()[:20_000], "provided_text"
     excerpts: list[str] = []
     for ref in list(task.source_refs or []):
+        if not isinstance(ref, dict) or ref.get("type") != "domain_knowledge_packet":
+            continue
+        packet_id = ref.get("id")
+        if not str(packet_id or "").isdigit():
+            continue
+        packet = (await db.execute(select(DomainKnowledgePacket).where(
+            DomainKnowledgePacket.id == int(packet_id),
+            DomainKnowledgePacket.learner_id == task.learner_id,
+        ))).scalar_one_or_none()
+        if not packet:
+            continue
+        units = dict(packet.knowledge_units or {})
+        packet_lines = [f"领域主题：{packet.subject_key}"]
+        for name in ("claims", "relations", "examples", "misconceptions"):
+            for item in list(units.get(name) or [])[:10]:
+                statement = _clean(item.get("statement") if isinstance(item, dict) else item, 900)
+                if statement:
+                    packet_lines.append(f"{name}: {statement}")
+        if len(packet_lines) > 1:
+            excerpts.append("\n".join(packet_lines))
+    for ref in list(task.source_refs or []):
         if not isinstance(ref, dict) or ref.get("type") != "conversation_message":
             continue
         message_id = ref.get("id")
@@ -1596,7 +1618,10 @@ async def _resolved_task_source_text(
         if content:
             excerpts.append(f"学习者的问题或任务：\n{content}")
     resolved = "\n\n".join(excerpts)[:20_000]
-    return resolved, "conversation_context" if resolved else "topic"
+    return resolved, "domain_packet" if any(
+        isinstance(ref, dict) and ref.get("type") == "domain_knowledge_packet"
+        for ref in list(task.source_refs or [])
+    ) and resolved else "conversation_context" if resolved else "topic"
 
 
 async def materialize_learning_task(
@@ -1617,6 +1642,56 @@ async def materialize_learning_task(
         return task
     if task.status not in {"queued", "active", "paused"}:
         raise RuntimeError("invalid_state")
+    from app.services.domain_knowledge import compile_domain_knowledge_packet, ensure_inline_source
+    packet_id = int(dict(task.execution_state or {}).get("domain_knowledge_packet_id") or 0)
+    packet = await db.get(DomainKnowledgePacket, packet_id) if packet_id else None
+    inherited_source_ids = [
+        int(ref.get("source_id")) for ref in list(packet.source_version_refs or [])
+        if isinstance(ref, dict) and str(ref.get("source_id") or "").isdigit()
+    ] if packet else []
+    inline_source = await ensure_inline_source(
+        db, learner_id=task.learner_id, text=source_text,
+        title=f"{task.title} · 任务显式材料",
+    ) if _clean(source_text, 20_000) else None
+    if not packet or packet.status not in {"ready", "ready_with_gaps"} or inline_source:
+        packet = await compile_domain_knowledge_packet(
+            db,
+            learner_id=task.learner_id,
+            query=f"{task.title} {task.objective}",
+            kind="teaching_artifact",
+            source_ids=list(dict.fromkeys([
+                *inherited_source_ids,
+                *([inline_source.id] if inline_source else []),
+            ])) or None,
+            project_id=task.project_id,
+            checkpoint_id=task.checkpoint_id,
+            session_id=task.session_id,
+            learning_task_id=task.id,
+            skill_id=str((task.plan or {}).get("primary_skill") or ""),
+        )
+        task.source_refs = [
+            *[ref for ref in list(task.source_refs or []) if not isinstance(ref, dict) or ref.get("type") != "domain_knowledge_packet"],
+            {"type": "domain_knowledge_packet", "id": packet.id},
+        ][:20]
+    task.execution_state = {
+        **dict(task.execution_state or {}),
+        "domain_knowledge_packet_id": packet.id,
+        "domain_knowledge_status": packet.status,
+        "domain_knowledge_gaps": list(packet.unresolved_gaps or []),
+    }
+    if packet.status not in {"ready", "ready_with_gaps"}:
+        _log_action(task, client_request_id, "knowledge_blocked", packet_id=packet.id)
+        await _record_task_event(
+            db, task, "learning_task_knowledge_blocked", source="domain_knowledge_harness",
+            suffix=f"knowledge-blocked:{client_request_id}",
+            payload={
+                "domain_knowledge_packet_id": packet.id,
+                "status": packet.status,
+                "gaps": list(packet.unresolved_gaps or []),
+                "mastery_unchanged": True,
+            },
+        )
+        return task
     from app.services.micro_learning import create_micro_learning_run
     resolved_source_text, source_mode = await _resolved_task_source_text(
         db, task, source_text,
@@ -1632,6 +1707,7 @@ async def materialize_learning_task(
         source="learning_task",
         attach_learning_task=False,
         learning_task_id=task.id,
+        domain_packet=packet,
     )
     was_active = task.status == "active"
     task.micro_learning_run_id = run.id

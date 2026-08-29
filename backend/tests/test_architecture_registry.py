@@ -43,7 +43,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-28.7"
+    assert REGISTRY_VERSION == "2026-08-29.1"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -66,8 +66,9 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert "startup queue reconciliation" in manifest["authority"]["memory_consolidation"]
     assert "shared Tutor deadline" in manifest["authority"]["interactive_model_latency"]
     assert manifest["authority"]["teaching_delivery_projection"].startswith(
-        "optional answer-free Knowledge ContextPacket"
+        "DomainBrief -> versioned SourceVersion evidence"
     )
+    assert "cannot imply mastery" in manifest["authority"]["domain_knowledge_authority"]
     assert manifest["authority"]["frontend_authority"].startswith("frontend/ is the only product frontend")
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [

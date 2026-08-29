@@ -120,17 +120,17 @@ def test_generic_fallback_cannot_enter_evidence_workflow(monkeypatch, client: Te
         "source_text": "",
         "client_request_id": _request_id("generic-quality-gate"),
     })
-    assert created.status_code == 200, created.text
-    run = created.json()
-    assert run["learning_card"]["quality_status"] == "blocked"
+    assert created.status_code == 409, created.text
+    assert "领域知识覆盖不足" in created.json()["detail"]
 
-    advanced = client.post(f"/api/micro-learning/runs/{run['id']}/advance", json={
-        "action": "complete_card",
-        "expected_version": run["version"],
-        "client_action_id": _request_id("blocked-card-viewed"),
-    })
-    assert advanced.status_code == 409
-    assert "内容质量门槛" in advanced.json()["detail"]
+    # The knowledge gate now rejects the artifact before persistence instead
+    # of creating a generic card that can never enter the evidence workflow.
+    runs = client.get("/api/micro-learning/runs")
+    assert runs.status_code == 200
+    assert all(
+        item["goal"] != "理解 Python 装饰器如何包装函数"
+        for item in runs.json()["items"]
+    )
 
 
 def test_learning_card_can_be_regenerated_before_evidence(monkeypatch, client: TestClient):

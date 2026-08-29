@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-29.1`）：新增不可变 `SourceVersion`、版本绑定 Chunk 和只读 `DomainKnowledgePacket`，并将 Teaching Contract 升级到 v2。项目 Tutor、简单讲解和五种带领学习 Skill 共用 `DomainBrief -> SourceVersion -> DomainKnowledgePacket -> TeachingContentBrief` 供给链；正式教学缺失关键知识时进入 `blocked_knowledge`，保留任务但不再发布 generic scaffold。Search/Page Reader 模型工具面不变；Harness 只在已读网页原文后回填 temporary SourceVersion。项目基线长期晋升仍需学习者确认。污染、冲突、过期和版本漂移只使来源/Packet/产物失效，新增事件均为零 Kernel target，五核、EvidenceEvent 掌握语义和唯一 reducer 链不变。迁移 `v20-domain-knowledge-supply` 为历史 processed Source 创建 version 1 并回填 Chunk；旧 Source/Chunk 读取保持兼容。实现详见 `docs/implementation/DOMAIN_KNOWLEDGE_SUPPLY.md`。
+
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
 
 Contract impact（`2026-08-28.7`）：`learning_file_study` 的首步收紧为“至多三句话直接导入 → 正式学习文件交接”。Harness 先从当前正式 LearningTask 的 `artifact_refs` 复用讲义/练习；缺少时复用既有 `generate_learning_files` 确认策略形成一次讲义+练习确认卡。未明确请求外部资源时，当前 Skill 的模型工具面不包含网页搜索、网页读取或视频搜索/核验；视频核验只有元数据时禁止正向推荐。没有新增模型工具、Agent、EventContract、Kernel writer 或掌握语义；旧项目文件提案 schema 继续兼容，新增 v2 提案只把同一确认能力用于未绑定项目的正式原子任务。

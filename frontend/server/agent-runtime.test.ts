@@ -1284,7 +1284,7 @@ test('project Tutor observes scoped project state and exposes proposals rather t
     },
   })
 
-  assert.deepEqual(result.toolRuns.slice(0, 4).map(run => run.kind), ['memory', 'project', 'project', 'workspace'])
+  assert.deepEqual(result.toolRuns.slice(0, 5).map(run => run.kind), ['memory', 'project', 'project', 'project', 'workspace'])
   assert.ok(result.toolRuns.some(run => run.projectRoadmapProposal?.confirmation_required))
   assert.match(result.reply, /确认后才会创建/)
   const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)

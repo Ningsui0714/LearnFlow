@@ -46,6 +46,8 @@ def _workflow_error(error: RuntimeError) -> HTTPException:
         return HTTPException(409, "当前步骤不能执行这个操作")
     if str(error) == "quality_gate":
         return HTTPException(409, "讲义未通过内容质量门槛，请重建讲义或返回原对话")
+    if str(error) == "domain_knowledge_blocked":
+        return HTTPException(409, "领域知识覆盖不足或来源已失效；请补充资料或先完成来源核验")
     return HTTPException(400, "无法更新学习流程")
 
 
@@ -55,15 +57,18 @@ async def create_run(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    run = await create_micro_learning_run(
-        db,
-        learner_id=current.learner.id,
-        goal=request.goal,
-        source_text=request.source_text,
-        client_request_id=request.client_request_id,
-        education_stage=current.profile.education_stage or "",
-        background=current.profile.background or "",
-    )
+    try:
+        run = await create_micro_learning_run(
+            db,
+            learner_id=current.learner.id,
+            goal=request.goal,
+            source_text=request.source_text,
+            client_request_id=request.client_request_id,
+            education_stage=current.profile.education_stage or "",
+            background=current.profile.background or "",
+        )
+    except RuntimeError as error:
+        raise _workflow_error(error) from error
     await reconcile_task_for_micro_run(db, run)
     await db.commit()
     return await run_view(db, run)

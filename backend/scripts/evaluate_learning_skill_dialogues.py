@@ -1,4 +1,4 @@
-"""Evaluate multi-turn pedagogical contracts for SkillSpec v2.
+"""Evaluate multi-turn pedagogical contracts for SkillSpec v3.
 
 This suite checks deterministic orchestration safety and coherence.  It does
 not claim to measure real learner gain; that requires human or field studies.
@@ -113,7 +113,7 @@ def evaluate(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
     return {
         "evaluation_scope": "deterministic_pedagogical_contract_not_learning_gain",
-        "schema_version": "learning-skill-dialogue-v2",
+        "schema_version": "learning-skill-dialogue-v3",
         "scenario_count": len(cases),
         "turn_count": sum(len(case["turns"]) for case in cases),
         "metrics": metrics,

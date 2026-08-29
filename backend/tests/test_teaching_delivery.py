@@ -11,7 +11,7 @@ from app.services.teaching_contract import (
 )
 
 
-def test_teaching_contract_normalizes_legacy_fields_without_blocking_delivery():
+def test_teaching_contract_normalizes_legacy_fields_and_blocks_without_domain_packet():
     contract = normalize_teaching_contract(
         {"exit_criteria": ["能解释生成器暂停与恢复"]},
         objective="理解 Python generator",
@@ -19,31 +19,31 @@ def test_teaching_contract_normalizes_legacy_fields_without_blocking_delivery():
     assert contract["objective"] == "理解 Python generator"
     assert contract["outcomes"] == ["能解释生成器暂停与恢复"]
     assert contract["exit_criteria"] == contract["outcomes"]
-    assert contract["teaching_gate"]["status"] == "ready_with_gaps"
+    assert contract["teaching_gate"]["status"] == "blocked_knowledge"
     assert contract["teaching_gate"]["max_model_revisions"] == 1
     knowledge = contract["knowledge_input_contract"]
-    assert knowledge["mode"] == "optional_read_only"
+    assert knowledge["mode"] == "required_for_formal_publish"
     assert knowledge["context_policy"] == "learning_design"
-    assert knowledge["missing_behavior"] == "generic_package_with_explicit_gaps"
+    assert knowledge["missing_behavior"] == "blocked_knowledge_without_published_artifact"
     assert knowledge["writes_kernels"] == []
     assert knowledge["mastery_inference"] is False
 
 
-def test_teaching_contract_hard_error_still_returns_answer_safe_fallback():
+def test_teaching_contract_hard_error_returns_non_publishable_gap_notice():
     contract = normalize_teaching_contract({
         "objective": "理解闭包",
         "outcomes": ["能解释自由变量"],
         "answer_leakage": True,
     })
-    assert contract["teaching_gate"]["status"] == "fallback_ready"
+    assert contract["teaching_gate"]["status"] == "blocked_knowledge"
     section = build_fallback_section(contract, checkpoint_title="闭包")
-    assert section["delivery_state"] == "fallback_ready"
+    assert section["delivery_state"] == "blocked_knowledge"
+    assert section["publishable"] is False
     assert section["mastery_inference"] is False
     assert "学习目标" in section["content"]
     assert "当前缺口" in section["content"]
     gated = ensure_teaching_sections([{"title": "unsafe", "content": "看似有效"}], contract=contract, checkpoint_title="闭包")
-    assert len(gated) == 1
-    assert gated[0]["delivery_state"] == "fallback_ready"
+    assert gated == []
 
 
 def test_knowledge_design_input_requires_answer_free_packet_and_stays_bounded():

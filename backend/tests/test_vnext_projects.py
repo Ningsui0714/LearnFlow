@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import AgentSession, EvidenceEvent, KernelMutation, LearningTask
-from app.models.project import Checkpoint, Project, Roadmap
+from app.models.project import Checkpoint, Project, Roadmap, Source, SourceVersion
 
 
 @pytest.fixture(scope="module")
@@ -61,6 +61,72 @@ def test_project_creation_is_topic_locked_and_does_not_invent_checkpoints(client
     assert mismatch.status_code == 422
 
 
+def test_project_source_baseline_requires_coverage_confirmation_and_invalidates_on_quarantine(
+    client: TestClient, tmp_path, monkeypatch,
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "source_uploads_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr(settings, "source_cache_dir", str(tmp_path / "cache"))
+    workspace = _create(client)
+    project_id = workspace["project"]["id"]
+    content = """# RAG Agent 项目范围
+
+## 前置与机制
+因为检索结果会进入模型上下文，必须先理解切分、召回和引用闭包之间的依赖。
+
+## 实现步骤
+先加载并切分文档，再建立检索索引，然后把带定位的证据交给回答器。
+
+## 例子
+例如用三个小文档验证检索命中，再检查回答的每个声明是否指向实际片段。
+
+## 风险与误区
+搜索摘要不能作为关键声明的唯一证据，也不能把检索命中直接当作回答正确。
+"""
+    uploaded = client.post(f"/api/projects/{project_id}/sources/upload", files={
+        "file": ("rag-baseline.md", content.encode(), "text/markdown"),
+    })
+    assert uploaded.status_code == 200, uploaded.text
+    source_id = uploaded.json()["id"]
+    processed = client.post(f"/api/projects/{project_id}/sources/{source_id}/process")
+    assert processed.status_code == 200, processed.text
+
+    async def mark_official() -> None:
+        async with async_session() as db:
+            source = await db.get(Source, source_id)
+            version = await db.get(
+                SourceVersion,
+                int(dict(source.meta_data or {})["active_source_version_id"]),
+            )
+            version.authority_tier = "official"
+            version.source_role = "canonical"
+            await db.commit()
+
+    asyncio.run(mark_official())
+    proposed = client.post(f"/api/vnext-projects/{project_id}/knowledge-baseline/proposals", json={
+        "source_ids": [source_id], "query": f"{workspace['project']['name']} RAG Agent 实现",
+    })
+    assert proposed.status_code == 200, proposed.text
+    proposal = proposed.json()["proposal"]
+    assert proposal["status"] == "draft"
+    assert proposal["coverage"]["gate_status"] == "ready"
+    confirmed = client.post(
+        f"/api/vnext-projects/{project_id}/knowledge-baseline/{proposal['id']}/confirm"
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["baseline"]["status"] == "ready"
+
+    quarantined = client.post(f"/api/vnext-projects/{project_id}/sources/{source_id}/health", json={
+        "action": "quarantine", "reason": "学习者发现资料被污染",
+    })
+    assert quarantined.status_code == 200, quarantined.text
+    baseline = client.get(f"/api/vnext-projects/{project_id}/knowledge-baseline")
+    assert baseline.status_code == 200, baseline.text
+    assert baseline.json()["baseline"]["status"] == "quarantined"
+    assert baseline.json()["baseline"]["mastery_inference"] is False
+
+
 def test_confirmed_roadmap_creates_checkpoint_sessions_and_formal_tasks(client: TestClient):
     workspace = _create(client)
     project = workspace["project"]
@@ -93,9 +159,9 @@ def test_confirmed_roadmap_creates_checkpoint_sessions_and_formal_tasks(client: 
     assert all(item["session_id"] for item in checkpoints)
     assert all(item["learning_task"]["origin_kind"] == "checkpoint" for item in checkpoints)
     assert all(item["learning_task"]["project_id"] == project["id"] for item in checkpoints)
-    assert all(item["learning_contract"]["schema_version"] == "learnflow.teaching-contract.v1" for item in checkpoints)
-    assert all(item["learning_contract"]["teaching_gate"]["status"] == "ready_with_gaps" for item in checkpoints)
-    assert all(item["learning_contract"]["knowledge_input_contract"]["mode"] == "optional_read_only" for item in checkpoints)
+    assert all(item["learning_contract"]["schema_version"] == "learnflow.teaching-contract.v2" for item in checkpoints)
+    assert all(item["learning_contract"]["teaching_gate"]["status"] == "blocked_knowledge" for item in checkpoints)
+    assert all(item["learning_contract"]["knowledge_input_contract"]["mode"] == "required_for_formal_publish" for item in checkpoints)
     assert all(item["learning_contract"]["delivery_readiness"]["overall"] == "outline_only" for item in checkpoints)
     assert all(item["learning_contract"]["delivery_readiness"]["package_readiness"]["overall"] == "outline_only" for item in checkpoints)
     assert all(item["learning_contract"]["delivery_readiness"]["task_readiness"]["overall"] == "runnable_with_fallback" for item in checkpoints)

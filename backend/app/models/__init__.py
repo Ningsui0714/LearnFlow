@@ -1,5 +1,6 @@
 from app.models.project import (
-    Project, Source, Chunk, Roadmap, Checkpoint, Lecture, Exercise,
+    Project, Source, SourceVersion, Chunk, DomainKnowledgePacket,
+    Roadmap, Checkpoint, Lecture, Exercise,
     LectureVersion, LectureNote, ArtifactAnnotation, ExerciseDraft,
     ProcessAnimation, ProjectWorkspace, WorkspaceOperation,
     LocalAgentProfile, LocalAgentRun, LocalAgentRunEvent,

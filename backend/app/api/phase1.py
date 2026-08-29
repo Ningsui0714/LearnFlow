@@ -24,6 +24,7 @@ from app.services.roadmap_agent import RoadmapAgent
 from app.services.learning_runtime import get_kernel_projection
 from app.services.source_locator import SOURCE_LOCATOR, SourceLocationError
 from app.services.source_knowledge import repository_knowledge_domains
+from app.services.domain_knowledge import ensure_source_version
 from app.services.auth import (
     CurrentLearner, get_current_learner, require_owned_project,
     require_owned_source,
@@ -221,24 +222,23 @@ async def process_source(
             except AttributeError:
                 pass  # meta_data column may not exist on old DB
 
-        # Delete previous chunks for this source
-        old = await db.execute(select(Chunk).where(Chunk.source_id == source.id))
-        for c in old.scalars().all():
-            await db.delete(c)
-
-        # Insert new chunks with rich metadata
-        for cd in chunks_data:
-            chunk = Chunk(
-                source_id=source.id,
-                index=cd["index"],
-                content=cd["content"],
-                tokens=cd["tokens"],
-                meta_data=cd.get("meta", {}),
-            )
-            db.add(chunk)
+        source_version, version_created = await ensure_source_version(
+            db, source=source, chunks=chunks_data, source_meta=source_meta,
+        )
+        if version_created:
+            for cd in chunks_data:
+                chunk = Chunk(
+                    source_id=source.id,
+                    source_version_id=source_version.id,
+                    index=cd["index"],
+                    content=cd["content"],
+                    tokens=cd["tokens"],
+                    meta_data=cd.get("meta", {}),
+                )
+                db.add(chunk)
 
         # Mark affected checkpoints' briefs as needing resync (chunk ids changed)
-        for cp_id in affected_cp_ids:
+        for cp_id in affected_cp_ids if version_created and source_version.version > 1 else []:
             cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == cp_id))).scalar_one_or_none()
             if cp and cp.brief:
                 new_brief = dict(cp.brief)
@@ -261,10 +261,13 @@ async def process_source(
         except Exception as e:
             print(f"[process] auto file_summaries skipped (source {source.id}): {type(e).__name__}: {e}")
 
-        source.status = "processed"
         await db.commit()
-        return {"status": "ok", "chunk_count": len(chunks_data),
-                "affected_checkpoints": affected_cp_ids}
+        return {
+            "status": "quarantined" if source_version.status == "quarantined" else "ok",
+            "chunk_count": len(chunks_data), "affected_checkpoints": affected_cp_ids,
+            "source_version_id": source_version.id, "source_version": source_version.version,
+            "version_created": version_created, "inspection": source_version.inspection,
+        }
 
     except SourceLocationError as e:
         source.status = "failed"
@@ -580,22 +583,23 @@ async def process_all_sources(
                 except AttributeError:
                     pass
 
-            old = await db.execute(select(Chunk).where(Chunk.source_id == source.id))
-            for c in old.scalars().all():
-                await db.delete(c)
-
-            for cd in chunks_data:
-                chunk = Chunk(
-                    source_id=source.id,
-                    index=cd["index"],
-                    content=cd["content"],
-                    tokens=cd["tokens"],
-                    meta_data=cd.get("meta", {}),
-                )
-                db.add(chunk)
+            source_version, version_created = await ensure_source_version(
+                db, source=source, chunks=chunks_data, source_meta=source_meta,
+            )
+            if version_created:
+                for cd in chunks_data:
+                    chunk = Chunk(
+                        source_id=source.id,
+                        source_version_id=source_version.id,
+                        index=cd["index"],
+                        content=cd["content"],
+                        tokens=cd["tokens"],
+                        meta_data=cd.get("meta", {}),
+                    )
+                    db.add(chunk)
 
             # Mark affected checkpoints' briefs as needing resync (chunk ids changed)
-            for cp_id in affected_cp_ids:
+            for cp_id in affected_cp_ids if version_created and source_version.version > 1 else []:
                 cp = (await db.execute(select(Checkpoint).where(Checkpoint.id == cp_id))).scalar_one_or_none()
                 if cp and cp.brief:
                     new_brief = dict(cp.brief)
@@ -617,7 +621,6 @@ async def process_all_sources(
             except Exception as e:
                 print(f"[process-all] auto file_summaries skipped (source {source.id}): {type(e).__name__}: {e}")
 
-            source.status = "processed"
             await db.commit()
             count += 1
 
