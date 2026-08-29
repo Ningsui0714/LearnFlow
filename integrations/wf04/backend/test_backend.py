@@ -1132,6 +1132,8 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertIn('class="app"', html)
         self.assertIn('class="sidebar"', html)
         self.assertIn('class="chat"', html)
+        self.assertIn("生成任务步骤", html)
+        self.assertIn("tool=learning-task-conversion", html)
         # 旧 Agent 主入口通过 /legacy 保持兼容。
         request = urllib.request.Request(self.base_url + "/legacy", method="GET")
         with urllib.request.urlopen(request, timeout=5) as response:

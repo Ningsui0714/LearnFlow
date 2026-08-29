@@ -346,6 +346,21 @@ input,textarea{font-family:inherit; color:inherit}
   border:1px solid transparent; border-radius:999px; padding:5px 12px;
 }
 .suggest-chip:hover{border-color:var(--accent)}
+.chat-tools{
+  flex:none; display:flex; align-items:center; gap:8px;
+  padding:0 14px 6px; min-width:0;
+}
+.chat-tools-label{font-size:10px; font-weight:700; color:var(--faint); flex:none}
+.task-conversion-entry{
+  display:inline-flex; align-items:center; gap:6px; min-width:0;
+  border:1px solid var(--accent); border-radius:999px; padding:5px 11px;
+  background:var(--accent-soft); color:var(--accent); font-size:11px; font-weight:700;
+  text-decoration:none; transition:background .14s,color .14s,transform .14s;
+}
+.task-conversion-entry:hover{
+  background:var(--accent); color:#fff; transform:translateY(-1px);
+}
+.task-conversion-entry .tool-mark{font-size:12px; line-height:1}
 .chat-input-box{
   flex:none; margin:4px 14px 14px;
   background:var(--surface3); border:1px solid var(--line); border-radius:13px;
@@ -637,6 +652,15 @@ input,textarea{font-family:inherit; color:inherit}
         <textarea id="followupInput" rows="1" placeholder="针对选中内容继续追问…"></textarea>
         <button class="fu-send" id="followupSend">➤</button>
       </div>
+    </div>
+    <div class="chat-tools" aria-label="Agent 扩展工具">
+      <span class="chat-tools-label">扩展工具</span>
+      <a
+        class="task-conversion-entry"
+        id="taskConversionEntry"
+        href="http://127.0.0.1:5173/agent?tool=learning-task-conversion"
+        title="把企业真实工作任务转为可执行的具体任务步骤"
+      ><span class="tool-mark">✦</span><span>生成任务步骤</span></a>
     </div>
     <div class="chat-input-box">
       <textarea id="chatInput" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"></textarea>

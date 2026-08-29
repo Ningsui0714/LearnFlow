@@ -8,6 +8,9 @@ export default function ProtectedRoute() {
   if (loading) {
     return <div className="flex h-screen items-center justify-center bg-gray-50 text-sm text-gray-500">正在恢复学习空间...</div>
   }
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  if (!user) {
+    const from = `${location.pathname}${location.search}${location.hash}`
+    return <Navigate to="/login" replace state={{ from }} />
+  }
   return <Outlet />
 }
