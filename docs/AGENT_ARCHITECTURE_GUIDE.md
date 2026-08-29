@@ -1059,3 +1059,9 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 7. 任何数据都不能跨 Learner 泄漏。
 
 这七条比“让某一次模型回复更聪明”更重要。
+
+## 岗位能力图谱插件
+
+`role_capability_graphing` 是 `learning_design_agent` 后的领域 Product Skill，不是新的主 Agent。它把项目来源和用户显式任务种子编译为不可变岗位快照，并提供固定快照解释和合同化迭代。Tutor 对话只能调用 `read_role_capability_graph` 与 `explain_role_capability` 两个只读工具；生成或迭代必须交接到项目“岗位图谱”工作台并由学习者显式触发。
+
+岗位节点的 `accepted/candidate/deprecated` 是岗位制品生命周期，`documented_norm/inferred_pattern` 是岗位断言的认识状态，二者都不是 Knowledge 或 Practice 掌握等级。任何从岗位图谱到关卡、LearningTask 或评估的投影都必须继续遵守既有提案、确认、教学合同与正式 Attempt 证据链。

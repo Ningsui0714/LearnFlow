@@ -470,6 +470,7 @@ function availableTools(input: TutorAgentRuntimeInput) {
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
     && (tool.name !== 'read_active_learning_file' || Boolean(input.activeArtifactContext))
     && (!tool.name.startsWith('read_project_') || Boolean(input.formalProjectContext))
+    && (!['read_role_capability_graph', 'explain_role_capability'].includes(tool.name) || Boolean(input.formalProjectContext))
     && (tool.name !== 'read_project_roadmap' || projectTutor)
     && (tool.name !== 'propose_project_roadmap' || projectTutor && input.mode === 'learning_plan')
     && (tool.name !== 'propose_project_learning_files' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
@@ -745,6 +746,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'read_project_roadmap'
         || call.name === 'read_project_sources'
         || call.name === 'read_project_learning_file'
+        || call.name === 'read_role_capability_graph'
+        || call.name === 'explain_role_capability'
         || call.name === 'read_active_learning_file'
         || call.name === 'search_learning_videos'
         || call.name === 'inspect_learning_video',

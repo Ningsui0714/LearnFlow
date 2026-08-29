@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-29.1"
+REGISTRY_VERSION = "2026-08-29.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -392,6 +392,14 @@ TOOLS = {
                      ("structure", "knowledge", "human", "value"), (), "project_tutor session only + exact project theme + scoped sources/context -> typed create/revision proposal; only not-started nodes may change and explicit learner confirmation is required"),
         ToolContract("project_learning_file_proposer", "Learning File Generation Proposal Harness", "learning_design_agent", "vnext", "proposal",
                      ("knowledge", "human"), (), "current formal LearningTask + managed artifact refs -> reuse existing lecture/practice or a confirmation-required generation proposal; project scope is used when available; user-triggered materialization and no mastery inference"),
+        ToolContract("role_capability_package_runtime", "Role Capability Package Compiler", "learning_design_agent", "learnflow", "artifact",
+                     (), (), "fixed project sources + explicit task seeds -> validated immutable role capability snapshot; zero learner-state write"),
+        ToolContract("role_capability_graph_reader", "Role Capability Graph Reader", "learning_design_agent", "learnflow", "read",
+                     (), (), "learner-owned project -> current immutable role snapshot -> bounded graph objects; no mastery inference"),
+        ToolContract("role_capability_explainer", "Snapshot-pinned Role Capability Explainer", "learning_design_agent", "learnflow", "read",
+                     (), (), "pinned snapshot + bounded query -> objects, relations and evidence refs; no role fact mutation and no learner-state write"),
+        ToolContract("role_capability_iteration_runtime", "Contracted Role Capability Iteration Runtime", "learning_design_agent", "learnflow", "harness",
+                     (), (), "base snapshot -> contract -> inspect -> bounded patch -> validate -> meaningful diff -> immutable successor; zero learner-state write"),
         ToolContract("vnext_learning_path_graph_reader", "vNext Official + Personal Learning Path Graph Reader", "tutor_agent", "vnext", "read",
                      ("structure", "knowledge", "value"), (), "compatibility dispatcher over exact then conditional fuzzy retrieval; not model-visible; self-report is never Knowledge mastery"),
         ToolContract("vnext_learning_path_exact_reader", "vNext Exact Learning Path Node Reader", "tutor_agent", "vnext", "read",
@@ -504,6 +512,7 @@ TOOL_INTERFACE_ROLES = {
         "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         "project_workspace_reader", "project_source_reader", "project_learning_file_reader",
         "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
+        "role_capability_graph_reader", "role_capability_explainer",
     }},
     **{tool_id: "harness" for tool_id in {
         "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime", "vnext_learning_path_graph_reader",
@@ -512,6 +521,7 @@ TOOL_INTERFACE_ROLES = {
         "learning_skill_runtime", "learning_task_runtime", "learning_task_planner",
         "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
         "source_version_runtime", "domain_knowledge_packet_compiler",
+        "role_capability_package_runtime", "role_capability_iteration_runtime",
     }},
     **{tool_id: "projection" for tool_id in {
         "review_scheduler", "review_proficiency_projector", "five_kernel_reducer", "memory_graph", "kernel_head_projector", "checkpoint_delivery_readiness",
@@ -535,6 +545,7 @@ TOOL_MODEL_EXPOSURE = {
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
+            "role_capability_graph_reader", "role_capability_explainer",
             "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector", "active_learning_file_reader",
         }
         else "agent_mediated"
@@ -935,6 +946,10 @@ SKILLS = {
                        "learning_task_runtime", "learning_file_service", "five_kernel_retriever"),
                       "topic-locked project Tutor -> confirmed checkpoint DAG -> checkpoint LearningTasks -> managed files and evidence-safe practice",
                       "Tutor owns orchestration; Learning Design proposes; user confirms structure/artifacts; reducer alone owns five-kernel mutations"),
+        SkillContract("role_capability_graphing", "岗位能力包生成、解释与迭代", "learning_design_agent",
+                      ("role_capability_package_runtime", "role_capability_graph_reader", "role_capability_explainer", "role_capability_iteration_runtime", "project_source_reader"),
+                      "project-scoped immutable role package + evidence-bound explanation + validated semantic successor",
+                      "Learning Design owns artifacts; explicit workspace actions own generation/iteration; snapshots never imply learner mastery"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
                       ("hierarchical_rag", "content_generation", "process_animation", "teaching_contract_gate", "checkpoint_delivery_readiness", "learning_video_inspector"),
                       "structured teaching artifact; never mastery evidence", "artifact contract"),
@@ -1057,6 +1072,8 @@ WORKBENCHES = {
                            "manage_project_conversations", "manage_learning_tasks", "plan_learning_task",
                            "run_learning_task", "generate_learning_files", "open_learning_file",
                            "attach_learning_file_to_chat", "delete_project"), "vnext"),
+        WorkbenchContract("role_capability_plugin", "Role Capability Graph Plugin", "/projects/:projectId", "learning_design_agent",
+                          ("generate_role_capability_package", "read_role_capability_graph", "explain_role_capability", "iterate_role_capability_package")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
         WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
@@ -1144,6 +1161,10 @@ CAPABILITY_OWNERS = {
     "add_source": ("tutor_agent", "source_ingestion", "project_tutor"),
     "read_project_roadmap": ("tutor_agent", "project_roadmap_reader", "project_tutor"),
     "revise_project_roadmap": ("tutor_agent", "project_roadmap_proposer", "project_tutor"),
+    "generate_role_capability_package": ("learning_design_agent", "role_capability_package_runtime", "role_capability_plugin"),
+    "read_role_capability_graph": ("learning_design_agent", "role_capability_graph_reader", "role_capability_plugin"),
+    "explain_role_capability": ("learning_design_agent", "role_capability_explainer", "role_capability_plugin"),
+    "iterate_role_capability_package": ("learning_design_agent", "role_capability_iteration_runtime", "role_capability_plugin"),
     "plan_learning_path": ("learning_design_agent", "content_generation", "project_tutor"),
     "apply_learning_path": ("tutor_agent", "action_board", "project_tutor"),
     "navigate_checkpoint": ("tutor_agent", "action_board", "project_tutor"),
@@ -1284,6 +1305,8 @@ EVENTS = {
         _event("source_added", "add_source", ("structure", "practice"), "artifact"),
         _event("source_processed", "add_source", ("structure", "practice"), "artifact"),
         _event("project_source_removed", "add_source", (), "confirmed_source_removal", origin="vnext"),
+        _event("role_capability_package_generated", "generate_role_capability_package", (), "versioned_domain_artifact", origin="role_capability_plugin"),
+        _event("role_capability_snapshot_iterated", "iterate_role_capability_package", (), "versioned_domain_artifact", origin="role_capability_plugin"),
         _event("roadmap_discussed", "plan_learning_path", ("structure",), "proposal"),
         _event("roadmap_applied", "apply_learning_path", ("structure",), "confirmed_action"),
         _event("roadmap_revised", "revise_project_roadmap", ("structure",), "confirmed_action", origin="vnext"),
@@ -1426,6 +1449,10 @@ _API_BINDING_TARGETS = {
     "api:vnext_projects.apply_roadmap": ("app.api.vnext_projects", "/vnext-projects/{project_id}/roadmap/apply", "POST", "apply_vnext_roadmap"),
     "api:vnext_projects.revise_roadmap": ("app.api.vnext_projects", "/vnext-projects/{project_id}/roadmap", "PUT", "revise_vnext_roadmap"),
     "api:vnext_projects.create_session": ("app.api.vnext_projects", "/vnext-projects/{project_id}/sessions", "POST", "create_project_free_session"),
+    "api:role_capability.read": ("app.api.role_capability", "/role-capability/projects/{project_id}", "GET", "read_role_capability_package"),
+    "api:role_capability.generate": ("app.api.role_capability", "/role-capability/projects/{project_id}/generate", "POST", "generate_role_capability_package"),
+    "api:role_capability.explain": ("app.api.role_capability", "/role-capability/projects/{project_id}/explain", "POST", "explain_role_capability_package"),
+    "api:role_capability.iterate": ("app.api.role_capability", "/role-capability/projects/{project_id}/iterate", "POST", "iterate_role_capability_package"),
     "api:assessment_blueprint.propose": ("app.api.assessment_design", "/assessment-blueprints", "POST", "propose_assessment_blueprint"),
     "api:memory.feedback": ("app.api.memory", "/memory/claims/{claim_id}/feedback", "POST", "submit_claim_feedback"),
     "api:profile.update": ("app.api.profile", "/profile", "PATCH", "update_profile"),
@@ -1486,6 +1513,7 @@ _FRONTEND_HANDLER_TARGETS = {
             "read_active_learning_file", "read_project_workspace", "read_project_sources",
             "read_project_learning_file", "read_project_roadmap", "propose_project_roadmap",
             "propose_project_learning_files", "search_computer_knowledge", "read_web_evidence",
+            "read_role_capability_graph", "explain_role_capability",
             "search_learning_videos", "inspect_learning_video", "generate_learning_diagram",
             "generate_learning_animation", "design_assessment_blueprint",
             "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
@@ -1506,6 +1534,7 @@ _FRONTEND_COMPONENT_TARGETS = {
     "workbench:vnext_practice_file": ("frontend/src/PracticeFilePage.tsx", "PracticeFilePage", "/files/practice/"),
     "workbench:learning_tasks": ("frontend/src/LearningTasksPage.tsx", "LearningTasksPage", "/tasks"),
     "workbench:project_tutor": ("frontend/src/ProjectWorkspacePage.tsx", "ProjectWorkspacePage", "/projects/"),
+    "workbench:role_capability_plugin": ("frontend/src/RoleCapabilityPluginPanel.tsx", "RoleCapabilityPluginPanel", "/projects/"),
     "workbench:review": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:competition_demo": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:desktop_workspace": ("frontend/src/main.tsx", "App", ""),
@@ -1592,6 +1621,10 @@ _TOOL_BINDING_IDS = {
     "project_roadmap_reader": ("frontend:tool:read_project_roadmap",),
     "project_roadmap_proposer": ("frontend:tool:propose_project_roadmap",),
     "project_learning_file_proposer": ("frontend:tool:propose_project_learning_files",),
+    "role_capability_package_runtime": ("api:role_capability.generate",),
+    "role_capability_graph_reader": ("frontend:tool:read_role_capability_graph", "api:role_capability.read"),
+    "role_capability_explainer": ("frontend:tool:explain_role_capability", "api:role_capability.explain"),
+    "role_capability_iteration_runtime": ("api:role_capability.iterate",),
     "vnext_learning_path_graph_reader": ("frontend:path.read",),
     "vnext_learning_path_exact_reader": ("frontend:path.lookup",),
     "vnext_learning_path_fuzzy_reader": ("frontend:path.search",),
@@ -1668,6 +1701,7 @@ _SKILL_BINDING_IDS = {
     "learning_path_planning": ("frontend:path.plan", "py:roadmap.agent"),
     "learning_resource_curation": ("frontend:agent_runtime.run", "frontend:tool:search_computer_knowledge"),
     "project_apprenticeship_orchestration": ("api:vnext_projects.context", "api:vnext_projects.apply_roadmap"),
+    "role_capability_graphing": ("api:role_capability.generate", "api:role_capability.explain", "api:role_capability.iterate"),
     "evidence_grounded_teaching": ("py:lecture.agent",),
     "practice_verification": ("api:phase3.submit_concept", "api:phase3.submit_exercise"),
     "assessment_blueprint_design": ("py:assessment.create",),

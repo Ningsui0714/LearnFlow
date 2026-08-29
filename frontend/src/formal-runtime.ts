@@ -938,6 +938,67 @@ export async function listFormalProjects() {
   return jsonRequest<{ schema_version: string; projects: FormalProjectWorkspace['project'][] }>('/api/vnext-projects')
 }
 
+export type RoleCapabilityNode = {
+  id: string
+  type: 'role' | 'task' | 'capability' | 'knowledge_skill'
+  label: string
+  summary: string
+  lifecycle: 'accepted' | 'candidate' | 'deprecated'
+  knowledge_state: string
+  evidence_refs: string[]
+}
+
+export type RoleCapabilityPluginView = {
+  plugin: 'role_capability_graph'
+  protocol_version?: string
+  package: null | { id: number; project_id: number; role_title: string; status: string; current_snapshot_id: number }
+  snapshot: null | {
+    id: number
+    snapshot_key: string
+    version: number
+    root_hash: string
+    graph: { role: { id: string; title: string }; nodes: RoleCapabilityNode[]; edges: Array<Record<string, any>> }
+    source_refs: Array<Record<string, any>>
+    validation: { valid: boolean; errors: string[]; warnings: string[]; stats: Record<string, number> }
+    provenance: Record<string, any>
+    created_at: string
+  }
+  authority?: string
+}
+
+export async function loadRoleCapabilityPlugin(projectId: number) {
+  return jsonRequest<RoleCapabilityPluginView>(`/api/role-capability/projects/${projectId}`)
+}
+
+export async function generateRoleCapabilityPackage(projectId: number, input: {
+  role_title: string
+  role_summary?: string
+  source_ids?: number[]
+  task_seeds?: string[]
+  idempotency_key: string
+}) {
+  return jsonRequest<RoleCapabilityPluginView & { run_id: number }>(`/api/role-capability/projects/${projectId}/generate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  })
+}
+
+export async function explainRoleCapability(projectId: number, query: string) {
+  return jsonRequest<{ snapshot: Record<string, any>; explanation: Record<string, any> }>(`/api/role-capability/projects/${projectId}/explain`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query }),
+  })
+}
+
+export async function iterateRoleCapabilityPackage(projectId: number, input: {
+  objective: string
+  target_ids: string[]
+  operations: Array<Record<string, any>>
+  idempotency_key: string
+}) {
+  return jsonRequest<RoleCapabilityPluginView & { run_id: number; status: string; diff: Record<string, any> }>(`/api/role-capability/projects/${projectId}/iterate`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  })
+}
+
 export async function createFormalProject(input: {
   name: string; objective: string; expectedOutcome: string; userLevel?: string
 }) {

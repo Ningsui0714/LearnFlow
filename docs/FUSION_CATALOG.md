@@ -45,6 +45,7 @@ artifact 或 Event 输入；供应商名称、YAML 或清单字符串本身不�
 
 - **Tools**：能执行读取、生成、评估、事件写入或投影的运行构件。
 - **Product skills**：由一个主 Agent 负责、组合多个 tools 的稳定产品能力，不等同于本地 Codex `SKILL.md`。
+- **Role capability plugin**：`role_capability_graphing` 由 Learning Design 负责，组合岗位包生成、只读图谱、固定快照解释和合同化迭代；生成制品与运行事件均不直接写五核。
 - **Workbenches**：用户或维护者操作能力的产品空间；候选外部 Studio 可以保留稳定声明，但只有 `implemented` 且 binding 校验通过的条目才可发布为 available。
 - **Important events**：会影响教学连续性、证据、偏好或里程碑的只追加事实。
 
