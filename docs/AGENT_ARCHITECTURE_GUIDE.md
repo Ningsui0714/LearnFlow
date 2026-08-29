@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-30.1`）：Tutor 的视觉工具面采用双重显式意图门。普通解释、文件共学和资源策展不暴露图解/动画工具；明确“画图/流程图/时序图”等只暴露图解，明确“动画/逐帧/演示变化”等只暴露动画，执行器再次校验。Learning Design 的 VisualSpec 必须具有可教学的语义对象、真实关系或状态变化，并通过确定性布局、安全和重放门；未知主题的单节点降级被取消。文件提案在真正物化前只能称为待确认提案。事件序号改由数据库行原子分配，五核仍只消费既有 EvidenceEvent/reducer 链。
+
 Contract impact（`2026-08-29.1`）：引入统一领域知识供给平面。Tutor 仍只使用现有的知识库读取、Search 和 Page Reader ACI；`source_version_runtime`、`domain_knowledge_packet_compiler` 和 `source_integrity_monitor` 都是 Harness/Policy，不向模型新增工具。学习设计在正式步骤前必须得到可发布 Packet；讲义和练习共用同一 TeachingContentBrief。用户资料决定语境、范围和课程版本，但其中的指令始终是不可信数据，事实权威不会静默压过官方或学习者已确认的项目版本。所有来源健康事件零 Kernel target。
 
 Contract impact（`2026-08-28.7`）：文件共学不再把“选学习文件”误执行成开放资源策展。初始聊天只给至多三句话的概念起点，Harness 根据正式 LearningTask 的文件引用确定性选择“复用现有文件”或“显示一次生成确认卡”；主体内容、例子和练习留在完整纸张中。只有学习者明确要求资料、视频或联网证据时，Search/Video ACI 才重新进入该 Skill 的工具面；`metadata_only` 视频不得被描述为适合或值得推荐。该调整复用现有工具和 Action Board 能力，不扩大模型工具面。

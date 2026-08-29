@@ -66,12 +66,12 @@ ACTION_BOARD = {
             ("generate_learning_files", "design_assessment_blueprint", "run_vnext_learning_task"),
         ),
         ActionDefinition(
-            "generate_learning_diagram", "生成安全学习图解", "artifact", "explicit_or_auto",
+            "generate_learning_diagram", "生成安全学习图解", "artifact", "explicit_or_click",
             {},
             (),
         ),
         ActionDefinition(
-            "generate_learning_animation", "生成安全学习动画", "artifact", "explicit_or_auto",
+            "generate_learning_animation", "生成安全学习动画", "artifact", "explicit_or_click",
             {},
             (),
         ),

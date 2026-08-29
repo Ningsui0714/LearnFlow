@@ -80,6 +80,16 @@ class AuthAccountNumberSequence(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class LearnerEventSequence(Base):
+    """Transactionally allocated per-learner EvidenceEvent sequence."""
+
+    __tablename__ = "learner_event_sequences"
+
+    learner_id = Column(Integer, ForeignKey("learners.id"), primary_key=True)
+    next_sequence = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class UserAccount(Base):
     __tablename__ = "user_accounts"
     __table_args__ = (

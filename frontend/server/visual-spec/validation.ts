@@ -963,30 +963,6 @@ export function legacyToSafeDiagram(legacy: LegacyLearningVisualSpec, request: s
   return { ...common, kind: 'diagram', domain: 'computer', abstraction: 'system_structure', semantic, accessibility: { summary: `${legacy.title}：旧版视觉已按静态关系安全呈现。`, readingOrder: semantic.entities.map(item => item.id), nonColorStateCue: '旧版高亮不被视为状态变化，当前内容已降级为静态图解。' } }
 }
 
-function topicLabel(request: string) {
-  return compact(request.replace(/^(?:请|帮我|给我|画|生成|演示|解释|讲解|用图解|用动画)+/i, ''), 46) || '当前学习主题'
-}
-
-function topicDiagram(request: string, modelError: string): LearningVisualSpec {
-  const classification = classifyLearningVisual(request)
-  const common = {
-    version: VISUAL_VERSION,
-    kind: 'diagram' as const,
-    title: compact(request, 72) || '学习图解',
-    subtitle: '确定性安全降级：仅保留可确认的主题，不补造关系或数值。',
-    explanation: '视觉规划未通过语义门。本图只保留原请求中的主题锚点，避免把猜测画成事实。',
-    state: emptyState(),
-    provenance: provenance(request),
-    generation: generationReport('deterministic_template', false, [{ code: 'model_plan_rejected', path: 'root', detail: modelError }], modelError, 'diagram'),
-  }
-  if (classification.domain === 'mathematics') {
-    const semantic: MathStructureSemantic = { type: 'math_structure', terms: [{ id: 'topic', label: topicLabel(request) }], relations: [] }
-    return { ...common, domain: 'mathematics', abstraction: 'math_structure', semantic, accessibility: { summary: `${common.title}。当前仅保留数学主题锚点，未生成未经验证的函数、分布或推导。`, readingOrder: ['topic'], nonColorStateCue: '此产物已明确标记为静态降级图解。' } }
-  }
-  const semantic: SystemStructureSemantic = { type: 'system_structure', entities: [{ id: 'topic', label: topicLabel(request), role: 'concept' }], relations: [] }
-  return { ...common, domain: 'computer', abstraction: 'system_structure', semantic, accessibility: { summary: `${common.title}。当前仅保留计算机主题锚点，未补造数据流、状态或协议关系。`, readingOrder: ['topic'], nonColorStateCue: '此产物已明确标记为静态降级图解。' } }
-}
-
 function tcpAnimation(request: string, modelError: string): LearningVisualSpec {
   const semantic: ProtocolSequenceSemantic = {
     type: 'protocol_sequence',
@@ -1021,7 +997,100 @@ function tcpAnimation(request: string, modelError: string): LearningVisualSpec {
   }
 }
 
+function federatedLearningDiagram(request: string, modelError: string): LearningVisualSpec {
+  const semantic: SystemStructureSemantic = {
+    type: 'system_structure',
+    entities: [
+      { id: 'local_data', label: '本地数据', detail: '原始数据保留在各参与方本地', role: 'input' },
+      { id: 'local_training', label: '本地训练', detail: '各参与方使用本地数据更新模型', role: 'process' },
+      { id: 'model_updates', label: '模型更新', detail: '仅上传模型参数更新或梯度', role: 'output' },
+      { id: 'aggregation', label: '聚合服务', detail: '聚合多个参与方的模型更新', role: 'process' },
+      { id: 'global_model', label: '全局模型', detail: '聚合后的模型进入下一轮训练', role: 'output' },
+    ],
+    relations: [
+      { id: 'data_to_training', from: 'local_data', to: 'local_training', label: '留在本地使用', kind: 'flow' },
+      { id: 'training_to_updates', from: 'local_training', to: 'model_updates', label: '产生更新', kind: 'flow' },
+      { id: 'updates_to_aggregation', from: 'model_updates', to: 'aggregation', label: '上传更新', kind: 'flow' },
+      { id: 'aggregation_to_global', from: 'aggregation', to: 'global_model', label: '合并', kind: 'flow' },
+      { id: 'global_to_training', from: 'global_model', to: 'local_training', label: '下发下一轮', kind: 'flow' },
+    ],
+  }
+  return {
+    version: VISUAL_VERSION,
+    kind: 'diagram',
+    title: '联邦学习的一轮协作',
+    subtitle: '数据留在本地，模型更新参与聚合',
+    domain: 'computer',
+    abstraction: 'system_structure',
+    semantic,
+    state: emptyState(),
+    explanation: '沿箭头读取一轮训练；回环表示聚合后的全局模型会再次下发，而不是上传原始数据。',
+    accessibility: {
+      summary: '本地数据用于本地训练，参与方上传模型更新，聚合服务形成全局模型并下发下一轮；原始数据不离开本地。',
+      readingOrder: ['local_data', 'local_training', 'model_updates', 'aggregation', 'global_model'],
+      nonColorStateCue: '每条边同时标注动作文字，数据边界由“留在本地使用”明确说明。',
+    },
+    provenance: provenance(request),
+    generation: generationReport('deterministic_template', false, [{ code: 'model_plan_rejected', path: 'root', detail: modelError }], modelError, 'diagram'),
+  }
+}
+
+function federatedLearningAnimation(request: string, modelError: string): LearningVisualSpec {
+  const semantic: ProtocolSequenceSemantic = {
+    type: 'protocol_sequence',
+    participants: [
+      { id: 'coordinator', label: '聚合服务', role: '协调与聚合' },
+      { id: 'client_a', label: '参与方 A', role: '本地训练' },
+      { id: 'client_b', label: '参与方 B', role: '本地训练' },
+    ],
+    messages: [
+      { id: 'dispatch_a', from: 'coordinator', to: 'client_a', label: '下发当前全局模型', order: 1, phase: '开始一轮' },
+      { id: 'dispatch_b', from: 'coordinator', to: 'client_b', label: '下发当前全局模型', order: 2, phase: '开始一轮' },
+      { id: 'update_a', from: 'client_a', to: 'coordinator', label: '上传模型更新', order: 3, phase: '本地训练完成' },
+      { id: 'update_b', from: 'client_b', to: 'coordinator', label: '上传模型更新', order: 4, phase: '本地训练完成' },
+      { id: 'next_round', from: 'coordinator', to: 'client_a', label: '聚合后进入下一轮', order: 5, phase: '形成新全局模型' },
+    ],
+  }
+  const initialState = emptyState()
+  const frames: LearningVisualFrame[] = semantic.messages.map((message, index) => ({
+    id: `frame_${index + 1}`,
+    title: `第 ${index + 1} 步：${message.phase}`,
+    narration: `${semantic.participants.find(item => item.id === message.from)?.label}向${semantic.participants.find(item => item.id === message.to)?.label}${message.label}。原始数据始终不随消息发送。`,
+    durationMs: 1500,
+    patches: [{ type: 'send_message', messageId: message.id }],
+  }))
+  const finalState = cloneState(initialState)
+  finalState.emittedMessageIds = semantic.messages.map(item => item.id)
+  finalState.activeIds = ['next_round']
+  return {
+    version: VISUAL_VERSION,
+    kind: 'animation',
+    title: '联邦学习的一轮训练',
+    subtitle: '逐步查看模型下发、本地训练更新与聚合',
+    domain: 'computer',
+    abstraction: 'protocol_sequence',
+    semantic,
+    initialState,
+    frames,
+    invariants: [{ type: 'references_resolve' }, { type: 'final_state_active', targetId: 'next_round' }],
+    finalState,
+    explanation: '这是简化的一轮协作时序：动画展示模型消息，不表示原始数据被上传。',
+    accessibility: {
+      summary: '聚合服务下发全局模型，参与方在本地训练并上传模型更新，聚合后开始下一轮；原始数据不离开参与方。',
+      readingOrder: ['coordinator', 'client_a', 'client_b', 'dispatch_a', 'dispatch_b', 'update_a', 'update_b', 'next_round'],
+      nonColorStateCue: '当前步骤同时显示序号、方向、消息名，并重复说明原始数据未发送。',
+    },
+    provenance: provenance(request),
+    generation: generationReport('deterministic_template', false, [{ code: 'model_plan_rejected', path: 'root', detail: modelError }], modelError, 'deterministic_animation'),
+  }
+}
+
 export function buildDeterministicFallback(kind: LearningVisualKind, request: string, modelError: string): LearningVisualSpec {
   if (kind === 'animation' && /(?:tcp|三次握手)/i.test(request)) return tcpAnimation(request, modelError)
-  return topicDiagram(request, modelError)
+  if (/(?:联邦学习|federated\s+learning)/i.test(request)) {
+    return kind === 'animation'
+      ? federatedLearningAnimation(request, modelError)
+      : federatedLearningDiagram(request, modelError)
+  }
+  throw new Error(`visual_fallback_unavailable:${modelError}`)
 }

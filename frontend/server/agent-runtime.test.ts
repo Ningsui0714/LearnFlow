@@ -822,8 +822,31 @@ test('learning file study uses a short artifact-first harness instead of resourc
   assert.equal(result.toolRuns.some(run => run.kind === 'search' || run.kind === 'video'), false)
   assert.ok(result.toolRuns.some(run => run.projectLearningFileProposal?.learning_task_id === 42))
   assert.ok(result.trace.events.some(event => event.status === 'blocked' && /search_learning_videos/.test(event.detail)))
-  assert.doesNotMatch(JSON.stringify(requests[0].body.tools), /search_learning_videos|search_computer_knowledge|read_web_evidence/)
+  assert.doesNotMatch(JSON.stringify(requests[0].body.tools), /search_learning_videos|search_computer_knowledge|read_web_evidence|generate_learning_diagram|generate_learning_animation/)
   assert.ok(result.reply.length < 220)
+})
+
+test('visual tools are exposed only for the explicitly requested visual form', async () => {
+  const cases = [
+    { message: '什么是联邦学习', present: [] as string[], absent: ['generate_learning_diagram', 'generate_learning_animation'] },
+    { message: '画一张联邦学习流程图', present: ['generate_learning_diagram'], absent: ['generate_learning_animation'] },
+    { message: '用动画逐步演示联邦学习聚合过程', present: ['generate_learning_animation'], absent: ['generate_learning_diagram'] },
+  ]
+  for (const item of cases) {
+    const requests: any[] = []
+    await runTutorAgentTurn({
+      baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'guided_learning',
+      messages: [{ role: 'user', content: item.message }], toolChoice: 'auto',
+      generate: async () => 'unused',
+      invokeProvider: async request => {
+        requests.push(request)
+        return { choices: [{ message: { content: '先用一句话说明核心，再按需要补充学习动作。' } }] }
+      },
+    })
+    const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
+    for (const name of item.present) assert.ok(exposed.includes(name), `${item.message}: ${name}`)
+    for (const name of item.absent) assert.ok(!exposed.includes(name), `${item.message}: ${name}`)
+  }
 })
 
 test('learning file study reuses an existing lecture before proposing generation', async () => {
@@ -868,6 +891,23 @@ test('metadata-only video inspection cannot support a positive recommendation', 
   })
   assert.equal(checked.valid, false)
   assert.ok(checked.violations.includes('unverified_video_recommendation'))
+})
+
+test('a pending learning-file proposal cannot be described as an available file', () => {
+  const checked = verifyTutorTurnOutcome({
+    reply: '讲义已经生成好了，直接打开这份讲义开始阅读。',
+    mode: 'guided_learning',
+    toolRuns: [{
+      id: 'proposal', kind: 'file', status: 'completed', title: '学习文件待生成', detail: '等待确认',
+      durationMs: 1, toolName: 'propose_project_learning_files', observationSummary: 'lecture + practice',
+      projectLearningFileProposal: {
+        project_id: 0, learning_task_id: 65, checkpoint_title: '联邦学习',
+        file_kinds: ['lecture', 'practice'], source_strategy: 'task_sources_first', confirmation_required: true,
+      },
+    }],
+  })
+  assert.equal(checked.valid, false)
+  assert.ok(checked.violations.includes('unmaterialized_learning_file_claim'))
 })
 
 test('review questions receive answer-free proficiency and memory observations', async () => {

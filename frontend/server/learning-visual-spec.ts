@@ -37,7 +37,7 @@ function semanticSchemaHint(domain: LearningVisualDomain, abstraction: LearningV
   if (domain === 'computer' && abstraction === 'data_structure') return '{"type":"data_structure","structure":"array","items":[{"id":"i0","label":"元素0","index":0}],"links":[],"pointers":[]}'
   if (domain === 'computer' && abstraction === 'code_trace') return '{"type":"code_trace","language":"pseudocode","lines":[{"id":"line1","number":1,"text":"有限的展示文本"}],"variables":[],"stackFrames":[]}'
   if (domain === 'computer' && abstraction === 'tensor_shape_flow') return '{"type":"tensor_shape_flow","tensors":[{"id":"x","label":"X","shape":[2,4]},{"id":"y","label":"Y","shape":[2,8]}],"operations":[{"id":"op","label":"线性映射","inputIds":["x"],"outputIds":["y"]}]}'
-  if (domain === 'computer') return '{"type":"system_structure","entities":[{"id":"a","label":"对象A"}],"relations":[]}'
+  if (domain === 'computer') return '{"type":"system_structure","entities":[{"id":"input","label":"输入","role":"input"},{"id":"process","label":"处理","role":"process"},{"id":"output","label":"输出","role":"output"}],"relations":[{"id":"input_to_process","from":"input","to":"process","label":"进入","kind":"flow"},{"id":"process_to_output","from":"process","to":"output","label":"产生","kind":"flow"}]}'
   if (abstraction === 'function') return '{"type":"function","axes":{"xLabel":"x","yLabel":"f(x)","xDomain":[-2,2],"yDomain":[-1,4]},"series":[{"id":"curve","label":"有限采样曲线","points":[[-2,4],[0,0],[2,4]]}],"parameters":[]}'
   if (abstraction === 'probability') return '{"type":"probability","mode":"pmf","xLabel":"x","yLabel":"P(X=x)","samples":[{"id":"p0","x":0,"y":0.5},{"id":"p1","x":1,"y":0.5}]}'
   if (abstraction === 'transformation') return '{"type":"transformation","space":"cartesian","objects":[{"id":"before","label":"变换前","points":[[0,0],[1,0]]},{"id":"after","label":"变换后","points":[[1,1],[2,1]]}],"transforms":[{"id":"shift","label":"平移","beforeId":"before","afterId":"after","kind":"translate"}],"parameters":[]}'
@@ -81,8 +81,15 @@ export async function generateLearningVisual(
     rendered = visualSpecToArtifact(spec)
   } catch (error) {
     modelError = error instanceof Error ? error.message.slice(0, 260) : 'visual_planner_failed'
-    spec = buildDeterministicFallback(kind, request, modelError)
-    rendered = visualSpecToArtifact(spec)
+    try {
+      spec = buildDeterministicFallback(kind, request, modelError)
+      const inspected = inspectLearningVisualSpec(spec)
+      if (inspected.status === 'rejected' || inspected.score < 68) throw new Error(`visual_fallback_quality_gate:${inspected.issues.join(',')}`)
+      rendered = visualSpecToArtifact(spec)
+    } catch (fallbackError) {
+      const fallbackReason = fallbackError instanceof Error ? fallbackError.message : 'visual_fallback_unavailable'
+      throw new Error(`visual_generation_unavailable:${modelError};${fallbackReason}`)
+    }
   }
   const { artifact, quality } = rendered
   return {

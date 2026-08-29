@@ -559,6 +559,7 @@ function App({ auth }: { auth: AuthGateSession }) {
   const [formalSnapshot, setFormalSnapshot] = useState<FormalLearnerSnapshot>()
   const [formalBusyKey, setFormalBusyKey] = useState('')
   const [formalError, setFormalError] = useState('')
+  const [learningFileProposalErrors, setLearningFileProposalErrors] = useState<Record<number, string>>({})
   const [pathPlanWriteErrors, setPathPlanWriteErrors] = useState<Record<string, string>>({})
   const [sourceBusy, setSourceBusy] = useState<Record<string, string>>({})
   const [sourceErrors, setSourceErrors] = useState<Record<string, string>>({})
@@ -2193,7 +2194,7 @@ function App({ auth }: { auth: AuthGateSession }) {
 
   const acceptProjectLearningFileProposal = async (proposal: ProjectLearningFileProposal, conversationId?: string) => {
     setFormalBusyKey(`project-file:${proposal.learning_task_id}`)
-    setFormalError('')
+    setLearningFileProposalErrors(previous => ({ ...previous, [proposal.learning_task_id]: '' }))
     try {
       const snapshot = await loadFormalLearnerSnapshot(true)
       const task = snapshot.learning_tasks.find(item => item.id === proposal.learning_task_id)
@@ -2209,7 +2210,10 @@ function App({ auth }: { auth: AuthGateSession }) {
         if (conversationId) attachLearningFileToConversation(preferred, conversationId)
       } else openTab(LEARNING_FILES_TAB)
     } catch (error) {
-      setFormalError(error instanceof Error ? error.message : '学习文件生成失败')
+      setLearningFileProposalErrors(previous => ({
+        ...previous,
+        [proposal.learning_task_id]: error instanceof Error ? error.message : '学习文件生成失败',
+      }))
     } finally { setFormalBusyKey('') }
   }
 
@@ -2631,6 +2635,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                     onAcceptProjectLearningFile={proposal => { void acceptProjectLearningFileProposal(proposal, conversation.id) }}
                     projectBusyKey={formalBusyKey}
                     projectError={formalError}
+                    learningFileProposalErrors={learningFileProposalErrors}
                     conversationId={conversation.id}
                     onOpenLearningFile={file => openLearningFile(file, {
                       conversationId: conversation.id,
@@ -3099,7 +3104,7 @@ function App({ auth }: { auth: AuthGateSession }) {
   )
 }
 
-function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError }: {
+function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
   run: TutorToolRun
   sourceMessageId: string
   conversationId: string
@@ -3114,6 +3119,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile,
   onAcceptProjectLearningFile: (proposal: ProjectLearningFileProposal) => void
   projectBusyKey?: string
   projectError?: string
+  learningFileProposalError?: string
 }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
@@ -3198,7 +3204,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile,
           <button type="button" disabled={projectBusyKey === `project-file:${run.projectLearningFileProposal.learning_task_id}`} onClick={() => onAcceptProjectLearningFile(run.projectLearningFileProposal!)}>
             {projectBusyKey === `project-file:${run.projectLearningFileProposal.learning_task_id}` ? '正在生成并保存…' : '确认生成，并作为纸张加入对话'}
           </button>
-          {projectError && <em>{projectError}</em>}
+          {learningFileProposalError && <em>{learningFileProposalError}</em>}
         </div>
       )}
       {run.sources && run.sources.length > 0 && (
@@ -3276,7 +3282,7 @@ function ToolDecisionBridge({
   )
 }
 
-function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError }: {
+function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
   messages: Message[]
   conversationId: string
   onQuoteFollowUp: (messageId: string, quote: string) => void
@@ -3291,6 +3297,7 @@ function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearning
   onAcceptProjectLearningFile: (proposal: ProjectLearningFileProposal) => void
   projectBusyKey?: string
   projectError?: string
+  learningFileProposalErrors: Record<number, string>
 }) {
   const endRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -3396,6 +3403,9 @@ function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearning
                       onAcceptProjectLearningFile={onAcceptProjectLearningFile}
                       projectBusyKey={projectBusyKey}
                       projectError={projectError}
+                      learningFileProposalError={run.projectLearningFileProposal
+                        ? learningFileProposalErrors[run.projectLearningFileProposal.learning_task_id]
+                        : undefined}
                     />
                     <ToolDecisionBridge run={run} nextRun={runs[index + 1]} summary={decisionSummary} />
                   </Fragment>

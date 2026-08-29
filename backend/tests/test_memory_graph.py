@@ -23,6 +23,7 @@ from app.services.memory_graph import (
     backfill_memory_graph,
     backfill_module_versions,
     input_fingerprint,
+    next_learner_sequence,
 )
 from app.services.memory_worker import (
     SynthesisClaimDraft,
@@ -90,6 +91,28 @@ def test_event_dual_write_creates_cross_kernel_facts_and_sparse_edges():
         for edge in same_event
     )
     assert after_first == after_second
+
+
+def test_learner_event_sequence_allocation_is_atomic_across_sessions():
+    async def scenario():
+        await init_db()
+        async with async_session() as db:
+            learner = Learner(key=_key("sequence-race"), display_name="Sequence Race")
+            db.add(learner)
+            await db.flush()
+            learner_id = learner.id
+            await db.commit()
+
+        async def allocate():
+            async with async_session() as db:
+                sequence = await next_learner_sequence(db, learner_id)
+                await db.commit()
+                return sequence
+
+        return await asyncio.gather(*(allocate() for _ in range(6)))
+
+    allocated = asyncio.run(scenario())
+    assert sorted(allocated) == [1, 2, 3, 4, 5, 6]
 
 
 def test_project_acceptance_and_completion_have_registered_kernel_reducers():

@@ -221,6 +221,15 @@ export function inspectLearningVisualSpec(spec: ReadableLearningVisualSpec): Lea
   let invariantFailures: string[] = []
   let replayStates: VisualStateSnapshot[] = []
 
+  if (spec.semantic.type === 'system_structure') {
+    if (spec.semantic.entities.length < 2) issues.push('insufficient_semantic_structure')
+    else if (spec.semantic.relations.length < 1) warnings.push('relations_missing_not_repaired')
+  }
+  if (spec.semantic.type === 'math_structure') {
+    if (spec.semantic.terms.length < 2) issues.push('insufficient_semantic_structure')
+    else if (spec.semantic.relations.length < 1) warnings.push('relations_missing_not_repaired')
+  }
+
   if (spec.kind === 'animation') {
     try {
       const replay = replayAnimation(spec)

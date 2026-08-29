@@ -43,7 +43,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-29.2"
+    assert REGISTRY_VERSION == "2026-08-30.1"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -243,6 +243,8 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert CAPABILITY_OWNERS["read_web_evidence"] == (
         "learning_design_agent", "web_evidence_reader", "vnext_chat",
     )
+    assert ACTION_BOARD["generate_learning_diagram"].confirmation_policy == "explicit_or_click"
+    assert ACTION_BOARD["generate_learning_animation"].confirmation_policy == "explicit_or_click"
     assert CAPABILITY_OWNERS["search_learning_videos"] == (
         "learning_design_agent", "learning_video_search", "vnext_chat",
     )

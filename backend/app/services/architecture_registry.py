@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-29.2"
+REGISTRY_VERSION = "2026-08-30.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -351,11 +351,11 @@ TOOLS = {
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
-                     (), (), "typed VisualSpec -> deterministic layout/state timeline -> quality gate -> sanitized SVG; model failure uses bounded semantic fallback"),
+                     (), (), "explicit learner visual intent -> typed VisualSpec -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG; failures return no artifact unless a verified deterministic template matches"),
         ToolContract("learning_diagram_generator", "Learning Diagram Generator", "learning_design_agent", "vnext", "artifact",
-                     (), (), "computer/math abstraction selection -> validated VisualSpec -> deterministic static SVG; zero learner-state write"),
+                     (), (), "explicit diagram intent -> computer/math abstraction selection -> validated useful VisualSpec -> deterministic static SVG; zero learner-state write"),
         ToolContract("learning_animation_generator", "Learning Animation Generator", "learning_design_agent", "vnext", "artifact",
-                     (), (), "state-changing computer/math process -> validated VisualSpec frames -> deterministic inspectable SVG timeline; zero learner-state write"),
+                     (), (), "explicit animation intent -> state-changing computer/math process -> validated VisualSpec frames -> deterministic inspectable SVG timeline; zero learner-state write"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",

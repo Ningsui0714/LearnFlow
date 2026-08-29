@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.learning import (
@@ -77,10 +77,44 @@ def actor_type_for_source(source: str) -> str:
 
 
 async def next_learner_sequence(db: AsyncSession, learner_id: int) -> int:
-    current = await db.scalar(select(func.max(EvidenceEvent.learner_seq)).where(
-        EvidenceEvent.learner_id == learner_id,
-    ))
-    return int(current or 0) + 1
+    """Allocate a unique learner-local event sequence inside the caller transaction.
+
+    A ``MAX + 1`` query races when chat persistence, task updates and artifact
+    actions arrive together.  The sequence row turns allocation into one atomic
+    database write while the MAX floor keeps old databases and direct imports
+    compatible.
+    """
+    bind = db.get_bind()
+    if bind.dialect.name == "sqlite":
+        await db.execute(text(
+            "INSERT OR IGNORE INTO learner_event_sequences "
+            "(learner_id, next_sequence, updated_at) "
+            "SELECT :learner_id, COALESCE(MAX(learner_seq), 0) + 1, CURRENT_TIMESTAMP "
+            "FROM evidence_events WHERE learner_id = :learner_id"
+        ), {"learner_id": learner_id})
+        statement = text(
+            "UPDATE learner_event_sequences SET "
+            "next_sequence = MAX(next_sequence, COALESCE((SELECT MAX(learner_seq) + 1 "
+            "FROM evidence_events WHERE learner_id = :learner_id), 1)) + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE learner_id = :learner_id "
+            "RETURNING next_sequence - 1"
+        )
+    else:
+        await db.execute(text(
+            "INSERT INTO learner_event_sequences (learner_id, next_sequence, updated_at) "
+            "SELECT :learner_id, COALESCE(MAX(learner_seq), 0) + 1, CURRENT_TIMESTAMP "
+            "FROM evidence_events WHERE learner_id = :learner_id "
+            "ON CONFLICT (learner_id) DO NOTHING"
+        ), {"learner_id": learner_id})
+        statement = text(
+            "UPDATE learner_event_sequences SET "
+            "next_sequence = GREATEST(next_sequence, COALESCE((SELECT MAX(learner_seq) + 1 "
+            "FROM evidence_events WHERE learner_id = :learner_id), 1)) + 1, "
+            "updated_at = CURRENT_TIMESTAMP WHERE learner_id = :learner_id "
+            "RETURNING next_sequence - 1"
+        )
+    allocated = (await db.execute(statement, {"learner_id": learner_id})).scalar_one()
+    return int(allocated)
 
 
 def _compact(value: Any, limit: int = 220) -> str:

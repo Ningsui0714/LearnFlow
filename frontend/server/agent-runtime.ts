@@ -217,6 +217,16 @@ export function repairTutorDraftForObservedGaps(reply: string, runs: TutorToolRu
     }
   }
 
+  const pendingLearningFiles = runs.some(run => run.projectLearningFileProposal)
+    && !runs.some(run => run.status === 'completed' && Boolean(run.learningFile))
+  if (pendingLearningFiles && /(?:打开|进入|阅读|查看)(?:这|该|刚才)?(?:份|个)?(?:讲义|练习|学习文件)|(?:讲义|练习|学习文件)(?:已经|已)(?:生成|准备|放入|加入)/i.test(repaired)) {
+    repaired = repaired.replace(
+      /(?:你可以|请|现在)?(?:先)?(?:打开|进入|阅读|查看)(?:这|该|刚才)?(?:份|个)?(?:讲义|练习|学习文件)[^。！？!?\n]*[。！？!?]?/gi,
+      '',
+    ).trim()
+    repaired += '\n\n讲义与练习目前只是待确认的生成提案，尚未生成；确认卡成功完成后，我再从文件中的第一个锚点继续带你学习。'
+  }
+
   return repaired
 }
 
@@ -434,6 +444,22 @@ function hasExplicitExternalResourceRequest(input: TutorAgentRuntimeInput) {
     || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|视频|b站|bilibili|youtube|来源|论文|文档|仓库|官网|最新)/i.test(message)
 }
 
+type VisualIntent = 'diagram' | 'animation' | 'none'
+
+function explicitVisualIntent(input: TutorAgentRuntimeInput, message: string): VisualIntent {
+  if (input.toolChoice === 'animation') return 'animation'
+  if (input.toolChoice === 'image') return 'diagram'
+  const normalized = message.replace(/\s+/g, ' ').trim()
+  if (!normalized) return 'none'
+  if (/(?:动画|动图|逐帧|逐步演示|演示(?:一下|过程|变化)|播放(?:过程|变化)|状态(?:如何|怎么)?变化|随时间变化)/i.test(normalized)) {
+    return 'animation'
+  }
+  if (/(?:画(?:一张|个|出)?|图解|流程图|时序图|结构图|关系图|示意图|概念图|知识图|可视化)/i.test(normalized)) {
+    return 'diagram'
+  }
+  return 'none'
+}
+
 function compactKnowledgeGate(input: TutorAgentRuntimeInput) {
   const personal = input.formalDomainKnowledgeContext && typeof input.formalDomainKnowledgeContext === 'object'
     ? (input.formalDomainKnowledgeContext as any).domain_knowledge_packet : null
@@ -464,6 +490,8 @@ function shouldAutoSupplementKnowledge(input: TutorAgentRuntimeInput, message: s
 
 function availableTools(input: TutorAgentRuntimeInput) {
   const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
+  const latestMessage = [...input.messages].reverse().find(item => item.role === 'user')?.content || ''
+  const visualIntent = explicitVisualIntent(input, latestMessage)
   const tools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
     (!['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node'].includes(tool.name) || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
@@ -477,6 +505,8 @@ function availableTools(input: TutorAgentRuntimeInput) {
     && (!['design_assessment_blueprint', 'generate_dynamic_practice', 'generate_similar_practice'].includes(tool.name)
       || Boolean(input.formalProjectContext?.checkpoint_id) && input.mode === 'guided_learning' && Boolean(input.learningTaskContext))
     && (tool.name !== 'inspect_practice_quality' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
+    && (tool.name !== 'generate_learning_diagram' || visualIntent === 'diagram')
+    && (tool.name !== 'generate_learning_animation' || visualIntent === 'animation')
   ))
   const fileStudy = input.mode === 'guided_learning' && input.learningTaskContext?.skillId === 'learning_file_study'
   if (!fileStudy || hasExplicitExternalResourceRequest(input)) return tools
@@ -486,8 +516,9 @@ function availableTools(input: TutorAgentRuntimeInput) {
   )
   const allowed = new Set([
     'read_domain_knowledge', 'read_project_sources',
-    'generate_learning_diagram', 'generate_learning_animation',
   ])
+  if (visualIntent === 'diagram') allowed.add('generate_learning_diagram')
+  if (visualIntent === 'animation') allowed.add('generate_learning_animation')
   if (knowledgeSupplementNeeded) {
     allowed.add('search_computer_knowledge')
     allowed.add('read_web_evidence')
@@ -585,6 +616,13 @@ export function verifyTutorTurnOutcome(options: {
     if (!hasFileHandoff) violations.push('missing_learning_file_handoff')
     if (reply.length > 520) violations.push('learning_file_chat_overflow')
   }
+  const pendingLearningFiles = options.toolRuns.some(run => run.projectLearningFileProposal)
+    && !options.toolRuns.some(run => run.status === 'completed' && Boolean(run.learningFile))
+  if (
+    pendingLearningFiles
+    && /(?:打开|进入|阅读|查看)(?:这|该|刚才)?(?:份|个)?(?:讲义|练习|学习文件)|(?:讲义|练习|学习文件)(?:已经|已)(?:生成|准备|放入|加入)/i.test(reply)
+    && !/(?:尚未|还未|没有|并未|待确认|确认后|生成后)/i.test(reply)
+  ) violations.push('unmaterialized_learning_file_claim')
   const unverifiedVideo = options.toolRuns.some(run => run.toolName === 'inspect_learning_video' && run.status !== 'completed')
   if (unverifiedVideo && /(?:推荐|很适合|值得看|优先看|建议看|可以看)/i.test(reply)) {
     violations.push('unverified_video_recommendation')
@@ -616,6 +654,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
   let currentVideoCandidates: LearningVideoCandidate[] = []
   const explicitlyRequestsExternalResources = hasExplicitExternalResourceRequest(input)
+  const visualIntent = explicitVisualIntent(input, latestMessage)
 
   const record = (event: Omit<AgentTrajectoryEvent, 'sequence' | 'at'>) => {
     const recorded = { ...event, sequence: ++sequence, at: Date.now() }
@@ -663,6 +702,19 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
 
   const execute = async (call: AgentToolCall, searchSources: SearchSource[] = []) => {
+    if (
+      (call.name === 'generate_learning_diagram' && visualIntent !== 'diagram')
+      || (call.name === 'generate_learning_animation' && visualIntent !== 'animation')
+    ) {
+      const blocked = {
+        error: 'visual_intent_required',
+        guidance: '图解和动画只在学习者本轮明确要求对应视觉形式时调用；普通讲解请直接使用文字、例子或既有学习文件。',
+      }
+      runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
+      runtimeMessages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(blocked) })
+      record({ phase: 'act', detail: `阻止缺少明确视觉意图的 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'blocked' })
+      return [] as string[]
+    }
     // Artifact generators are expensive and have side effects. Treat a second
     // request for the same formal task as a duplicate even when the model only
     // changes a title or difficulty after a failure. Recovery must use the
