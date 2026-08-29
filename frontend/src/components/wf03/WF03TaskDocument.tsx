@@ -1,8 +1,12 @@
 import {
   ArrowRight, ExternalLink, MessageSquarePlus, PlayCircle, Sparkles, Wrench,
 } from 'lucide-react'
-import type { LearningTaskConversionBundle } from '../../services/api'
+import type { LearningTaskConversionBundle, LearningTaskStepHandoff } from '../../services/api'
 import type { WF03Selection } from './types'
+
+const HIGH_RISK_TERMS = /安全|风险|断电|高压|权限|分区|格式化|删除|加密|认证|生产环境|回滚|故障|异常|冲突|兼容|校准|电池|驱动|网络|数据库/g
+const CRITICAL_ACTION_TERMS = /安装|部署|配置|迁移|调试|联调|验收|验证|测试|诊断|恢复|备份|切换/g
+const KEY_STEP_NAME_TERMS = /重装|安装|部署|配置|校验|验证|测试|验收|调试|联调|迁移|恢复/
 
 function text(value: unknown) {
   return typeof value === 'string' ? value : ''
@@ -12,6 +16,26 @@ function platformLabel(platform?: string, linkKind?: string) {
   if (platform === 'bilibili') return linkKind === 'curated_video' ? 'B站精选' : 'B站搜索'
   if (platform === 'douyin') return linkKind === 'curated_video' ? '抖音精选' : '抖音搜索'
   return platform || '学习资源'
+}
+
+export function isKeyTaskStep(step: LearningTaskStepHandoff) {
+  const action = step.action.trim()
+  const instruction = text(step.instruction).trim()
+  const body = [step.name, action, instruction, step.deliverable, step.check].join(' ')
+  const highRiskTermCount = new Set(body.match(HIGH_RISK_TERMS) || []).size
+  const criticalActionCount = new Set(body.match(CRITICAL_ACTION_TERMS) || []).size
+  const mappingCount = step.knowledge_point_ids.length + step.skill_point_ids.length
+
+  let score = 0
+  if (instruction && instruction !== action) score += 1
+  if (body.length >= 150) score += 1
+  if (mappingCount >= 4) score += 1
+  if (step.deliverable.length >= 36 || step.check.length >= 36) score += 1
+  if (highRiskTermCount > 0) score += 2
+  if (criticalActionCount > 0) score += 1
+  if (KEY_STEP_NAME_TERMS.test(step.name)) score += 2
+
+  return score >= 3
 }
 
 export function externalHref(value: unknown) {
@@ -109,14 +133,16 @@ export default function WF03TaskDocument({
             <p className="text-[10px] font-bold tracking-[0.14em] text-emerald-700">WORK PROCESS</p>
             <h2 className="mt-1 text-xl font-bold tracking-tight text-slate-950">真实作业流程</h2>
           </div>
-          <p className="mb-0.5 ml-auto hidden text-xs text-slate-400 sm:block">每一步都绑定产物、验收点与知识技能</p>
+          <p className="mb-0.5 ml-auto hidden text-xs text-slate-400 sm:block">关键步骤展开，常规步骤精简</p>
         </div>
 
         <div className="relative mt-5">
           <div className="absolute bottom-8 left-[22px] top-8 w-px bg-emerald-200 sm:left-[27px]" />
           <div className="space-y-4">
-            {task.task_steps.map((step, index) => (
-              <section
+            {task.task_steps.map((step, index) => {
+              const keyStep = isKeyTaskStep(step)
+              return (
+                <section
                 key={step.step_id}
                 className="group relative grid gap-3 pl-[58px] sm:pl-[72px] 2xl:grid-cols-[minmax(0,1fr)_235px]"
                 data-step-id={step.step_id}
@@ -127,7 +153,12 @@ export default function WF03TaskDocument({
                 <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition group-hover:-translate-y-0.5 group-hover:border-emerald-300 group-hover:shadow-md">
                   <div className="flex items-start gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-bold tracking-[0.12em] text-emerald-700">阶段 {index + 1}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[10px] font-bold tracking-[0.12em] text-emerald-700">阶段 {index + 1}</p>
+                        {keyStep && (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold text-amber-700">关键步骤</span>
+                        )}
+                      </div>
                       <h3 className="mt-1 text-base font-bold text-slate-950">{step.name}</h3>
                     </div>
                     <button
@@ -139,27 +170,34 @@ export default function WF03TaskDocument({
                     </button>
                   </div>
                   <div className="px-5 py-4 sm:px-6">
-                    <div>
-                      <p className="text-[10px] font-bold tracking-[0.1em] text-slate-400">分步操作指南</p>
-                      <p className="mt-1.5 text-sm leading-7 text-slate-700">{step.action}</p>
-                      {step.instruction && step.instruction.trim() !== step.action.trim() && (
-                        <p className="mt-2 border-l-2 border-emerald-200 pl-3 text-xs leading-6 text-slate-500">{step.instruction}</p>
-                      )}
-                    </div>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-lg bg-sky-50 px-3.5 py-3">
-                        <p className="text-[10px] font-bold tracking-[0.1em] text-sky-700">阶段产物</p>
-                        <p className="mt-1.5 text-xs leading-5 text-slate-700">{step.deliverable}</p>
+                    <p className="text-sm leading-7 text-slate-700">{step.action}</p>
+                    {keyStep ? (
+                      <>
+                        {step.instruction && step.instruction.trim() !== step.action.trim() && (
+                          <p className="mt-2 border-l-2 border-amber-200 pl-3 text-xs leading-6 text-slate-500">{step.instruction}</p>
+                        )}
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-lg bg-sky-50 px-3.5 py-3">
+                            <p className="text-[10px] font-bold tracking-[0.1em] text-sky-700">阶段产物</p>
+                            <p className="mt-1.5 text-xs leading-5 text-slate-700">{step.deliverable}</p>
+                          </div>
+                          <div className="rounded-lg bg-emerald-50 px-3.5 py-3">
+                            <p className="text-[10px] font-bold tracking-[0.1em] text-emerald-700">验收检查</p>
+                            <p className="mt-1.5 text-xs leading-5 text-slate-700">{step.check}</p>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3 text-[11px] leading-5">
+                        <p className="flex gap-2 text-slate-600"><span className="w-8 shrink-0 font-bold text-sky-700">产物</span><span>{step.deliverable}</span></p>
+                        <p className="flex gap-2 text-slate-600"><span className="w-8 shrink-0 font-bold text-emerald-700">验收</span><span>{step.check}</span></p>
                       </div>
-                      <div className="rounded-lg bg-emerald-50 px-3.5 py-3">
-                        <p className="text-[10px] font-bold tracking-[0.1em] text-emerald-700">验收检查</p>
-                        <p className="mt-1.5 text-xs leading-5 text-slate-700">{step.check}</p>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
 
-                <aside className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                {keyStep ? (
+                  <aside className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
                   <p className="text-[10px] font-bold tracking-[0.12em] text-slate-500">步骤能力映射</p>
                   <div className="mt-3 space-y-2.5">
                     {step.knowledge_point_ids.map((id, mappingIndex) => {
@@ -214,10 +252,47 @@ export default function WF03TaskDocument({
                         </div>
                       )
                     })}
-                  </div>
-                </aside>
-              </section>
-            ))}
+                    </div>
+                  </aside>
+                ) : (
+                  <aside className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                    <p className="text-[10px] font-bold tracking-[0.12em] text-slate-500">本步知识与技能</p>
+                    <div className="mt-3 space-y-2">
+                      {step.knowledge_point_ids.map((id, mappingIndex) => {
+                        const knowledge = knowledgeById.get(id)
+                        return (
+                          <button
+                            key={`${id}-${mappingIndex}`}
+                            type="button"
+                            onClick={() => onOpenPersonalizedLearning(id)}
+                            disabled={openingKnowledgeId === id}
+                            data-knowledge-id={id}
+                            className="flex min-h-9 w-full items-center gap-2 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-left text-[10px] font-semibold text-slate-700 transition hover:border-emerald-300 hover:text-emerald-800 disabled:cursor-wait disabled:opacity-60"
+                          >
+                            <Sparkles size={12} className="shrink-0 text-emerald-700" />
+                            <span className="min-w-0 flex-1">{knowledge?.name || id}</span>
+                            <ArrowRight size={11} className="shrink-0" />
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {!!step.skill_point_ids.length && (
+                      <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-200 pt-3">
+                        {step.skill_point_ids.map((id, mappingIndex) => {
+                          const skill = skillById.get(id)
+                          return (
+                            <span key={`${id}-${mappingIndex}`} data-skill-id={id} className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[9px] font-semibold text-amber-900">
+                              <Wrench size={10} /> {skill?.name || id}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </aside>
+                )}
+                </section>
+              )
+            })}
           </div>
         </div>
       </section>
