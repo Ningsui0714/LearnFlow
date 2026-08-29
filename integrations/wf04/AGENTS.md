@@ -23,7 +23,7 @@
 ### 前端
 
 - 原生 HTML、CSS、JavaScript，无 React/Vue 构建链。
-- 主入口：`frontend/agent.html`，根路径 `/` 由后端映射到该文件。
+- 主入口：`frontend/agent-v2.html`，根路径 `/` 由后端映射到该文件；`frontend/agent.html` 通过 `/legacy` 保留兼容。
 - 旧学习中心：`frontend/index.html`，仅保留兼容能力。
 - 通用前端逻辑：`frontend/app.js`、`frontend/api.js`。
 - 样式：`frontend/styles.css`；优先复用 `:root` CSS 变量。
@@ -119,7 +119,7 @@ _archive/                      历史归档，只读
 - `backend/data/knowledge_seed.py`：不得加入无来源 AI 内容；来源占位不能冒充已核实页码。
 - `backend/data/diagnosis_bank.py`：修改答案或映射时必须补判题/归因测试。
 - `backend/data/goal_graph.py`：修改节点 ID 或依赖前先检查历史数据兼容性。
-- `frontend/index.html`：旧入口；新 Agent 页面需求默认修改 `frontend/agent.html`。
+- `frontend/index.html`：旧学习中心；新版工作台需求默认修改 `frontend/agent-v2.html`，兼容需求才修改 `frontend/agent.html`。
 - 核心定稿文档：实现发生变化时才同步更新，不用文档改写代替代码实现。
 
 工作区可能已有用户未提交修改。开始前必须运行 `git status --short`，不得覆盖、回退或格式化无关改动。
@@ -164,7 +164,7 @@ node --check frontend\app.js
 node --check frontend\api.js
 ```
 
-若修改 `frontend/agent.html` 中的内联脚本，还需通过浏览器测试验证；不要假定 `node --check` 已覆盖 HTML 内联代码。
+若修改 `frontend/agent-v2.html` 或 `frontend/agent.html` 中的内联脚本，还需通过浏览器测试验证；不要假定 `node --check` 已覆盖 HTML 内联代码。
 
 ### 后端定向测试
 

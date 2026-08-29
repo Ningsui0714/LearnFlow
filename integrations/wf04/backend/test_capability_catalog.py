@@ -15,6 +15,8 @@ from backend.data.capability_catalog import (
     public_capability_catalog,
     reference_path_nodes,
 )
+from backend.data.professional_group_source_registry import pending_source_registry
+from backend.data.teaching_contract_drafts import get_teaching_contract_draft
 from backend.server import LearningApplication, Settings, create_server
 
 
@@ -151,6 +153,36 @@ class CapabilityCatalogTests(unittest.TestCase):
         self.assertEqual(created["support_level"], REFERENCE_SUPPORT_LEVEL)
         self.assertEqual(created["assessment_state"], "question_sources_pending")
         self.assertEqual(created["capability_pack"]["pack_id"], "PACK-COMPUTER-NETWORK")
+
+    def test_every_catalog_module_has_a_pending_source_registration(self) -> None:
+        registry = pending_source_registry()
+        modules = registry["modules"]
+        self.assertEqual(len(modules), 47)
+        self.assertTrue(all(item["review_status"] == "pending" for item in modules))
+        self.assertTrue(all(item["source"]["source_url"].startswith("https://") for item in modules))
+        self.assertTrue(all(item["source"]["locator"] for item in modules))
+
+        api_registry = self.request_json("GET", "/api/source-registry")
+        self.assertEqual(api_registry["schema_version"], registry["schema_version"])
+        self.assertEqual(len(api_registry["modules"]), 47)
+
+    def test_ai_python_draft_contract_stays_outside_formal_contracts(self) -> None:
+        draft = get_teaching_contract_draft("ai-python")
+        self.assertEqual(draft["review"]["status"], "draft_pending_expert_review")
+        self.assertEqual(len(draft["concepts"]), 3)
+        self.assertEqual(len(draft["outcomes"]), 3)
+
+    def test_formal_lesson_gate_requires_local_approved_knowledge(self) -> None:
+        application = self.server.RequestHandlerClass.application
+        web_ready = {"status": "ready", "evidence": [{"title": "网页资料"}]}
+        self.assertFalse(application._lesson_source_ready(
+            web_ready, {"knowledge_point_id": "ai-python"}
+        ))
+        self.assertTrue(application._lesson_source_ready(
+            {"status": "not_requested", "evidence": []},
+            {"knowledge_point_id": "KN_JAVA_CLASS"},
+        ))
+        self.assertIn("Java 类与对象", application._local_kb_text("KN_JAVA_CLASS"))
 
 
 if __name__ == "__main__":

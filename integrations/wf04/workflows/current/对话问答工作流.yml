@@ -1,7 +1,7 @@
 flowMeta:
-  name: 对话问答
+  name: 对话问答工作流
   description: 对话问答：多轮上下文 + 知识库生成回答（生成上平台、检索留本地）
-  avatarIcon: https://openres.xfyun.cn/xfyundoc/2026-01-13/a16e21df-f04c-4786-bff1-2fd57b3d91a8/1768290619810/2%402x.png
+  avatarIcon: https://openres.xfyun.cn/xfyundoc/2026-01-13/6e2c73bb-4f83-4615-a8b4-b16a2f18496f/1768290622460/9%402x.png
   avatarColor: '#EAF7EE'
   advancedConfig: '{"prologue":{"enabled":false},"needGuide":false}'
   category: 17
@@ -11,8 +11,8 @@ flowData:
   - id: node-start::6f9e5140-8fba-4ecb-993d-2cdb8368fd69
     dragging: false
     selected: false
-    width: 256
-    height: 74
+    width: 255
+    height: 115
     position:
       x: -801.3087571914225
       y: 206.12709205020923
@@ -24,7 +24,7 @@ flowData:
       allowInputReference: false
       allowOutputReference: true
       label: 开始
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 开始节点
         nodeType: 基础节点
@@ -47,15 +47,15 @@ flowData:
       updatable: false
   - id: ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0
     dragging: false
-    selected: false
-    width: 362
-    height: 100
+    selected: true
+    width: 361
+    height: 141
     position:
-      x: -429.39076428393315
-      y: 205.86515046582565
+      x: -449.39076428393315
+      y: 179.61515046582565
     positionAbsolute:
-      x: -429.39076428393315
-      y: 205.86515046582565
+      x: -449.39076428393315
+      y: 179.61515046582565
     type: 代码
     data:
       allowInputReference: true
@@ -64,7 +64,7 @@ flowData:
       labelEdit: false
       references: [
         ]
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 代码
         nodeType: 工具
@@ -250,8 +250,8 @@ flowData:
   - id: spark-llm::3b41e154-88d1-45bb-80e3-4e95a322b34f
     dragging: false
     selected: false
-    width: 362
-    height: 124
+    width: 361
+    height: 165
     position:
       x: 1441.7798753400816
       y: 183.0755345040891
@@ -266,7 +266,7 @@ flowData:
       labelEdit: false
       references: [
         ]
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 大模型
         nodeType: 基础节点
@@ -318,9 +318,9 @@ flowData:
           value:
             type: ref
             content:
-              name: material_resources
-              id: e6b8514d-6078-400e-a790-ea2b05d8f99b
-              nodeId: ifly-code::5a49689a-b938-4c9a-ae0c-294a6561af27
+              name: source_summary
+              id: ced8e255-b32d-4d32-9322-089d7b219868
+              nodeId: ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0
             contentErrMsg: ''
         fileType: ''
       - id: 82083de3-03e4-4519-9a92-5b4cea89bb56
@@ -372,14 +372,15 @@ flowData:
         maxTokens: 2048
         temperature: 0.4
         systemTemplate: |-
-          你是职业教育"Java 面向对象程序设计"课程的智能辅导助手。
+          你是"知行课径"教育智能体，服务于计算机信息技术专业群的学习者。专业群涵盖软件技术（含 Java 应用开发）、计算机应用技术、计算机网络技术、大数据技术、人工智能技术应用等方向，Java 应用开发只是其中软件技术方向的能力之一，不得把专业群窄化成"只学 Java"。你是一位耐心、分步引导的高职教育辅导老师。
 
           回答要求：
-          1. 只用 {{kb_text}} 中的内容回答，不得编造 kb_text 之外的知识；kb_text 为空时明确告知"知识库暂未覆盖，建议先进入学情诊断"，并给出 2-3 个可追问的方向。
+          0. 先完整、直接回答学生所问；是否联系当前实训项目取决于问题是否与当前实训直接相关，禁止为贴合项目而强行回扣。仅在学生明确询问学习安排、进度、下一步或复习计划时，再结合 {{student_profile}} 与知识库中的项目信息做衔接。
+          1. 只用 {{kb_text}} 中的内容回答，不得编造 kb_text 之外的知识；kb_text 为空时明确告知"知识库暂未覆盖，建议先进入学情诊断"，并给出 2-3 个可追问的方向。若提问属于专业群内方向（如数据库、网络、大数据、人工智能、前端、云计算），如实说明知识库暂未覆盖该方向，可引导明确方向或建立学习目标；禁止说"咱们专业只聚焦 Java"或"咱们专业是 Java 应用开发"之类的窄化表述。
           2. 语言口语化、分步骤，贴合高职学生认知；避免术语堆砌；必要时给出一行 Java 代码示例。
           3. 结合 {{history_memory}} 中的上文：若学生用"那/它/这个"等指代提问，按上文主题作答；不要重复上轮已回答的内容。
           4. 结合 {{student_profile}} 调整讲解节奏、示例密度和支架强度，但不得据此杜撰学生信息或改变知识结论。
-          5. 若学生提问与 Java/课程无关，礼貌说明本助手专注该课程范围。
+          5. 若学生提问明显超出专业群学习范围（与信息技术学习、开发、数据、网络等无关的闲聊或他行业务），礼貌说明本助手聚焦计算机信息技术专业群的学习与能力培养，可转而引导学生建立学习目标或解答专业问题；不要用"只讲 Java"回绝，也不要强行把问题拉回实训项目。
           6. 只输出一个合法 JSON 对象（不输出 Markdown 代码块），格式严格如下：
           {"answer": "口语化回答，不超过 500 字", "sources": [{"title": "依据的知识库条目标题", "locator": "来源定位"}]}
           sources 最多 3 条，必须来自 kb_text；无依据时 sources 为空数组。
@@ -402,8 +403,8 @@ flowData:
   - id: ifly-code::df6ab890-5252-4709-8d00-6d13d6bdf022
     dragging: false
     selected: false
-    width: 256
-    height: 100
+    width: 255
+    height: 141
     position:
       x: 1897.8120834363888
       y: 187.32359271167843
@@ -418,7 +419,7 @@ flowData:
       labelEdit: false
       references: [
         ]
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 代码
         nodeType: 工具
@@ -514,8 +515,8 @@ flowData:
   - id: node-end::840ee1fc-d2fe-40cb-b882-b06983307fad
     dragging: false
     selected: false
-    width: 256
-    height: 74
+    width: 255
+    height: 115
     position:
       x: 2409.21718311484
       y: 207.19632418170926
@@ -529,7 +530,7 @@ flowData:
       label: 结束
       references: [
         ]
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 结束节点
         nodeType: 基础节点
@@ -559,8 +560,8 @@ flowData:
   - id: plugin::0b93fed8-486e-44ad-beb2-bd317dc3938e
     dragging: false
     selected: false
-    width: 362
-    height: 100
+    width: 361
+    height: 99
     position:
       x: 536.4601604496786
       y: 57.210429668027416
@@ -592,8 +593,8 @@ flowData:
               id: ced8e255-b32d-4d32-9322-089d7b219868
               nodeId: ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0
             contentErrMsg: ''
-        description: 输入资源
         fileType: ''
+        description: 输入资源
         required: false
         disabled: false
       - id: d4ec8c0d-878c-44b2-94c0-4bc9d8547e3d
@@ -608,8 +609,8 @@ flowData:
               id: 19c71e75-b155-4cbb-ab6f-5d43dd5207a9
               nodeId: ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0
             contentErrMsg: ''
-        description: 输入事项
         fileType: ''
+        description: 输入事项
         required: false
         disabled: false
       - id: 4328effa-a239-4329-81ea-2be7da00d73d
@@ -621,8 +622,8 @@ flowData:
             type: literal
             content: '3'
             contentErrMsg: ''
-        description: 请求类型
         fileType: ''
+        description: 请求类型
         required: true
         disabled: false
       - id: be9831ed-a738-482d-b109-368c641c5469
@@ -637,8 +638,8 @@ flowData:
               id: 5ec32e5c-13a5-4372-998d-6f7929a98b4a
               nodeId: ifly-code::150e40ef-1533-4a41-8c75-974252ba1ca0
             contentErrMsg: ''
-        description: 请求
         fileType: ''
+        description: 请求
         required: false
         disabled: false
       outputs:
@@ -681,8 +682,8 @@ flowData:
   - id: if-else::59740203-9e0c-4c5b-992f-562ab82817b0
     dragging: false
     selected: false
-    width: 362
-    height: 126
+    width: 361
+    height: 167
     position:
       x: 12.903331024816339
       y: 129.34246270255596
@@ -697,7 +698,7 @@ flowData:
       labelEdit: false
       references: [
         ]
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 分支器
         nodeType: 分支器
@@ -752,7 +753,7 @@ flowData:
     dragging: false
     selected: false
     width: 301
-    height: 100
+    height: 99
     position:
       x: 1013.0351919625621
       y: 55.441566833153445
@@ -822,7 +823,7 @@ flowData:
     dragging: false
     selected: false
     width: 301
-    height: 100
+    height: 141
     position:
       x: 533.5189420054035
       y: 316.02892374685143
@@ -837,7 +838,7 @@ flowData:
       labelEdit: false
       references: [
         ]
-      status: ''
+      status: success
       nodeMeta:
         aliasName: 代码
         nodeType: 工具

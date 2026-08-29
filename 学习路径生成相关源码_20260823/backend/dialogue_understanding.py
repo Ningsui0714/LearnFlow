@@ -24,12 +24,6 @@ PRIMARY_INTENTS = frozenset(
 )
 
 SUBJECT_ALIASES = (
-    ("professional_group", ("计算机信息技术专业群", "信息技术专业群", "专业群")),
-    ("software_technology", ("软件技术", "软件开发")),
-    ("computer_application", ("计算机应用技术", "计算机应用")),
-    ("computer_network", ("计算机网络技术", "计算机网络", "网络技术")),
-    ("big_data", ("大数据技术", "大数据")),
-    ("ai_application", ("人工智能技术应用", "人工智能技术")),
     ("python", ("python", "py语言")),
     ("java", ("java",)),
     ("javascript", ("javascript", "js", "前端")),
@@ -69,31 +63,6 @@ APPLICATION_SCENARIOS = (
 
 def _contains_any(text: str, values: tuple[str, ...]) -> bool:
     return any(value in text for value in values)
-
-
-def _is_anaphoric_followup(text: str) -> bool:
-    """是否为指代型追问（以指代词/承接词开头，或以呢/啥作句尾续问）。
-
-    例：「都包含什么内容」「那 getter 方法呢」「再讲一下」是追问；「番茄
-    工作法有什么优缺点？」这类命名新主题的完整独立提问不是。仅凭"短"不算
-    指代：短句也可能是完整独立问句（如「番茄钟是什么」），不应继承上轮主题。
-    """
-    stripped = " ".join(str(text or "").split())
-    if not stripped:
-        return False
-    if any(
-        stripped.startswith(word)
-        for word in ("那", "它", "这个", "这些", "其", "然后", "都", "也", "再")
-    ):
-        return True
-    # 句尾语气词续问（只匹配句尾，避免"呢子大衣"类误伤）。带语气词但较长的
-    # 句子（如「数据透视呢」）多半是新主题提问，不继承上轮主题。
-    if len(stripped) <= 4 and stripped.rstrip("？?。.,，！!").endswith(("呢", "啥")):
-        return True
-    return stripped in {
-        "继续", "接着说", "为啥", "为什么", "怎么", "怎么用", "怎么理解",
-        "啥意思", "什么意思",
-    }
 
 
 def _subject(text: str) -> str:
@@ -239,65 +208,22 @@ def _response_preferences(text: str) -> dict[str, str]:
     return preferences
 
 
-def _is_learning_context_update(text: str) -> bool:
-    """是否为已有项目内的学习上下文更新（路径偏好/自述/时间约束）。
-
-    对齐原 server 的 `_is_learning_context_update` 直连信号，并保留新模块
-    新增的 视频/图文/简单讲 等表达。仅当 has_project=True 时才参与意图判定，
-    避免把新建目标误判为上下文更新。
-    """
-    lowered = str(text or "").lower()
-    direct_signals = (
-        "每天", "每周", "只能学", "有时间", "没时间", "学习时间", "学习时长",
-        "太难", "太简单", "看不懂", "跟不上", "想先学", "先跳过", "从第",
-        "喜欢案例", "先看案例", "案例优先", "多举例", "讲慢", "讲快", "详细一点", "简单一点",
-        "有基础", "零基础", "没学过", "不会", "视频", "图文", "简单讲",
-    )
-    if any(signal in lowered for signal in direct_signals):
-        return True
-    self_report_patterns = (
-        r"(?:我|本人)[^，。；？?]{0,16}(?:已经会|会了|学过|没学过|不会|不太会|有基础|零基础)",
-        r"(?:这个|这部分|这章)[^，。；？?]{0,8}(?:我会|我不会|学过|没学过)",
-    )
-    return any(re.search(pattern, lowered) for pattern in self_report_patterns)
-
-
 def understand_turn(
     message: str,
     *,
     has_project: bool = False,
     has_goal_draft: bool = False,
-    previous_subject: str = "",
-    has_history: bool = False,
 ) -> dict[str, Any]:
-    """返回不含执行权限的结构化对话理解结果。
-
-    ``previous_subject`` / ``has_history`` 为历史感知参数（教育优先）：
-    - 本轮无主题但属于指代型追问时，可继承最近一轮已识别主题；
-    - 有历史却仍未接上主题的追问，走教育式澄清而非通用助手。
-    二者默认关闭，不改变既有调用点的行为。
-    """
+    """返回不含执行权限的结构化对话理解结果。"""
     text = " ".join(str(message or "").split())
     lowered = text.lower()
     subject = _subject(text)
     scope = _learning_scope(text, subject)
-    inherited_subject = False
-    if (
-        not subject
-        and previous_subject
-        and _is_anaphoric_followup(text)
-    ):
-        subject = previous_subject
-        inherited_subject = True
     question_markers = (
         "什么", "哪些", "怎么", "如何", "为什么", "区别", "是否", "能否",
         "吗", "么", "？", "?", "报错", "错误", "用法", "介绍", "解释",
     )
-    # 句尾语气词 呢/啥 构成续问（「那 getter 方法呢」「数据透视呢」）；
-    # 只匹配句尾，避免"呢子大衣"类误伤。
-    is_question = _contains_any(lowered, question_markers) or lowered.rstrip(
-        "？? "
-    ).endswith(("呢", "啥"))
+    is_question = _contains_any(lowered, question_markers)
     goal_markers = (
         "我想", "我要", "希望", "计划", "准备", "想学", "学习", "掌握",
         "入门", "提升", "备考", "备战", "实训", "项目", "规划", "制定路径", "补", "需要",
@@ -312,29 +238,14 @@ def understand_turn(
     )
     command_map = (
         ("start_assessment", ("开始测评", "能力测评", "重新测评", "做测评", "测一下", "诊断一下")),
-        (
-            "show_path",
-            (
-                "查看学习路径", "学习路径", "课程安排", "学习计划", "下一步学什么",
-                "从哪里开始学", "从哪开始学", "从哪里学起", "从哪学起", "先学什么",
-            ),
-        ),
+        ("show_path", ("查看学习路径", "学习路径", "课程安排", "学习计划", "下一步学什么")),
         ("open_lesson", ("开始学习", "继续学习", "打开课程", "打开章节", "学习章节", "下一课")),
-    )
-    path_navigation_markers = (
-        "下一步学什么", "从哪里开始学", "从哪开始学", "从哪里学起", "从哪学起", "先学什么",
     )
     primary_intent = ""
     for intent, markers in command_map:
         if (
             _contains_any(lowered, markers)
-            and (
-                not is_question
-                or (
-                    intent == "show_path"
-                    and _contains_any(lowered, path_navigation_markers)
-                )
-            )
+            and not is_question
             and not _contains_any(lowered, general_markers)
         ):
             primary_intent = intent
@@ -344,22 +255,17 @@ def understand_turn(
     # “随便学点什么”里的“什么”不是知识问答。没有明确主题的学习意愿
     # 应进入目标澄清，避免直接按泛用聊天回答。
     if not primary_intent and is_question and not (has_goal_signal and not subject):
-        if subject or has_project or has_goal_draft:
-            primary_intent = "knowledge_question"
-        elif has_history and _is_anaphoric_followup(text):
-            # 有来龙去脉但没接上主题的追问：教育式澄清，而不是降级通用助手
-            primary_intent = "clarify_intent"
-        else:
-            primary_intent = "general_assistant"
-    has_context_update = has_project and _is_learning_context_update(text)
+        primary_intent = "knowledge_question" if (subject or has_project or has_goal_draft) else "general_assistant"
+    context_markers = (
+        "每天", "每周", "学习时间", "学习时长", "有基础", "零基础", "没学过",
+        "不会", "看不懂", "太难", "太简单", "喜欢案例", "视频", "图文",
+        "简单讲", "详细一点", "讲慢", "讲快", "从第", "先跳过",
+    )
+    has_context_update = has_project and _contains_any(lowered, context_markers)
     if not primary_intent and has_context_update:
         primary_intent = "update_learning_context"
     if not primary_intent and has_goal_signal:
         primary_intent = "create_project"
-    if not primary_intent and inherited_subject:
-        # 指代追问已继承上轮主题但未命中任何命令/问句标记：视为对该主题的
-        # 续问（「再讲一下」「继续」），而非降级通用助手。
-        primary_intent = "knowledge_question"
     if not primary_intent:
         primary_intent = "clarify_intent" if len(text) <= 4 else "general_assistant"
 
@@ -396,14 +302,11 @@ def understand_turn(
             goal_missing_information.append("current_level")
         if not goal_constraints.get("daily_time") and not goal_constraints.get("weekly_time"):
             goal_missing_information.append("time_budget")
-    topic = {"subject": subject, "learning_scope": scope}
-    if inherited_subject:
-        topic["inherited"] = True
     return {
         "schema_version": 1,
         "primary_intent": primary_intent if primary_intent in PRIMARY_INTENTS else "clarify_intent",
         "secondary_intents": secondary_intents,
-        "topic": topic,
+        "topic": {"subject": subject, "learning_scope": scope},
         "goal": {
             "goal_type": goal_type,
             "target_outcome": target_outcome,
@@ -421,23 +324,3 @@ def understand_turn(
         "confidence": confidence,
         "missing_information": ["learning_subject"] if clarification_needed else [],
     }
-
-
-def recent_subject(messages: list[dict[str, Any]]) -> str:
-    """从历史消息倒序扫描 user 消息，返回最后一个非空主题 subject；无则空串。
-
-    供 server.py 在 agent_turn 处派生 ``previous_subject``，让无主题的
-    指代型追问继承最近一轮已识别主题。
-    """
-    for item in reversed(list(messages)):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("role") or "").strip() != "user":
-            continue
-        content = str(item.get("content") or "").strip()
-        if not content:
-            continue
-        subject = _subject(content)
-        if subject:
-            return subject
-    return ""

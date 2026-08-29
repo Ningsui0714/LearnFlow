@@ -1,6 +1,6 @@
 import unittest
 
-from backend.dialogue_understanding import understand_turn
+from backend.dialogue_understanding import recent_subject, understand_turn
 
 
 class DialogueUnderstandingTests(unittest.TestCase):
@@ -70,3 +70,80 @@ class DialogueUnderstandingTests(unittest.TestCase):
         self.assertEqual(result["primary_intent"], "create_project")
         self.assertEqual(result["goal"]["goal_type"], "project")
         self.assertEqual(result["goal"]["application_scenario"], "machine_learning")
+
+    def test_professional_group_questions_route_to_knowledge(self):
+        cases = (
+            ("软件技术都学什么", "software_technology"),
+            ("计算机应用技术主要包含什么", "computer_application"),
+            ("计算机网络技术方向有哪些内容", "computer_network"),
+            ("大数据技术都包含什么", "big_data"),
+            ("人工智能技术应用学什么", "ai_application"),
+        )
+        for message, subject in cases:
+            with self.subTest(message=message):
+                result = understand_turn(message)
+                self.assertEqual(result["primary_intent"], "knowledge_question")
+                self.assertEqual(result["topic"]["subject"], subject)
+
+    # ---- 教育优先 + 历史感知（模块①）----
+
+    def test_anaphoric_followup_inherits_previous_subject(self):
+        # 「前端是什么」→「都包含什么内容」：无主题追问继承上轮主题，保持教育辅导
+        result = understand_turn("都包含什么内容", previous_subject="javascript")
+        self.assertEqual(result["primary_intent"], "knowledge_question")
+        self.assertEqual(result["topic"]["subject"], "javascript")
+        self.assertTrue(result["topic"]["inherited"])
+
+    def test_anaphoric_followup_with_history_but_no_subject_is_clarified(self):
+        # 有来龙去脉但连主题都没接上：教育式澄清，而不是静默降级通用助手
+        result = understand_turn("都包含什么内容", has_history=True)
+        self.assertEqual(result["primary_intent"], "clarify_intent")
+
+    def test_full_question_with_history_stays_general_assistant(self):
+        # 12 字完整独立提问，有历史也不该被误判为指代追问
+        result = understand_turn("番茄工作法有什么优缺点？", has_history=True)
+        self.assertEqual(result["primary_intent"], "general_assistant")
+
+    def test_default_params_keep_original_behavior(self):
+        # 不传 previous_subject/has_history → 与改动前行为一致
+        result = understand_turn("都包含什么内容")
+        self.assertEqual(result["primary_intent"], "general_assistant")
+        self.assertNotIn("inherited", result["topic"])
+
+    def test_project_starting_point_question_routes_to_learning_path(self):
+        for message in ("要从哪里开始学", "我应该从哪学起", "先学什么"):
+            with self.subTest(message=message):
+                result = understand_turn(message, has_project=True)
+                self.assertEqual(result["primary_intent"], "show_path")
+
+    def test_recent_subject_scans_last_user_message_with_subject(self):
+        messages = [
+            {"role": "user", "content": "前端是什么"},
+            {"role": "assistant", "content": "前端就是网页里我们看到和交互的部分…"},
+            {"role": "user", "content": "都包含什么内容"},
+        ]
+        self.assertEqual(recent_subject(messages), "javascript")
+        self.assertEqual(recent_subject([]), "")
+        self.assertEqual(recent_subject([{"role": "assistant", "content": "前端"}]), "")
+
+    # ---- F5/F6 收紧修复（审查回归）----
+
+    def test_short_complete_question_does_not_inherit_previous_subject(self):
+        # F5 收紧：≤6 字完整独立提问（「番茄钟是什么」）不是指代，不继承上轮主题
+        result = understand_turn("番茄钟是什么", previous_subject="java", has_history=True)
+        self.assertNotIn("inherited", result["topic"])
+        self.assertNotEqual(result["topic"]["subject"], "java")
+
+    def test_ne_particle_followup_routes_to_knowledge_question(self):
+        # F6 修复：「那 getter 方法呢」继承主题并走知识问答
+        result = understand_turn("那 getter 方法呢", previous_subject="java")
+        self.assertEqual(result["primary_intent"], "knowledge_question")
+        self.assertEqual(result["topic"]["subject"], "java")
+        self.assertTrue(result["topic"]["inherited"])
+
+    def test_anaphoric_continuation_without_marker_is_knowledge_question(self):
+        # F6 兜底：已继承主题的续接（「再讲一下」）走知识问答而非通用助手
+        result = understand_turn("再讲一下", previous_subject="java")
+        self.assertEqual(result["primary_intent"], "knowledge_question")
+        self.assertEqual(result["topic"]["subject"], "java")
+        self.assertTrue(result["topic"]["inherited"])

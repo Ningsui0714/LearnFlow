@@ -1124,12 +1124,20 @@ class BackendIntegrationTests(unittest.TestCase):
             )
 
     def test_static_frontend_is_served(self):
-        # 根路径 = agent 主入口
+        # 根路径 = 新版三栏学习工作台
         request = urllib.request.Request(self.base_url + "/", method="GET")
         with urllib.request.urlopen(request, timeout=5) as response:
             html = response.read().decode("utf-8")
-        self.assertIn("知行课径 Agent", html)
-        self.assertIn("project-tree", html)
+        self.assertIn("知行课径 · 学习工作台", html)
+        self.assertIn('class="app"', html)
+        self.assertIn('class="sidebar"', html)
+        self.assertIn('class="chat"', html)
+        # 旧 Agent 主入口通过 /legacy 保持兼容。
+        request = urllib.request.Request(self.base_url + "/legacy", method="GET")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            legacy_agent = response.read().decode("utf-8")
+        self.assertIn("知行课径 Agent", legacy_agent)
+        self.assertIn("project-tree", legacy_agent)
         # 旧版学习中心保留在 /index.html
         request = urllib.request.Request(self.base_url + "/index.html", method="GET")
         with urllib.request.urlopen(request, timeout=5) as response:
