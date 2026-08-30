@@ -588,6 +588,8 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
 
 export type TutorAgentToolRuntimeOptions = {
   message: string
+  /** Tutor's verified pre-animation explanation, supplied before visual planning. */
+  visualPreparation?: string
   recentMessages?: TutorContextMessage[]
   generate: GenerateText
   searchConfiguration?: SearchProviderConfiguration
@@ -1748,7 +1750,7 @@ export async function executeTutorAgentTool(
 
     if (name === 'generate_learning_diagram' || name === 'generate_learning_animation' || name === 'generate_learning_visual') {
       const requestedKind = name === 'generate_learning_animation' || args.kind === 'animation' ? 'animation' : 'diagram'
-      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate, options.onVisualStage)
+      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate, options.onVisualStage, options.visualPreparation)
       const visual = execution.generated
       const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
       const degradedLabel = visual.degraded

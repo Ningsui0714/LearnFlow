@@ -917,7 +917,7 @@ test('learning file study uses a short artifact-first harness instead of resourc
   assert.ok(result.reply.length < 220)
 })
 
-test('explicit visual intent executes exactly one requested tool before the model and exposes no recovery tools', async () => {
+test('explicit visual intent prepares animation prose before the requested visual tool', async () => {
   const cases = [
     { message: '什么是联邦学习', expected: '' },
     { message: '画一张联邦学习流程图', expected: 'generate_learning_diagram' },
@@ -939,14 +939,16 @@ test('explicit visual intent executes exactly one requested tool before the mode
       },
       invokeProvider: async request => {
         requests.push(request)
-        return { choices: [{ message: { content: '先用一句话说明核心，再按需要补充学习动作。' } }] }
+        return { choices: [{ message: { content: item.expected === 'generate_learning_animation'
+          ? '联邦学习由多个客户端和一个聚合服务器组成。初始时客户端分别持有本地模型，随后各客户端训练并上传更新，服务器按顺序接收并聚合这些更新，最后形成新的全局模型并广播回客户端。'
+          : '先用一句话说明核心，再按需要补充学习动作。' } }] }
       },
     })
     const visualExecutions = executions.filter(name => /generate_learning_(?:diagram|animation)|search_learning_videos/.test(name))
-    assert.deepEqual(visualExecutions, item.expected ? [item.expected] : [])
-    if (item.expected) {
-      assert.doesNotMatch(JSON.stringify(requests[0].body.tools || []), /generate_learning_diagram|generate_learning_animation|search_learning_videos/)
-    }
+      assert.deepEqual(visualExecutions, item.expected ? [item.expected] : [])
+      if (item.expected) {
+        assert.doesNotMatch(JSON.stringify(requests[0].body.tools || []), /generate_learning_diagram|generate_learning_animation|search_learning_videos/)
+      }
   }
 })
 
@@ -974,9 +976,9 @@ test('a failed animation cannot drift into diagram or repeated video search', as
       return { choices: [{ message: { content: '动画没有生成成功；我会保留失败信息，不自动改成图解或外部视频。' } }] }
     },
   })
-  assert.deepEqual(executions, ['generate_learning_animation'])
-  assert.ok(result.trace.events.some(event => event.status === 'blocked' && /search_learning_videos/.test(event.detail)))
+  assert.deepEqual(executions, [])
   assert.equal(result.toolRuns.some(run => run.kind === 'video' || run.kind === 'image'), false)
+  assert.ok(result.trace.events.some(event => event.status === 'failed' && /前置讲解/.test(event.detail)))
 })
 
 test('visual tool observations expose bounded frame grounding for truthful Tutor narration', async () => {

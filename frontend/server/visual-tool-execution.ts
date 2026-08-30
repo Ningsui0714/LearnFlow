@@ -111,11 +111,20 @@ export async function executeLearningVisual(
   messages: TutorContextMessage[],
   generate: GenerateText,
   onStage?: (stage: VisualGenerationStage) => void,
+  explanationContext = '',
 ): Promise<{ generated: GeneratedLearningVisual; request: ResolvedVisualRequest }> {
   const request = resolveVisualRequest(query, messages)
-  if (!hasVisualTopic(request.effectiveRequest)) {
+  const preparedExplanation = compact(explanationContext, 4200)
+  const enrichedRequest = preparedExplanation
+    ? {
+      ...request,
+      effectiveRequest: `${request.effectiveRequest}\n【动画前置讲解上下文】${preparedExplanation}`,
+      contextEnriched: request.contextEnriched,
+    }
+    : request
+  if (!hasVisualTopic(enrichedRequest.effectiveRequest)) {
     throw new Error('visual_generation_needs_input:visual_topic_context_required')
   }
-  const generated = await generateLearningVisual(kind, request.effectiveRequest, generate, { onStage })
-  return { generated, request }
+  const generated = await generateLearningVisual(kind, enrichedRequest.effectiveRequest, generate, { onStage })
+  return { generated, request: enrichedRequest }
 }

@@ -134,6 +134,26 @@ function compactDecisionText(value: unknown, fallback: string, limit = 220) {
   return (text || fallback).slice(0, limit)
 }
 
+function visualPreparationSufficient(value: string) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  // Count Unicode code points rather than tokens: a concise Chinese explanation
+  // can describe a real process in fewer than 140 JavaScript UTF-16 units.
+  if ([...text].length < 80) return false
+  if (text.split(/[。！？.!?]+/).filter(Boolean).length < 2) return false
+  const processSignals = text.match(/(?:对象|输入|输出|初始|状态|步骤|过程|先|然后|接着|随后|最后|变为|移动|更新|比较|交换|传递|经过|结果|变化|关系|连接|分成|合并|循环|递归|阶段|before|after|state|step|then|next|result|change|process)/gi)
+  return (processSignals?.length || 0) >= 2
+}
+
+function visualPreparationPrompt(kind: 'animation', request: string, repair = false) {
+  return [
+    '你正在为学习动画准备讲解文字。先不要调用任何工具，也不要输出 JSON。',
+    '请围绕学习者的原始请求，写一段准确、可检查的中文教学文字：明确对象、初始状态、关键中间状态、最终状态，以及状态如何一步步变化。',
+    '尽量给出具体值、顺序、参与者和因果关系；不要使用“输入/处理/输出”这类没有主题内容的占位词。',
+    repair ? '上一版讲解过短或没有描述真实过程，请补充对象和至少两个有意义的状态变化。' : '',
+    `原始请求：${request}`,
+  ].filter(Boolean).join('\n')
+}
+
 function toolDecisionReason(call: AgentToolCall) {
   const reasons: Record<string, string> = {
     read_learner_context: '先确认与当前问题相关的基础、目标和已记录学习线索，避免使用不合适的讲法',
@@ -924,8 +944,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       id: `explicit-visual-intent-${Date.now()}`,
       name: visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram',
       arguments: { query: latestMessage },
-    })
-  if (explicit) {
+  })
+  // Animation is intentionally deferred until after a Tutor explanation pass.
+  // Other explicit tools can still run in the observation phase as before.
+  if (explicit && explicit.name !== 'generate_learning_animation') {
     const sources = await execute(explicit)
     if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(sources)
   }
@@ -953,7 +975,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       maxWallTimeMs: budget.maxWallTimeMs,
     },
   }
-  const visualAlreadyAttempted = visualIntent !== 'none' && runs.some(run => run.toolName === (visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'))
+  const visualAlreadyAttempted = visualIntent !== 'none' && (
+    runs.some(run => run.toolName === (visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'))
+    || (explicit?.name === 'generate_learning_animation')
+  )
   const tools = availableTools(input).filter(tool => !visualAlreadyAttempted || !['generate_learning_diagram', 'generate_learning_animation'].includes(tool.name))
   const modelVisibleToolNames = new Set(tools.map(tool => tool.name))
   const instructions = buildTutorInstructions({
@@ -974,6 +999,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   })
 
   let reply = ''
+  let visualPreparation = ''
   let searchSources: SearchSource[] = runs.flatMap(run => run.sources || [])
   const invokeModel = async (
     request: ReturnType<typeof buildAgentProviderRequest>,
@@ -1000,6 +1026,55 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     throw lastError
   }
   try {
+    if (explicit?.name === 'generate_learning_animation') {
+      record({ phase: 'decide', detail: '先生成动画前置讲解，明确对象、状态与过程', status: 'started' })
+      const preparationMessages = [
+        ...runtimeMessages,
+        { role: 'user' as const, content: visualPreparationPrompt('animation', latestMessage) },
+      ]
+      const preparationRequest = buildAgentProviderRequest({
+        baseUrl: input.baseUrl,
+        model: input.model,
+        instructions,
+        messages: preparationMessages,
+        tools: [],
+        includeTools: false,
+      })
+      try {
+        modelRounds += 1
+        let preparationPayload = await invokeModel(preparationRequest)
+        visualPreparation = textFromTutorProviderResponse(preparationPayload).trim()
+        if (!visualPreparationSufficient(visualPreparation) && Date.now() < deadline - 1_000) {
+          record({ phase: 'decide', detail: '前置讲解不足，补充对象与至少两个状态变化', status: 'retrying' })
+          modelRounds += 1
+          const repairRequest = buildAgentProviderRequest({
+            baseUrl: input.baseUrl,
+            model: input.model,
+            instructions,
+            messages: [
+              ...preparationMessages,
+              { role: 'assistant' as const, content: visualPreparation },
+              { role: 'user' as const, content: visualPreparationPrompt('animation', latestMessage, true) },
+            ],
+            tools: [],
+            includeTools: false,
+          })
+          preparationPayload = await invokeModel(repairRequest)
+          visualPreparation = textFromTutorProviderResponse(preparationPayload).trim()
+        }
+        if (!visualPreparationSufficient(visualPreparation)) {
+          throw new Error('visual_preparation_insufficient:需要先明确对象、初始状态、变化过程和结果')
+        }
+        runtimeMessages.push({ role: 'assistant', content: visualPreparation })
+        toolOptions.visualPreparation = visualPreparation
+        record({ phase: 'decide', detail: '动画前置讲解已具备对象、状态和过程描述', status: 'completed' })
+        await execute(explicit)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'visual_preparation_failed'
+        record({ phase: 'act', detail: `动画前置讲解未达到生成门槛：${message.slice(0, 220)}`, status: 'failed' })
+        visualPreparation = ''
+      }
+    }
     for (let round = 0; round < budget.maxModelRounds && Date.now() < deadline; round += 1) {
       modelRounds += 1
       record({ phase: 'decide', detail: `模型决策第 ${modelRounds} 轮`, status: 'started' })

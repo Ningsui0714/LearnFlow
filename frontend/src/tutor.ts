@@ -343,6 +343,24 @@ async function executeDesktopVisualTool(options: {
   const title = options.kind === 'animation' ? '生成过程动画' : '生成知识图解'
   const request = resolveVisualRequest(options.query, options.messages)
   try {
+    let animationPreparation = ''
+    if (options.kind === 'animation') {
+      const preparationInstructions = `你正在为学习动画准备讲解文字。先不要输出 JSON，也不要描述视觉布局。围绕原始请求写准确、可检查的中文教学文字，明确对象、初始状态、关键中间状态、最终状态，以及至少两个真实的状态变化和它们的顺序。尽量给出具体值、参与者和因果关系，不要使用没有主题内容的“输入/处理/输出”占位词。`
+      const preparationResponse = await runtimeFetch(`/api/agent/sessions/${options.sessionId}/visual-plans`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions: preparationInstructions, input: `原始请求：${options.query}`, timeout_ms: 45_000, max_tokens: 1_200 }),
+        signal: options.signal,
+      })
+      const preparationPayload = await preparationResponse.json().catch(() => null) as { text?: unknown; detail?: unknown } | null
+      if (!preparationResponse.ok || typeof preparationPayload?.text !== 'string') {
+        throw new Error('visual_preparation_failed:前置讲解服务不可用')
+      }
+      animationPreparation = preparationPayload.text.replace(/\s+/g, ' ').trim()
+      const sufficient = [...animationPreparation].length >= 80
+        && animationPreparation.split(/[。！？.!?]+/).filter(Boolean).length >= 2
+        && (animationPreparation.match(/(?:对象|输入|输出|初始|状态|步骤|过程|先|然后|接着|随后|最后|变为|移动|更新|比较|交换|传递|经过|结果|变化|关系|连接|分成|合并|循环|递归|阶段)/g)?.length || 0) >= 2
+      if (!sufficient) throw new Error('visual_preparation_insufficient:前置讲解没有充分描述对象与过程')
+    }
     const execution = await executeLearningVisual(options.kind, options.query, options.messages, async (
       instructions, input, timeoutMs = 26_000, maxTokens = 2_200, generationOptions,
     ) => {
@@ -362,7 +380,7 @@ async function executeDesktopVisualTool(options: {
       if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : `视觉规划返回 HTTP ${response.status}`)
       if (typeof payload?.text !== 'string' || !payload.text.trim()) throw new Error('视觉规划没有返回可验证的 JSON')
       return payload.text
-    })
+    }, undefined, animationPreparation)
     const visual = execution.generated
     const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
     return {
