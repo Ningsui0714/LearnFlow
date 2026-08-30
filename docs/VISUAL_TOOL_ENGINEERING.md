@@ -91,7 +91,7 @@
 
 - Web 与 Desktop 共用 `visual-tool-execution.ts`、VisualSpec 编译器、验证器和 renderer；Desktop 不再返回空 `toolRuns` 后绕过视觉能力。
 - Desktop 专用 `/agent/sessions/{session_id}/visual-plans` 只返回模型候选文本，并校验桌面令牌、learner 与 session ownership；它不接收 SVG，不执行代码，也不写学习证据。
-- 可计算精确输入和教学示例均为零模型调用。长尾图解首轮/修复预算为 26/18 秒，动画为 38/26 秒；总重试次数固定为一次，不能用改写参数无限重试。
+- 可计算精确输入和教学示例均为零模型调用。长尾图解首轮/修复预算为 60/40 秒，动画为 90/60 秒；总重试次数固定为一次，不能用改写参数无限重试。只有显式视觉请求会把 Agent 总回合扩到图解 210 秒、动画 270 秒，普通 Tutor 仍保持原预算。
 - 每次 Tool Run 记录 `requestedKind`、`effectiveKind`、`contextEnriched`、`generationSource`、`compileStatus`、`plannerAttempts` 与 `outcomeStage`，用于区分“被调用、规划返回、验证通过、布局通过、真正渲染”各阶段，不能再用 nominal completed 代替真实成功率。
 
 ## 金标验收

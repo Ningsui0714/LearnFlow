@@ -431,15 +431,16 @@ export async function requestTutorReply(options: {
   const observedToolRuns: TutorToolRun[] = []
   const observedDecisionSummaries: NonNullable<AgentTurnTrace['decisionSummaries']> = []
   const observedTrajectory: AgentTurnTrace['events'] = []
-  const timeoutMs = options.mode === 'guided_learning'
+  const latestUserMessage = [...options.messages].reverse().find(message => message.role === 'user')?.content || ''
+  const visualIntent = resolveExplicitVisualIntent(options.toolChoice, latestUserMessage)
+  const baseTimeoutMs = options.mode === 'guided_learning'
     ? 235_000
     : options.mode === 'learning_plan' ? 200_000 : 105_000
+  const timeoutMs = Math.max(baseTimeoutMs, visualIntent === 'animation' ? 330_000 : visualIntent === 'diagram' ? 260_000 : 0)
   const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs)
   try {
     if (isDesktopRuntime()) {
       if (!options.formalScope?.sessionId) throw new Error('桌面 Tutor 尚未取得正式会话，请重试本轮')
-      const latestUserMessage = [...options.messages].reverse().find(message => message.role === 'user')?.content || ''
-      const visualIntent = resolveExplicitVisualIntent(options.toolChoice, latestUserMessage)
       const visualPromise = visualIntent === 'none' ? undefined : executeDesktopVisualTool({
         sessionId: options.formalScope.sessionId,
         kind: visualIntent,

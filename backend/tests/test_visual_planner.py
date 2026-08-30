@@ -68,7 +68,7 @@ def test_desktop_visual_planner_is_narrow_scoped_and_uses_requested_budget(monke
             json={
                 "instructions": "只输出严格的 LearnFlow VisualSpec JSON，不得输出代码或解释。",
                 "input": "画一个编译器前端结构图",
-                "timeout_ms": 38_000,
+                "timeout_ms": 90_000,
                 "max_tokens": 3_000,
             },
         )
@@ -77,7 +77,7 @@ def test_desktop_visual_planner_is_narrow_scoped_and_uses_requested_budget(monke
         assert asyncio.run(_evidence_count()) == evidence_before
 
     assert len(calls) == 1
-    assert calls[0]["timeout"] == 38
+    assert calls[0]["timeout"] == 90
     assert calls[0]["max_tokens"] == 3_000
     assert calls[0]["messages"][0]["role"] == "system"
     assert calls[0]["messages"][1]["content"] == "画一个编译器前端结构图"

@@ -616,7 +616,7 @@ test('a failed visual plan receives one bounded repair attempt', async () => {
     })
   })
   assert.equal(calls, 2)
-  assert.deepEqual(timeouts, [26_000, 18_000])
+  assert.deepEqual(timeouts, [60_000, 40_000])
   assert.equal(generated.generation.plannerAttempts, 2)
   assert.equal(generated.generation.repairAttempted, true)
   assert.equal(generated.artifact.kind, 'image')

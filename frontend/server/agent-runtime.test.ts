@@ -31,6 +31,9 @@ test('guided learning receives a larger but still bounded runtime budget', () =>
     finalizationAttempts: 2,
     finalizationGraceMs: 45_000,
   })
+  assert.equal(tutorAgentBudget('simple_explain', 'diagram').maxWallTimeMs, 210_000)
+  assert.equal(tutorAgentBudget('simple_explain', 'animation').maxWallTimeMs, 270_000)
+  assert.equal(tutorAgentBudget('guided_learning', 'animation').maxWallTimeMs, 270_000)
 })
 
 test('provider tool calls are normalized for chat completions and responses APIs', () => {

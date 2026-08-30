@@ -478,7 +478,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'generate_learning_diagram',
     title: '生成学习图解',
-    description: '仅当学习者本轮明确要求画图、图解、流程图、时序图、结构图或可视化时调用。把结构、关系、对比、数据流或数学关系规划为 VisualSpec，再由确定性布局器生成安全 SVG；普通讲解不得为了装饰自动调用。query 应写清主题，例如“Dijkstra 从 S 到 T 的最短路径”；“把刚才那个画出来”等省略表达会由 Harness 结合最近对话主题补全并在结果中披露。可计算主题缺少具体输入时允许生成明确标注的教学示例，不会冒充用户数据。通常需要 0-40 秒。',
+    description: '仅当学习者本轮明确要求画图、图解、流程图、时序图、结构图或可视化时调用。把结构、关系、对比、数据流或数学关系规划为 VisualSpec，再由确定性布局器生成安全 SVG；普通讲解不得为了装饰自动调用。query 应写清主题，例如“Dijkstra 从 S 到 T 的最短路径”；“把刚才那个画出来”等省略表达会由 Harness 结合最近对话主题补全并在结果中披露。可计算主题缺少具体输入时允许生成明确标注的教学示例，不会冒充用户数据。复杂长尾图解首轮最多等待 60 秒，并可进行一次 40 秒结构修复。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {
@@ -493,7 +493,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'generate_learning_animation',
     title: '生成学习动画',
-    description: '仅当学习者本轮明确要求动画、逐帧或演示状态变化时调用。把有机械因果、状态转移或逐步计算的过程规划为 VisualSpec 时间线，再由确定性渲染器生成身份稳定、可暂停逐帧检查的安全 SVG 动画；不得把静态关系或普通讲解自动动画化。query 应写清过程，例如“逐帧演示 Dijkstra 如何更新 tentative distance”；省略的主题会由 Harness 从最近对话恢复并披露。缺少具体数据时可以使用明确标注的教学示例。复杂长尾动画可能进行一次结构化修复，通常需要 0-65 秒。',
+    description: '仅当学习者本轮明确要求动画、逐帧或演示状态变化时调用。把有机械因果、状态转移或逐步计算的过程规划为 VisualSpec 时间线，再由确定性渲染器生成身份稳定、可暂停逐帧检查的安全 SVG 动画；不得把静态关系或普通讲解自动动画化。query 应写清过程，例如“逐帧演示 Dijkstra 如何更新 tentative distance”；省略的主题会由 Harness 从最近对话恢复并披露。缺少具体数据时可以使用明确标注的教学示例。复杂长尾动画首轮最多等待 90 秒，并可进行一次 60 秒结构修复。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {

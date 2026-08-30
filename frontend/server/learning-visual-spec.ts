@@ -200,7 +200,7 @@ export async function generateLearningVisual(
     raw = await generate(
       initialPrompt,
       `学习者请求：\n${request.slice(0, 2200)}`,
-      kind === 'animation' ? 38_000 : 26_000,
+      kind === 'animation' ? 90_000 : 60_000,
       kind === 'animation' ? 3000 : 2200,
     )
     const accepted = parseAndRender(raw)
@@ -218,7 +218,7 @@ export async function generateLearningVisual(
       const repairedRaw = await generate(
         `${initialPrompt}\n\n修复要求：根据失败原因只修正结构、引用、timeline 或缺失字段；仍只输出一个完整 JSON。不要解释错误，不要缩减为单节点占位图。`,
         repairInput,
-        kind === 'animation' ? 26_000 : 18_000,
+        kind === 'animation' ? 60_000 : 40_000,
         kind === 'animation' ? 3000 : 2200,
       )
       const accepted = parseAndRender(repairedRaw)

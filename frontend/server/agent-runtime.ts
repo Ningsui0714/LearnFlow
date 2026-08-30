@@ -41,12 +41,13 @@ export type TutorAgentBudget = {
   finalizationGraceMs: number
 }
 
-export function tutorAgentBudget(mode: TutorMode): TutorAgentBudget {
+export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'animation' | 'none' = 'none'): TutorAgentBudget {
+  const visualWallTimeMs = visualIntent === 'animation' ? 270_000 : visualIntent === 'diagram' ? 210_000 : 0
   if (mode === 'guided_learning') {
     return {
       maxModelRounds: 9,
       maxToolCalls: 14,
-      maxWallTimeMs: 180_000,
+      maxWallTimeMs: Math.max(180_000, visualWallTimeMs),
       finalizationAttempts: 2,
       finalizationGraceMs: 45_000,
     }
@@ -55,7 +56,7 @@ export function tutorAgentBudget(mode: TutorMode): TutorAgentBudget {
     return {
       maxModelRounds: 7,
       maxToolCalls: 12,
-      maxWallTimeMs: 150_000,
+      maxWallTimeMs: Math.max(150_000, visualWallTimeMs),
       finalizationAttempts: 2,
       finalizationGraceMs: 40_000,
     }
@@ -63,7 +64,7 @@ export function tutorAgentBudget(mode: TutorMode): TutorAgentBudget {
   return {
     maxModelRounds: 5,
     maxToolCalls: 8,
-    maxWallTimeMs: 90_000,
+    maxWallTimeMs: Math.max(90_000, visualWallTimeMs),
     finalizationAttempts: 1,
     finalizationGraceMs: 25_000,
   }
@@ -621,9 +622,10 @@ export function verifyTutorTurnOutcome(options: {
 export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<AgentTurnResponse> {
   const id = turnId()
   const startedAt = Date.now()
-  const budget = tutorAgentBudget(input.mode)
-  const deadline = startedAt + budget.maxWallTimeMs
   const latestMessage = [...input.messages].reverse().find(message => message.role === 'user')?.content || ''
+  const visualIntent = resolveExplicitVisualIntent(input.toolChoice, latestMessage)
+  const budget = tutorAgentBudget(input.mode, visualIntent)
+  const deadline = startedAt + budget.maxWallTimeMs
   const trajectory: AgentTrajectoryEvent[] = []
   const decisionSummaries: AgentDecisionSummary[] = []
   const runs: TutorToolRun[] = []
@@ -642,7 +644,6 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
   let currentVideoCandidates: LearningVideoCandidate[] = []
   const explicitlyRequestsExternalResources = hasExplicitExternalResourceRequest(input)
-  const visualIntent = resolveExplicitVisualIntent(input.toolChoice, latestMessage)
 
   const record = (event: Omit<AgentTrajectoryEvent, 'sequence' | 'at'>) => {
     const recorded = { ...event, sequence: ++sequence, at: Date.now() }

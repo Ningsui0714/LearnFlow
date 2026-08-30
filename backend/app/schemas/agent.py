@@ -56,7 +56,7 @@ class TutorTurnRequest(BaseModel):
 class VisualPlannerRequest(BaseModel):
     instructions: str = Field(min_length=20, max_length=24_000)
     input: str = Field(min_length=1, max_length=16_000)
-    timeout_ms: int = Field(default=26_000, ge=1_000, le=45_000)
+    timeout_ms: int = Field(default=60_000, ge=1_000, le=100_000)
     max_tokens: int = Field(default=2_200, ge=400, le=4_000)
 
 
