@@ -1,4 +1,5 @@
 import type { SearchSource } from '../src/tooling.ts'
+import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
 
 export type SearchIntent = 'explanation' | 'comparison' | 'troubleshooting' | 'implementation' | 'research' | 'current'
 export type SearchDepth = 'quick' | 'standard' | 'deep'
@@ -426,7 +427,7 @@ async function readCuratedPages(plan: SearchPlan, sources: SearchSource[], confi
 async function fetchWithTimeout(
   url: string,
   init: RequestInit = {},
-  timeoutMs = 6200,
+  timeoutMs = AI_LATENCY_BUDGETS.searchProvider,
   configuration: SearchProviderConfiguration = {},
 ) {
   const controller = new AbortController()
@@ -445,7 +446,7 @@ async function fetchWithTimeout(
   }
 }
 
-async function fetchJson(url: string, init: RequestInit = {}, timeoutMs = 6200, configuration: SearchProviderConfiguration = {}) {
+async function fetchJson(url: string, init: RequestInit = {}, timeoutMs = AI_LATENCY_BUDGETS.searchProvider, configuration: SearchProviderConfiguration = {}) {
   const response = await fetchWithTimeout(url, {
     ...init,
     headers: { Accept: 'application/json', ...(init.headers || {}) },
@@ -615,7 +616,7 @@ async function searchGitHub(plan: SearchPlan, configuration: SearchProviderConfi
   url.searchParams.set('sort', 'stars')
   url.searchParams.set('order', 'desc')
   url.searchParams.set('per_page', '4')
-  const payload = await fetchJson(url.toString(), {}, 6200, configuration)
+  const payload = await fetchJson(url.toString(), {}, AI_LATENCY_BUDGETS.searchProvider, configuration)
   return (Array.isArray(payload?.items) ? payload.items : []).slice(0, 4).map((item: any) => searchResult(
     item?.full_name, item?.html_url,
     `${compactText(item?.description, 500)} · ★ ${Number(item?.stargazers_count || 0).toLocaleString('en-US')}`,

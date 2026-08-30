@@ -66,7 +66,7 @@ class PluginRunnerConfig:
     execution_mode: str = "disabled"
     environment: str = "production"
     allow_unsigned_development: bool = False
-    timeout_seconds: float = 180.0
+    timeout_seconds: float = 600.0
     max_message_bytes: int = 256 * 1024
     max_output_bytes: int = 1024 * 1024
     max_host_calls: int = 32
@@ -82,7 +82,7 @@ class PluginRunnerConfig:
                 getattr(settings, "plugin_allow_unsigned_dev", False)
             ),
             timeout_seconds=float(
-                getattr(settings, "plugin_runner_timeout_seconds", 180.0)
+                getattr(settings, "plugin_runner_timeout_seconds", 600.0)
             ),
             max_message_bytes=int(
                 getattr(settings, "plugin_runner_max_message_bytes", 256 * 1024)
@@ -98,7 +98,7 @@ class PluginRunnerConfig:
             execution_mode=self.execution_mode,
             environment=self.environment,
             allow_unsigned_development=self.allow_unsigned_development,
-            timeout_seconds=max(0.1, min(float(self.timeout_seconds), 180.0)),
+            timeout_seconds=max(0.1, min(float(self.timeout_seconds), 600.0)),
             max_message_bytes=max(128, min(int(self.max_message_bytes), 256 * 1024)),
             max_output_bytes=max(512, min(int(self.max_output_bytes), 1024 * 1024)),
             max_host_calls=max(0, min(int(self.max_host_calls), 32)),

@@ -14,6 +14,15 @@ import { createLearningTask, learningTaskTutorContext, projectLearningTask } fro
 import { executeTutorAgentTool } from './tool-runtime.ts'
 import { TUTOR_AGENT_TOOL_DEFINITIONS } from './tool-runtime.ts'
 import { buildProviderRequest } from '../src/tutor.ts'
+import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
+
+test('interactive budgets preserve outer ownership and bounded provider calls', () => {
+  assert.ok(AI_LATENCY_BUDGETS.tutorClient.standard > AI_LATENCY_BUDGETS.agentTurn.standard)
+  assert.ok(AI_LATENCY_BUDGETS.tutorClient.diagram > AI_LATENCY_BUDGETS.agentTurn.diagram)
+  assert.ok(AI_LATENCY_BUDGETS.tutorClient.animation > AI_LATENCY_BUDGETS.agentTurn.animation)
+  assert.ok(AI_LATENCY_BUDGETS.agentTurn.standard > AI_LATENCY_BUDGETS.providerRequest)
+  assert.ok(AI_LATENCY_BUDGETS.visualPlanner.animation > AI_LATENCY_BUDGETS.visualPlanner.diagram)
+})
 
 test('guided learning receives a larger but still bounded runtime budget', () => {
   const simple = tutorAgentBudget('simple_explain')
@@ -21,20 +30,20 @@ test('guided learning receives a larger but still bounded runtime budget', () =>
   assert.deepEqual(simple, {
     maxModelRounds: 5,
     maxToolCalls: 8,
-    maxWallTimeMs: 90_000,
+    maxWallTimeMs: 360_000,
     finalizationAttempts: 1,
     finalizationGraceMs: 25_000,
   })
   assert.deepEqual(guided, {
     maxModelRounds: 9,
     maxToolCalls: 14,
-    maxWallTimeMs: 180_000,
+    maxWallTimeMs: 540_000,
     finalizationAttempts: 2,
     finalizationGraceMs: 45_000,
   })
-  assert.equal(tutorAgentBudget('simple_explain', 'diagram').maxWallTimeMs, 210_000)
-  assert.equal(tutorAgentBudget('simple_explain', 'animation').maxWallTimeMs, 270_000)
-  assert.equal(tutorAgentBudget('guided_learning', 'animation').maxWallTimeMs, 270_000)
+  assert.equal(tutorAgentBudget('simple_explain', 'diagram').maxWallTimeMs, 600_000)
+  assert.equal(tutorAgentBudget('simple_explain', 'animation').maxWallTimeMs, 720_000)
+  assert.equal(tutorAgentBudget('guided_learning', 'animation').maxWallTimeMs, 720_000)
 })
 
 test('provider tool calls are normalized for chat completions and responses APIs', () => {

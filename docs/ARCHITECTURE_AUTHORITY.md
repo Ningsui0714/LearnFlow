@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-30.9`）：所有用户可见的 AI、检索、视觉规划、正式 API 与插件生成路径改用分层长预算，普通 Tutor 外层/Agent 内层为 420/360 秒，图解为 660/600 秒，动画为 780/720 秒，单次模型调用上限 180 秒；后端 Tutor、学习任务与微学习默认模型预算同步提高，插件运行上限为 600 秒。外层始终覆盖其拥有的内层工作，并保留最终回答余量；预算仍有硬上限，不改变重试次数、工具权限、Action Board、副作用确认、五核或 EvidenceEvent 语义。密码哈希、数据库锁、代码执行和进程终止等资源保护超时不随之放大。完整矩阵见 `docs/implementation/INTERACTIVE_LATENCY_BUDGETS.md`。
+
 Contract impact（`2026-08-30.8`）：岗位图谱恢复 LearnFlow 原生的 Tutor 主导产品路径。项目目标或对话中出现明确岗位名且首个快照不存在时，Tutor Harness 确定性提取岗位名、构造有界通用研究种子并以项目/实例级幂等键自动调用既有 `generate` workflow；生成结果作为同一 Tutor 消息流中的受管快照投影出现。Composer 不再暴露任务种子、独立生成表单或独立迭代面板，只保留状态、对话动作和管理入口；缺少岗位名时由 Tutor 在对话中追问。Plugin Host 的 ownership、schema、验证、快照提交和零 Kernel target 事件不变，候选仍不表示岗位事实已核验或学习者掌握；既有 API、Snapshot schema、三类主 Agent、五核与 EvidenceEvent 无迁移。
 
 Contract impact（`2026-08-30.7`）：纠正插件产品定义与外部分发机制的混层。LearnFlow 官方插件现在是随应用加载的内置 Agent Package，由 Agent、Product Skill、Tool、Workflow、Schema 和聊天 UI binding 组成；岗位图谱的 `generate / explain / iterate / validate / upgrade` 注册为同进程 handler，默认配置下不启动本机插件进程，也不依赖 `PLUGIN_EXECUTION_MODE`。通用 Plugin Host 继续确定性负责项目权限、Host Port、输入输出 schema、幂等、快照校验、ObjectIndex、提交和零目标事件。`.lfplugin`、Ed25519 签名、JSON-RPC runner 与 `trusted_signed_process` 保留为可选的第三方分发/执行适配器，不再定义官方插件的产品形态。既有 PluginInstance、Snapshot、ObjectRef、API、聊天 UI、三类主 Agent、五核与 EvidenceEvent 语义保持兼容，无数据库迁移。

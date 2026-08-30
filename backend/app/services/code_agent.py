@@ -54,7 +54,7 @@ class CodeAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.3,
-            timeout=30,
+            timeout=120,
             max_retries=0,
         )
 

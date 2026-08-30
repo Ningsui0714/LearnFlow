@@ -1,3 +1,5 @@
+import { AI_LATENCY_BUDGETS } from './latency-budgets.ts'
+
 const DESKTOP_AUTH_STORAGE_KEY = 'learnflow.desktop.auth-token'
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 const UNSCOPED_WORKSPACE_STORAGE_KEY = 'learnflow.vnext.workspace.v1'
@@ -217,7 +219,8 @@ export async function runtimeFetch(input: RequestInfo | URL, init: RequestInit =
 async function waitForSidecar(apiBaseUrl: string) {
   const healthUrl = `${apiBaseUrl.replace(/\/api\/?$/, '')}/health`
   let lastError: unknown
-  for (let attempt = 0; attempt < 180; attempt += 1) {
+  const deadline = Date.now() + AI_LATENCY_BUDGETS.desktopStartup
+  while (Date.now() < deadline) {
     try {
       const response = await fetch(healthUrl)
       if (response.ok) return
@@ -228,7 +231,7 @@ async function waitForSidecar(apiBaseUrl: string) {
     await new Promise(resolve => window.setTimeout(resolve, 500))
   }
   const detail = lastError instanceof Error ? `：${lastError.message}` : ''
-  throw new Error(`本地服务启动超时（90 秒）${detail}`)
+  throw new Error(`本地服务启动超时（${Math.round(AI_LATENCY_BUDGETS.desktopStartup / 1000)} 秒）${detail}`)
 }
 
 export function initializeRuntimeClient(): Promise<RuntimeClientState> {

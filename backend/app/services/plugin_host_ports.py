@@ -608,7 +608,7 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.1,
-        timeout=min(30.0, max(1.0, settings.learning_task_plan_model_budget_seconds)),
+        timeout=min(180.0, max(1.0, settings.learning_task_plan_model_budget_seconds)),
         max_retries=0,
         max_tokens=4_000,
         model_kwargs={"response_format": {"type": "json_object"}},
@@ -616,7 +616,7 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
     try:
         response = await asyncio.wait_for(
             llm.ainvoke([HumanMessage(content=prompt)]),
-            timeout=min(30.0, max(1.0, settings.learning_task_plan_model_budget_seconds)),
+            timeout=min(180.0, max(1.0, settings.learning_task_plan_model_budget_seconds)),
         )
         raw = str(response.content or "")[:MAX_MODEL_OUTPUT_CHARS]
         value = json.loads(raw)

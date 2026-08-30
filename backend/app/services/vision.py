@@ -27,7 +27,7 @@ def _get_llm() -> ChatOpenAI:
         api_key=api_key,
         base_url=settings.vision_base_url,
         temperature=1.0,  # kimi 系列只允许 temperature=1
-        timeout=120,
+        timeout=300,
         max_retries=0,
         max_tokens=1500,  # reasoning 模型需要余量，否则 content 为空
     )

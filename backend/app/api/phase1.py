@@ -467,7 +467,7 @@ async def _generate_file_summaries(db: AsyncSession, source) -> dict:
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.2,
-        timeout=60,
+        timeout=180,
         max_retries=0,
     )
 
@@ -715,7 +715,7 @@ async def reconcile_sources(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.3,
-        timeout=120,
+        timeout=300,
         max_retries=0,
         max_tokens=4000,
         model_kwargs={"response_format": {"type": "json_object"}},
@@ -1154,7 +1154,7 @@ async def backfill_briefs(
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.2,
-            timeout=90,
+            timeout=240,
             max_retries=0,
         )
         cp_lines = [f"- {cp.title}: {cp.description or ''}" for cp, _ in empty]

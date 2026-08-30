@@ -113,7 +113,7 @@ learning_card
 run、LearningTask 和题目稳定 ID，新增 Lecture 版本并替换卡片内容。已有学习证据后禁止重
 生成，避免题目变化污染 Attempt、纠错与复习引用。重生成使用乐观版本和幂等请求 ID。
 
-在线候选生成有独立的 wall-clock budget（默认 18 秒）；超时不会继续占用请求，而是立即
+在线候选生成有独立的 wall-clock budget（默认 180 秒）；超时不会继续占用请求，而是立即
 保存确定性学习卡和验证题。运行投影以 `generation_mode / generation_reason` 区分模型增强、
 未配置模型、超时和供应商/校验失败，便于诊断且不把生成来源当成学习证据。
 

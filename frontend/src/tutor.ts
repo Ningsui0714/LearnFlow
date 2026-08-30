@@ -18,6 +18,7 @@ import {
 import type { PluginChatContext } from './plugin-chat.ts'
 import { roleCapabilityArtifactFromToolObservation } from './plugin-chat.ts'
 import { callProjectPluginReadTool, discoverProjectPluginReadTools } from './plugin-runtime.ts'
+import { AI_LATENCY_BUDGETS } from './latency-budgets.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -449,9 +450,13 @@ export async function requestTutorReply(options: {
   const latestUserMessage = [...options.messages].reverse().find(message => message.role === 'user')?.content || ''
   const visualIntent = resolveExplicitVisualIntent(options.toolChoice, latestUserMessage)
   const baseTimeoutMs = options.mode === 'guided_learning'
-    ? 235_000
-    : options.mode === 'learning_plan' ? 200_000 : 105_000
-  const timeoutMs = Math.max(baseTimeoutMs, visualIntent === 'animation' ? 330_000 : visualIntent === 'diagram' ? 260_000 : 0)
+    ? AI_LATENCY_BUDGETS.tutorClient.guided
+    : options.mode === 'learning_plan'
+      ? AI_LATENCY_BUDGETS.tutorClient.planning
+      : AI_LATENCY_BUDGETS.tutorClient.standard
+  const timeoutMs = Math.max(baseTimeoutMs, visualIntent === 'animation'
+    ? AI_LATENCY_BUDGETS.tutorClient.animation
+    : visualIntent === 'diagram' ? AI_LATENCY_BUDGETS.tutorClient.diagram : 0)
   const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs)
   try {
     if (isDesktopRuntime()) {

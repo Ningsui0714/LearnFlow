@@ -279,7 +279,7 @@ class LectureAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.7,
-            timeout=90,
+            timeout=240,
             max_retries=0,
         )
         self.gen_llm = ChatOpenAI(
@@ -287,7 +287,7 @@ class LectureAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.8,
-            timeout=120,
+            timeout=300,
             max_retries=0,
         )
 
@@ -755,7 +755,7 @@ class QAAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.5,
-            timeout=30,
+            timeout=120,
             max_retries=0,
         )
 

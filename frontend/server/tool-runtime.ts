@@ -21,6 +21,7 @@ import type { TutorContextMessage } from '../src/tutor.ts'
 import { executeLearningVisual, resolveVisualRequest } from './visual-tool-execution.ts'
 import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentToolDefinition } from '../src/agent-contracts.ts'
 import type { AgentProjectContext, ProjectCheckpointProposal } from '../src/project.ts'
+import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
 import { roleCapabilityArtifactFromToolObservation } from '../src/plugin-chat.ts'
 import {
   FIVE_KERNEL_LABELS,
@@ -864,7 +865,7 @@ async function callFormalPracticeApi(
       ...(options.requestCookie ? { Cookie: options.requestCookie } : {}),
       ...(init.headers || {}),
     },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.formalApi),
   })
   const payload = await response.json().catch(() => ({})) as any
   if (!response.ok) {
@@ -888,7 +889,7 @@ async function callProjectPluginApi(
       ...(options.requestCookie ? { Cookie: options.requestCookie } : {}),
       ...(init.headers || {}),
     },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.formalApi),
   })
   const payload = await response.json().catch(() => ({})) as any
   if (!response.ok) {
@@ -953,7 +954,7 @@ async function readActiveLearningFile(options: TutorAgentToolRuntimeOptions) {
       : `/api/knowledge-library/sources/${encodeURIComponent(artifact.ref)}/paper`
   const response = await fetch(`${options.backendBase}${path}`, {
     headers: options.requestCookie ? { Cookie: options.requestCookie } : {},
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.formalApi),
   })
   const payload = await response.json().catch(() => ({})) as any
   if (!response.ok) {
@@ -1024,7 +1025,7 @@ async function callAssessmentBlueprintApi(
       ...(options.requestCookie ? { Cookie: options.requestCookie } : {}),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.formalApi),
   })
   const payload = await response.json().catch(() => ({})) as any
   if (!response.ok) {
@@ -1054,7 +1055,7 @@ async function captureFormalWebEvidence(
       learning_task_id: options.learningTaskContext?.formalTaskId,
       project_id: options.formalProjectContext?.project?.id,
     }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.formalApi),
   })
   const payload = await response.json().catch(() => ({})) as any
   if (!response.ok) {

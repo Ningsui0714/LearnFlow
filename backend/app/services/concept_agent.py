@@ -120,7 +120,7 @@ class ConceptAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.7,
-            timeout=120,
+            timeout=300,
             max_retries=0,
             max_tokens=8000,
             model_kwargs={"response_format": {"type": "json_object"}},
@@ -132,7 +132,7 @@ class ConceptAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.5,
-            timeout=60,
+            timeout=180,
             max_retries=0,
             max_tokens=2000,
         )

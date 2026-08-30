@@ -828,7 +828,7 @@ async def run_resource_search(task_id: int):
                 if plan.get("sort"):
                     params["sort"] = plan["sort"]
                 try:
-                    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+                    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                         response = await client.get(
                             "https://api.github.com/search/repositories",
                             params=params, headers=headers,

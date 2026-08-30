@@ -33,6 +33,7 @@ import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
 import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
 import type { PluginChatContext } from '../src/plugin-chat.ts'
+import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
 
 export type TutorAgentBudget = {
   maxModelRounds: number
@@ -43,12 +44,14 @@ export type TutorAgentBudget = {
 }
 
 export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'animation' | 'none' = 'none'): TutorAgentBudget {
-  const visualWallTimeMs = visualIntent === 'animation' ? 270_000 : visualIntent === 'diagram' ? 210_000 : 0
+  const visualWallTimeMs = visualIntent === 'animation'
+    ? AI_LATENCY_BUDGETS.agentTurn.animation
+    : visualIntent === 'diagram' ? AI_LATENCY_BUDGETS.agentTurn.diagram : 0
   if (mode === 'guided_learning') {
     return {
       maxModelRounds: 9,
       maxToolCalls: 14,
-      maxWallTimeMs: Math.max(180_000, visualWallTimeMs),
+      maxWallTimeMs: Math.max(AI_LATENCY_BUDGETS.agentTurn.guided, visualWallTimeMs),
       finalizationAttempts: 2,
       finalizationGraceMs: 45_000,
     }
@@ -57,7 +60,7 @@ export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'ani
     return {
       maxModelRounds: 7,
       maxToolCalls: 12,
-      maxWallTimeMs: Math.max(150_000, visualWallTimeMs),
+      maxWallTimeMs: Math.max(AI_LATENCY_BUDGETS.agentTurn.planning, visualWallTimeMs),
       finalizationAttempts: 2,
       finalizationGraceMs: 40_000,
     }
@@ -65,7 +68,7 @@ export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'ani
   return {
     maxModelRounds: 5,
     maxToolCalls: 8,
-    maxWallTimeMs: Math.max(90_000, visualWallTimeMs),
+    maxWallTimeMs: Math.max(AI_LATENCY_BUDGETS.agentTurn.standard, visualWallTimeMs),
     finalizationAttempts: 1,
     finalizationGraceMs: 25_000,
   }
@@ -981,7 +984,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       try {
         const payload = await input.invokeProvider({
           ...request,
-          timeoutMs: Math.max(1_000, Math.min(45_000, requestDeadline - Date.now())),
+          timeoutMs: Math.max(1_000, Math.min(AI_LATENCY_BUDGETS.providerRequest, requestDeadline - Date.now())),
           onTextDelta: emitTextDelta,
         })
         return payload

@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-30.9`）：Tutor 与 Learning Design 的用户可见异步工作采用统一分层预算。浏览器等待时间长于 Agent 回合，Agent 回合长于单次 provider/工具请求；普通解释、规划、带领学习、图解和动画分别按工作复杂度递增。后端内容生成、插件 runner、来源获取和模型连通性检查同步扩容，但所有路径仍有确定性硬上限，且重试、工具面、五核写入与掌握判定不变。密码哈希、数据库锁、代码执行和进程退出等安全/资源保护超时保持原值。
+
 Contract impact（`2026-08-30.8`）：岗位插件不再以 Composer 内独立 Workflow 产品存在。Tutor Harness 在项目目标或用户消息给出明确岗位名、且实例尚无首个快照时，生成通用有界 bootstrap contract 并自动启动内置 Agent Package；项目/实例级幂等键防止重复生成，结果进入 Tutor 工具消息。无岗位名时只在对话中追问；解释和调整也从对话发起。插件继续位于 `learning_design_agent` 之后，宿主继续掌握副作用、校验和提交，生成物不写五核也不构成掌握。
 
 Contract impact（`2026-08-30.7`）：官方产品插件统一定义为内置 Agent Package，而非本机可执行 Bundle。Agent、Product Skill、Tool、Workflow、Schema 与聊天 binding 随 LearnFlow 注册；通用宿主继续掌握项目 scope、Host Port、幂等、校验、快照与事件提交。岗位图谱默认走同进程 handler，不需要操作员开启 `trusted_signed_process`。签名 `.lfplugin` 与 JSON-RPC runner 只保留为第三方分发适配器；三类主 Agent、五核和掌握证据边界不变。

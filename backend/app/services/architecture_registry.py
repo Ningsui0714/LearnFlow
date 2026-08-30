@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.8"
+REGISTRY_VERSION = "2026-08-30.9"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.

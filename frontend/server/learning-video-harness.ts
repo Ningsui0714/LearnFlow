@@ -1,3 +1,5 @@
+import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
+
 export type LearningVideoPlatform = 'bilibili' | 'youtube'
 
 export type VideoTranscriptSegment = {
@@ -95,7 +97,7 @@ function parseDuration(value: unknown) {
 async function searchBilibili(query: string, configuration: LearningVideoConfiguration): Promise<LearningVideoCandidate[]> {
   const fetcher = configuration.fetchImpl || fetch
   const endpoint = `https://api.bilibili.com/x/web-interface/search/type?search_type=video&page=1&keyword=${encodeURIComponent(query)}`
-  const response = await fetcher(endpoint, { headers: { 'User-Agent': 'Mozilla/5.0 LearnFlow/1.0', Referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(10_000) })
+  const response = await fetcher(endpoint, { headers: { 'User-Agent': 'Mozilla/5.0 LearnFlow/1.0', Referer: 'https://www.bilibili.com/' }, signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.videoProvider) })
   if (!response.ok) throw new Error(`bilibili_search_${response.status}`)
   const payload = await response.json() as any
   if (Number(payload?.code) !== 0) throw new Error(`bilibili_search_${payload?.code || 'invalid'}`)
@@ -117,7 +119,7 @@ async function searchYouTube(query: string, configuration: LearningVideoConfigur
   const fetcher = configuration.fetchImpl || fetch
   const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
   searchUrl.search = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '12', q: query, key: configuration.youtubeApiKey }).toString()
-  const response = await fetcher(searchUrl, { signal: AbortSignal.timeout(10_000) })
+  const response = await fetcher(searchUrl, { signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.videoProvider) })
   if (!response.ok) throw new Error(`youtube_search_${response.status}`)
   const payload = await response.json() as any
   const items = Array.isArray(payload?.items) ? payload.items : []
@@ -126,7 +128,7 @@ async function searchYouTube(query: string, configuration: LearningVideoConfigur
   if (ids.length) {
     const detailsUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
     detailsUrl.search = new URLSearchParams({ part: 'contentDetails,statistics,status', id: ids.join(','), key: configuration.youtubeApiKey }).toString()
-    const detailResponse = await fetcher(detailsUrl, { signal: AbortSignal.timeout(10_000) })
+    const detailResponse = await fetcher(detailsUrl, { signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.videoProvider) })
     if (detailResponse.ok) {
       const detailPayload = await detailResponse.json() as any
       details = new Map((detailPayload.items || []).map((item: any) => [item.id, item]))
@@ -187,18 +189,18 @@ export async function searchLearningVideos(input: LearningVideoSearchInput, conf
 async function inspectBilibili(candidate: LearningVideoCandidate, configuration: LearningVideoConfiguration) {
   const fetcher = configuration.fetchImpl || fetch
   const headers = { 'User-Agent': 'Mozilla/5.0 LearnFlow/1.0', Referer: candidate.url }
-  const view = await fetcher(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(candidate.platformVideoId)}`, { headers, signal: AbortSignal.timeout(10_000) })
+  const view = await fetcher(`https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(candidate.platformVideoId)}`, { headers, signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.videoProvider) })
   if (!view.ok) throw new Error(`bilibili_view_${view.status}`)
   const viewPayload = await view.json() as any
   const cid = viewPayload?.data?.cid
   if (!cid) throw new Error('bilibili_cid_missing')
-  const player = await fetcher(`https://api.bilibili.com/x/player/v2?bvid=${encodeURIComponent(candidate.platformVideoId)}&cid=${cid}`, { headers, signal: AbortSignal.timeout(10_000) })
+  const player = await fetcher(`https://api.bilibili.com/x/player/v2?bvid=${encodeURIComponent(candidate.platformVideoId)}&cid=${cid}`, { headers, signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.videoProvider) })
   const playerPayload = player.ok ? await player.json() as any : {}
   const subtitles = Array.isArray(playerPayload?.data?.subtitle?.subtitles) ? playerPayload.data.subtitle.subtitles : []
   const selected = subtitles.find((item: any) => /zh|en/i.test(String(item.lan || ''))) || subtitles[0]
   if (!selected?.subtitle_url) return [] as VideoTranscriptSegment[]
   const subtitleUrl = String(selected.subtitle_url).startsWith('//') ? `https:${selected.subtitle_url}` : String(selected.subtitle_url)
-  const subtitleResponse = await fetcher(subtitleUrl, { headers, signal: AbortSignal.timeout(10_000) })
+  const subtitleResponse = await fetcher(subtitleUrl, { headers, signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.videoProvider) })
   if (!subtitleResponse.ok) throw new Error(`bilibili_subtitle_${subtitleResponse.status}`)
   const subtitlePayload = await subtitleResponse.json() as any
   return (Array.isArray(subtitlePayload?.body) ? subtitlePayload.body : []).slice(0, 1200).map((item: any) => ({

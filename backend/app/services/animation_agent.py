@@ -89,7 +89,7 @@ class AnimationAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.4,
-            timeout=120,
+            timeout=300,
             max_retries=0,
         )
 

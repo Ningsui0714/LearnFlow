@@ -162,7 +162,7 @@ async def _model_draft(
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         temperature=0,
-        timeout=45,
+        timeout=120,
         max_retries=1,
     )
     structured = llm.with_structured_output(SynthesisDraft, include_raw=True)

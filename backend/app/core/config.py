@@ -62,11 +62,11 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
-    # Optional online enhancement must not hold an interactive request for the
-    # provider's full transport timeout. Deterministic fallbacks remain usable.
-    tutor_model_budget_seconds: float = 15.0
-    learning_task_plan_model_budget_seconds: float = 12.0
-    micro_learning_artifact_model_budget_seconds: float = 18.0
+    # User-visible online enhancement has a long but bounded wall-clock budget.
+    # Deterministic fallbacks remain usable when the provider reaches it.
+    tutor_model_budget_seconds: float = 180.0
+    learning_task_plan_model_budget_seconds: float = 120.0
+    micro_learning_artifact_model_budget_seconds: float = 180.0
 
     # Vision (image understanding) — Moonshot
     vision_api_key: str = ""
@@ -118,7 +118,7 @@ class Settings(BaseSettings):
     plugin_execution_mode: str = "disabled"  # disabled | trusted_signed_process
     plugin_allow_unsigned_dev: bool = False
     plugin_artifact_dir: str = "data/plugin-artifacts"
-    plugin_runner_timeout_seconds: int = 180
+    plugin_runner_timeout_seconds: int = 600
     plugin_runner_max_message_bytes: int = 256 * 1024
     plugin_runner_max_output_bytes: int = 1024 * 1024
     plugin_runner_max_host_calls: int = 32

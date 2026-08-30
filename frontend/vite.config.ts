@@ -17,6 +17,7 @@ import type { SearchProviderConfiguration } from './server/computer-knowledge-se
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
 import { createAccountCredentialResolver, type ModelCredential } from './server/account-model-credential.ts'
 import { buildBackendProxyHeaders } from './server/backend-proxy-security.ts'
+import { AI_LATENCY_BUDGETS } from './src/latency-budgets.ts'
 
 function loadTutorKey(mode: string): ModelCredential {
   const localEnv = loadEnv(mode, process.cwd(), '')
@@ -144,7 +145,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
     onTextDelta?: (delta: string) => void
   }) => {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 65_000)
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs || AI_LATENCY_BUDGETS.providerProxyDefault)
     try {
       const requestBody = options.onTextDelta && options.body && typeof options.body === 'object'
         ? { ...(options.body as Record<string, unknown>), stream: true }
@@ -458,7 +459,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           maxTokens: Math.max(400, Math.min(7_000, Number(maxTokens) || 1_200)),
           responseFormat: generationOptions?.responseFormat,
         })
-        const payload = await invokeProvider({ ...request, timeoutMs: timeoutMs || 32_000 })
+        const payload = await invokeProvider({ ...request, timeoutMs: timeoutMs || AI_LATENCY_BUDGETS.providerRequest })
         const text = textFromTutorProviderResponse(payload)
         if (!text) throw new Error('模型没有返回可用的生成内容')
         return text
@@ -559,7 +560,7 @@ function backendApiProxy(backendBase: string): Plugin {
           contentType: incomingContentType,
         }),
         body,
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.backendProxy),
       })
       response.statusCode = upstream.status
       response.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8')

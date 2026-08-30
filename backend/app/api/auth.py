@@ -412,7 +412,7 @@ async def test_model_credential(
             model=model,
             messages=[{"role": "user", "content": "只回复 OK"}],
             max_tokens=16,
-            timeout=15,
+            timeout=60,
             **openai_chat_provider_kwargs(
                 base_url,
                 model,

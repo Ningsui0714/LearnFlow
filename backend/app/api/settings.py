@@ -223,7 +223,7 @@ async def test_connection(
             model=req.model,
             messages=[{"role": "user", "content": "只回复 OK"}],
             max_tokens=128,
-            timeout=15,
+            timeout=60,
             **openai_chat_provider_kwargs(
                 base_url,
                 req.model,
@@ -284,7 +284,7 @@ async def test_embedding(
         resp = await client.embeddings.create(
             model=req.model or "text-embedding-ada-002",
             input="test",
-            timeout=15,
+            timeout=60,
         )
         dims = len(resp.data[0].embedding)
         return {"status": "ok", "dimensions": dims}
@@ -369,7 +369,7 @@ async def test_vision(
             ]}],
             max_tokens=500,
             temperature=1,
-            timeout=30,
+            timeout=120,
         )
         msg = resp.choices[0].message.content
         if not msg:

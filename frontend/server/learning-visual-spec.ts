@@ -22,6 +22,7 @@ import { visualSpecToArtifact } from './visual-spec/render.ts'
 import { deriveTeachingRequest } from './visual-spec/teaching-compiler.ts'
 import { teachingDerivationToSpec } from './visual-spec/teaching-spec.ts'
 import { compileDeclarativeAnimationPlan } from './visual-spec/declarative-animation.ts'
+import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
 
 export * from './visual-spec/types.ts'
 export {
@@ -240,7 +241,9 @@ export async function generateLearningVisual(
     ? 'process_storyboard'
     : inferred.abstraction
   const initialPrompt = visualPlannerPrompt(kind, inferred.domain, plannerAbstraction)
-  const initialTimeoutMs = kind === 'animation' ? 90_000 : 60_000
+  const initialTimeoutMs = kind === 'animation'
+    ? AI_LATENCY_BUDGETS.visualPlanner.animation
+    : AI_LATENCY_BUDGETS.visualPlanner.diagram
   const initialStartedAt = Date.now()
   try {
     plannerAttempts += 1
@@ -260,7 +263,9 @@ export async function generateLearningVisual(
   } catch (firstError) {
     const firstMessage = firstError instanceof Error ? firstError.message.slice(0, 360) : 'visual_planner_failed'
     attempts.push({ attempt: 1, stage: 'planner', timeoutMs: initialTimeoutMs, durationMs: Date.now() - initialStartedAt, status: 'rejected', outputChars: raw.length, errorType: errorType(firstMessage) })
-    const repairTimeoutMs = kind === 'animation' ? 60_000 : 40_000
+    const repairTimeoutMs = kind === 'animation'
+      ? AI_LATENCY_BUDGETS.visualPlanner.animationRepair
+      : AI_LATENCY_BUDGETS.visualPlanner.diagramRepair
     const repairStartedAt = Date.now()
     let repairedRaw = ''
     try {

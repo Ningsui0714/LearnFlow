@@ -95,7 +95,7 @@ class RoadmapAgent:
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             temperature=0.7,
-            timeout=60,
+            timeout=180,
             max_retries=0,
         )
         self._existing_roadmap: Optional[Dict] = None
