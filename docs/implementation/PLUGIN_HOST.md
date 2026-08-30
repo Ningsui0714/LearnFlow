@@ -3,7 +3,7 @@
 状态：implemented
 包协议：`learnflow.plugin-package.v1`
 对象引用协议：`learnflow.plugin-object-ref.v1`
-架构注册表：`2026-08-30.7`
+架构注册表：`2026-08-30.8`
 
 本文规定 LearnFlow 插件的运行、持久化、可选分发和产品接入边界。插件的产品定义是 Agent Package：
 由 Agent、Skill、Tool、Workflow、Schema 与聊天 UI binding 组成。插件是项目作用域的领域能力扩展，
@@ -250,7 +250,7 @@ body。Surface 不允许 HTML、脚本、插件 CSS、任意 URL、动态 import
 项目内的插件操作沿用 Tutor 与项目上下文，不建立第二套路由或插件专属页面：
 
 - 左栏展示项目已启用插件；点击插件只选择既有项目 Tutor 对话及其 `PluginChatContext`。
-- Product Skill、插件状态和 workflow 确认入口位于 Composer 选项栏。
+- Product Skill 与插件状态位于 Composer；领域 workflow 可以由 Tutor Harness 按插件契约在对话中调度。
 - Surface 是聊天输入控件与工具输出 renderer 的声明，不在消息区顶部建立独立插件工作台。
 - 管理抽屉只负责安装、授权、配置、停用和升级；实例失效时聊天撤下相应工具与控件。
 
@@ -284,10 +284,10 @@ bridge 对象；`generate / explain / iterate / validate / upgrade` workflow；P
 
 学习者使用路径以聊天为主：项目左栏把已启用插件显示为可进入的插件项，点击后复用项目 Tutor 对话并绑定
 `PluginChatContext`。Tutor 先通过 `discover_project_plugin_tools` 获得当前项目、当前实例、当前权限下的只读能力，
-再用 `call_project_plugin_tool` 固定快照读取。插件选择、Product Skill、快照版本和 workflow 入口位于 Composer
-对话选项栏；岗位雷达图、事理森林、对象卡片由宿主对 Snapshot 组件确定性投影为 Tutor 工具消息，不在消息区
-顶部形成独立工作台，也不保存第二份领域真相。`generate` 与 `iterate` 只由选项栏确认卡调用，模型不能代替
-学习者确认；项目抽屉仅负责安装、授权、配置、停用和升级。
+再用 `call_project_plugin_tool` 固定快照读取。插件选择、Product Skill 和快照版本位于 Composer；岗位雷达图、
+事理森林、对象卡片由宿主对 Snapshot 组件确定性投影为 Tutor 工具消息，不在消息区顶部形成独立工作台，也不保存第二份领域真相。
+当项目目标或消息中有明确岗位名且尚无快照时，Tutor Harness 用项目/实例级幂等键自动调用 `generate`；缺少岗位名则在对话中追问。
+模型不能绕过宿主直接提交候选；项目抽屉仅负责安装、授权、配置、停用和升级。
 
 其快照组件包括 evidence、semantic graph、process forest、views、retrieval index、validation report 和
 reference migrations。解释固定精确 snapshot，执行有界检索、关系遍历和证据读取；迭代固定 base snapshot，

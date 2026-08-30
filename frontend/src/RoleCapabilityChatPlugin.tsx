@@ -1,12 +1,7 @@
 import { useEffect, useState } from 'react'
-import {
-  loadProjectPluginSurfaces,
-  runProjectPluginWorkflow,
-  type ProjectPluginSurface,
-} from './plugin-runtime.ts'
+import { loadProjectPluginSurfaces, type ProjectPluginSurface } from './plugin-runtime.ts'
 import {
   pluginChatContext,
-  roleCapabilityArtifactFromSnapshot,
   roleCapabilityChatState,
   type RoleCapabilityChatArtifact,
 } from './plugin-chat.ts'
@@ -104,52 +99,25 @@ export function RoleCapabilityArtifactView({ artifact }: { artifact: RoleCapabil
   )
 }
 
-export default function RoleCapabilityChatPlugin({ projectId, pluginId, disabled, onManage, onPrompt, onArtifact }: {
+export default function RoleCapabilityChatPlugin({ projectId, pluginId, snapshotId, disabled, onManage, onPrompt }: {
   projectId: number
   pluginId: string
+  snapshotId?: number
   disabled?: boolean
   onManage: () => void
   onPrompt: (prompt: string) => void
-  onArtifact: (artifact: RoleCapabilityChatArtifact, detail: string) => void
 }) {
   const [surface, setSurface] = useState<ProjectPluginSurface>()
-  const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
-  const [action, setAction] = useState<'generate' | 'iterate' | ''>('')
-  const [roleTitle, setRoleTitle] = useState('')
-  const [taskSeeds, setTaskSeeds] = useState('')
-  const [objective, setObjective] = useState('补充一个关键能力并保持任务、能力与过程一致')
-  const [label, setLabel] = useState('')
   const refresh = async () => {
     const page = await loadProjectPluginSurfaces(projectId)
     const selected = page.surfaces.find(item => item.plugin_id === pluginId)
     setSurface(selected)
     return selected
   }
-  useEffect(() => { void refresh().catch(failure => setError(failure instanceof Error ? failure.message : '插件状态读取失败')) }, [projectId, pluginId])
-  const state = roleCapabilityChatState(surface, busy)
+  useEffect(() => { void refresh().catch(failure => setError(failure instanceof Error ? failure.message : '插件状态读取失败')) }, [projectId, pluginId, snapshotId])
+  const state = roleCapabilityChatState(surface)
   const context = surface ? pluginChatContext(surface) : undefined
-
-  const run = async (workflow: 'generate' | 'iterate') => {
-    if (!surface) return
-    setBusy(workflow)
-    setError('')
-    try {
-      const input = workflow === 'generate'
-        ? { role_title: roleTitle.trim(), task_seeds: taskSeeds.split(/[,，\n]/).map(item => item.trim()).filter(Boolean) }
-        : { objective: objective.trim(), object_type: 'capability', label: label.trim(), summary: objective.trim() }
-      if (workflow === 'generate' && !input.role_title) throw new Error('请先填写目标岗位')
-      if (workflow === 'iterate' && (!input.objective || !input.label)) throw new Error('请填写迭代目标和新增能力名称')
-      await runProjectPluginWorkflow(projectId, surface, workflow, input)
-      const refreshed = await refresh()
-      const nextArtifact = roleCapabilityArtifactFromSnapshot(refreshed?.data, refreshed?.title)
-      if (nextArtifact) onArtifact(nextArtifact, workflow === 'generate' ? '已生成首个不可变岗位快照' : '宿主校验通过并提交了后继快照')
-      setAction('')
-      setLabel('')
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : '插件 workflow 执行失败')
-    } finally { setBusy('') }
-  }
 
   return (
     <details className="composer-plugin-control" aria-label="岗位能力图谱插件选项">
@@ -161,25 +129,12 @@ export default function RoleCapabilityChatPlugin({ projectId, pluginId, disabled
       <div className="composer-plugin-popover">
         <header><div><span>PRODUCT SKILL</span><strong>{context?.productSkillId || 'role_capability_graphing'}</strong></div><button type="button" onClick={onManage}>管理</button></header>
         <div className={`plugin-chat-status plugin-chat-status-${state.id}`}><i />{state.label}</div>
-        <p>解释固定当前快照；生成与迭代需确认，不写五核。</p>
+        <p>{context?.snapshotId ? '岗位包已进入当前 Tutor 对话；解释和调整都从消息发起，不写五核。' : 'Tutor 会从项目目标或下一条岗位名自动启动。'}</p>
         <div className="plugin-chat-actions">
-          <button type="button" disabled={disabled || Boolean(busy)} onClick={() => setAction('generate')}>{context?.snapshotId ? '重新生成' : '生成岗位包'}</button>
-          <button type="button" disabled={disabled || Boolean(busy) || !context?.snapshotId} onClick={() => onPrompt('请使用当前岗位能力图谱插件的 explain 工具，固定到当前快照，解释这个岗位最关键的任务、能力、知识技能和证据。')}>解释快照</button>
-          <button type="button" disabled={disabled || Boolean(busy) || !context?.snapshotId} onClick={() => setAction('iterate')}>迭代</button>
+          <button type="button" disabled={disabled || !context?.snapshotId} onClick={() => onPrompt('请固定到当前岗位图谱快照，解释这个岗位最关键的任务、能力、知识技能和证据。')}>在对话中解释</button>
+          <button type="button" disabled={disabled || !context?.snapshotId} onClick={() => onPrompt('我想调整当前岗位图谱。请先在对话中确认我要改变的岗位对象和依据，再形成候选迭代。')}>在对话中调整</button>
         </div>
-      {action === 'generate' && <div className="plugin-chat-confirm-card">
-        <span>生成 workflow · 将创建新快照</span>
-        <label>目标岗位<input value={roleTitle} onChange={event => setRoleTitle(event.target.value)} placeholder="例如：Agent 产品工程师" /></label>
-        <label>任务种子<textarea value={taskSeeds} onChange={event => setTaskSeeds(event.target.value)} placeholder="每行一个典型任务，可留空让 Agent 基于项目来源形成候选" /></label>
-        <footer><button type="button" onClick={() => setAction('')}>取消</button><button type="button" disabled={Boolean(busy)} onClick={() => void run('generate')}>{busy === 'generate' ? '正在生成…' : '确认生成候选快照'}</button></footer>
-      </div>}
-      {action === 'iterate' && <div className="plugin-chat-confirm-card">
-        <span>迭代 workflow · 基于 v{context?.snapshotVersion || 1} 形成后继快照</span>
-        <label>迭代目标<textarea value={objective} onChange={event => setObjective(event.target.value)} /></label>
-        <label>新增能力名称<input value={label} onChange={event => setLabel(event.target.value)} placeholder="例如：评测驱动的 Agent 迭代" /></label>
-        <footer><button type="button" onClick={() => setAction('')}>取消</button><button type="button" disabled={Boolean(busy)} onClick={() => void run('iterate')}>{busy === 'iterate' ? '正在校验…' : '确认验证并提交'}</button></footer>
-      </div>}
-      {error && <div className="plugin-chat-error">{error}</div>}
+        {error && <div className="plugin-chat-error">{error}</div>}
       </div>
     </details>
   )
