@@ -34,7 +34,8 @@
 
 ```text
 用户请求
-  → 保留原请求；省略表达从最近对话补充结构化、有界主题锚点并披露 contextEnriched/source
+  → 保留原请求；省略表达优先从最近已验证视觉 artifact、其次从最近用户主题补充结构化有界锚点，并披露 contextEnriched/source
+  → 从实际请求动态抽取主题词；无可恢复主题时 needs_input，模型零调用
   → 可计算领域三态
     → 参数完整：确定性 compiler + semantic proof（exact）
     → 只有概念、没有用户数据：明确标注教学示例（illustrative_example）
@@ -43,6 +44,7 @@
     → 本地只修复尾逗号或相邻容器间缺失逗号；不修改任何标量内容
     → 仍失败后至多一次结构化 model repair（仅 structural）
   → typed parser 与引用门
+  → 请求主题充分性门：所有候选需主题覆盖；声明式过程必须由 semantic/帧覆盖，标题不能代替过程内容
   → deterministic replay
   → 高层 semantic adapter
   → 内部 SceneIR（唯一允许出现画布坐标的层）
@@ -54,7 +56,7 @@
 
 确定性主题编译器负责可以从输入重新计算真值的机制；长尾主题不再要求模型直接手写帧、补丁或坐标。动画 Harness 另提供两种可复用的声明式宏：
 
-- `process_storyboard`：模型只声明 2–12 个阶段、带引用的转移和一条连续路径。运行时要求恰有一个初始阶段，逐项验证 `from` 与上一步终态一致，再编译成受限 `state_machine`、`transition_state` 帧、初态、终态和 invariant。
+- `process_storyboard`：模型只声明 3–12 个主题阶段、至少两个带引用的转移和一条连续路径。运行时要求恰有一个初始阶段，逐项验证 `from` 与上一步终态一致，再编译成受限 `state_machine`、`transition_state` 帧、初态、终态和 invariant。
 - 声明式 `protocol_sequence`：模型只声明参与者和带唯一顺序的消息；运行时按顺序生成 `send_message` 帧和可重放终态。
 
 `process_storyboard` 是 planner 内部 IR，不是新的持久化 VisualSpec 版本，也不是新工具。编译后只保存既有 VisualSpec v3 的 `state_machine` 或 `protocol_sequence`，因此旧 renderer、播放器、持久化读取和安全门可以直接复用。模型提供的阶段名称和因果关系仍只具有 `structural` 证据等级；只有专用真值编译器的结果可以标记为 `derived_verified`。
@@ -87,6 +89,7 @@
 - 静态图和动画都运行领域真值检查；核心事实错误直接拒绝，不能用总分补偿。
 - Dijkstra 的生产推导与独立 Bellman–Ford oracle 交叉核验；浮点改善使用严格大小关系，不能用固定 epsilon 吞掉真实更短路径。
 - `structural` 只表示 schema、引用、重放、布局和 SVG 安全通过。
+- `structural` 产物还必须单独通过请求主题充分性门；对声明式过程，结构分和标题都不能让“输入→处理→输出”等占位语义获得可用状态。
 - `derived_verified` 表示输入已被确定性解析，结果由版本化编译器推导并复核。
 - 持久化产物不能只靠 compiler 名称获得 `derived_verified`：读取时必须用 provenance 中的原请求重新编译，并逐字段比对 semantic、时间线、状态、文案与无障碍信息。
 - `scene manifest` 记录 viewport、语义区域、稳定对象 ID 与 bounds；测试不再靠猜 SVG 字符串判断布局。
@@ -113,6 +116,7 @@
 - Desktop 专用 `/agent/sessions/{session_id}/visual-plans` 只返回模型候选文本，并校验桌面令牌、learner 与 session ownership；它不接收 SVG，不执行代码，也不写学习证据。
 - 可计算精确输入和教学示例均为零模型调用。长尾图解首轮/修复预算为 60/40 秒，动画为 90/60 秒；总重试次数固定为一次，不能用改写参数无限重试。只有显式视觉请求会把 Agent 总回合扩到图解 210 秒、动画 270 秒，普通 Tutor 仍保持原预算。
 - 每次 Tool Run 记录 `requestedKind`、`effectiveKind`、`contextEnriched`、`generationSource`、`compileStatus`、`plannerAttempts`、`syntaxRepairApplied`、每次尝试的预算/耗时/结果/错误类型与 `outcomeStage`；运行轨迹同时显示编译、规划返回、标点修复、验证、限次修复、降级和渲染阶段，不能再用 nominal completed 代替真实成功率。
+- 成功产物向 Tutor 只投影有界 `grounding`（摘要、帧标题、帧描述、非颜色状态线索、语义变化数），不回灌 SVG。Tutor 只能根据这份投影描述“动画展示了什么”，主题常识不能补成产物事实。
 - 显式图解/动画意图在模型前确定性执行且每轮只允许对应的一类视觉调用；执行后从本轮工具面移除两类视觉工具和视频搜索，失败不能漂移到另一视觉形式或形成重复搜索回路。
 
 ## 金标验收

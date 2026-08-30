@@ -11,7 +11,7 @@ import {
 } from './learning-visual-spec.ts'
 import { GOLD_VISUAL_FIXTURES } from './visual-spec/gold-fixtures.ts'
 import { parseV2Spec } from './visual-spec/validation.ts'
-import { resolveVisualRequest } from './visual-tool-execution.ts'
+import { executeLearningVisual, resolveVisualRequest } from './visual-tool-execution.ts'
 import './visual-spec/gold-teaching.test.ts'
 import './visual-spec/teaching-compiler.test.ts'
 import './visual-playback.test.ts'
@@ -101,6 +101,46 @@ test('deictic visual requests preserve the current turn and recover the prior us
   assert.equal(resolved.contextEnriched, true)
   assert.deepEqual(resolved.topicAnchor, { topic: '跟我解释一下迪杰斯特拉算法', source: 'prior_user' })
   assert.match(resolved.effectiveRequest, /【结构化主题锚点】\{"topic":"跟我解释一下迪杰斯特拉算法","source":"prior_user"\}/)
+})
+
+test('natural visual follow-ups recover a short prior topic without a domain keyword list', () => {
+  const resolved = resolveVisualRequest('给我一个动画示例', [
+    { role: 'user', content: '讲一下快速排序' },
+    { role: 'assistant', content: '快速排序通过分区递归处理子数组。' },
+    { role: 'user', content: '给我一个动画示例' },
+  ])
+  assert.equal(resolved.contextEnriched, true)
+  assert.deepEqual(resolved.topicAnchor, { topic: '讲一下快速排序', source: 'prior_user' })
+})
+
+test('visual-to-visual follow-ups inherit the validated artifact rather than prose guesses', () => {
+  const resolved = resolveVisualRequest('做成动画', [{
+    role: 'assistant', content: '这里是上一轮说明。', toolRuns: [{
+      id: 'visual-1', kind: 'image', status: 'completed', title: '生成知识图解', detail: '完成', durationMs: 1,
+      artifact: {
+        kind: 'image', title: '令牌刷新图解', subtitle: '观察过期与换发', steps: [],
+        readable: {
+          summary: '客户端用刷新令牌换取新的访问令牌。', readingOrder: [], frameDescriptions: [],
+          nonColorStateCue: '状态使用文字标记。',
+        },
+      },
+    }],
+  }])
+  assert.equal(resolved.contextEnriched, true)
+  assert.equal(resolved.topicAnchor?.source, 'prior_artifact')
+  assert.match(resolved.topicAnchor?.topic || '', /令牌刷新图解.*刷新令牌/)
+})
+
+test('a topicless visual request fails before spending a planner call', async () => {
+  let calls = 0
+  await assert.rejects(
+    () => executeLearningVisual('animation', '给我一个动画示例', [], async () => {
+      calls += 1
+      return '{}'
+    }),
+    /visual_topic_context_required/,
+  )
+  assert.equal(calls, 0)
 })
 
 test('concept-only computable requests use disclosed deterministic teaching examples', async () => {
@@ -731,6 +771,55 @@ test('an unseen process compiles from declarative stages into a validated animat
   assert.doesNotMatch(JSON.stringify(generated.spec.frames), /"to":\s*\[/)
 })
 
+test('a generic placeholder process is rejected even when its structure is valid', async () => {
+  const placeholder = JSON.stringify({
+    version: 'learnflow.visual.v3', kind: 'animation', title: '过程动画示例', domain: 'computer', abstraction: 'process_storyboard',
+    semantic: {
+      type: 'process_storyboard',
+      stages: [
+        { id: 'input', label: '输入', initial: true },
+        { id: 'process', label: '处理' },
+        { id: 'output', label: '输出', terminal: true },
+      ],
+      transitions: [
+        { id: 'start', from: 'input', to: 'process', event: '处理' },
+        { id: 'finish', from: 'process', to: 'output', event: '完成' },
+      ],
+      path: ['start', 'finish'],
+    },
+    accessibility: { summary: '输入经过处理得到输出。', readingOrder: ['input', 'process', 'output', 'start', 'finish'], nonColorStateCue: '当前状态有文字标记。' },
+    explanation: '观察通用过程。',
+  })
+  await assert.rejects(
+    () => generateLearningVisual('animation', '用动画演示快速排序的分区过程', async () => placeholder),
+    /visual_topic_coverage_missing/,
+  )
+})
+
+test('an unseen three-stage topic passes the same generic topic and substance gates', async () => {
+  const generated = await generateLearningVisual('animation', '用动画演示 OAuth token refresh 生命周期', async () => JSON.stringify({
+    version: 'learnflow.visual.v3', kind: 'animation', title: 'OAuth token refresh', domain: 'computer', abstraction: 'process_storyboard',
+    semantic: {
+      type: 'process_storyboard',
+      stages: [
+        { id: 'expired', label: '访问令牌过期', initial: true },
+        { id: 'refreshing', label: '提交 refresh token' },
+        { id: 'renewed', label: '获得新 token', terminal: true },
+      ],
+      transitions: [
+        { id: 'submit_refresh', from: 'expired', to: 'refreshing', event: '客户端提交 refresh token' },
+        { id: 'issue_token', from: 'refreshing', to: 'renewed', event: '授权服务签发新 token' },
+      ],
+      path: ['submit_refresh', 'issue_token'],
+    },
+    accessibility: { summary: 'OAuth 客户端在访问令牌过期后提交 refresh token，并获得新 token。', readingOrder: ['expired', 'refreshing', 'renewed', 'submit_refresh', 'issue_token'], nonColorStateCue: '当前阶段由文字和粗边框共同标记。' },
+    explanation: '逐步观察 token refresh 生命周期。',
+  }))
+  assert.equal(generated.spec.kind, 'animation')
+  assert.equal(generated.artifact.steps.length, 3)
+  assert.equal(generated.quality.semanticChanges, 2)
+})
+
 test('a semantic-only protocol plan receives a deterministic message timeline', async () => {
   const generated = await generateLearningVisual('animation', '用动画演示一个新的请求、确认、完成协议', async instructions => {
     assert.match(instructions, /声明式协议动画/)
@@ -766,7 +855,7 @@ test('declarative process continuity is validated before the one bounded repair'
       type: 'process_storyboard',
       stages: [{ id: 'draft', label: '草稿', initial: true }, { id: 'review', label: '审核' }, { id: 'live', label: '上线', terminal: true }],
       transitions: [{ id: 'submit', from: 'draft', to: 'review', event: '提交' }, { id: 'publish', from: 'review', to: 'live', event: '发布' }],
-      path: ['publish'],
+      path: ['publish', 'submit'],
     },
     accessibility: { summary: '草稿经过审核后上线。', readingOrder: ['draft', 'review', 'live', 'submit', 'publish'], nonColorStateCue: '当前状态有文字标记。' },
     explanation: '观察发布状态变化。',

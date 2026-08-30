@@ -1755,13 +1755,20 @@ export async function executeTutorAgentTool(
         ? `；已如实降级为${effectiveKind === 'animation' ? '确定性动画' : '静态图解'}`
         : ''
       const contextLabel = execution.request.contextEnriched ? '；已结合最近对话主题' : ''
+      const visualGrounding = {
+        summary: compactText(visual.artifact.readable.summary, 1200),
+        stepTitles: visual.artifact.steps.map(step => compactText(step.title, 120)).slice(0, 13),
+        frameDescriptions: visual.artifact.readable.frameDescriptions.map(item => compactText(item, 500)).slice(0, 13),
+        nonColorStateCue: compactText(visual.artifact.readable.nonColorStateCue, 500),
+        semanticChanges: visual.quality.semanticChanges,
+      }
       return {
         run: {
           ...base,
           kind: effectiveKind === 'diagram' ? 'image' : 'animation',
           status: 'completed',
           title: requestedKind === 'diagram' ? '生成知识图解' : '生成过程动画',
-          detail: `${effectiveKind === 'diagram' ? '图解' : `${visual.artifact.steps.length} 帧动画`}已通过结构、布局与 SVG 安全门；质量分 ${visual.quality.score}${degradedLabel}${contextLabel}。`,
+          detail: `${effectiveKind === 'diagram' ? '图解' : `${visual.artifact.steps.length} 帧动画`}已通过主题对齐、结构、布局与 SVG 安全门；结构质量分 ${visual.quality.score}${degradedLabel}${contextLabel}。`,
           observationSummary: visual.artifact.title,
           durationMs: Date.now() - startedAt,
           artifact: visual.artifact,
@@ -1791,10 +1798,12 @@ export async function executeTutorAgentTool(
             quality: visual.quality,
             contextEnriched: execution.request.contextEnriched,
             generation: visual.generation,
+            grounding: visualGrounding,
           },
-          guidance: '最终回答解释怎样阅读产物，不重复输出 SVG',
+          claimBoundary: '最终回答只能描述 grounding 明确列出的对象、步骤和状态变化；grounding 未出现的指针、交换、移动、数值或结果必须明确说动画没有展示。不得依据主题常识补写产物内容。',
+          guidance: '依据 grounding 简洁说明怎样阅读产物，不重复输出 SVG，不把主题知识冒充为动画已展示内容。',
         },
-        directReply: visual.explanation,
+        directReply: `已生成“${visual.artifact.title}”。${visualGrounding.summary} 共 ${visual.artifact.steps.length} 帧：${visualGrounding.stepTitles.join('；')}。`,
       }
     }
     if (name === 'design_assessment_blueprint') {

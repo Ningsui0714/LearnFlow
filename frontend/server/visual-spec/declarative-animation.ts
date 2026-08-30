@@ -80,7 +80,7 @@ function compileProcessStoryboard(payload: JsonRecord): JsonRecord | undefined {
   assertTimelineAbsent(payload)
   const semantic = record(payload.semantic, 'semantic')
   if (semantic.type !== 'process_storyboard') throw new Error('visual_declarative_semantic_mismatch:process_storyboard')
-  const stages = array(semantic.stages, 'semantic.stages', 2, 12).map((value, index) => {
+  const stages = array(semantic.stages, 'semantic.stages', 3, 12).map((value, index) => {
     const stage = record(value, `semantic.stages[${index}]`)
     return {
       id: id(stage.id, `semantic.stages[${index}].id`),
@@ -93,7 +93,7 @@ function compileProcessStoryboard(payload: JsonRecord): JsonRecord | undefined {
   const initialStages = stages.filter(stage => stage.initial)
   if (initialStages.length !== 1) throw new Error('visual_declarative_exactly_one_initial_stage_required')
   const stageIds = new Set(stages.map(stage => stage.id))
-  const transitions = array(semantic.transitions, 'semantic.transitions', 1, 20).map((value, index) => {
+  const transitions = array(semantic.transitions, 'semantic.transitions', 2, 20).map((value, index) => {
     const transition = record(value, `semantic.transitions[${index}]`)
     const output = {
       id: id(transition.id, `semantic.transitions[${index}].id`),
@@ -108,7 +108,7 @@ function compileProcessStoryboard(payload: JsonRecord): JsonRecord | undefined {
   })
   assertUnique(transitions, 'semantic.transitions')
   const transitionById = new Map(transitions.map(transition => [transition.id, transition]))
-  const path = array(semantic.path, 'semantic.path', 1, 12).map((value, index) => id(value, `semantic.path[${index}]`))
+  const path = array(semantic.path, 'semantic.path', 2, 12).map((value, index) => id(value, `semantic.path[${index}]`))
   let currentStateId = initialStages[0].id
   const resolvedPath = path.map((transitionId, index) => {
     const transition = transitionById.get(transitionId)

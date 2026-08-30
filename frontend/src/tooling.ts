@@ -59,6 +59,12 @@ export type VisualArtifact = {
   renderer?: string
   quality?: { score: number; issues: string[]; repaired: boolean }
   fallbackUsed?: boolean
+  readable?: {
+    summary: string
+    readingOrder: string[]
+    frameDescriptions: string[]
+    nonColorStateCue: string
+  }
 }
 
 export type TutorToolRun = {

@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.9"
+REGISTRY_VERSION = "2026-08-30.10"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -747,11 +747,11 @@ TOOLS = {
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
-                     (), (), "explicit learner visual intent + structured bounded topic anchor -> exact/illustrative deterministic compiler including convolution_trace | long-tail provider-native JSON plan -> scalar-preserving local punctuation repair -> at most one budgeted model repair -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG; each stage and attempt is observable, Desktop and Web share the same TS runtime, and one requested visual cannot drift into another visual or repeated video search"),
+                     (), (), "explicit learner visual intent + bounded request/prior-artifact topic anchor -> exact/illustrative deterministic compiler including convolution_trace | long-tail provider-native JSON plan -> request-derived topic coverage + minimum process substance -> scalar-preserving local punctuation repair -> at most one budgeted model repair -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG + bounded frame grounding for Tutor claims; each stage and attempt is observable, Desktop and Web share the same TS runtime, and one requested visual cannot drift into another visual or repeated video search"),
         ToolContract("learning_diagram_generator", "Learning Diagram Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "explicit diagram intent -> computer/math abstraction selection -> validated useful VisualSpec -> deterministic static SVG; zero learner-state write"),
         ToolContract("learning_animation_generator", "Learning Animation Generator", "learning_design_agent", "vnext", "artifact",
-                     (), (), "explicit animation intent -> state-changing computer/math process -> validated VisualSpec frames -> deterministic inspectable SVG timeline; zero learner-state write"),
+                     (), (), "explicit animation intent + recoverable topic -> request-specific state-changing computer/math process with at least two transitions for process storyboards -> validated VisualSpec frames -> deterministic inspectable SVG timeline + truthful bounded Tutor grounding; zero learner-state write"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",

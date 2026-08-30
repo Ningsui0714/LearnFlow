@@ -7,6 +7,7 @@ import {
   type LearningVisualKind,
   type VisualGenerationStage,
 } from './learning-visual-spec.ts'
+import { hasVisualTopic } from './visual-spec/intent-contract.ts'
 
 export type ResolvedVisualRequest = {
   originalRequest: string
@@ -15,7 +16,7 @@ export type ResolvedVisualRequest = {
   contextSummary?: string
   topicAnchor?: {
     topic: string
-    source: 'prior_user' | 'prior_assistant'
+    source: 'prior_user' | 'prior_assistant' | 'prior_artifact'
   }
 }
 
@@ -62,26 +63,37 @@ export function resolveVisualRequest(
 ): ResolvedVisualRequest {
   const originalRequest = compact(query, 2200)
   if (!originalRequest) return { originalRequest: '', effectiveRequest: '', contextEnriched: false }
-  if (subjectStrength(originalRequest) >= 2 && !DEICTIC.test(originalRequest)) {
+  if (hasVisualTopic(originalRequest) && !DEICTIC.test(originalRequest)) {
     return { originalRequest, effectiveRequest: originalRequest, contextEnriched: false }
   }
 
   const prior = [...messages]
     .reverse()
     .filter(message => compact(message.content, 2200) !== originalRequest)
+  const priorArtifact = prior
+    .flatMap(message => [...(message.toolRuns || [])].reverse())
+    .find(run => run.status === 'completed' && run.artifact)
+    ?.artifact
+  const artifactSummary = priorArtifact
+    ? compact([
+      priorArtifact.title,
+      priorArtifact.subtitle,
+      priorArtifact.readable?.summary,
+    ].filter(Boolean).join('：'), 520)
+    : ''
   const priorUser = prior
     .filter(message => message.role === 'user')
     .map(message => compact(message.content, 280))
-    .find(candidate => subjectStrength(candidate) >= 2)
+    .find(candidate => subjectStrength(candidate) >= 1 && hasVisualTopic(candidate))
   const priorAssistant = prior
     .filter(message => message.role === 'assistant')
     .map(message => compact(message.content, 240).split(/[。！？\n]/)[0])
-    .find(candidate => subjectStrength(candidate) >= 2)
-  const contextSummary = priorUser || priorAssistant
+    .find(candidate => subjectStrength(candidate) >= 1 && hasVisualTopic(candidate))
+  const contextSummary = artifactSummary || priorUser || priorAssistant
   if (!contextSummary) return { originalRequest, effectiveRequest: originalRequest, contextEnriched: false }
   const topicAnchor = {
     topic: contextSummary,
-    source: priorUser ? 'prior_user' as const : 'prior_assistant' as const,
+    source: artifactSummary ? 'prior_artifact' as const : priorUser ? 'prior_user' as const : 'prior_assistant' as const,
   }
   return {
     originalRequest,
@@ -100,6 +112,9 @@ export async function executeLearningVisual(
   onStage?: (stage: VisualGenerationStage) => void,
 ): Promise<{ generated: GeneratedLearningVisual; request: ResolvedVisualRequest }> {
   const request = resolveVisualRequest(query, messages)
+  if (!hasVisualTopic(request.effectiveRequest)) {
+    throw new Error('visual_generation_needs_input:visual_topic_context_required')
+  }
   const generated = await generateLearningVisual(kind, request.effectiveRequest, generate, { onStage })
   return { generated, request }
 }

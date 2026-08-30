@@ -979,6 +979,23 @@ test('a failed animation cannot drift into diagram or repeated video search', as
   assert.equal(result.toolRuns.some(run => run.kind === 'video' || run.kind === 'image'), false)
 })
 
+test('visual tool observations expose bounded frame grounding for truthful Tutor narration', async () => {
+  const result = await executeTutorAgentTool('generate_learning_animation', {
+    query: '用动画逐步演示联邦学习聚合过程',
+  }, {
+    message: '用动画逐步演示联邦学习聚合过程',
+    recentMessages: [{ role: 'user', content: '用动画逐步演示联邦学习聚合过程' }],
+    generate: async () => { throw new Error('deterministic visual must not call the model') },
+  })
+  const observation = result.observation as any
+  assert.equal(observation.authority, 'validated_learning_artifact')
+  assert.ok(observation.artifact.grounding.semanticChanges >= 1)
+  assert.equal(observation.artifact.grounding.stepTitles.length, result.run.artifact?.steps.length)
+  assert.match(observation.claimBoundary, /grounding.*唯一|grounding.*只能|只能描述/)
+  assert.doesNotMatch(JSON.stringify(observation), /<svg|<path|<rect/)
+  assert.match(result.directReply || '', /共 \d+ 帧/)
+})
+
 test('learning file study reuses an existing lecture before proposing generation', async () => {
   const created = createLearningTask('理解聚类', 100, [], 'learning_file_study')
   const learningTaskContext = {
