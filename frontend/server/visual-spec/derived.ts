@@ -1,5 +1,6 @@
 import type {
   ComputerVisualSemantic,
+  ConvolutionTraceSemantic,
   EventLoopSemantic,
   GraphAlgorithmSemantic,
   MathematicsVisualSemantic,
@@ -220,6 +221,75 @@ export type OptimizationSnapshot = {
 }
 export type OptimizationDerivation = { points: OptimizationPoint[]; snapshots: OptimizationSnapshot[] }
 
+export type ConvolutionSnapshot = {
+  step: number
+  phase: 'initial' | 'convolution' | 'relu' | 'pool'
+  outputRow?: number
+  outputColumn?: number
+  inputRow?: number
+  inputColumn?: number
+  products?: number[]
+  sum?: number
+  convolution: Array<Array<number | null>>
+  activated?: number[][]
+  pooled?: number[][]
+}
+
+export type ConvolutionDerivation = {
+  output: number[][]
+  activated: number[][]
+  pooled: number[][]
+  snapshots: ConvolutionSnapshot[]
+}
+
+export function deriveConvolution(semantic: ConvolutionTraceSemantic): ConvolutionDerivation {
+  const inputRows = semantic.input.values.length
+  const inputColumns = semantic.input.values[0]?.length || 0
+  const kernelRows = semantic.kernel.values.length
+  const kernelColumns = semantic.kernel.values[0]?.length || 0
+  if (!inputRows || !inputColumns || !kernelRows || !kernelColumns) throw new Error('convolution_empty')
+  if (semantic.input.values.some(row => row.length !== inputColumns) || semantic.kernel.values.some(row => row.length !== kernelColumns)) throw new Error('convolution_not_rectangular')
+  if (inputRows < kernelRows || inputColumns < kernelColumns) throw new Error('convolution_kernel_larger_than_input')
+  const outputRows = Math.floor((inputRows - kernelRows) / semantic.stride) + 1
+  const outputColumns = Math.floor((inputColumns - kernelColumns) / semantic.stride) + 1
+  if (outputRows * outputColumns > 9) throw new Error('convolution_trace_too_large')
+  const output = Array.from({ length: outputRows }, () => Array(outputColumns).fill(0) as number[])
+  const partial = Array.from({ length: outputRows }, () => Array(outputColumns).fill(null) as Array<number | null>)
+  const snapshots: ConvolutionSnapshot[] = [{ step: 0, phase: 'initial', convolution: partial.map(row => [...row]) }]
+  for (let row = 0; row < outputRows; row += 1) {
+    for (let column = 0; column < outputColumns; column += 1) {
+      const products: number[] = []
+      for (let kernelRow = 0; kernelRow < kernelRows; kernelRow += 1) {
+        for (let kernelColumn = 0; kernelColumn < kernelColumns; kernelColumn += 1) {
+          products.push(semantic.input.values[row * semantic.stride + kernelRow][column * semantic.stride + kernelColumn] * semantic.kernel.values[kernelRow][kernelColumn])
+        }
+      }
+      const sum = products.reduce((total, value) => total + value, semantic.bias)
+      if (!Number.isFinite(sum)) throw new Error('convolution_result_non_finite')
+      output[row][column] = sum
+      partial[row][column] = sum
+      snapshots.push({
+        step: snapshots.length, phase: 'convolution', outputRow: row, outputColumn: column,
+        inputRow: row * semantic.stride, inputColumn: column * semantic.stride,
+        products, sum, convolution: partial.map(item => [...item]),
+      })
+    }
+  }
+  const activated = output.map(row => row.map(value => Math.max(0, value)))
+  snapshots.push({ step: snapshots.length, phase: 'relu', convolution: output.map(row => [...row]), activated })
+  const pooledRows = Math.floor(activated.length / semantic.poolSize)
+  const pooledColumns = Math.floor(activated[0].length / semantic.poolSize)
+  const pooled = Array.from({ length: pooledRows }, (_, row) => Array.from({ length: pooledColumns }, (_, column) => {
+    const values: number[] = []
+    for (let poolRow = 0; poolRow < semantic.poolSize; poolRow += 1) {
+      for (let poolColumn = 0; poolColumn < semantic.poolSize; poolColumn += 1) values.push(activated[row * semantic.poolSize + poolRow][column * semantic.poolSize + poolColumn])
+    }
+    return Math.max(...values)
+  }))
+  snapshots.push({ step: snapshots.length, phase: 'pool', convolution: output.map(row => [...row]), activated, pooled })
+  return { output, activated, pooled, snapshots }
+}
+
 export function deriveOptimization(semantic: OptimizationSemantic): OptimizationDerivation {
   const points: OptimizationPoint[] = []
   let current = semantic.initialX
@@ -238,7 +308,7 @@ export function deriveOptimization(semantic: OptimizationSemantic): Optimization
   return { points, snapshots }
 }
 
-export type DerivedSemantic = MatrixOperationSemantic | GraphAlgorithmSemantic | NaturalFrequencySemantic | EventLoopSemantic | OptimizationSemantic
+export type DerivedSemantic = MatrixOperationSemantic | GraphAlgorithmSemantic | NaturalFrequencySemantic | EventLoopSemantic | OptimizationSemantic | ConvolutionTraceSemantic
 
 function shortestPathCostOracle(semantic: GraphAlgorithmSemantic): number | null {
   if (semantic.nodes.length > 8 || semantic.edges.length > 24) throw new Error('graph_oracle_input_too_large')
@@ -273,12 +343,14 @@ export function isDerivedSemantic(semantic: ComputerVisualSemantic | Mathematics
     || semantic.type === 'natural_frequency'
     || semantic.type === 'event_loop'
     || semantic.type === 'optimization'
+    || semantic.type === 'convolution_trace'
 }
 
 export function derivedTraceLength(semantic: DerivedSemantic) {
   if (semantic.type === 'graph_algorithm') return deriveDijkstra(semantic).snapshots.length
   if (semantic.type === 'event_loop') return deriveEventLoop(semantic).snapshots.length
   if (semantic.type === 'optimization') return deriveOptimization(semantic).snapshots.length
+  if (semantic.type === 'convolution_trace') return deriveConvolution(semantic).snapshots.length
   return 1
 }
 
@@ -300,6 +372,11 @@ export function verifyDerivedSemantic(semantic: ComputerVisualSemantic | Mathema
       const result = deriveOptimization(semantic)
       if (!(semantic.learningRate > 0 && semantic.learningRate < 1)) throw new Error('optimization_learning_rate_not_convergent')
       if (result.points.some(point => point.x < semantic.axes.xDomain[0] || point.x > semantic.axes.xDomain[1] || point.y < semantic.axes.yDomain[0] || point.y > semantic.axes.yDomain[1])) throw new Error('optimization_trace_outside_domain')
+    }
+    if (semantic.type === 'convolution_trace') {
+      const result = deriveConvolution(semantic)
+      if (result.snapshots.length < 4 || result.snapshots.length > 12) throw new Error('convolution_trace_length_invalid')
+      if (result.output.some(row => row.some(value => !Number.isFinite(value)))) throw new Error('convolution_output_non_finite')
     }
     return { checked: 1, passed: 1, failures: [] as string[] }
   } catch (error) {

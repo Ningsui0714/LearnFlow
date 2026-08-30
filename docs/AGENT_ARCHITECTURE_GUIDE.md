@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-30.6`）：Learning Design 的安全视觉 Harness 把 CNN 卷积过程纳入确定性 `convolution_trace`，并将长尾模型输出约束为 provider 原生 JSON object。只可本地修复尾逗号与相邻 JSON 容器之间的缺失逗号，所有标量、引用、语义、布局、安全与重放规则仍完整校验；失败后只有一次有预算的结构化修复。Tutor 以结构化主题锚点处理“演示一下”等省略表达，并对显式视觉意图执行单一视觉调用，失败后不切换形式或反复搜索视频。规划阶段和尝试诊断进入 Tool Run/轨迹，但不是学习证据，也不新增状态权威。
+
 Contract impact（`2026-08-30.4`）：学习设计视觉能力新增共享的上下文补全、三态确定性编译和一次结构化修复。浏览器与 Desktop 不再拥有两套视觉执行路径：两端共同运行 VisualSpec parser/compiler/verifier/renderer，Desktop 后端桥接仅为长尾候选提供有界模型文本。教学示例必须在标题、说明和无障碍摘要中披露，不能冒充学习者输入；缺失了部分关键参数的请求仍返回可追问失败。该变化不新增主 Agent，不改变五核、掌握判定或证据链。
 
 Contract impact（`2026-08-30.3`）：插件能力统一进入“确定性宿主 + 可变 Agent runner”边界。Bundle 只声明能力，项目 Instance 只保存配置与授权，不可变 Snapshot 承载领域事实，ObjectIndex 只负责寻址。Tutor 不为每个插件常驻硬编码工具，而通过 `discover_project_plugin_tools` 和 `call_project_plugin_tool` 发现、调用当前项目已启用且获授权的只读能力；任何写核心对象的意图只能持久化为 Action Board 待确认动作。插件 runner 不获得 ORM、数据库会话或密钥，外部事件只允许零 Kernel target；宿主把实例配置作为不可伪造 runtime envelope 注入，并以实际 Host Port 读取重建来源 provenance。受信签名本机进程仍明确没有文件、网络、密钥、CPU 或内存隔离。岗位能力图谱是首个官方插件，旧专用 API/工具名只作 deprecated 兼容转发。三类主 Agent、五核、评分、掌握与 EvidenceEvent reducer 语义不变。

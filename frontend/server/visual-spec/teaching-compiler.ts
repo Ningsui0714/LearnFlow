@@ -132,12 +132,30 @@ export type GradientDescentDerivation = VerifiedDerivation<
   }
 >
 
+export type ConvolutionDerivation = VerifiedDerivation<
+  'convolution_trace',
+  {
+    request: string
+    input: number[][]
+    kernel: number[][]
+    stride: 1 | 2
+    padding: 0
+    bias: number
+  },
+  {
+    output: number[][]
+    activated: number[][]
+    pooled: number[][]
+  }
+>
+
 export type TeachingDerivation =
   | MatrixMultiplicationDerivation
   | DijkstraDerivation
   | NaturalFrequencyDerivation
   | EventLoopDerivation
   | GradientDescentDerivation
+  | ConvolutionDerivation
   | TeachingDerivationFailure
 
 function envelope<T extends TeachingDerivation>(value: Omit<T, 'compilerId' | 'version' | 'verification'>): T {
@@ -199,7 +217,7 @@ function extractBalanced(text: string, start: number, open: string, close: strin
   return undefined
 }
 
-function extractAssignedMatrix(text: string, name: 'A' | 'B'): unknown {
+function extractAssignedMatrix(text: string, name: string): unknown {
   const matcher = new RegExp(`(?:^|[^A-Za-z0-9_])${name}\\s*=\\s*(?=\\[)`, 'i')
   const match = matcher.exec(text)
   if (!match) return undefined
@@ -211,6 +229,50 @@ function extractAssignedMatrix(text: string, name: 'A' | 'B'): unknown {
   } catch {
     return null
   }
+}
+
+function deriveConvolutionRequest(kind: TeachingVisualKind, request: string): TeachingDerivation | undefined {
+  if (!/(?:cnn|卷积|池化|手写数字|mnist|感受野)/i.test(request)) return undefined
+  const rawInput = extractAssignedMatrix(request, 'CONV_INPUT')
+    ?? extractAssignedMatrix(request, 'INPUT')
+  const rawKernel = extractAssignedMatrix(request, 'CONV_KERNEL')
+    ?? extractAssignedMatrix(request, 'KERNEL')
+  if (rawInput === undefined && rawKernel === undefined) return undefined
+  const input = normalizeMatrix(rawInput)
+  const kernel = normalizeMatrix(rawKernel)
+  if (!input || !kernel) return undefined
+  const strideValue = matchedNumber(/stride\s*(?:=|:|：)\s*(\d+)/i.exec(request)) ?? 1
+  const padding = matchedNumber(/padding\s*(?:=|:|：)\s*(\d+)/i.exec(request)) ?? 0
+  const bias = matchedNumber(/bias\s*(?:=|:|：)\s*([+\-−]?(?:\d+(?:\.\d+)?|\.\d+))/i.exec(request)) ?? 0
+  if ((strideValue !== 1 && strideValue !== 2) || padding !== 0 || !Number.isFinite(bias)) return undefined
+  if (input.length > 7 || input[0].length > 7 || kernel.length > 4 || kernel[0].length > 4) return undefined
+  if (input.length < kernel.length || input[0].length < kernel[0].length) return undefined
+  const outputRows = Math.floor((input.length - kernel.length) / strideValue) + 1
+  const outputColumns = Math.floor((input[0].length - kernel[0].length) / strideValue) + 1
+  if (outputRows < 1 || outputColumns < 1 || outputRows * outputColumns > 9) return undefined
+  const output = Array.from({ length: outputRows }, (_, row) => Array.from({ length: outputColumns }, (_, column) => {
+    let sum = bias
+    for (let kernelRow = 0; kernelRow < kernel.length; kernelRow += 1) {
+      for (let kernelColumn = 0; kernelColumn < kernel[0].length; kernelColumn += 1) {
+        sum += input[row * strideValue + kernelRow][column * strideValue + kernelColumn] * kernel[kernelRow][kernelColumn]
+      }
+    }
+    return stableNumber(sum)
+  }))
+  const activated = output.map(row => row.map(value => Math.max(0, value)))
+  const pooledRows = Math.floor(activated.length / 2)
+  const pooledColumns = Math.floor(activated[0].length / 2)
+  const pooled = Array.from({ length: pooledRows }, (_, row) => Array.from({ length: pooledColumns }, (_, column) => Math.max(
+    activated[row * 2][column * 2],
+    activated[row * 2][column * 2 + 1],
+    activated[row * 2 + 1][column * 2],
+    activated[row * 2 + 1][column * 2 + 1],
+  )))
+  return envelope<ConvolutionDerivation>({
+    type: 'convolution_trace', kind,
+    input: { request, input, kernel, stride: strideValue as 1 | 2, padding: 0, bias },
+    derived: { output, activated, pooled },
+  })
 }
 
 function normalizeMatrix(value: unknown): number[][] | undefined {
@@ -776,7 +838,8 @@ function deriveGradientDescent(kind: TeachingVisualKind, request: string): Teach
 export function deriveTeachingRequest(kind: TeachingVisualKind, request: string): TeachingDerivation | undefined {
   const source = request.trim()
   if (!source) return undefined
-  return deriveMatrix(kind, source)
+  return deriveConvolutionRequest(kind, source)
+    ?? deriveMatrix(kind, source)
     ?? deriveDijkstra(kind, source)
     ?? deriveNaturalFrequency(kind, source)
     ?? deriveEventLoop(kind, source)

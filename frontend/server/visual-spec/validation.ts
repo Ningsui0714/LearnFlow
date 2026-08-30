@@ -5,6 +5,7 @@ import {
   type CodeTraceSemantic,
   type ComputerVisualAbstraction,
   type ComputerVisualSemantic,
+  type ConvolutionTraceSemantic,
   type DataStructureSemantic,
   type DerivationSemantic,
   type EventLoopSemantic,
@@ -265,6 +266,73 @@ export function extractJson(raw: string) {
   return record(JSON.parse(json), 'root')
 }
 
+function repairPlannerJsonPunctuation(original: string) {
+  let repaired = ''
+  let inString = false
+  let escaped = false
+  let changed = false
+  for (let index = 0; index < original.length; index += 1) {
+    const character = original[index]
+    if (inString) {
+      repaired += character
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+    if (character === '"') {
+      inString = true
+      repaired += character
+      continue
+    }
+    let next = index + 1
+    while (/\s/.test(original[next] || '')) next += 1
+    if (character === ',' && ['}', ']'].includes(original[next])) {
+      changed = true
+      continue
+    }
+    repaired += character
+    if (['}', ']'].includes(character) && ['{', '['].includes(original[next])) {
+      repaired += ','
+      changed = true
+    }
+  }
+  return changed ? repaired : original
+}
+
+/**
+ * Repair only JSON punctuation that cannot change a scalar value or invent a
+ * teaching fact. The repaired payload still passes the complete VisualSpec
+ * parser, semantic verifier, replay gate, layout gate and SVG sanitizer.
+ */
+export function extractPlannerJson(raw: string): { payload: Record<string, unknown>; repairs: VisualRepair[] } {
+  try {
+    return { payload: extractJson(raw), repairs: [] }
+  } catch (strictError) {
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]
+    const source = (fenced || raw).trim()
+    const start = source.indexOf('{')
+    const end = source.lastIndexOf('}')
+    if (start < 0 || end <= start) throw strictError
+    const original = source.slice(start, end + 1)
+    if (FORBIDDEN_EXECUTABLE.test(original)) throw strictError
+    const repaired = repairPlannerJsonPunctuation(original)
+    if (repaired === original) throw strictError
+    try {
+      return {
+        payload: record(JSON.parse(repaired), 'root'),
+        repairs: [{
+          code: 'planner_json_punctuation_repaired',
+          path: 'root',
+          detail: '只修复尾随逗号或相邻数组/对象元素间缺失的逗号；未改写任何标量内容。',
+        }],
+      }
+    } catch {
+      throw strictError
+    }
+  }
+}
+
 function classificationForMath(value: string): MathematicsVisualAbstraction {
   if (/(?:自然频数|贝叶斯|患病率|灵敏度|敏感度|特异度|natural frequenc(?:y|ies)?|bayes(?:ian)?|prevalence|sensitivity|specificity)/i.test(value)) return 'natural_frequency'
   if (/(?:梯度下降|gradient descent|学习率)/i.test(value)) return 'optimization'
@@ -279,6 +347,7 @@ export function classifyLearningVisual(query: string):
   | { domain: 'computer'; abstraction: ComputerVisualAbstraction }
   | { domain: 'mathematics'; abstraction: MathematicsVisualAbstraction } {
   const normalized = query.toLowerCase()
+  if (/(?:cnn|卷积(?:神经网络|核|层|计算)?|池化|手写数字|mnist|感受野)/i.test(normalized)) return { domain: 'computer', abstraction: 'convolution_trace' }
   if (/(?:事件循环|微任务|宏任务|event loop|microtask)/i.test(normalized)) return { domain: 'computer', abstraction: 'event_loop' }
   if (/(?:dijkstra|迪杰斯特拉|最短路径|带权图)/i.test(normalized)) return { domain: 'computer', abstraction: 'graph_algorithm' }
   if (/(?:张量|shape|qkv|神经网络|注意力|transformer|tensor)/i.test(normalized)) return { domain: 'computer', abstraction: 'tensor_shape_flow' }
@@ -425,6 +494,37 @@ function parseTensor(value: unknown, context: ParseContext): TensorShapeFlowSema
   })
   uniqueIds(operations, 'semantic.operations')
   return { type: 'tensor_shape_flow', tensors, operations }
+}
+
+function parseConvolution(value: unknown, context: ParseContext): ConvolutionTraceSemantic {
+  const source = record(value, 'semantic')
+  const input = record(source.input, 'semantic.input')
+  const kernel = record(source.kernel, 'semantic.kernel')
+  const stride = integer(source.stride, 'semantic.stride', 1, 2)
+  if (stride !== 1 && stride !== 2) throw new Error('visual_spec_convolution_stride_invalid')
+  if (source.padding !== 0) throw new Error('visual_spec_convolution_padding_invalid')
+  if (source.activation !== 'relu') throw new Error('visual_spec_convolution_activation_invalid')
+  if (source.poolSize !== 2) throw new Error('visual_spec_convolution_pool_invalid')
+  return {
+    type: 'convolution_trace',
+    id: id(source.id, 'semantic.id'),
+    input: {
+      id: id(input.id, 'semantic.input.id'),
+      label: text(input.label, 'semantic.input.label', 28, context),
+      values: numericMatrix(input.values, 'semantic.input.values'),
+    },
+    kernel: {
+      id: id(kernel.id, 'semantic.kernel.id'),
+      label: text(kernel.label, 'semantic.kernel.label', 28, context),
+      values: numericMatrix(kernel.values, 'semantic.kernel.values'),
+    },
+    outputId: id(source.outputId, 'semantic.outputId'),
+    stride: stride as 1 | 2,
+    padding: 0,
+    bias: finiteNumber(source.bias, 'semantic.bias', -1_000, 1_000),
+    activation: 'relu',
+    poolSize: 2,
+  }
 }
 
 function parseStructure(value: unknown, context: ParseContext): SystemStructureSemantic {
@@ -707,6 +807,7 @@ function parseSemantic(domain: LearningVisualDomain, abstraction: LearningVisual
     if (abstraction === 'data_structure') return parseDataStructure(value, context)
     if (abstraction === 'code_trace') return parseCodeTrace(value, context)
     if (abstraction === 'tensor_shape_flow') return parseTensor(value, context)
+    if (abstraction === 'convolution_trace') return parseConvolution(value, context)
     if (abstraction === 'graph_algorithm') return parseGraphAlgorithm(value, context)
     if (abstraction === 'event_loop') return parseEventLoop(value, context)
     if (abstraction === 'system_structure') return parseStructure(value, context)
@@ -732,6 +833,7 @@ export function entityIdsForSemantic(semantic: ComputerVisualSemantic | Mathemat
     case 'data_structure': add(semantic.items); add(semantic.links); add(semantic.pointers); break
     case 'code_trace': add(semantic.lines); add(semantic.variables); add(semantic.stackFrames); break
     case 'tensor_shape_flow': add(semantic.tensors); add(semantic.operations); break
+    case 'convolution_trace': add([{ id: semantic.id }, semantic.input, semantic.kernel, { id: semantic.outputId }]); break
     case 'graph_algorithm': add([{ id: semantic.id }]); add(semantic.nodes); add(semantic.edges); break
     case 'event_loop': add([{ id: semantic.id }]); add(semantic.lines); add(semantic.operations); break
     case 'system_structure': add(semantic.entities); add(semantic.relations); break
@@ -1010,6 +1112,7 @@ function readingOrder(semantic: ComputerVisualSemantic | MathematicsVisualSemant
     case 'data_structure': return [...semantic.items.map(item => item.id), ...semantic.pointers.map(item => item.id)]
     case 'code_trace': return [...semantic.lines.map(item => item.id), ...semantic.variables.map(item => item.id), ...semantic.stackFrames.map(item => item.id)]
     case 'tensor_shape_flow': return [...semantic.tensors.map(item => item.id), ...semantic.operations.map(item => item.id)]
+    case 'convolution_trace': return [semantic.id, semantic.input.id, semantic.kernel.id, semantic.outputId]
     case 'graph_algorithm': return [semantic.id, ...semantic.nodes.map(item => item.id), ...semantic.edges.map(item => item.id)]
     case 'event_loop': return [semantic.id, ...semantic.lines.map(item => item.id), ...semantic.operations.map(item => item.id)]
     case 'system_structure': return semantic.entities.map(item => item.id)

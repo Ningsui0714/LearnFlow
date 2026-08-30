@@ -5,6 +5,7 @@ import {
   type GenerateText,
   type GeneratedLearningVisual,
   type LearningVisualKind,
+  type VisualGenerationStage,
 } from './learning-visual-spec.ts'
 
 export type ResolvedVisualRequest = {
@@ -12,6 +13,10 @@ export type ResolvedVisualRequest = {
   effectiveRequest: string
   contextEnriched: boolean
   contextSummary?: string
+  topicAnchor?: {
+    topic: string
+    source: 'prior_user' | 'prior_assistant'
+  }
 }
 
 export type VisualIntent = 'diagram' | 'animation' | 'none'
@@ -66,19 +71,24 @@ export function resolveVisualRequest(
     .filter(message => compact(message.content, 2200) !== originalRequest)
   const priorUser = prior
     .filter(message => message.role === 'user')
-    .map(message => compact(message.content, 600))
+    .map(message => compact(message.content, 280))
     .find(candidate => subjectStrength(candidate) >= 2)
   const priorAssistant = prior
     .filter(message => message.role === 'assistant')
-    .map(message => compact(message.content, 700))
+    .map(message => compact(message.content, 240).split(/[。！？\n]/)[0])
     .find(candidate => subjectStrength(candidate) >= 2)
   const contextSummary = priorUser || priorAssistant
   if (!contextSummary) return { originalRequest, effectiveRequest: originalRequest, contextEnriched: false }
+  const topicAnchor = {
+    topic: contextSummary,
+    source: priorUser ? 'prior_user' as const : 'prior_assistant' as const,
+  }
   return {
     originalRequest,
-    effectiveRequest: `${originalRequest}\n【对话主题】${contextSummary}`,
+    effectiveRequest: `${originalRequest}\n【结构化主题锚点】${JSON.stringify(topicAnchor)}`,
     contextEnriched: true,
     contextSummary,
+    topicAnchor,
   }
 }
 
@@ -87,8 +97,9 @@ export async function executeLearningVisual(
   query: string,
   messages: TutorContextMessage[],
   generate: GenerateText,
+  onStage?: (stage: VisualGenerationStage) => void,
 ): Promise<{ generated: GeneratedLearningVisual; request: ResolvedVisualRequest }> {
   const request = resolveVisualRequest(query, messages)
-  const generated = await generateLearningVisual(kind, request.effectiveRequest, generate)
+  const generated = await generateLearningVisual(kind, request.effectiveRequest, generate, { onStage })
   return { generated, request }
 }

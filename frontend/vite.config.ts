@@ -450,11 +450,13 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         inputText: string,
         timeoutMs?: number,
         maxTokens?: number,
+        generationOptions?: { responseFormat?: 'json_object' },
       ) => {
         const request = buildProviderRequest({
           baseUrl, model, instructions,
           messages: [{ role: 'user', content: inputText }],
           maxTokens: Math.max(400, Math.min(7_000, Number(maxTokens) || 1_200)),
+          responseFormat: generationOptions?.responseFormat,
         })
         const payload = await invokeProvider({ ...request, timeoutMs: timeoutMs || 32_000 })
         const text = textFromTutorProviderResponse(payload)

@@ -58,6 +58,7 @@ class VisualPlannerRequest(BaseModel):
     input: str = Field(min_length=1, max_length=16_000)
     timeout_ms: int = Field(default=60_000, ge=1_000, le=100_000)
     max_tokens: int = Field(default=2_200, ge=400, le=4_000)
+    response_format: Literal["json_object"] = "json_object"
 
 
 class LearningSkillRunCreateRequest(BaseModel):

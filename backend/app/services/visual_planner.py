@@ -23,6 +23,7 @@ def _message_text(message: Any) -> str:
 
 async def plan_learning_visual(
     *, instructions: str, input_text: str, timeout_ms: int, max_tokens: int,
+    response_format: str = "json_object",
 ) -> dict[str, Any]:
     """Run the narrow model-planning stage; validation and rendering stay client-side."""
     if not settings.llm_api_key.strip():
@@ -44,6 +45,7 @@ async def plan_learning_visual(
         ],
         max_tokens=max_tokens,
         timeout=max(1.0, timeout_ms / 1000),
+        response_format={"type": response_format},
         **openai_chat_provider_kwargs(
             settings.llm_base_url,
             settings.llm_model,

@@ -19,13 +19,14 @@
 
 ### 可计算教学视觉
 
-基础能力不足不能用“更长 prompt”掩盖。以下五类高层 semantic 由确定性编译器直接从输入推导结果：
+基础能力不足不能用“更长 prompt”掩盖。以下六类高层 semantic 由确定性编译器直接从输入推导结果：
 
 - `matrix_operation`：输入矩阵 → 乘积、形状规则、焦点单元格点积。
 - `graph_algorithm`：带权图 → Dijkstra 距离、前驱、确定顺序、最短路径和 relax trace。
 - `natural_frequency`：总体、患病率、灵敏度、特异度 → TP/FN/FP/TN、阳性池与后验。
 - `event_loop`：受限 JavaScript 日志、Promise 与 timer → 同步、微任务、任务的调度轨迹。
 - `optimization`：平方距离目标、起点、学习率、步数 → 梯度、更新量和固定坐标轨迹。
+- `convolution_trace`：小型输入矩阵、卷积核、步长与偏置 → 每个滑窗的逐元素乘积、求和、特征图、ReLU 与 2×2 最大池化。
 
 模型和自然语言解析器都不能填写这些 semantic 的“答案字段”。结果由参考算法生成，并通过同一算法重新核验。精确命中时产物标记为 `derived_verified`；维度冲突、负权、未知异步结构或缺少必要参数时真实拒绝，不猜测。
 
@@ -33,12 +34,14 @@
 
 ```text
 用户请求
-  → 保留原请求；省略表达从最近对话补充有界主题并披露 contextEnriched
+  → 保留原请求；省略表达从最近对话补充结构化、有界主题锚点并披露 contextEnriched/source
   → 可计算领域三态
     → 参数完整：确定性 compiler + semantic proof（exact）
     → 只有概念、没有用户数据：明确标注教学示例（illustrative_example）
     → 已给部分参数但仍歧义：needs_input，不猜测
-  → 非精确/长尾：模型候选 VisualSpec；首轮失败后至多一次结构化 repair（仅 structural）
+  → 非精确/长尾：provider 原生 JSON object 候选 VisualSpec
+    → 本地只修复尾逗号或相邻容器间缺失逗号；不修改任何标量内容
+    → 仍失败后至多一次结构化 model repair（仅 structural）
   → typed parser 与引用门
   → deterministic replay
   → 高层 semantic adapter
@@ -92,11 +95,12 @@
 - Web 与 Desktop 共用 `visual-tool-execution.ts`、VisualSpec 编译器、验证器和 renderer；Desktop 不再返回空 `toolRuns` 后绕过视觉能力。
 - Desktop 专用 `/agent/sessions/{session_id}/visual-plans` 只返回模型候选文本，并校验桌面令牌、learner 与 session ownership；它不接收 SVG，不执行代码，也不写学习证据。
 - 可计算精确输入和教学示例均为零模型调用。长尾图解首轮/修复预算为 60/40 秒，动画为 90/60 秒；总重试次数固定为一次，不能用改写参数无限重试。只有显式视觉请求会把 Agent 总回合扩到图解 210 秒、动画 270 秒，普通 Tutor 仍保持原预算。
-- 每次 Tool Run 记录 `requestedKind`、`effectiveKind`、`contextEnriched`、`generationSource`、`compileStatus`、`plannerAttempts` 与 `outcomeStage`，用于区分“被调用、规划返回、验证通过、布局通过、真正渲染”各阶段，不能再用 nominal completed 代替真实成功率。
+- 每次 Tool Run 记录 `requestedKind`、`effectiveKind`、`contextEnriched`、`generationSource`、`compileStatus`、`plannerAttempts`、`syntaxRepairApplied`、每次尝试的预算/耗时/结果/错误类型与 `outcomeStage`；运行轨迹同时显示编译、规划返回、标点修复、验证、限次修复、降级和渲染阶段，不能再用 nominal completed 代替真实成功率。
+- 显式图解/动画意图在模型前确定性执行且每轮只允许对应的一类视觉调用；执行后从本轮工具面移除两类视觉工具和视频搜索，失败不能漂移到另一视觉形式或形成重复搜索回路。
 
 ## 金标验收
 
-第一组端到端金标由三张图解和三段动画组成：
+端到端金标由三张图解和四段动画组成：
 
 1. 矩阵乘法：矩阵网格 + 形状约束 + 焦点点积 + 迁移题。
 2. Dijkstra 静态图：带权图 + 距离/前驱表 + 路径与更新依据。
@@ -104,14 +108,15 @@
 4. JavaScript 事件循环：固定六区 + 稳定 callback token + prediction gate。
 5. Dijkstra 动画：固定图与表 + settled/relax trace + prediction gate。
 6. 梯度下降：固定坐标和曲线 + 稳定当前点 + 切线/更新箭头 + prediction gate。
+7. CNN 卷积：输入矩阵与卷积核 + 逐窗乘加 + 特征图 + ReLU + 最大池化，所有数值由编译器推导。
 
-每项必须满足：质量分不低于 85、`derived_verified`、核心真值全通过、零区域碰撞/越界、JSON 往返可重放。动画还必须满足稳定对象身份、固定 geometry、直接 seek 与顺序播放结果一致。参数变形和 mutation case 用于防止实现只记住六道题答案。
+每项必须满足：质量分不低于 85、`derived_verified`、核心真值全通过、零区域碰撞/越界、JSON 往返可重放。动画还必须满足稳定对象身份、固定 geometry、直接 seek 与顺序播放结果一致。参数变形和 mutation case 用于防止实现只记住七道题答案。
 
 ### 五个评估维度
 
 | 维度 | 不再接受的替代指标 | v3 的直接证据 |
 |---|---|---|
-| 实用性 | “成功生成一张 SVG” | 六个真实教学任务是否包含读图所需的对象、公式、状态、迁移问题和无障碍描述 |
+| 实用性 | “成功生成一张 SVG” | 七个真实教学任务是否包含读图所需的对象、公式、状态、迁移问题和无障碍描述 |
 | 效率 | 只比较模型响应时间 | 可计算金标零模型调用；同时记录编译、验证、渲染时间和动画完成时间 |
 | 成功率 | JSON 能解析 | 金标、参数变形、边界输入和 mutation case 同时通过真值、重放、安全、布局与泄漏检查 |
 | 启发性 | 有动画或有提问 | 是否促成预测、解释、改输入和迁移；必须另测答题质量与学习迁移，不能由点击量推断 |
@@ -140,4 +145,4 @@
 
 ## 修改影响
 
-本模块扩展视觉内部 schema、上下文 Harness、Desktop 规划桥接、编译器、renderer、播放器和测试，不改变三类主 Agent、五核语义、`EvidenceEvent`、Action Board capability 或既有视觉工具 ID。新增视觉产物仍由 `learning_design_agent` 所有，并保持只读教学产物边界。新增 API binding 向后兼容，旧 Web 调用无需迁移；Desktop 从“无视觉 Tool Run”迁移为同构产物与可观测失败。
+本模块扩展视觉内部 schema、上下文 Harness、Desktop 规划桥接、编译器、renderer、播放器和测试，不改变三类主 Agent、五核语义、`EvidenceEvent`、Action Board capability 或既有视觉工具 ID。`convolution_trace` 是 VisualSpec v3 的向后兼容新增分支；旧产物与调用无需迁移。新增视觉产物仍由 `learning_design_agent` 所有，并保持只读教学产物边界。

@@ -499,6 +499,10 @@ function availableTools(input: TutorAgentRuntimeInput) {
     && (tool.name !== 'generate_learning_diagram' || visualIntent === 'diagram')
     && (tool.name !== 'generate_learning_animation' || visualIntent === 'animation')
   ))
+  if (visualIntent !== 'none') {
+    const visualToolName = visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'
+    return tools.filter(tool => tool.name === visualToolName)
+  }
   const fileStudy = input.mode === 'guided_learning' && input.learningTaskContext?.skillId === 'learning_file_study'
   if (!fileStudy || hasExplicitExternalResourceRequest(input)) return tools
   const gate = compactKnowledgeGate(input)
@@ -691,6 +695,19 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     activeArtifactContext: input.activeArtifactContext,
     backendBase: input.backendBase,
     requestCookie: input.requestCookie,
+    onVisualStage: stage => {
+      const labels: Record<string, string> = {
+        compiling: '正在尝试确定性视觉编译',
+        planner_started: '正在生成结构化视觉计划',
+        planner_received: '视觉计划已返回，准备校验',
+        syntax_repaired: '已在本地修复有限 JSON 标点错误',
+        validation_started: '正在校验语义、引用、布局与安全性',
+        repair_started: '首轮计划未通过，正在进行一次限次修复',
+        fallback_started: '规划不可用，正在验证确定性降级产物',
+        rendered: '视觉产物已通过校验并完成渲染',
+      }
+      record({ phase: 'act', detail: labels[stage] || stage, status: 'started' })
+    },
   }
 
   const execute = async (call: AgentToolCall, searchSources: SearchSource[] = []) => {
@@ -715,7 +732,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     const practiceGenerationKey = ['generate_dynamic_practice', 'generate_similar_practice'].includes(call.name)
       ? `${call.name}:learning-task:${String(call.arguments.learning_task_id || '')}`
       : ''
-    const signature = practiceGenerationKey || `${call.name}:${JSON.stringify(call.arguments)}`
+    const visualGenerationKey = ['generate_learning_diagram', 'generate_learning_animation'].includes(call.name)
+      ? `${call.name}:visual-intent:${visualIntent}`
+      : ''
+    const signature = practiceGenerationKey || visualGenerationKey || `${call.name}:${JSON.stringify(call.arguments)}`
     if (signatures.has(signature)) {
       const duplicate = {
         error: 'duplicate_tool_call',
@@ -897,6 +917,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     await execute({ id: `observe-review-${id}`, name: 'read_review_context', arguments: { query: latestMessage } })
   }
   const explicit = explicitToolCall(input.toolChoice, latestMessage, Boolean(input.formalProjectContext))
+    || (visualIntent === 'none' ? undefined : {
+      id: `explicit-visual-intent-${Date.now()}`,
+      name: visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram',
+      arguments: { query: latestMessage },
+    })
   if (explicit) {
     const sources = await execute(explicit)
     if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(sources)
@@ -925,7 +950,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       maxWallTimeMs: budget.maxWallTimeMs,
     },
   }
-  const tools = availableTools(input)
+  const visualAlreadyAttempted = visualIntent !== 'none' && runs.some(run => run.toolName === (visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'))
+  const tools = availableTools(input).filter(tool => !visualAlreadyAttempted || !['generate_learning_diagram', 'generate_learning_animation'].includes(tool.name))
   const modelVisibleToolNames = new Set(tools.map(tool => tool.name))
   const instructions = buildTutorInstructions({
     mode: input.mode,

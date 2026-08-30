@@ -725,6 +725,7 @@ async def plan_visual_for_desktop(
             input_text=data.input,
             timeout_ms=data.timeout_ms,
             max_tokens=data.max_tokens,
+            response_format=data.response_format,
         )
     except RuntimeError as exc:
         if str(exc) == "visual_planner_not_configured":

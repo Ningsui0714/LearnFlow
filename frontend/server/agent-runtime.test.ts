@@ -13,6 +13,7 @@ import { createInitialLearnerPathState } from '../src/learning-path-graph.ts'
 import { createLearningTask, learningTaskTutorContext, projectLearningTask } from '../src/learning.ts'
 import { executeTutorAgentTool } from './tool-runtime.ts'
 import { TUTOR_AGENT_TOOL_DEFINITIONS } from './tool-runtime.ts'
+import { buildProviderRequest } from '../src/tutor.ts'
 
 test('guided learning receives a larger but still bounded runtime budget', () => {
   const simple = tutorAgentBudget('simple_explain')
@@ -65,6 +66,19 @@ test('provider requests expose real tool definitions in both API dialects', () =
     messages: [{ role: 'user', content: 'hello' }], tools: [tool], includeTools: true,
   })
   assert.equal((responses.body as any).tools[0].name, 'read_learner_context')
+})
+
+test('visual planning requests use provider-native JSON object mode in both API dialects', () => {
+  const chat = buildProviderRequest({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'm', instructions: 'json',
+    messages: [{ role: 'user', content: 'plan' }], responseFormat: 'json_object',
+  })
+  assert.deepEqual((chat.body as any).response_format, { type: 'json_object' })
+  const responses = buildProviderRequest({
+    baseUrl: 'https://example.com/v1/responses', model: 'm', instructions: 'json',
+    messages: [{ role: 'user', content: 'plan' }], responseFormat: 'json_object',
+  })
+  assert.deepEqual((responses.body as any).text, { format: { type: 'json_object' } })
 })
 
 test('project plugin tools are thin read-only host calls and role aliases stay compatible', async () => {
@@ -894,27 +908,66 @@ test('learning file study uses a short artifact-first harness instead of resourc
   assert.ok(result.reply.length < 220)
 })
 
-test('visual tools are exposed only for the explicitly requested visual form', async () => {
+test('explicit visual intent executes exactly one requested tool before the model and exposes no recovery tools', async () => {
   const cases = [
-    { message: '什么是联邦学习', present: [] as string[], absent: ['generate_learning_diagram', 'generate_learning_animation'] },
-    { message: '画一张联邦学习流程图', present: ['generate_learning_diagram'], absent: ['generate_learning_animation'] },
-    { message: '用动画逐步演示联邦学习聚合过程', present: ['generate_learning_animation'], absent: ['generate_learning_diagram'] },
+    { message: '什么是联邦学习', expected: '' },
+    { message: '画一张联邦学习流程图', expected: 'generate_learning_diagram' },
+    { message: '用动画逐步演示联邦学习聚合过程', expected: 'generate_learning_animation' },
   ]
   for (const item of cases) {
     const requests: any[] = []
+    const executions: string[] = []
     await runTutorAgentTurn({
       baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'guided_learning',
       messages: [{ role: 'user', content: item.message }], toolChoice: 'auto',
       generate: async () => 'unused',
+      executeTool: async (name, _args, _options, meta) => {
+        executions.push(name)
+        return {
+          run: { id: String(meta?.callId || name), kind: name.endsWith('animation') ? 'animation' : 'image', toolName: name, status: 'failed', title: name, detail: 'fixture failure', durationMs: 1 },
+          observation: { error: 'fixture failure' },
+        } as any
+      },
       invokeProvider: async request => {
         requests.push(request)
         return { choices: [{ message: { content: '先用一句话说明核心，再按需要补充学习动作。' } }] }
       },
     })
-    const exposed = requests[0].body.tools.map((tool: any) => tool.function.name)
-    for (const name of item.present) assert.ok(exposed.includes(name), `${item.message}: ${name}`)
-    for (const name of item.absent) assert.ok(!exposed.includes(name), `${item.message}: ${name}`)
+    const visualExecutions = executions.filter(name => /generate_learning_(?:diagram|animation)|search_learning_videos/.test(name))
+    assert.deepEqual(visualExecutions, item.expected ? [item.expected] : [])
+    if (item.expected) {
+      assert.doesNotMatch(JSON.stringify(requests[0].body.tools || []), /generate_learning_diagram|generate_learning_animation|search_learning_videos/)
+    }
   }
+})
+
+test('a failed animation cannot drift into diagram or repeated video search', async () => {
+  const executions: string[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain',
+    messages: [
+      { role: 'user', content: '讲一下 CNN 手写数字识别' },
+      { role: 'assistant', content: 'CNN 会通过卷积核提取局部特征。' },
+      { role: 'user', content: '用动画演示一下' },
+    ],
+    toolChoice: 'auto', generate: async () => 'unused',
+    executeTool: async (name, _args, _options, meta) => {
+      executions.push(name)
+      return {
+        run: { id: String(meta?.callId || name), kind: 'animation', toolName: name, status: 'failed', title: '生成学习动画', detail: 'planner failed', durationMs: 1 },
+        observation: { error: 'planner failed' },
+      } as any
+    },
+    invokeProvider: async () => {
+      round += 1
+      if (round === 1) return { choices: [{ message: { tool_calls: [{ id: 'drift-video', function: { name: 'search_learning_videos', arguments: '{"target":"CNN"}' } }] } }] }
+      return { choices: [{ message: { content: '动画没有生成成功；我会保留失败信息，不自动改成图解或外部视频。' } }] }
+    },
+  })
+  assert.deepEqual(executions, ['generate_learning_animation'])
+  assert.ok(result.trace.events.some(event => event.status === 'blocked' && /search_learning_videos/.test(event.detail)))
+  assert.equal(result.toolRuns.some(run => run.kind === 'video' || run.kind === 'image'), false)
 })
 
 test('learning file study reuses an existing lecture before proposing generation', async () => {

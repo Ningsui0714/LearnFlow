@@ -95,6 +95,7 @@ export function buildProviderRequest(options: {
   instructions: string
   messages: TutorContextMessage[]
   maxTokens?: number
+  responseFormat?: 'json_object'
 }) {
   const endpoint = endpointFor(options.baseUrl)
   const responsesApi = endpoint.endsWith('/responses')
@@ -105,6 +106,7 @@ export function buildProviderRequest(options: {
         instructions: options.instructions,
         input: recentMessages,
         ...(options.maxTokens ? { max_output_tokens: options.maxTokens } : {}),
+        ...(options.responseFormat ? { text: { format: { type: options.responseFormat } } } : {}),
       }
     : {
         model: options.model.trim(),
@@ -113,6 +115,7 @@ export function buildProviderRequest(options: {
           ...recentMessages,
         ],
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+        ...(options.responseFormat ? { response_format: { type: options.responseFormat } } : {}),
       }
   return { endpoint, body }
 }
@@ -340,12 +343,18 @@ async function executeDesktopVisualTool(options: {
   const request = resolveVisualRequest(options.query, options.messages)
   try {
     const execution = await executeLearningVisual(options.kind, options.query, options.messages, async (
-      instructions, input, timeoutMs = 26_000, maxTokens = 2_200,
+      instructions, input, timeoutMs = 26_000, maxTokens = 2_200, generationOptions,
     ) => {
       const response = await runtimeFetch(`/api/agent/sessions/${options.sessionId}/visual-plans`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instructions, input, timeout_ms: timeoutMs, max_tokens: maxTokens }),
+        body: JSON.stringify({
+          instructions,
+          input,
+          timeout_ms: timeoutMs,
+          max_tokens: maxTokens,
+          response_format: generationOptions?.responseFormat,
+        }),
         signal: options.signal,
       })
       const payload = await response.json().catch(() => null) as { text?: unknown; detail?: unknown } | null
@@ -375,6 +384,8 @@ async function executeDesktopVisualTool(options: {
         generationSource: visual.generation.source,
         compileStatus: visual.generation.compileStatus,
         plannerAttempts: visual.generation.plannerAttempts,
+        syntaxRepairApplied: visual.generation.syntaxRepairApplied,
+        plannerDiagnostics: visual.generation.attempts,
         outcomeStage: 'rendered',
       },
     }

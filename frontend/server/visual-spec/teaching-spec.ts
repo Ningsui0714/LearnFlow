@@ -3,6 +3,7 @@ import {
   RENDERER_VERSION,
   VISUAL_VERSION,
   type EventLoopSemantic,
+  type ConvolutionTraceSemantic,
   type GraphAlgorithmSemantic,
   type LearningVisualFrame,
   type LearningVisualSpec,
@@ -11,7 +12,7 @@ import {
   type OptimizationSemantic,
   type VisualPredictionGate,
 } from './types.ts'
-import { deriveDijkstra, deriveEventLoop, deriveOptimization, derivedTraceLength } from './derived.ts'
+import { deriveConvolution, deriveDijkstra, deriveEventLoop, deriveOptimization, derivedTraceLength } from './derived.ts'
 import { emptyState, generationReport, provenance } from './validation.ts'
 import type { TeachingDerivation } from './teaching-compiler.ts'
 import { TEACHING_COMPILER_ID, TEACHING_COMPILER_VERSION } from './teaching-compiler.ts'
@@ -47,7 +48,7 @@ function stableIdMap(values: string[], fallback: string) {
   return output
 }
 
-function animationTimeline(semantic: GraphAlgorithmSemantic | EventLoopSemantic | OptimizationSemantic, frames: LearningVisualFrame[]) {
+function animationTimeline(semantic: GraphAlgorithmSemantic | EventLoopSemantic | OptimizationSemantic | ConvolutionTraceSemantic, frames: LearningVisualFrame[]) {
   const lastStep = derivedTraceLength(semantic) - 1
   const initialState = emptyState()
   initialState.values[semantic.id] = 0
@@ -61,6 +62,46 @@ function animationTimeline(semantic: GraphAlgorithmSemantic | EventLoopSemantic 
     invariants: [{ type: 'final_state_value' as const, targetId: semantic.id, equals: lastStep }],
     finalState,
   }
+}
+
+function convolutionSpec(derivation: Extract<TeachingDerivation, { type: 'convolution_trace' }>): LearningVisualSpec | undefined {
+  const semantic: ConvolutionTraceSemantic = {
+    type: 'convolution_trace', id: 'convolution_trace',
+    input: { id: 'input_image', label: '输入图像', values: derivation.input.input },
+    kernel: { id: 'edge_kernel', label: '竖直边缘卷积核', values: derivation.input.kernel },
+    outputId: 'feature_map', stride: derivation.input.stride, padding: 0,
+    bias: derivation.input.bias, activation: 'relu', poolSize: 2,
+  }
+  const trace = deriveConvolution(semantic)
+  const common = {
+    ...base(derivation.input.request), domain: 'computer' as const, abstraction: 'convolution_trace' as const, semantic,
+    title: 'CNN：卷积核如何形成特征图',
+    subtitle: derivation.kind === 'animation' ? '滑动窗口 → 乘加 → ReLU → 最大池化' : '卷积、激活与池化的确定性结果',
+    explanation: '每个特征图单元都由对应输入窗口与卷积核逐项相乘后求和得到；ReLU 和最大池化结果由代码确定性计算。',
+    accessibility: {
+      summary: `输入为 ${semantic.input.values.length}×${semantic.input.values[0].length}，卷积核为 ${semantic.kernel.values.length}×${semantic.kernel.values[0].length}，得到 ${trace.output.length}×${trace.output[0].length} 特征图，再经过 ReLU 与 2×2 最大池化。`,
+      readingOrder: [semantic.id, semantic.input.id, semantic.kernel.id, semantic.outputId],
+      nonColorStateCue: '当前输入窗口和输出单元格同时使用粗边框、坐标与乘加算式标注。',
+    },
+  }
+  if (derivation.kind === 'diagram') {
+    const state = emptyState()
+    state.values[semantic.id] = trace.snapshots.length - 1
+    state.activeIds = [semantic.id]
+    return { ...common, kind: 'diagram', state }
+  }
+  const frames: LearningVisualFrame[] = trace.snapshots.slice(1).map(snapshot => ({
+    id: `convolution_step_${snapshot.step}`,
+    title: snapshot.phase === 'convolution'
+      ? `计算特征图 [${snapshot.outputRow}, ${snapshot.outputColumn}]`
+      : snapshot.phase === 'relu' ? '应用 ReLU' : '执行 2×2 最大池化',
+    narration: snapshot.phase === 'convolution'
+      ? `${snapshot.products?.join(' + ')} + bias ${semantic.bias} = ${snapshot.sum}。`
+      : snapshot.phase === 'relu' ? '负响应归零，正响应保持不变。' : '每个 2×2 区域保留最大响应。',
+    durationMs: 1250,
+    patches: [{ type: 'set_trace_step', semanticId: semantic.id, step: snapshot.step }],
+  }))
+  return { ...common, ...animationTimeline(semantic, frames) }
 }
 
 function prediction(id: string, prompt: string, choices: Array<{ id: string; label: string }>, correctChoiceId: string, explanation: string): VisualPredictionGate {
@@ -300,6 +341,7 @@ export function teachingDerivationToSpec(derivation: TeachingDerivation): Learni
       : derivation.type === 'natural_frequency_bayes' ? naturalFrequencySpec(derivation)
         : derivation.type === 'js_event_loop' ? eventLoopSpec(derivation)
           : derivation.type === 'quadratic_gradient_descent' ? optimizationSpec(derivation)
+            : derivation.type === 'convolution_trace' ? convolutionSpec(derivation)
             : undefined
   if (!spec || !derivation.input.request.includes('【教学示例参数】')) return spec
   return {

@@ -2,6 +2,7 @@ import type { VisualArtifact } from '../../src/tooling.ts'
 import {
   RENDERER_VERSION,
   type CodeTraceSemantic,
+  type ConvolutionTraceSemantic,
   type DataStructureSemantic,
   type DerivationSemantic,
   type FunctionSemantic,
@@ -24,7 +25,7 @@ import {
   type VisualStateSnapshot,
 } from './types.ts'
 import { describePatch, inspectLearningVisualSpec, replayAnimation } from './runtime.ts'
-import { isDerivedSemantic } from './derived.ts'
+import { deriveConvolution, isDerivedSemantic } from './derived.ts'
 import { renderDerivedTeachingVisual } from './teaching-scene.ts'
 
 type RenderResult = { svg: string; collisions: number; outOfBounds: number; manifest?: VisualSceneManifest }
@@ -161,6 +162,71 @@ function tensorSvg(spec: LearningVisualSpec & { semantic: TensorShapeFlowSemanti
   return graphSvg(spec.title, spec.accessibility.summary, nodes, edges, state, stateCue)
 }
 
+function convolutionGrid(
+  values: Array<Array<number | null>>,
+  x: number,
+  y: number,
+  cell: number,
+  active?: { row: number; column: number; rows: number; columns: number },
+) {
+  return values.map((row, rowIndex) => row.map((value, columnIndex) => {
+    const highlighted = active
+      && rowIndex >= active.row && rowIndex < active.row + active.rows
+      && columnIndex >= active.column && columnIndex < active.column + active.columns
+    const cellX = x + columnIndex * cell
+    const cellY = y + rowIndex * cell
+    return `<rect x="${cellX}" y="${cellY}" width="${cell}" height="${cell}" fill="${highlighted ? '#fff0c5' : '#fff'}" stroke="${highlighted ? '#765000' : '#9aaba2'}" stroke-width="${highlighted ? 3 : 1.2}" ${highlighted ? 'stroke-dasharray="5 2"' : ''}></rect>${svgTextLines(value === null ? '·' : String(value), cellX + cell / 2, cellY + cell / 2 + 4, { size: 10, color: value === null ? '#9aaba2' : '#203a30' })}`
+  }).join('')).join('')
+}
+
+function convolutionSvg(spec: LearningVisualSpec & { semantic: ConvolutionTraceSemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
+  const trace = deriveConvolution(spec.semantic)
+  const requestedStep = Number(state.values[spec.semantic.id] ?? 0)
+  const step = Math.max(0, Math.min(trace.snapshots.length - 1, Number.isInteger(requestedStep) ? requestedStep : 0))
+  const snapshot = trace.snapshots[step]
+  const inputCell = 34
+  const kernelCell = 34
+  const outputCell = 42
+  const activeWindow = snapshot.phase === 'convolution' && snapshot.inputRow !== undefined && snapshot.inputColumn !== undefined
+    ? { row: snapshot.inputRow, column: snapshot.inputColumn, rows: spec.semantic.kernel.values.length, columns: spec.semantic.kernel.values[0].length }
+    : undefined
+  const activeOutput = snapshot.phase === 'convolution' && snapshot.outputRow !== undefined && snapshot.outputColumn !== undefined
+    ? { row: snapshot.outputRow, column: snapshot.outputColumn, rows: 1, columns: 1 }
+    : undefined
+  const outputValues = snapshot.phase === 'pool' && snapshot.pooled?.length
+    ? snapshot.pooled
+    : snapshot.phase === 'relu' && snapshot.activated
+      ? snapshot.activated
+      : snapshot.convolution
+  const inputX = 42
+  const inputY = 104
+  const kernelX = 292
+  const kernelY = 124
+  const outputX = 520
+  const outputY = 124
+  const phaseLabel = snapshot.phase === 'initial' ? '准备输入与卷积核'
+    : snapshot.phase === 'convolution' ? `窗口 (${snapshot.inputRow}, ${snapshot.inputColumn}) → 输出 (${snapshot.outputRow}, ${snapshot.outputColumn})`
+      : snapshot.phase === 'relu' ? 'ReLU：max(0, x)'
+        : '2×2 MaxPool：保留最大响应'
+  const equation = snapshot.phase === 'convolution'
+    ? `${snapshot.products?.join(' + ')} + ${spec.semantic.bias} = ${snapshot.sum}`
+    : snapshot.phase === 'relu' ? '所有负响应归零' : snapshot.phase === 'pool' ? '每个 2×2 区域取最大值' : '卷积核将逐格滑动'
+  const body = [
+    svgTextLines(spec.semantic.input.label, inputX, 75, { anchor: 'start', size: 13, lineLength: 18 }),
+    convolutionGrid(spec.semantic.input.values, inputX, inputY, inputCell, activeWindow),
+    svgTextLines(spec.semantic.kernel.label, kernelX, 95, { anchor: 'start', size: 13, lineLength: 18 }),
+    convolutionGrid(spec.semantic.kernel.values, kernelX, kernelY, kernelCell),
+    svgTextLines(snapshot.phase === 'pool' ? '池化结果' : snapshot.phase === 'relu' ? 'ReLU 特征图' : '卷积特征图', outputX, 95, { anchor: 'start', size: 13, lineLength: 18 }),
+    convolutionGrid(outputValues, outputX, outputY, outputCell, activeOutput),
+    `<path d="M 230 210 L 278 210" fill="none" stroke="#667d71" stroke-width="2" marker-end="url(#lf-arrow)"></path>`,
+    `<path d="M 410 210 L 505 210" fill="none" stroke="#667d71" stroke-width="2" marker-end="url(#lf-arrow)"></path>`,
+    `<rect x="250" y="330" width="500" height="58" rx="14" fill="#ffffff" stroke="#d4ded8"></rect>`,
+    svgTextLines(phaseLabel, 270, 351, { anchor: 'start', size: 12, color: '#176c96', lineLength: 58 }),
+    svgTextLines(equation, 270, 373, { anchor: 'start', size: 10, weight: 560, color: '#52675c', lineLength: 72 }),
+  ].join('')
+  return { svg: svgShell(spec.title, spec.accessibility.summary, body, stateCue || phaseLabel), collisions: 0, outOfBounds: 0 }
+}
+
 function chartBounds(series: VisualPoint[][]) {
   const all = series.flat()
   const xs = all.map(item => item[0])
@@ -222,6 +288,7 @@ function semanticGraph(spec: LearningVisualSpec, state: VisualStateSnapshot): { 
 }
 
 function renderSpec(spec: LearningVisualSpec, state: VisualStateSnapshot, stateCue = ''): RenderResult {
+  if (spec.semantic.type === 'convolution_trace') return convolutionSvg(spec as LearningVisualSpec & { semantic: ConvolutionTraceSemantic }, state, stateCue)
   if (isDerivedSemantic(spec.semantic)) return renderDerivedTeachingVisual(spec, state, stateCue)
   if (spec.semantic.type === 'protocol_sequence') return protocolSvg(spec as LearningVisualSpec & { semantic: ProtocolSequenceSemantic }, state, stateCue)
   if (spec.semantic.type === 'code_trace') return codeTraceSvg(spec as LearningVisualSpec & { semantic: CodeTraceSemantic }, state, stateCue)

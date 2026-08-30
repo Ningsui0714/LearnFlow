@@ -79,6 +79,7 @@ def test_desktop_visual_planner_is_narrow_scoped_and_uses_requested_budget(monke
     assert len(calls) == 1
     assert calls[0]["timeout"] == 90
     assert calls[0]["max_tokens"] == 3_000
+    assert calls[0]["response_format"] == {"type": "json_object"}
     assert calls[0]["messages"][0]["role"] == "system"
     assert calls[0]["messages"][1]["content"] == "画一个编译器前端结构图"
 

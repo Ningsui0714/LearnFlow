@@ -82,6 +82,16 @@ export type TutorToolRun = {
     generationSource: 'deterministic_compiler' | 'model_plan' | 'deterministic_template' | 'legacy_reader'
     compileStatus: 'exact' | 'illustrative_example' | 'not_applicable' | 'ambiguous' | 'invalid'
     plannerAttempts: number
+    syntaxRepairApplied?: boolean
+    plannerDiagnostics?: Array<{
+      attempt: 1 | 2
+      stage: 'planner' | 'repair'
+      timeoutMs: number
+      durationMs: number
+      status: 'accepted' | 'rejected'
+      outputChars: number
+      errorType?: 'timeout' | 'syntax' | 'validation' | 'provider' | 'unexpected'
+    }>
     outcomeStage: 'rendered' | 'planner' | 'validation' | 'layout'
   }
   sources?: SearchSource[]

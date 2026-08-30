@@ -45,6 +45,7 @@ type GenerateText = (
   input: string,
   timeoutMs?: number,
   maxTokens?: number,
+  options?: { responseFormat?: 'json_object' },
 ) => Promise<string>
 
 const SAFE_SVG_TAGS = new Set([
@@ -608,6 +609,7 @@ export type TutorAgentToolRuntimeOptions = {
   }
   backendBase?: string
   requestCookie?: string
+  onVisualStage?: (stage: import('./visual-spec/types.ts').VisualGenerationStage) => void
 }
 
 export type TutorAgentToolExecution = {
@@ -1745,7 +1747,7 @@ export async function executeTutorAgentTool(
 
     if (name === 'generate_learning_diagram' || name === 'generate_learning_animation' || name === 'generate_learning_visual') {
       const requestedKind = name === 'generate_learning_animation' || args.kind === 'animation' ? 'animation' : 'diagram'
-      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate)
+      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate, options.onVisualStage)
       const visual = execution.generated
       const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
       const degradedLabel = visual.degraded
@@ -1769,6 +1771,8 @@ export async function executeTutorAgentTool(
             generationSource: visual.generation.source,
             compileStatus: visual.generation.compileStatus,
             plannerAttempts: visual.generation.plannerAttempts,
+            syntaxRepairApplied: visual.generation.syntaxRepairApplied,
+            plannerDiagnostics: visual.generation.attempts,
             outcomeStage: 'rendered',
           },
         },

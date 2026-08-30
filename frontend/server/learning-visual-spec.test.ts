@@ -60,12 +60,35 @@ test('computer and mathematics classifiers cover every required abstraction fami
   assert.deepEqual(classifyLearningVisual('逐行代码执行和调用栈'), { domain: 'computer', abstraction: 'code_trace' })
   assert.deepEqual(classifyLearningVisual('用动画演示迪杰斯特拉算法'), { domain: 'computer', abstraction: 'graph_algorithm' })
   assert.deepEqual(classifyLearningVisual('演示自注意力 QKV 的张量 shape 流动'), { domain: 'computer', abstraction: 'tensor_shape_flow' })
+  assert.deepEqual(classifyLearningVisual('用动画演示 CNN 手写数字卷积和池化'), { domain: 'computer', abstraction: 'convolution_trace' })
   assert.deepEqual(classifyLearningVisual('画出函数导数变化'), { domain: 'mathematics', abstraction: 'function' })
   assert.deepEqual(classifyLearningVisual('贝叶斯概率分布'), { domain: 'mathematics', abstraction: 'natural_frequency' })
   assert.deepEqual(classifyLearningVisual('prevalence 1%, sensitivity 90%'), { domain: 'mathematics', abstraction: 'natural_frequency' })
   assert.deepEqual(classifyLearningVisual('患病率 1%，但还没给特异度'), { domain: 'mathematics', abstraction: 'natural_frequency' })
   assert.deepEqual(classifyLearningVisual('矩阵线性变换'), { domain: 'mathematics', abstraction: 'transformation' })
   assert.deepEqual(classifyLearningVisual('公式等式推导'), { domain: 'mathematics', abstraction: 'derivation' })
+})
+
+test('CNN convolution animation compiles, computes and renders without a model', async () => {
+  let modelCalls = 0
+  const generated = await generateLearningVisual('animation', '用动画演示 CNN 手写数字识别中的卷积、ReLU 和池化', async () => {
+    modelCalls += 1
+    throw new Error('CNN deterministic compiler must not call the model')
+  })
+  assert.equal(modelCalls, 0)
+  assert.equal(generated.spec.abstraction, 'convolution_trace')
+  assert.equal(generated.spec.kind, 'animation')
+  assert.equal(generated.generation.source, 'deterministic_compiler')
+  assert.equal(generated.generation.compileStatus, 'illustrative_example')
+  assert.equal(generated.quality.verification.level, 'derived_verified')
+  assert.equal(generated.quality.status, 'passed')
+  assert.equal(generated.artifact.steps.length, 12)
+  assert.match(generated.artifact.steps[1].svg, /输入图像/)
+  assert.match(generated.artifact.steps[1].svg, /竖直边缘卷积核/)
+  assert.match(generated.artifact.steps.at(-1)?.text || '', /最大响应/)
+  const replayed = readLearningVisualSpec(JSON.parse(JSON.stringify(generated.spec)), 'animation', generated.spec.provenance.requestText)
+  assert.equal(replayed.abstraction, 'convolution_trace')
+  assert.deepEqual(replayAnimation(replayed).finalState, generated.spec.finalState)
 })
 
 test('deictic visual requests preserve the current turn and recover the prior user topic', () => {
@@ -76,7 +99,8 @@ test('deictic visual requests preserve the current turn and recover the prior us
   ])
   assert.equal(resolved.originalRequest, '我希望你用动画演示出来')
   assert.equal(resolved.contextEnriched, true)
-  assert.match(resolved.effectiveRequest, /【对话主题】跟我解释一下迪杰斯特拉算法/)
+  assert.deepEqual(resolved.topicAnchor, { topic: '跟我解释一下迪杰斯特拉算法', source: 'prior_user' })
+  assert.match(resolved.effectiveRequest, /【结构化主题锚点】\{"topic":"跟我解释一下迪杰斯特拉算法","source":"prior_user"\}/)
 })
 
 test('concept-only computable requests use disclosed deterministic teaching examples', async () => {
@@ -594,6 +618,7 @@ test('request intent blocks a valid but unrelated model abstraction before displ
 
 test('a failed visual plan receives one bounded repair attempt', async () => {
   const timeouts: number[] = []
+  const stages: string[] = []
   let calls = 0
   const generated = await generateLearningVisual('diagram', '画一个编译器前端结构图', async (_instructions, _input, timeoutMs) => {
     calls += 1
@@ -614,12 +639,53 @@ test('a failed visual plan receives one bounded repair attempt', async () => {
       accessibility: { summary: '源代码经过解析器形成中间表示。', readingOrder: ['source', 'parser', 'ir'], nonColorStateCue: '箭头和标签共同表达方向。' },
       explanation: '按箭头阅读编译器前端的三个阶段。',
     })
-  })
+  }, { onStage: stage => stages.push(stage) })
   assert.equal(calls, 2)
   assert.deepEqual(timeouts, [60_000, 40_000])
   assert.equal(generated.generation.plannerAttempts, 2)
   assert.equal(generated.generation.repairAttempted, true)
+  assert.equal(generated.generation.attempts.length, 2)
+  assert.deepEqual(generated.generation.attempts.map(item => item.status), ['rejected', 'accepted'])
+  assert.deepEqual(generated.generation.attempts.map(item => item.timeoutMs), [60_000, 40_000])
+  assert.ok(stages.includes('planner_started'))
+  assert.ok(stages.includes('repair_started'))
+  assert.ok(stages.includes('validation_started'))
+  assert.equal(stages.at(-1), 'rendered')
   assert.equal(generated.artifact.kind, 'image')
+})
+
+test('planner punctuation repair salvages JSON without a second model call or semantic invention', async () => {
+  let calls = 0
+  let generationOptions: unknown
+  const valid = JSON.stringify({
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '编译器前端', subtitle: '稳定结构',
+    domain: 'computer', abstraction: 'system_structure',
+    semantic: {
+      type: 'system_structure',
+      entities: [{ id: 'source', label: '源代码 }{ 与 ,] 保持原文' }, { id: 'parser', label: '解析器' }, { id: 'ir', label: '中间表示' }],
+      relations: [{ id: 'source_parser', from: 'source', to: 'parser', kind: 'flow' }, { id: 'parser_ir', from: 'parser', to: 'ir', kind: 'flow' }],
+    },
+    state: { activeIds: ['source'] },
+    accessibility: { summary: '源代码经过解析器形成中间表示。', readingOrder: ['source', 'parser', 'ir'], nonColorStateCue: '当前对象有文字标记。' },
+    explanation: '沿箭头阅读。',
+  })
+  const missingComma = valid.replace('},{"id":"parser"', '}{"id":"parser"')
+  const generated = await generateLearningVisual('diagram', '画一个编译器前端结构图', async (_instructions, _input, _timeout, _tokens, options) => {
+    calls += 1
+    generationOptions = options
+    return missingComma
+  })
+  assert.equal(calls, 1)
+  assert.deepEqual(generationOptions, { responseFormat: 'json_object' })
+  assert.ok(generated.spec.generation.repairs.some(repair => repair.code === 'planner_json_punctuation_repaired'))
+  assert.equal(generated.generation.syntaxRepairApplied, true)
+  assert.equal(generated.generation.attempts.length, 1)
+  assert.equal(generated.generation.attempts[0].status, 'accepted')
+  assert.equal(generated.spec.semantic.type, 'system_structure')
+  if (generated.spec.semantic.type === 'system_structure') {
+    assert.equal(generated.spec.semantic.entities[0].label, '源代码 }{ 与 ,] 保持原文')
+  }
+  assert.equal(generated.quality.status, 'passed')
 })
 
 test('an incomplete natural-frequency request never falls through to the model', async () => {

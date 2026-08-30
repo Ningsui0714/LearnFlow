@@ -12,6 +12,7 @@ export type ComputerVisualAbstraction =
   | 'data_structure'
   | 'code_trace'
   | 'tensor_shape_flow'
+  | 'convolution_trace'
   | 'graph_algorithm'
   | 'event_loop'
   | 'system_structure'
@@ -61,6 +62,19 @@ export type TensorShapeFlowSemantic = {
   type: 'tensor_shape_flow'
   tensors: Array<{ id: string; label: string; shape: number[]; dtype?: 'bool' | 'int32' | 'int64' | 'float16' | 'float32' | 'float64' }>
   operations: Array<{ id: string; label: string; inputIds: string[]; outputIds: string[] }>
+}
+
+export type ConvolutionTraceSemantic = {
+  type: 'convolution_trace'
+  id: string
+  input: { id: string; label: string; values: number[][] }
+  kernel: { id: string; label: string; values: number[][] }
+  outputId: string
+  stride: 1 | 2
+  padding: 0
+  bias: number
+  activation: 'relu'
+  poolSize: 2
 }
 
 export type SystemStructureSemantic = {
@@ -177,6 +191,7 @@ export type ComputerVisualSemantic =
   | DataStructureSemantic
   | CodeTraceSemantic
   | TensorShapeFlowSemantic
+  | ConvolutionTraceSemantic
   | GraphAlgorithmSemantic
   | EventLoopSemantic
   | SystemStructureSemantic
@@ -298,6 +313,7 @@ export type ComputerLearningVisualSpec = VisualSpecCommon & { domain: 'computer'
   | { abstraction: 'data_structure'; semantic: DataStructureSemantic }
   | { abstraction: 'code_trace'; semantic: CodeTraceSemantic }
   | { abstraction: 'tensor_shape_flow'; semantic: TensorShapeFlowSemantic }
+  | { abstraction: 'convolution_trace'; semantic: ConvolutionTraceSemantic }
   | { abstraction: 'graph_algorithm'; semantic: GraphAlgorithmSemantic }
   | { abstraction: 'event_loop'; semantic: EventLoopSemantic }
   | { abstraction: 'system_structure'; semantic: SystemStructureSemantic }
@@ -418,7 +434,28 @@ export type GenerateText = (
   input: string,
   timeoutMs?: number,
   maxTokens?: number,
+  options?: { responseFormat?: 'json_object' },
 ) => Promise<string>
+
+export type VisualGenerationStage =
+  | 'compiling'
+  | 'planner_started'
+  | 'planner_received'
+  | 'syntax_repaired'
+  | 'validation_started'
+  | 'repair_started'
+  | 'fallback_started'
+  | 'rendered'
+
+export type VisualPlannerAttempt = {
+  attempt: 1 | 2
+  stage: 'planner' | 'repair'
+  timeoutMs: number
+  durationMs: number
+  status: 'accepted' | 'rejected'
+  outputChars: number
+  errorType?: 'timeout' | 'syntax' | 'validation' | 'provider' | 'unexpected'
+}
 
 export type GeneratedLearningVisual = {
   spec: LearningVisualSpec
@@ -434,5 +471,7 @@ export type GeneratedLearningVisual = {
     compileStatus: 'exact' | 'illustrative_example' | 'not_applicable'
     plannerAttempts: number
     repairAttempted: boolean
+    syntaxRepairApplied: boolean
+    attempts: VisualPlannerAttempt[]
   }
 }
