@@ -6,7 +6,8 @@ import {
   type VisualPatch,
   type VisualStateSnapshot,
 } from './types.ts'
-import { cloneState, equivalent } from './validation.ts'
+import { verifyDerivedSemantic } from './derived.ts'
+import { assertDeterministicTraceTimeline, cloneState, equivalent } from './validation.ts'
 
 function patchTargets(patch: VisualPatch) {
   switch (patch.type) {
@@ -23,6 +24,7 @@ function patchTargets(patch: VisualPatch) {
     case 'replace_series': return [patch.seriesId]
     case 'transform_object': return [patch.objectId]
     case 'replace_expression': return [patch.stepId]
+    case 'set_trace_step': return [patch.semanticId]
   }
 }
 
@@ -62,6 +64,7 @@ function semanticValue(spec: LearningVisualSpec, state: VisualStateSnapshot, pat
   if (patch.type === 'replace_expression') {
     return state.expressions[patch.stepId] || (spec.semantic.type === 'derivation' ? spec.semantic.steps.find(item => item.id === patch.stepId)?.expression : undefined)
   }
+  if (patch.type === 'set_trace_step') return state.values[patch.semanticId] ?? 0
   return undefined
 }
 
@@ -77,6 +80,7 @@ function rejectNoOp(spec: LearningVisualSpec, state: VisualStateSnapshot, patch:
                 : patch.type === 'replace_series' ? patch.points
                   : patch.type === 'transform_object' ? patch.points
                     : patch.type === 'replace_expression' ? patch.expression
+                      : patch.type === 'set_trace_step' ? patch.step
                       : undefined
   if (after !== undefined && equivalent(before, after)) throw new Error(`visual_patch_no_change:${patch.type}.${patchTargets(patch)[0]}`)
 }
@@ -114,22 +118,27 @@ function applyPatch(spec: LearningVisualSpec, state: VisualStateSnapshot, patch:
     case 'replace_series': state.series[patch.seriesId] = patch.points.map(item => [...item]); break
     case 'transform_object': state.series[patch.objectId] = patch.points.map(item => [...item]); break
     case 'replace_expression': state.expressions[patch.stepId] = patch.expression; break
+    case 'set_trace_step': state.values[patch.semanticId] = patch.step; break
   }
   state.activeIds = Array.from(new Set([...state.activeIds, ...patchTargets(patch)]))
 }
 
 export function replayAnimation(spec: LearningVisualSpec & { kind: 'animation' }) {
+  assertDeterministicTraceTimeline(spec)
   let state = cloneState(spec.initialState)
   const states: VisualStateSnapshot[] = []
   let semanticChanges = 0
-  for (const frame of spec.frames) {
+  for (const [frameIndex, frame] of spec.frames.entries()) {
+    if (frame.prediction && frame.patches.length) throw new Error(`visual_spec_prediction_frame_must_not_patch:${frame.id}`)
+    if (frame.prediction && !spec.frames[frameIndex + 1]?.patches.length) throw new Error(`visual_spec_prediction_without_reveal:${frame.id}`)
     state.activeIds = []
     const before = cloneState(state)
     for (const patch of frame.patches) applyPatch(spec, state, patch)
     const afterWithoutFocus = cloneState(state)
     afterWithoutFocus.activeIds = []
-    if (equivalent(before, afterWithoutFocus)) throw new Error(`visual_spec_frame_without_semantic_change:${frame.id}`)
-    semanticChanges += 1
+    const changed = !equivalent(before, afterWithoutFocus)
+    if (!changed && !frame.prediction) throw new Error(`visual_spec_frame_without_semantic_change:${frame.id}`)
+    if (changed) semanticChanges += 1
     states.push(cloneState(state))
   }
   return { states, finalState: state, semanticChanges }
@@ -190,6 +199,7 @@ export function describePatch(patch: VisualPatch) {
     case 'replace_series': return `曲线 ${patch.seriesId} 更新 ${patch.points.length} 个有限采样点`
     case 'transform_object': return `对象 ${patch.objectId} 完成坐标变换`
     case 'replace_expression': return `推导步骤 ${patch.stepId} 的表达式发生替换`
+    case 'set_trace_step': return `可计算教学轨迹 ${patch.semanticId} 前进到第 ${patch.step} 步`
   }
 }
 
@@ -210,6 +220,7 @@ export function inspectLearningVisualSpec(spec: ReadableLearningVisualSpec): Lea
       layout: { collisions: 0, outOfBounds: 0 },
       security: { executableContentRejected: true, finiteDataOnly: true },
       replayable: true,
+      verification: { level: 'structural', checked: 0, passed: 0, failures: [] },
     }
   }
 
@@ -220,6 +231,7 @@ export function inspectLearningVisualSpec(spec: ReadableLearningVisualSpec): Lea
   let passed = 0
   let invariantFailures: string[] = []
   let replayStates: VisualStateSnapshot[] = []
+  const verification = verifyDerivedSemantic(spec.semantic)
 
   if (spec.semantic.type === 'system_structure') {
     if (spec.semantic.entities.length < 2) issues.push('insufficient_semantic_structure')
@@ -239,7 +251,8 @@ export function inspectLearningVisualSpec(spec: ReadableLearningVisualSpec): Lea
       invariantFailures = evaluateInvariants(spec, replay.finalState)
       checked = spec.invariants.length
       passed = Math.max(0, checked - invariantFailures.length)
-      if (replay.semanticChanges !== spec.frames.length) issues.push('frame_without_semantic_change')
+      const expectedChanges = spec.frames.filter(frame => frame.patches.length > 0).length
+      if (replay.semanticChanges !== expectedChanges) issues.push('frame_without_semantic_change')
     } catch (error) {
       issues.push(error instanceof Error ? error.message : 'animation_replay_failed')
     }
@@ -252,11 +265,14 @@ export function inspectLearningVisualSpec(spec: ReadableLearningVisualSpec): Lea
     })
   }
   if (invariantFailures.length) issues.push(...invariantFailures)
+  if (verification.failures.length) issues.push(...verification.failures.map(failure => `derived_truth:${failure}`))
   if (spec.generation.degraded) warnings.push(`degraded_to:${spec.generation.degradedTo || spec.kind}`)
   if (spec.generation.modelError) warnings.push(`model_error:${spec.generation.modelError}`)
   const uniqueIssues = Array.from(new Set(issues))
   const uniqueWarnings = Array.from(new Set(warnings))
-  const score = Math.max(0, 100 - uniqueIssues.length * 25 - uniqueWarnings.length * 4 - spec.generation.repairs.length * 2)
+  const verificationLevel = verification.checked > 0 && spec.generation.source === 'deterministic_compiler' ? 'derived_verified' : 'structural'
+  const rawScore = Math.max(0, 100 - uniqueIssues.length * 25 - uniqueWarnings.length * 4 - spec.generation.repairs.length * 2)
+  const score = verificationLevel === 'derived_verified' ? rawScore : Math.min(84, rawScore)
   return {
     score,
     status: uniqueIssues.length ? 'rejected' : spec.generation.degraded ? 'degraded' : 'passed',
@@ -269,5 +285,6 @@ export function inspectLearningVisualSpec(spec: ReadableLearningVisualSpec): Lea
     layout: { collisions: 0, outOfBounds: 0 },
     security: { executableContentRejected: true, finiteDataOnly: true },
     replayable: true,
+    verification: { level: verificationLevel, ...verification },
   }
 }

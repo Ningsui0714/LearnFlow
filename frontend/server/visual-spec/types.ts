@@ -1,8 +1,8 @@
 import type { VisualArtifact, VisualStep } from '../../src/tooling.ts'
 
-export const VISUAL_VERSION = 'learnflow.visual.v2' as const
-export const PROMPT_VERSION = 'learnflow.visual-planner.v2' as const
-export const RENDERER_VERSION = 'learnflow.deterministic-svg.v2' as const
+export const VISUAL_VERSION = 'learnflow.visual.v3' as const
+export const PROMPT_VERSION = 'learnflow.visual-planner.v3' as const
+export const RENDERER_VERSION = 'learnflow.deterministic-svg.v3' as const
 
 export type LearningVisualKind = 'diagram' | 'animation'
 export type LearningVisualDomain = 'computer' | 'mathematics'
@@ -12,12 +12,17 @@ export type ComputerVisualAbstraction =
   | 'data_structure'
   | 'code_trace'
   | 'tensor_shape_flow'
+  | 'graph_algorithm'
+  | 'event_loop'
   | 'system_structure'
 export type MathematicsVisualAbstraction =
   | 'function'
   | 'probability'
   | 'transformation'
   | 'derivation'
+  | 'matrix_operation'
+  | 'natural_frequency'
+  | 'optimization'
   | 'math_structure'
 export type LearningVisualAbstraction = ComputerVisualAbstraction | MathematicsVisualAbstraction
 
@@ -99,12 +104,81 @@ export type MathStructureSemantic = {
   relations: Array<{ id: string; from: string; to: string; label?: string }>
 }
 
+/**
+ * High-level, computable teaching models. The planner/compiler provides only
+ * source inputs; results and animation traces are derived deterministically.
+ * Pixel coordinates and raw drawing commands intentionally are not part of
+ * this public VisualSpec surface.
+ */
+export type MatrixOperationSemantic = {
+  type: 'matrix_operation'
+  id: string
+  operation: 'multiply'
+  left: { id: string; label: string; values: number[][] }
+  right: { id: string; label: string; values: number[][] }
+  resultId: string
+  focus?: { row: number; column: number }
+  transferPrompt?: string
+}
+
+export type GraphAlgorithmSemantic = {
+  type: 'graph_algorithm'
+  id: string
+  algorithm: 'dijkstra'
+  directed: boolean
+  nodes: Array<{ id: string; label: string }>
+  edges: Array<{ id: string; from: string; to: string; weight: number }>
+  sourceId: string
+  targetId: string
+  transferPrompt?: string
+}
+
+export type NaturalFrequencySemantic = {
+  type: 'natural_frequency'
+  id: string
+  population: number
+  prevalence: number
+  sensitivity: number
+  specificity: number
+  conditionLabel: string
+  positiveLabel: string
+  predictionPrompt?: string
+}
+
+export type EventLoopSemantic = {
+  type: 'event_loop'
+  id: string
+  language: 'javascript'
+  lines: Array<{ id: string; number: number; text: string }>
+  operations: Array<{
+    id: string
+    lineId: string
+    kind: 'sync' | 'microtask' | 'task'
+    output: string
+    order: number
+    label: string
+  }>
+}
+
+export type OptimizationSemantic = {
+  type: 'optimization'
+  id: string
+  objective: 'squared_distance'
+  center: number
+  initialX: number
+  learningRate: number
+  iterations: number
+  axes: { xLabel: string; yLabel: string; xDomain: VisualPoint; yDomain: VisualPoint }
+}
+
 export type ComputerVisualSemantic =
   | ProtocolSequenceSemantic
   | StateMachineSemantic
   | DataStructureSemantic
   | CodeTraceSemantic
   | TensorShapeFlowSemantic
+  | GraphAlgorithmSemantic
+  | EventLoopSemantic
   | SystemStructureSemantic
 
 export type MathematicsVisualSemantic =
@@ -112,6 +186,9 @@ export type MathematicsVisualSemantic =
   | ProbabilitySemantic
   | TransformationSemantic
   | DerivationSemantic
+  | MatrixOperationSemantic
+  | NaturalFrequencySemantic
+  | OptimizationSemantic
   | MathStructureSemantic
 
 export type VisualStateSnapshot = {
@@ -143,6 +220,15 @@ export type VisualPatch =
   | { type: 'replace_series'; seriesId: string; points: VisualPoint[] }
   | { type: 'transform_object'; objectId: string; points: VisualPoint[] }
   | { type: 'replace_expression'; stepId: string; expression: string }
+  | { type: 'set_trace_step'; semanticId: string; step: number }
+
+export type VisualPredictionGate = {
+  id: string
+  prompt: string
+  choices: Array<{ id: string; label: string }>
+  correctChoiceId: string
+  explanation: string
+}
 
 export type LearningVisualFrame = {
   id: string
@@ -150,6 +236,7 @@ export type LearningVisualFrame = {
   narration: string
   durationMs: number
   patches: VisualPatch[]
+  prediction?: VisualPredictionGate
 }
 
 export type VisualInvariant =
@@ -163,12 +250,13 @@ export type VisualInvariant =
 export type VisualRepair = { code: string; path: string; detail: string }
 
 export type VisualGenerationReport = {
-  source: 'model_plan' | 'deterministic_template' | 'legacy_reader'
+  source: 'model_plan' | 'deterministic_compiler' | 'deterministic_template' | 'legacy_reader'
   plannerSucceeded: boolean
   degraded: boolean
   degradedTo?: 'diagram' | 'storyboard' | 'deterministic_animation'
   modelError?: string
   repairs: VisualRepair[]
+  compiler?: { id: string; version: string }
 }
 
 export type VisualProvenance = {
@@ -210,6 +298,8 @@ export type ComputerLearningVisualSpec = VisualSpecCommon & { domain: 'computer'
   | { abstraction: 'data_structure'; semantic: DataStructureSemantic }
   | { abstraction: 'code_trace'; semantic: CodeTraceSemantic }
   | { abstraction: 'tensor_shape_flow'; semantic: TensorShapeFlowSemantic }
+  | { abstraction: 'graph_algorithm'; semantic: GraphAlgorithmSemantic }
+  | { abstraction: 'event_loop'; semantic: EventLoopSemantic }
   | { abstraction: 'system_structure'; semantic: SystemStructureSemantic }
 ) & (DiagramTimeline | AnimationTimeline)
 
@@ -218,6 +308,9 @@ export type MathematicsLearningVisualSpec = VisualSpecCommon & { domain: 'mathem
   | { abstraction: 'probability'; semantic: ProbabilitySemantic }
   | { abstraction: 'transformation'; semantic: TransformationSemantic }
   | { abstraction: 'derivation'; semantic: DerivationSemantic }
+  | { abstraction: 'matrix_operation'; semantic: MatrixOperationSemantic }
+  | { abstraction: 'natural_frequency'; semantic: NaturalFrequencySemantic }
+  | { abstraction: 'optimization'; semantic: OptimizationSemantic }
   | { abstraction: 'math_structure'; semantic: MathStructureSemantic }
 ) & (DiagramTimeline | AnimationTimeline)
 
@@ -275,9 +368,33 @@ export type LearningVisualQuality = {
   layout: { collisions: number; outOfBounds: number }
   security: { executableContentRejected: boolean; finiteDataOnly: boolean }
   replayable: boolean
+  verification: {
+    level: 'structural' | 'derived_verified'
+    checked: number
+    passed: number
+    failures: string[]
+  }
 }
 
-export type ReadableVisualStep = VisualStep & { durationMs?: number; stateDescription?: string }
+export type VisualSceneManifest = {
+  viewport: readonly [number, number, number, number]
+  regions: Array<{ id: string; role: string; bounds: readonly [number, number, number, number] }>
+  objects: Array<{
+    id: string
+    role: string
+    regionId: string
+    bounds: readonly [number, number, number, number]
+    value?: VisualScalar
+    status?: string
+  }>
+}
+
+export type ReadableVisualStep = VisualStep & {
+  durationMs?: number
+  stateDescription?: string
+  prediction?: VisualPredictionGate
+  manifest?: VisualSceneManifest
+}
 
 export type ReplayableVisualArtifact = VisualArtifact & {
   status: 'usable' | 'degraded'

@@ -20,11 +20,14 @@ import {
   type TensorShapeFlowSemantic,
   type TransformationSemantic,
   type VisualPoint,
+  type VisualSceneManifest,
   type VisualStateSnapshot,
 } from './types.ts'
 import { describePatch, inspectLearningVisualSpec, replayAnimation } from './runtime.ts'
+import { isDerivedSemantic } from './derived.ts'
+import { renderDerivedTeachingVisual } from './teaching-scene.ts'
 
-type RenderResult = { svg: string; collisions: number; outOfBounds: number }
+type RenderResult = { svg: string; collisions: number; outOfBounds: number; manifest?: VisualSceneManifest }
 type GraphNode = { id: string; label: string; detail?: string }
 type GraphEdge = { id: string; from: string; to: string; label?: string }
 
@@ -48,7 +51,10 @@ function svgTextLines(value: string, x: number, y: number, options: { size?: num
 }
 
 function svgShell(title: string, description: string, body: string, stateCue = '') {
-  return `<svg viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg" role="img"><title>${escapeXml(title)}</title><desc>${escapeXml(description)}</desc><defs><marker id="lf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#667d71"></path></marker><linearGradient id="lf-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fbf9"></stop><stop offset="1" stop-color="#eef5f1"></stop></linearGradient></defs><rect x="6" y="6" width="788" height="438" rx="24" fill="url(#lf-bg)" stroke="#d9e5de"></rect>${body}${stateCue ? `<rect x="22" y="405" width="756" height="28" rx="9" fill="#fff7df" stroke="#e1bd67"></rect>${svgTextLines(`状态变化：${stateCue}`, 35, 423, { anchor: 'start', size: 11, weight: 700, color: '#684e12', lineLength: 90 })}` : ''}</svg>`
+  const safeDescription = stateCue && stateCue !== '稳定单状态图解' && stateCue !== '旧版静态图解'
+    ? stateCue
+    : description
+  return `<svg viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg" role="img"><title>${escapeXml(title)}</title><desc>${escapeXml(safeDescription)}</desc><defs><marker id="lf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#667d71"></path></marker><linearGradient id="lf-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f8fbf9"></stop><stop offset="1" stop-color="#eef5f1"></stop></linearGradient></defs><rect x="6" y="6" width="788" height="438" rx="24" fill="url(#lf-bg)" stroke="#d9e5de"></rect>${body}${stateCue ? `<rect x="22" y="405" width="756" height="28" rx="9" fill="#fff7df" stroke="#e1bd67"></rect>${svgTextLines(`状态变化：${stateCue}`, 35, 423, { anchor: 'start', size: 11, weight: 700, color: '#684e12', lineLength: 90 })}` : ''}</svg>`
 }
 
 function graphSvg(title: string, description: string, nodes: GraphNode[], edges: GraphEdge[], state: VisualStateSnapshot, stateCue = ''): RenderResult {
@@ -182,13 +188,18 @@ function chartSvg(title: string, description: string, series: Array<{ id: string
 
 function probabilitySvg(spec: LearningVisualSpec & { semantic: ProbabilitySemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
   const pointValues = spec.semantic.samples.map(item => [item.x, typeof state.values[item.id] === 'number' ? state.values[item.id] as number : item.y] as VisualPoint)
-  const chart = chartSvg(spec.title, spec.accessibility.summary, [{ id: 'probability', label: spec.semantic.mode.toUpperCase(), points: pointValues }], state, stateCue)
-  if (spec.semantic.mode !== 'pmf') return chart
-  const bounds = chartBounds([pointValues])
-  const x = (value: number) => 70 + ((value - bounds.minX) / (bounds.maxX - bounds.minX)) * 650
-  const y = (value: number) => 365 - ((value - bounds.minY) / (bounds.maxY - bounds.minY)) * 285
-  const stems = pointValues.map(item => `<line x1="${x(item[0])}" y1="365" x2="${x(item[0])}" y2="${y(item[1])}" stroke="#176c96" stroke-width="4"></line><circle cx="${x(item[0])}" cy="${y(item[1])}" r="5" fill="#fff" stroke="#176c96" stroke-width="3"></circle>`).join('')
-  return { ...chart, svg: chart.svg.replace('</svg>', `${stems}</svg>`) }
+  if (spec.semantic.mode !== 'pmf') return chartSvg(spec.title, spec.accessibility.summary, [{ id: 'probability', label: spec.semantic.mode.toUpperCase(), points: pointValues }], state, stateCue)
+  const xs = pointValues.map(item => item[0])
+  let minX = Math.min(...xs); let maxX = Math.max(...xs)
+  if (minX === maxX) { minX -= 1; maxX += 1 }
+  const padding = Math.max(0.25, (maxX - minX) * 0.12)
+  minX -= padding; maxX += padding
+  const maxY = Math.max(0.01, ...pointValues.map(item => item[1])) * 1.15
+  const x = (value: number) => 70 + ((value - minX) / (maxX - minX)) * 650
+  const y = (value: number) => 365 - (value / maxY) * 285
+  const axes = `<g id="lf_pmf_axes"><line x1="70" y1="365" x2="720" y2="365" stroke="#50675b" stroke-width="2"></line><line x1="70" y1="80" x2="70" y2="365" stroke="#50675b" stroke-width="2"></line>${svgTextLines('0', 52, 365, { size: 9 })}${svgTextLines(maxY.toFixed(2), 48, 84, { size: 9 })}${svgTextLines('PMF', 650, 48, { size: 11, color: '#176c96' })}</g>`
+  const stems = pointValues.map((item, index) => `<g id="lf_pmf_${escapeXml(spec.semantic.samples[index].id)}"><line x1="${x(item[0])}" y1="365" x2="${x(item[0])}" y2="${y(item[1])}" stroke="#176c96" stroke-width="4"></line><circle cx="${x(item[0])}" cy="${y(item[1])}" r="5" fill="#fff" stroke="#176c96" stroke-width="3"></circle>${svgTextLines(String(item[0]), x(item[0]), 384, { size: 9 })}${svgTextLines(String(item[1]), x(item[0]), y(item[1]) - 13, { size: 10, color: '#176c96' })}</g>`).join('')
+  return { svg: svgShell(spec.title, spec.accessibility.summary, axes + stems, stateCue), collisions: 0, outOfBounds: 0 }
 }
 
 function derivationSvg(spec: LearningVisualSpec & { semantic: DerivationSemantic }, state: VisualStateSnapshot, stateCue: string): RenderResult {
@@ -211,6 +222,7 @@ function semanticGraph(spec: LearningVisualSpec, state: VisualStateSnapshot): { 
 }
 
 function renderSpec(spec: LearningVisualSpec, state: VisualStateSnapshot, stateCue = ''): RenderResult {
+  if (isDerivedSemantic(spec.semantic)) return renderDerivedTeachingVisual(spec, state, stateCue)
   if (spec.semantic.type === 'protocol_sequence') return protocolSvg(spec as LearningVisualSpec & { semantic: ProtocolSequenceSemantic }, state, stateCue)
   if (spec.semantic.type === 'code_trace') return codeTraceSvg(spec as LearningVisualSpec & { semantic: CodeTraceSemantic }, state, stateCue)
   if (spec.semantic.type === 'tensor_shape_flow') return tensorSvg(spec as LearningVisualSpec & { semantic: TensorShapeFlowSemantic }, state, stateCue)
@@ -234,7 +246,10 @@ function renderLegacySpec(spec: LegacyLearningVisualSpec, frame?: LegacyLearning
 }
 
 function frameDescription(frame: LearningVisualFrame) {
-  return `${frame.title}：${frame.narration}。${frame.patches.map(describePatch).join('；')}`
+  return [frame.narration, frame.patches.map(describePatch).join('；')]
+    .map(part => part.trim().replace(/[。；]+$/u, ''))
+    .filter(Boolean)
+    .join('；')
 }
 
 export function visualSpecToArtifact(spec: ReadableLearningVisualSpec): { artifact: ReplayableVisualArtifact; quality: LearningVisualQuality } {
@@ -249,30 +264,31 @@ export function visualSpecToArtifact(spec: ReadableLearningVisualSpec): { artifa
     const frames: Array<LegacyLearningVisualFrame | undefined> = spec.kind === 'animation' && spec.frames.length ? spec.frames : [undefined]
     for (const frame of frames) {
       const result = renderLegacySpec(spec, frame)
-      const description = frame ? `${frame.title}：${frame.narration || '旧版高亮帧'}` : `${spec.title}：旧版静态图解`
+      const description = frame ? frame.narration || '旧版高亮帧' : '旧版静态图解'
       rendered.push(result)
       descriptions.push(description)
-      steps.push({ title: frame?.title || spec.title, text: description, svg: result.svg, stateDescription: description })
+      steps.push({ title: frame?.title || spec.title, text: description, svg: result.svg, stateDescription: description, manifest: result.manifest })
     }
   } else if (spec.kind === 'diagram') {
     const result = renderSpec(spec, spec.state, '稳定单状态图解')
-    const description = `${spec.title}：${spec.accessibility.summary}`
+    const description = spec.accessibility.summary
     rendered.push(result)
     descriptions.push(description)
-    steps.push({ title: spec.title, text: spec.subtitle || spec.explanation, svg: result.svg, stateDescription: description })
+    steps.push({ title: spec.title, text: spec.subtitle || spec.explanation, svg: result.svg, stateDescription: description, manifest: result.manifest })
   } else {
     artifactKind = 'animation'
     const initial = renderSpec(spec, spec.initialState, '初始状态：尚未应用任何动画补丁')
+    const initialDescription = '初始状态：尚未揭晓后续状态或最终答案。'
     rendered.push(initial)
-    descriptions.push(`初始状态：${spec.accessibility.summary}`)
-    steps.push({ title: '初始状态', text: spec.accessibility.summary, svg: initial.svg, durationMs: 1200, stateDescription: descriptions[0] })
+    descriptions.push(initialDescription)
+    steps.push({ title: '初始状态', text: initialDescription, svg: initial.svg, durationMs: 1200, stateDescription: initialDescription, manifest: initial.manifest })
     const replay = replayAnimation(spec)
     spec.frames.forEach((frame, index) => {
       const description = frameDescription(frame)
       const result = renderSpec(spec, replay.states[index], description)
       rendered.push(result)
       descriptions.push(description)
-      steps.push({ title: frame.title, text: description, svg: result.svg, durationMs: frame.durationMs, stateDescription: description })
+      steps.push({ title: frame.title, text: description, svg: result.svg, durationMs: frame.durationMs, stateDescription: description, prediction: frame.prediction, manifest: result.manifest })
     })
   }
 
@@ -299,7 +315,7 @@ export function visualSpecToArtifact(spec: ReadableLearningVisualSpec): { artifa
     abstraction: spec.abstraction,
     renderer: RENDERER_VERSION,
     quality,
-    fallbackUsed: generation.source !== 'model_plan' || generation.degraded,
+    fallbackUsed: generation.source === 'deterministic_template' || generation.source === 'legacy_reader' || generation.degraded,
     status: generation.degraded ? 'degraded' : 'usable',
     degraded: generation.degraded,
     degradedTo: generation.degradedTo,

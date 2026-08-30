@@ -10,6 +10,10 @@ import {
   visualSpecToArtifact,
 } from './learning-visual-spec.ts'
 import { GOLD_VISUAL_FIXTURES } from './visual-spec/gold-fixtures.ts'
+import { parseV2Spec } from './visual-spec/validation.ts'
+import './visual-spec/gold-teaching.test.ts'
+import './visual-spec/teaching-compiler.test.ts'
+import './visual-playback.test.ts'
 
 function commonState(overrides: Record<string, unknown> = {}) {
   return {
@@ -30,6 +34,24 @@ async function generatePlan(kind: 'diagram' | 'animation', request: string, payl
   return generateLearningVisual(kind, request, async () => JSON.stringify(payload))
 }
 
+function persistedV2From(value: unknown) {
+  const payload = JSON.parse(JSON.stringify(value)) as {
+    version: string
+    provenance: {
+      schemaVersion: string
+      promptVersion: string
+      rendererVersion: string
+      requestHash: string
+      requestText: string
+    }
+  }
+  payload.version = 'learnflow.visual.v2'
+  payload.provenance.schemaVersion = 'learnflow.visual.v2'
+  payload.provenance.promptVersion = 'learnflow.visual-planner.v2'
+  payload.provenance.rendererVersion = 'learnflow.deterministic-svg.v2'
+  return payload
+}
+
 test('computer and mathematics classifiers cover every required abstraction family', () => {
   assert.deepEqual(classifyLearningVisual('演示 TCP 三次握手协议'), { domain: 'computer', abstraction: 'protocol_sequence' })
   assert.deepEqual(classifyLearningVisual('展示连接的状态机'), { domain: 'computer', abstraction: 'state_machine' })
@@ -37,14 +59,69 @@ test('computer and mathematics classifiers cover every required abstraction fami
   assert.deepEqual(classifyLearningVisual('逐行代码执行和调用栈'), { domain: 'computer', abstraction: 'code_trace' })
   assert.deepEqual(classifyLearningVisual('演示自注意力 QKV 的张量 shape 流动'), { domain: 'computer', abstraction: 'tensor_shape_flow' })
   assert.deepEqual(classifyLearningVisual('画出函数导数变化'), { domain: 'mathematics', abstraction: 'function' })
-  assert.deepEqual(classifyLearningVisual('贝叶斯概率分布'), { domain: 'mathematics', abstraction: 'probability' })
+  assert.deepEqual(classifyLearningVisual('贝叶斯概率分布'), { domain: 'mathematics', abstraction: 'natural_frequency' })
+  assert.deepEqual(classifyLearningVisual('prevalence 1%, sensitivity 90%'), { domain: 'mathematics', abstraction: 'natural_frequency' })
+  assert.deepEqual(classifyLearningVisual('患病率 1%，但还没给特异度'), { domain: 'mathematics', abstraction: 'natural_frequency' })
   assert.deepEqual(classifyLearningVisual('矩阵线性变换'), { domain: 'mathematics', abstraction: 'transformation' })
   assert.deepEqual(classifyLearningVisual('公式等式推导'), { domain: 'mathematics', abstraction: 'derivation' })
 })
 
+test('numeric fields and graph direction keep strict JSON primitive types', () => {
+  const functionPayload = (sampleY: unknown) => ({
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '严格数值', domain: 'mathematics', abstraction: 'function',
+    semantic: {
+      type: 'function',
+      axes: { xLabel: 'x', yLabel: 'y', xDomain: [-1, 1], yDomain: [-1, 2] },
+      series: [{ id: 'curve', label: 'curve', points: [[-1, 1], [0, sampleY], [1, 1]] }],
+      parameters: [],
+    },
+    state: {},
+  }) as Record<string, unknown>
+  for (const invalid of [null, false, [], '', '1']) {
+    assert.throws(
+      () => parseV2Spec(functionPayload(invalid), 'diagram', '画出函数的严格有限数值'),
+      /visual_spec_number_invalid:semantic\.series\[0\]\.points\[1\]\[1\]/,
+    )
+  }
+  assert.doesNotThrow(() => parseV2Spec(functionPayload(0), 'diagram', '画出函数的严格有限数值'))
+
+  const graphPayload = (directed: unknown) => ({
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '严格方向', domain: 'computer', abstraction: 'graph_algorithm',
+    semantic: {
+      type: 'graph_algorithm', id: 'graph_trace', algorithm: 'dijkstra', directed,
+      nodes: [{ id: 's', label: 'S' }, { id: 't', label: 'T' }],
+      edges: [{ id: 's_t', from: 's', to: 't', weight: 1 }], sourceId: 's', targetId: 't',
+    },
+    state: {},
+  }) as Record<string, unknown>
+  for (const invalid of [null, 0, 1, 'true', []]) {
+    assert.throws(
+      () => parseV2Spec(graphPayload(invalid), 'diagram', 'Dijkstra 严格方向'),
+      /visual_spec_boolean_required:semantic\.directed/,
+    )
+  }
+  assert.equal(parseV2Spec(graphPayload(false), 'diagram', 'Dijkstra 严格方向').semantic.type, 'graph_algorithm')
+  assert.equal(parseV2Spec(graphPayload(true), 'diagram', 'Dijkstra 严格方向').semantic.type, 'graph_algorithm')
+})
+
+test('reader rejects every explicit unknown schema version before shape sniffing', () => {
+  assert.throws(
+    () => readLearningVisualSpec({ version: 'learnflow.visual.v999', nodes: [{ id: 'a', label: 'A' }] }, 'diagram', '未知版本'),
+    /visual_spec_version_unsupported:learnflow\.visual\.v999/,
+  )
+  assert.throws(
+    () => readLearningVisualSpec({ version: 'learnflow.visual.v999', semantic: {} }, 'diagram', '未知版本'),
+    /visual_spec_version_unsupported:learnflow\.visual\.v999/,
+  )
+  assert.throws(
+    () => readLearningVisualSpec({ semantic: {} }, 'diagram', '无版本语义'),
+    /visual_spec_version_required/,
+  )
+})
+
 test('a function diagram uses finite samples, stable state, replayable provenance and safe SVG', async () => {
-  const generated = await generatePlan('diagram', '画出 y=x² 的有限采样图', {
-    version: 'learnflow.visual.v2', kind: 'diagram', title: '二次函数', subtitle: '有限采样，不执行表达式',
+  const generated = await generatePlan('diagram', '画出函数 y=x² 的有限采样图', {
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '二次函数', subtitle: '有限采样，不执行表达式',
     domain: 'mathematics', abstraction: 'function',
     semantic: {
       type: 'function',
@@ -60,10 +137,12 @@ test('a function diagram uses finite samples, stable state, replayable provenanc
   assert.equal(generated.degraded, false)
   assert.equal(generated.spec.kind, 'diagram')
   assert.equal(generated.artifact.kind, 'image')
-  assert.equal(generated.artifact.specVersion, 'learnflow.visual.v2')
+  assert.equal(generated.artifact.specVersion, 'learnflow.visual.v3')
   assert.equal(generated.artifact.provenance.requestHash, generated.spec.provenance.requestHash)
   assert.equal(generated.artifact.replay.spec, generated.spec)
   assert.equal(generated.quality.replayable, true)
+  assert.equal(generated.quality.verification.level, 'structural')
+  assert.equal(generated.quality.score, 84)
   assert.equal(generated.quality.layout.collisions, 0)
   assert.equal(generated.quality.layout.outOfBounds, 0)
   assert.match(generated.artifact.steps[0].svg, /^<svg/)
@@ -72,7 +151,7 @@ test('a function diagram uses finite samples, stable state, replayable provenanc
 
 test('diagram rejects timeline fields instead of displaying a content-free fallback', async () => {
   await assert.rejects(() => generatePlan('diagram', '解释模块关系', {
-    version: 'learnflow.visual.v2', kind: 'diagram', title: '模块关系', domain: 'computer', abstraction: 'system_structure',
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '模块关系', domain: 'computer', abstraction: 'system_structure',
     semantic: { type: 'system_structure', entities: [{ id: 'a', label: 'A' }], relations: [] },
     state: {}, frames: [],
   }), /visual_generation_unavailable:.*diagram_timeline_forbidden/)
@@ -80,7 +159,7 @@ test('diagram rejects timeline fields instead of displaying a content-free fallb
 
 test('protocol animation replays typed send_message patches and verifies final state', async () => {
   const generated = await generatePlan('animation', '演示一次客户端请求', {
-    version: 'learnflow.visual.v2', kind: 'animation', title: '请求时序', domain: 'computer', abstraction: 'protocol_sequence',
+    version: 'learnflow.visual.v3', kind: 'animation', title: '请求时序', domain: 'computer', abstraction: 'protocol_sequence',
     semantic: {
       type: 'protocol_sequence',
       participants: [{ id: 'client', label: '客户端' }, { id: 'server', label: '服务端' }],
@@ -182,6 +261,9 @@ test('probability diagram enforces normalized PMF finite data', async () => {
   assert.equal(generated.plannerSucceeded, true)
   assert.equal(generated.quality.issues.length, 0)
   assert.match(generated.artifact.steps[0].svg, /PMF/)
+  const stems = [...generated.artifact.steps[0].svg.matchAll(/id="lf_pmf_(?!axes)[^"]+"><line[^>]+y1="365"[^>]+y2="([0-9.]+)"/g)]
+  assert.equal(stems.length, 2)
+  assert.ok(stems.every(match => Number(match[1]) < 365), 'every positive PMF mass must rise above the zero baseline')
 })
 
 test('probability animation updates finite samples with a domain-specific patch', async () => {
@@ -230,7 +312,7 @@ test('mathematical transformation animation uses finite coordinates and paramete
 })
 
 test('derivation animation replaces an expression as inert text', async () => {
-  const generated = await generatePlan('animation', '展示交换律推导', {
+  const generated = await generatePlan('animation', '展示公式交换律推导', {
     kind: 'animation', title: '交换律', domain: 'mathematics', abstraction: 'derivation',
     semantic: { type: 'derivation', steps: [{ id: 's1', expression: 'a + b', relation: 'definition', reason: '起点', changedTerms: [] }, { id: 's2', expression: 'a + b', relation: 'equals', reason: '交换律', changedTerms: ['a', 'b'] }] },
     initialState: { expressions: { s2: 'a + b' } },
@@ -243,7 +325,7 @@ test('derivation animation replaces an expression as inert text', async () => {
 })
 
 test('a frame whose patch changes only focus is rejected as a fake animation', async () => {
-  await assert.rejects(() => generatePlan('animation', '变量保持不变', {
+  await assert.rejects(() => generatePlan('animation', '逐行代码变量保持不变', {
     kind: 'animation', title: '无变化', domain: 'computer', abstraction: 'code_trace',
     semantic: { type: 'code_trace', language: 'pseudocode', lines: [{ id: 'line1', number: 1, text: 'x ← 1' }], variables: [{ id: 'x', name: 'x', initialValue: 1 }], stackFrames: [] },
     initialState: { values: { x: 1 } },
@@ -251,6 +333,79 @@ test('a frame whose patch changes only focus is rejected as a fake animation', a
     invariants: [{ type: 'references_resolve' }],
     finalState: { activeIds: ['x'], values: { x: 1 } },
   }), /visual_generation_unavailable:.*(?:frame_without_semantic_change|visual_patch_no_change)/)
+})
+
+test('a prediction gate cannot reveal its answer by applying a patch in the same frame', async () => {
+  await assert.rejects(generatePlan('animation', '展示一个状态机并先预测', {
+    kind: 'animation', title: '预测状态变化', domain: 'computer', abstraction: 'state_machine',
+    semantic: {
+      type: 'state_machine',
+      states: [{ id: 'idle', label: '空闲', initial: true }, { id: 'busy', label: '运行' }],
+      transitions: [{ id: 'start', from: 'idle', to: 'busy', event: 'start' }],
+    },
+    initialState: { currentStateId: 'idle' },
+    frames: [{
+      id: 'predict_and_reveal', title: '先预测', narration: '预测下一状态。',
+      prediction: {
+        id: 'gate_state', prompt: '下一状态是什么？',
+        choices: [{ id: 'choice_idle', label: '空闲' }, { id: 'choice_busy', label: '运行' }],
+        correctChoiceId: 'choice_busy', explanation: 'start 触发 idle 到 busy。',
+      },
+      patches: [{ type: 'transition_state', transitionId: 'start', from: 'idle', to: 'busy' }],
+    }],
+    invariants: [{ type: 'final_state_active', targetId: 'busy' }],
+    finalState: { activeIds: ['start', 'busy'], currentStateId: 'busy' },
+  }), /visual_spec_prediction_frame_must_not_patch/)
+})
+
+test('a prediction gate must be followed by a real reveal frame', async () => {
+  await assert.rejects(generatePlan('animation', '展示一个状态机并先预测', {
+    kind: 'animation', title: '未揭晓的预测', domain: 'computer', abstraction: 'state_machine',
+    semantic: {
+      type: 'state_machine',
+      states: [{ id: 'idle', label: '空闲', initial: true }, { id: 'busy', label: '运行' }],
+      transitions: [{ id: 'start', from: 'idle', to: 'busy', event: 'start' }],
+    },
+    initialState: { currentStateId: 'idle' },
+    frames: [{
+      id: 'prediction_only', title: '先预测', narration: '预测下一状态。', patches: [],
+      prediction: {
+        id: 'gate_state', prompt: '下一状态是什么？',
+        choices: [{ id: 'choice_idle', label: '空闲' }, { id: 'choice_busy', label: '运行' }],
+        correctChoiceId: 'choice_busy', explanation: 'start 会进入 busy。',
+      },
+    }],
+    invariants: [{ type: 'references_resolve' }],
+    finalState: { currentStateId: 'idle' },
+  }), /visual_spec_prediction_without_reveal/)
+})
+
+test('a structural model plan cannot claim a verified non-leaking prediction gate', async () => {
+  await assert.rejects(generatePlan('animation', '展示一个状态机并先预测', {
+    kind: 'animation', title: '模型预测状态变化', domain: 'computer', abstraction: 'state_machine',
+    semantic: {
+      type: 'state_machine',
+      states: [{ id: 'idle', label: '空闲', initial: true }, { id: 'busy', label: '运行' }],
+      transitions: [{ id: 'start', from: 'idle', to: 'busy', event: 'start' }],
+    },
+    initialState: { currentStateId: 'idle' },
+    frames: [
+      {
+        id: 'predict', title: '先预测', narration: '先预测下一状态。', patches: [],
+        prediction: {
+          id: 'gate_state', prompt: '下一状态是什么？',
+          choices: [{ id: 'choice_idle', label: '空闲' }, { id: 'choice_busy', label: '运行' }],
+          correctChoiceId: 'choice_busy', explanation: 'start 会触发 idle 到 busy。',
+        },
+      },
+      {
+        id: 'reveal', title: '揭晓', narration: '进入运行状态。',
+        patches: [{ type: 'transition_state', transitionId: 'start', fromStateId: 'idle', toStateId: 'busy' }],
+      },
+    ],
+    invariants: [{ type: 'final_state_active', targetId: 'busy' }],
+    finalState: { activeIds: ['start', 'busy'], currentStateId: 'busy' },
+  }), /visual_spec_prediction_requires_verified_compiler/)
 })
 
 test('setting a tensor to its declared shape is a no-op even when initialState omits the duplicate value', async () => {
@@ -352,6 +507,253 @@ test('provider failure uses only a verified deterministic template and otherwise
     () => generateLearningVisual('animation', '演示一个没有足够事实的主题', async () => { throw new Error('empty model output') }),
     /visual_generation_unavailable:empty model output/,
   )
+
+  await assert.rejects(
+    () => generateLearningVisual('animation', '逐步演示 TCP 四次挥手', async () => { throw new Error('provider timeout') }),
+    /visual_generation_unavailable:provider timeout/,
+  )
+  await assert.rejects(
+    () => generateLearningVisual('diagram', '画一张联邦学习投毒攻击的防御流程图', async () => { throw new Error('provider timeout') }),
+    /visual_generation_unavailable:provider timeout/,
+  )
+})
+
+test('request intent blocks a valid but unrelated model abstraction before display', async () => {
+  let modelCalls = 0
+  const generated = await generateLearningVisual('animation', '逐步演示 TCP 三次握手', async () => {
+    modelCalls += 1
+    return JSON.stringify({
+      version: 'learnflow.visual.v3', kind: 'animation', title: '无关概率动画', domain: 'mathematics', abstraction: 'probability',
+      semantic: {
+        type: 'probability', mode: 'pmf', xLabel: 'x', yLabel: 'P(X=x)',
+        samples: [{ id: 'p0', x: 0, y: 0.4 }, { id: 'p1', x: 1, y: 0.6 }],
+      },
+      initialState: {},
+      frames: [{
+        id: 'change_probability', title: '调整概率', narration: '调整两个有限样本。',
+        patches: [
+          { type: 'set_probability_sample', sampleId: 'p0', y: 0.3 },
+          { type: 'set_probability_sample', sampleId: 'p1', y: 0.7 },
+        ],
+      }],
+      invariants: [{ type: 'probability_bounds' }],
+      finalState: { activeIds: ['p0', 'p1'], values: { p0: 0.3, p1: 0.7 } },
+    })
+  })
+
+  assert.equal(modelCalls, 1)
+  assert.equal(generated.spec.abstraction, 'protocol_sequence')
+  assert.equal(generated.spec.semantic.type, 'protocol_sequence')
+  assert.match(generated.modelError || '', /visual_spec_domain_abstraction_mismatch/)
+})
+
+test('an incomplete natural-frequency request never falls through to the model', async () => {
+  let modelCalls = 0
+  await assert.rejects(
+    () => generateLearningVisual(
+      'diagram',
+      '用自然频数解释贝叶斯：总人数 10000，患病率 1%，敏感度 90%，还没有给出另一项指标',
+      async () => {
+        modelCalls += 1
+        return '{}'
+      },
+    ),
+    /natural_frequency_specificity_missing/,
+  )
+  assert.equal(modelCalls, 0)
+})
+
+test('a legal persisted v2 spec migrates to v3 and then round-trips as v3', async () => {
+  const generated = await generatePlan('diagram', '版本迁移系统图', {
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '版本迁移系统图', domain: 'computer', abstraction: 'system_structure',
+    semantic: {
+      type: 'system_structure',
+      entities: [{ id: 'input', label: '输入' }, { id: 'output', label: '输出' }],
+      relations: [{ id: 'flow', from: 'input', to: 'output', kind: 'flow' }],
+    },
+    state: {},
+  })
+  const persistedV2 = persistedV2From(generated.spec)
+  const migrated = readLearningVisualSpec(persistedV2, 'diagram', '不得覆盖旧 requestText')
+
+  assert.equal(migrated.version, 'learnflow.visual.v3')
+  assert.deepEqual(
+    [migrated.provenance.schemaVersion, migrated.provenance.promptVersion, migrated.provenance.rendererVersion],
+    ['learnflow.visual.v3', 'learnflow.visual-planner.v3', 'learnflow.deterministic-svg.v3'],
+  )
+  assert.equal(migrated.provenance.requestHash, persistedV2.provenance.requestHash)
+  assert.equal(migrated.provenance.requestText, persistedV2.provenance.requestText)
+  assert.ok(migrated.generation.repairs.some(repair => repair.code === 'schema_migrated_v2_to_v3'))
+
+  const rendered = visualSpecToArtifact(migrated)
+  assert.equal(rendered.artifact.specVersion, 'learnflow.visual.v3')
+  assert.equal(rendered.artifact.renderer, 'learnflow.deterministic-svg.v3')
+  const reread = readLearningVisualSpec(JSON.parse(JSON.stringify(migrated)), 'diagram', '仍不得覆盖旧 requestText')
+  assert.deepEqual(reread, migrated)
+})
+
+test('v2 migration rejects every non-canonical provenance tuple and a forged request hash', async () => {
+  const generated = await generatePlan('diagram', '严格校验旧 provenance', {
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '严格 provenance', domain: 'computer', abstraction: 'system_structure',
+    semantic: {
+      type: 'system_structure',
+      entities: [{ id: 'left', label: '左' }, { id: 'right', label: '右' }],
+      relations: [{ id: 'mapping', from: 'left', to: 'right', kind: 'mapping' }],
+    },
+    state: {},
+  })
+  const mutations: Array<(payload: ReturnType<typeof persistedV2From>) => void> = [
+    payload => { payload.provenance.schemaVersion = 'learnflow.visual.v1' },
+    payload => { payload.provenance.promptVersion = 'learnflow.visual-planner.v3' },
+    payload => { payload.provenance.rendererVersion = 'learnflow.deterministic-svg.v999' },
+  ]
+  for (const mutate of mutations) {
+    const invalid = persistedV2From(generated.spec)
+    mutate(invalid)
+    assert.throws(() => readLearningVisualSpec(invalid, 'diagram', '严格校验旧 provenance'), /visual_spec_provenance_version_invalid/)
+  }
+
+  const forged = persistedV2From(generated.spec)
+  forged.provenance.requestText = `${forged.provenance.requestText} forged`
+  assert.throws(() => readLearningVisualSpec(forged, 'diagram', '严格校验旧 provenance'), /visual_spec_provenance_hash_mismatch/)
+})
+
+test('a valid v2 payload without provenance records an explicit repair and stays structural', async () => {
+  const generated = await generatePlan('diagram', '缺失 provenance 的旧系统图', {
+    version: 'learnflow.visual.v3', kind: 'diagram', title: '旧系统图', domain: 'computer', abstraction: 'system_structure',
+    semantic: {
+      type: 'system_structure',
+      entities: [{ id: 'source', label: '来源' }, { id: 'sink', label: '去向' }],
+      relations: [{ id: 'flow', from: 'source', to: 'sink', kind: 'flow' }],
+    },
+    state: {},
+  })
+  const persistedV2 = persistedV2From(generated.spec) as ReturnType<typeof persistedV2From> & { provenance?: unknown }
+  delete persistedV2.provenance
+
+  const migrated = readLearningVisualSpec(persistedV2, 'diagram', '迁移时重建 provenance')
+  const migration = migrated.generation.repairs.find(repair => repair.code === 'schema_migrated_v2_to_v3')
+  assert.equal(migrated.provenance.requestText, '迁移时重建 provenance')
+  assert.equal(migration?.detail, 'legacy_v2_schema_validated_and_missing_provenance_regenerated')
+  assert.equal(visualSpecToArtifact(migrated).quality.verification.level, 'structural')
+})
+
+test('v3-only computable semantics cannot masquerade as a legacy v2 closed schema', async () => {
+  const generated = await generateLearningVisual(
+    'diagram',
+    '矩阵乘法 A=[[1,2],[3,4]]，B=[[5],[6]]，重点解释 C_11',
+    async () => { throw new Error('deterministic compiler should not call model') },
+  )
+  const disguised = persistedV2From(generated.spec)
+  assert.throws(
+    () => readLearningVisualSpec(disguised, 'diagram', disguised.provenance.requestText),
+    /visual_spec_v2_abstraction_unsupported:mathematics.matrix_operation/,
+  )
+})
+
+test('persisted v3 deterministic compiler claims require the exact registered compiler tuple', async () => {
+  const generated = await generateLearningVisual(
+    'diagram',
+    '矩阵乘法 A=[[1,2],[3,4]]，B=[[5],[6]]，重点解释 C_11',
+    async () => { throw new Error('deterministic compiler should not call model') },
+  )
+  const valid = readLearningVisualSpec(
+    JSON.parse(JSON.stringify(generated.spec)),
+    'diagram',
+    generated.spec.provenance.requestText,
+  )
+  assert.equal(visualSpecToArtifact(valid).quality.verification.level, 'derived_verified')
+
+  const forgedId = JSON.parse(JSON.stringify(generated.spec)) as {
+    generation: { compiler: { id: string; version: string } }
+  }
+  forgedId.generation.compiler.id = 'learnflow.forged-compiler'
+  assert.throws(
+    () => readLearningVisualSpec(forgedId, 'diagram', generated.spec.provenance.requestText),
+    /visual_spec_generation_compiler_version_invalid/,
+  )
+
+  const forgedVersion = JSON.parse(JSON.stringify(generated.spec)) as {
+    generation: { compiler: { id: string; version: string } }
+  }
+  forgedVersion.generation.compiler.version = '999.0.0'
+  assert.throws(
+    () => readLearningVisualSpec(forgedVersion, 'diagram', generated.spec.provenance.requestText),
+    /visual_spec_generation_compiler_version_invalid/,
+  )
+})
+
+test('persisted deterministic compiler claims are recompiled from provenance before trust', async () => {
+  const matrix = await generateLearningVisual(
+    'diagram',
+    '矩阵乘法 A=[[1,2],[3,4]]，B=[[5],[6]]，重点解释 C_11',
+    async () => { throw new Error('deterministic compiler should not call model') },
+  )
+  type MutableMatrixSpec = {
+    title: string
+    explanation: string
+    semantic: { left: { values: number[][] } }
+    state: { activeIds: string[] }
+    accessibility: { summary: string }
+  }
+  const matrixMutations: Array<(payload: MutableMatrixSpec) => void> = [
+    payload => { payload.semantic.left.values[0][0] = 9 },
+    payload => { payload.state.activeIds = ['matrix_a'] },
+    payload => { payload.title = '伪造标题' },
+    payload => { payload.explanation = '伪造说明' },
+    payload => { payload.accessibility.summary = '伪造无障碍摘要' },
+  ]
+  for (const mutate of matrixMutations) {
+    const forged = JSON.parse(JSON.stringify(matrix.spec)) as MutableMatrixSpec
+    mutate(forged)
+    assert.throws(
+      () => readLearningVisualSpec(forged, 'diagram', matrix.spec.provenance.requestText),
+      /visual_spec_deterministic_compiler_claim_mismatch/,
+    )
+  }
+
+  const optimization = await generateLearningVisual(
+    'animation',
+    '演示 f(x)=(x-2)^2 的梯度下降，x0=-2，学习率 α=.25，迭代 4 步',
+    async () => { throw new Error('deterministic compiler should not call model') },
+  )
+  type MutableCompiledAnimation = { frames: Array<{ prediction?: unknown; narration: string; patches: Array<{ type: string; step?: number }> }> }
+  const forgedTimeline = JSON.parse(JSON.stringify(optimization.spec)) as MutableCompiledAnimation
+  forgedTimeline.frames.find(frame => !frame.prediction)!.narration = '伪造帧说明'
+  assert.throws(
+    () => readLearningVisualSpec(forgedTimeline, 'animation', optimization.spec.provenance.requestText),
+    /visual_spec_deterministic_compiler_claim_mismatch/,
+  )
+})
+
+test('deterministic derived traces cannot jump, repeat or move backward', async () => {
+  const generated = await generateLearningVisual(
+    'animation',
+    '演示 f(x)=(x-2)^2 的梯度下降，x0=-2，学习率 α=.25，迭代 4 步',
+    async () => { throw new Error('deterministic compiler should not call model') },
+  )
+  type MutableTraceSpec = {
+    frames: Array<{ prediction?: unknown; id: string; patches: Array<{ type: string; step?: number }> }>
+  }
+  const forgedTrace = (ordinaryIndex: number, step: number) => {
+    const payload = JSON.parse(JSON.stringify(generated.spec)) as MutableTraceSpec
+    const ordinary = payload.frames.filter(frame => !frame.prediction)
+    ordinary[ordinaryIndex].patches[0].step = step
+    return payload
+  }
+
+  assert.throws(
+    () => readLearningVisualSpec(forgedTrace(0, 2), 'animation', generated.spec.provenance.requestText),
+    /visual_spec_trace_sequence_invalid:.*expected_1:received_2/,
+  )
+  assert.throws(
+    () => readLearningVisualSpec(forgedTrace(1, 1), 'animation', generated.spec.provenance.requestText),
+    /visual_spec_trace_sequence_invalid:.*expected_2:received_1/,
+  )
+  assert.throws(
+    () => readLearningVisualSpec(forgedTrace(2, 1), 'animation', generated.spec.provenance.requestText),
+    /visual_spec_trace_sequence_invalid:.*expected_3:received_1/,
+  )
 })
 
 test('degraded generation metadata and provenance survive persisted-spec replay', async () => {
@@ -403,7 +805,7 @@ test('every gold fixture validates, renders and replays without a model or netwo
     assert.equal(rendered.quality.layout.collisions, 0, name)
     assert.equal(rendered.quality.layout.outOfBounds, 0, name)
     assert.match(rendered.artifact.steps[0].svg, /^<svg/, name)
-    if (spec.version === 'learnflow.visual.v2' && spec.kind === 'animation') {
+    if (spec.version === 'learnflow.visual.v3' && spec.kind === 'animation') {
       assert.ok(quality.semanticChanges >= 1, name)
       assert.deepEqual(replayAnimation(spec).finalState, spec.finalState, name)
     }
@@ -441,10 +843,17 @@ test('a one-node topic anchor is rejected as non-instructional', async () => {
 
 test('VisualArtifact source exposes keyboard, pause, live frame text and reduced-motion contracts', async () => {
   const source = await readFile(new URL('../src/VisualArtifact.tsx', import.meta.url), 'utf8')
+  const gateStyles = await readFile(new URL('../src/visual-artifact-gate.css', import.meta.url), 'utf8')
   assert.match(source, /prefers-reduced-motion: reduce/)
   assert.match(source, /onKeyDown=\{handleKeyboard\}/)
   assert.match(source, /aria-live="polite"/)
   assert.match(source, /aria-pressed=\{playing\}/)
+  assert.match(source, /currentAccessibleSummary = isAnimation \? frameDescription : summary/)
+  assert.match(source, /!isAnimation && artifact\.subtitle/)
+  assert.match(source, /aria-label="重新开始"/)
   assert.match(source, /暂停/)
   assert.match(source, /nonColorStateCue/)
+  assert.match(gateStyles, /overflow-x:\s*auto/)
+  assert.match(gateStyles, /min-width:\s*900px/)
+  assert.match(gateStyles, /max-height:\s*none/)
 })

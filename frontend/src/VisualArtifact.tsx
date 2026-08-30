@@ -1,5 +1,7 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useMemo, useReducer, useState, type KeyboardEvent } from 'react'
 import type { VisualArtifact as VisualArtifactData } from './tooling'
+import { answerForGate, gateResolved, initialVisualPlaybackState, reduceVisualPlayback } from './visual-playback'
+import './visual-artifact-gate.css'
 
 const SAFE_TAGS = new Set([
   'svg', 'g', 'circle', 'rect', 'line', 'path', 'text', 'polygon', 'polyline',
@@ -29,6 +31,7 @@ type AccessibleVisualArtifact = VisualArtifactData & {
     frameDescriptions?: string[]
     nonColorStateCue?: string
   }
+  provenance?: { requestHash?: string }
 }
 
 type AccessibleVisualStep = VisualArtifactData['steps'][number] & {
@@ -87,8 +90,7 @@ function useReducedMotion() {
 
 export default function VisualArtifact({ artifact }: { artifact: VisualArtifactData }) {
   const accessibleArtifact = artifact as AccessibleVisualArtifact
-  const [stepIndex, setStepIndex] = useState(0)
-  const [playing, setPlaying] = useState(false)
+  const [playback, dispatchPlayback] = useReducer(reduceVisualPlayback, undefined, initialVisualPlaybackState)
   const reducedMotion = useReducedMotion()
   const titleId = useId()
   const descriptionId = useId()
@@ -99,28 +101,23 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
   const degradedToStoryboard = effectiveDegradedTo === 'storyboard'
   const isAnimation = rawKind === 'animation' && !degradedToStoryboard && effectiveDegradedTo !== 'diagram'
   const steps = (artifact.steps || []) as AccessibleVisualStep[]
+  const stepIndex = playback.index
+  const playing = playback.playing
   const safeSvgs = useMemo(() => steps.map(step => sanitizeSvg(step.svg)), [steps])
 
   useEffect(() => {
-    setStepIndex(0)
-    setPlaying(false)
-  }, [artifact.title, artifact.specVersion])
+    dispatchPlayback({ type: 'RESET' })
+  }, [artifact.title, artifact.specVersion, accessibleArtifact.provenance?.requestHash, steps.length])
 
   useEffect(() => {
-    if (reducedMotion || !isAnimation) setPlaying(false)
+    if (reducedMotion || !isAnimation) dispatchPlayback({ type: 'MOVE', target: stepIndex, steps })
   }, [isAnimation, reducedMotion])
 
   useEffect(() => {
     if (!playing || !isAnimation || reducedMotion || steps.length < 2) return
     const duration = Math.max(500, Math.min(10_000, steps[Math.min(stepIndex, steps.length - 1)]?.durationMs || 1500))
     const timer = globalThis.setTimeout(() => {
-      setStepIndex(current => {
-        if (current >= steps.length - 1) {
-          setPlaying(false)
-          return current
-        }
-        return current + 1
-      })
+      dispatchPlayback({ type: 'TICK', steps })
     }, duration)
     return () => globalThis.clearTimeout(timer)
   }, [isAnimation, playing, reducedMotion, stepIndex, steps])
@@ -128,6 +125,9 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
   if (!steps.length) return null
   const activeIndex = Math.min(stepIndex, steps.length - 1)
   const activeStep = steps[activeIndex]
+  const activePrediction = activeStep.prediction
+  const selectedChoiceId = answerForGate(playback, activePrediction?.id)
+  const predictionResolved = gateResolved(playback, activeStep)
   const imageUrl = safeSvgs[activeIndex] ? svgDataUrl(safeSvgs[activeIndex]) : ''
   const frameDescription = accessibleArtifact.readable?.frameDescriptions?.[activeIndex]
     || activeStep.stateDescription
@@ -135,25 +135,24 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
     || activeStep.title
     || `第 ${activeIndex + 1} 步`
   const summary = accessibleArtifact.readable?.summary || artifact.subtitle || artifact.title
+  const currentAccessibleSummary = isAnimation ? frameDescription : summary
   const showStepNavigation = steps.length > 1
   const degraded = legacyHighlightOnly || accessibleArtifact.degraded === true || accessibleArtifact.status === 'degraded' || Boolean(effectiveDegradedTo)
 
   const moveTo = (next: number) => {
-    setPlaying(false)
-    setStepIndex(Math.max(0, Math.min(steps.length - 1, next)))
+    dispatchPlayback({ type: 'MOVE', target: next, steps })
   }
 
   const togglePlayback = () => {
     if (!isAnimation || reducedMotion) return
-    if (!playing && activeIndex === steps.length - 1) setStepIndex(0)
-    setPlaying(value => !value)
+    dispatchPlayback({ type: 'TOGGLE', steps })
   }
 
   const handleKeyboard = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget || !showStepNavigation) return
     if (event.key === 'ArrowLeft') { event.preventDefault(); moveTo(activeIndex - 1) }
     else if (event.key === 'ArrowRight') { event.preventDefault(); moveTo(activeIndex + 1) }
-    else if (event.key === 'Home') { event.preventDefault(); moveTo(0) }
+    else if (event.key === 'Home') { event.preventDefault(); dispatchPlayback({ type: 'RESET' }) }
     else if (event.key === 'End') { event.preventDefault(); moveTo(steps.length - 1) }
     else if ((event.key === ' ' || event.key === 'Enter') && isAnimation && !reducedMotion) { event.preventDefault(); togglePlayback() }
   }
@@ -168,13 +167,13 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
     >
       <figcaption>
         <strong id={titleId}>{artifact.title}</strong>
-        {artifact.subtitle && <span>{artifact.subtitle}</span>}
+        {!isAnimation && artifact.subtitle && <span>{artifact.subtitle}</span>}
         {degraded && <em className="visual-status-badge">已降级为{effectiveDegradedTo === 'storyboard' ? '故事板' : effectiveDegradedTo === 'deterministic_animation' ? '确定性动画' : '图解'}</em>}
       </figcaption>
-      <p id={descriptionId} className="visual-sr-only">{summary}。{accessibleArtifact.readable?.nonColorStateCue}</p>
+      <p id={descriptionId} className="visual-sr-only">{currentAccessibleSummary}。{accessibleArtifact.readable?.nonColorStateCue}</p>
       <div id={canvasId} className="visual-canvas" aria-live="off">
         {imageUrl
-          ? <img src={imageUrl} alt={`${artifact.title}${activeStep.title ? `：${activeStep.title}` : ''}。${frameDescription}`} />
+          ? <img src={imageUrl} alt={frameDescription} />
           : <span role="alert">可视化内容未通过安全校验</span>}
       </div>
       {(isAnimation || degradedToStoryboard || showStepNavigation) && (
@@ -183,16 +182,38 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
           <span>{frameDescription}</span>
         </div>
       )}
+      {activePrediction && (
+        <section className="visual-prediction-gate" aria-label="预测后揭晓" aria-live="polite">
+          <strong>先预测</strong>
+          <p>{activePrediction.prompt}</p>
+          <div role="group" aria-label="预测选项">
+            {activePrediction.choices.map(choice => (
+              <button
+                key={choice.id}
+                type="button"
+                aria-pressed={selectedChoiceId === choice.id}
+                onClick={() => dispatchPlayback({ type: 'ANSWER', gateId: activePrediction.id, choiceId: choice.id, steps })}
+              >{choice.label}</button>
+            ))}
+          </div>
+          {selectedChoiceId && (
+            <p role="status">
+              {selectedChoiceId === activePrediction.correctChoiceId ? '判断正确。' : '这个预测不成立。'}{activePrediction.explanation}
+            </p>
+          )}
+        </section>
+      )}
       {reducedMotion && isAnimation && <p className="visual-reduced-motion-note">已启用减少动态效果，请使用前后按钮逐帧查看。</p>}
       {showStepNavigation && (
         <div className="animation-controls" aria-label={isAnimation ? '动画控制' : '故事板控制'}>
+          <button type="button" onClick={() => dispatchPlayback({ type: 'RESET' })} aria-label="重新开始">↺</button>
           <button type="button" onClick={() => moveTo(activeIndex - 1)} disabled={activeIndex === 0} aria-label="查看上一步">←</button>
           {isAnimation && (
             <button
               type="button"
               className="animation-play"
               onClick={togglePlayback}
-              disabled={reducedMotion}
+              disabled={reducedMotion || !predictionResolved}
               aria-pressed={playing}
               aria-controls={canvasId}
             >{playing ? '暂停' : '播放'}</button>
@@ -207,7 +228,7 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
             aria-valuetext={`第 ${activeIndex + 1} 步：${activeStep.title || frameDescription}`}
           />
           <span>{activeIndex + 1} / {steps.length}</span>
-          <button type="button" onClick={() => moveTo(activeIndex + 1)} disabled={activeIndex === steps.length - 1} aria-label="查看下一步">→</button>
+          <button type="button" onClick={() => moveTo(activeIndex + 1)} disabled={activeIndex === steps.length - 1 || !predictionResolved} aria-label="查看下一步">→</button>
         </div>
       )}
     </figure>

@@ -7,7 +7,9 @@ import {
   type ComputerVisualSemantic,
   type DataStructureSemantic,
   type DerivationSemantic,
+  type EventLoopSemantic,
   type FunctionSemantic,
+  type GraphAlgorithmSemantic,
   type LearningVisualAbstraction,
   type LearningVisualDomain,
   type LearningVisualFrame,
@@ -20,6 +22,9 @@ import {
   type MathematicsVisualAbstraction,
   type MathematicsVisualSemantic,
   type MathStructureSemantic,
+  type MatrixOperationSemantic,
+  type NaturalFrequencySemantic,
+  type OptimizationSemantic,
   type ProbabilitySemantic,
   type ProtocolSequenceSemantic,
   type ReadableLearningVisualSpec,
@@ -32,13 +37,42 @@ import {
   type VisualInvariant,
   type VisualPatch,
   type VisualPoint,
+  type VisualPredictionGate,
   type VisualProvenance,
   type VisualRepair,
   type VisualScalar,
   type VisualStateSnapshot,
 } from './types.ts'
+import { derivedTraceLength, isDerivedSemantic } from './derived.ts'
+import { deriveTeachingRequest, TEACHING_COMPILER_ID, TEACHING_COMPILER_VERSION } from './teaching-compiler.ts'
+import { teachingDerivationToSpec } from './teaching-spec.ts'
 
 type ParseContext = { repairs: VisualRepair[] }
+
+const LEGACY_V1_VERSION = 'learnflow.visual.v1' as const
+const LEGACY_V2_VERSION = 'learnflow.visual.v2' as const
+const LEGACY_V2_PROMPT_VERSION = 'learnflow.visual-planner.v2' as const
+const LEGACY_V2_RENDERER_VERSION = 'learnflow.deterministic-svg.v2' as const
+const LEGACY_V2_ABSTRACTIONS = {
+  computer: new Set(['protocol_sequence', 'state_machine', 'data_structure', 'code_trace', 'tensor_shape_flow', 'system_structure']),
+  mathematics: new Set(['function', 'probability', 'transformation', 'derivation', 'math_structure']),
+} as const
+const LEGACY_V2_PATCH_TYPES = new Set([
+  'send_message',
+  'transition_state',
+  'move_item',
+  'set_pointer',
+  'set_active_line',
+  'set_variable',
+  'push_stack',
+  'pop_stack',
+  'set_tensor_shape',
+  'set_parameter',
+  'set_probability_sample',
+  'replace_series',
+  'transform_object',
+  'replace_expression',
+])
 
 const MAX_ENTITIES = 24
 const MAX_RELATIONS = 32
@@ -76,9 +110,10 @@ function id(value: unknown, path: string) {
 }
 
 function finiteNumber(value: unknown, path: string, min = -1_000_000, max = 1_000_000) {
-  const output = typeof value === 'number' ? value : Number(value)
-  if (!Number.isFinite(output) || output < min || output > max) throw new Error(`visual_spec_number_invalid:${path}`)
-  return output
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`visual_spec_number_invalid:${path}`)
+  }
+  return value
 }
 
 function integer(value: unknown, path: string, min: number, max: number) {
@@ -124,6 +159,15 @@ function points(value: unknown, path: string, minimum = 1, maximum = MAX_POINTS)
   return boundedArray(value, path, minimum, maximum).map((item, index) => point(item, `${path}[${index}]`))
 }
 
+function numericMatrix(value: unknown, path: string) {
+  const rows = boundedArray(value, path, 1, 8).map((row, rowIndex) => (
+    boundedArray(row, `${path}[${rowIndex}]`, 1, 8).map((item, columnIndex) => finiteNumber(item, `${path}[${rowIndex}][${columnIndex}]`))
+  ))
+  const columns = rows[0].length
+  if (rows.some(row => row.length !== columns)) throw new Error(`visual_spec_matrix_not_rectangular:${path}`)
+  return rows
+}
+
 function shape(value: unknown, path: string) {
   return boundedArray(value, path, 1, 8).map((item, index) => integer(item, `${path}[${index}]`, 1, 1_000_000))
 }
@@ -149,8 +193,19 @@ function hashText(value: string) {
   return `fnv1a-${(hash >>> 0).toString(16).padStart(8, '0')}`
 }
 
+function provenanceRequestText(value: unknown) {
+  return String(value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .trim()
+    .slice(0, 2200)
+}
+
 export function provenance(request: string): VisualProvenance {
-  const requestText = compact(request, 2200)
+  // Line boundaries are compiler input for code/event-loop requests. They are
+  // therefore provenance, not presentational whitespace, and must survive a
+  // persisted round trip for reproducible compilation.
+  const requestText = provenanceRequestText(request)
   return {
     schemaVersion: VISUAL_VERSION,
     promptVersion: PROMPT_VERSION,
@@ -211,6 +266,9 @@ export function extractJson(raw: string) {
 }
 
 function classificationForMath(value: string): MathematicsVisualAbstraction {
+  if (/(?:自然频数|贝叶斯|患病率|灵敏度|敏感度|特异度|natural frequenc(?:y|ies)?|bayes(?:ian)?|prevalence|sensitivity|specificity)/i.test(value)) return 'natural_frequency'
+  if (/(?:梯度下降|gradient descent|学习率)/i.test(value)) return 'optimization'
+  if (/(?:矩阵乘法|矩阵相乘|matrix multiplication|matmul)/i.test(value)) return 'matrix_operation'
   if (/(?:概率|分布|贝叶斯|随机变量|pmf|pdf|cdf|probability)/i.test(value)) return 'probability'
   if (/(?:推导|证明|等式|化简|恒等|derivation|proof)/i.test(value)) return 'derivation'
   if (/(?:变换|矩阵|向量|旋转|平移|缩放|参数变化|线性映射|transform)/i.test(value)) return 'transformation'
@@ -221,12 +279,14 @@ export function classifyLearningVisual(query: string):
   | { domain: 'computer'; abstraction: ComputerVisualAbstraction }
   | { domain: 'mathematics'; abstraction: MathematicsVisualAbstraction } {
   const normalized = query.toLowerCase()
+  if (/(?:事件循环|微任务|宏任务|event loop|microtask)/i.test(normalized)) return { domain: 'computer', abstraction: 'event_loop' }
+  if (/(?:dijkstra|最短路径|带权图)/i.test(normalized)) return { domain: 'computer', abstraction: 'graph_algorithm' }
   if (/(?:张量|shape|qkv|神经网络|注意力|transformer|tensor)/i.test(normalized)) return { domain: 'computer', abstraction: 'tensor_shape_flow' }
   if (/(?:协议|握手|请求.*响应|客户端|服务端|tcp|http|sequence)/i.test(normalized)) return { domain: 'computer', abstraction: 'protocol_sequence' }
   if (/(?:状态机|状态转移|生命周期|state machine)/i.test(normalized)) return { domain: 'computer', abstraction: 'state_machine' }
   if (/(?:代码执行|逐行|变量变化|调用栈|递归栈|code trace)/i.test(normalized)) return { domain: 'computer', abstraction: 'code_trace' }
   if (/(?:树|链表|栈|队列|堆|数组|数据结构|二分|排序)/i.test(normalized)) return { domain: 'computer', abstraction: 'data_structure' }
-  const math = /(?:公式|定理|证明|函数|导数|积分|矩阵|向量|概率|分布|几何|极限|梯度|方程|math|theorem|probability)/i.test(normalized)
+  const math = /(?:公式|定理|证明|函数|导数|积分|矩阵|向量|概率|分布|几何|极限|梯度|方程|自然频数|贝叶斯|患病率|灵敏度|敏感度|特异度|math|theorem|probability|natural frequenc(?:y|ies)?|bayes(?:ian)?|prevalence|sensitivity|specificity)/i.test(normalized)
   if (math) return { domain: 'mathematics', abstraction: classificationForMath(normalized) }
   return { domain: 'computer', abstraction: 'system_structure' }
 }
@@ -503,6 +563,143 @@ function parseMathStructure(value: unknown, context: ParseContext): MathStructur
   return { type: 'math_structure', terms, relations }
 }
 
+function parseMatrixOperation(value: unknown, context: ParseContext): MatrixOperationSemantic {
+  const source = record(value, 'semantic')
+  if (source.operation !== 'multiply') throw new Error('visual_spec_matrix_operation_invalid')
+  const parseOperand = (valueToRead: unknown, path: string) => {
+    const operand = record(valueToRead, path)
+    return {
+      id: id(operand.id, `${path}.id`),
+      label: text(operand.label, `${path}.label`, 20, context),
+      values: numericMatrix(operand.values, `${path}.values`),
+    }
+  }
+  const semanticId = id(source.id, 'semantic.id')
+  const left = parseOperand(source.left, 'semantic.left')
+  const right = parseOperand(source.right, 'semantic.right')
+  const resultId = id(source.resultId, 'semantic.resultId')
+  uniqueIds([{ id: semanticId }, left, right, { id: resultId }], 'semantic.matrix_operation')
+  const focusSource = source.focus === undefined ? undefined : record(source.focus, 'semantic.focus')
+  const focus = focusSource ? {
+    row: integer(focusSource.row, 'semantic.focus.row', 0, 7),
+    column: integer(focusSource.column, 'semantic.focus.column', 0, 7),
+  } : undefined
+  return {
+    type: 'matrix_operation', id: semanticId, operation: 'multiply', left, right, resultId, focus,
+    transferPrompt: compact(source.transferPrompt, 120, context, 'semantic.transferPrompt') || undefined,
+  }
+}
+
+function parseGraphAlgorithm(value: unknown, context: ParseContext): GraphAlgorithmSemantic {
+  const source = record(value, 'semantic')
+  if (source.algorithm !== 'dijkstra') throw new Error('visual_spec_graph_algorithm_invalid')
+  if (typeof source.directed !== 'boolean') throw new Error('visual_spec_boolean_required:semantic.directed')
+  const directed = source.directed
+  const semanticId = id(source.id, 'semantic.id')
+  const nodes = records(source.nodes, 'semantic.nodes', 2, 8).map((node, index) => ({
+    id: id(node.id, `semantic.nodes[${index}].id`),
+    label: text(node.label, `semantic.nodes[${index}].label`, 18, context),
+  }))
+  uniqueIds(nodes, 'semantic.nodes')
+  const nodeIds = new Set(nodes.map(node => node.id))
+  const edges = records(source.edges, 'semantic.edges', 1, 24).map((edge, index) => {
+    const output = {
+      id: id(edge.id, `semantic.edges[${index}].id`),
+      from: id(edge.from, `semantic.edges[${index}].from`),
+      to: id(edge.to, `semantic.edges[${index}].to`),
+      weight: finiteNumber(edge.weight, `semantic.edges[${index}].weight`, 0, 1_000_000),
+    }
+    assertReferences([output.from, output.to], nodeIds, `semantic.edges[${index}]`)
+    if (output.from === output.to) throw new Error(`visual_spec_graph_self_loop_unsupported:${output.id}`)
+    return output
+  })
+  uniqueIds(edges, 'semantic.edges')
+  const edgePairs = new Set<string>()
+  for (const edge of edges) {
+    const endpoints = directed ? [edge.from, edge.to] : [edge.from, edge.to].sort()
+    const pair = `${endpoints[0]}\u0000${endpoints[1]}`
+    if (edgePairs.has(pair)) throw new Error(`visual_spec_graph_parallel_edge_unsupported:${edge.from}.${edge.to}`)
+    edgePairs.add(pair)
+  }
+  const sourceId = id(source.sourceId, 'semantic.sourceId')
+  const targetId = id(source.targetId, 'semantic.targetId')
+  assertReferences([sourceId, targetId], nodeIds, 'semantic.graph_endpoints')
+  uniqueIds([{ id: semanticId }, ...nodes, ...edges], 'semantic.graph_algorithm')
+  return {
+    type: 'graph_algorithm', id: semanticId, algorithm: 'dijkstra', directed,
+    nodes, edges, sourceId, targetId,
+    transferPrompt: compact(source.transferPrompt, 120, context, 'semantic.transferPrompt') || undefined,
+  }
+}
+
+function parseNaturalFrequency(value: unknown, context: ParseContext): NaturalFrequencySemantic {
+  const source = record(value, 'semantic')
+  return {
+    type: 'natural_frequency',
+    id: id(source.id, 'semantic.id'),
+    population: integer(source.population, 'semantic.population', 1, 1_000_000),
+    prevalence: finiteNumber(source.prevalence, 'semantic.prevalence', 0, 1),
+    sensitivity: finiteNumber(source.sensitivity, 'semantic.sensitivity', 0, 1),
+    specificity: finiteNumber(source.specificity, 'semantic.specificity', 0, 1),
+    conditionLabel: text(source.conditionLabel, 'semantic.conditionLabel', 24, context),
+    positiveLabel: text(source.positiveLabel, 'semantic.positiveLabel', 24, context),
+    predictionPrompt: compact(source.predictionPrompt, 140, context, 'semantic.predictionPrompt') || undefined,
+  }
+}
+
+function parseEventLoop(value: unknown, context: ParseContext): EventLoopSemantic {
+  const source = record(value, 'semantic')
+  if (source.language !== 'javascript') throw new Error('visual_spec_event_loop_language_invalid')
+  const semanticId = id(source.id, 'semantic.id')
+  const lines = records(source.lines, 'semantic.lines', 1, 16).map((line, index) => ({
+    id: id(line.id, `semantic.lines[${index}].id`),
+    number: integer(line.number, `semantic.lines[${index}].number`, 1, 9999),
+    text: text(line.text, `semantic.lines[${index}].text`, 120, context),
+  }))
+  uniqueIds(lines, 'semantic.lines')
+  const lineIds = new Set(lines.map(line => line.id))
+  const operations = records(source.operations, 'semantic.operations', 1, 16).map((operation, index) => {
+    const kind = String(operation.kind)
+    if (!['sync', 'microtask', 'task'].includes(kind)) throw new Error(`visual_spec_event_operation_invalid:semantic.operations[${index}]`)
+    const output = {
+      id: id(operation.id, `semantic.operations[${index}].id`),
+      lineId: id(operation.lineId, `semantic.operations[${index}].lineId`),
+      kind: kind as EventLoopSemantic['operations'][number]['kind'],
+      output: text(operation.output, `semantic.operations[${index}].output`, 32, context),
+      order: integer(operation.order, `semantic.operations[${index}].order`, 1, 99),
+      label: text(operation.label, `semantic.operations[${index}].label`, 42, context),
+    }
+    assertReferences([output.lineId], lineIds, `semantic.operations[${index}]`)
+    return output
+  })
+  uniqueIds(operations, 'semantic.operations')
+  if (new Set(operations.map(operation => operation.order)).size !== operations.length) throw new Error('visual_spec_duplicate_event_operation_order')
+  uniqueIds([{ id: semanticId }, ...lines, ...operations], 'semantic.event_loop')
+  return { type: 'event_loop', id: semanticId, language: 'javascript', lines, operations }
+}
+
+function parseOptimization(value: unknown, context: ParseContext): OptimizationSemantic {
+  const source = record(value, 'semantic')
+  if (source.objective !== 'squared_distance') throw new Error('visual_spec_optimization_objective_invalid')
+  const axes = record(source.axes, 'semantic.axes')
+  const xDomain = point(axes.xDomain, 'semantic.axes.xDomain')
+  const yDomain = point(axes.yDomain, 'semantic.axes.yDomain')
+  if (xDomain[0] >= xDomain[1] || yDomain[0] >= yDomain[1]) throw new Error('visual_spec_axis_domain_invalid')
+  return {
+    type: 'optimization', id: id(source.id, 'semantic.id'), objective: 'squared_distance',
+    center: finiteNumber(source.center, 'semantic.center'),
+    initialX: finiteNumber(source.initialX, 'semantic.initialX'),
+    learningRate: finiteNumber(source.learningRate, 'semantic.learningRate', 0.000001, 0.999999),
+    iterations: integer(source.iterations, 'semantic.iterations', 1, 5),
+    axes: {
+      xLabel: text(axes.xLabel, 'semantic.axes.xLabel', 20, context),
+      yLabel: text(axes.yLabel, 'semantic.axes.yLabel', 20, context),
+      xDomain,
+      yDomain,
+    },
+  }
+}
+
 function parseSemantic(domain: LearningVisualDomain, abstraction: LearningVisualAbstraction, value: unknown, context: ParseContext): ComputerVisualSemantic | MathematicsVisualSemantic {
   if (domain === 'computer') {
     if (abstraction === 'protocol_sequence') return parseProtocol(value, context)
@@ -510,12 +707,17 @@ function parseSemantic(domain: LearningVisualDomain, abstraction: LearningVisual
     if (abstraction === 'data_structure') return parseDataStructure(value, context)
     if (abstraction === 'code_trace') return parseCodeTrace(value, context)
     if (abstraction === 'tensor_shape_flow') return parseTensor(value, context)
+    if (abstraction === 'graph_algorithm') return parseGraphAlgorithm(value, context)
+    if (abstraction === 'event_loop') return parseEventLoop(value, context)
     if (abstraction === 'system_structure') return parseStructure(value, context)
   } else {
     if (abstraction === 'function') return parseFunction(value, context)
     if (abstraction === 'probability') return parseProbability(value, context)
     if (abstraction === 'transformation') return parseTransformation(value, context)
     if (abstraction === 'derivation') return parseDerivation(value, context)
+    if (abstraction === 'matrix_operation') return parseMatrixOperation(value, context)
+    if (abstraction === 'natural_frequency') return parseNaturalFrequency(value, context)
+    if (abstraction === 'optimization') return parseOptimization(value, context)
     if (abstraction === 'math_structure') return parseMathStructure(value, context)
   }
   throw new Error(`visual_spec_domain_abstraction_mismatch:${domain}.${abstraction}`)
@@ -530,11 +732,16 @@ export function entityIdsForSemantic(semantic: ComputerVisualSemantic | Mathemat
     case 'data_structure': add(semantic.items); add(semantic.links); add(semantic.pointers); break
     case 'code_trace': add(semantic.lines); add(semantic.variables); add(semantic.stackFrames); break
     case 'tensor_shape_flow': add(semantic.tensors); add(semantic.operations); break
+    case 'graph_algorithm': add([{ id: semantic.id }]); add(semantic.nodes); add(semantic.edges); break
+    case 'event_loop': add([{ id: semantic.id }]); add(semantic.lines); add(semantic.operations); break
     case 'system_structure': add(semantic.entities); add(semantic.relations); break
     case 'function': add(semantic.series); add(semantic.parameters); break
     case 'probability': add(semantic.samples); break
     case 'transformation': add(semantic.objects); add(semantic.transforms); add(semantic.parameters); break
     case 'derivation': add(semantic.steps); break
+    case 'matrix_operation': add([{ id: semantic.id }, semantic.left, semantic.right, { id: semantic.resultId }]); break
+    case 'natural_frequency': add([{ id: semantic.id }]); break
+    case 'optimization': add([{ id: semantic.id }]); break
     case 'math_structure': add(semantic.terms); add(semantic.relations); break
   }
   return output
@@ -634,6 +841,12 @@ function assertPatchMatchesSemantic(
     if (!has(semantic.tensors, patch.tensorId)) targetInvalid(patch.tensorId)
     return
   }
+  if (isDerivedSemantic(semantic)) {
+    if (patch.type !== 'set_trace_step') return notAllowed()
+    if (patch.semanticId !== semantic.id) targetInvalid(patch.semanticId)
+    if (patch.step < 0 || patch.step >= derivedTraceLength(semantic)) throw new Error(`visual_spec_trace_step_invalid:${path}.${patch.step}`)
+    return
+  }
   if (semantic.type === 'system_structure') {
     if (patch.type !== 'move_item') return notAllowed()
     if (!has(semantic.entities, patch.itemId)) targetInvalid(patch.itemId)
@@ -717,6 +930,7 @@ function parsePatch(
   else if (type === 'set_probability_sample') patch = { type, sampleId: ref(source.sampleId, 'sampleId'), y: finiteNumber(source.y, `${path}.y`, 0, 1_000_000) }
   else if (type === 'replace_series') patch = { type, seriesId: ref(source.seriesId, 'seriesId'), points: points(source.points, `${path}.points`, 2, MAX_POINTS) }
   else if (type === 'transform_object') patch = { type, objectId: ref(source.objectId, 'objectId'), points: points(source.points, `${path}.points`, 1, 24) }
+  else if (type === 'set_trace_step') patch = { type, semanticId: ref(source.semanticId, 'semanticId'), step: integer(source.step, `${path}.step`, 0, 32) }
   if (type === 'replace_expression') {
     const expression = text(source.expression, `${path}.expression`, 120, context)
     if (FORBIDDEN_EXECUTABLE.test(expression)) throw new Error(`visual_spec_executable_content_rejected:${path}.expression`)
@@ -727,15 +941,48 @@ function parsePatch(
   return patch
 }
 
-function parseFrames(value: unknown, references: Set<string>, semantic: ComputerVisualSemantic | MathematicsVisualSemantic, context: ParseContext): LearningVisualFrame[] {
-  const output = records(value, 'frames', 1, MAX_FRAMES).map((item, index) => ({
-    id: id(item.id, `frames[${index}].id`),
-    title: text(item.title, `frames[${index}].title`, 64, context),
-    narration: text(item.narration, `frames[${index}].narration`, 220, context),
-    durationMs: integer(item.durationMs ?? 1500, `frames[${index}].durationMs`, 250, 10_000),
-    patches: records(item.patches, `frames[${index}].patches`, 1, MAX_PATCHES_PER_FRAME).map((patch, patchIndex) => parsePatch(patch, `frames[${index}].patches[${patchIndex}]`, references, semantic, context)),
+function parsePrediction(value: unknown, path: string, context: ParseContext): VisualPredictionGate | undefined {
+  if (value === undefined) return undefined
+  const source = record(value, path)
+  const choices = records(source.choices, `${path}.choices`, 2, 4).map((choice, index) => ({
+    id: id(choice.id, `${path}.choices[${index}].id`),
+    label: text(choice.label, `${path}.choices[${index}].label`, 80, context),
   }))
+  uniqueIds(choices, `${path}.choices`)
+  if (new Set(choices.map(choice => choice.label)).size !== choices.length) throw new Error(`visual_spec_prediction_choices_not_distinct:${path}`)
+  const correctChoiceId = id(source.correctChoiceId, `${path}.correctChoiceId`)
+  if (!choices.some(choice => choice.id === correctChoiceId)) throw new Error(`visual_spec_prediction_answer_invalid:${path}`)
+  return {
+    id: id(source.id, `${path}.id`),
+    prompt: text(source.prompt, `${path}.prompt`, 180, context),
+    choices,
+    correctChoiceId,
+    explanation: text(source.explanation, `${path}.explanation`, 220, context),
+  }
+}
+
+function parseFrames(value: unknown, references: Set<string>, semantic: ComputerVisualSemantic | MathematicsVisualSemantic, context: ParseContext): LearningVisualFrame[] {
+  const output = records(value, 'frames', 1, MAX_FRAMES).map((item, index) => {
+    const prediction = parsePrediction(item.prediction, `frames[${index}].prediction`, context)
+    const rawPatches = records(item.patches, `frames[${index}].patches`, prediction ? 0 : 1, MAX_PATCHES_PER_FRAME)
+    if (prediction && rawPatches.length) throw new Error(`visual_spec_prediction_frame_must_not_patch:frames[${index}]`)
+    return {
+      id: id(item.id, `frames[${index}].id`),
+      title: text(item.title, `frames[${index}].title`, 64, context),
+      narration: text(item.narration, `frames[${index}].narration`, 220, context),
+      durationMs: integer(item.durationMs ?? 1500, `frames[${index}].durationMs`, 250, 10_000),
+      patches: rawPatches.map((patch, patchIndex) => parsePatch(patch, `frames[${index}].patches[${patchIndex}]`, references, semantic, context)),
+      prediction,
+    }
+  })
   uniqueIds(output, 'frames')
+  const gateIds = output.flatMap(frame => frame.prediction ? [{ id: frame.prediction.id }] : [])
+  uniqueIds(gateIds, 'frames.prediction')
+  output.forEach((frame, index) => {
+    if (frame.prediction && !output[index + 1]?.patches.length) {
+      throw new Error(`visual_spec_prediction_without_reveal:frames[${index}]`)
+    }
+  })
   return output
 }
 
@@ -763,11 +1010,16 @@ function readingOrder(semantic: ComputerVisualSemantic | MathematicsVisualSemant
     case 'data_structure': return [...semantic.items.map(item => item.id), ...semantic.pointers.map(item => item.id)]
     case 'code_trace': return [...semantic.lines.map(item => item.id), ...semantic.variables.map(item => item.id), ...semantic.stackFrames.map(item => item.id)]
     case 'tensor_shape_flow': return [...semantic.tensors.map(item => item.id), ...semantic.operations.map(item => item.id)]
+    case 'graph_algorithm': return [semantic.id, ...semantic.nodes.map(item => item.id), ...semantic.edges.map(item => item.id)]
+    case 'event_loop': return [semantic.id, ...semantic.lines.map(item => item.id), ...semantic.operations.map(item => item.id)]
     case 'system_structure': return semantic.entities.map(item => item.id)
     case 'function': return [...semantic.series.map(item => item.id), ...semantic.parameters.map(item => item.id)]
     case 'probability': return semantic.samples.map(item => item.id)
     case 'transformation': return [...semantic.objects.map(item => item.id), ...semantic.transforms.map(item => item.id)]
     case 'derivation': return semantic.steps.map(item => item.id)
+    case 'matrix_operation': return [semantic.id, semantic.left.id, semantic.right.id, semantic.resultId]
+    case 'natural_frequency': return [semantic.id]
+    case 'optimization': return [semantic.id]
     case 'math_structure': return semantic.terms.map(item => item.id)
   }
 }
@@ -775,7 +1027,9 @@ function readingOrder(semantic: ComputerVisualSemantic | MathematicsVisualSemant
 function parseAccessibility(value: unknown, title: string, semantic: ComputerVisualSemantic | MathematicsVisualSemantic, context: ParseContext): VisualAccessibility {
   const source = value === undefined ? {} : record(value, 'accessibility')
   const references = entityIdsForSemantic(semantic)
-  const requestedOrder = source.readingOrder === undefined ? readingOrder(semantic) : ids(source.readingOrder, 'accessibility.readingOrder')
+  const requestedOrder = source.readingOrder === undefined
+    ? readingOrder(semantic)
+    : ids(source.readingOrder, 'accessibility.readingOrder', Math.max(MAX_ENTITIES, references.size))
   assertReferences(requestedOrder, references, 'accessibility.readingOrder')
   if (source.summary === undefined) context.repairs.push({ code: 'accessibility_summary_defaulted', path: 'accessibility.summary', detail: 'derived_from_title' })
   return {
@@ -800,12 +1054,23 @@ function parseStoredRepairs(value: unknown): VisualRepair[] {
 function parseStoredGeneration(value: unknown): VisualGenerationReport {
   const source = record(value, 'generation')
   const origin = String(source.source)
-  if (!['model_plan', 'deterministic_template', 'legacy_reader'].includes(origin)) throw new Error('visual_spec_generation_source_invalid')
+  if (!['model_plan', 'deterministic_compiler', 'deterministic_template', 'legacy_reader'].includes(origin)) throw new Error('visual_spec_generation_source_invalid')
   if (typeof source.plannerSucceeded !== 'boolean' || typeof source.degraded !== 'boolean') throw new Error('visual_spec_generation_status_invalid')
   const degradedTo = source.degradedTo === undefined ? undefined : String(source.degradedTo)
   if (degradedTo && !['diagram', 'storyboard', 'deterministic_animation'].includes(degradedTo)) throw new Error('visual_spec_generation_degraded_to_invalid')
   const modelError = source.modelError === undefined ? undefined : compact(source.modelError, 260)
-  if (source.plannerSucceeded && (source.degraded || degradedTo || modelError || origin !== 'model_plan')) throw new Error('visual_spec_generation_success_claim_invalid')
+  const compilerSource = source.compiler === undefined ? undefined : record(source.compiler, 'generation.compiler')
+  const compiler = compilerSource ? {
+    id: text(compilerSource.id, 'generation.compiler.id', 100, { repairs: [] }),
+    version: text(compilerSource.version, 'generation.compiler.version', 40, { repairs: [] }),
+  } : undefined
+  if (source.plannerSucceeded && (source.degraded || degradedTo || modelError || !['model_plan', 'deterministic_compiler'].includes(origin))) throw new Error('visual_spec_generation_success_claim_invalid')
+  if (origin === 'deterministic_compiler' && !compiler) throw new Error('visual_spec_generation_compiler_required')
+  if (origin === 'deterministic_compiler' && compiler
+    && (compiler.id !== TEACHING_COMPILER_ID || compiler.version !== TEACHING_COMPILER_VERSION)) {
+    throw new Error('visual_spec_generation_compiler_version_invalid')
+  }
+  if (origin !== 'deterministic_compiler' && compiler) throw new Error('visual_spec_generation_compiler_mismatch')
   if (!source.plannerSucceeded && !source.degraded) throw new Error('visual_spec_generation_failure_claim_invalid')
   if (!source.degraded && degradedTo) throw new Error('visual_spec_generation_degradation_invalid')
   return {
@@ -814,27 +1079,119 @@ function parseStoredGeneration(value: unknown): VisualGenerationReport {
     degraded: source.degraded,
     degradedTo: degradedTo as VisualGenerationReport['degradedTo'],
     modelError,
+    compiler,
     repairs: parseStoredRepairs(source.repairs),
   }
 }
 
-function parseStoredProvenance(value: unknown): VisualProvenance {
+function parseStoredProvenance(value: unknown, version: 'current' | 'legacy_v2' = 'current'): VisualProvenance {
   const source = record(value, 'provenance')
-  if (source.schemaVersion !== VISUAL_VERSION || source.promptVersion !== PROMPT_VERSION || source.rendererVersion !== RENDERER_VERSION) {
+  const expected = version === 'legacy_v2'
+    ? { schema: LEGACY_V2_VERSION, prompt: LEGACY_V2_PROMPT_VERSION, renderer: LEGACY_V2_RENDERER_VERSION }
+    : { schema: VISUAL_VERSION, prompt: PROMPT_VERSION, renderer: RENDERER_VERSION }
+  if (source.schemaVersion !== expected.schema || source.promptVersion !== expected.prompt || source.rendererVersion !== expected.renderer) {
     throw new Error('visual_spec_provenance_version_invalid')
   }
-  const requestText = compact(source.requestText, 2200)
+  const requestText = version === 'legacy_v2'
+    ? compact(source.requestText, 2200)
+    : provenanceRequestText(source.requestText)
   const requestHash = String(source.requestHash || '')
   if (requestHash !== hashText(requestText)) throw new Error('visual_spec_provenance_hash_mismatch')
   return { schemaVersion: VISUAL_VERSION, promptVersion: PROMPT_VERSION, rendererVersion: RENDERER_VERSION, requestHash, requestText }
 }
 
-type ParseSpecOptions = { preserveMetadata?: boolean }
+/**
+ * A deterministic teaching animation is a replay of one compiler-owned trace,
+ * not a model-authored list of arbitrary trace indexes. Keep the accepted
+ * timeline bijective with trace steps so no persisted plan can skip, repeat or
+ * move backwards while still claiming derived verification.
+ */
+export function assertDeterministicTraceTimeline(spec: LearningVisualSpec) {
+  if (spec.kind !== 'animation' || spec.generation.source !== 'deterministic_compiler' || !isDerivedSemantic(spec.semantic)) return
+
+  const semanticId = spec.semantic.id
+  const lastStep = derivedTraceLength(spec.semantic) - 1
+  if (spec.initialState.values[semanticId] !== 0) {
+    throw new Error(`visual_spec_trace_initial_step_invalid:${semanticId}`)
+  }
+
+  let expectedStep = 1
+  for (const [frameIndex, frame] of spec.frames.entries()) {
+    if (frame.prediction) {
+      if (frame.patches.length) throw new Error(`visual_spec_prediction_frame_must_not_patch:${frame.id}`)
+      const reveal = spec.frames[frameIndex + 1]
+      const revealPatch = reveal?.patches[0]
+      if (!reveal || reveal.prediction || reveal.patches.length !== 1 || revealPatch?.type !== 'set_trace_step' || revealPatch.semanticId !== semanticId) {
+        throw new Error(`visual_spec_prediction_without_adjacent_trace_reveal:${frame.id}`)
+      }
+      if (revealPatch.step !== expectedStep) {
+        throw new Error(`visual_spec_trace_sequence_invalid:${reveal.id}:expected_${expectedStep}:received_${revealPatch.step}`)
+      }
+      continue
+    }
+
+    const patch = frame.patches[0]
+    if (frame.patches.length !== 1 || patch?.type !== 'set_trace_step' || patch.semanticId !== semanticId) {
+      throw new Error(`visual_spec_trace_frame_invalid:${frame.id}`)
+    }
+    if (patch.step !== expectedStep) {
+      throw new Error(`visual_spec_trace_sequence_invalid:${frame.id}:expected_${expectedStep}:received_${patch.step}`)
+    }
+    expectedStep += 1
+  }
+
+  if (expectedStep - 1 !== lastStep) {
+    throw new Error(`visual_spec_trace_incomplete:${semanticId}:expected_${lastStep}:received_${expectedStep - 1}`)
+  }
+  if (spec.finalState.values[semanticId] !== lastStep) {
+    throw new Error(`visual_spec_trace_final_step_invalid:${semanticId}`)
+  }
+}
+
+function compilerOwnedProjection(spec: LearningVisualSpec) {
+  const common = {
+    version: spec.version,
+    kind: spec.kind,
+    domain: spec.domain,
+    abstraction: spec.abstraction,
+    title: spec.title,
+    subtitle: spec.subtitle,
+    explanation: spec.explanation,
+    semantic: spec.semantic,
+    accessibility: spec.accessibility,
+  }
+  return spec.kind === 'diagram'
+    ? { ...common, state: spec.state }
+    : {
+        ...common,
+        initialState: spec.initialState,
+        frames: spec.frames,
+        invariants: spec.invariants,
+        finalState: spec.finalState,
+      }
+}
+
+function assertDeterministicCompilerReproducible(spec: LearningVisualSpec) {
+  if (spec.generation.source !== 'deterministic_compiler') return
+  let canonical: LearningVisualSpec | undefined
+  try {
+    const derivation = deriveTeachingRequest(spec.kind, spec.provenance.requestText)
+    canonical = derivation ? teachingDerivationToSpec(derivation) : undefined
+  } catch {
+    canonical = undefined
+  }
+  if (!canonical) throw new Error('visual_spec_deterministic_compiler_claim_unreproducible')
+  if (!equivalent(compilerOwnedProjection(spec), compilerOwnedProjection(canonical))) {
+    throw new Error('visual_spec_deterministic_compiler_claim_mismatch')
+  }
+}
+
+type ParseSpecOptions = { preserveMetadata?: boolean; initialRepairs?: VisualRepair[] }
 
 export function parseV2Spec(payload: Record<string, unknown>, requestedKind: LearningVisualKind, request: string, options: ParseSpecOptions = {}): LearningVisualSpec {
   if (payload.version !== undefined && payload.version !== VISUAL_VERSION) throw new Error(`visual_spec_version_unsupported:${String(payload.version)}`)
   if (payload.kind !== undefined && payload.kind !== requestedKind) throw new Error(`visual_spec_kind_mismatch:${String(payload.kind)}`)
-  const context: ParseContext = { repairs: [] }
+  const context: ParseContext = { repairs: [...(options.initialRepairs || [])] }
   const storedGeneration = options.preserveMetadata && payload.generation !== undefined ? parseStoredGeneration(payload.generation) : undefined
   if (storedGeneration) context.repairs.push(...storedGeneration.repairs)
   if (options.preserveMetadata && payload.version === undefined) throw new Error('visual_spec_version_required')
@@ -865,17 +1222,25 @@ export function parseV2Spec(payload: Record<string, unknown>, requestedKind: Lea
     if (payload.frames !== undefined || payload.initialState !== undefined || payload.finalState !== undefined || payload.invariants !== undefined) {
       throw new Error('visual_spec_diagram_timeline_forbidden')
     }
-    return { ...common, kind: 'diagram', state: parseState(payload.state, 'state', references, context) } as LearningVisualSpec
+    const spec = { ...common, kind: 'diagram', state: parseState(payload.state, 'state', references, context) } as LearningVisualSpec
+    assertDeterministicTraceTimeline(spec)
+    return spec
   }
   if (payload.state !== undefined) throw new Error('visual_spec_animation_stable_state_forbidden')
-  return {
+  const frames = parseFrames(payload.frames, references, semantic, context)
+  const spec = {
     ...common,
     kind: 'animation',
     initialState: parseState(payload.initialState, 'initialState', references, context),
-    frames: parseFrames(payload.frames, references, semantic, context),
+    frames,
     invariants: parseInvariants(payload.invariants, references, context),
     finalState: parseState(payload.finalState, 'finalState', references, context),
   } as LearningVisualSpec
+  if (frames.some(frame => frame.prediction) && spec.generation.source !== 'deterministic_compiler') {
+    throw new Error('visual_spec_prediction_requires_verified_compiler')
+  }
+  assertDeterministicTraceTimeline(spec)
+  return spec
 }
 
 export function parseLegacySpec(payload: Record<string, unknown>, requestedKind: LearningVisualKind, request: string, options: ParseSpecOptions = {}): LegacyLearningVisualSpec {
@@ -931,17 +1296,86 @@ export function parseLegacySpec(payload: Record<string, unknown>, requestedKind:
     relations,
     frames,
     explanation: compact(payload.explanation, 1800, context, 'explanation'),
-    provenance: options.preserveMetadata && payload.provenance !== undefined ? parseStoredProvenance(payload.provenance) : provenance(request),
+    provenance: options.preserveMetadata && payload.provenance !== undefined
+      ? parseStoredProvenance(
+        payload.provenance,
+        isRecord(payload.provenance) && payload.provenance.schemaVersion === LEGACY_V2_VERSION ? 'legacy_v2' : 'current',
+      )
+      : provenance(request),
     generation: storedGeneration
       ? { ...storedGeneration, repairs: context.repairs }
       : generationReport('legacy_reader', false, context.repairs, kind === 'animation' ? 'legacy_highlight_only_animation' : 'legacy_visual_v1', kind === 'animation' ? 'storyboard' : 'diagram'),
   }
 }
 
+function assertLegacyV2Payload(payload: Record<string, unknown>) {
+  if (payload.version !== LEGACY_V2_VERSION) throw new Error(`visual_spec_version_unsupported:${String(payload.version)}`)
+  if (payload.domain !== 'computer' && payload.domain !== 'mathematics') throw new Error('visual_spec_domain_required')
+  const abstraction = String(payload.abstraction || '')
+  if (!LEGACY_V2_ABSTRACTIONS[payload.domain].has(abstraction)) {
+    throw new Error(`visual_spec_v2_abstraction_unsupported:${payload.domain}.${abstraction}`)
+  }
+
+  if (payload.generation !== undefined) {
+    const generation = record(payload.generation, 'generation')
+    if (generation.source === 'deterministic_compiler' || generation.compiler !== undefined) {
+      throw new Error('visual_spec_v2_generation_source_invalid')
+    }
+  }
+
+  for (const [frameIndex, frame] of optionalRecords(payload.frames, 'frames', MAX_FRAMES).entries()) {
+    if (frame.prediction !== undefined) throw new Error(`visual_spec_v2_prediction_unsupported:frames[${frameIndex}]`)
+    for (const [patchIndex, patch] of optionalRecords(frame.patches, `frames[${frameIndex}].patches`, MAX_PATCHES_PER_FRAME).entries()) {
+      const patchType = String(patch.type || '')
+      if (!LEGACY_V2_PATCH_TYPES.has(patchType)) {
+        throw new Error(`visual_spec_v2_patch_unsupported:frames[${frameIndex}].patches[${patchIndex}].${patchType}`)
+      }
+    }
+  }
+}
+
+function migrateLegacyV2Spec(
+  payload: Record<string, unknown>,
+  requestedKind: LearningVisualKind,
+  request: string,
+): LearningVisualSpec {
+  assertLegacyV2Payload(payload)
+  const storedProvenance = payload.provenance === undefined
+    ? provenance(request)
+    : parseStoredProvenance(payload.provenance, 'legacy_v2')
+  const migrationRepair: VisualRepair = {
+    code: 'schema_migrated_v2_to_v3',
+    path: 'version',
+    detail: payload.provenance === undefined
+      ? 'legacy_v2_schema_validated_and_missing_provenance_regenerated'
+      : 'legacy_v2_schema_and_provenance_tuple_validated',
+  }
+  return parseV2Spec(
+    { ...payload, version: VISUAL_VERSION, provenance: storedProvenance },
+    requestedKind,
+    request,
+    { preserveMetadata: true, initialRepairs: [migrationRepair] },
+  )
+}
+
 export function readLearningVisualSpec(value: unknown, requestedKind: LearningVisualKind = 'diagram', request = ''): ReadableLearningVisualSpec {
   const payload = record(value, 'root')
-  if (payload.version === VISUAL_VERSION || payload.semantic !== undefined) return parseV2Spec(payload, requestedKind, request, { preserveMetadata: true })
-  if (payload.nodes !== undefined) return parseLegacySpec(payload, requestedKind, request, { preserveMetadata: true })
+  if (payload.version !== undefined
+    && payload.version !== LEGACY_V1_VERSION
+    && payload.version !== LEGACY_V2_VERSION
+    && payload.version !== VISUAL_VERSION) {
+    throw new Error(`visual_spec_version_unsupported:${String(payload.version)}`)
+  }
+  if (payload.version === LEGACY_V2_VERSION) return migrateLegacyV2Spec(payload, requestedKind, request)
+  if (payload.version === VISUAL_VERSION) {
+    const spec = parseV2Spec(payload, requestedKind, request, { preserveMetadata: true })
+    assertDeterministicCompilerReproducible(spec)
+    return spec
+  }
+  if ((payload.version === LEGACY_V1_VERSION || payload.version === undefined) && payload.nodes !== undefined) {
+    return parseLegacySpec(payload, requestedKind, request, { preserveMetadata: true })
+  }
+  if (payload.semantic !== undefined) throw new Error('visual_spec_version_required')
   throw new Error('visual_spec_reader_unsupported')
 }
 
@@ -1086,8 +1520,13 @@ function federatedLearningAnimation(request: string, modelError: string): Learni
 }
 
 export function buildDeterministicFallback(kind: LearningVisualKind, request: string, modelError: string): LearningVisualSpec {
-  if (kind === 'animation' && /(?:tcp|三次握手)/i.test(request)) return tcpAnimation(request, modelError)
-  if (/(?:联邦学习|federated\s+learning)/i.test(request)) {
+  const tcpHandshake = /(?:tcp[^。；\n]{0,32}三次握手|三次握手[^。；\n]{0,32}tcp|^\s*三次握手\s*$)/i.test(request)
+    && !/(?:四次挥手|断开|终止|关闭|拥塞|重传|攻击|防御|teardown|termination|close|congestion)/i.test(request)
+  if (kind === 'animation' && tcpHandshake) return tcpAnimation(request, modelError)
+  const federatedRound = /(?:联邦学习|federated\s+learning)/i.test(request)
+    && /(?:一轮|训练流程|训练过程|模型下发|模型更新|聚合|training\s+round)/i.test(request)
+    && !/(?:投毒|攻击|防御|隐私攻击|拜占庭|后门|poison|attack|defen|byzantine|backdoor)/i.test(request)
+  if (federatedRound) {
     return kind === 'animation'
       ? federatedLearningAnimation(request, modelError)
       : federatedLearningDiagram(request, modelError)

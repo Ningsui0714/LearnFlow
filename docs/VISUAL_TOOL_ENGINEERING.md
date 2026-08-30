@@ -1,63 +1,133 @@
 # LearnFlow 图解与动画工具工程说明
 
-## 目标
+## 目标与边界
 
-图解和动画是同一份教学对象的两种呈现，不是两个互不相干的“生成图片”接口。两者先产生可验证的 `VisualSpec`，图解渲染一个稳定状态，动画则重放一组有类型的状态补丁。模型只能提出候选对象；校验、布局、重放与降级由确定性运行时完成。
+图解和动画共享同一套受限 `VisualSpec`、确定性重放与 SVG 安全边界。模型不能提交 SVG、HTML、脚本、像素坐标或可执行表达式；它只能提供高层语义输入。布局、派生数值、时间线、质量门和降级由代码负责。
 
-## 参考实现与取舍
+视觉产物不会直接写五核。查看、播放或回答动画内的预测题只属于当前界面交互，除非未来通过已登记的 `EvidenceEvent` 入口形成独立学习行为，否则不能视为掌握证据。
 
-- [Mermaid](https://github.com/mermaid-js/mermaid) 证明了文本/结构化图定义适合版本控制与多类技术图，但 LearnFlow 不直接执行模型生成的 Mermaid 文本，而是先进入受限对象模型。
-- [Cytoscape.js](https://github.com/cytoscape/cytoscape.js) 提供图论模型、交互和渲染分层的参考；LearnFlow 同样把节点、边、语义和呈现分开。
-- [Eclipse ELK / elkjs](https://github.com/kieler/elkjs) 提供自动布局的参考；当前版本使用内建确定性布局，后续可把 ELK 作为纯布局适配器，不能改变教学语义。
-- [Motion Canvas](https://github.com/motion-canvas/motion-canvas) 使用 TypeScript generator 表达可预览动画；LearnFlow 借鉴“时间线可重放”，但不执行模型代码。
-- [Manim](https://github.com/3b1b/manim) 适合精确的数学动画。LearnFlow 当前不把自然语言直接编译成 Manim Python，因为生产环境不能安全地执行模型生成代码；数学动画先用有限的几何、函数、矩阵和概率对象表达。
+## 两级能力
 
-## 统一对象底座
+### 通用结构视觉
 
-`VisualSpec v2` 包含：
+`VisualSpec v3` 继续支持以下通用 abstraction：
 
-- `domain`：`computer | math | mixed`。
-- `scene`：有限节点、关系、标签、坐标与可访问描述。
-- `animation`：帧、typed patch、持续时间、解释文字。
-- `invariants`：重放过程中必须一直成立的约束。
-- `finalState`：重放结果，用于确定性校验。
-- `provenance`：输入主题、规划器结果、是否降级、失败原因与版本。
-- `quality`：可读性、布局门、重放门和覆盖的抽象。
+- 计算机：协议序列、状态机、数据结构、代码追踪、张量形状流、系统结构。
+- 数学：函数、概率分布、变换、推导、数学结构。
 
-禁止 `eval`、任意脚本、任意 SVG/HTML、悬空引用、模型臆造的关系以及“动画失败但仍标成动画”。
+这些对象经过引用、有限数值、安全、重放和布局检查，但开放主题的模型计划只能标记为 `structural`。结构分不再等同于事实正确性，因而其质量分上限低于金标通过线。
 
-## 计算机知识抽象
+### 可计算教学视觉
 
-- 调用/消息序列：协议、函数调用、Agent tool loop。
-- 状态机：线程、事务、编译器阶段、学习 Skill 子状态。
-- 数据流与张量流：网络包、ETL、QKV、计算图。
-- 内存与存储布局：栈/堆、页表、缓存、数组与对象。
-- 树与图：AST、索引、依赖、搜索、知识图。
-- 并发时间线：锁、调度、竞态、生产者消费者。
-- 分层系统：网络栈、操作系统、模型/服务架构。
+基础能力不足不能用“更长 prompt”掩盖。以下五类高层 semantic 由确定性编译器直接从输入推导结果：
 
-## 数学知识抽象
+- `matrix_operation`：输入矩阵 → 乘积、形状规则、焦点单元格点积。
+- `graph_algorithm`：带权图 → Dijkstra 距离、前驱、确定顺序、最短路径和 relax trace。
+- `natural_frequency`：总体、患病率、灵敏度、特异度 → TP/FN/FP/TN、阳性池与后验。
+- `event_loop`：受限 JavaScript 日志、Promise 与 timer → 同步、微任务、任务的调度轨迹。
+- `optimization`：平方距离目标、起点、学习率、步数 → 梯度、更新量和固定坐标轨迹。
 
-- 数轴、坐标系、函数图像与参数变化。
-- 向量、线性变换、基与投影。
-- 矩阵形状、乘法与分块结构。
-- 几何构造、约束和不变量。
-- 概率质量/密度、条件化与采样过程。
-- 极限、导数、积分面积和局部线性化。
-- 离散结构、集合关系与证明步骤。
+模型和自然语言解析器都不能填写这些 semantic 的“答案字段”。结果由参考算法生成，并通过同一算法重新核验。精确命中时产物标记为 `derived_verified`；维度冲突、负权、未知异步结构或缺少必要参数时真实拒绝，不猜测。
 
-## 成功率与延迟策略
+## 生成管线
 
-1. 优先命中确定性模板和已有 gold fixture。
-2. 模型只补充有限字段，不负责渲染代码。
-3. 先校验引用与数量预算，再布局；布局失败降级为线性说明图。
-4. 动画必须完整重放并满足 invariants；失败则降级为静态图，并保留 `degradedTo` 和失败原因。
-5. 产物与五核隔离：看到图解只代表内容曝光，不代表理解或掌握。
+```text
+用户请求
+  → 精确的结构化解析
+    → 可计算领域：确定性 compiler + semantic proof
+    → 非精确/长尾：模型候选 VisualSpec（仅 structural）
+  → typed parser 与引用门
+  → deterministic replay
+  → 高层 semantic adapter
+  → 内部 SceneIR（唯一允许出现画布坐标的层）
+  → 一次布局，多帧复用同一 geometry
+  → 安全 SVG + scene manifest + quality report
+```
 
-## 验收
+`SceneIR` 不属于模型协议。它包含面板、矩阵格、图节点与边、表格、频数树、比例条、代码区、队列、函数图、切线和箭头等已布局对象。动画帧只选择确定性 trace step，不携带可伪造的距离、后验或下一迭代点。
 
-- JSON 往返不丢 provenance、quality、replay 或降级信息。
-- 同一输入和模板产生稳定图。
-- 动画 final state 可由初始状态和 typed patches 重建。
-- reduced-motion、键盘操作、文本替代和窄屏均可用。
-- 工具失败有真实原因；不能用占位动画冒充成功。
+## Prediction gate
+
+预测—揭示是帧元数据，不是伪造的状态 patch：
+
+- 播放进入 gate 自动暂停。
+- 下一步、End、滑块和自动播放都不能越过未回答 gate。
+- 选择后才显示解释并允许继续。
+- replay 清除已回答 gate，重新执行“先预测、后揭示”。
+- reduced-motion 关闭自动播放，但保留 gate 约束和逐帧导航。
+
+预测选择只保存在组件本地，不直接形成学习证据。
+
+## 安全、真值与质量
+
+- 禁止 `eval`、任意脚本、任意 SVG/HTML、悬空引用和非有限数值。
+- 静态图和动画都运行领域真值检查；核心事实错误直接拒绝，不能用总分补偿。
+- Dijkstra 的生产推导与独立 Bellman–Ford oracle 交叉核验；浮点改善使用严格大小关系，不能用固定 epsilon 吞掉真实更短路径。
+- `structural` 只表示 schema、引用、重放、布局和 SVG 安全通过。
+- `derived_verified` 表示输入已被确定性解析，结果由版本化编译器推导并复核。
+- 持久化产物不能只靠 compiler 名称获得 `derived_verified`：读取时必须用 provenance 中的原请求重新编译，并逐字段比对 semantic、时间线、状态、文案与无障碍信息。
+- `scene manifest` 记录 viewport、语义区域、稳定对象 ID 与 bounds；测试不再靠猜 SVG 字符串判断布局。
+- 图边路由还执行解析几何门，检查曲线不得穿过非端点节点、权重标签不得遮挡节点或其他边；稠密图无法诚实排布时明确拒绝，不把表面 bbox 的 `0 collision` 当作成功。
+- 动画每一帧的 SVG `<desc>`、屏幕阅读器文本与可见字幕只描述当前状态；全局总结不能越过 prediction gate 泄露未来答案。
+- v3 的 schema、planner prompt 与 renderer 一起版本化。合法 v2 产物经过旧封闭 schema 和 provenance tuple 校验后显式迁移到 v3；v1 保持只读兼容。把 v3-only semantic、patch 或 compiler 声明伪装成 v2 会被拒绝。
+
+## 精确匹配与失败语义
+
+确定性能力优先于模型，以降低已知问题的延迟并提高成功率；但只在必需参数完整、语义唯一时启用。主题级 contains 匹配不再构成 fallback 依据：
+
+- “TCP 四次挥手”不得降级成“三次握手”。
+- “联邦学习投毒防御”不得降级成普通训练轮。
+- Dijkstra 负权、矩阵内维冲突、无法可靠转为整数频数的 Bayes 请求直接拒绝确定性编译。
+- JavaScript 只接受受限的顶层 `console.log`、`Promise.resolve().then` 与零延时 `setTimeout` 语句；函数声明、类、未知异步结构、注释或字符串中的伪代码均不会被正则误当成执行轨迹。
+- 模型候选必须与请求分类出的 domain/abstraction 完全一致；不相关但 schema 合法的图也会被拒绝。
+- 模型生成的长尾动画暂不允许 prediction gate，因为其文案和未来状态不能被重新证明；gate 只来自确定性编译器。
+
+模型失败后，只有精确匹配且经过语义证明的模板允许产生降级产物；否则返回真实失败原因。
+
+## 金标验收
+
+第一组端到端金标由三张图解和三段动画组成：
+
+1. 矩阵乘法：矩阵网格 + 形状约束 + 焦点点积 + 迁移题。
+2. Dijkstra 静态图：带权图 + 距离/前驱表 + 路径与更新依据。
+3. 贝叶斯自然频数：条件树 + 阳性汇流 + 真实比例条 + 后验公式。
+4. JavaScript 事件循环：固定六区 + 稳定 callback token + prediction gate。
+5. Dijkstra 动画：固定图与表 + settled/relax trace + prediction gate。
+6. 梯度下降：固定坐标和曲线 + 稳定当前点 + 切线/更新箭头 + prediction gate。
+
+每项必须满足：质量分不低于 85、`derived_verified`、核心真值全通过、零区域碰撞/越界、JSON 往返可重放。动画还必须满足稳定对象身份、固定 geometry、直接 seek 与顺序播放结果一致。参数变形和 mutation case 用于防止实现只记住六道题答案。
+
+### 五个评估维度
+
+| 维度 | 不再接受的替代指标 | v3 的直接证据 |
+|---|---|---|
+| 实用性 | “成功生成一张 SVG” | 六个真实教学任务是否包含读图所需的对象、公式、状态、迁移问题和无障碍描述 |
+| 效率 | 只比较模型响应时间 | 可计算金标零模型调用；同时记录编译、验证、渲染时间和动画完成时间 |
+| 成功率 | JSON 能解析 | 金标、参数变形、边界输入和 mutation case 同时通过真值、重放、安全、布局与泄漏检查 |
+| 启发性 | 有动画或有提问 | 是否促成预测、解释、改输入和迁移；必须另测答题质量与学习迁移，不能由点击量推断 |
+| 架构合理性 | 文件分层看起来整齐 | 版本化 semantic → reference derivation → trace → SceneIR → renderer → verifier，且每层可单测、可拒绝、可重放 |
+
+此前的通用 v2 管线主要证明结构安全和可渲染，不能证明领域事实正确；v3 为五类可计算主题增加 reference algorithm、`derived_verified`、prediction gate、scene manifest 和显式失败语义。通用长尾模型计划仍保留，但最高只计为 `structural`，不能跨过金标事实线。
+
+## 研究依据与取舍
+
+工程项目提供的是架构先例，不是教学效果证明：
+
+- [Vega-Lite 论文](https://idl.cs.washington.edu/files/2017-VegaLite-InfoVis.pdf)与[官方文档](https://vega.github.io/vega-lite/docs/)把高层声明式 spec 编译为低层数据流和渲染描述。这支持 LearnFlow 把模型边界停在教学 semantic，不允许模型直接提交 SVG、坐标或 callback。
+- [Motion Canvas animation flow](https://motioncanvas.io/docs/flow/)用 generator/yield 描述显式时间顺序；[Manim Scene](https://docs.manim.community/en/stable/reference/manim.scene.scene.Scene.html)分离对象、动画和场景。LearnFlow 借鉴显式 timeline 和稳定对象身份，但不执行模型生成的 TypeScript/Python。
+- [ELK 的算法分阶段设计](https://eclipse.dev/elk/documentation/algorithmdevelopers/algorithmimplementation/algorithmstructure.html)与[Layered layout](https://eclipse.dev/elk/reference/algorithms/org-eclipse-elk-layered.html)支持把区域约束、节点放置、边路由、标签放置和压缩拆开。LearnFlow 当前用小型确定性 SceneIR 实现同样的职责边界，并以 manifest 检查区域归属、碰撞和越界。
+- [Cytoscape.js layout API](https://js.cytoscape.org/#layouts)进一步说明图的语义元素和布局算法应可替换；LearnFlow 因安全、体积和可重复测试要求，暂不在服务端引入运行时布局插件。
+
+教学论文约束了“何时该动画、怎样交互”，也提醒我们不要把交互本身当成效果：
+
+- Mayer 与 Chandler 的[分段动画实验](https://doi.org/10.1037/0022-0663.93.2.390)支持学习者控制的短段推进，主要改善迁移而非简单保持；因此动画提供暂停、逐帧、重放和 reduced-motion，而不是强制连续播放。
+- Mautone 与 Mayer 的[signaling 实验](https://doi.org/10.1037/0022-0663.93.2.377)支持用标题、结构线索和因果提示突出当前组织；因此每帧保留区域角色、当前状态和非颜色线索，同时禁止这些线索提前给出答案。
+- Brod 等人的预注册研究[When Generating a Prediction Boosts Learning](https://doi.org/10.1016/j.learninstruc.2018.01.013)发现预测在特定任务上改善学习，且违反预期后的惊讶反应与学习相关；因此 gate 必须真实阻断 reveal 并立即给反馈，但只放在有意义的关键转折。
+- Höffler 与 Leutner 的[静态图与教学动画元分析](https://www.leibniz-ipn.de/en/research/publications/instructional-animation-versus-static-pictures-a-meta-analysis)报告动画平均优势不大且高度依赖是否表征真实过程；因此矩阵结果和自然频数默认是图解，事件循环、Dijkstra trace 和梯度更新才使用动画。
+- Hundhausen、Douglas 与 Stasko 的[算法可视化 meta-study](https://users.cs.duke.edu/~rodger/jflappapers/Hundhausen2002.pdf)以及 Naps 等人的[参与分类](https://doi.org/10.1145/782941.782998)都指出“学习者怎样使用可视化”比单纯看见什么更关键；其中 prediction 也存在耗时增加而后测无显著优势的反例。因此后续实验必须同时测迁移、错误预测、帮助水平和完成时间，不能以 gate 数或播放完成率宣称教学成功。
+
+这些研究没有证明本实现已经提高学习效果。它们决定了架构和验收假设；真正的启发性仍需通过静态/动画、被动/分段、预测/不预测的对照实验来验证。
+
+## 修改影响
+
+本模块扩展视觉内部 schema、编译器、renderer、播放器和测试，不改变三类主 Agent、五核语义、`EvidenceEvent`、Action Board capability 或既有视觉工具 ID。新增视觉产物仍由 `learning_design_agent` 所有，并保持只读教学产物边界。

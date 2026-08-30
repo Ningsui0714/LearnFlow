@@ -24,6 +24,27 @@ export type VisualStep = {
   title: string
   text: string
   svg: string
+  durationMs?: number
+  stateDescription?: string
+  prediction?: {
+    id: string
+    prompt: string
+    choices: Array<{ id: string; label: string }>
+    correctChoiceId: string
+    explanation: string
+  }
+  manifest?: {
+    viewport: readonly [number, number, number, number]
+    regions: Array<{ id: string; role: string; bounds: readonly [number, number, number, number] }>
+    objects: Array<{
+      id: string
+      role: string
+      regionId: string
+      bounds: readonly [number, number, number, number]
+      value?: string | number | boolean | null
+      status?: string
+    }>
+  }
 }
 
 export type VisualArtifact = {
