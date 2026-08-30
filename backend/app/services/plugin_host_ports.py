@@ -142,7 +142,7 @@ async def _declared_and_granted(context: PluginHostPortContext, port: str) -> No
         or release.trust_state not in {"trusted_signed", "untrusted_development", "built_in"}
     ):
         raise _error("plugin_release_unavailable", "plugin release is no longer runnable")
-    if release.publisher_id is not None:
+    if release.publisher_id is not None and release.trust_state != "built_in":
         publisher = await context.db.get(PluginPublisher, release.publisher_id)
         if (
             not publisher

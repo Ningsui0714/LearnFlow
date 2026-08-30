@@ -99,6 +99,7 @@ def build_generation_contract(role_title: str, source_refs: list[dict[str, Any]]
 def compile_role_graph(
     *, role_title: str, role_summary: str = "", task_seeds: list[str],
     source_refs: list[dict[str, Any]], source_texts: list[Any],
+    max_tasks: int = MAX_TASKS,
 ) -> dict[str, Any]:
     candidates: list[tuple[str, str]] = []
     candidates.extend((item, "user:task-seed") for item in _sentences(task_seeds))
@@ -118,7 +119,7 @@ def compile_role_graph(
             continue
         seen_tasks.add(task)
         tasks.append((task, evidence_ref))
-        if len(tasks) >= MAX_TASKS:
+        if len(tasks) >= max(1, min(int(max_tasks), 40)):
             break
     if not tasks:
         raise ValueError("岗位包生成至少需要一个显式任务种子或已处理的项目来源")

@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.6"
+REGISTRY_VERSION = "2026-08-30.7"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -445,7 +445,7 @@ PLUGIN_CONTRACTS = {
             kernel_allow_list=(),
             manifest_path="plugins/role_capability_graph/manifest.json",
             execution_boundary=(
-                "trusted_signed_process only; filesystem/network/secrets/CPU/memory isolation are false"
+                "built-in Agent Package behind deterministic Plugin Host; optional signed native runner is distribution-only"
             ),
         ),
     )
@@ -1779,6 +1779,9 @@ _PYTHON_BINDING_TARGETS = {
     "py:plugin.instance.enable": ("app.services.plugin_host", "enable_plugin_instance"),
     "py:plugin.instance.update": ("app.services.plugin_host", "update_plugin_instance"),
     "py:plugin.workflow.execute": ("app.services.plugin_host", "execute_plugin_operation"),
+    "py:plugin.role_capability_agent_package": (
+        "app.services.role_capability_agent_package", "run_role_capability_workflow",
+    ),
     "py:plugin.tool.discover": ("app.services.plugin_host", "discover_plugin_tools"),
     "py:plugin.surfaces.read": ("app.services.plugin_host", "plugin_surfaces"),
     "py:plugin.host_port.call": ("app.services.plugin_host_ports", "call_plugin_host_port"),
@@ -2214,7 +2217,8 @@ _SKILL_BINDING_IDS = {
         "api:plugins.tools.call",
     ),
     "role_capability_graphing": (
-        "plugin-manifest:role_capability_graph", "py:plugin.workflow.execute",
+        "plugin-manifest:role_capability_graph", "py:plugin.role_capability_agent_package",
+        "py:plugin.workflow.execute",
         "api:plugins.workflows.run", "api:plugins.tools.call",
     ),
     "evidence_grounded_teaching": ("py:lecture.agent",),
@@ -2314,7 +2318,7 @@ PLUGIN_PUBLICATIONS = {
         "implemented",
         (
             "plugin-manifest:role_capability_graph",
-            "py:plugin.package.load",
+            "py:plugin.role_capability_agent_package",
             "py:plugin.workflow.execute",
             "workbench:plugin_surface_host",
             "workbench:role_capability_plugin",
@@ -2915,8 +2919,8 @@ def registry_manifest() -> dict[str, Any]:
             "memory_consolidation": "enabled async worker; startup queue reconciliation; deterministic offline/provider-failure fallback",
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
-            "plugin_host_authority": "signed bundle -> project-scoped instance -> immutable snapshot -> indexed PluginObjectRef; deterministic host alone grants ports, validates candidates and commits successors",
-            "plugin_execution_boundary": "trusted_signed_process is operator-enabled; filesystem/network/secrets/CPU/memory isolation are all explicitly false in v1",
+            "plugin_host_authority": "Agent Package -> project-scoped instance -> immutable snapshot -> indexed PluginObjectRef; deterministic host alone grants ports, validates candidates and commits successors",
+            "plugin_execution_boundary": "official product plugins run as in-process Agent Packages; optional third-party trusted_signed_process remains operator-enabled and explicitly has no filesystem/network/secrets/CPU/memory isolation",
             "plugin_state_boundary": "external plugin events are namespaced and zero-target; core changes are Action Board proposals; no plugin receives a Kernel or ORM write interface",
             "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
             "teaching_delivery_projection": "DomainBrief -> versioned SourceVersion evidence -> DomainKnowledgePacket -> TeachingContentBrief -> lecture/practice; formal publication blocks on critical knowledge gaps while learner Knowledge remains a separate answer-free design hint",

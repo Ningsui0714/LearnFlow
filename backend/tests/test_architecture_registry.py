@@ -49,7 +49,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-30.6"
+    assert REGISTRY_VERSION == "2026-08-30.7"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -76,7 +76,8 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     )
     assert "cannot imply mastery" in manifest["authority"]["domain_knowledge_authority"]
     assert "immutable snapshot" in manifest["authority"]["plugin_host_authority"]
-    assert "explicitly false" in manifest["authority"]["plugin_execution_boundary"]
+    assert "in-process Agent Packages" in manifest["authority"]["plugin_execution_boundary"]
+    assert "explicitly has no" in manifest["authority"]["plugin_execution_boundary"]
     assert "zero-target" in manifest["authority"]["plugin_state_boundary"]
     assert manifest["authority"]["frontend_authority"].startswith("frontend/ is the only product frontend")
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
@@ -127,6 +128,7 @@ def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable(
     plugin = next(row for row in manifest["plugins"] if row["id"] == "role_capability_graph")
     assert plugin["available"] is True
     assert "plugin-manifest:role_capability_graph" in plugin["binding_ids"]
+    assert "py:plugin.role_capability_agent_package" in plugin["binding_ids"]
 
 
 def test_targeted_events_declare_payload_and_explicit_reducer_bindings():

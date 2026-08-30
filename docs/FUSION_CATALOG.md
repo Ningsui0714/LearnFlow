@@ -27,7 +27,7 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 | 通用文件编辑 | Monaco + Markdown/PDF/image preview | UTF-8 轻量编辑与 Vim 模式；不内置 Python runtime、终端或任意编译 |
 | Tutor 本地构建能力 | `local_agent_broker` + `LocalAgentProfile` | 本地代码 Agent 仅作 Tutor 工具；确定性选择、隔离副本、两次确认、hash 校验与批量回滚 |
 | 可安装领域扩展 | `learnflow.plugin-package.v1` + 通用插件宿主 | Bundle/Instance/Snapshot/Object 四层分离；签名本机 runner 只生成候选，宿主控制权限、校验、提交、Action proposal 和零目标事件 |
-| 岗位包生成、解释与迭代 | `role_capability_graph.lfplugin` + `role_capability_graphing` | 迁移为首个官方项目插件；固定快照解释、合同化迭代和旧专用 API 兼容转发，生成/阅读均不写五核 |
+| 岗位包生成、解释与迭代 | 内置 `role_capability_graph` Agent Package + `role_capability_graphing` | 首个官方聊天插件；同进程 handler、固定快照解释、合同化迭代和旧专用 API 兼容转发，生成/阅读均不写五核；`.lfplugin` 仅作可选分发 |
 | 对话式学习方法 | `LearningSkillRun` + `LearningTask` + `learning_skill_runtime` | 清晰讲解/苏格拉底/费曼/示例渐隐在 Session 内有界运行并绑定原子任务；推荐需确认，独立验证才进入能力证据链 |
 | Teaching Contract 与内容门禁 | `Checkpoint.learning_contract` + `teaching_contract_gate` + `checkpoint_delivery_readiness` | Knowledge 通过可选 answer-free 输入契约辅助起点设计；包成熟度只由教学资产重建，任务就绪度只组合 learner-owned LearningTask；模型最多修订一次，失败仍交付答案安全 fallback，三者均不等同学习进度或掌握 |
 | 视频推荐与内容核验 | `learning_video_search` + `learning_video_inspector` + `learning_resource_curation` | 模型只看“搜索候选/核验本轮候选”两个目标级只读 ACI；平台 API、字幕和 ASR 留在 Harness，标题与热度不能替代内容核验，观看不形成掌握 |
@@ -51,7 +51,8 @@ Surface；生产还必须有受信、未撤销发布者的 Ed25519 签名。包�
 
 - **Tools**：能执行读取、生成、评估、事件写入或投影的运行构件。
 - **Product skills**：由一个主 Agent 负责、组合多个 tools 的稳定产品能力，不等同于本地 Codex `SKILL.md`。
-- **Plugin Bundle**：可安装的 `.lfplugin` 能力包，不承载项目事实；manifest 贡献项只能 namespaced，不能覆盖核心 ID 或增加第四类主 Agent。
+- **Agent Package**：官方插件的产品形态，由 Agent、Skill、Tool、Workflow、Schema 与聊天 binding 组成；同进程运行但仍受通用宿主约束。
+- **Plugin Bundle**：可选的 `.lfplugin` 第三方分发 envelope，不承载项目事实；manifest 贡献项只能 namespaced，不能覆盖核心 ID 或增加第四类主 Agent。
 - **Plugin Instance**：某 learner-owned 项目对固定 release 的配置、授权和当前 Snapshot 指针，不承载领域事实。
 - **Plugin Snapshot / Object**：Snapshot 是不可变领域事实版本；Object 由 Snapshot 组件承载，ObjectIndex 仅提供可重建寻址。
 - **Role capability plugin**：`role_capability_graphing` 由 Learning Design 负责，组合岗位包生成、固定快照解释和合同化迭代；它是首个官方 Bundle，生成制品与运行事件均不直接写五核。
@@ -68,7 +69,7 @@ Surface；生产还必须有受信、未撤销发布者的 Ed25519 签名。包�
 生成 Action Board proposal。`PluginSurfaceHost` 只接受 section、text、metric、list、table、graph、form、
 input、citation、status、action，不执行 HTML、脚本、插件 CSS 或任意 URL。
 
-插件 runner 使用默认关闭的 `trusted_signed_process`。即使包签名受信，也必须公开
+第三方原生插件 runner 使用默认关闭的 `trusted_signed_process`；内置 Agent Package 不依赖该开关。即使外部包签名受信，也必须公开
 `filesystem_isolation=false`、`network_isolation=false`、`secrets_isolation=false`、
 `cpu_isolation=false` 与 `memory_isolation=false`；签名不代表沙箱。完整协议见
 `docs/implementation/PLUGIN_HOST.md`。

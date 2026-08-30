@@ -2,11 +2,12 @@
 
 状态：implemented
 插件 ID：`role_capability_graph`
-包协议：`learnflow.plugin-package.v1`
+产品形态：内置 Agent Package
+可选分发协议：`learnflow.plugin-package.v1`
 对象协议：`role-capability.object.v1`
-架构注册表：`2026-08-30.3`
+架构注册表：`2026-08-30.7`
 
-岗位能力图谱是 LearnFlow 通用插件宿主的首个官方插件。它参考 `/Users/a1-6/CEG C/role-agent` 的可观察
+岗位能力图谱是 LearnFlow 通用插件宿主的首个官方 Agent Package。它参考 `/Users/a1-6/CEG C/role-agent` 的可观察
 产品不变量，按 LearnFlow 契约独立实现，不复制其运行代码、数据库或岗位包数据。通用安装、运行、权限、
 制品和对象引用契约以 `docs/implementation/PLUGIN_HOST.md` 为准；本文只规定岗位领域语义与旧实现迁移。
 
@@ -16,7 +17,7 @@
 Project + 固定 SourceVersion / DomainKnowledgePacket / 显式任务种子
                             │
                             ▼
-              role_capability_graph Instance
+       role_capability_graph Agent Package + Instance
                             │
           ┌─────────────────┼──────────────────┐
           ▼                 ▼                  ▼
@@ -38,11 +39,12 @@ Project + 固定 SourceVersion / DomainKnowledgePacket / 显式任务种子
 
 插件 owner 是 `learning_design_agent`，不是第四类主 Agent。Tutor 仍拥有对话、工具发现和 handoff；
 Learning Design 只生成岗位制品候选；Practice Agent、确定性评分、RemediationStrategy 与五核边界不变。
-runner 内的解释/迭代 Agent 不能批准自己的结果或直接写对象、核心模型、EvidenceEvent 或 KernelState。
+Package 内的解释/迭代 Agent 不能批准自己的结果或直接写对象、核心模型、EvidenceEvent 或 KernelState。
 
-## 2. Bundle manifest
+## 2. Agent Package 与可选 Bundle
 
-官方 `role_capability_graph.lfplugin` 声明：
+官方插件在 LearnFlow 进程内注册 Agent、Product Skill、Tool、Workflow、Schema 和聊天 UI binding。它的
+`role_capability_graph.lfplugin` 只是可选的不可变分发/导出 envelope，不是产品运行的前置条件。能力声明包括：
 
 - object types：`role`、`task`、`capability`、`knowledge_skill`、`claim`、`semantic_edge`、`scenario`、
   `process_event`、`actor`、`work_object`、`artifact`、`risk`、`bridge`；
@@ -54,10 +56,10 @@ runner 内的解释/迭代 Agent 不能批准自己的结果或直接写对象�
   `model.generate_structured.v1`、`event.record.v1`；
 - 运行事件：只允许 namespaced、零 Kernel target 的生成与迭代事件。
 
-包不包含 SQL migration、ORM adapter、React/JavaScript、HTML、CSS 或核心对象写接口。生产运行要求受信、
-未撤销发布者的 Ed25519 签名以及操作员显式开启 `trusted_signed_process`；即使官方签名受信，仍必须显示
-`filesystem_isolation=false`、`network_isolation=false`、`secrets_isolation=false`、
-`cpu_isolation=false` 和 `memory_isolation=false`。
+内置 Agent Package 通过仓库注册表和构建产物受控，不需要 `trusted_signed_process`。包内 handler 只接收
+通用 Plugin Host 提供的 Context 与已授权 Host Ports；宿主仍负责 schema、权限、幂等、验证与提交。
+只有导入第三方 `.lfplugin` 并选择原生 runner 时，才要求受信签名和操作员显式开启进程执行；其无隔离
+披露不得套用到内置 Package，也不得影响官方插件的默认可用性。
 
 ## 3. 快照与领域对象
 
@@ -90,7 +92,7 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 2. 固定 SourceVersion ID/hash、已确认的 DomainKnowledgePacket 和显式任务种子；来源正文标为不可信。
    每个 Chunk 保留自己的 SourceVersion ref，不得把多来源内容统一归因到第一条来源。宿主注入的
    `max_tasks` 与 `include_process_view` 配置分别约束任务预算和过程视图投影。
-3. runner 建立有预算和停止条件的 generation contract，并生成候选 evidence、semantic graph、process forest
+3. 内置 generation handler 建立有预算和停止条件的 contract，并生成候选 evidence、semantic graph、process forest
    与 views。
 4. `validate` 检查协议、稳定 ID、引用闭包、证据可解析性、最小对象集合、process/semantic bridge 和 probes。
 5. 宿主重新校验组件、构建 retrieval/object index、计算 canonical root hash 并原子提交 Snapshot。
@@ -102,7 +104,7 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 ### 4.2 `explain`
 
 1. 宿主验证 ownership，并固定显式或当前 snapshot 的 ID 与 root hash。
-2. runner 对 retrieval index 做有界搜索，再进行有界关系遍历，并从同一 Snapshot 的 evidence 组件读取
+2. 内置 explain handler 对 retrieval index 做有界搜索，再进行有界关系遍历，并从同一 Snapshot 的 evidence 组件读取
    source 与 claim 摘要。
 3. 返回 answer、objects、relations、带固定 source/claim 的 citations、coverage 和完整 snapshot ref。
 4. 宿主检查所有引用都属于固定 Snapshot；超预算或悬空引用使本次 Run 失败。
@@ -113,7 +115,7 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 ### 4.3 `iterate`
 
 1. 请求必须提交 `expected_snapshot_id`；与当前基线不一致返回 `409 Conflict`。
-2. runner 固定 base snapshot，形成 objective、target IDs、操作预算、验收策略和停止条件。
+2. 内置 iterate handler 固定 base snapshot，形成 objective、target IDs、操作预算、验收策略和停止条件。
 3. 检查 base 的协议、覆盖、evidence readiness 和目标引用。
 4. 生成结构化 patch，随后运行结构、节点/关系类型、证据闭包、语义端点类型、process/semantic bridge 与
    引用校验；缺失证据不再只是 warning。
@@ -123,7 +125,7 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 
 ### 4.4 `validate` 与 `upgrade`
 
-`validate` 是宿主提交前的必经 workflow，不能由 runner 的“自报成功”替代。`upgrade` 在旧 release 与当前
+`validate` 是宿主提交前的必经 workflow，不能由 Package handler 的“自报成功”替代。`upgrade` 在旧 release 与当前
 Snapshot 上运行兼容/迁移；只有候选满足新 release 的 schemas、引用和 root hash 契约，宿主才在同一事务中
 切换 release 与 snapshot。失败时 Instance 继续固定旧 release 和旧 snapshot。
 
@@ -186,7 +188,7 @@ LearningAttempt / 已登记用户行为
 
 ## 8. 失败与验收
 
-- 生成失败、协议失败或 runner 崩溃：Run 可审计，current snapshot 不移动。
+- 生成失败、协议失败或 handler 异常：Run 可审计，current snapshot 不移动。
 - 无变化迭代：Run 为 `no_change`，不创建新版本。
 - expected snapshot 过期或同幂等键异请求：返回 `409`。
 - 发布者/release 撤销：历史可读，立即阻止新运行。
