@@ -159,3 +159,35 @@ async def test_gateway_generates_reviewed_catalog_match_with_complete_bundle():
         "/api/v1/wf03/learning-tasks/generate",
         "/api/v1/learning-task-conversion/tasks/ltc_catalog_windows_01/bundle",
     ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_accepts_structurally_valid_provisional_catalog_bundle():
+    task_card_id = "ltc_catalog_windows_provisional_01"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/typical-tasks/search"):
+            return httpx.Response(200, json={
+                "status": "ready",
+                "primary_task_id": "tt_windows_01",
+                "candidates": [{"task_id": "tt_windows_01"}],
+            })
+        if request.url.path.endswith("/learning-tasks/generate"):
+            return httpx.Response(200, json={
+                "status": "provisional",
+                "task_card_id": task_card_id,
+            })
+        if request.url.path.endswith(f"/tasks/{task_card_id}/bundle"):
+            bundle = _bundle(task_card_id)
+            bundle["verification_status"] = "provisional"
+            return httpx.Response(200, json=bundle)
+        raise AssertionError(request.url.path)
+
+    gateway = LearningTaskConversionGateway(
+        base_url="https://conversion.example",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert await gateway.generate_catalog_match(
+        "Windows 11 系统重装与驱动验收"
+    ) == task_card_id

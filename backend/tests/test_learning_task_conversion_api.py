@@ -16,6 +16,7 @@ from app.services.personalized_learning_handoff import (
 class _FakeGateway:
     submitted_feedback = []
     submitted_upstream = []
+    last_query = ""
 
     async def capabilities(self):
         return {
@@ -24,9 +25,11 @@ class _FakeGateway:
         }
 
     async def generate_catalog_match(self, _query: str):
+        _FakeGateway.last_query = _query
         return None
 
     async def task_bundle(self, task_card_id: str):
+        task_name = _FakeGateway.last_query or "Unity摄像机跟随模块开发"
         return {
             "schema_version": "learning-task-conversion-integration-bundle-v1",
             "task_card_id": task_card_id,
@@ -35,9 +38,9 @@ class _FakeGateway:
                 "schema_version": "learning-task-to-personalized-learning-v1",
                 "work_task": {
                     "work_task_id": "task-unity-camera",
-                    "enterprise_task_name": "Unity摄像机跟随模块开发",
+                    "enterprise_task_name": task_name,
                     "enterprise_task_description": "完成跟随、遮挡检测和验收。",
-                    "teaching_task_name": "Unity摄像机跟随学习型工作任务",
+                    "teaching_task_name": f"{task_name}学习型工作任务",
                     "teaching_task_description": "在实训环境中完成模块并提交验收记录。",
                     "work_situation": "在Unity项目中为第三人称角色开发摄像机模块。",
                     "task_steps": [
@@ -50,7 +53,20 @@ class _FakeGateway:
                             "check": "摄像机平滑跟随角色",
                             "knowledge_point_ids": ["kp_camera"],
                             "skill_point_ids": ["sp_camera"],
-                        }
+                        },
+                        *[
+                            {
+                                "step": index,
+                                "step_id": f"step_{index:02d}",
+                                "name": f"摄像机模块实施步骤{index}",
+                                "action": f"完成第{index}个摄像机跟随实施操作。",
+                                "deliverable": f"步骤{index}配置与记录",
+                                "check": f"运行并确认步骤{index}结果正确。",
+                                "knowledge_point_ids": ["kp_camera"],
+                                "skill_point_ids": ["sp_camera"],
+                            }
+                            for index in range(2, 6)
+                        ],
                     ],
                     "knowledge_points": [
                         {
@@ -59,7 +75,21 @@ class _FakeGateway:
                             "name": "Cinemachine跟随与阻尼参数",
                             "scope": "理解跟随对象、构图与阻尼的作用。",
                             "learning_resources": [],
-                        }
+                        },
+                        {
+                            "knowledge_id": "kp_camera_input",
+                            "display_code": "K2",
+                            "name": "Unity输入与视角控制",
+                            "scope": "理解输入与视角控制。",
+                            "learning_resources": [],
+                        },
+                        {
+                            "knowledge_id": "kp_camera_test",
+                            "display_code": "K3",
+                            "name": "Unity运行与验收测试",
+                            "scope": "理解模块运行与验收。",
+                            "learning_resources": [],
+                        },
                     ],
                     "skill_points": [
                         {
@@ -67,7 +97,19 @@ class _FakeGateway:
                             "display_code": "S1",
                             "name": "配置第三人称摄像机",
                             "observable_action": "能完成跟随参数配置并验证。",
-                        }
+                        },
+                        {
+                            "skill_id": "sp_camera_debug",
+                            "display_code": "S2",
+                            "name": "调试摄像机参数",
+                            "observable_action": "能完成参数调试。",
+                        },
+                        {
+                            "skill_id": "sp_camera_verify",
+                            "display_code": "S3",
+                            "name": "验收摄像机模块",
+                            "observable_action": "能完成运行验收。",
+                        },
                     ],
                 },
             },
@@ -129,7 +171,15 @@ class _FakeXfyunClient:
 class _CatalogGateway(_FakeGateway):
     async def generate_catalog_match(self, query: str):
         assert query == "windows系统的安装"
+        _FakeGateway.last_query = query
         return "ltc_catalog_windows_01"
+
+    async def task_bundle(self, task_card_id: str):
+        bundle = await super().task_bundle(task_card_id)
+        work_task = bundle["task"]["work_task"]
+        work_task["enterprise_task_name"] = "Windows系统安装与验收"
+        work_task["teaching_task_name"] = "Windows系统安装学习型工作任务"
+        return bundle
 
 
 class _FakePersonalizedLearningClient:
@@ -191,6 +241,40 @@ class _StageConflictClient(_FakeXfyunClient):
         raise XfyunWorkflowError(
             "讯飞星辰工作流执行失败(21812): 当前阶段 INTAKE 不接受计划提交"
         )
+
+
+class _ThirdParty405Client(_FakeXfyunClient):
+    async def run(self, user_input: str, *, uid: str):
+        self.calls.append({"user_input": user_input, "uid": uid})
+        raise XfyunWorkflowError(
+            "讯飞星辰工作流执行失败(21812): Third-party tool request failed"
+            "(Request error code: 405, error message Method Not Allowed)"
+        )
+
+
+class _FakeDirectPlanGenerator:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def generate(self, user_input: str):
+        self.calls.append(user_input)
+        return {
+            "schema_version": "learning-task-conversion-direct-plan-run-v1",
+            "provider": "wf03-plan-direct-fallback",
+            "run_id": "run_direct_plan_test",
+            "content": '{"task_card_id":"ltc_direct_plan_01"}',
+            "usage": {},
+            "fallback": True,
+        }
+
+
+def test_third_party_tool_failure_is_not_misclassified_as_stage_conflict():
+    error = XfyunWorkflowError(
+        "讯飞星辰工作流执行失败(21812): Third-party tool request failed"
+        "(Request error code: 405, error message Method Not Allowed)"
+    )
+
+    assert learning_task_conversion._is_workflow_stage_conflict(error) is False
 
 
 class _WorkflowSelfLinkClient(_FakeXfyunClient):
@@ -336,13 +420,156 @@ def test_learning_task_integration_generates_embeddable_artifact(monkeypatch):
         payload = generated.json()
         assert payload["status"] == "success"
         assert payload["task_card_id"] == "ltc_generated_01"
-        assert payload["artifact_url"].endswith("/ltc_generated_01/interactive.html")
+        assert payload["workspace_path"] == "/wf03/tasks/ltc_generated_01"
+        assert payload["artifact_url"] == "/wf03/tasks/ltc_generated_01"
+        assert "verification_status" not in payload["bundle"]
+        assert payload["provider_artifact_url"].endswith(
+            "/ltc_generated_01/interactive.html"
+        )
 
         empty_run = client.post(
             "/api/learning-task-conversion/workflow-runs",
             json={"user_input": "  "},
         )
         assert empty_run.status_code == 422
+
+
+def test_unseen_task_falls_back_to_direct_plan_when_xingchen_tool_is_405(monkeypatch):
+    fake_xfyun = _ThirdParty405Client()
+    direct_plan = _FakeDirectPlanGenerator()
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    monkeypatch.setattr(
+        learning_task_conversion,
+        "_direct_plan_generator",
+        lambda: direct_plan,
+    )
+    with TestClient(app) as client:
+        username = f"conversion_direct_{uuid.uuid4().hex[:10]}"
+        assert client.post(
+            "/api/auth/register", json=_registration(username)
+        ).status_code == 200
+
+        generated = client.post(
+            "/api/learning-task-conversion/integration-generate",
+            json={
+                "query": "Unity第三人称摄像机跟随模块开发与验收",
+                "student_id": "STU-001",
+            },
+        )
+
+        assert generated.status_code == 200
+        assert generated.json()["status"] == "success"
+        assert generated.json()["task_card_id"] == "ltc_direct_plan_01"
+        assert direct_plan.calls == ["Unity第三人称摄像机跟随模块开发与验收"]
+        assert len(fake_xfyun.calls) == 1
+
+
+def test_learning_task_integration_expands_broad_java_direction(monkeypatch):
+    fake_xfyun = _FakeXfyunClient()
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
+    monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    with TestClient(app) as client:
+        username = f"conversion_java_{uuid.uuid4().hex[:10]}"
+        assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
+
+        generated = client.post(
+            "/api/learning-task-conversion/integration-generate",
+            json={"query": "Java应用的开发", "student_id": "STU-001"},
+        )
+
+        assert generated.status_code == 200
+        payload = generated.json()
+        assert payload["status"] == "success"
+        assert payload["task_card_id"] == "ltc_java_student_records_v1"
+        work_task = payload["bundle"]["task"]["work_task"]
+        assert work_task["teaching_task_name"] == (
+            "Java学生成绩管理模块开发学习型工作任务"
+        )
+        assert len(work_task["task_steps"]) == 6
+        assert all(step["deliverable"] for step in work_task["task_steps"])
+        assert all(step["check"] for step in work_task["task_steps"])
+        assert all(
+            point["learning_resources"]
+            for point in work_task["knowledge_points"]
+        )
+        assert fake_xfyun.calls == []
+
+
+def test_local_java_bundle_supports_knowledge_handoff(monkeypatch):
+    fake_personalized = _FakePersonalizedLearningClient()
+    monkeypatch.setattr(
+        learning_task_conversion,
+        "_personalized_learning_client",
+        lambda: fake_personalized,
+    )
+    with TestClient(app) as client:
+        username = f"java_handoff_{uuid.uuid4().hex[:10]}"
+        assert client.post(
+            "/api/auth/register", json=_registration(username)
+        ).status_code == 200
+
+        entry = client.get(
+            "/api/learning-task-conversion/tasks/"
+            "ltc_java_student_records_v1/knowledge/"
+            "kp_java_requirements/personalized-learning-entry"
+        )
+        assert entry.status_code == 200
+        assert entry.json()["status"] == "ready"
+        assert len(entry.json()["focus"]["source_steps"]) == 1
+        assert entry.json()["focus"]["strongly_related_skills"][0][
+            "skill_id"
+        ] == "sp_java_01"
+
+
+def test_broad_computing_task_expansion_keeps_explicit_task_unchanged():
+    assert learning_task_conversion._expand_broad_computing_task("java") == (
+        "学生成绩管理系统的学生信息增删改查模块开发与验收（Java）"
+    )
+    assert learning_task_conversion._expand_broad_computing_task("Java应用的开发") == (
+        "学生成绩管理系统的学生信息增删改查模块开发与验收（Java）"
+    )
+    explicit = "使用Java开发校园报修系统的工单审批模块并完成接口测试"
+    assert learning_task_conversion._expand_broad_computing_task(explicit) == explicit
+
+
+def test_catalog_match_must_preserve_requested_task_object():
+    unrelated_bundle = {
+        "task": {
+            "work_task": {
+                "enterprise_task_name": "Unity角色移动模块开发与调试",
+                "teaching_task_name": "Unity角色移动学习型工作任务",
+            }
+        }
+    }
+    related_bundle = {
+        "task": {
+            "work_task": {
+                "enterprise_task_name": "Unity角色背包拖拽排序模块开发与验收",
+                "teaching_task_name": "Unity角色背包拖拽排序学习任务",
+            }
+        }
+    }
+
+    assert learning_task_conversion._catalog_bundle_preserves_task_object(
+        "Unity角色背包拖拽排序模块开发与验收", unrelated_bundle,
+    ) is False
+    assert learning_task_conversion._catalog_bundle_preserves_task_object(
+        "Unity角色背包拖拽排序模块开发与验收", related_bundle,
+    ) is True
+
+    docker_mysql_bundle = {
+        "task": {
+            "work_task": {
+                "enterprise_task_name": "Docker Compose部署Nginx与MySQL服务",
+                "teaching_task_name": "Docker Compose服务部署学习型工作任务",
+            }
+        }
+    }
+    assert learning_task_conversion._catalog_bundle_preserves_task_object(
+        "Docker Compose部署Redis主从与故障切换演练",
+        docker_mysql_bundle,
+    ) is False
 
 
 def test_learning_task_integration_auto_repairs_clear_rejected_task(monkeypatch):
@@ -492,7 +719,8 @@ def test_learning_task_generation_persists_and_replays_session_turn(monkeypatch)
         assert second.status_code == 200
         assert second.json()["replayed"] is True
         assert len(fake_xfyun.calls) == 1
-        assert "查看学习型任务" in first.json()["message"]
+        assert "在中间工作区打开" in first.json()["message"]
+        assert first.json()["workspace_path"] == "/wf03/tasks/ltc_generated_01"
         assert "PDF" not in first.json()["message"]
         assert "JSON" not in first.json()["message"]
         loaded = client.get(f"/api/agent/sessions/{session['id']}").json()
@@ -501,7 +729,9 @@ def test_learning_task_generation_persists_and_replays_session_turn(monkeypatch)
             if item.get("meta_data", {}).get("message_kind") == "learning_task_generated"
         ]
         assert len(generated) == 1
-        assert "/wf03/tasks/ltc_generated_01" in generated[0]["content"]
+        assert generated[0]["meta_data"]["generation_result"]["workspace_path"] == (
+            "/wf03/tasks/ltc_generated_01"
+        )
 
 
 def test_learning_task_generation_persistence_tolerates_stale_replay_check(monkeypatch):
@@ -563,7 +793,12 @@ def test_learning_task_generation_turns_intake_conflict_into_clarification(monke
 
 def test_learning_task_generation_never_exposes_empty_or_workflow_self_links(monkeypatch):
     fake_xfyun = _WorkflowSelfLinkClient()
+    direct_plan = _FakeDirectPlanGenerator()
+    monkeypatch.setattr(learning_task_conversion, "_gateway", lambda: _FakeGateway())
     monkeypatch.setattr(learning_task_conversion, "_xfyun_client", lambda: fake_xfyun)
+    monkeypatch.setattr(
+        learning_task_conversion, "_direct_plan_generator", lambda: direct_plan,
+    )
     with TestClient(app) as client:
         username = f"conversion_self_link_{uuid.uuid4().hex[:10]}"
         assert client.post("/api/auth/register", json=_registration(username)).status_code == 200
@@ -575,9 +810,9 @@ def test_learning_task_generation_never_exposes_empty_or_workflow_self_links(mon
 
         payload = response.json()
         assert response.status_code == 200
-        assert payload["status"] == "needs_revision"
-        assert payload["task_card_id"] == ""
-        assert payload["bundle"] is None
+        assert payload["status"] == "success"
+        assert payload["task_card_id"] == "ltc_direct_plan_01"
+        assert payload["bundle"] is not None
         assert "agent.xfyun.cn" not in payload["message"]
         assert "[]()" not in payload["message"]
 

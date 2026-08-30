@@ -155,7 +155,12 @@ class LearningTaskConversionGateway:
             payload={"typical_task_id": task_id},
         )
         task_card_id = str(generated.get("task_card_id") or "").strip()
-        if generated.get("status") != "ready" or not task_card_id:
+        # ``provisional`` means the task package is structurally complete but
+        # its evidence can still be enriched. Rejecting it here sends a clear
+        # catalogue task back through model intake and can produce a false
+        # clarification. The validated bundle keeps its verification status,
+        # so it is safe to display as a draft without claiming formal review.
+        if generated.get("status") not in {"ready", "provisional"} or not task_card_id:
             return None
         # Validate the persisted delivery now.  This prevents a stale catalogue
         # row from bypassing the same integration gate used by model output.

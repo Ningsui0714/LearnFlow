@@ -179,6 +179,9 @@ export interface WF03GenerationResult {
   status: 'success' | 'needs_clarification' | 'needs_revision'
   task_card_id: string
   message: string
+  workspace_path?: string
+  artifact_url?: string
+  provider_artifact_url?: string
   bundle: LearningTaskConversionBundle | null
   replayed?: boolean
 }

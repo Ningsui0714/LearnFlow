@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import re
 import hmac
 from hashlib import sha256
@@ -28,6 +29,10 @@ from app.services.learning_task_conversion_xfyun import (
     XfyunLearningTaskWorkflowClient,
     XfyunWorkflowConfigError,
     XfyunWorkflowError,
+)
+from app.services.learning_task_direct_plan import (
+    LearningTaskDirectPlanError,
+    LearningTaskDirectPlanGenerator,
 )
 from app.services.personalized_learning_handoff import (
     PersonalizedLearningHandoffClient,
@@ -334,6 +339,10 @@ def _personalized_learning_client() -> PersonalizedLearningHandoffClient:
     return PersonalizedLearningHandoffClient()
 
 
+def _direct_plan_generator() -> LearningTaskDirectPlanGenerator:
+    return LearningTaskDirectPlanGenerator()
+
+
 def _raise_gateway_error(exc: LearningTaskConversionError) -> None:
     raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
@@ -392,6 +401,313 @@ def _query_requires_clarification(user_input: str) -> bool:
     return not remainder
 
 
+def _expand_broad_computing_task(user_input: str) -> str:
+    """Turn a computing-major direction into one representative work task.
+
+    The task-conversion entry is intentionally different from the ordinary
+    learning-goal chat: learners may type a technology name first.  Repeating
+    the same clarification for inputs such as ``java`` makes the entry appear
+    broken even though the product can safely choose a reversible example.
+    Keep explicit tasks unchanged and only expand a small, auditable catalogue
+    of broad computing-major directions.
+    """
+
+    compact = re.sub(r"[\s，。！？、,.!?的]", "", user_input).lower()
+    compact = re.sub(
+        r"^(我)?(想|要|希望)?(学习|学|了解|入门|掌握)",
+        "",
+        compact,
+    )
+    java_task = "学生成绩管理系统的学生信息增删改查模块开发与验收（Java）"
+    python_task = "学生成绩数据分析工具开发与验收（Python）"
+    defaults = {
+        "java": java_task,
+        "java学习": java_task,
+        "java入门": java_task,
+        "java编程": java_task,
+        "java程序设计": java_task,
+        "java开发": java_task,
+        "java应用": java_task,
+        "java应用开发": java_task,
+        "python": python_task,
+        "python编程": python_task,
+        "python开发": python_task,
+        "前端": "响应式课程管理前端页面开发与验收",
+        "web前端": "响应式课程管理前端页面开发与验收",
+        "前端开发": "响应式课程管理前端页面开发与验收",
+        "数据库": "学生成绩管理数据库表结构与增删改查功能设计与验收",
+        "sql": "学生成绩管理数据库表结构与增删改查功能设计与验收",
+        "linux": "Linux服务器安装与基础服务配置验收",
+        "网络": "企业园区交换机VLAN与Trunk配置及连通性验收",
+        "网络技术": "企业园区交换机VLAN与Trunk配置及连通性验收",
+    }
+    return defaults.get(compact, user_input)
+
+
+_LOCAL_JAVA_TASK_CARD_ID = "ltc_java_student_records_v1"
+_LOCAL_JAVA_TASK_NAME = "学生成绩管理系统的学生信息增删改查模块开发与验收（Java）"
+
+
+def _local_reviewed_task_card_id(user_input: str) -> str:
+    """Resolve a broad computing direction to a reviewed demo task.
+
+    The provider workflow is still used for concrete, user-specified tasks.
+    This small catalogue only prevents common professional-group entry words
+    from falling into the provider's INTAKE loop during a live demonstration.
+    """
+
+    if _expand_broad_computing_task(user_input) == _LOCAL_JAVA_TASK_NAME:
+        return _LOCAL_JAVA_TASK_CARD_ID
+    return ""
+
+
+def _local_reviewed_task_bundle(task_card_id: str) -> dict[str, Any] | None:
+    """Return the versioned, reviewable bundle for a local computing task."""
+
+    if task_card_id != _LOCAL_JAVA_TASK_CARD_ID:
+        return None
+
+    resource_queries = {
+        "kp_java_requirements": "Java 学生成绩管理系统 需求分析 数据模型",
+        "kp_java_maven": "Java Maven 项目创建 分层结构",
+        "kp_java_oop": "Java 面向对象 封装 参数校验 异常处理",
+        "kp_java_crud": "Java CRUD 增删改查 ArrayList",
+        "kp_java_junit": "Java JUnit5 单元测试 入门",
+        "kp_java_delivery": "Java 项目调试 Git 交付 验收",
+    }
+
+    def resources(knowledge_id: str, name: str) -> list[dict[str, str]]:
+        query = resource_queries[knowledge_id].replace(" ", "%20")
+        return [
+            {
+                "resource_id": f"res_{knowledge_id}_bilibili",
+                "resource_name": f"B站：{name}实操教程",
+                "resource_type": "video_search",
+                "platform": "bilibili",
+                "resource_url": f"https://search.bilibili.com/all?keyword={query}",
+            }
+        ]
+
+    knowledge_specs = [
+        (
+            "kp_java_requirements", "K1", "需求分析与数据模型",
+            "把业务字段、约束和操作边界转成可实现、可验收的数据模型。",
+        ),
+        (
+            "kp_java_maven", "K2", "Maven工程与分层结构",
+            "理解工程目录、依赖配置以及界面层、服务层和数据层的职责边界。",
+        ),
+        (
+            "kp_java_oop", "K3", "Java封装、校验与异常处理",
+            "在实体对象中应用封装，并对非法输入给出明确、可追踪的异常。",
+        ),
+        (
+            "kp_java_crud", "K4", "集合与增删改查逻辑",
+            "使用集合、接口和条件判断实现学生信息的新增、查询、修改和删除。",
+        ),
+        (
+            "kp_java_junit", "K5", "JUnit 5单元测试",
+            "围绕正常、边界和异常场景设计可重复执行的自动化测试。",
+        ),
+        (
+            "kp_java_delivery", "K6", "调试、版本控制与交付验收",
+            "根据运行日志定位问题，形成可复现构建和可检查的交付记录。",
+        ),
+    ]
+    knowledge_points = [
+        {
+            "knowledge_id": knowledge_id,
+            "display_code": code,
+            "name": name,
+            "scope": scope,
+            "related_skill_ids": [f"sp_java_{index:02d}"],
+            "learning_resources": resources(knowledge_id, name),
+        }
+        for index, (knowledge_id, code, name, scope) in enumerate(
+            knowledge_specs, start=1,
+        )
+    ]
+    skill_names = [
+        "把需求整理为字段、规则与验收清单",
+        "创建可运行的Maven分层工程",
+        "实现实体封装、输入校验与异常处理",
+        "实现并调试学生信息增删改查",
+        "编写并执行JUnit自动化测试",
+        "完成构建、版本归档与验收演示",
+    ]
+    skill_points = [
+        {
+            "skill_id": f"sp_java_{index:02d}",
+            "display_code": f"S{index}",
+            "name": name,
+            "observable_action": name,
+        }
+        for index, name in enumerate(skill_names, start=1)
+    ]
+    step_specs = [
+        (
+            "需求分析与数据模型设计",
+            "分析学生信息增删改查场景，确定学号、姓名、课程和成绩字段及唯一性、取值范围等规则。",
+            "上游任务目标与示例数据已确认。",
+            "需求清单与Student、Score数据模型草图",
+            "字段覆盖新增、查询、修改、删除四类操作；学号唯一且成绩范围明确。",
+            "只使用脱敏的实训数据，不采集真实学生隐私信息。",
+        ),
+        (
+            "创建Maven工程与分层骨架",
+            "创建Java Maven工程，配置JDK与JUnit依赖，建立model、repository、service和app目录。",
+            "数据模型和技术约束已经评审。",
+            "可编译运行的工程骨架与pom.xml",
+            "执行mvn test能够完成编译，目录职责与依赖方向清晰。",
+            "依赖版本固定，不引入来源不明的第三方包。",
+        ),
+        (
+            "实现实体封装与输入校验",
+            "实现Student和Score实体，封装字段访问，并对空值、重复学号和非法成绩抛出业务异常。",
+            "工程骨架已通过编译。",
+            "实体类、校验器与异常类型源码",
+            "非法姓名、重复学号及越界成绩均被拒绝并返回可理解的信息。",
+            "异常信息不得输出密码、路径等敏感运行信息。",
+        ),
+        (
+            "实现学生信息增删改查",
+            "通过repository与service接口实现新增、按学号查询、修改成绩和删除记录，并保持数据状态一致。",
+            "实体与校验逻辑已经完成。",
+            "可运行的CRUD服务代码与操作演示记录",
+            "四类操作结果正确；不存在的学号得到明确反馈；修改与删除后查询结果一致。",
+            "删除前必须确认目标记录，禁止批量误删。",
+        ),
+        (
+            "编写JUnit测试并修复缺陷",
+            "为正常、边界和异常路径编写JUnit 5测试，执行测试并根据失败信息修复实现。",
+            "CRUD主流程可手工运行。",
+            "JUnit测试集、测试报告与缺陷修复记录",
+            "核心服务测试全部通过，至少覆盖重复学号、成绩边界和不存在记录三类异常。",
+            "测试必须隔离，不能依赖上一次运行遗留的数据。",
+        ),
+        (
+            "构建交付并完成验收演示",
+            "清理工程、执行完整构建，整理README和版本提交，按验收清单演示从新增到删除的完整流程。",
+            "自动化测试全部通过。",
+            "可运行JAR、README、Git提交记录与验收截图",
+            "全新环境按README可完成构建；演示结果与需求清单一致；交付物可以追溯到版本号。",
+            "交付包不包含密钥、个人数据、IDE缓存和临时构建文件。",
+        ),
+    ]
+    task_steps = [
+        {
+            "step": index,
+            "step_id": f"step_java_{index:02d}",
+            "name": name,
+            "action": action,
+            "prerequisites": prerequisites,
+            "deliverable": deliverable,
+            "check": check,
+            "safety": safety,
+            "knowledge_point_ids": [knowledge_specs[index - 1][0]],
+            "skill_point_ids": [f"sp_java_{index:02d}"],
+        }
+        for index, (
+            name, action, prerequisites, deliverable, check, safety,
+        ) in enumerate(step_specs, start=1)
+    ]
+    relationships = [
+        {
+            "relation_id": f"rel_java_{index:02d}",
+            "knowledge_id": knowledge_specs[index - 1][0],
+            "skill_id": f"sp_java_{index:02d}",
+            "skill_ids": [f"sp_java_{index:02d}"],
+            "relation_type": "required_for_step",
+            "strength": "strong",
+            "applies_to_steps": [step_specs[index - 1][0]],
+            "step_id": f"step_java_{index:02d}",
+            "basis": "reviewed_computing_task_template",
+            "reason": "该知识点直接支撑本步骤的可观察技能动作与验收产物。",
+        }
+        for index in range(1, 7)
+    ]
+    return {
+        "schema_version": "learning-task-conversion-integration-bundle-v1",
+        "task_card_id": task_card_id,
+        "verification_status": "reviewed_computing_task",
+        "task": {
+            "schema_version": "learning-task-to-personalized-learning-v1",
+            "task_card_id": task_card_id,
+            "work_task": {
+                "work_task_id": "work_java_student_records_v1",
+                "enterprise_task_name": "Java学生成绩管理模块开发与验收",
+                "enterprise_task_description": (
+                    "按软件开发任务要求实现学生信息增删改查模块，并通过自动化测试和交付验收。"
+                ),
+                "teaching_task_name": "Java学生成绩管理模块开发学习型工作任务",
+                "teaching_task_description": (
+                    "在校内软件开发实训环境中完成需求、编码、测试与交付的完整工作过程。"
+                ),
+                "work_situation": (
+                    "作为初级Java开发成员，根据明确需求完成学生成绩管理模块并提交可运行版本。"
+                ),
+                "task_scenario": (
+                    "校内软件项目实训：从需求清单出发完成学生信息模块的开发、测试和验收。"
+                ),
+                "tools": ["JDK 21", "IntelliJ IDEA", "Maven", "JUnit 5", "Git"],
+                "safety_points": [
+                    "仅使用脱敏测试数据",
+                    "禁止在源码中写入密钥和个人信息",
+                    "删除操作必须确认目标记录",
+                ],
+                "acceptance_tests": [
+                    "Maven完整构建通过",
+                    "增删改查与异常路径测试通过",
+                    "README能够指导全新环境复现",
+                ],
+                "task_steps": task_steps,
+                "knowledge_points": knowledge_points,
+                "skill_points": skill_points,
+            },
+        },
+        "strong_relationships": relationships,
+        "artifacts": {
+            "interactive_html_url": "",
+            "pdf_url": "",
+            "personalized_learning_json_url": (
+                f"/api/learning-task-conversion/tasks/{task_card_id}/personalized-learning"
+            ),
+            "feedback_json_url": "/api/learning-task-conversion/downstream-feedback",
+        },
+    }
+
+
+async def _resolved_task_bundle(task_card_id: str) -> dict[str, Any]:
+    local_bundle = _local_reviewed_task_bundle(task_card_id)
+    if local_bundle is not None:
+        return local_bundle
+    return await _gateway().task_bundle(task_card_id)
+
+
+def _learner_display_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Remove provider review state from the learner-facing task bundle.
+
+    After structural validation the workbench opens the result as a normal
+    task. Provider evidence/review metadata remains at the source service for
+    auditing, but it must not create a learner-facing draft or pending state.
+    """
+
+    display_bundle = deepcopy(bundle)
+    display_bundle.pop("verification_status", None)
+    display_bundle.pop("traceability", None)
+    task = display_bundle.get("task")
+    if isinstance(task, dict):
+        for field in (
+            "verification_status",
+            "review_required",
+            "review_mode",
+            "evidence_required",
+            "release_scope",
+        ):
+            task.pop(field, None)
+    return display_bundle
+
+
 def _is_explicit_work_task(user_input: str) -> bool:
     normalized = re.sub(r"\s+", "", user_input)
     role_markers = (
@@ -431,6 +747,98 @@ def _task_object_anchor(user_input: str) -> str:
     elif normalized.endswith("动力电池"):
         normalized += "包"
     return normalized[:48]
+
+
+def _catalog_bundle_preserves_task_object(
+    user_input: str,
+    bundle: dict[str, Any],
+) -> bool:
+    """Reject broad catalogue matches that replace the requested task object."""
+
+    anchor = _task_object_anchor(user_input)
+    normalized_anchor = re.sub(r"[^a-zA-Z0-9\u4e00-\u9fff]", "", anchor).lower()
+    if not normalized_anchor:
+        return False
+    task = bundle.get("task") if isinstance(bundle, dict) else None
+    work_task = task.get("work_task") if isinstance(task, dict) else None
+    if not isinstance(work_task, dict):
+        return False
+    searchable_fields = (
+        "enterprise_task_name",
+        "enterprise_task_description",
+        "teaching_task_name",
+        "teaching_task_description",
+        "work_situation",
+        "task_scenario",
+    )
+    searchable = "".join(
+        str(work_task.get(field) or "") for field in searchable_fields
+    )
+    normalized_searchable = re.sub(
+        r"[^a-zA-Z0-9\u4e00-\u9fff]", "", searchable,
+    ).lower()
+
+    # Preserve every explicitly named technology across the whole request,
+    # including technologies after an action verb.  For example,
+    # "Docker Compose部署Redis" must never reuse a Docker Nginx/MySQL task just
+    # because its prefix matches.
+    required_latin = {
+        token.lower()
+        for token in re.findall(
+            r"[a-zA-Z][a-zA-Z0-9+#.]{1,30}", user_input,
+        )
+    }
+    if any(token not in normalized_searchable for token in required_latin):
+        return False
+    if normalized_anchor in normalized_searchable:
+        return True
+    # For a short direction such as "Windows系统安装", retain a strict
+    # technology/object prefix instead of accepting a match on generic words
+    # like "开发" or "验收".
+    latin_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9+#.]{1,20}", anchor)
+    distinctive_chinese = [
+        token for token in re.findall(r"[\u4e00-\u9fff]{2,}", anchor)
+        if token not in {"系统", "模块", "任务", "开发", "验收"}
+    ]
+    tokens = [token.lower() for token in latin_tokens] + distinctive_chinese
+    return bool(tokens) and all(token in normalized_searchable for token in tokens)
+
+
+def _task_bundle_quality_issues(
+    user_input: str,
+    bundle: dict[str, Any],
+) -> list[str]:
+    """Return release-blocking learner-facing task-package defects."""
+
+    issues: list[str] = []
+    if not _catalog_bundle_preserves_task_object(user_input, bundle):
+        issues.append("TASK_OBJECT_NOT_PRESERVED")
+    task = bundle.get("task") if isinstance(bundle, dict) else None
+    work_task = task.get("work_task") if isinstance(task, dict) else None
+    if not isinstance(work_task, dict):
+        return [*issues, "WORK_TASK_MISSING"]
+    steps = work_task.get("task_steps")
+    if not isinstance(steps, list) or not 5 <= len(steps) <= 8:
+        issues.append("STEP_COUNT_OUT_OF_RANGE")
+        steps = steps if isinstance(steps, list) else []
+    for index, step in enumerate(steps, start=1):
+        if not isinstance(step, dict):
+            issues.append(f"STEP_{index}_INVALID")
+            continue
+        for field in ("name", "action", "deliverable", "check"):
+            if not str(step.get(field) or "").strip():
+                issues.append(f"STEP_{index}_{field.upper()}_MISSING")
+        if not step.get("knowledge_point_ids"):
+            issues.append(f"STEP_{index}_KNOWLEDGE_MISSING")
+        if not step.get("skill_point_ids"):
+            issues.append(f"STEP_{index}_SKILL_MISSING")
+    knowledge_points = work_task.get("knowledge_points")
+    skill_points = work_task.get("skill_points")
+    if not isinstance(knowledge_points, list) or len(knowledge_points) < 3:
+        issues.append("KNOWLEDGE_POINTS_INSUFFICIENT")
+    if not isinstance(skill_points, list) or len(skill_points) < 3:
+        issues.append("SKILL_POINTS_INSUFFICIENT")
+    return issues
 
 
 def _auto_revision_prompt(user_input: str, content: str) -> str:
@@ -516,7 +924,67 @@ def _fresh_workflow_uid(learner_id: int) -> str:
 
 def _is_workflow_stage_conflict(exc: XfyunWorkflowError) -> bool:
     message = str(exc)
-    return "21812" in message or "当前阶段" in message or "INTAKE" in message
+    # 21812 is Xingchen's generic workflow/tool execution code.  It is also
+    # returned for network/plugin failures (for example a third-party 405),
+    # which must never be presented to the learner as "please clarify the
+    # task".  Only the provider's explicit stage-state wording is recoverable
+    # by creating a fresh workflow UID.
+    return "当前阶段" in message or bool(
+        re.search(r"\bINTAKE\b.*(?:不接受|阶段|冲突)", message, flags=re.I)
+    )
+
+
+def _should_use_direct_plan_fallback(
+    exc: XfyunWorkflowError | XfyunWorkflowConfigError,
+) -> bool:
+    """Use the same Plan backend when Xingchen's published tool is unhealthy."""
+
+    if isinstance(exc, XfyunWorkflowConfigError):
+        return True
+    message = str(exc).lower()
+    markers = (
+        "third-party tool request failed",
+        "method not allowed",
+        "error code: 405",
+        "功能授权",
+        "业务量已超限",
+        "20373",
+        "连接失败",
+        "未收到响应",
+    )
+    return any(marker in message for marker in markers)
+
+
+async def _direct_plan_after_xfyun_failure(
+    user_input: str,
+    exc: XfyunWorkflowError | XfyunWorkflowConfigError,
+) -> dict[str, Any]:
+    if not _should_use_direct_plan_fallback(exc):
+        raise exc
+    return await _direct_plan_generator().generate(user_input)
+
+
+async def _quality_gate_or_direct_plan(
+    user_input: str,
+    workflow_run: dict[str, Any],
+) -> dict[str, Any]:
+    """Accept a generated package only when the learner-facing bundle is deep enough."""
+
+    task_card_id = _task_card_id_from_content(
+        str(workflow_run.get("content") or "")
+    )
+    if task_card_id:
+        try:
+            bundle = await _gateway().task_bundle(task_card_id)
+        except LearningTaskConversionError:
+            bundle = {}
+        if not _task_bundle_quality_issues(user_input, bundle):
+            return workflow_run
+    # A clear task that produced no package, a wrong task, or fewer than five
+    # complete steps is not shown as a learner-facing failure.  Recompile it
+    # through the same Plan/Critic/commit service with the strict candidate
+    # schema used by the direct fallback.
+    return await _direct_plan_generator().generate(user_input)
 
 
 def _clarification_result(user_input: str) -> dict[str, Any]:
@@ -571,7 +1039,17 @@ async def _replay_generation_result(
         return None
     stored = dict((message.meta_data or {}).get("generation_result") or {})
     task_card_id = str(stored.get("task_card_id") or "")
-    bundle = await _gateway().task_bundle(task_card_id) if task_card_id else None
+    bundle = (
+        _learner_display_bundle(await _resolved_task_bundle(task_card_id))
+        if task_card_id else None
+    )
+    workspace_path = f"/wf03/tasks/{task_card_id}" if task_card_id else ""
+    artifacts = bundle.get("artifacts") if isinstance(bundle, dict) else None
+    provider_artifact_url = (
+        str(artifacts.get("interactive_html_url") or "").strip()
+        if isinstance(artifacts, dict)
+        else ""
+    )
     return {
         "schema_version": "learnflow-learning-task-generation-v2",
         "execute_id": str(stored.get("execute_id") or ""),
@@ -579,6 +1057,9 @@ async def _replay_generation_result(
         "task_card_id": task_card_id,
         "message": message.content,
         "usage": {},
+        "workspace_path": workspace_path,
+        "artifact_url": workspace_path,
+        "provider_artifact_url": provider_artifact_url,
         "bundle": bundle,
         "replayed": True,
     }
@@ -612,6 +1093,7 @@ async def _persist_generation_exchange(
         "status": result["status"],
         "task_card_id": result.get("task_card_id") or "",
         "execute_id": result.get("execute_id") or "",
+        "workspace_path": result.get("workspace_path") or "",
     }
     result_statement = sqlite_insert(AgentMessage).values(
         session_id=session.id,
@@ -702,6 +1184,19 @@ async def _run_generation_workflow(
             learner_id=learner_id,
         )
 
+    local_task_card_id = _local_reviewed_task_card_id(user_input)
+    if local_task_card_id:
+        return {
+            "schema_version": "learning-task-conversion-reviewed-run-v1",
+            "provider": "reviewed-computing-task-catalog",
+            "run_id": f"reviewed:{local_task_card_id}",
+            "content": f'{{"task_card_id":"{local_task_card_id}"}}',
+            "usage": {},
+            "catalog_reuse": True,
+        }
+
+    user_input = _expand_broad_computing_task(user_input)
+
     # WF03 is database-first: reviewed enterprise tasks already have complete
     # workflow_steps and must not be degraded by a fresh model repair turn.
     # Only an unseen task continues to the Xingchen Plan workflow below.
@@ -711,6 +1206,10 @@ async def _run_generation_workflow(
             catalog_task_card_id = await _gateway().generate_catalog_match(
                 user_input
             )
+            if catalog_task_card_id:
+                catalog_bundle = await _gateway().task_bundle(catalog_task_card_id)
+                if _task_bundle_quality_issues(user_input, catalog_bundle):
+                    catalog_task_card_id = None
         except LearningTaskConversionError:
             # Catalogue lookup is an optimization, not a new single point of
             # failure.  Unavailable or unmatched data continues to the model
@@ -742,14 +1241,20 @@ async def _run_generation_workflow(
         timeout=_SPECULATIVE_REPAIR_HEAD_START_SECONDS,
     )
     if done:
-        initial = await primary
+        try:
+            initial = await primary
+        except (XfyunWorkflowError, XfyunWorkflowConfigError) as exc:
+            return await _direct_plan_after_xfyun_failure(user_input, exc)
         if _task_card_id_from_content(str(initial.get("content") or "")):
-            return initial
-        repaired = await _run_isolated_workflow(
-            client,
-            _auto_revision_prompt(user_input, str(initial.get("content") or "")),
-            learner_id=learner_id,
-        )
+            return await _quality_gate_or_direct_plan(user_input, initial)
+        try:
+            repaired = await _run_isolated_workflow(
+                client,
+                _auto_revision_prompt(user_input, str(initial.get("content") or "")),
+                learner_id=learner_id,
+            )
+        except (XfyunWorkflowError, XfyunWorkflowConfigError) as exc:
+            return await _direct_plan_after_xfyun_failure(user_input, exc)
         result = dict(repaired)
         result["usage"] = _merge_workflow_usage(initial, repaired)
         result["auto_revision"] = {
@@ -759,7 +1264,7 @@ async def _run_generation_workflow(
             "initial_run_id": str(initial.get("run_id") or ""),
             "final_run_id": str(repaired.get("run_id") or ""),
         }
-        return result
+        return await _quality_gate_or_direct_plan(user_input, result)
 
     repair = asyncio.create_task(_run_isolated_workflow(
         client,
@@ -789,7 +1294,7 @@ async def _run_generation_workflow(
                     "attempts": 1,
                     "winner_run_id": str(run.get("run_id") or ""),
                 }
-                return result
+                return await _quality_gate_or_direct_plan(user_input, result)
     finally:
         for task in tasks:
             if not task.done():
@@ -805,9 +1310,12 @@ async def _run_generation_workflow(
             "attempts": 1,
             "winner_run_id": "",
         }
-        return result
+        return await _quality_gate_or_direct_plan(user_input, result)
     if errors:
-        raise errors[0]
+        first = errors[0]
+        if isinstance(first, (XfyunWorkflowError, XfyunWorkflowConfigError)):
+            return await _direct_plan_after_xfyun_failure(user_input, first)
+        raise first
     raise XfyunWorkflowError("自动修订未返回工作流结果")
 
 
@@ -875,8 +1383,14 @@ async def generate_learning_task_from_conversation(
                 user_input=user_input, result=result,
             )
             return result
-        bundle = await _gateway().task_bundle(task_card_id)
-        local_url = f"/wf03/tasks/{task_card_id}"
+        bundle = _learner_display_bundle(await _resolved_task_bundle(task_card_id))
+        workspace_path = f"/wf03/tasks/{task_card_id}"
+        artifacts = bundle.get("artifacts") if isinstance(bundle, dict) else None
+        provider_artifact_url = (
+            str(artifacts.get("interactive_html_url") or "").strip()
+            if isinstance(artifacts, dict)
+            else ""
+        )
         result = {
             "schema_version": "learnflow-learning-task-generation-v2",
             "execute_id": workflow_run.get("run_id") or "",
@@ -884,10 +1398,15 @@ async def generate_learning_task_from_conversation(
             "task_card_id": task_card_id,
             "message": (
                 "学习型任务已经生成并在中间工作区打开。"
-                "你可以按步骤查看产物与验收点，点击知识点直接进入个性化学习。\n\n"
-                f"[查看学习型任务]({local_url})"
+                "你可以按步骤查看产物与验收点，点击知识点直接进入个性化学习。"
             ),
             "usage": workflow_run.get("usage") or {},
+            # The repository workbench is the only learner-facing page.  Keep
+            # the provider-rendered HTML only as an audit artifact so callers
+            # cannot accidentally replace the three-column workspace with it.
+            "workspace_path": workspace_path,
+            "artifact_url": workspace_path,
+            "provider_artifact_url": provider_artifact_url,
             "bundle": bundle,
         }
         await _persist_generation_exchange(
@@ -906,6 +1425,8 @@ async def generate_learning_task_from_conversation(
         _raise_xfyun_error(exc)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
+    except LearningTaskDirectPlanError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post("/integration-generate")
@@ -941,13 +1462,14 @@ async def generate_learning_task_for_integration(
         task_card_id = _task_card_id_from_content(workflow_run["content"])
         if not task_card_id:
             return _non_success_result(workflow_run, user_input)
-        bundle = await _gateway().task_bundle(task_card_id)
+        bundle = _learner_display_bundle(await _resolved_task_bundle(task_card_id))
         artifacts = bundle.get("artifacts") if isinstance(bundle, dict) else None
-        artifact_url = (
+        provider_artifact_url = (
             str(artifacts.get("interactive_html_url") or "").strip()
             if isinstance(artifacts, dict)
             else ""
         )
+        workspace_path = f"/wf03/tasks/{task_card_id}"
         return {
             "schema_version": "learnflow-learning-task-generation-v2",
             "execute_id": workflow_run.get("run_id") or "",
@@ -955,7 +1477,9 @@ async def generate_learning_task_for_integration(
             "task_card_id": task_card_id,
             "message": "学习型任务已经生成，可在当前工作台查看并选择知识点进入个性化学习。",
             "usage": workflow_run.get("usage") or {},
-            "artifact_url": artifact_url,
+            "workspace_path": workspace_path,
+            "artifact_url": workspace_path,
+            "provider_artifact_url": provider_artifact_url,
             "bundle": bundle,
         }
     except (XfyunWorkflowError, XfyunWorkflowConfigError) as exc:
@@ -964,6 +1488,8 @@ async def generate_learning_task_for_integration(
         _raise_xfyun_error(exc)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
+    except LearningTaskDirectPlanError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post(
@@ -990,7 +1516,7 @@ async def launch_integration_personalized_learning(
     if learner_id is None:
         raise HTTPException(status_code=503, detail="学习型任务转化服务尚无可用运行身份")
     try:
-        bundle = await _gateway().task_bundle(task_card_id)
+        bundle = await _resolved_task_bundle(task_card_id)
         entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
         result = await _personalized_learning_client().import_entry(
             learner_id=learner_id,
@@ -1055,7 +1581,7 @@ async def get_learning_task_conversion_bundle(
     _current: CurrentLearner = Depends(get_current_learner),
 ) -> dict[str, Any]:
     try:
-        return await _gateway().task_bundle(task_card_id)
+        return await _resolved_task_bundle(task_card_id)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
 
@@ -1066,6 +1592,9 @@ async def get_personalized_learning_handoff(
     _current: CurrentLearner = Depends(get_current_learner),
 ) -> dict[str, Any]:
     try:
+        local_bundle = _local_reviewed_task_bundle(task_card_id)
+        if local_bundle is not None:
+            return dict(local_bundle["task"])
         return await _gateway().personalized_learning_handoff(task_card_id)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
@@ -1082,7 +1611,7 @@ async def get_knowledge_personalized_learning_entry(
     """Return a knowledge-scoped, versioned JSON handoff for downstream use."""
 
     try:
-        bundle = await _gateway().task_bundle(task_card_id)
+        bundle = await _resolved_task_bundle(task_card_id)
         return _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
@@ -1100,7 +1629,7 @@ async def open_knowledge_personalized_learning_entry(
     """Prepare the handoff and record the explicit cross-function navigation."""
 
     try:
-        bundle = await _gateway().task_bundle(task_card_id)
+        bundle = await _resolved_task_bundle(task_card_id)
         entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
         await record_event(
             db,
@@ -1137,7 +1666,7 @@ async def launch_knowledge_personalized_learning(
     """Import the verified handoff with server-owned identity and return a URL."""
 
     try:
-        bundle = await _gateway().task_bundle(task_card_id)
+        bundle = await _resolved_task_bundle(task_card_id)
         entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
         result = await _personalized_learning_client().import_entry(
             learner_id=current.learner.id,
@@ -1192,7 +1721,7 @@ async def receive_personalized_learning_result(
     """
 
     try:
-        bundle = await _gateway().task_bundle(task_card_id)
+        bundle = await _resolved_task_bundle(task_card_id)
         entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
