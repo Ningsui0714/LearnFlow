@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.4"
+REGISTRY_VERSION = "2026-08-30.5"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -1481,11 +1481,11 @@ WORKBENCHES = {
                            "run_learning_task", "generate_learning_files", "open_learning_file",
                            "attach_learning_file_to_chat", "delete_project"), "vnext"),
         WorkbenchContract(
-            "plugin_surface_host", "Project Plugin Surface Host", "/projects/:projectId", "tutor_agent",
+            "plugin_surface_host", "Project Plugin Management Host", "/projects/:projectId", "tutor_agent",
             ("manage_project_plugin_instance", "run_project_plugin_workflow",
              "discover_project_plugin_tools", "call_project_plugin_tool", "propose_plugin_core_action"),
         ),
-        WorkbenchContract("role_capability_plugin", "Role Capability Graph Plugin", "/projects/:projectId", "learning_design_agent",
+        WorkbenchContract("role_capability_plugin", "Role Capability Graph Chat Plugin", "/chat/:conversationId", "learning_design_agent",
                           ("generate_role_capability_package", "read_role_capability_graph", "explain_role_capability", "iterate_role_capability_package")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
@@ -1987,8 +1987,8 @@ _FRONTEND_COMPONENT_TARGETS = {
     "workbench:vnext_practice_file": ("frontend/src/PracticeFilePage.tsx", "PracticeFilePage", "/files/practice/"),
     "workbench:learning_tasks": ("frontend/src/LearningTasksPage.tsx", "LearningTasksPage", "/tasks"),
     "workbench:project_tutor": ("frontend/src/ProjectWorkspacePage.tsx", "ProjectWorkspacePage", "/projects/"),
-    "workbench:plugin_surface_host": ("frontend/src/PluginSurfaceHost.tsx", "PluginSurfaceHost", "/projects/"),
-    "workbench:role_capability_plugin": ("frontend/src/RoleCapabilityPluginPanel.tsx", "RoleCapabilityPluginPanel", "/projects/"),
+    "workbench:plugin_surface_host": ("frontend/src/ProjectPluginManager.tsx", "ProjectPluginManager", "/projects/"),
+    "workbench:role_capability_plugin": ("frontend/src/RoleCapabilityChatPlugin.tsx", "RoleCapabilityChatPlugin", "/chat/"),
     "workbench:review": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:competition_demo": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:desktop_workspace": ("frontend/src/main.tsx", "App", ""),
@@ -2253,10 +2253,6 @@ _WORKBENCH_LIFECYCLES = {
     "profile": ("deprecated", "Legacy /profile redirect is not a canonical frontend workbench."),
     "memory": ("deprecated", "Legacy /memory redirect is not a canonical frontend workbench."),
     "xingchen_studio": ("optional_unimplemented", "No Xingchen Studio runtime or repository-owned route exists."),
-    "role_capability_plugin": (
-        "deprecated",
-        "Compatibility surface replaced by the generic PluginSurfaceHost declaration renderer.",
-    ),
 }
 
 
@@ -2321,6 +2317,7 @@ PLUGIN_PUBLICATIONS = {
             "py:plugin.package.load",
             "py:plugin.workflow.execute",
             "workbench:plugin_surface_host",
+            "workbench:role_capability_plugin",
         ),
     ),
 }

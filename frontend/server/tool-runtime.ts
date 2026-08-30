@@ -21,6 +21,7 @@ import type { TutorContextMessage } from '../src/tutor.ts'
 import { executeLearningVisual, resolveVisualRequest } from './visual-tool-execution.ts'
 import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentToolDefinition } from '../src/agent-contracts.ts'
 import type { AgentProjectContext, ProjectCheckpointProposal } from '../src/project.ts'
+import { roleCapabilityArtifactFromToolObservation } from '../src/plugin-chat.ts'
 import {
   FIVE_KERNEL_LABELS,
   profilePacketToTutorContext,
@@ -1347,6 +1348,14 @@ export async function executeTutorAgentTool(
       )
       const snapshot = payload.snapshot_ref || payload.snapshot
         || (Number(payload.snapshot_id) > 0 ? { id: Number(payload.snapshot_id) } : descriptor.snapshot || null)
+      const observation = {
+        authority: 'project_plugin_host_read_only_tool',
+        qualified_tool_id: qualifiedToolId,
+        snapshot_ref: snapshot,
+        result: payload.result ?? payload.observation ?? payload.run?.result ?? payload.run ?? payload,
+        compatibility_alias: legacyToolId ? name : undefined,
+        mastery_unchanged: true,
+      }
       return {
         run: {
           ...base, kind: 'project', status: 'completed',
@@ -1358,15 +1367,11 @@ export async function executeTutorAgentTool(
           detail: `已通过通用插件宿主调用 ${qualifiedToolId}；宿主验证了项目权限、只读模式和固定快照。`,
           observationSummary: compactText(payload.summary || payload.observation_summary || payload.run?.status || descriptor.description || qualifiedToolId, 180),
           durationMs: Date.now() - startedAt,
+          ...(qualifiedToolId.startsWith('role_capability_graph:')
+            ? { pluginArtifact: roleCapabilityArtifactFromToolObservation(observation) }
+            : {}),
         },
-        observation: {
-          authority: 'project_plugin_host_read_only_tool',
-          qualified_tool_id: qualifiedToolId,
-          snapshot_ref: snapshot,
-          result: payload.result ?? payload.observation ?? payload.run?.result ?? payload.run ?? payload,
-          compatibility_alias: legacyToolId ? name : undefined,
-          mastery_unchanged: true,
-        },
+        observation,
       }
     }
 

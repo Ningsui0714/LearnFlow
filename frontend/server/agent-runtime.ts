@@ -32,6 +32,7 @@ import type { SearchProviderConfiguration } from './computer-knowledge-search.ts
 import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
 import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
+import type { PluginChatContext } from '../src/plugin-chat.ts'
 
 export type TutorAgentBudget = {
   maxModelRounds: number
@@ -104,6 +105,7 @@ export type TutorAgentRuntimeInput = {
   formalDomainKnowledgeContext?: unknown
   formalReviewContext?: unknown
   formalProjectContext?: AgentProjectContext
+  activePlugin?: PluginChatContext
   conversationId?: string
   sheetId?: string
   backendBase?: string
@@ -841,6 +843,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     if (input.formalProjectContext.tool_policy?.roadmap_tool_access === 'project_tutor' && input.mode === 'learning_plan') {
       await execute({ id: `observe-roadmap-${id}`, name: 'read_project_roadmap', arguments: { query: latestMessage } })
     }
+    if (input.activePlugin) {
+      await execute({
+        id: `observe-plugin-${id}`,
+        name: 'discover_project_plugin_tools',
+        arguments: { query: `${input.activePlugin.pluginId} ${latestMessage}`.slice(0, 500) },
+      })
+    }
   }
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
     await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
@@ -924,7 +933,15 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     activeArtifactContext: input.activeArtifactContext,
     learningTaskContext: input.learningTaskContext,
     learningPlanContext: input.learningPlanContext,
-    toolContext: envelopePrompt(envelope),
+    toolContext: `${envelopePrompt(envelope)}${input.activePlugin ? `\n\n当前聊天已启用插件：\n${safeJson({
+      plugin_id: input.activePlugin.pluginId,
+      title: input.activePlugin.title,
+      product_skill_id: input.activePlugin.productSkillId,
+      pinned_snapshot_id: input.activePlugin.snapshotId,
+      state: input.activePlugin.snapshotId ? 'ready' : 'needs_snapshot',
+      interaction: '先使用已经发现的 namespaced 只读工具回答；生成和迭代只能由界面确认卡触发，不能由模型执行。',
+      boundary: '插件产物不是掌握证据，不得产生 KernelMutation。',
+    })}` : ''}`,
   })
 
   let reply = ''

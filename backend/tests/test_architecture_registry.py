@@ -49,7 +49,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-30.4"
+    assert REGISTRY_VERSION == "2026-08-30.5"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -450,6 +450,7 @@ def test_generic_plugin_host_owns_runtime_and_role_aliases_are_compatibility_onl
         "tutor_agent", "plugin_process_runner", "plugin_surface_host",
     )
     assert WORKBENCHES["plugin_surface_host"].surface == "/projects/:projectId"
+    assert WORKBENCHES["role_capability_plugin"].surface == "/chat/:conversationId"
     assert TOOL_INTERFACE_ROLES["discover_project_plugin_tools"] == "aci_tool"
     assert TOOL_MODEL_EXPOSURE["discover_project_plugin_tools"] == "vnext_native"
     assert TOOL_INTERFACE_ROLES["call_project_plugin_tool"] == "aci_tool"
@@ -474,7 +475,7 @@ def test_generic_plugin_host_owns_runtime_and_role_aliases_are_compatibility_onl
     assert CAPABILITY_OWNERS["iterate_role_capability_package"] == (
         "learning_design_agent", "role_capability_iteration_runtime", "role_capability_plugin",
     )
-    assert WORKBENCHES["role_capability_plugin"].surface == "/projects/:projectId"
+    assert WORKBENCHES["role_capability_plugin"].surface == "/chat/:conversationId"
     assert SKILL_KINDS["role_capability_graphing"] == "playbook"
     assert TOOL_INTERFACE_ROLES["role_capability_graph_reader"] == "adapter"
     assert TOOL_MODEL_EXPOSURE["role_capability_graph_reader"] == "not_model_callable"
@@ -485,7 +486,7 @@ def test_generic_plugin_host_owns_runtime_and_role_aliases_are_compatibility_onl
     assert TOOL_INTERFACE_ROLES["role_capability_iteration_runtime"] == "adapter"
     assert TOOL_MODEL_EXPOSURE["role_capability_iteration_runtime"] == "not_model_callable"
     assert PUBLICATIONS["tools"]["role_capability_graph_reader"].lifecycle == "deprecated"
-    assert PUBLICATIONS["workbenches"]["role_capability_plugin"].lifecycle == "deprecated"
+    assert PUBLICATIONS["workbenches"]["role_capability_plugin"].lifecycle == "implemented"
     assert EVENTS["role_capability_package_generated"].kernel_targets == ()
     assert EVENTS["role_capability_snapshot_iterated"].kernel_targets == ()
 

@@ -124,6 +124,41 @@ test('project plugin tools are thin read-only host calls and role aliases stay c
   }
 })
 
+test('an active sidebar plugin becomes chat state and is discovered before the model answers', async () => {
+  const called: string[] = []
+  const requests: any[] = []
+  await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'free',
+    messages: [{ role: 'user', content: '这个岗位最关键的能力是什么？' }], toolChoice: 'auto',
+    formalProjectContext,
+    activePlugin: {
+      pluginId: 'role_capability_graph', title: '岗位图谱', surfaceId: 'role_capability_project',
+      instanceId: 12, snapshotId: 35, snapshotVersion: 3, productSkillId: 'role_capability_graphing',
+    },
+    generate: async () => 'unused',
+    executeTool: async (name, _args, _options, meta) => {
+      called.push(name)
+      return {
+        run: {
+          id: meta?.callId || name, toolCallId: meta?.callId, toolName: name, kind: 'project', status: 'completed',
+          title: name, detail: 'ok', durationMs: 1,
+        },
+        observation: name === 'discover_project_plugin_tools'
+          ? { tools: [{ qualified_tool_id: 'role_capability_graph:explain', snapshot_id: 35 }] }
+          : { authority: 'test' },
+      } as any
+    },
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '我会基于固定快照解释岗位能力，不把它当成掌握证据。' } }] }
+    },
+  })
+  assert.ok(called.includes('discover_project_plugin_tools'))
+  const instructions = String((requests[0].body as any).messages?.[0]?.content || (requests[0].body as any).instructions || '')
+  assert.match(instructions, /role_capability_graphing/)
+  assert.match(instructions, /生成和迭代只能由界面确认卡触发/)
+})
+
 test('final-state verifier rejects unconfirmed writes, mastery overclaims and hidden failures', () => {
   const proposalRun: any = {
     id: 'path', kind: 'path', status: 'completed', title: '路径', detail: 'proposal', durationMs: 1,

@@ -39,6 +39,9 @@ import {
   type LearningTaskProjection,
 } from './learning'
 import VisualArtifact from './VisualArtifact'
+import RoleCapabilityChatPlugin, { RoleCapabilityArtifactView } from './RoleCapabilityChatPlugin'
+import { pluginChatContext, pluginChatGlyph, type PluginChatContext, type RoleCapabilityChatArtifact } from './plugin-chat'
+import { loadProjectPluginSurfaces, type ProjectPluginSurface } from './plugin-runtime'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
 import {
@@ -212,6 +215,7 @@ type Conversation = {
   projectId?: number
   checkpointId?: number
   projectRole?: 'tutor' | 'checkpoint' | 'free'
+  pluginContext?: PluginChatContext
 }
 
 type WorkspaceTab = {
@@ -462,6 +466,18 @@ function restoreState(learnerId: number): PersistedState {
       planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
       domainSources: Array.isArray(conversation.domainSources) ? conversation.domainSources : [],
       projectSources: Array.isArray(conversation.projectSources) ? conversation.projectSources : [],
+      pluginContext: conversation.pluginContext
+        && typeof conversation.pluginContext.pluginId === 'string'
+        && typeof conversation.pluginContext.title === 'string'
+        && typeof conversation.pluginContext.surfaceId === 'string'
+        && Number.isInteger(conversation.pluginContext.instanceId)
+        ? {
+            ...conversation.pluginContext,
+            pluginId: conversation.pluginContext.pluginId.slice(0, 160),
+            title: conversation.pluginContext.title.slice(0, 240),
+            surfaceId: conversation.pluginContext.surfaceId.slice(0, 160),
+          }
+        : undefined,
       preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
         || sheets.some(sheet => sheet.id === conversation.activeSheetId)
@@ -573,6 +589,7 @@ function App({ auth }: { auth: AuthGateSession }) {
   const [sourceUrls, setSourceUrls] = useState<Record<string, string>>({})
   const [formalProjects, setFormalProjects] = useState<FormalProjectWorkspace['project'][]>([])
   const [formalProjectWorkspaces, setFormalProjectWorkspaces] = useState<Record<number, FormalProjectWorkspace>>({})
+  const [pluginSurfacesByProject, setPluginSurfacesByProject] = useState<Record<number, ProjectPluginSurface[]>>({})
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({})
   const [projectPanelRequest, setProjectPanelRequest] = useState(initialProjectPanelRequest)
   const formalChatHydrated = useRef(false)
@@ -612,6 +629,12 @@ function App({ auth }: { auth: AuthGateSession }) {
         setFormalProjects([])
         setFormalProjectWorkspaces({})
       })
+  }
+
+  const refreshProjectPluginSurfaces = async (projectId: number) => {
+    const page = await loadProjectPluginSurfaces(projectId)
+    setPluginSurfacesByProject(previous => ({ ...previous, [projectId]: page.surfaces }))
+    return page.surfaces
   }
 
   const persistGlobalConversation = async (conversation: Conversation) => {
@@ -695,6 +718,14 @@ function App({ auth }: { auth: AuthGateSession }) {
   }
 
   useEffect(() => { refreshFormalProjects() }, [])
+
+  useEffect(() => {
+    formalProjects.forEach(project => {
+      void refreshProjectPluginSurfaces(project.id).catch(() => {
+        setPluginSurfacesByProject(previous => ({ ...previous, [project.id]: [] }))
+      })
+    })
+  }, [formalProjects.map(project => project.id).join(',')])
 
   useEffect(() => {
     let active = true
@@ -902,6 +933,68 @@ function App({ auth }: { auth: AuthGateSession }) {
     } catch (error) {
       setFormalError(error instanceof Error ? error.message : '项目加载失败')
     }
+  }
+
+  const openProjectPluginChat = async (projectId: number, pluginId: string) => {
+    try {
+      const [projectWorkspace, surfaces] = await Promise.all([
+        loadFormalProject(projectId),
+        refreshProjectPluginSurfaces(projectId),
+      ])
+      const surface = surfaces.find(item => item.plugin_id === pluginId)
+      if (!surface) throw new Error('这个插件当前未启用，或没有可用于聊天的 Surface')
+      syncProjectWorkspace(projectWorkspace)
+      setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
+      const conversationId = openProjectConversation(projectWorkspace, 'tutor')
+      const context = pluginChatContext(surface)
+      setWorkspace(previous => ({
+        ...previous,
+        conversations: previous.conversations.map(conversation => {
+          if (conversation.id !== conversationId) return conversation
+          const alreadyActive = conversation.pluginContext?.pluginId === context.pluginId
+          return {
+            ...conversation,
+            pluginContext: context,
+            updatedAt: Date.now(),
+            messages: alreadyActive ? conversation.messages : [...conversation.messages, {
+              id: uid('message'), role: 'assistant' as const, createdAt: Date.now(), tutorMode: conversation.mode,
+              content: `已为当前对话选择“${context.title}”。我会先发现它公开的只读工具，再固定到确切快照解释；生成和迭代只会通过输入框下方的插件选项确认运行。`,
+            }],
+          }
+        }),
+      }))
+      setProjectPanelRequest(closeProjectPanel)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '插件对话打开失败')
+    }
+  }
+
+  const appendPluginArtifact = (conversationId: string, artifact: RoleCapabilityChatArtifact, detail: string) => {
+    const createdAt = Date.now()
+    const projectId = workspace.conversations.find(item => item.id === conversationId)?.projectId
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => conversation.id === conversationId ? {
+        ...conversation,
+        updatedAt: createdAt,
+        pluginContext: conversation.pluginContext ? {
+          ...conversation.pluginContext,
+          snapshotId: artifact.snapshot?.id || conversation.pluginContext.snapshotId,
+          snapshotVersion: artifact.snapshot?.version || conversation.pluginContext.snapshotVersion,
+          snapshotRootHash: artifact.snapshot?.rootHash || conversation.pluginContext.snapshotRootHash,
+        } : conversation.pluginContext,
+        messages: [...conversation.messages, {
+          id: uid('message'), role: 'assistant' as const, createdAt, tutorMode: conversation.mode,
+          content: `${detail}。下面是宿主从不可变快照生成的聊天投影；它不是新的领域真相，也不改变学习状态。`,
+          toolRuns: [{
+            id: uid('plugin-run'), kind: 'project' as const, status: 'completed' as const,
+            title: artifact.title, detail, durationMs: 0, toolName: 'run_project_plugin_workflow',
+            pluginArtifact: artifact,
+          }],
+        }],
+      } : conversation),
+    }))
+    if (projectId) void refreshProjectPluginSurfaces(projectId).catch(() => undefined)
   }
 
   const addProjectFreeConversation = async (projectId: number) => {
@@ -1719,6 +1812,7 @@ function App({ auth }: { auth: AuthGateSession }) {
           checkpointId: conversation.checkpointId || formalTaskForTurn?.checkpoint_id || undefined,
           projectRole: conversation.projectRole,
         },
+        activePlugin: conversation.pluginContext,
         domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
@@ -2429,7 +2523,7 @@ function App({ auth }: { auth: AuthGateSession }) {
           <h1>{conversation.title}</h1>
           <div className="chat-state-stack">
             {conversation.projectId && <button type="button" className="project-panel-toggle" aria-expanded={projectPanelRequest.conversationId === conversation.id} onClick={() => setProjectPanelRequest(current => toggleProjectPanel(current, conversation.id))}>项目面板</button>}
-            {conversation.projectId && <button type="button" className="project-panel-toggle project-plugin-capability-toggle" aria-expanded={projectPanelRequest.conversationId === conversation.id} onClick={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}>插件能力</button>}
+            {conversation.pluginContext && <span className="plugin-mode-badge">{conversation.pluginContext.title} · {conversation.pluginContext.snapshotVersion ? `v${conversation.pluginContext.snapshotVersion}` : '待生成'}</span>}
             <span className={`mode-badge mode-badge-${visibleMode}`}>
               {TUTOR_MODE_LABELS[visibleMode]}{visibleSubstateLabel ? ` · ${visibleSubstateLabel}` : ''}
             </span>
@@ -2932,6 +3026,27 @@ function App({ auth }: { auth: AuthGateSession }) {
                     onClick={() => setConversationMode(conversation.id, 'learning_plan')}
                   >学习规划</button>
                 </div>
+                {conversation.projectId && (conversation.pluginContext?.pluginId === 'role_capability_graph' ? (
+                  <RoleCapabilityChatPlugin
+                    projectId={conversation.projectId}
+                    pluginId={conversation.pluginContext.pluginId}
+                    disabled={Boolean(pendingMode)}
+                    onManage={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}
+                    onPrompt={prompt => { void runTutorTurn(conversation.id, prompt) }}
+                    onArtifact={(artifact, detail) => appendPluginArtifact(conversation.id, artifact, detail)}
+                  />
+                ) : (
+                  <details className="composer-plugin-control composer-plugin-picker">
+                    <summary role="button"><span className="composer-plugin-glyph">＋</span><strong>插件</strong><small>{(pluginSurfacesByProject[conversation.projectId] || []).length}</small></summary>
+                    <div className="composer-plugin-popover">
+                      <header><div><span>CHAT PLUGINS</span><strong>选择本对话使用的插件</strong></div><button type="button" onClick={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}>管理</button></header>
+                      <div className="composer-plugin-list">
+                        {(pluginSurfacesByProject[conversation.projectId] || []).map(surface => <button type="button" key={`${surface.plugin_id}:${surface.surface_id}`} onClick={() => void openProjectPluginChat(conversation.projectId!, surface.plugin_id)}><span>{pluginChatGlyph(surface.plugin_id)}</span><div><strong>{surface.title}</strong><small>工具、Skill 与聊天产物</small></div></button>)}
+                        {!(pluginSurfacesByProject[conversation.projectId] || []).length && <p>当前项目还没有启用插件，请先进入管理完成安装和授权。</p>}
+                      </div>
+                    </div>
+                  </details>
+                ))}
                 <ComposerCapabilityPicker
                   isGuidedLearning={Boolean(activeTaskProjection) || conversation.mode === 'guided_learning'}
                   skillChoice={activeTaskProjection?.skillId || (conversation.mode === 'guided_learning' ? conversation.preferredSkillId || 'auto' : 'auto')}
@@ -2963,6 +3078,7 @@ function App({ auth }: { auth: AuthGateSession }) {
               onOpenFile={file => openTab(learningFileTab(file))}
               onGenerateFiles={generateTaskFiles}
               onWorkspaceChange={syncProjectWorkspace}
+              onOpenPluginChat={pluginId => { void openProjectPluginChat(conversation.projectId!, pluginId) }}
             />
           </Suspense>
         )}
@@ -2997,9 +3113,17 @@ function App({ auth }: { auth: AuthGateSession }) {
                   <div className="sidebar-project-row">
                     <button type="button" className="project-folder-toggle" onClick={() => setExpandedProjects(previous => ({ ...previous, [project.id]: !expanded }))} aria-label={`${expanded ? '收起' : '展开'}${project.name}`}>{expanded ? '⌄' : '›'}</button>
                     <button type="button" className="project-folder-open" onClick={() => void openProjectTutor(project.id)}><span>▱</span><strong>{project.name}</strong></button>
-                    <button type="button" className="project-folder-plugin" onClick={() => void openProjectTutor(project.id, 'plugins')} aria-label={`打开${project.name}的插件能力`}>插件</button>
+                    <button type="button" className="project-folder-plugin" onClick={() => void openProjectTutor(project.id, 'plugins')} aria-label={`管理${project.name}的插件`}>管理</button>
                     <button type="button" className="project-folder-add-chat" onClick={event => { event.stopPropagation(); void addProjectFreeConversation(project.id) }} disabled={formalBusyKey === `project-free:${project.id}`} aria-label={`在${project.name}中新建自由对话`} title="新建项目自由对话">＋</button>
                   </div>
+                  {expanded && (pluginSurfacesByProject[project.id] || []).length > 0 && <div className="project-plugin-list" aria-label={`${project.name}的插件`}>
+                    {(pluginSurfacesByProject[project.id] || []).map(surface => <button
+                      type="button"
+                      key={`${surface.plugin_id}:${surface.surface_id}`}
+                      className={activeConversation?.pluginContext?.pluginId === surface.plugin_id && activeConversation.projectId === project.id ? 'active' : ''}
+                      onClick={() => void openProjectPluginChat(project.id, surface.plugin_id)}
+                    ><span>{pluginChatGlyph(surface.plugin_id)}</span><strong>{surface.title}</strong><small>在聊天中使用</small></button>)}
+                  </div>}
                   {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(entry => <button
                     type="button"
                     key={entry.key}
@@ -3235,6 +3359,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile,
         </div>
       )}
       {run.artifact && <VisualArtifact artifact={run.artifact} />}
+      {run.pluginArtifact && <RoleCapabilityArtifactView artifact={run.pluginArtifact} />}
     </section>
   )
 }

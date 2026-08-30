@@ -2074,6 +2074,7 @@ async def _generate_tutor_reply(
             ),
         },
         "active_surface_context": review_workspace,
+        "active_plugin": dict(latest_context.get("active_plugin") or {}),
         "chat_mode": mode_view,
         "current_state": state,
         "available_projects": [{"id": p.id, "name": p.name, "description": p.description} for p in projects],
@@ -2619,6 +2620,19 @@ async def process_turn(
         message_context["learning_skill"] = active_learning_skill
     if isinstance(incoming_context.get("selected_text"), str):
         message_context["selected_text"] = incoming_context["selected_text"][:12000]
+    active_plugin = incoming_context.get("active_plugin")
+    if isinstance(active_plugin, dict):
+        plugin_id = str(active_plugin.get("pluginId") or "")[:160]
+        if plugin_id:
+            message_context["active_plugin"] = {
+                "plugin_id": plugin_id,
+                "title": str(active_plugin.get("title") or plugin_id)[:240],
+                "product_skill_id": str(active_plugin.get("productSkillId") or "")[:160],
+                "snapshot_id": active_plugin.get("snapshotId"),
+                "state": "ready" if active_plugin.get("snapshotId") else "needs_snapshot",
+                "observation": active_plugin.get("observation") if isinstance(active_plugin.get("observation"), dict) else None,
+                "boundary": "read_only_fixed_snapshot_no_kernel_mutation",
+            }
     for key in (
         "selected_source_id", "selected_source_url", "surface", "resource_kind",
         "resource_id", "title", "section_index", "selected_path", "open_file", "language",

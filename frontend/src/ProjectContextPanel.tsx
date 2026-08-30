@@ -12,21 +12,13 @@ import {
 } from './formal-runtime'
 import type { FormalLearningFileRef, FormalLearningTask } from './formal-runtime'
 import ProjectPluginManager from './ProjectPluginManager'
-import PluginSurfaceHost from './PluginSurfaceHost'
 import {
-  pluginSurfaceTabId,
-  reconcileProjectPanelTab,
   type ProjectPanelTab,
-  type ProjectPluginSurfaceTab,
 } from './project-plugin-navigation'
 import { loadProjectPluginSurfaces, type ProjectPluginSurface } from './plugin-runtime'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace } from './project'
 
-function pluginTabId(surface: ProjectPluginSurface): ProjectPluginSurfaceTab {
-  return pluginSurfaceTabId(surface.plugin_id, surface.surface_id)
-}
-
-export default function ProjectContextPanel({ projectId, requestedTab = 'checkpoints', requestKey = 0, onClose, onOpenCheckpoint, onOpenFree, onOpenFile, onGenerateFiles, onWorkspaceChange }: {
+export default function ProjectContextPanel({ projectId, requestedTab = 'checkpoints', requestKey = 0, onClose, onOpenCheckpoint, onOpenFree, onOpenFile, onGenerateFiles, onWorkspaceChange, onOpenPluginChat }: {
   projectId: number
   requestedTab?: ProjectPanelTab
   requestKey?: number
@@ -36,6 +28,7 @@ export default function ProjectContextPanel({ projectId, requestedTab = 'checkpo
   onOpenFile: (file: FormalLearningFileRef) => void
   onGenerateFiles: (task: FormalLearningTask) => Promise<void>
   onWorkspaceChange?: (workspace: FormalProjectWorkspace) => void
+  onOpenPluginChat?: (pluginId: string) => void
 }) {
   const [workspace, setWorkspace] = useState<FormalProjectWorkspace>()
   const [pluginSurfaces, setPluginSurfaces] = useState<ProjectPluginSurface[]>([])
@@ -60,27 +53,25 @@ export default function ProjectContextPanel({ projectId, requestedTab = 'checkpo
   useEffect(() => { void refresh() }, [projectId])
 
   useEffect(() => {
-    setActiveTab(requestedTab)
+    setActiveTab(requestedTab.startsWith('plugin:') ? 'plugins' : requestedTab)
   }, [projectId, requestedTab, requestKey])
 
   const refreshPluginSurfaces = useCallback(async () => {
     try {
       const page = await loadProjectPluginSurfaces(projectId)
       setPluginSurfaces(page.surfaces)
-      const available = new Set(page.surfaces.map(pluginTabId))
-      setActiveTab(current => reconcileProjectPanelTab(current, available))
+      setActiveTab(current => current.startsWith('plugin:') ? 'plugins' : current)
       setPluginError('')
     } catch (failure) {
       setPluginSurfaces([])
-      setActiveTab(current => reconcileProjectPanelTab(current, new Set()))
+      setActiveTab(current => current.startsWith('plugin:') ? 'plugins' : current)
       setPluginError(failure instanceof Error ? failure.message : '插件界面读取失败')
     }
   }, [projectId])
   useEffect(() => { void refreshPluginSurfaces() }, [refreshPluginSurfaces])
 
   const files = useMemo(() => workspace ? [...workspace.files.lectures, ...workspace.files.practices] : [], [workspace])
-  const activePluginSurface = pluginSurfaces.find(surface => pluginTabId(surface) === activeTab)
-  const pluginPanelActive = activeTab === 'plugins' || activeTab.startsWith('plugin:')
+  const pluginPanelActive = activeTab === 'plugins'
 
   const openPluginWorkspace = (pluginId: string) => {
     const surface = pluginSurfaces.find(item => item.plugin_id === pluginId)
@@ -90,7 +81,8 @@ export default function ProjectContextPanel({ projectId, requestedTab = 'checkpo
       return
     }
     setPluginError('')
-    setActiveTab(pluginTabId(surface))
+    onOpenPluginChat?.(pluginId)
+    onClose()
   }
 
   const addUrl = async () => {
@@ -191,8 +183,7 @@ export default function ProjectContextPanel({ projectId, requestedTab = 'checkpo
         <section aria-label="插件能力">
           <span>插件能力</span>
           <div>
-            <button type="button" className={activeTab === 'plugins' ? 'active' : ''} onClick={() => setActiveTab('plugins')}>管理</button>
-            {pluginSurfaces.map(surface => <button type="button" key={pluginTabId(surface)} className={activeTab === pluginTabId(surface) ? 'active' : ''} onClick={() => setActiveTab(pluginTabId(surface))}>{surface.title}</button>)}
+            <button type="button" className={activeTab === 'plugins' ? 'active' : ''} onClick={() => setActiveTab('plugins')}>安装、授权与版本</button>
           </div>
         </section>
       </nav>
@@ -235,7 +226,6 @@ export default function ProjectContextPanel({ projectId, requestedTab = 'checkpo
         </div>
       )}
       {workspace && activeTab === 'plugins' && <ProjectPluginManager projectId={projectId} onChanged={refreshPluginSurfaces} onOpenPluginWorkspace={openPluginWorkspace} />}
-      {workspace && activePluginSurface && <PluginSurfaceHost key={pluginTabId(activePluginSurface)} projectId={projectId} surface={activePluginSurface} onChanged={refreshPluginSurfaces} />}
     </aside>
   )
 }

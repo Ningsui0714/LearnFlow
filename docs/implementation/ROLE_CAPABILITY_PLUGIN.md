@@ -31,7 +31,7 @@ Project + 固定 SourceVersion / DomainKnowledgePacket / 显式任务种子
                                             │
                          ┌──────────────────┴─────────────────┐
                          ▼                                    ▼
-              项目 PluginSurfaceHost               Tutor 通用只读工具
+              聊天确认卡与快照投影               Tutor 通用只读工具
                          │                                    │
                          └──────── Action proposal / zero-target event
 ```
@@ -127,12 +127,13 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 Snapshot 上运行兼容/迁移；只有候选满足新 release 的 schemas、引用和 root hash 契约，宿主才在同一事务中
 切换 release 与 snapshot。失败时 Instance 继续固定旧 release 和旧 snapshot。
 
-## 5. Surface、Tool 与对话
+## 5. 聊天插件、Tool 与管理 Surface
 
-项目岗位页由通用 `PluginSurfaceHost` 渲染，只使用 section、text、metric、list、table、graph、form、input、
-citation、status 和 action。它展示当前 snapshot/version/root hash、校验报告、对象/关系、过程视图、来源
-引用和 Run 状态；不执行插件脚本、HTML、CSS 或任意 URL。generate/iterate/upgrade action 只能引用 manifest
-workflow，并遵守 expected snapshot、幂等和用户确认。
+项目左栏显示已启用的岗位插件，点击后为项目 Tutor 对话选择 `PluginChatContext`。插件选择、Product Skill、
+snapshot/version 和运行入口都位于 Composer 对话选项栏；雷达图、事理森林、展开卡片只作为 Tutor 工具消息读取 Snapshot 的 semantic graph、
+process forest 与 validation report，不复制或修改领域事实。generate/iterate 确认卡只能引用 manifest workflow，
+并遵守 expected snapshot、幂等和用户确认。项目管理抽屉只保留安装、Host Port 授权、配置、停用和升级；不再
+把独立 `PluginSurfaceHost` 当作学习者的主要工作空间。所有渲染均不执行插件脚本、HTML、CSS 或任意 URL。
 
 Tutor 不把岗位插件专用工具常驻硬编码进模型工具面。标准路径为：
 

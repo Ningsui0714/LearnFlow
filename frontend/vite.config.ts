@@ -283,6 +283,24 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         checkpointId: positiveInteger(rawFormalScope.checkpointId),
         projectRole: typeof rawFormalScope.projectRole === 'string' ? rawFormalScope.projectRole : undefined,
       }
+      const rawActivePlugin = input.activePlugin && typeof input.activePlugin === 'object'
+        ? input.activePlugin as Record<string, unknown> : undefined
+      const activePlugin = rawActivePlugin
+        && typeof rawActivePlugin.pluginId === 'string'
+        && typeof rawActivePlugin.title === 'string'
+        && typeof rawActivePlugin.surfaceId === 'string'
+        && positiveInteger(rawActivePlugin.instanceId)
+        ? {
+            pluginId: rawActivePlugin.pluginId.slice(0, 160),
+            title: rawActivePlugin.title.slice(0, 240),
+            surfaceId: rawActivePlugin.surfaceId.slice(0, 160),
+            instanceId: positiveInteger(rawActivePlugin.instanceId)!,
+            snapshotId: positiveInteger(rawActivePlugin.snapshotId),
+            snapshotVersion: positiveInteger(rawActivePlugin.snapshotVersion),
+            snapshotRootHash: typeof rawActivePlugin.snapshotRootHash === 'string' ? rawActivePlugin.snapshotRootHash.slice(0, 128) : undefined,
+            productSkillId: typeof rawActivePlugin.productSkillId === 'string' ? rawActivePlugin.productSkillId.slice(0, 160) : undefined,
+          }
+        : undefined
       const domainSourceIds = Array.isArray(input.domainSourceIds)
         ? [...new Set(input.domainSourceIds.filter(positiveInteger))].slice(0, 12) as number[]
         : []
@@ -463,6 +481,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         formalDomainKnowledgeContext,
         formalReviewContext,
         formalProjectContext: formalProjectContext as any,
+        activePlugin,
         backendBase,
         requestCookie: typeof request.headers.cookie === 'string' ? request.headers.cookie : undefined,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
