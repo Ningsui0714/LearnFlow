@@ -57,6 +57,12 @@ class LearningTaskIntegrationRequest(BaseModel):
     student_id: str = Field(default="", max_length=120)
 
 
+class LearningTaskIntegrationLaunchRequest(BaseModel):
+    student_id: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
 class PersonalizedLearningResultRequest(BaseModel):
     schema_version: str = Field(
         pattern=r"^personalized-learning-result-v1$",
@@ -958,6 +964,68 @@ async def generate_learning_task_for_integration(
         _raise_xfyun_error(exc)
     except LearningTaskConversionError as exc:
         _raise_gateway_error(exc)
+
+
+@router.post(
+    "/integration-tasks/{task_card_id}/knowledge/{knowledge_id}/"
+    "personalized-learning-launch"
+)
+async def launch_integration_personalized_learning(
+    payload: LearningTaskIntegrationLaunchRequest,
+    request: Request,
+    task_card_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,100}$"),
+    knowledge_id: str = Path(pattern=r"^[A-Za-z0-9_-]{1,100}$"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Launch one knowledge point inside an approved external workbench."""
+
+    _require_learning_task_integration(request)
+    learner_id = (await db.execute(
+        select(Learner.id)
+        .join(UserAccount, UserAccount.id == Learner.user_id)
+        .where(UserAccount.status == "active")
+        .order_by(Learner.id.asc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if learner_id is None:
+        raise HTTPException(status_code=503, detail="学习型任务转化服务尚无可用运行身份")
+    try:
+        bundle = await _gateway().task_bundle(task_card_id)
+        entry = _knowledge_handoff_entry(bundle, task_card_id, knowledge_id)
+        result = await _personalized_learning_client().import_entry(
+            learner_id=learner_id,
+            handoff=entry,
+            downstream_student_id=payload.student_id,
+        )
+        await record_event(
+            db,
+            learner_id=learner_id,
+            event_type="personalized_learning_handoff_opened",
+            source="learning_task_conversion",
+            payload={
+                "entry_id": entry["entry_id"],
+                "task_card_id": task_card_id,
+                "knowledge_id": knowledge_id,
+                "schema_version": entry["schema_version"],
+                "downstream_project_id": result["project_id"],
+                "downstream_created": result["created"],
+            },
+            artifact_refs=[
+                f"learning-task:{task_card_id}",
+                f"knowledge:{knowledge_id}",
+            ],
+            client_event_id=(
+                f"personalized-integration-launch:{learner_id}:{entry['entry_id']}"
+            ),
+        )
+        await db.commit()
+        return result
+    except LearningTaskConversionError as exc:
+        _raise_gateway_error(exc)
+    except PersonalizedLearningHandoffConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except PersonalizedLearningHandoffError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/capabilities")

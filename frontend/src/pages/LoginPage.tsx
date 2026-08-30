@@ -27,10 +27,6 @@ export default function LoginPage() {
   const [devAvailable, setDevAvailable] = useState(true)
   const [devLoading, setDevLoading] = useState(false)
   const [devLoadError, setDevLoadError] = useState('')
-  const requestedPath = (() => {
-    const from = (location.state as { from?: unknown } | null)?.from
-    return typeof from === 'string' && from !== '/login' ? from : '/agent'
-  })()
 
   const loadDevAccounts = async () => {
     setDevLoading(true)
@@ -50,7 +46,7 @@ export default function LoginPage() {
 
   useEffect(() => { void loadDevAccounts() }, [])
 
-  if (user) return <Navigate to={requestedPath} replace />
+  if (user) return <Navigate to="/agent" replace />
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -58,7 +54,8 @@ export default function LoginPage() {
     setError('')
     try {
       await login(username, password)
-      navigate(requestedPath, { replace: true })
+      const from = (location.state as any)?.from
+      navigate(from && from !== '/login' ? from : '/agent', { replace: true })
     } catch (requestError: any) {
       setError(requestError?.response?.data?.detail || '登录失败，请检查用户名和密码')
     } finally {
@@ -71,7 +68,7 @@ export default function LoginPage() {
     setError('')
     try {
       await enterDevAccount(accountId)
-      navigate(requestedPath, { replace: true })
+      navigate('/agent', { replace: true })
     } catch (requestError: any) {
       setError(requestError?.response?.data?.detail || '开发测试账号进入失败，请重试')
     } finally {

@@ -232,6 +232,7 @@ class PersonalizedLearningHandoffClient:
         *,
         learner_id: int,
         handoff: dict[str, Any],
+        downstream_student_id: str | None = None,
     ) -> dict[str, Any]:
         source_entry_id, knowledge_id = self._validate_handoff(handoff)
         # WF04 owns a globally unique entry_id. Scope the stable source entry
@@ -242,8 +243,17 @@ class PersonalizedLearningHandoffClient:
             learner_id,
         )
         scoped_handoff = {**handoff, "entry_id": entry_id}
+        resolved_student_id = str(downstream_student_id or "").strip()
+        if resolved_student_id and not all(
+            character.isalnum() or character in {"_", "-"}
+            for character in resolved_student_id
+        ):
+            raise PersonalizedLearningHandoffError(
+                "个性化学习交接的学习者 ID 格式无效",
+                status_code=422,
+            )
         payload = {
-            "student_id": f"LEARNFLOW-{learner_id}",
+            "student_id": resolved_student_id or f"LEARNFLOW-{learner_id}",
             "handoff": scoped_handoff,
         }
         try:

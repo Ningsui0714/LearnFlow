@@ -369,6 +369,11 @@ class Settings:
         "http://localhost:4173",
     )
     api_token: str = ""
+    task_conversion_api_url: str = (
+        "http://127.0.0.1:8010/api/learning-task-conversion/integration-generate"
+    )
+    task_conversion_timeout: float = 260.0
+    task_conversion_integration_token: str = ""
     # OpenAI 兼容内容模型（讲解正文本地化）：api_key 为空时退化为确定性模板。
     # 字段名保留 spark_*，避免破坏现有调用方；新配置统一使用 CONTENT_LLM_*。
     spark_api_base: str = "https://api.deepseek.com/chat/completions"
@@ -469,6 +474,16 @@ class Settings:
             ),
             allowed_origins=allowed_origins,
             api_token=os.getenv("APP_API_TOKEN", "").strip(),
+            task_conversion_api_url=os.getenv(
+                "TASK_CONVERSION_API_URL",
+                "http://127.0.0.1:8010/api/learning-task-conversion/integration-generate",
+            ).strip(),
+            task_conversion_timeout=max(
+                1.0, float(os.getenv("TASK_CONVERSION_TIMEOUT", "260"))
+            ),
+            task_conversion_integration_token=os.getenv(
+                "TASK_CONVERSION_INTEGRATION_TOKEN", ""
+            ).strip(),
             spark_api_base=(
                 os.getenv("CONTENT_LLM_API_BASE")
                 or os.getenv("DEEPSEEK_API_BASE")
@@ -6922,6 +6937,112 @@ class LearningApplication:
                 "handoff_ref": {"step_id": step_id},
             })
         return nodes
+
+    def _request_learning_task_service(
+        self, url: str, request_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not self.settings.task_conversion_api_url:
+            raise ApiError(
+                503,
+                "TASK_CONVERSION_NOT_CONFIGURED",
+                "任务步骤生成服务尚未配置",
+            )
+        headers = {"Content-Type": "application/json"}
+        if self.settings.task_conversion_integration_token:
+            headers["x-learning-task-conversion-token"] = (
+                self.settings.task_conversion_integration_token
+            )
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            # 本机服务间调用不应继承系统代理，否则 macOS 的全局代理会把
+            # 127.0.0.1 请求转发出去并返回 502。
+            direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with direct_opener.open(request, timeout=self.settings.task_conversion_timeout) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as error:
+            try:
+                error_payload = json.loads(error.read().decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                error_payload = {}
+            detail = error_payload.get("detail") if isinstance(error_payload, dict) else ""
+            if isinstance(detail, dict):
+                detail = detail.get("message") or detail.get("detail") or ""
+            raise ApiError(
+                502,
+                "TASK_CONVERSION_UPSTREAM_ERROR",
+                str(detail or "任务步骤生成失败，请稍后重试"),
+            ) from error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise ApiError(
+                503,
+                "TASK_CONVERSION_UNAVAILABLE",
+                "任务步骤生成服务暂时不可用，请稍后重试",
+            ) from error
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ApiError(
+                502,
+                "TASK_CONVERSION_INVALID_RESPONSE",
+                "任务步骤生成服务返回了无法识别的结果",
+            ) from error
+        if not isinstance(result, dict):
+            raise ApiError(
+                502,
+                "TASK_CONVERSION_INVALID_RESPONSE",
+                "任务步骤生成服务返回了无法识别的结果",
+            )
+        return result
+
+    def generate_learning_task(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        query = str(incoming.get("query") or incoming.get("message") or "").strip()
+        if len(query) < 2:
+            raise ApiError(422, "TASK_QUERY_REQUIRED", "请先输入要转化的真实工作任务")
+        if len(query) > 500:
+            raise ApiError(422, "TASK_QUERY_TOO_LONG", "任务描述不能超过 500 个字符")
+        return self._request_learning_task_service(
+            self.settings.task_conversion_api_url,
+            {
+                "query": query,
+                "student_id": str(
+                    incoming.get("student_id")
+                    or incoming.get("learner_id")
+                    or "STU-DEMO-001"
+                ).strip(),
+            },
+        )
+
+    def launch_personalized_learning(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        task_card_id = str(incoming.get("task_card_id") or "").strip()
+        knowledge_id = str(incoming.get("knowledge_id") or "").strip()
+        student_id = str(incoming.get("student_id") or "STU-DEMO-001").strip()
+        identifier_pattern = r"^[A-Za-z0-9_-]{1,100}$"
+        if not re.fullmatch(identifier_pattern, task_card_id):
+            raise ApiError(422, "TASK_CARD_ID_INVALID", "任务标识格式无效")
+        if not re.fullmatch(identifier_pattern, knowledge_id):
+            raise ApiError(422, "KNOWLEDGE_ID_INVALID", "知识点标识格式无效")
+        base_url, separator, _ = self.settings.task_conversion_api_url.rpartition(
+            "/integration-generate"
+        )
+        if not separator:
+            raise ApiError(
+                503,
+                "TASK_CONVERSION_NOT_CONFIGURED",
+                "个性化学习入口尚未配置",
+            )
+        launch_url = (
+            f"{base_url}/integration-tasks/{task_card_id}/knowledge/"
+            f"{knowledge_id}/personalized-learning-launch"
+        )
+        return self._request_learning_task_service(
+            launch_url,
+            {"student_id": student_id},
+        )
 
     def import_learning_task_knowledge(
         self, incoming: dict[str, Any]
@@ -17165,6 +17286,18 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 result = self.application.run_review(payload)
             elif parsed.path == "/api/demo/seed":
                 result = self.application.ingest_upstream(demo_upstream_payload())
+            elif parsed.path == "/api/integrations/learning-task-conversion/generate":
+                result = self.application.generate_learning_task(payload)
+            elif launch_match := re.fullmatch(
+                r"/api/integrations/learning-task-conversion/tasks/"
+                r"([^/]+)/knowledge/([^/]+)/launch",
+                parsed.path,
+            ):
+                result = self.application.launch_personalized_learning({
+                    **payload,
+                    "task_card_id": unquote(launch_match.group(1)),
+                    "knowledge_id": unquote(launch_match.group(2)),
+                })
             elif parsed.path == "/api/integrations/learning-task-knowledge":
                 result = self.application.import_learning_task_knowledge(payload)
             elif parsed.path == "/api/projects":

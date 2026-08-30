@@ -195,6 +195,69 @@ input,textarea{font-family:inherit; color:inherit}
 .page.welcome{display:none}
 .page.welcome.active{display:block}
 
+/* ---- 具体任务步骤页 ---- */
+.task-document{max-width:980px; margin:0 auto; padding:28px 30px 52px}
+.task-document-head{
+  display:flex; align-items:flex-start; gap:15px; padding:20px 22px;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-lg);
+}
+.task-document-mark{
+  width:44px; height:44px; border-radius:13px; flex:none; display:grid; place-items:center;
+  background:var(--accent); color:#fff; font-size:21px; font-weight:800;
+}
+.task-document-head h1{font-family:var(--font-disp); font-size:22px; line-height:1.35; letter-spacing:-.01em}
+.task-document-head p{margin-top:6px; color:var(--muted); font-size:12.5px; line-height:1.7}
+.task-context-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}
+.task-context-card{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:12px 14px}
+.task-context-card b{display:block;font-size:11px;color:var(--accent);margin-bottom:5px}
+.task-context-card p{font-size:11.5px;color:var(--muted);line-height:1.65}
+.task-step-list{margin-top:18px; display:flex; flex-direction:column; gap:14px}
+.task-step-card{
+  display:grid; grid-template-columns:54px minmax(0,1fr); gap:17px;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-lg);
+  padding:18px 20px; box-shadow:0 8px 24px -24px rgba(15,23,42,.45);
+}
+.task-step-no{
+  width:48px; height:48px; border-radius:14px; display:grid; place-items:center;
+  background:var(--accent-soft); color:var(--accent); font:800 16px/1 var(--font-disp);
+}
+.task-step-main h2{font-size:16px; line-height:1.4; margin-bottom:7px}
+.task-step-action{font-size:13px; line-height:1.75; color:var(--text)}
+.task-step-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px}
+.task-step-field{background:var(--surface2); border-radius:9px; padding:9px 11px; min-width:0}
+.task-step-field b{display:block; color:var(--faint); font-size:10.5px; margin-bottom:3px}
+.task-step-field span{display:block; color:var(--muted); font-size:12px; line-height:1.55}
+.task-step-learning{margin-top:12px; padding-top:11px; border-top:1px solid var(--line)}
+.task-step-learning strong{font-size:11px; color:var(--muted); margin-right:8px}
+.task-chip{
+  display:inline-flex; align-items:center; margin:4px 6px 0 0; padding:5px 9px;
+  border-radius:999px; border:1px solid var(--line); background:var(--surface2);
+  color:var(--accent); font-size:11px; font-weight:600;
+}
+.task-knowledge-card{margin-top:9px;padding:11px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2)}
+.task-knowledge-top{display:flex;align-items:flex-start;gap:10px}
+.task-knowledge-body{flex:1;min-width:0}
+.task-knowledge-name{font-size:12px;font-weight:700;color:var(--text)}
+.task-knowledge-scope{font-size:11px;color:var(--muted);line-height:1.6;margin-top:3px}
+.task-personalize{
+  flex:none;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;
+  padding:6px 9px;font-size:10.5px;font-weight:700;
+}
+.task-personalize:disabled{opacity:.55;cursor:wait}
+.task-resources{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.task-resource{
+  display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:8px;
+  background:var(--surface);padding:6px 8px;color:var(--accent);font-size:10.5px;font-weight:600;text-decoration:none;
+}
+.task-resource:hover{border-color:var(--accent);background:var(--accent-soft)}
+@media(max-width:720px){
+  .task-document{padding:18px 14px 38px}
+  .task-context-grid{grid-template-columns:1fr}
+  .task-step-card{grid-template-columns:40px minmax(0,1fr); gap:12px; padding:15px}
+  .task-step-no{width:38px;height:38px;border-radius:11px;font-size:13px}
+  .task-step-grid{grid-template-columns:1fr}
+}
+
 /* ---- 项目总览页 ---- */
 .overview{padding:24px 28px 40px; max-width:1080px; margin:0 auto}
 .ov-head{display:flex; align-items:flex-start; gap:14px; margin-bottom:18px}
@@ -359,6 +422,9 @@ input,textarea{font-family:inherit; color:inherit}
 }
 .task-conversion-entry:hover{
   background:var(--accent); color:#fff; transform:translateY(-1px);
+}
+.task-conversion-entry.active{
+  background:var(--accent); color:#fff; box-shadow:0 5px 14px rgba(20,125,118,.22);
 }
 .task-conversion-entry .tool-mark{font-size:12px; line-height:1}
 .chat-input-box{
@@ -655,12 +721,13 @@ input,textarea{font-family:inherit; color:inherit}
     </div>
     <div class="chat-tools" aria-label="Agent 扩展工具">
       <span class="chat-tools-label">扩展工具</span>
-      <a
+      <button
+        type="button"
         class="task-conversion-entry"
         id="taskConversionEntry"
-        href="http://127.0.0.1:5173/agent?tool=learning-task-conversion"
+        aria-pressed="false"
         title="把企业真实工作任务转为可执行的具体任务步骤"
-      ><span class="tool-mark">✦</span><span>生成任务步骤</span></a>
+      ><span class="tool-mark">✦</span><span class="tool-label">生成任务步骤</span></button>
     </div>
     <div class="chat-input-box">
       <textarea id="chatInput" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"></textarea>
@@ -684,6 +751,7 @@ var state = {
   activeTabId: null,
   pages: {},              // tabId -> 渲染状态
   followUp: { open:false, projectId:null, knowledgePointId:null, selection:null, history:[] },
+  taskConversionMode: false,
   theme: "system"
 };
 
@@ -802,6 +870,7 @@ async function init(){
 }
 function bind(){
   $("addProjectBtn").onclick = function(){ enterDraftMode(); };
+  $("taskConversionEntry").onclick = toggleTaskConversionMode;
   $("chatSend").onclick = sendChat;
   $("chatInput").addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); sendChat(); }
@@ -1936,7 +2005,67 @@ function sendChat(){
   var msg = input.value.trim();
   if (!msg) return;
   input.value = "";
-  requestAgentTurn(msg);
+  if (state.taskConversionMode) requestTaskConversion(msg);
+  else requestAgentTurn(msg);
+}
+function toggleTaskConversionMode(){
+  state.taskConversionMode = !state.taskConversionMode;
+  var button = $("taskConversionEntry");
+  button.classList.toggle("active", state.taskConversionMode);
+  button.setAttribute("aria-pressed", state.taskConversionMode ? "true" : "false");
+  button.querySelector(".tool-label").textContent = state.taskConversionMode
+    ? "任务步骤模式"
+    : "生成任务步骤";
+  if (state.taskConversionMode){
+    setChatContext("任务步骤生成", "输入一个真实工作任务");
+    setSuggestions([
+      "Windows 11 系统重装与驱动验收",
+      "配置交换机 VLAN 与 Trunk 并验收连通性",
+      "新能源汽车电池包安装与安全检查"
+    ]);
+    focusChat("描述要转化的真实工作任务…");
+  } else {
+    var project = projectById(state.currentProjectId);
+    setChatContext(
+      project ? (project.goal_name || "学习助手") : "学习助手",
+      project ? (project.direction || "") : "说出你的学习目标"
+    );
+    setSuggestions([]);
+    focusChat("输入消息…");
+  }
+}
+async function requestTaskConversion(message){
+  var key = state.activeConversationKey || "draft";
+  var conv = ensureConversation(key);
+  if (conv.busy) return;
+  conv.busy = true;
+  $("chatSend").disabled = true;
+  addMsg("user", escapeHtml(message));
+  var typing = appendTyping();
+  try {
+    var result = await api("/api/integrations/learning-task-conversion/generate", {
+      method: "POST",
+      body: { query: message, student_id: STUDENT_ID },
+      timeoutMs: 280000
+    });
+    removeTyping(typing);
+    if (result.status === "needs_clarification"){
+      addMsg("ai", "<p>" + renderMarkdown(result.message || "请补充具体的任务对象、动作或交付结果。") + "</p>");
+      return;
+    }
+    if (!result.bundle || !result.bundle.task){
+      throw new Error(result.message || "没有收到可展示的任务步骤");
+    }
+    openTaskConversionTab(result);
+    addMsg("ai", "<p>具体任务步骤已经生成，并在中间工作区打开。</p>");
+    setSuggestions([]);
+  } catch(err){
+    removeTyping(typing);
+    addMsg("ai", '<p style="color:var(--bad)">' + escapeHtml(err.message) + "</p>");
+  } finally {
+    conv.busy = false;
+    $("chatSend").disabled = false;
+  }
 }
 async function requestAgentTurn(message){
   var key = state.activeConversationKey || "draft";
@@ -2219,6 +2348,7 @@ function activateTab(tabId){
 function renderPage(tab){
   var el = pageEl(tab.id);
   if (tab.view === "welcome"){ return; }
+  if (tab.view === "task-conversion"){ renderTaskConversionPage(el, tab); return; }
   if (tab.view === "overview"){ renderOverviewPage(el, tab); return; }
   if (tab.view === "lesson"){ renderLessonPage(el, tab); return; }
   if (tab.view === "map"){ renderMapPage(el, tab); return; }
@@ -2227,6 +2357,171 @@ function renderPage(tab){
   if (tab.view === "wrongbook"){ renderWrongbookPage(el, tab); return; }
   if (tab.view === "plan"){ renderPlanPage(el, tab); return; }
   el.innerHTML = '<div class="empty-state"><div class="es-ic">🚧</div>该页面尚未实现</div>';
+}
+function taskText(value){
+  if (value == null) return "";
+  if (Array.isArray(value)) return value.map(taskText).filter(Boolean).join("；");
+  if (typeof value === "object"){
+    return taskText(value.description || value.name || value.content || value.value || "");
+  }
+  return String(value).trim();
+}
+function openTaskConversionTab(result){
+  var bundle = result.bundle || {};
+  var workTask = (bundle.task && bundle.task.work_task) || {};
+  var title = taskText(workTask.teaching_task_name || workTask.enterprise_task_name) || "具体任务步骤";
+  var tabId = "task-conversion:" + (result.task_card_id || bundle.task_card_id || Date.now());
+  var tab = workspaceTab(tabId);
+  if (!tab){
+    tab = openTab("task-conversion", title, "✦", { tabId: tabId });
+  } else {
+    tab.label = title;
+    activateTab(tab.id);
+  }
+  tab.result = result;
+  tab.error = null;
+  renderTabbar();
+  renderPage(tab);
+}
+function renderTaskConversionPage(el, tab){
+  var result = tab.result || {};
+  var bundle = result.bundle || {};
+  var workTask = (bundle.task && bundle.task.work_task) || {};
+  var taskCardId = result.task_card_id || bundle.task_card_id || "";
+  var steps = Array.isArray(workTask.task_steps) ? workTask.task_steps : [];
+  if (!steps.length){
+    el.innerHTML = emptyState("⚠️", "本次结果没有可展示的任务步骤");
+    return;
+  }
+  var knowledge = {};
+  (workTask.knowledge_points || []).forEach(function(item){
+    var id = item.knowledge_id || item.knowledge_point_id || item.id;
+    if (id) knowledge[id] = item;
+  });
+  var skills = {};
+  (workTask.skill_points || []).forEach(function(item){
+    var id = item.skill_id || item.skill_point_id || item.id;
+    if (id) skills[id] = taskText(item.name || item.skill_point_name || id);
+  });
+  var title = taskText(workTask.teaching_task_name || workTask.enterprise_task_name) || "具体任务步骤";
+  var description = taskText(
+    workTask.teaching_task_description || workTask.enterprise_task_description || workTask.work_situation
+  );
+  var situation = taskText(workTask.task_scenario || workTask.work_situation);
+  var tools = taskText(workTask.tools);
+  var safetySummary = taskText(workTask.safety_points);
+  var acceptanceSummary = taskText(workTask.acceptance_tests);
+  var html = '<div class="task-document"><header class="task-document-head">' +
+    '<div class="task-document-mark">✦</div><div><h1>' + escapeHtml(title) + '</h1>' +
+    (description ? '<p>' + escapeHtml(description) + '</p>' : '') + '</div></header>';
+  if (situation || tools || safetySummary || acceptanceSummary){
+    html += '<div class="task-context-grid">' +
+      (situation ? '<div class="task-context-card"><b>工作情境</b><p>' + escapeHtml(situation) + '</p></div>' : '') +
+      (tools ? '<div class="task-context-card"><b>工具与材料</b><p>' + escapeHtml(tools) + '</p></div>' : '') +
+      ((safetySummary || acceptanceSummary) ? '<div class="task-context-card"><b>安全与总体验收</b><p>' +
+        escapeHtml([safetySummary, acceptanceSummary].filter(Boolean).join("；")) + '</p></div>' : '') +
+      '</div>';
+  }
+  html += '<div class="task-step-list">';
+  steps.forEach(function(step, index){
+    var number = step.step || step.order || index + 1;
+    var name = taskText(step.name || step.title || step.action) || ("任务步骤 " + number);
+    var action = taskText(step.action || step.description || step.operation_guidance || step.instruction);
+    var instruction = taskText(step.instruction);
+    var prerequisites = taskText(step.prerequisites || step.precondition || step.prerequisite);
+    var deliverable = taskText(step.deliverable || step.output || step.stage_deliverable);
+    var acceptance = taskText(step.check || step.acceptance || step.acceptance_criteria || step.checkpoint);
+    var safety = taskText(step.safety || step.safety_boundary || step.safety_boundaries);
+    var kpIds = step.knowledge_point_ids || step.knowledge_ids || [];
+    var skillIds = step.skill_point_ids || step.skill_ids || [];
+    var kpItems = kpIds.map(function(id){
+      return knowledge[id] || { knowledge_id:id, name:id, learning_resources:[] };
+    }).filter(Boolean);
+    var skillNames = skillIds.map(function(id){ return skills[id] || id; }).filter(Boolean);
+    html += '<article class="task-step-card"><div class="task-step-no">' +
+      String(number).padStart(2, "0") + '</div><div class="task-step-main"><h2>' + escapeHtml(name) + '</h2>' +
+      (action ? '<div class="task-step-action">' + escapeHtml(action) + '</div>' : '');
+    if (prerequisites || deliverable || acceptance || safety || (instruction && instruction !== action)){
+      html += '<div class="task-step-grid">' +
+        (prerequisites ? '<div class="task-step-field"><b>开始前</b><span>' + escapeHtml(prerequisites) + '</span></div>' : '') +
+        ((instruction && instruction !== action) ? '<div class="task-step-field"><b>操作说明</b><span>' + escapeHtml(instruction) + '</span></div>' : '') +
+        (deliverable ? '<div class="task-step-field"><b>步骤产物</b><span>' + escapeHtml(deliverable) + '</span></div>' : '') +
+        (acceptance ? '<div class="task-step-field"><b>验收依据</b><span>' + escapeHtml(acceptance) + '</span></div>' : '') +
+        (safety ? '<div class="task-step-field"><b>安全边界</b><span>' + escapeHtml(safety) + '</span></div>' : '') +
+        '</div>';
+    }
+    if (kpItems.length || skillNames.length){
+      html += '<div class="task-step-learning">';
+      if (kpItems.length){
+        html += '<strong>本步骤知识点与学习资源</strong>';
+        kpItems.forEach(function(item){
+          var knowledgeId = item.knowledge_id || item.knowledge_point_id || item.id || "";
+          var knowledgeName = taskText(item.name || item.knowledge_point_name || knowledgeId);
+          var resources = Array.isArray(item.learning_resources) ? item.learning_resources : [];
+          html += '<div class="task-knowledge-card"><div class="task-knowledge-top"><div class="task-knowledge-body">' +
+            '<div class="task-knowledge-name">' + escapeHtml(knowledgeName) + '</div>' +
+            (item.scope ? '<div class="task-knowledge-scope">' + escapeHtml(taskText(item.scope)) + '</div>' : '') +
+            '</div>' +
+            (taskCardId && knowledgeId ? '<button class="task-personalize" data-personalize data-task-card="' +
+              escapeAttr(taskCardId) + '" data-knowledge="' + escapeAttr(knowledgeId) + '" data-name="' +
+              escapeAttr(knowledgeName) + '">进入个性化学习</button>' : '') + '</div>';
+          if (resources.length){
+            html += '<div class="task-resources">' + resources.map(function(resource){
+              var url = safeHttpUrl(resource.resource_url || resource.url || "");
+              if (!url) return "";
+              var platform = String(resource.platform || "").toLowerCase();
+              var icon = platform === "bilibili" ? "▶" : (platform === "douyin" ? "♪" : "↗");
+              return '<a class="task-resource" href="' + escapeAttr(url) + '" target="_blank" rel="noopener noreferrer">' +
+                icon + ' ' + escapeHtml(taskText(resource.resource_name || resource.title || "学习资源")) + '</a>';
+            }).join("") + '</div>';
+          }
+          html += '</div>';
+        });
+      }
+      if (skillNames.length){
+        html += '<div style="margin-top:5px"><strong>本步骤技能点</strong>' + skillNames.map(function(name){
+          return '<span class="task-chip">' + escapeHtml(name) + '</span>';
+        }).join("") + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div></article>';
+  });
+  html += '</div></div>';
+  el.innerHTML = html;
+  el.onclick = function(event){
+    var button = event.target.closest("[data-personalize]");
+    if (button) launchTaskPersonalizedLearning(button);
+  };
+}
+async function launchTaskPersonalizedLearning(button){
+  if (button.disabled) return;
+  var taskCardId = button.dataset.taskCard;
+  var knowledgeId = button.dataset.knowledge;
+  var knowledgeName = button.dataset.name || knowledgeId;
+  var previousLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在进入…";
+  try {
+    var result = await api(
+      "/api/integrations/learning-task-conversion/tasks/" + encodeURIComponent(taskCardId) +
+      "/knowledge/" + encodeURIComponent(knowledgeId) + "/launch",
+      { method:"POST", body:{ student_id:STUDENT_ID }, timeoutMs:120000 }
+    );
+    await refreshProjects();
+    state.taskConversionMode = false;
+    var modeButton = $("taskConversionEntry");
+    modeButton.classList.remove("active");
+    modeButton.setAttribute("aria-pressed", "false");
+    modeButton.querySelector(".tool-label").textContent = "生成任务步骤";
+    selectProject(result.project_id);
+    openLessonTab(result.project_id, result.knowledge_point_id || knowledgeId, knowledgeName);
+    toast("已进入“" + knowledgeName + "”个性化学习");
+  } catch(err){
+    button.disabled = false;
+    button.textContent = previousLabel;
+    toast(err.message, "error");
+  }
 }
 function openTab(view, label, icon, data){
   data = data || {};

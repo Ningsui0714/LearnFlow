@@ -136,8 +136,18 @@ class _FakePersonalizedLearningClient:
     def __init__(self):
         self.imports = []
 
-    async def import_entry(self, *, learner_id: int, handoff: dict):
-        self.imports.append({"learner_id": learner_id, "handoff": handoff})
+    async def import_entry(
+        self,
+        *,
+        learner_id: int,
+        handoff: dict,
+        downstream_student_id: str | None = None,
+    ):
+        self.imports.append({
+            "learner_id": learner_id,
+            "handoff": handoff,
+            "downstream_student_id": downstream_student_id,
+        })
         knowledge_id = handoff["focus"]["knowledge_point"]["knowledge_id"]
         entry_id = scoped_personalized_learning_entry_id(
             handoff["entry_id"], learner_id,
@@ -661,6 +671,15 @@ def test_learning_task_conversion_proxies_both_handoff_directions(monkeypatch):
         assert len(personalized.imports) == 1
         assert personalized.imports[0]["learner_id"] > 0
         assert personalized.imports[0]["handoff"]["entry_id"] == entry["entry_id"]
+
+        integration_launched = client.post(
+            "/api/learning-task-conversion/integration-tasks/ltc_generated_01/"
+            "knowledge/kp_camera/personalized-learning-launch",
+            json={"student_id": "STU-INTEGRATION-001"},
+        )
+        assert integration_launched.status_code == 200
+        assert integration_launched.json()["project_id"] == "PROJ-DOWNSTREAM-001"
+        assert personalized.imports[-1]["downstream_student_id"] == "STU-INTEGRATION-001"
 
         result_payload = {
             "schema_version": "personalized-learning-result-v1",

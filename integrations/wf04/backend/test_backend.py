@@ -1133,7 +1133,11 @@ class BackendIntegrationTests(unittest.TestCase):
         self.assertIn('class="sidebar"', html)
         self.assertIn('class="chat"', html)
         self.assertIn("生成任务步骤", html)
-        self.assertIn("tool=learning-task-conversion", html)
+        self.assertIn("/api/integrations/learning-task-conversion/generate", html)
+        self.assertIn("进入个性化学习", html)
+        self.assertIn("learning_resources", html)
+        self.assertNotIn("127.0.0.1:5173", html)
+        self.assertNotIn("LearnFlow", html)
         # 旧 Agent 主入口通过 /legacy 保持兼容。
         request = urllib.request.Request(self.base_url + "/legacy", method="GET")
         with urllib.request.urlopen(request, timeout=5) as response:
@@ -1146,6 +1150,106 @@ class BackendIntegrationTests(unittest.TestCase):
             legacy = response.read().decode("utf-8")
         self.assertIn("个性化学习中心", legacy)
         self.assertIn("api.js", legacy)
+
+    def test_task_conversion_stays_inside_current_workspace(self):
+        upstream_payload = {
+            "status": "success",
+            "task_card_id": "ltc_test_01",
+            "bundle": {
+                "task_card_id": "ltc_test_01",
+                "task": {
+                    "work_task": {
+                        "teaching_task_name": "交换机配置学习任务",
+                        "task_steps": [{
+                            "step": 1,
+                            "step_id": "step_01",
+                            "name": "创建 VLAN",
+                            "action": "创建并核对 VLAN。",
+                            "knowledge_point_ids": ["kp_vlan"],
+                            "skill_point_ids": ["sp_vlan"],
+                        }],
+                        "knowledge_points": [{
+                            "knowledge_id": "kp_vlan",
+                            "name": "VLAN 基础",
+                        }],
+                        "skill_points": [{
+                            "skill_id": "sp_vlan",
+                            "name": "VLAN 配置",
+                        }],
+                    }
+                },
+            },
+        }
+
+        class TaskConversionStub(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                received = json.loads(self.rfile.read(length).decode("utf-8"))
+                self.server.received.append({"path": self.path, "payload": received})
+                response_payload = (
+                    {
+                        "status": "ok",
+                        "project_id": "PROJECT-PERSONALIZED-001",
+                        "knowledge_point_id": "kp_vlan",
+                        "entry_id": "ple_personalized_001",
+                        "redirect_url": "http://127.0.0.1:4173/?project_id=PROJECT-PERSONALIZED-001",
+                        "content_generation": {"provider": "deterministic_template"},
+                        "assessment": {"status": "ready"},
+                        "created": True,
+                    }
+                    if self.path.endswith("/personalized-learning-launch")
+                    else upstream_payload
+                )
+                body = json.dumps(response_payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *_args):
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), TaskConversionStub)
+        upstream.received = []
+        upstream_thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        upstream_thread.start()
+        application = self.server.RequestHandlerClass.application
+        application.settings = replace(
+            application.settings,
+            task_conversion_api_url=(
+                f"http://127.0.0.1:{upstream.server_port}/integration-generate"
+            ),
+        )
+        try:
+            result = self.request_json(
+                "POST",
+                "/api/integrations/learning-task-conversion/generate",
+                {"query": "配置交换机 VLAN", "student_id": "STU-INTEGRATION-001"},
+            )
+            launched = self.request_json(
+                "POST",
+                "/api/integrations/learning-task-conversion/tasks/ltc_test_01/"
+                "knowledge/kp_vlan/launch",
+                {"student_id": "STU-INTEGRATION-001"},
+            )
+        finally:
+            upstream.shutdown()
+            upstream.server_close()
+            upstream_thread.join(timeout=5)
+
+        self.assertEqual(result["task_card_id"], "ltc_test_01")
+        self.assertEqual(upstream.received[0]["payload"]["query"], "配置交换机 VLAN")
+        self.assertEqual(
+            upstream.received[0]["payload"]["student_id"], "STU-INTEGRATION-001"
+        )
+        self.assertEqual(launched["project_id"], "PROJECT-PERSONALIZED-001")
+        self.assertTrue(
+            upstream.received[1]["path"].endswith(
+                "/integration-tasks/ltc_test_01/knowledge/kp_vlan/"
+                "personalized-learning-launch"
+            )
+        )
 
     def test_remote_xingchen_request_contract(self):
         settings = Settings(
