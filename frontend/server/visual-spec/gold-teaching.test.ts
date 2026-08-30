@@ -375,7 +375,7 @@ test('recognized computable requests never fall through to an unverified model a
   }
   await assert.rejects(
     generateLearningVisual('diagram', '矩阵乘法 A=(1 2; 3 4)，B=(5 6; 7 8)', model),
-    /visual_generation_unavailable:visual_deterministic_inputs_ambiguous:matrix_operation/,
+    /visual_generation_needs_input:visual_deterministic_inputs_ambiguous:matrix_operation/,
   )
   await assert.rejects(
     generateLearningVisual('animation', '演示 f(x)=(x-2)^2 的梯度下降，x0=-2，学习率 α=.25，迭代 6 步', model),
@@ -400,7 +400,7 @@ test('deterministic hardening rejects unsafe or ambiguous computable inputs with
   )
   await assert.rejects(
     generateLearningVisual('animation', "解释 JS event loop：setTimeout(() => console.log('late'), 100); console.log('now');", forbiddenModel),
-    /visual_generation_unavailable:visual_deterministic_inputs_ambiguous:event_loop/,
+    /visual_generation_needs_input:visual_deterministic_inputs_ambiguous:event_loop/,
   )
   assert.equal(modelCalls, 0)
 })

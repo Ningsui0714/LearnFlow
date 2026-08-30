@@ -280,7 +280,7 @@ export function classifyLearningVisual(query: string):
   | { domain: 'mathematics'; abstraction: MathematicsVisualAbstraction } {
   const normalized = query.toLowerCase()
   if (/(?:事件循环|微任务|宏任务|event loop|microtask)/i.test(normalized)) return { domain: 'computer', abstraction: 'event_loop' }
-  if (/(?:dijkstra|最短路径|带权图)/i.test(normalized)) return { domain: 'computer', abstraction: 'graph_algorithm' }
+  if (/(?:dijkstra|迪杰斯特拉|最短路径|带权图)/i.test(normalized)) return { domain: 'computer', abstraction: 'graph_algorithm' }
   if (/(?:张量|shape|qkv|神经网络|注意力|transformer|tensor)/i.test(normalized)) return { domain: 'computer', abstraction: 'tensor_shape_flow' }
   if (/(?:协议|握手|请求.*响应|客户端|服务端|tcp|http|sequence)/i.test(normalized)) return { domain: 'computer', abstraction: 'protocol_sequence' }
   if (/(?:状态机|状态转移|生命周期|state machine)/i.test(normalized)) return { domain: 'computer', abstraction: 'state_machine' }

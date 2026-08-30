@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-30.4`）：Web 与 Desktop 的显式图解/动画请求统一进入同一套 TypeScript VisualSpec Harness。Harness 保留当前请求，并仅在“把刚才那个演示出来”等省略表达中从最近对话补充有界主题；可计算主题区分精确输入、明确披露的教学示例和需补参数三态。长尾模型计划的首轮预算提高，并只允许一次带失败原因的结构化修复，真实性、布局、安全与重放门不放宽。新增 Desktop-only `POST /agent/sessions/{session_id}/visual-plans` 只承担模型规划，校验桌面令牌与会话归属，不渲染、不写 EvidenceEvent 或五核；既有视觉 Tool ID、VisualSpec v3 和事件语义保持兼容。
+
 Contract impact（`2026-08-30.3`）：新增 `learnflow.plugin-package.v1` 通用插件宿主，把可安装 Bundle、项目作用域 Instance、不可变 Snapshot 与快照内 Object 分成四层；核心注册表新增 Plugin/Host Interface 契约以及已安装 release 的动态 namespaced 投影。新增发布者、release、instance、snapshot、object index、run/event 持久化与内容寻址制品；外部 runner 仅以默认关闭的 `trusted_signed_process`、固定参数 JSON-RPC 运行，并持续披露文件系统、网络、密钥、CPU 和内存均未隔离。插件只能使用实例获授权的版本化 Host Ports；写核心对象必须持久化为现有 Action Board 的待确认 `AgentAction`，外部事件只能零 Kernel target。Snapshot root 由宿主对 release、schema、组件、固定来源、配置和稳定元数据 envelope 计算，来源 provenance 只能来自本次 Host Port 读取或基线快照。岗位能力图谱迁移为首个官方插件；旧专用表冻结为只读迁移源，旧 API 与工具名保留 deprecated 转发，不形成双写权威。三类主 Agent、五核 schema、EvidenceEvent schema、唯一 reducer 链、掌握语义和现有核心对象 API 保持兼容。协议、迁移和安全边界见 `docs/implementation/PLUGIN_HOST.md` 与 `docs/implementation/ROLE_CAPABILITY_PLUGIN.md`。
 
 Contract impact（`2026-08-30.1`）：学习图解与动画从“模型可自动补充”收紧为显式意图能力：只有学习者明确要求图解或动画时，相应工具才进入本轮模型工具面，执行器还会再次校验意图。视觉规划失败不再生成单节点主题锚点冒充图解；只有与请求精确匹配、可重放且通过语义/布局/安全门的确定性模板允许降级，否则返回无产物失败。学习文件待确认提案不得被 Tutor 描述成已生成文件，提案错误按任务隔离展示。新增 `learner_event_sequences` 以数据库原子更新分配 `EvidenceEvent.learner_seq`，兼容既有事件并消除并发 `MAX + 1` 冲突；EvidenceEvent schema、五核 reducer、稳定工具 ID 和掌握语义不变。

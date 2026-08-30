@@ -17,7 +17,8 @@ import {
 } from './learning-video-harness.ts'
 import type { LearningTaskTutorContext } from '../src/learning.ts'
 import type { LearningPlanTutorContext } from '../src/planning.ts'
-import { generateLearningVisual } from './learning-visual-spec.ts'
+import type { TutorContextMessage } from '../src/tutor.ts'
+import { executeLearningVisual, resolveVisualRequest } from './visual-tool-execution.ts'
 import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentToolDefinition } from '../src/agent-contracts.ts'
 import type { AgentProjectContext, ProjectCheckpointProposal } from '../src/project.ts'
 import {
@@ -477,7 +478,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'generate_learning_diagram',
     title: '生成学习图解',
-    description: '仅当学习者本轮明确要求画图、图解、流程图、时序图、结构图或可视化时调用。把结构、关系、对比、数据流或数学关系规划为 VisualSpec，再由确定性布局器生成安全 SVG；普通讲解不得为了装饰自动调用。',
+    description: '仅当学习者本轮明确要求画图、图解、流程图、时序图、结构图或可视化时调用。把结构、关系、对比、数据流或数学关系规划为 VisualSpec，再由确定性布局器生成安全 SVG；普通讲解不得为了装饰自动调用。query 应写清主题，例如“Dijkstra 从 S 到 T 的最短路径”；“把刚才那个画出来”等省略表达会由 Harness 结合最近对话主题补全并在结果中披露。可计算主题缺少具体输入时允许生成明确标注的教学示例，不会冒充用户数据。通常需要 0-40 秒。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {
@@ -492,7 +493,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'generate_learning_animation',
     title: '生成学习动画',
-    description: '仅当学习者本轮明确要求动画、逐帧或演示状态变化时调用。把有机械因果、状态转移或逐步计算的过程规划为 VisualSpec 时间线，再由确定性渲染器生成身份稳定、可暂停逐帧检查的安全 SVG 动画；不得把静态关系或普通讲解自动动画化。',
+    description: '仅当学习者本轮明确要求动画、逐帧或演示状态变化时调用。把有机械因果、状态转移或逐步计算的过程规划为 VisualSpec 时间线，再由确定性渲染器生成身份稳定、可暂停逐帧检查的安全 SVG 动画；不得把静态关系或普通讲解自动动画化。query 应写清过程，例如“逐帧演示 Dijkstra 如何更新 tentative distance”；省略的主题会由 Harness 从最近对话恢复并披露。缺少具体数据时可以使用明确标注的教学示例。复杂长尾动画可能进行一次结构化修复，通常需要 0-65 秒。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {
@@ -584,6 +585,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
 
 export type TutorAgentToolRuntimeOptions = {
   message: string
+  recentMessages?: TutorContextMessage[]
   generate: GenerateText
   searchConfiguration?: SearchProviderConfiguration
   mode?: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
@@ -772,9 +774,20 @@ function cleanCheckpointProposal(raw: any, index: number): ProjectCheckpointProp
 
 function classifyToolError(error: unknown): NonNullable<TutorToolRun['errorType']> {
   const message = error instanceof Error ? error.message : String(error || '')
-  if (/timeout|超时|429|rate|network|fetch|ECONN|暂时/i.test(message)) return 'transient'
+  if (/timeout|timed out|abort|aborted|超时|429|rate|network|fetch|ECONN|暂时/i.test(message)) return 'transient'
+  if (/needs_input|inputs_ambiguous|请提供|需要补充/i.test(message)) return 'user_fixable'
   if (/参数|必须|缺少|无效|不支持/i.test(message)) return 'model_recoverable'
   return 'unexpected'
+}
+
+function visualInputGuidance(message: string) {
+  if (!/visual_generation_needs_input|visual_deterministic_inputs_ambiguous/.test(message)) return message
+  if (/matrix_operation/.test(message)) return '请补充矩阵 A、B 的完整二维数组；如果只想看概念示例，请不要填写一半参数。'
+  if (/graph_algorithm/.test(message)) return '请补充起点、终点和完整的带权边；例如 S→A=4、A→T=2。'
+  if (/natural_frequency/.test(message)) return '请补充总体人数、患病率、灵敏度和特异度；或明确只看教学示例。'
+  if (/event_loop/.test(message)) return '请提供完整的受支持 JavaScript 片段；非零延时或未知异步结构不会被猜测。'
+  if (/optimization/.test(message)) return '请补充目标函数、起点、学习率和迭代步数；或明确只看教学示例。'
+  return '当前输入只提供了部分关键参数，请补充完整数据，或明确只看教学示例。'
 }
 
 async function generatePracticeCandidates(
@@ -1056,6 +1069,8 @@ export async function executeTutorAgentTool(
 ): Promise<TutorAgentToolExecution> {
   const startedAt = Date.now()
   const query = compactText(args.query || options.message, 1800) || compactText(options.message, 1800)
+  const isVisualCall = ['generate_learning_diagram', 'generate_learning_animation', 'generate_learning_visual'].includes(name)
+  const resolvedVisualRequest = isVisualCall ? resolveVisualRequest(query, options.recentMessages || []) : undefined
   const base = {
     id: id('tool'),
     toolName: name,
@@ -1725,21 +1740,32 @@ export async function executeTutorAgentTool(
 
     if (name === 'generate_learning_diagram' || name === 'generate_learning_animation' || name === 'generate_learning_visual') {
       const requestedKind = name === 'generate_learning_animation' || args.kind === 'animation' ? 'animation' : 'diagram'
-      const visual = await generateLearningVisual(requestedKind, query, options.generate)
+      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate)
+      const visual = execution.generated
       const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
       const degradedLabel = visual.degraded
         ? `；已如实降级为${effectiveKind === 'animation' ? '确定性动画' : '静态图解'}`
         : ''
+      const contextLabel = execution.request.contextEnriched ? '；已结合最近对话主题' : ''
       return {
         run: {
           ...base,
           kind: effectiveKind === 'diagram' ? 'image' : 'animation',
           status: 'completed',
           title: requestedKind === 'diagram' ? '生成知识图解' : '生成过程动画',
-          detail: `${effectiveKind === 'diagram' ? '图解' : `${visual.artifact.steps.length} 帧动画`}已通过结构、布局与 SVG 安全门；质量分 ${visual.quality.score}${degradedLabel}。`,
+          detail: `${effectiveKind === 'diagram' ? '图解' : `${visual.artifact.steps.length} 帧动画`}已通过结构、布局与 SVG 安全门；质量分 ${visual.quality.score}${degradedLabel}${contextLabel}。`,
           observationSummary: visual.artifact.title,
           durationMs: Date.now() - startedAt,
           artifact: visual.artifact,
+          visualMeta: {
+            requestedKind,
+            effectiveKind,
+            contextEnriched: execution.request.contextEnriched,
+            generationSource: visual.generation.source,
+            compileStatus: visual.generation.compileStatus,
+            plannerAttempts: visual.generation.plannerAttempts,
+            outcomeStage: 'rendered',
+          },
         },
         observation: {
           authority: 'validated_learning_artifact',
@@ -1753,6 +1779,8 @@ export async function executeTutorAgentTool(
             stepCount: visual.artifact.steps.length,
             abstraction: visual.artifact.abstraction,
             quality: visual.quality,
+            contextEnriched: execution.request.contextEnriched,
+            generation: visual.generation,
           },
           guidance: '最终回答解释怎样阅读产物，不重复输出 SVG',
         },
@@ -1865,7 +1893,10 @@ export async function executeTutorAgentTool(
     }
     throw new Error(`未知工具 ${name}`)
   } catch (error) {
-    const message = compactText(error instanceof Error ? error.message : '工具调用失败', 300)
+    const rawMessage = compactText(error instanceof Error ? error.message : '工具调用失败', 300)
+    const visualRequestedKind = name === 'generate_learning_animation' || args.kind === 'animation' ? 'animation' : 'diagram'
+    const visualFailure = isVisualCall
+    const message = visualFailure ? visualInputGuidance(rawMessage) : rawMessage
     const kind = name === 'read_learner_context' ? 'memory'
       : name === 'read_learning_workspace' ? 'workspace'
       : name === 'read_domain_knowledge' ? 'domain'
@@ -1874,7 +1905,7 @@ export async function executeTutorAgentTool(
         : name === 'search_computer_knowledge' ? 'search'
           : /learning_video/.test(name) ? 'video'
           : /practice/i.test(name) ? 'file'
-          : args.kind === 'animation' ? 'animation' : 'image'
+          : visualFailure && visualRequestedKind === 'animation' ? 'animation' : 'image'
     return {
       run: {
         ...base,
@@ -1885,6 +1916,17 @@ export async function executeTutorAgentTool(
         observationSummary: '工具失败，未产生可信观察',
         errorType: classifyToolError(error),
         durationMs: Date.now() - startedAt,
+        ...(visualFailure ? {
+          visualMeta: {
+            requestedKind: visualRequestedKind,
+            effectiveKind: visualRequestedKind,
+            contextEnriched: resolvedVisualRequest?.contextEnriched || false,
+            generationSource: /deterministic|inputs_ambiguous|needs_input|derivation_failed/i.test(rawMessage) ? 'deterministic_compiler' as const : 'model_plan' as const,
+            compileStatus: /inputs_ambiguous|needs_input/.test(rawMessage) ? 'ambiguous' as const : /derivation_failed|invalid|unsupported/.test(rawMessage) ? 'invalid' as const : 'not_applicable' as const,
+            plannerAttempts: /after_2_attempts|repair|second_attempt/.test(rawMessage) ? 2 : /deterministic|inputs_ambiguous|needs_input|derivation_failed/i.test(rawMessage) ? 0 : 1,
+            outcomeStage: /scene|layout|collision|route/.test(rawMessage) ? 'layout' as const : /quality|spec|parse|json|validation/.test(rawMessage) ? 'validation' as const : 'planner' as const,
+          },
+        } : {}),
       },
       observation: { error: message, recoverableByModel: classifyToolError(error) !== 'unexpected' },
     }

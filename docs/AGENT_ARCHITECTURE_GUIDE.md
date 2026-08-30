@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-30.4`）：学习设计视觉能力新增共享的上下文补全、三态确定性编译和一次结构化修复。浏览器与 Desktop 不再拥有两套视觉执行路径：两端共同运行 VisualSpec parser/compiler/verifier/renderer，Desktop 后端桥接仅为长尾候选提供有界模型文本。教学示例必须在标题、说明和无障碍摘要中披露，不能冒充学习者输入；缺失了部分关键参数的请求仍返回可追问失败。该变化不新增主 Agent，不改变五核、掌握判定或证据链。
+
 Contract impact（`2026-08-30.3`）：插件能力统一进入“确定性宿主 + 可变 Agent runner”边界。Bundle 只声明能力，项目 Instance 只保存配置与授权，不可变 Snapshot 承载领域事实，ObjectIndex 只负责寻址。Tutor 不为每个插件常驻硬编码工具，而通过 `discover_project_plugin_tools` 和 `call_project_plugin_tool` 发现、调用当前项目已启用且获授权的只读能力；任何写核心对象的意图只能持久化为 Action Board 待确认动作。插件 runner 不获得 ORM、数据库会话或密钥，外部事件只允许零 Kernel target；宿主把实例配置作为不可伪造 runtime envelope 注入，并以实际 Host Port 读取重建来源 provenance。受信签名本机进程仍明确没有文件、网络、密钥、CPU 或内存隔离。岗位能力图谱是首个官方插件，旧专用 API/工具名只作 deprecated 兼容转发。三类主 Agent、五核、评分、掌握与 EvidenceEvent reducer 语义不变。
 
 Contract impact（`2026-08-30.1`）：Tutor 的视觉工具面采用双重显式意图门。普通解释、文件共学和资源策展不暴露图解/动画工具；明确“画图/流程图/时序图”等只暴露图解，明确“动画/逐帧/演示变化”等只暴露动画，执行器再次校验。Learning Design 的 VisualSpec 必须具有可教学的语义对象、真实关系或状态变化，并通过确定性布局、安全和重放门；未知主题的单节点降级被取消。文件提案在真正物化前只能称为待确认提案。事件序号改由数据库行原子分配，五核仍只消费既有 EvidenceEvent/reducer 链。

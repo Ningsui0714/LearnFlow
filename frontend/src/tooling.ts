@@ -74,6 +74,15 @@ export type TutorToolRun = {
   inputSummary?: string
   observationSummary?: string
   errorType?: 'transient' | 'model_recoverable' | 'user_fixable' | 'unexpected'
+  visualMeta?: {
+    requestedKind: 'diagram' | 'animation'
+    effectiveKind: 'diagram' | 'animation'
+    contextEnriched: boolean
+    generationSource: 'deterministic_compiler' | 'model_plan' | 'deterministic_template' | 'legacy_reader'
+    compileStatus: 'exact' | 'illustrative_example' | 'not_applicable' | 'ambiguous' | 'invalid'
+    plannerAttempts: number
+    outcomeStage: 'rendered' | 'planner' | 'validation' | 'layout'
+  }
   sources?: SearchSource[]
   searchMeta?: {
     intent?: string

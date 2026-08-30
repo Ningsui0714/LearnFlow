@@ -14,7 +14,7 @@ from app.schemas.agent import (
     AgentSessionCreate, TutorTurnRequest, LearningEventRequest, VNextSessionSyncRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
     LearningSkillRunCreateRequest, LearningSkillRunActionRequest,
-    LearningSkillRunTurnRequest,
+    LearningSkillRunTurnRequest, VisualPlannerRequest,
 )
 from app.services.learning_runtime import (
     PUBLIC_EVENT_TYPES, record_event, get_state_summary, evaluate_checkpoint_status,
@@ -704,6 +704,40 @@ async def tutor_turn(
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise _skill_run_error(exc) from exc
+
+
+@router.post("/sessions/{session_id}/visual-plans")
+async def plan_visual_for_desktop(
+    session_id: int,
+    data: VisualPlannerRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """Desktop-only model planning. Visual validation/rendering uses the shared TS runtime."""
+    if not valid_desktop_request(request):
+        raise HTTPException(404, "Visual planner bridge is unavailable")
+    await _owned_session(db, current.learner.id, session_id)
+    from app.services.visual_planner import plan_learning_visual
+    try:
+        return await plan_learning_visual(
+            instructions=data.instructions,
+            input_text=data.input,
+            timeout_ms=data.timeout_ms,
+            max_tokens=data.max_tokens,
+        )
+    except RuntimeError as exc:
+        if str(exc) == "visual_planner_not_configured":
+            raise HTTPException(409, "桌面模型凭据尚未配置") from None
+        raise HTTPException(502, str(exc)) from None
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        error_name = type(exc).__name__.casefold()
+        if status_code in {401, 403} or "authentication" in error_name:
+            raise HTTPException(502, "视觉规划模型认证失败") from None
+        if "timeout" in error_name or "timeout" in str(exc).casefold():
+            raise HTTPException(504, "视觉规划模型请求超时") from None
+        raise HTTPException(502, "视觉规划模型调用失败") from None
 
 
 @router.get("/project-proposals/{proposal_id}")

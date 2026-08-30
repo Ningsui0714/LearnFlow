@@ -177,7 +177,6 @@ function naturalFrequencySpec(derivation: Extract<TeachingDerivation, { type: 'n
 }
 
 function eventLoopSpec(derivation: Extract<TeachingDerivation, { type: 'js_event_loop' }>): LearningVisualSpec | undefined {
-  if (derivation.kind !== 'animation') return undefined
   const lines = derivation.input.codeLines.map((line, index) => ({ id: `line_${index + 1}`, number: line.number, text: line.text }))
   const lineIds = new Map(derivation.input.codeLines.map((line, index) => [line.number, lines[index].id]))
   if (derivation.input.events.some(event => !lineIds.has(event.sourceLineNumber))) return undefined
@@ -188,6 +187,22 @@ function eventLoopSpec(derivation: Extract<TeachingDerivation, { type: 'js_event
       lineId: lineIds.get(event.sourceLineNumber)!, kind: event.queue, output: event.output, order: index + 1,
       label: event.queue === 'microtask' ? `Promise callback → ${event.output}` : event.queue === 'task' ? `Timer callback → ${event.output}` : `同步输出 ${event.output}`,
     })),
+  }
+  const common = {
+    ...base(derivation.input.request), domain: 'computer' as const, abstraction: 'event_loop' as const, semantic,
+    title: 'JavaScript 事件循环', subtitle: derivation.kind === 'diagram' ? '同步脚本、微任务与任务队列的最终关系' : '同步脚本 → 微任务 → 下一轮任务',
+    explanation: '同步代码、微任务与任务按参考调度器派生；callback 在不同区域保持同一稳定 ID。',
+    accessibility: {
+      summary: `同步输出先发生；主任务结束后清空微任务，再进入下一轮任务。最终输出 ${derivation.derived.outputOrder.join('、')}。`,
+      readingOrder: [semantic.id, ...semantic.lines.map(line => line.id), ...semantic.operations.map(operation => operation.id)],
+      nonColorStateCue: '每个 callback token 保持稳定文字 ID，所在区域、队列名和当前状态均显式显示。',
+    },
+  }
+  if (derivation.kind === 'diagram') {
+    const state = emptyState()
+    state.values[semantic.id] = derivedTraceLength(semantic) - 1
+    state.activeIds = [semantic.id]
+    return { ...common, kind: 'diagram', state }
   }
   const trace = deriveEventLoop(semantic)
   const frames: LearningVisualFrame[] = []
@@ -209,19 +224,12 @@ function eventLoopSpec(derivation: Extract<TeachingDerivation, { type: 'js_event
   })
   if (frames.length > 12) return undefined
   return {
-    ...base(derivation.input.request), ...animationTimeline(semantic, frames), domain: 'computer', abstraction: 'event_loop', semantic,
-    title: 'JavaScript 事件循环', subtitle: '同步脚本 → 微任务 → 下一轮任务',
-    explanation: '同步代码、微任务与任务按参考调度器派生；callback 在不同区域保持同一稳定 ID。',
-    accessibility: {
-      summary: `同步输出先发生；主任务结束后清空微任务，再进入下一轮任务。最终输出 ${derivation.derived.outputOrder.join('、')}。`,
-      readingOrder: [semantic.id, ...semantic.lines.map(line => line.id), ...semantic.operations.map(operation => operation.id)],
-      nonColorStateCue: '每个 callback token 保持稳定文字 ID，所在区域、队列名和当前状态均显式显示。',
-    },
+    ...common, ...animationTimeline(semantic, frames),
   }
 }
 
 function optimizationSpec(derivation: Extract<TeachingDerivation, { type: 'quadratic_gradient_descent' }>): LearningVisualSpec | undefined {
-  if (derivation.kind !== 'animation' || derivation.input.updates > 5) return undefined
+  if (derivation.input.updates > 5) return undefined
   const traceXValues = [derivation.input.center, ...derivation.derived.points.map(point => point.x)]
   const traceMinimumX = Math.min(...traceXValues)
   const traceMaximumX = Math.max(...traceXValues)
@@ -247,6 +255,22 @@ function optimizationSpec(derivation: Extract<TeachingDerivation, { type: 'quadr
     },
   }
   const trace = deriveOptimization(semantic)
+  const common = {
+    ...base(derivation.input.request), domain: 'mathematics' as const, abstraction: 'optimization' as const, semantic,
+    title: '梯度下降：方向与步长', subtitle: `f(x)=(x−${semantic.center})²，α=${semantic.learningRate}`,
+    explanation: '曲线、坐标轴和相机固定；每个点、梯度与更新量均由同一递推式计算。',
+    accessibility: {
+      summary: `从 x=${semantic.initialX} 出发，${semantic.iterations} 次更新后到 x=${trace.points[trace.points.length - 1]?.x}；点逐步接近最小值 x=${semantic.center}。`,
+      readingOrder: [semantic.id],
+      nonColorStateCue: '当前点、历史点、切线和更新箭头使用稳定 ID、文字数值与不同线型共同表达。',
+    },
+  }
+  if (derivation.kind === 'diagram') {
+    const state = emptyState()
+    state.values[semantic.id] = derivedTraceLength(semantic) - 1
+    state.activeIds = [semantic.id]
+    return { ...common, kind: 'diagram', state }
+  }
   const frames: LearningVisualFrame[] = []
   trace.snapshots.slice(1).forEach(snapshot => {
     if (snapshot.phase === 'gradient' && snapshot.iteration === 0 && Math.abs(trace.points[0].gradient) > 1e-12) {
@@ -265,25 +289,29 @@ function optimizationSpec(derivation: Extract<TeachingDerivation, { type: 'quadr
     })
   })
   return {
-    ...base(derivation.input.request), ...animationTimeline(semantic, frames), domain: 'mathematics', abstraction: 'optimization', semantic,
-    title: '梯度下降：方向与步长', subtitle: `f(x)=(x−${semantic.center})²，α=${semantic.learningRate}`,
-    explanation: '曲线、坐标轴和相机固定；每个点、梯度与更新量均由同一递推式计算。',
-    accessibility: {
-      summary: `从 x=${semantic.initialX} 出发，${semantic.iterations} 次更新后到 x=${trace.points.at(-1)?.x}；点逐步接近最小值 x=${semantic.center}。`,
-      readingOrder: [semantic.id],
-      nonColorStateCue: '当前点、历史点、切线和更新箭头使用稳定 ID、文字数值与不同线型共同表达。',
-    },
+    ...common, ...animationTimeline(semantic, frames),
   }
 }
 
 export function teachingDerivationToSpec(derivation: TeachingDerivation): LearningVisualSpec | undefined {
   if (derivation.type === 'derivation_failure') throw new Error(`visual_deterministic_derivation_failed:${derivation.derived.code}`)
-  if (derivation.type === 'matrix_multiplication') return matrixSpec(derivation)
-  if (derivation.type === 'dijkstra') return graphSpec(derivation)
-  if (derivation.type === 'natural_frequency_bayes') return naturalFrequencySpec(derivation)
-  if (derivation.type === 'js_event_loop') return eventLoopSpec(derivation)
-  if (derivation.type === 'quadratic_gradient_descent') return optimizationSpec(derivation)
-  return undefined
+  const spec = derivation.type === 'matrix_multiplication' ? matrixSpec(derivation)
+    : derivation.type === 'dijkstra' ? graphSpec(derivation)
+      : derivation.type === 'natural_frequency_bayes' ? naturalFrequencySpec(derivation)
+        : derivation.type === 'js_event_loop' ? eventLoopSpec(derivation)
+          : derivation.type === 'quadratic_gradient_descent' ? optimizationSpec(derivation)
+            : undefined
+  if (!spec || !derivation.input.request.includes('【教学示例参数】')) return spec
+  return {
+    ...spec,
+    title: `教学示例：${spec.title}`,
+    subtitle: `以下数值和对象是为解释机制选取的示例；${spec.subtitle}`,
+    explanation: `原请求没有提供完整可计算输入，因此使用明确标注的教学示例，不代表学习者自己的数据。${spec.explanation}`,
+    accessibility: {
+      ...spec.accessibility,
+      summary: `这是教学示例，不代表学习者自己的数据。${spec.accessibility.summary}`,
+    },
+  }
 }
 
 export const TEACHING_RUNTIME_VERSIONS = { schema: VISUAL_VERSION, prompt: PROMPT_VERSION, renderer: RENDERER_VERSION }

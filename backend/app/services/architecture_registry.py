@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.3"
+REGISTRY_VERSION = "2026-08-30.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -747,7 +747,7 @@ TOOLS = {
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
-                     (), (), "explicit learner visual intent -> typed VisualSpec -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG; failures return no artifact unless a verified deterministic template matches"),
+                     (), (), "explicit learner visual intent + bounded recent dialogue -> exact compiler | disclosed illustrative compiler | long-tail model plan with one repair -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG; Desktop and Web share the same TS runtime and failures return no artifact unless a verified deterministic template matches"),
         ToolContract("learning_diagram_generator", "Learning Diagram Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "explicit diagram intent -> computer/math abstraction selection -> validated useful VisualSpec -> deterministic static SVG; zero learner-state write"),
         ToolContract("learning_animation_generator", "Learning Animation Generator", "learning_design_agent", "vnext", "artifact",
@@ -1869,6 +1869,7 @@ _API_BINDING_TARGETS = {
     "api:agent.advance_skill_turn": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs/{run_id}/turns", "POST", "advance_learning_skill_turn"),
     "api:agent.skill_action": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs/{run_id}/actions", "POST", "update_learning_skill_run"),
     "api:agent.tutor_turn": ("app.api.agent", "/agent/sessions/{session_id}/turns", "POST", "tutor_turn"),
+    "api:agent.visual_plan": ("app.api.agent", "/agent/sessions/{session_id}/visual-plans", "POST", "plan_visual_for_desktop"),
     "api:agent.delete_session": ("app.api.agent", "/agent/sessions/{session_id}", "DELETE", "delete_session"),
     "api:agent.patch_proposal": ("app.api.agent", "/agent/project-proposals/{proposal_id}", "PATCH", "patch_project_proposal"),
     "api:agent.accept_proposal": ("app.api.agent", "/agent/project-proposals/{proposal_id}/accept", "POST", "accept_project_proposal"),
@@ -2083,7 +2084,7 @@ _TOOL_BINDING_IDS = {
     "domain_knowledge_packet_compiler": ("py:domain_packet.compile", "api:knowledge_library.web_evidence"),
     "source_integrity_monitor": ("py:source_integrity.inspect", "api:vnext_projects.source_health"),
     "checkpoint_delivery_readiness": ("py:delivery_readiness.read",),
-    "safe_visual_generation": ("frontend:visual.generate",),
+    "safe_visual_generation": ("frontend:visual.generate", "api:agent.visual_plan"),
     "learning_diagram_generator": ("frontend:tool:generate_learning_diagram",),
     "learning_animation_generator": ("frontend:tool:generate_learning_animation",),
     "selection_followup_context": ("frontend:paper.ancestors",),

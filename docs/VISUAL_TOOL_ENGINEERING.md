@@ -33,9 +33,12 @@
 
 ```text
 用户请求
-  → 精确的结构化解析
-    → 可计算领域：确定性 compiler + semantic proof
-    → 非精确/长尾：模型候选 VisualSpec（仅 structural）
+  → 保留原请求；省略表达从最近对话补充有界主题并披露 contextEnriched
+  → 可计算领域三态
+    → 参数完整：确定性 compiler + semantic proof（exact）
+    → 只有概念、没有用户数据：明确标注教学示例（illustrative_example）
+    → 已给部分参数但仍歧义：needs_input，不猜测
+  → 非精确/长尾：模型候选 VisualSpec；首轮失败后至多一次结构化 repair（仅 structural）
   → typed parser 与引用门
   → deterministic replay
   → 高层 semantic adapter
@@ -84,6 +87,13 @@
 
 模型失败后，只有精确匹配且经过语义证明的模板允许产生降级产物；否则返回真实失败原因。
 
+### 调用路径与预算
+
+- Web 与 Desktop 共用 `visual-tool-execution.ts`、VisualSpec 编译器、验证器和 renderer；Desktop 不再返回空 `toolRuns` 后绕过视觉能力。
+- Desktop 专用 `/agent/sessions/{session_id}/visual-plans` 只返回模型候选文本，并校验桌面令牌、learner 与 session ownership；它不接收 SVG，不执行代码，也不写学习证据。
+- 可计算精确输入和教学示例均为零模型调用。长尾图解首轮/修复预算为 26/18 秒，动画为 38/26 秒；总重试次数固定为一次，不能用改写参数无限重试。
+- 每次 Tool Run 记录 `requestedKind`、`effectiveKind`、`contextEnriched`、`generationSource`、`compileStatus`、`plannerAttempts` 与 `outcomeStage`，用于区分“被调用、规划返回、验证通过、布局通过、真正渲染”各阶段，不能再用 nominal completed 代替真实成功率。
+
 ## 金标验收
 
 第一组端到端金标由三张图解和三段动画组成：
@@ -130,4 +140,4 @@
 
 ## 修改影响
 
-本模块扩展视觉内部 schema、编译器、renderer、播放器和测试，不改变三类主 Agent、五核语义、`EvidenceEvent`、Action Board capability 或既有视觉工具 ID。新增视觉产物仍由 `learning_design_agent` 所有，并保持只读教学产物边界。
+本模块扩展视觉内部 schema、上下文 Harness、Desktop 规划桥接、编译器、renderer、播放器和测试，不改变三类主 Agent、五核语义、`EvidenceEvent`、Action Board capability 或既有视觉工具 ID。新增视觉产物仍由 `learning_design_agent` 所有，并保持只读教学产物边界。新增 API binding 向后兼容，旧 Web 调用无需迁移；Desktop 从“无视觉 Tool Run”迁移为同构产物与可观测失败。

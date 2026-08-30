@@ -11,6 +11,7 @@ import {
 } from './learning-visual-spec.ts'
 import { GOLD_VISUAL_FIXTURES } from './visual-spec/gold-fixtures.ts'
 import { parseV2Spec } from './visual-spec/validation.ts'
+import { resolveVisualRequest } from './visual-tool-execution.ts'
 import './visual-spec/gold-teaching.test.ts'
 import './visual-spec/teaching-compiler.test.ts'
 import './visual-playback.test.ts'
@@ -57,6 +58,7 @@ test('computer and mathematics classifiers cover every required abstraction fami
   assert.deepEqual(classifyLearningVisual('展示连接的状态机'), { domain: 'computer', abstraction: 'state_machine' })
   assert.deepEqual(classifyLearningVisual('逐步展示链表数据结构'), { domain: 'computer', abstraction: 'data_structure' })
   assert.deepEqual(classifyLearningVisual('逐行代码执行和调用栈'), { domain: 'computer', abstraction: 'code_trace' })
+  assert.deepEqual(classifyLearningVisual('用动画演示迪杰斯特拉算法'), { domain: 'computer', abstraction: 'graph_algorithm' })
   assert.deepEqual(classifyLearningVisual('演示自注意力 QKV 的张量 shape 流动'), { domain: 'computer', abstraction: 'tensor_shape_flow' })
   assert.deepEqual(classifyLearningVisual('画出函数导数变化'), { domain: 'mathematics', abstraction: 'function' })
   assert.deepEqual(classifyLearningVisual('贝叶斯概率分布'), { domain: 'mathematics', abstraction: 'natural_frequency' })
@@ -64,6 +66,49 @@ test('computer and mathematics classifiers cover every required abstraction fami
   assert.deepEqual(classifyLearningVisual('患病率 1%，但还没给特异度'), { domain: 'mathematics', abstraction: 'natural_frequency' })
   assert.deepEqual(classifyLearningVisual('矩阵线性变换'), { domain: 'mathematics', abstraction: 'transformation' })
   assert.deepEqual(classifyLearningVisual('公式等式推导'), { domain: 'mathematics', abstraction: 'derivation' })
+})
+
+test('deictic visual requests preserve the current turn and recover the prior user topic', () => {
+  const resolved = resolveVisualRequest('我希望你用动画演示出来', [
+    { role: 'user', content: '跟我解释一下迪杰斯特拉算法' },
+    { role: 'assistant', content: 'Dijkstra 会反复选择当前距离最小的未确定节点。' },
+    { role: 'user', content: '我希望你用动画演示出来' },
+  ])
+  assert.equal(resolved.originalRequest, '我希望你用动画演示出来')
+  assert.equal(resolved.contextEnriched, true)
+  assert.match(resolved.effectiveRequest, /【对话主题】跟我解释一下迪杰斯特拉算法/)
+})
+
+test('concept-only computable requests use disclosed deterministic teaching examples', async () => {
+  const cases = [
+    ['diagram', '画一下两个矩阵相乘'],
+    ['animation', '用动画演示迪杰斯特拉算法'],
+    ['diagram', '画贝叶斯定理自然频数'],
+    ['animation', '用动画解释 JS 事件循环'],
+    ['animation', '做一个梯度下降动画'],
+  ] as const
+  for (const [kind, request] of cases) {
+    const generated = await generateLearningVisual(kind, request, async () => {
+      throw new Error('illustrative compiler must not call the model')
+    })
+    assert.equal(generated.generation.compileStatus, 'illustrative_example')
+    assert.equal(generated.generation.plannerAttempts, 0)
+    assert.match(generated.artifact.title, /^教学示例：/)
+    assert.match(generated.explanation, /教学示例.*学习者自己的数据/)
+    assert.equal(generated.quality.verification.level, 'derived_verified')
+  }
+})
+
+test('Chinese weighted-edge phrasing compiles as an exact Dijkstra animation', async () => {
+  const generated = await generateLearningVisual(
+    'animation',
+    '用动画演示迪杰斯特拉：有向图，从 S 到 T，S 到 A 权重 4，S 到 B 权重 1，B 到 A 权重 2，A 到 T 权重 3',
+    async () => { throw new Error('exact compiler must not call the model') },
+  )
+  assert.equal(generated.generation.compileStatus, 'exact')
+  assert.equal(generated.generation.plannerAttempts, 0)
+  assert.equal(generated.artifact.kind, 'animation')
+  assert.equal(generated.quality.verification.level, 'derived_verified')
 })
 
 test('numeric fields and graph direction keep strict JSON primitive types', () => {
@@ -541,10 +586,40 @@ test('request intent blocks a valid but unrelated model abstraction before displ
     })
   })
 
-  assert.equal(modelCalls, 1)
+  assert.equal(modelCalls, 2)
   assert.equal(generated.spec.abstraction, 'protocol_sequence')
   assert.equal(generated.spec.semantic.type, 'protocol_sequence')
   assert.match(generated.modelError || '', /visual_spec_domain_abstraction_mismatch/)
+})
+
+test('a failed visual plan receives one bounded repair attempt', async () => {
+  const timeouts: number[] = []
+  let calls = 0
+  const generated = await generateLearningVisual('diagram', '画一个编译器前端结构图', async (_instructions, _input, timeoutMs) => {
+    calls += 1
+    timeouts.push(timeoutMs || 0)
+    if (calls === 1) return '{}'
+    return JSON.stringify({
+      version: 'learnflow.visual.v3', kind: 'diagram', title: '编译器前端', subtitle: '从源码到中间表示',
+      domain: 'computer', abstraction: 'system_structure',
+      semantic: {
+        type: 'system_structure',
+        entities: [{ id: 'source', label: '源代码' }, { id: 'parser', label: '解析器' }, { id: 'ir', label: '中间表示' }],
+        relations: [
+          { id: 'source_to_parser', from: 'source', to: 'parser', kind: 'flow' },
+          { id: 'parser_to_ir', from: 'parser', to: 'ir', kind: 'flow' },
+        ],
+      },
+      state: { activeIds: ['source', 'parser', 'ir'] },
+      accessibility: { summary: '源代码经过解析器形成中间表示。', readingOrder: ['source', 'parser', 'ir'], nonColorStateCue: '箭头和标签共同表达方向。' },
+      explanation: '按箭头阅读编译器前端的三个阶段。',
+    })
+  })
+  assert.equal(calls, 2)
+  assert.deepEqual(timeouts, [26_000, 18_000])
+  assert.equal(generated.generation.plannerAttempts, 2)
+  assert.equal(generated.generation.repairAttempted, true)
+  assert.equal(generated.artifact.kind, 'image')
 })
 
 test('an incomplete natural-frequency request never falls through to the model', async () => {

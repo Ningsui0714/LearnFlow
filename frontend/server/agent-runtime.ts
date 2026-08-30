@@ -31,6 +31,7 @@ import {
 import type { SearchProviderConfiguration } from './computer-knowledge-search.ts'
 import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
+import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
 
 export type TutorAgentBudget = {
   maxModelRounds: number
@@ -445,22 +446,6 @@ function hasExplicitExternalResourceRequest(input: TutorAgentRuntimeInput) {
     || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|视频|b站|bilibili|youtube|来源|论文|文档|仓库|官网|最新|插件|岗位图谱|岗位能力)/i.test(message)
 }
 
-type VisualIntent = 'diagram' | 'animation' | 'none'
-
-function explicitVisualIntent(input: TutorAgentRuntimeInput, message: string): VisualIntent {
-  if (input.toolChoice === 'animation') return 'animation'
-  if (input.toolChoice === 'image') return 'diagram'
-  const normalized = message.replace(/\s+/g, ' ').trim()
-  if (!normalized) return 'none'
-  if (/(?:动画|动图|逐帧|逐步演示|演示(?:一下|过程|变化)|播放(?:过程|变化)|状态(?:如何|怎么)?变化|随时间变化)/i.test(normalized)) {
-    return 'animation'
-  }
-  if (/(?:画(?:一张|个|出)?|图解|流程图|时序图|结构图|关系图|示意图|概念图|知识图|可视化)/i.test(normalized)) {
-    return 'diagram'
-  }
-  return 'none'
-}
-
 function compactKnowledgeGate(input: TutorAgentRuntimeInput) {
   const personal = input.formalDomainKnowledgeContext && typeof input.formalDomainKnowledgeContext === 'object'
     ? (input.formalDomainKnowledgeContext as any).domain_knowledge_packet : null
@@ -492,7 +477,7 @@ function shouldAutoSupplementKnowledge(input: TutorAgentRuntimeInput, message: s
 function availableTools(input: TutorAgentRuntimeInput) {
   const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
   const latestMessage = [...input.messages].reverse().find(item => item.role === 'user')?.content || ''
-  const visualIntent = explicitVisualIntent(input, latestMessage)
+  const visualIntent = resolveExplicitVisualIntent(input.toolChoice, latestMessage)
   const tools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
     !['read_role_capability_graph', 'explain_role_capability'].includes(tool.name)
     &&
@@ -657,7 +642,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let pathResolution: 'unknown' | 'resolved' | 'ambiguous' | 'not_found' | 'overview' = 'unknown'
   let currentVideoCandidates: LearningVideoCandidate[] = []
   const explicitlyRequestsExternalResources = hasExplicitExternalResourceRequest(input)
-  const visualIntent = explicitVisualIntent(input, latestMessage)
+  const visualIntent = resolveExplicitVisualIntent(input.toolChoice, latestMessage)
 
   const record = (event: Omit<AgentTrajectoryEvent, 'sequence' | 'at'>) => {
     const recorded = { ...event, sequence: ++sequence, at: Date.now() }
@@ -686,6 +671,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   }
   const toolOptions: TutorAgentToolRuntimeOptions = {
     message: latestMessage,
+    recentMessages: input.messages,
     generate: input.generate,
     searchConfiguration: input.searchConfiguration,
     mode: input.mode,

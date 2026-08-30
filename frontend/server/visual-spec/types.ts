@@ -429,4 +429,10 @@ export type GeneratedLearningVisual = {
   plannerSucceeded: boolean
   degraded: boolean
   degradedTo?: VisualGenerationReport['degradedTo']
+  generation: {
+    source: VisualGenerationReport['source']
+    compileStatus: 'exact' | 'illustrative_example' | 'not_applicable'
+    plannerAttempts: number
+    repairAttempted: boolean
+  }
 }

@@ -10,6 +10,11 @@ import {
 import type { LearnerPathState } from './learning-path-graph.ts'
 import type { AgentFormalScope, AgentKnowledgeDomain, AgentTaskQueueItem, AgentTurnResponse, AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts.ts'
 import { isDesktopRuntime, runtimeFetch } from './runtime-client.ts'
+import {
+  executeLearningVisual,
+  resolveExplicitVisualIntent,
+  resolveVisualRequest,
+} from '../server/visual-tool-execution.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -319,6 +324,85 @@ export function guidedLearningRecoveryReply(context: LearningTaskTutorContext, e
   return `${transparentNote}\n\n我们先继续「${context.objective}」的“${context.stepTitle}”：${directive}`
 }
 
+async function executeDesktopVisualTool(options: {
+  sessionId: number
+  kind: 'diagram' | 'animation'
+  query: string
+  messages: TutorContextMessage[]
+  signal: AbortSignal
+}): Promise<TutorToolRun> {
+  const startedAt = Date.now()
+  const toolName = options.kind === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'
+  const title = options.kind === 'animation' ? '生成过程动画' : '生成知识图解'
+  const request = resolveVisualRequest(options.query, options.messages)
+  try {
+    const execution = await executeLearningVisual(options.kind, options.query, options.messages, async (
+      instructions, input, timeoutMs = 26_000, maxTokens = 2_200,
+    ) => {
+      const response = await runtimeFetch(`/api/agent/sessions/${options.sessionId}/visual-plans`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instructions, input, timeout_ms: timeoutMs, max_tokens: maxTokens }),
+        signal: options.signal,
+      })
+      const payload = await response.json().catch(() => null) as { text?: unknown; detail?: unknown } | null
+      if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : `视觉规划返回 HTTP ${response.status}`)
+      if (typeof payload?.text !== 'string' || !payload.text.trim()) throw new Error('视觉规划没有返回可验证的 JSON')
+      return payload.text
+    })
+    const visual = execution.generated
+    const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
+    return {
+      id: `desktop-visual-${startedAt}`,
+      toolCallId: `desktop-visual-${startedAt}`,
+      toolName,
+      kind: effectiveKind === 'animation' ? 'animation' : 'image',
+      status: 'completed',
+      title,
+      detail: `${effectiveKind === 'animation' ? `${visual.artifact.steps.length} 帧动画` : '图解'}已通过结构、布局与 SVG 安全门；质量分 ${visual.quality.score}${visual.degraded ? '；已如实降级' : ''}${execution.request.contextEnriched ? '；已结合最近对话主题' : ''}。`,
+      durationMs: Date.now() - startedAt,
+      startedAt,
+      inputSummary: request.effectiveRequest.slice(0, 240),
+      observationSummary: visual.artifact.title,
+      artifact: visual.artifact,
+      visualMeta: {
+        requestedKind: options.kind,
+        effectiveKind,
+        contextEnriched: execution.request.contextEnriched,
+        generationSource: visual.generation.source,
+        compileStatus: visual.generation.compileStatus,
+        plannerAttempts: visual.generation.plannerAttempts,
+        outcomeStage: 'rendered',
+      },
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 300) : '视觉生成失败'
+    return {
+      id: `desktop-visual-${startedAt}`,
+      toolCallId: `desktop-visual-${startedAt}`,
+      toolName,
+      kind: options.kind === 'animation' ? 'animation' : 'image',
+      status: 'failed',
+      title,
+      detail: message,
+      durationMs: Date.now() - startedAt,
+      startedAt,
+      inputSummary: request.effectiveRequest.slice(0, 240),
+      observationSummary: '视觉工具失败，未产生可信产物',
+      errorType: /超时|timeout|abort/i.test(message) ? 'transient' : /needs_input|ambiguous|请提供/i.test(message) ? 'user_fixable' : 'model_recoverable',
+      visualMeta: {
+        requestedKind: options.kind,
+        effectiveKind: options.kind,
+        contextEnriched: request.contextEnriched,
+        generationSource: 'model_plan',
+        compileStatus: /needs_input|ambiguous/i.test(message) ? 'ambiguous' : 'invalid',
+        plannerAttempts: /after_2_attempts/i.test(message) ? 2 : 1,
+        outcomeStage: /layout|collision|route/i.test(message) ? 'layout' : /spec|json|validation|quality/i.test(message) ? 'validation' : 'planner',
+      },
+    }
+  }
+}
+
 export async function requestTutorReply(options: {
   baseUrl: string
   model: string
@@ -354,11 +438,20 @@ export async function requestTutorReply(options: {
   try {
     if (isDesktopRuntime()) {
       if (!options.formalScope?.sessionId) throw new Error('桌面 Tutor 尚未取得正式会话，请重试本轮')
+      const latestUserMessage = [...options.messages].reverse().find(message => message.role === 'user')?.content || ''
+      const visualIntent = resolveExplicitVisualIntent(options.toolChoice, latestUserMessage)
+      const visualPromise = visualIntent === 'none' ? undefined : executeDesktopVisualTool({
+        sessionId: options.formalScope.sessionId,
+        kind: visualIntent,
+        query: latestUserMessage,
+        messages: options.messages,
+        signal: controller.signal,
+      })
       const response = await runtimeFetch(`/api/agent/sessions/${options.formalScope.sessionId}/turns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: [...options.messages].reverse().find(message => message.role === 'user')?.content || '',
+          message: latestUserMessage,
           project_id: options.formalScope.projectId,
           checkpoint_id: options.formalScope.checkpointId,
           selected_skill_id: options.learningTaskContext?.skillId,
@@ -375,14 +468,18 @@ export async function requestTutorReply(options: {
       const payload = await response.json().catch(() => null) as { message?: unknown; detail?: unknown } | null
       if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : `桌面 Tutor 返回 HTTP ${response.status}`)
       if (typeof payload?.message !== 'string' || !payload.message.trim()) throw new Error('桌面 Tutor 没有返回可显示的文本')
+      const visualRun = await visualPromise
       const at = Date.now()
       return {
         reply: payload.message.trim(),
-        toolRuns: [],
+        toolRuns: visualRun ? [visualRun] : [],
         trace: {
           version: 'vnext-agent-trace.v1', turnId: `desktop-${at}`,
-          modelRounds: 1, toolCalls: 0, stopReason: 'final_answer',
-          events: [{ sequence: 1, phase: 'finalize', detail: '正式 Tutor 完成桌面回合', at }],
+          modelRounds: 1, toolCalls: visualRun ? 1 : 0, stopReason: 'final_answer',
+          events: [
+            ...(visualRun ? [{ sequence: 1, phase: 'verify' as const, detail: visualRun.detail, at, toolCallId: visualRun.toolCallId, toolName: visualRun.toolName, status: visualRun.status === 'completed' ? 'completed' as const : 'failed' as const }] : []),
+            { sequence: visualRun ? 2 : 1, phase: 'finalize', detail: '正式 Tutor 完成桌面回合', at },
+          ],
         } satisfies AgentTurnTrace,
       }
     }

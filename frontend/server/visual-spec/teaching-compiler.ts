@@ -207,7 +207,7 @@ function extractAssignedMatrix(text: string, name: 'A' | 'B'): unknown {
   const source = extractBalanced(text, start, '[', ']')
   if (!source) return null
   try {
-    return JSON.parse(source.replaceAll('，', ','))
+    return JSON.parse(source.split('，').join(','))
   } catch {
     return null
   }
@@ -319,7 +319,7 @@ function namedNode(text: string, labels: string[]): string | undefined {
 
 function deriveDijkstra(kind: TeachingVisualKind, request: string): TeachingDerivation | undefined {
   if (!/dijkstra|迪杰斯特拉|最短(?:路|路径)/i.test(request)) return undefined
-  const edgePattern = new RegExp(`(${NODE})\\s*(→|->|—|-)\\s*(${NODE})\\s*(?:=|:|：)\\s*([+\-−]?(?:\\d+(?:\\.\\d+)?|\\.\\d+))`, 'gi')
+  const edgePattern = new RegExp(`(${NODE})\\s*(→|->|—|-|到|至)\\s*(${NODE})\\s*(?:(?:权重|weight)\\s*(?:=|:|：|为)?|(?:=|:|：))\\s*([+\-−]?(?:\\d+(?:\\.\\d+)?|\\.\\d+))`, 'gi')
   const parsed: Array<{ from: string; to: string; weight: number; notation: string }> = []
   for (const match of request.matchAll(edgePattern)) {
     parsed.push({ from: match[1], to: match[3], weight: Number(match[4].replace('−', '-')), notation: match[2] })
@@ -330,7 +330,7 @@ function deriveDijkstra(kind: TeachingVisualKind, request: string): TeachingDeri
   }
   const explicitDirected = /有向|\bdirected\b/i.test(request) && !/无向|\bundirected\b/i.test(request)
   const explicitUndirected = /无向|\bundirected\b/i.test(request)
-  const hasArrow = parsed.some((edge) => edge.notation === '→' || edge.notation === '->')
+  const hasArrow = parsed.some((edge) => ['→', '->', '到', '至'].includes(edge.notation))
   const hasLine = parsed.some((edge) => edge.notation === '-' || edge.notation === '—')
   if (!explicitDirected && !explicitUndirected && hasArrow && hasLine) {
     return failure(kind, request, 'dijkstra', 'dijkstra_mixed_edge_notation', 'Mixed directed and undirected edge notation needs an explicit graph direction.')
@@ -451,14 +451,18 @@ function deriveNaturalFrequency(kind: TeachingVisualKind, request: string): Teac
   const prevalence = parseRatio(request, ['prevalence', '患病率', '发病率', '先验概率'])
   const sensitivity = parseRatio(request, ['sensitivity', '敏感度', '灵敏度', '召回率', '真阳性率'])
   const specificity = parseRatio(request, ['specificity', '特异度', '真阴性率'])
+  const hasNumericInputs = population !== undefined || prevalence !== undefined || sensitivity !== undefined
   if (specificity === undefined) {
-    return failure(
-      kind,
-      request,
-      'natural_frequency',
-      'natural_frequency_specificity_missing',
-      'A recognized Bayes natural-frequency request must provide a valid specificity.',
-    )
+    if (hasNumericInputs) {
+      return failure(
+        kind,
+        request,
+        'natural_frequency',
+        'natural_frequency_specificity_missing',
+        'A recognized Bayes natural-frequency request must provide a valid specificity.',
+      )
+    }
+    return undefined
   }
   if (!population || !Number.isSafeInteger(population) || population <= 0 || prevalence === undefined || sensitivity === undefined) return undefined
   const diseased = reliableCount(population * prevalence)
@@ -525,7 +529,7 @@ function relevantCodeLines(source: string, spans: Array<{ start: number; end: nu
 
 function decodeStringLiteral(value: string): string | undefined {
   const quote = value[0]
-  if (!quote || !['"', "'", '`'].includes(quote) || value.at(-1) !== quote) return undefined
+  if (!quote || !['"', "'", '`'].includes(quote) || value[value.length - 1] !== quote) return undefined
   const body = value.slice(1, -1)
   if (quote === '`' && body.includes('${')) return undefined
   let output = ''
@@ -702,7 +706,6 @@ function parseEventStatements(source: string): ParsedEventStatement[] | undefine
 }
 
 function deriveEventLoop(kind: TeachingVisualKind, request: string): TeachingDerivation | undefined {
-  if (kind !== 'animation') return undefined
   const statements = parseEventStatements(request)
   if (!statements || statements.length < 2 || !statements.some(statement => statement.queue !== 'sync')) return undefined
   const events: EventLoopDerivation['input']['events'] = []
@@ -735,7 +738,7 @@ function matchedNumber(match: RegExpExecArray | null): number | undefined {
 }
 
 function deriveGradientDescent(kind: TeachingVisualKind, request: string): TeachingDerivation | undefined {
-  if (kind !== 'animation' || !/gradient\s*descent|梯度下降/i.test(request)) return undefined
+  if (!/gradient\s*descent|梯度下降/i.test(request)) return undefined
   const objective = /\(\s*x\s*([+\-−])\s*(\d+(?:\.\d+)?|\.\d+)\s*\)\s*(?:\^|\*\*)\s*2/i.exec(request)
   if (!objective) return undefined
   const center = stableNumber((objective[1] === '+' ? -1 : 1) * Number(objective[2]))

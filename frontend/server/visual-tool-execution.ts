@@ -1,0 +1,94 @@
+import type { TutorContextMessage } from '../src/tutor.ts'
+import type { TutorToolChoice } from '../src/tooling.ts'
+import {
+  generateLearningVisual,
+  type GenerateText,
+  type GeneratedLearningVisual,
+  type LearningVisualKind,
+} from './learning-visual-spec.ts'
+
+export type ResolvedVisualRequest = {
+  originalRequest: string
+  effectiveRequest: string
+  contextEnriched: boolean
+  contextSummary?: string
+}
+
+export type VisualIntent = 'diagram' | 'animation' | 'none'
+
+export function resolveExplicitVisualIntent(toolChoice: TutorToolChoice, message: string): VisualIntent {
+  if (toolChoice === 'animation') return 'animation'
+  if (toolChoice === 'image') return 'diagram'
+  const normalized = compact(message, 2200)
+  if (!normalized) return 'none'
+  if (/(?:动画|动图|逐帧|逐步演示|演示(?:一下|过程|变化)|播放(?:过程|变化)|状态(?:如何|怎么)?变化|随时间变化)/i.test(normalized)) {
+    return 'animation'
+  }
+  if (/(?:画(?:一张|个|出)?|图解|流程图|时序图|结构图|关系图|示意图|概念图|知识图|可视化)/i.test(normalized)) {
+    return 'diagram'
+  }
+  return 'none'
+}
+
+const VISUAL_ONLY = /(?:动画|动图|逐帧|演示|画|图解|流程图|时序图|结构图|关系图|示意图|概念图|知识图|可视化)/gi
+const DEICTIC = /(?:这个|那个|它|他(?:的)?|上面|刚才|前面|演示出来|画出来|这个流程|该过程|这种变化)/i
+const TOPIC_SIGNAL = /(?:算法|协议|网络|矩阵|函数|概率|贝叶斯|梯度|卷积|cnn|transformer|事件循环|dijkstra|迪杰斯特拉|tcp|http|数据结构|状态机|联邦学习|神经网络)/i
+
+function compact(value: unknown, limit: number) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit)
+}
+
+function subjectStrength(value: string) {
+  const withoutVisualWords = value.replace(VISUAL_ONLY, '').replace(/[：:，,。.!！?？\s]/g, '')
+  if (TOPIC_SIGNAL.test(value)) return 3
+  if (!DEICTIC.test(value) && withoutVisualWords.length >= 10) return 2
+  if (!DEICTIC.test(value) && withoutVisualWords.length >= 5) return 1
+  return 0
+}
+
+/**
+ * Keep the learner's tool argument verbatim and add a visibly delimited topic
+ * only when the current turn is deictic or underspecified. The added topic is
+ * selected from prior user turns first; assistant text is a last-resort hint.
+ */
+export function resolveVisualRequest(
+  query: string,
+  messages: TutorContextMessage[] = [],
+): ResolvedVisualRequest {
+  const originalRequest = compact(query, 2200)
+  if (!originalRequest) return { originalRequest: '', effectiveRequest: '', contextEnriched: false }
+  if (subjectStrength(originalRequest) >= 2 && !DEICTIC.test(originalRequest)) {
+    return { originalRequest, effectiveRequest: originalRequest, contextEnriched: false }
+  }
+
+  const prior = [...messages]
+    .reverse()
+    .filter(message => compact(message.content, 2200) !== originalRequest)
+  const priorUser = prior
+    .filter(message => message.role === 'user')
+    .map(message => compact(message.content, 600))
+    .find(candidate => subjectStrength(candidate) >= 2)
+  const priorAssistant = prior
+    .filter(message => message.role === 'assistant')
+    .map(message => compact(message.content, 700))
+    .find(candidate => subjectStrength(candidate) >= 2)
+  const contextSummary = priorUser || priorAssistant
+  if (!contextSummary) return { originalRequest, effectiveRequest: originalRequest, contextEnriched: false }
+  return {
+    originalRequest,
+    effectiveRequest: `${originalRequest}\n【对话主题】${contextSummary}`,
+    contextEnriched: true,
+    contextSummary,
+  }
+}
+
+export async function executeLearningVisual(
+  kind: LearningVisualKind,
+  query: string,
+  messages: TutorContextMessage[],
+  generate: GenerateText,
+): Promise<{ generated: GeneratedLearningVisual; request: ResolvedVisualRequest }> {
+  const request = resolveVisualRequest(query, messages)
+  const generated = await generateLearningVisual(kind, request.effectiveRequest, generate)
+  return { generated, request }
+}
