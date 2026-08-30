@@ -55,7 +55,8 @@ function subjectStrength(value: string) {
 /**
  * Keep the learner's tool argument verbatim and add a visibly delimited topic
  * only when the current turn is deictic or underspecified. The added topic is
- * selected from prior user turns first; assistant text is a last-resort hint.
+ * selected from the latest validated visual artifact first, then prior user
+ * turns; assistant text is a last-resort hint.
  */
 export function resolveVisualRequest(
   query: string,
