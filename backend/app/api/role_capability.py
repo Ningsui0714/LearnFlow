@@ -1,4 +1,13 @@
-from datetime import datetime
+"""Deprecated compatibility routes for the official role graph plugin.
+
+The legacy URL and response shape remain available, but this module is no
+longer a persistence authority. Every run and snapshot is delegated to the
+generic plugin host; the v21 role tables are read-only migration sources.
+"""
+
+from __future__ import annotations
+
+import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,18 +16,36 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import get_db
-from app.models.project import Chunk, Source, SourceVersion
-from app.models.role_capability import RoleCapabilityPackage, RoleCapabilityRun, RoleCapabilitySnapshot
+from app.models.plugin import PluginInstance, PluginRelease, PluginRun, PluginSnapshot
+from app.models.project import Project
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_project
-from app.services.learning_runtime import record_event
-from app.services.role_capability_plugin import (
-    apply_iteration, build_generation_contract, build_iteration_contract,
-    compile_role_graph, create_snapshot, current_package, current_snapshot,
-    explain_role_graph, inspect_role_graph, package_view,
+from app.services.bundled_plugins import ROLE_PLUGIN_ID, ensure_official_role_plugin_release
+from app.services.plugin_host import (
+    PluginHostError,
+    enable_plugin_instance,
+    execute_plugin_operation,
+    snapshot_view,
 )
 
 
-router = APIRouter(prefix="/role-capability", tags=["Role Capability Plugin"])
+router = APIRouter(prefix="/role-capability", tags=["Role Capability Plugin (deprecated alias)"])
+
+_DEPRECATION = {
+    "deprecated": True,
+    "protocol": "learnflow.compatibility-alias.v1",
+    "message": "该岗位专用 API 已弃用；请求已转发到通用 LearnFlow Plugin Host。",
+    "replacement": {
+        "instances": "/api/projects/{project_id}/plugin-instances",
+        "workflows": (
+            "/api/projects/{project_id}/plugin-instances/role_capability_graph/"
+            "workflows/{workflow_id}/runs"
+        ),
+        "objects": (
+            "/api/projects/{project_id}/plugin-instances/role_capability_graph/objects"
+        ),
+    },
+    "legacy_tables": "frozen_read_only",
+}
 
 
 class GenerateRolePackageRequest(BaseModel):
@@ -50,54 +77,169 @@ class IterateRolePackageRequest(BaseModel):
     target_ids: list[str] = Field(default_factory=list, max_length=40)
     operations: list[IterationOperation] = Field(default_factory=list, max_length=24)
     idempotency_key: str = Field(min_length=8, max_length=160)
+    # The old route did not carry an optimistic-concurrency token. Keeping
+    # this optional preserves wire compatibility; omission pins the current
+    # snapshot and is explicitly disclosed in the response.
+    expected_snapshot_id: int | None = None
 
 
-async def _owned_package(db: AsyncSession, learner_id: int, project_id: int) -> RoleCapabilityPackage:
-    package = await current_package(db, learner_id, project_id)
-    if not package:
-        raise HTTPException(404, "当前项目尚未生成岗位能力包")
-    return package
+def _raise_plugin_error(exc: PluginHostError) -> None:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
 
 
-async def _existing_run(db: AsyncSession, learner_id: int, key: str) -> RoleCapabilityRun | None:
-    return (await db.execute(select(RoleCapabilityRun).where(
-        RoleCapabilityRun.learner_id == learner_id,
-        RoleCapabilityRun.idempotency_key == key,
+async def _role_instance(
+    db: AsyncSession,
+    learner_id: int,
+    project_id: int,
+) -> PluginInstance | None:
+    return (await db.execute(select(PluginInstance).where(
+        PluginInstance.learner_id == learner_id,
+        PluginInstance.project_id == project_id,
+        PluginInstance.plugin_id == ROLE_PLUGIN_ID,
     ))).scalar_one_or_none()
 
 
-async def _source_inputs(
-    db: AsyncSession, project_id: int, requested_ids: list[int],
-) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
-    query = select(Source).where(Source.project_id == project_id, Source.status == "processed")
-    if requested_ids:
-        query = query.where(Source.id.in_(requested_ids))
-    sources = list((await db.execute(query.order_by(Source.id))).scalars().all())
-    if requested_ids and {item.id for item in sources} != set(requested_ids):
-        raise HTTPException(400, "岗位包只能引用当前项目中已处理且归属正确的来源")
-    refs: list[dict[str, Any]] = []
-    texts: list[dict[str, str]] = []
-    for source in sources[:20]:
-        active_id = int(dict(source.meta_data or {}).get("active_source_version_id") or 0)
-        version = await db.get(SourceVersion, active_id) if active_id else None
-        if not version:
-            version = (await db.execute(select(SourceVersion).where(
-                SourceVersion.source_id == source.id,
-            ).order_by(SourceVersion.version.desc()).limit(1))).scalar_one_or_none()
-        ref = f"source:{source.id}@v{version.version if version else 0}"
-        refs.append({
-            "ref": ref, "source_id": source.id,
-            "source_version_id": version.id if version else None,
-            "content_hash": version.content_hash if version else "",
-            "authority_tier": version.authority_tier if version else "learner_owned",
-            "status": version.status if version else source.status,
-        })
-        chunks = list((await db.execute(select(Chunk).where(
-            Chunk.source_id == source.id,
-            *([Chunk.source_version_id == version.id] if version else []),
-        ).order_by(Chunk.index).limit(24))).scalars().all())
-        texts.extend({"ref": ref, "text": item.content[:2000]} for item in chunks)
-    return refs, texts
+async def _idempotent_expected_snapshot(
+    db: AsyncSession,
+    instance: PluginInstance,
+    idempotency_key: str,
+    default: int | None,
+) -> int | None:
+    """Keep a replay bound to the exact optimistic baseline of its first run."""
+
+    existing = (await db.execute(select(PluginRun).where(
+        PluginRun.instance_id == instance.id,
+        PluginRun.idempotency_key == idempotency_key,
+    ))).scalar_one_or_none()
+    return existing.expected_snapshot_id if existing is not None else default
+
+
+async def _enable_compatibility_instance(
+    db: AsyncSession,
+    current: CurrentLearner,
+    project: Project,
+) -> PluginInstance:
+    """Enable the bundled release for an explicit legacy workflow request.
+
+    Calling the old mutation endpoint is treated as the learner's explicit
+    request to use the capabilities that endpoint historically required. The
+    response discloses this compatibility grant so new clients can move to the
+    normal instance enablement UI.
+    """
+
+    release = await ensure_official_role_plugin_release(db)
+    manifest = dict(release.manifest or {})
+    existing = await _role_instance(db, current.learner.id, project.id)
+    generate = next(
+        (
+            dict(item)
+            for item in list(manifest.get("workflows") or [])
+            if isinstance(item, dict) and item.get("id") == "generate"
+        ),
+        {},
+    )
+    # The compatibility endpoint is explicit authorization to run its own
+    # generation flow, not blanket consent for every port the release may use
+    # in other workflows.
+    existing_grants = list(existing.granted_host_ports or []) if existing else []
+    compatibility_grants = sorted(
+        set(existing_grants) | set(generate.get("host_ports") or [])
+    )
+    instance, _ = await enable_plugin_instance(
+        db,
+        current,
+        project,
+        plugin_id=ROLE_PLUGIN_ID,
+        release_id=release.id,
+        configuration=dict(existing.configuration or {}) if existing else {},
+        granted_host_ports=compatibility_grants,
+    )
+    return instance
+
+
+async def _snapshot_for_instance(
+    db: AsyncSession,
+    instance: PluginInstance,
+    snapshot_id: int | None = None,
+) -> PluginSnapshot | None:
+    selected_id = snapshot_id if snapshot_id is not None else instance.current_snapshot_id
+    snapshot = await db.get(PluginSnapshot, selected_id) if selected_id else None
+    if snapshot is not None and snapshot.instance_id != instance.id:
+        raise HTTPException(404, "指定快照不属于当前岗位插件实例")
+    return snapshot
+
+
+def _legacy_snapshot_payload(snapshot: PluginSnapshot | None) -> dict[str, Any] | None:
+    if snapshot is None:
+        return None
+    materialized = snapshot_view(snapshot, include_component_data=True)
+    components = dict(materialized.get("components") or {})
+    graph = dict(components.get("semantic-graph") or {})
+    return {
+        "id": snapshot.id,
+        "snapshot_key": (
+            f"plugin-snapshot:{snapshot.instance_id}:v{snapshot.version}:"
+            f"{snapshot.root_hash[:12]}"
+        ),
+        "version": snapshot.version,
+        "root_hash": snapshot.root_hash,
+        "status": "ready",
+        "graph": graph,
+        "source_refs": list(snapshot.source_refs or []),
+        "validation": dict(snapshot.validation or {}),
+        "provenance": dict(snapshot.provenance or {}),
+        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else None,
+        "components": materialized.get("components"),
+    }
+
+
+async def _legacy_package_view(
+    db: AsyncSession,
+    instance: PluginInstance | None,
+    snapshot: PluginSnapshot | None,
+) -> dict[str, Any]:
+    if instance is None:
+        return {
+            "plugin": ROLE_PLUGIN_ID,
+            "package": None,
+            "snapshot": None,
+            "deprecation": _DEPRECATION,
+        }
+    snapshot_payload = _legacy_snapshot_payload(snapshot)
+    graph = dict((snapshot_payload or {}).get("graph") or {})
+    role = dict(graph.get("role") or {})
+    release = await db.get(PluginRelease, instance.release_id)
+    return {
+        "plugin": ROLE_PLUGIN_ID,
+        "protocol_version": "learnflow.role-capability.v1",
+        "package_protocol": release.package_protocol if release else None,
+        "package": {
+            "id": instance.id,
+            "project_id": instance.project_id,
+            "role_title": str(role.get("title") or ""),
+            "status": instance.status,
+            "current_snapshot_id": instance.current_snapshot_id,
+            "release_id": instance.release_id,
+        },
+        "snapshot": snapshot_payload,
+        "authority": (
+            "role artifacts are domain supply; they never mutate five-kernel learner state"
+        ),
+        "deprecation": _DEPRECATION,
+    }
+
+
+async def _view_for_run(
+    db: AsyncSession,
+    instance: PluginInstance,
+    run: PluginRun,
+) -> dict[str, Any]:
+    snapshot = await _snapshot_for_instance(
+        db,
+        instance,
+        run.result_snapshot_id or instance.current_snapshot_id,
+    )
+    return await _legacy_package_view(db, instance, snapshot)
 
 
 @router.get("/projects/{project_id}")
@@ -107,10 +249,9 @@ async def read_role_capability_package(
     db: AsyncSession = Depends(get_db),
 ):
     await require_owned_project(db, current.learner.id, project_id)
-    package = await current_package(db, current.learner.id, project_id)
-    if not package:
-        return {"plugin": "role_capability_graph", "package": None, "snapshot": None}
-    return package_view(package, await current_snapshot(db, package))
+    instance = await _role_instance(db, current.learner.id, project_id)
+    snapshot = await _snapshot_for_instance(db, instance) if instance else None
+    return await _legacy_package_view(db, instance, snapshot)
 
 
 @router.post("/projects/{project_id}/generate")
@@ -121,63 +262,42 @@ async def generate_role_capability_package(
     db: AsyncSession = Depends(get_db),
 ):
     project = await require_owned_project(db, current.learner.id, project_id)
-    existing_run = await _existing_run(db, current.learner.id, data.idempotency_key)
-    if existing_run:
-        if existing_run.project_id != project_id:
-            raise HTTPException(409, "幂等键已绑定到其他项目，不能跨 scope 重放")
-        package = await db.get(RoleCapabilityPackage, existing_run.package_id)
-        return {**package_view(package, await current_snapshot(db, package)), "run_id": existing_run.id, "idempotent_replay": True}
-    source_refs, source_texts = await _source_inputs(db, project_id, data.source_ids)
-    package = await current_package(db, current.learner.id, project_id)
-    if not package:
-        package = RoleCapabilityPackage(
-            learner_id=current.learner.id, project_id=project_id,
-            role_title=data.role_title.strip(),
-        )
-        db.add(package)
-        await db.flush()
-    else:
-        package.role_title = data.role_title.strip()
-    contract = build_generation_contract(package.role_title, source_refs)
-    run = RoleCapabilityRun(
-        learner_id=current.learner.id, project_id=project_id, package_id=package.id,
-        kind="generate", idempotency_key=data.idempotency_key,
-        request=data.model_dump(), contract=contract,
-    )
-    db.add(run)
-    await db.flush()
     try:
-        graph = compile_role_graph(
-            role_title=package.role_title,
-            role_summary=data.role_summary or project.description,
-            task_seeds=data.task_seeds, source_refs=source_refs, source_texts=source_texts,
+        instance = await _enable_compatibility_instance(db, current, project)
+        expected_snapshot_id = await _idempotent_expected_snapshot(
+            db, instance, data.idempotency_key, instance.current_snapshot_id,
         )
-        previous = await current_snapshot(db, package)
-        snapshot = await create_snapshot(
-            db, package, graph, source_refs,
-            {"run_id": run.id, "kind": "generate", "contract": contract, "mastery_unchanged": True},
-            previous.id if previous else None,
+        run, replay = await execute_plugin_operation(
+            db,
+            current,
+            project,
+            instance,
+            operation_id="generate",
+            input_data={
+                "role_title": data.role_title,
+                "role_summary": data.role_summary,
+                "source_ids": data.source_ids,
+                "task_seeds": data.task_seeds,
+            },
+            idempotency_key=data.idempotency_key,
+            expected_snapshot_id=expected_snapshot_id,
+            invocation_kind="workflow",
+            require_expected_snapshot=True,
+            expected_snapshot_provided=True,
         )
-        run.status = "completed"
-        run.result_snapshot_id = snapshot.id
-        run.inspection = snapshot.validation
-        run.summary = f"生成 {snapshot.validation['stats']['nodes']} 个岗位对象与 {snapshot.validation['stats']['edges']} 条关系"
-        run.finished_at = datetime.utcnow()
-        await record_event(
-            db, learner_id=current.learner.id, project_id=project_id,
-            event_type="role_capability_package_generated", source="role_capability_plugin",
-            payload={"package_id": package.id, "snapshot_id": snapshot.id, "root_hash": snapshot.root_hash, "mastery_unchanged": True},
-            provenance={"run_id": run.id, "protocol_version": package.policy_version},
-            client_event_id=f"role-capability:{data.idempotency_key}:generated",
-        )
-        await db.commit()
-        return {**package_view(package, snapshot), "run_id": run.id, "contract": contract}
-    except ValueError as exc:
-        run.status = "failed"
-        run.error = {"message": str(exc)}
-        run.finished_at = datetime.utcnow()
-        await db.commit()
-        raise HTTPException(409, str(exc)) from exc
+    except PluginHostError as exc:
+        _raise_plugin_error(exc)
+    response = await _view_for_run(db, instance, run)
+    return {
+        **response,
+        "run_id": run.id,
+        "contract": dict(run.contract or {}),
+        "idempotent_replay": replay,
+        "compatibility_grant": {
+            "implicit_from_legacy_mutation_endpoint": True,
+            "granted_host_ports": list(instance.granted_host_ports or []),
+        },
+    }
 
 
 @router.post("/projects/{project_id}/explain")
@@ -187,22 +307,42 @@ async def explain_role_capability_package(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    await require_owned_project(db, current.learner.id, project_id)
-    package = await _owned_package(db, current.learner.id, project_id)
-    snapshot = await current_snapshot(db, package)
-    if not snapshot:
+    project = await require_owned_project(db, current.learner.id, project_id)
+    instance = await _role_instance(db, current.learner.id, project_id)
+    if instance is None:
+        raise HTTPException(404, "当前项目尚未生成岗位能力包")
+    snapshot = await _snapshot_for_instance(db, instance, data.snapshot_id)
+    if snapshot is None:
         raise HTTPException(409, "岗位能力包没有可解释的固定快照")
-    if data.snapshot_id and data.snapshot_id != snapshot.id:
-        candidate = (await db.execute(select(RoleCapabilitySnapshot).where(
-            RoleCapabilitySnapshot.id == data.snapshot_id,
-            RoleCapabilitySnapshot.package_id == package.id,
-        ))).scalar_one_or_none()
-        if not candidate:
-            raise HTTPException(404, "指定快照不属于当前岗位包")
-        snapshot = candidate
+    try:
+        run, replay = await execute_plugin_operation(
+            db,
+            current,
+            project,
+            instance,
+            operation_id="explain",
+            input_data={"query": data.query, "snapshot_id": snapshot.id},
+            idempotency_key=f"legacy-explain-{uuid.uuid4().hex}",
+            expected_snapshot_id=snapshot.id,
+            invocation_kind="workflow",
+            require_expected_snapshot=False,
+            expected_snapshot_provided=True,
+        )
+    except PluginHostError as exc:
+        _raise_plugin_error(exc)
     return {
-        "snapshot": {"id": snapshot.id, "snapshot_key": snapshot.snapshot_key, "root_hash": snapshot.root_hash},
-        "explanation": explain_role_graph(snapshot.graph, data.query),
+        "snapshot": {
+            "id": snapshot.id,
+            "snapshot_key": (
+                f"plugin-snapshot:{snapshot.instance_id}:v{snapshot.version}:"
+                f"{snapshot.root_hash[:12]}"
+            ),
+            "root_hash": snapshot.root_hash,
+        },
+        "explanation": dict(run.result or {}),
+        "run_id": run.id,
+        "idempotent_replay": replay,
+        "deprecation": _DEPRECATION,
     }
 
 
@@ -213,57 +353,48 @@ async def iterate_role_capability_package(
     current: CurrentLearner = Depends(get_current_learner),
     db: AsyncSession = Depends(get_db),
 ):
-    await require_owned_project(db, current.learner.id, project_id)
-    existing_run = await _existing_run(db, current.learner.id, data.idempotency_key)
-    if existing_run:
-        if existing_run.project_id != project_id:
-            raise HTTPException(409, "幂等键已绑定到其他项目，不能跨 scope 重放")
-        package = await db.get(RoleCapabilityPackage, existing_run.package_id)
-        return {**package_view(package, await current_snapshot(db, package)), "run_id": existing_run.id, "idempotent_replay": True}
-    package = await _owned_package(db, current.learner.id, project_id)
-    base = await current_snapshot(db, package)
-    if not base:
+    project = await require_owned_project(db, current.learner.id, project_id)
+    instance = await _role_instance(db, current.learner.id, project_id)
+    if instance is None:
+        raise HTTPException(404, "当前项目尚未生成岗位能力包")
+    base = await _snapshot_for_instance(db, instance)
+    if base is None:
         raise HTTPException(409, "请先生成首个岗位能力快照")
-    contract = build_iteration_contract(data.objective, data.target_ids, base.id)
-    run = RoleCapabilityRun(
-        learner_id=current.learner.id, project_id=project_id, package_id=package.id,
-        kind="iterate", idempotency_key=data.idempotency_key,
-        request=data.model_dump(), contract=contract,
+    implicit_expected = "expected_snapshot_id" not in data.model_fields_set
+    expected_snapshot_id = base.id if implicit_expected else data.expected_snapshot_id
+    expected_snapshot_id = await _idempotent_expected_snapshot(
+        db, instance, data.idempotency_key, expected_snapshot_id,
     )
-    db.add(run)
-    await db.flush()
-    before = inspect_role_graph(base.graph)
-    candidate, diff = apply_iteration(base.graph, [item.model_dump(exclude_none=True) for item in data.operations])
-    after = inspect_role_graph(candidate)
-    run.inspection = {"before": before, "after": after}
-    run.diff = diff
-    if not diff["meaningful"]:
-        run.status = "no_change"
-        run.summary = "没有满足合同的有效图谱变更；保留当前快照"
-        run.finished_at = datetime.utcnow()
-        await db.commit()
-        return {**package_view(package, base), "run_id": run.id, "status": "no_change", "contract": contract, "inspection": run.inspection, "diff": diff}
-    if not after["valid"]:
-        run.status = "failed"
-        run.error = {"message": "candidate_protocol_invalid", "errors": after["errors"]}
-        run.finished_at = datetime.utcnow()
-        await db.commit()
-        raise HTTPException(409, {"message": "候选图谱未通过协议校验", "errors": after["errors"]})
-    snapshot = await create_snapshot(
-        db, package, candidate, list(base.source_refs or []),
-        {"run_id": run.id, "kind": "iterate", "contract": contract, "diff": diff, "mastery_unchanged": True},
-        base.id,
-    )
-    run.status = "completed"
-    run.result_snapshot_id = snapshot.id
-    run.summary = f"形成 v{snapshot.version}：{diff['change_count']} 项有意义变化"
-    run.finished_at = datetime.utcnow()
-    await record_event(
-        db, learner_id=current.learner.id, project_id=project_id,
-        event_type="role_capability_snapshot_iterated", source="role_capability_plugin",
-        payload={"package_id": package.id, "base_snapshot_id": base.id, "snapshot_id": snapshot.id, "diff": diff, "mastery_unchanged": True},
-        provenance={"run_id": run.id, "protocol_version": package.policy_version},
-        client_event_id=f"role-capability:{data.idempotency_key}:iterated",
-    )
-    await db.commit()
-    return {**package_view(package, snapshot), "run_id": run.id, "status": "completed", "contract": contract, "inspection": run.inspection, "diff": diff}
+    try:
+        run, replay = await execute_plugin_operation(
+            db,
+            current,
+            project,
+            instance,
+            operation_id="iterate",
+            input_data={
+                "objective": data.objective,
+                "target_ids": data.target_ids,
+                "operations": [item.model_dump(exclude_none=True) for item in data.operations],
+            },
+            idempotency_key=data.idempotency_key,
+            expected_snapshot_id=expected_snapshot_id,
+            invocation_kind="workflow",
+            require_expected_snapshot=True,
+            # The alias deterministically pins omission to the current snapshot;
+            # the deprecation block below makes this compatibility behavior visible.
+            expected_snapshot_provided=True,
+        )
+    except PluginHostError as exc:
+        _raise_plugin_error(exc)
+    response = await _view_for_run(db, instance, run)
+    return {
+        **response,
+        "run_id": run.id,
+        "status": run.status,
+        "contract": dict(run.contract or {}),
+        "inspection": dict((response.get("snapshot") or {}).get("validation") or {}),
+        "diff": dict((run.result or {}).get("diff") or {}),
+        "idempotent_replay": replay,
+        "deprecated_implicit_expected_snapshot": implicit_expected,
+    }

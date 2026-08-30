@@ -227,9 +227,39 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
+    name: 'discover_project_plugin_tools',
+    title: '发现项目插件工具',
+    description: '发现当前项目已启用插件公开的只读工具、输入 schema 和固定快照。只返回经过宿主权限过滤的能力，不执行工具。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: '要寻找的插件能力或领域问题' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'call_project_plugin_tool',
+    title: '调用项目插件只读工具',
+    description: '调用发现结果中的 namespaced 只读插件工具。宿主再次检查项目 ownership、实例状态、授权、工具风险和固定快照；不能执行副作用 workflow。',
+    toolClass: 'perception',
+    risk: 'read_only',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        qualified_tool_id: { type: 'string', description: '发现结果中的 plugin_id:tool_id' },
+        input: { type: 'object', description: '按发现结果 input_schema 构造的输入' },
+        snapshot_id: { type: 'integer', description: '可选；固定到明确的不可变插件快照' },
+      },
+      required: ['qualified_tool_id', 'input'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'read_role_capability_graph',
     title: '读取岗位能力图谱',
-    description: '读取当前项目插件的不可变岗位快照、任务、能力、知识技能、证据引用和校验状态。只读，不生成岗位事实，也不推断学习者掌握。',
+    description: '兼容别名：通过通用插件宿主调用 role_capability_graph:read_graph。只读，不生成岗位事实，也不推断学习者掌握。',
     toolClass: 'perception',
     risk: 'read_only',
     inputSchema: {
@@ -242,7 +272,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'explain_role_capability',
     title: '解释岗位任务与能力',
-    description: '把问题固定到当前不可变岗位快照，进行有界对象与关系读取并返回来源引用。适合“这个岗位做什么、为什么需要某能力、任务与知识如何关联”；不能修改图谱或五核。',
+    description: '兼容别名：通过通用插件宿主调用 role_capability_graph:explain，并固定不可变快照返回引用；不能修改图谱或五核。',
     toolClass: 'perception',
     risk: 'read_only',
     inputSchema: {
@@ -828,14 +858,14 @@ async function callFormalPracticeApi(
   return payload
 }
 
-async function callRoleCapabilityApi(
+async function callProjectPluginApi(
   options: TutorAgentToolRuntimeOptions,
   projectId: number,
   path: string,
   init: RequestInit = {},
 ) {
-  if (!options.backendBase) throw new Error('岗位能力插件后端未连接')
-  const response = await fetch(`${options.backendBase}/api/role-capability/projects/${projectId}${path}`, {
+  if (!options.backendBase) throw new Error('项目插件宿主后端未连接')
+  const response = await fetch(`${options.backendBase}/api/projects/${projectId}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -847,9 +877,53 @@ async function callRoleCapabilityApi(
   const payload = await response.json().catch(() => ({})) as any
   if (!response.ok) {
     const detail = typeof payload.detail === 'string' ? payload.detail : payload.detail?.message || payload.error
-    throw new Error(compactText(detail || `岗位能力插件返回 ${response.status}`, 500))
+    throw new Error(compactText(detail || `项目插件宿主返回 ${response.status}`, 500))
   }
   return payload
+}
+
+function projectPluginTools(payload: any) {
+  return (Array.isArray(payload?.tools) ? payload.tools : []).slice(0, 48)
+}
+
+function pluginToolIdentifier(tool: any) {
+  return compactText(tool?.qualified_tool_id || tool?.id, 180)
+}
+
+function pluginToolIsReadOnly(tool: any) {
+  return tool?.risk === 'read_only' || tool?.mode === 'read' || tool?.read_only === true
+}
+
+async function discoverProjectPluginTools(options: TutorAgentToolRuntimeOptions, projectId: number, query = '') {
+  const suffix = query.trim() ? `?query=${encodeURIComponent(query.trim().slice(0, 500))}` : ''
+  const payload = await callProjectPluginApi(options, projectId, `/plugin-tools${suffix}`)
+  return { ...payload, tools: projectPluginTools(payload).filter(pluginToolIsReadOnly) }
+}
+
+async function callDiscoveredProjectPluginTool(
+  options: TutorAgentToolRuntimeOptions,
+  projectId: number,
+  qualifiedToolId: string,
+  input: Record<string, unknown>,
+  snapshotId?: number,
+) {
+  const discovery = await discoverProjectPluginTools(options, projectId, qualifiedToolId)
+  const descriptor = discovery.tools.find((tool: any) => pluginToolIdentifier(tool) === qualifiedToolId)
+  if (!descriptor) throw new Error('该插件工具未在当前项目的只读发现结果中')
+  const pinnedSnapshotId = Number(snapshotId || descriptor.current_snapshot_id || descriptor.snapshot_id || descriptor.snapshot?.id)
+  const payload = await callProjectPluginApi(
+    options,
+    projectId,
+    `/plugin-tools/${encodeURIComponent(qualifiedToolId)}/calls`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        input,
+        ...(Number.isInteger(pinnedSnapshotId) && pinnedSnapshotId > 0 ? { snapshot_id: pinnedSnapshotId } : {}),
+      }),
+    },
+  )
+  return { descriptor, payload }
 }
 
 async function readActiveLearningFile(options: TutorAgentToolRuntimeOptions) {
@@ -1210,38 +1284,72 @@ export async function executeTutorAgentTool(
       }
     }
 
-    if (name === 'read_role_capability_graph' || name === 'explain_role_capability') {
+    if (name === 'discover_project_plugin_tools') {
       const project = compactProjectContext(options.formalProjectContext)
       const projectId = Number(project?.project?.id)
       if (!project || !Number.isInteger(projectId) || projectId <= 0) throw new Error('当前对话没有正式项目 scope')
-      const payload = name === 'read_role_capability_graph'
-        ? await callRoleCapabilityApi(options, projectId, '')
-        : await callRoleCapabilityApi(options, projectId, '/explain', {
-            method: 'POST', body: JSON.stringify({ query: compactText(args.query || query, 1000) }),
-          })
-      if (!payload.package && name === 'read_role_capability_graph') {
-        throw new Error('当前项目尚未在“岗位图谱”插件页显式生成岗位能力包')
-      }
-      const snapshot = payload.snapshot || {}
-      const explanation = payload.explanation
+      const discovery = await discoverProjectPluginTools(options, projectId, compactText(args.query || query, 500))
+      const tools = projectPluginTools(discovery)
       return {
         run: {
-          ...base, kind: 'project', status: 'completed',
-          title: name === 'read_role_capability_graph' ? '读取岗位能力图谱' : '解释岗位任务与能力',
-          detail: name === 'read_role_capability_graph'
-            ? `已固定岗位快照 v${snapshot.version}，读取 ${snapshot.validation?.stats?.nodes || 0} 个对象；岗位制品不等于学习者掌握。`
-            : `已基于固定快照读取相关对象、关系与 ${explanation?.citations?.length || 0} 条来源引用。`,
-          observationSummary: name === 'read_role_capability_graph'
-            ? `${snapshot.validation?.stats?.task || 0} 任务 / ${snapshot.validation?.stats?.capability || 0} 能力`
-            : compactText(explanation?.answer, 180),
+          ...base, kind: 'project', status: 'completed', title: '发现项目插件工具',
+          detail: `当前项目有 ${tools.length} 个已启用、已授权的只读插件工具；副作用 workflow 不会暴露给 Tutor。`,
+          observationSummary: `${tools.length} 个只读插件工具`,
           durationMs: Date.now() - startedAt,
         },
         observation: {
-          authority: 'immutable_role_capability_snapshot',
-          ...(name === 'read_role_capability_graph' ? payload : explanation),
-          snapshot_ref: name === 'read_role_capability_graph'
-            ? { id: snapshot.id, root_hash: snapshot.root_hash, version: snapshot.version }
-            : payload.snapshot,
+          authority: 'project_plugin_host_discovery',
+          query: compactText(args.query || query, 500),
+          tools,
+          mutation_boundary: '发现面只包含只读工具；任何副作用只能形成 Action Board proposal。',
+          mastery_unchanged: true,
+        },
+      }
+    }
+
+    if (name === 'call_project_plugin_tool' || name === 'read_role_capability_graph' || name === 'explain_role_capability') {
+      const project = compactProjectContext(options.formalProjectContext)
+      const projectId = Number(project?.project?.id)
+      if (!project || !Number.isInteger(projectId) || projectId <= 0) throw new Error('当前对话没有正式项目 scope')
+      const legacyToolId = name === 'read_role_capability_graph'
+        ? 'role_capability_graph:read_graph'
+        : name === 'explain_role_capability'
+          ? 'role_capability_graph:explain'
+          : ''
+      const qualifiedToolId = legacyToolId || compactText(args.qualified_tool_id, 180)
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*:[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(qualifiedToolId)) {
+        throw new Error('qualified_tool_id 必须使用 plugin_id:tool_id')
+      }
+      const requestedInput = args.input && typeof args.input === 'object' && !Array.isArray(args.input)
+        ? args.input as Record<string, unknown>
+        : { query: compactText(args.query || query, 1000) }
+      const { descriptor, payload } = await callDiscoveredProjectPluginTool(
+        options,
+        projectId,
+        qualifiedToolId,
+        requestedInput,
+        Number(args.snapshot_id),
+      )
+      const snapshot = payload.snapshot_ref || payload.snapshot
+        || (Number(payload.snapshot_id) > 0 ? { id: Number(payload.snapshot_id) } : descriptor.snapshot || null)
+      return {
+        run: {
+          ...base, kind: 'project', status: 'completed',
+          title: name === 'read_role_capability_graph'
+            ? '读取岗位能力图谱'
+            : name === 'explain_role_capability'
+              ? '解释岗位任务与能力'
+              : compactText(descriptor.title || descriptor.name || qualifiedToolId, 160),
+          detail: `已通过通用插件宿主调用 ${qualifiedToolId}；宿主验证了项目权限、只读模式和固定快照。`,
+          observationSummary: compactText(payload.summary || payload.observation_summary || payload.run?.status || descriptor.description || qualifiedToolId, 180),
+          durationMs: Date.now() - startedAt,
+        },
+        observation: {
+          authority: 'project_plugin_host_read_only_tool',
+          qualified_tool_id: qualifiedToolId,
+          snapshot_ref: snapshot,
+          result: payload.result ?? payload.observation ?? payload.run?.result ?? payload.run ?? payload,
+          compatibility_alias: legacyToolId ? name : undefined,
           mastery_unchanged: true,
         },
       }

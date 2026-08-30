@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-30.3`）：新增 `learnflow.plugin-package.v1` 通用插件宿主，把可安装 Bundle、项目作用域 Instance、不可变 Snapshot 与快照内 Object 分成四层；核心注册表新增 Plugin/Host Interface 契约以及已安装 release 的动态 namespaced 投影。新增发布者、release、instance、snapshot、object index、run/event 持久化与内容寻址制品；外部 runner 仅以默认关闭的 `trusted_signed_process`、固定参数 JSON-RPC 运行，并持续披露文件系统、网络、密钥、CPU 和内存均未隔离。插件只能使用实例获授权的版本化 Host Ports；写核心对象必须持久化为现有 Action Board 的待确认 `AgentAction`，外部事件只能零 Kernel target。Snapshot root 由宿主对 release、schema、组件、固定来源、配置和稳定元数据 envelope 计算，来源 provenance 只能来自本次 Host Port 读取或基线快照。岗位能力图谱迁移为首个官方插件；旧专用表冻结为只读迁移源，旧 API 与工具名保留 deprecated 转发，不形成双写权威。三类主 Agent、五核 schema、EvidenceEvent schema、唯一 reducer 链、掌握语义和现有核心对象 API 保持兼容。协议、迁移和安全边界见 `docs/implementation/PLUGIN_HOST.md` 与 `docs/implementation/ROLE_CAPABILITY_PLUGIN.md`。
+
 Contract impact（`2026-08-30.1`）：学习图解与动画从“模型可自动补充”收紧为显式意图能力：只有学习者明确要求图解或动画时，相应工具才进入本轮模型工具面，执行器还会再次校验意图。视觉规划失败不再生成单节点主题锚点冒充图解；只有与请求精确匹配、可重放且通过语义/布局/安全门的确定性模板允许降级，否则返回无产物失败。学习文件待确认提案不得被 Tutor 描述成已生成文件，提案错误按任务隔离展示。新增 `learner_event_sequences` 以数据库原子更新分配 `EvidenceEvent.learner_seq`，兼容既有事件并消除并发 `MAX + 1` 冲突；EvidenceEvent schema、五核 reducer、稳定工具 ID 和掌握语义不变。
 
 Contract impact（`2026-08-29.2`）：新增项目内 `role_capability_graph` 插件，把岗位包冷启动、固定快照解释与合同化迭代收敛到 `learning_design_agent` 后的领域能力。新增 `RoleCapabilityPackage / Snapshot / Run`、四个 Tool、一个 Product Skill、一个 Workbench、四个 Capability、两个零 Kernel target 事件和四个 learner-owned API。生成与迭代只允许项目工作台显式动作；Tutor 模型只获得读图谱与固定快照解释两个只读工具。岗位图谱是带来源、稳定 ID、root hash 和协议校验的领域供给，不是学习者画像或掌握证据；三类主 Agent、五核 schema、EvidenceEvent schema、唯一 reducer 链与 RemediationStrategy 均不变。实现与迁移见 `docs/implementation/ROLE_CAPABILITY_PLUGIN.md`。
@@ -42,7 +44,7 @@ Contract impact（`2026-08-26.21`）：新增 learner-owned 领域知识底座�
 
 ## 1. 权威层级
 
-1. `architecture_registry.py`：三类主 Agent、五核、能力、工具、产品技能、工作台和重要事件的机器可读清单。
+1. `architecture_registry.py`：三类主 Agent、五核、能力、工具、产品技能、工作台、重要事件、插件与 Host Interface 的机器可读清单；已安装 release 只能形成经宿主验证的动态 namespaced 投影。
 2. `AGENT_ARCHITECTURE_GUIDE.md`：角色边界、证据规则、上下文装配和产品空间的规范说明。
 3. `learning_runtime.py` 与 `memory_graph.py`：事件归约、五核投影与记忆图谱的运行实现。
 4. 领域模块和页面文档：只能细化，不得重新定义上述权威。
@@ -549,10 +551,30 @@ frontend 当前没有该 route，所以 `learner_growth` lifecycle 为 `optional
 
 维护范围：
 
-- Action Board handler、来源处理、RAG、生成器、代码执行器和外部工作流 adapter。
+- Action Board handler、来源处理、RAG、生成器、代码执行器、通用插件宿主和外部工作流 adapter。
 - 路线规划、教学产物、实践验证、纠错等产品技能的实现。
 - 已实现的 `/chat/:conversationId`、`/tasks`、`/learning-files`、项目、讲义文件、练习文件、全局复习、画像和 demo 工作台，以及明确标为 optional/deprecated 的候选或兼容工作台。
 - 工具运行状态、页面行为、第三方工作流和比赛演示资产。
+
+### 通用插件宿主
+
+插件是维护域 B 的能力平面，不是维护域 A 的状态权威。宿主确定性控制包验证、发布者信任、项目 ownership、
+Host Port 授权、版本固定、对象引用、并发、幂等、候选校验、快照提交和事件登记；插件 runner 或其中的
+Agent 只能生成候选，不能批准自己的结果。四层对象的权威含义是：Bundle 声明可安装能力，Instance 保存
+项目配置和授权，Snapshot 承载不可变领域事实，ObjectIndex 只给 Snapshot 内对象寻址。
+
+插件进程不得获得 ORM、数据库会话、登录 token 或模型密钥。它只能调用 manifest 声明并由 Instance 授权的
+`project.read.v1`、`source.read.v1`、`knowledge_baseline.read.v1`、`roadmap.read.v1`、
+`checkpoint.read.v1`、`learning_task.read.v1`、`learning_file.read.v1`、`learner_context.read.v1`、
+`artifact.resolve.v1`、`model.generate_structured.v1`、`action.propose.v1` 和 `event.record.v1`。
+前八类读取端口返回有作用域的最小投影；模型调用由宿主代办；核心对象变更只能形成 Action Board proposal；
+外部插件事件只允许零 Kernel target。
+
+`trusted_signed_process` 在所有部署中默认关闭。即使 release 具有受信 Ed25519 签名，仍必须披露
+`filesystem_isolation=false`、`network_isolation=false`、`secrets_isolation=false`、
+`cpu_isolation=false` 与 `memory_isolation=false`；签名证明发布者和内容完整性，不等于沙箱。
+详细包结构、RPC 预算、通用 API、Surface DSL 与升级/迁移语义以
+`docs/implementation/PLUGIN_HOST.md` 为准。
 
 ### 重合区处理
 
@@ -570,6 +592,12 @@ frontend 当前没有该 route，所以 `learner_growth` lifecycle 为 `optional
 4. 若需要五核变化，在 reducer 中增加确定性规则、维护可机读的 reducer 事件导出并补测试；注册表不得通过搜索源码文本推断 handler 存在。
 5. 外部工作流输出先校验为 LearnFlow artifact；不得直接写五核或决定纠错状态。
 6. 更新架构/融合/比赛文档，提升注册表版本，并分别检查 `schema_valid` 与 `implementation_valid`，再运行后端、前端与 demo 验收。
+
+新增或升级插件时还必须验证 `learnflow.plugin-package.v1` manifest、artifact root hash、发布者签名和宿主兼容
+范围；将 bundle 声明投影为 namespaced PluginContract/HostInterfaceContract，禁止覆盖核心 ID 或增加第四类
+主 Agent。写 workflow 必须携带 `expected_snapshot_id` 和绑定 request hash 的 instance 级幂等键；候选只有在
+宿主验证并原子提交后才成为后继 Snapshot。Surface 只能使用受限声明式 DSL；Tutor 只通过
+`discover_project_plugin_tools` 与 `call_project_plugin_tool` 发现和调用当前项目获授权的只读能力。
 
 破坏性接口调整必须保留迁移说明。仅增加讲法、模型或供应商 adapter，不应改变 EvidenceEvent 和五核语义。
 

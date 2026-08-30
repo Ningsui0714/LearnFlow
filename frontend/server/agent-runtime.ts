@@ -430,6 +430,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '搜索或读取返回 partial、empty、coverage gaps、circuit_open 时必须在回答中显式保留证据缺口；不得用模型常识伪装成已检索证据。',
     '评估目标、题型组合或成功条件不清时，先调用 design_assessment_blueprint；它返回可检查的蓝图与确定性量表，但不评分。动态习题工具只可在带领学习态且绑定正式 LearningTask/Checkpoint 时调用；生成题目是零目标 artifact 事件，不得声称形成掌握。需要动态练习、诊断或变式验证时，可生成正式练习文件，再让学习者在答案安全工作台提交。',
     '处于项目 scope 时，所有规划、来源选择、讲义与练习都必须锚定 envelope.scope.projectId 对应的项目主题；不得偷换为通用课程规划。',
+    '项目插件能力必须先调用 discover_project_plugin_tools，只能把发现结果中的 qualified_tool_id 交给 call_project_plugin_tool。插件副作用 workflow 不向 Tutor 暴露；需要修改核心对象时只能形成 Action Board proposal。插件对象和生成物不等于学习者掌握。',
     '若学习者观察中存在 Claim 冲突，必须明确说明冲突并把纠正留给学习者确认；不得静默选择一边或声称已经改写画像。',
     '若工作区观察含 sourceConstraint，路线和讲解必须受当前项目来源覆盖范围约束；超出范围只能标为资料缺口，并在检索到新证据后补充。',
     '工作区中没有 Attempt 只表示当前作用域没有可见记录，不能推断学生第一次学习、从未练习或没有相关经历。',
@@ -441,7 +442,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
 function hasExplicitExternalResourceRequest(input: TutorAgentRuntimeInput) {
   const message = [...input.messages].reverse().find(item => item.role === 'user')?.content || ''
   return input.toolChoice !== 'auto'
-    || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|视频|b站|bilibili|youtube|来源|论文|文档|仓库|官网|最新)/i.test(message)
+    || /(?:联网|搜索|查找|检索|资料|资源|教材|课程推荐|视频|b站|bilibili|youtube|来源|论文|文档|仓库|官网|最新|插件|岗位图谱|岗位能力)/i.test(message)
 }
 
 type VisualIntent = 'diagram' | 'animation' | 'none'
@@ -493,12 +494,14 @@ function availableTools(input: TutorAgentRuntimeInput) {
   const latestMessage = [...input.messages].reverse().find(item => item.role === 'user')?.content || ''
   const visualIntent = explicitVisualIntent(input, latestMessage)
   const tools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
+    !['read_role_capability_graph', 'explain_role_capability'].includes(tool.name)
+    &&
     (!['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node'].includes(tool.name) || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
     && (tool.name !== 'read_active_learning_file' || Boolean(input.activeArtifactContext))
     && (!tool.name.startsWith('read_project_') || Boolean(input.formalProjectContext))
-    && (!['read_role_capability_graph', 'explain_role_capability'].includes(tool.name) || Boolean(input.formalProjectContext))
+    && (!['discover_project_plugin_tools', 'call_project_plugin_tool'].includes(tool.name) || Boolean(input.formalProjectContext))
     && (tool.name !== 'read_project_roadmap' || projectTutor)
     && (tool.name !== 'propose_project_roadmap' || projectTutor && input.mode === 'learning_plan')
     && (tool.name !== 'propose_project_learning_files' || Boolean(input.formalProjectContext) && input.mode === 'guided_learning')
@@ -798,6 +801,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'read_project_roadmap'
         || call.name === 'read_project_sources'
         || call.name === 'read_project_learning_file'
+        || call.name === 'discover_project_plugin_tools'
+        || call.name === 'call_project_plugin_tool'
         || call.name === 'read_role_capability_graph'
         || call.name === 'explain_role_capability'
         || call.name === 'read_active_learning_file'

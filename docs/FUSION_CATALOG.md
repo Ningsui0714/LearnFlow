@@ -26,6 +26,8 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 | 学习专属文件 | `.lflecture/.lfexercise` + 自定义播放器 | 描述符只引用数据库对象；讲义版本化、练习草稿/批注隔离、正式提交才写证据 |
 | 通用文件编辑 | Monaco + Markdown/PDF/image preview | UTF-8 轻量编辑与 Vim 模式；不内置 Python runtime、终端或任意编译 |
 | Tutor 本地构建能力 | `local_agent_broker` + `LocalAgentProfile` | 本地代码 Agent 仅作 Tutor 工具；确定性选择、隔离副本、两次确认、hash 校验与批量回滚 |
+| 可安装领域扩展 | `learnflow.plugin-package.v1` + 通用插件宿主 | Bundle/Instance/Snapshot/Object 四层分离；签名本机 runner 只生成候选，宿主控制权限、校验、提交、Action proposal 和零目标事件 |
+| 岗位包生成、解释与迭代 | `role_capability_graph.lfplugin` + `role_capability_graphing` | 迁移为首个官方项目插件；固定快照解释、合同化迭代和旧专用 API 兼容转发，生成/阅读均不写五核 |
 | 对话式学习方法 | `LearningSkillRun` + `LearningTask` + `learning_skill_runtime` | 清晰讲解/苏格拉底/费曼/示例渐隐在 Session 内有界运行并绑定原子任务；推荐需确认，独立验证才进入能力证据链 |
 | Teaching Contract 与内容门禁 | `Checkpoint.learning_contract` + `teaching_contract_gate` + `checkpoint_delivery_readiness` | Knowledge 通过可选 answer-free 输入契约辅助起点设计；包成熟度只由教学资产重建，任务就绪度只组合 learner-owned LearningTask；模型最多修订一次，失败仍交付答案安全 fallback，三者均不等同学习进度或掌握 |
 | 视频推荐与内容核验 | `learning_video_search` + `learning_video_inspector` + `learning_resource_curation` | 模型只看“搜索候选/核验本轮候选”两个目标级只读 ACI；平台 API、字幕和 ASR 留在 Harness，标题与热度不能替代内容核验，观看不形成掌握 |
@@ -41,11 +43,18 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 外部 workflow 将来接入时必须先得到真实 implementation binding，并把输出校验为 LearnFlow
 artifact 或 Event 输入；供应商名称、YAML 或清单字符串本身不能把 lifecycle 提升为 `implemented`。
 
+通用插件宿主不会使上述无实现的外部 workflow 自动变为可用插件。候选必须先被包装为通过
+`learnflow.plugin-package.v1` 校验的 release，声明真实平台 runner、schema、Host Ports、workflow 和
+Surface；生产还必须有受信、未撤销发布者的 Ed25519 签名。包被安装也不等于项目已启用或能力已运行。
+
 ## 统一分类
 
 - **Tools**：能执行读取、生成、评估、事件写入或投影的运行构件。
 - **Product skills**：由一个主 Agent 负责、组合多个 tools 的稳定产品能力，不等同于本地 Codex `SKILL.md`。
-- **Role capability plugin**：`role_capability_graphing` 由 Learning Design 负责，组合岗位包生成、只读图谱、固定快照解释和合同化迭代；生成制品与运行事件均不直接写五核。
+- **Plugin Bundle**：可安装的 `.lfplugin` 能力包，不承载项目事实；manifest 贡献项只能 namespaced，不能覆盖核心 ID 或增加第四类主 Agent。
+- **Plugin Instance**：某 learner-owned 项目对固定 release 的配置、授权和当前 Snapshot 指针，不承载领域事实。
+- **Plugin Snapshot / Object**：Snapshot 是不可变领域事实版本；Object 由 Snapshot 组件承载，ObjectIndex 仅提供可重建寻址。
+- **Role capability plugin**：`role_capability_graphing` 由 Learning Design 负责，组合岗位包生成、固定快照解释和合同化迭代；它是首个官方 Bundle，生成制品与运行事件均不直接写五核。
 - **Workbenches**：用户或维护者操作能力的产品空间；候选外部 Studio 可以保留稳定声明，但只有 `implemented` 且 binding 校验通过的条目才可发布为 available。
 - **Important events**：会影响教学连续性、证据、偏好或里程碑的只追加事实。
 
@@ -53,6 +62,16 @@ artifact 或 Event 输入；供应商名称、YAML 或清单字符串本身不�
 每个 Tool、Product Skill、Workbench、Capability 与 Event 都公开 lifecycle、binding 与 `available`；
 `GET /api/architecture/validate` 分开报告 `schema_valid` 和 `implementation_valid`。外部 workflow
 名称、供应商或版本可以变化，稳定 ID、证据语义和五核写权限不能随之变化。
+
+插件动态投影同样受核心注册表约束：只暴露已安装、通过验证且当前项目启用授权的 namespaced 项。Tutor
+通过 `discover_project_plugin_tools` 和 `call_project_plugin_tool` 取得按回合裁剪的只读工具；插件副作用只能
+生成 Action Board proposal。`PluginSurfaceHost` 只接受 section、text、metric、list、table、graph、form、
+input、citation、status、action，不执行 HTML、脚本、插件 CSS 或任意 URL。
+
+插件 runner 使用默认关闭的 `trusted_signed_process`。即使包签名受信，也必须公开
+`filesystem_isolation=false`、`network_isolation=false`、`secrets_isolation=false`、
+`cpu_isolation=false` 与 `memory_isolation=false`；签名不代表沙箱。完整协议见
+`docs/implementation/PLUGIN_HOST.md`。
 
 ## 暂不复制的部分
 

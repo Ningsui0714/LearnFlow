@@ -1,0 +1,45 @@
+{
+  "protocol": "learnflow.plugin-surface.v1",
+  "id": "role_capability_project",
+  "slot": "project.context.tabs",
+  "label": "岗位图谱",
+  "body": {
+    "type": "section",
+    "title": "岗位能力图谱",
+    "children": [
+      {"type": "status", "source": "instance.status", "label": "插件状态"},
+      {"type": "metric", "source": "snapshot.validation.stats.nodes", "label": "对象"},
+      {"type": "metric", "source": "snapshot.validation.stats.edges", "label": "关系"},
+      {
+        "type": "graph",
+        "nodes": "snapshot.components.semantic-graph.nodes",
+        "edges": "snapshot.components.semantic-graph.edges",
+        "label": "任务—能力—知识关系"
+      },
+      {
+        "type": "form",
+        "id": "generate_role_package",
+        "workflow": "generate",
+        "submit_label": "生成岗位包",
+        "children": [
+          {"type": "input", "name": "role_title", "label": "目标岗位", "required": true},
+          {"type": "input", "name": "task_seeds", "label": "显式任务种子", "multiple": true}
+        ]
+      },
+      {
+        "type": "form",
+        "id": "iterate_role_package",
+        "workflow": "iterate",
+        "submit_label": "验证并提交后继快照",
+        "requires_confirmation": true,
+        "children": [
+          {"type": "input", "name": "objective", "label": "本次迭代目标", "required": true},
+          {"type": "input", "name": "object_type", "label": "新增对象类型", "value": "capability", "required": true},
+          {"type": "input", "name": "label", "label": "新增对象名称", "required": true},
+          {"type": "input", "name": "summary", "label": "说明"},
+          {"type": "input", "name": "parent_id", "label": "关联父对象 ID"}
+        ]
+      }
+    ]
+  }
+}

@@ -1,127 +1,202 @@
-# 岗位能力图谱插件：生成、解释与迭代
+# 岗位能力图谱首插件：生成、解释与迭代
 
 状态：implemented
-协议：`learnflow.role-capability.v1`
-架构注册表：`2026-08-29.2`
+插件 ID：`role_capability_graph`
+包协议：`learnflow.plugin-package.v1`
+对象协议：`role-capability.object.v1`
+架构注册表：`2026-08-30.3`
 
-## 1. 来源与重构原则
+岗位能力图谱是 LearnFlow 通用插件宿主的首个官方插件。它参考 `/Users/a1-6/CEG C/role-agent` 的可观察
+产品不变量，按 LearnFlow 契约独立实现，不复制其运行代码、数据库或岗位包数据。通用安装、运行、权限、
+制品和对象引用契约以 `docs/implementation/PLUGIN_HOST.md` 为准；本文只规定岗位领域语义与旧实现迁移。
 
-本插件参考 `/Users/a1-6/CEG C/role-agent` 的可观察产品不变量，按 LearnFlow 契约独立实现，没有复制其运行代码、数据库或岗位包数据。逆向阅读聚焦三条纵向链：冷启动生成、固定快照解释、合同化迭代。
-
-阅读前预测及校正：
-
-| 预测 | 结果 | LearnFlow 取舍 |
-|---|---|---|
-| 岗位包/快照是真相源 | 成立；发布包由不可变快照编译并校验 | `RoleCapabilitySnapshot` 保存完整图、来源闭包、root hash 和校验报告 |
-| 解释 Agent 可直接读取工作图 | 不成立；它先 pin 确切快照，再执行有界读取 | 对话工具只读当前不可变快照，返回对象、关系和引用 |
-| 迭代 Agent 直接重跑生成 | 不成立；先形成合同、检查、patch、评估，再决定是否建新快照 | `iterate` 只有候选有效且 diff meaningful 才生成后继版本 |
-| 工作区观察可直接成为岗位共性 | 不成立；observed pattern 与 documented norm 分层 | 用户迭代和无正式来源任务保持 `inferred_pattern`，不冒充规范事实 |
-
-## 2. 架构位置
+## 1. 架构位置
 
 ```text
-Project + processed SourceVersion / explicit task seeds
-                    │
-                    ▼
-        learning_design_agent 领域插件
-                    │
-   ┌────────────────┼──────────────────┐
-   ▼                ▼                  ▼
-生成 workflow    解释 workflow       迭代 workflow
-合同→编译→校验   pin→有界读取→引用   合同→检查→patch→校验→diff
-   │                │                  │
-   └──────────► immutable RoleCapabilitySnapshot
-                              │
-                 ┌────────────┴────────────┐
-                 ▼                         ▼
-        项目“岗位图谱”工作台         Tutor 只读对话工具
-                 │                         │
-                 └────────── zero-target operational events
+Project + 固定 SourceVersion / DomainKnowledgePacket / 显式任务种子
+                            │
+                            ▼
+              role_capability_graph Instance
+                            │
+          ┌─────────────────┼──────────────────┐
+          ▼                 ▼                  ▼
+       generate          explain             iterate
+   合同→候选→校验     pin→有界读取→引用   pin→合同→patch→diff
+          │                 │                  │
+          └─────────────────┴─────────► 宿主验证
+                                            │
+                                            ▼
+                              immutable PluginSnapshot
+                                 + PluginObjectIndex
+                                            │
+                         ┌──────────────────┴─────────────────┐
+                         ▼                                    ▼
+              项目 PluginSurfaceHost               Tutor 通用只读工具
+                         │                                    │
+                         └──────── Action proposal / zero-target event
 ```
 
-插件位于 `learning_design_agent` 后面，不是第四类主 Agent。Tutor 仍拥有对话和跨空间协调；Learning Design 拥有岗位制品；Practice Agent 与确定性判题边界不变。
+插件 owner 是 `learning_design_agent`，不是第四类主 Agent。Tutor 仍拥有对话、工具发现和 handoff；
+Learning Design 只生成岗位制品候选；Practice Agent、确定性评分、RemediationStrategy 与五核边界不变。
+runner 内的解释/迭代 Agent 不能批准自己的结果或直接写对象、核心模型、EvidenceEvent 或 KernelState。
 
-## 3. 核心对象
+## 2. Bundle manifest
 
-| 对象 | 责任 | 不变量 |
+官方 `role_capability_graph.lfplugin` 声明：
+
+- object types：`role`、`task`、`capability`、`knowledge_skill`、`claim`、`semantic_edge`、`scenario`、
+  `process_event`、`actor`、`work_object`、`artifact`、`risk`、`bridge`；
+- workflows：`generate`、`explain`、`iterate`、`validate`、`upgrade`；
+- Product Skill：`role_capability_graphing`，owner 为 `learning_design_agent`；
+- 项目 `project.context.tabs` Surface；
+- 两个只读对话工具：读取图谱与固定快照解释；
+- Host Ports：`project.read.v1`、`source.read.v1`、`knowledge_baseline.read.v1`、
+  `model.generate_structured.v1`、`event.record.v1`；
+- 运行事件：只允许 namespaced、零 Kernel target 的生成与迭代事件。
+
+包不包含 SQL migration、ORM adapter、React/JavaScript、HTML、CSS 或核心对象写接口。生产运行要求受信、
+未撤销发布者的 Ed25519 签名以及操作员显式开启 `trusted_signed_process`；即使官方签名受信，仍必须显示
+`filesystem_isolation=false`、`network_isolation=false`、`secrets_isolation=false`、
+`cpu_isolation=false` 和 `memory_isolation=false`。
+
+## 3. 快照与领域对象
+
+岗位领域事实只存在 `PluginSnapshot` 的内容寻址组件中：
+
+| 组件 | 内容 | 约束 |
 |---|---|---|
-| `RoleCapabilityPackage` | learner + project 唯一插件根与当前快照指针 | 指针可变，但不承载岗位事实 |
-| `RoleCapabilitySnapshot` | 完整岗位图、来源闭包、校验、root hash | 创建后不可覆盖；版本与 hash 唯一 |
-| `RoleCapabilityRun` | 生成/迭代的幂等请求、合同、检查、diff 和结果 | `learner_id + idempotency_key` 唯一；失败可审计 |
-| role graph node | role/task/capability/knowledge_skill | 稳定内容 ID、认识状态、evidence refs |
-| role graph edge | owns_task/requires_capability/requires_knowledge_skill | 两端必须可解析，禁止悬空引用 |
+| evidence | 固定来源、断言和 provenance | SourceVersion/hash 必须可解析；来源内容不可信 |
+| semantic graph | 对象节点、语义边、claim 与风险 | 稳定 ID；边两端必须闭合 |
+| process forest | scenario、process_event、actor、work_object、artifact | 事件顺序与参与关系必须可验证 |
+| views | 面向角色、任务、能力和过程的声明式投影 | 不复制或覆盖图谱事实 |
+| retrieval index | 有界解释使用的确定性检索索引 | 可从事实组件重建 |
+| validation report | 结构、证据、语义、引用与 Agent probe 结果 | 失败候选不得提交 |
+| reference migrations | 前后版本对象引用迁移映射 | 不改写历史引用 |
 
-岗位包是领域知识供给，不是学习者状态。它不会直接成为 `KernelState`、`MemoryFact` 或掌握声明。后续若把图谱节点投影为项目关卡或学习任务，仍需经过既有提案/确认合同；学习证据仍只能来自正式 Attempt/Event reducer 链。
+`PluginObjectIndex` 只保存 object ID、type、label、component/JSON Pointer、content hash、生命周期和引用；
+它必须能从快照重建，不能成为第二份岗位图谱。岗位节点的 `accepted / candidate / deprecated` 是领域对象
+生命周期；`documented_norm / inferred_pattern` 是岗位断言的认识状态，二者都不是 Knowledge 或 Practice
+掌握等级。
+
+跨核心对象引用岗位节点时必须固定完整 `learnflow.plugin-object-ref.v1`，包括 plugin/instance/snapshot ID、
+snapshot root hash、object type/ID、schema version 和 object content hash。读取历史任务时不得自动替换成
+当前快照的同名对象。
 
 ## 4. Workflow
 
-### 4.1 生成
+### 4.1 `generate`
 
-1. 工作台显式提交岗位名称、已处理项目来源和可选任务种子。
-2. 固定 SourceVersion ID/hash；来源内容按不可信数据处理。
-3. 创建有预算和停止条件的 generation contract。
-4. 编译 role → task → capability → knowledge_skill 图。
-5. 检查协议版本、稳定 ID、引用闭包、最小对象集合和 Agent probes。
-6. 计算 canonical root hash；相同内容复用已有快照。
-7. 记录 `role_capability_package_generated` 零 Kernel target 事件。
+1. 宿主验证 learner/project ownership、Instance/release、授权、配置、幂等键和输入 schema。
+2. 固定 SourceVersion ID/hash、已确认的 DomainKnowledgePacket 和显式任务种子；来源正文标为不可信。
+   每个 Chunk 保留自己的 SourceVersion ref，不得把多来源内容统一归因到第一条来源。宿主注入的
+   `max_tasks` 与 `include_process_view` 配置分别约束任务预算和过程视图投影。
+3. runner 建立有预算和停止条件的 generation contract，并生成候选 evidence、semantic graph、process forest
+   与 views。
+4. `validate` 检查协议、稳定 ID、引用闭包、证据可解析性、最小对象集合、process/semantic bridge 和 probes。
+5. 宿主重新校验组件、构建 retrieval/object index、计算 canonical root hash 并原子提交 Snapshot。
+6. 宿主通过 `record_event()` 记录声明过的生成事件；该事件零 Kernel target。
 
-没有已处理来源且没有显式任务种子时进入 blocked，不发布 generic 岗位壳。
+没有可用的已处理来源且没有显式任务种子时，Run 进入 blocked，不发布通用岗位壳。相同 instance 幂等键
+绑定 canonical request hash：同键同请求返回原 Run，同键不同请求返回 `409 Conflict`。
 
-### 4.2 解释 Agent
+### 4.2 `explain`
 
-1. 验证 learner/project ownership。
-2. pin 当前或显式指定的包内快照。
-3. 对问题做有界对象匹配，最多返回 8 个对象和 12 条关系。
-4. 返回 answer、objects、relations、citations、coverage 与 snapshot ref。
-5. 不改变岗位事实，不写事件，不写五核。
+1. 宿主验证 ownership，并固定显式或当前 snapshot 的 ID 与 root hash。
+2. runner 对 retrieval index 做有界搜索，再进行有界关系遍历，并从同一 Snapshot 的 evidence 组件读取
+   source 与 claim 摘要。
+3. 返回 answer、objects、relations、带固定 source/claim 的 citations、coverage 和完整 snapshot ref。
+4. 宿主检查所有引用都属于固定 Snapshot；超预算或悬空引用使本次 Run 失败。
 
-对话工具：
+解释不修改对象、不移动 Instance 指针、不记录学习掌握事件。旧
+`read_role_capability_graph` 与 `explain_role_capability` 只是该通用只读调用路径的兼容别名。
 
-- `read_role_capability_graph`：回答“图谱里有什么”。
-- `explain_role_capability`：回答“为什么需要某能力、任务和知识怎样关联”。
+### 4.3 `iterate`
 
-生成和迭代不暴露给模型；当用户在聊天中要求修改岗位包时，Tutor 应引导打开项目的“岗位图谱”页完成显式动作。
+1. 请求必须提交 `expected_snapshot_id`；与当前基线不一致返回 `409 Conflict`。
+2. runner 固定 base snapshot，形成 objective、target IDs、操作预算、验收策略和停止条件。
+3. 检查 base 的协议、覆盖、evidence readiness 和目标引用。
+4. 生成结构化 patch，随后运行结构、节点/关系类型、证据闭包、语义端点类型、process/semantic bridge 与
+   引用校验；缺失证据不再只是 warning。
+5. 计算 meaningful diff；无有效变化进入 `no_change`，不创建 Snapshot。
+6. 只有宿主复验通过才创建不可变后继 Snapshot、重建 ObjectIndex 并原子移动 current snapshot 指针。
+7. 宿主记录零 Kernel target 的迭代事件。
 
-### 4.3 迭代 Agent
+### 4.4 `validate` 与 `upgrade`
 
-1. pin base snapshot。
-2. 创建含 objective、target IDs、操作预算、验收策略与停止条件的 iteration contract。
-3. 检查 base 的协议、覆盖与 evidence readiness。
-4. 应用最多 24 个结构化 operation；首版支持 `add_node` 和 `update_node`。
-5. 检查候选；悬空边、删除根岗位、无有效操作都会停止。
-6. 只有 `meaningful=true` 且无协议错误时创建不可变后继快照。
-7. 记录 `role_capability_snapshot_iterated` 零 Kernel target 事件。
+`validate` 是宿主提交前的必经 workflow，不能由 runner 的“自报成功”替代。`upgrade` 在旧 release 与当前
+Snapshot 上运行兼容/迁移；只有候选满足新 release 的 schemas、引用和 root hash 契约，宿主才在同一事务中
+切换 release 与 snapshot。失败时 Instance 继续固定旧 release 和旧 snapshot。
 
-## 5. Product Skill、Tool 与对话融合
+## 5. Surface、Tool 与对话
 
-注册的 Product Skill 为 `role_capability_graphing`，它组合：
+项目岗位页由通用 `PluginSurfaceHost` 渲染，只使用 section、text、metric、list、table、graph、form、input、
+citation、status 和 action。它展示当前 snapshot/version/root hash、校验报告、对象/关系、过程视图、来源
+引用和 Run 状态；不执行插件脚本、HTML、CSS 或任意 URL。generate/iterate/upgrade action 只能引用 manifest
+workflow，并遵守 expected snapshot、幂等和用户确认。
 
-- `role_capability_package_runtime`：生成与确定性编译 Harness；
-- `role_capability_graph_reader`：模型可见只读 ACI tool；
-- `role_capability_explainer`：模型可见只读 ACI tool；
-- `role_capability_iteration_runtime`：显式工作台迭代 Harness；
-- `project_source_reader`：复用项目来源边界。
+Tutor 不把岗位插件专用工具常驻硬编码进模型工具面。标准路径为：
 
-工作台 `role_capability_plugin` 嵌入 `/projects/:projectId` 的项目抽屉。用户可以：生成首包、查看版本/hash/校验、浏览对象、提问解释、显式补充任务并形成新版本。它复用 LearnFlow 现有鉴权、项目 ownership、来源版本和 runtime client。
+```text
+discover_project_plugin_tools
+  -> 当前项目已启用、获授权的岗位只读 tool + schema
+  -> call_project_plugin_tool
+  -> 固定 Snapshot 的有界结果与引用
+```
 
-## 6. 异常、恢复与兼容性
+插件若要把 capability/task 节点转成 Roadmap、Checkpoint、LearningTask 或 LearningFile，只能返回带固定
+`PluginObjectRef` 的 `action.propose.v1` proposal。Action Board 展示确认卡，用户确认后由核心 capability 和
+既有对象服务执行。生成和迭代不直接暴露给 Tutor 模型。
 
-- 重复请求：幂等 run 返回原结果，不重复建快照或事件。
-- 生成失败：run 保留 `failed` 与 error；当前快照不移动。
-- 无变化迭代：run 为 `no_change`；当前快照不移动。
-- 候选协议失败：保存 inspection/error；不创建后继快照。
-- 取消/崩溃：当前快照仍是最后一个完成且通过校验的版本；running run 可供后续恢复策略识别。
-- 权限：所有 API 先校验 learner 对 project 的 ownership；历史快照必须属于同一 package。
-- 数据迁移：新增三张表由现有 `create_all` 加法创建，没有修改既有表或 API；旧项目按需首次创建插件根。
+## 6. 迁移与兼容性
 
-Contract impact：新增 Tool、Product Skill、Workbench、Capability、零目标 Event 和四个 API；注册表版本提升。三类主 Agent、五核 schema、EvidenceEvent schema、reducer、RemediationStrategy 与现有项目 API 均保持兼容。
+历史 `RoleCapabilityPackage / RoleCapabilitySnapshot / RoleCapabilityRun` 通过幂等迁移转换为：
 
-## 7. 验收
+```text
+RoleCapabilityPackage  -> PluginInstance(role_capability_graph)
+RoleCapabilitySnapshot -> PluginSnapshot + 可重建 PluginObjectIndex
+RoleCapabilityRun      -> PluginRun / PluginRunEvent
+```
 
-- 同输入编译出相同稳定 ID 与图结构；
-- 解释固定到 snapshot root hash 且输出有界；
-- 悬空迭代候选被协议检查捕获；
-- 生成请求幂等；
-- 有意义迭代产生 version + 1 和新 root hash；
-- 两个运行事件不会产生任何 `KernelMutation`；
-- 架构注册表能够解析 API、前端 tool handler 与工作台组件 binding。
+迁移保留原 version、parent、root hash、来源引用、合同、检查、diff、结果和 provenance；转换后的对象引用必须
+解析到内容一致的通用 Snapshot。旧三表随后冻结为只读兼容源，不再双写，也不再作为新运行的权威。迁移可
+重复执行且不得重复创建 Instance、Snapshot、ObjectIndex、Run 或事件。
+
+旧 `/api/role-capability/...` 路由保留为 deprecated compatibility aliases，内部按 ownership 转发通用宿主，
+响应附带 deprecation metadata 和通用 replacement route。旧 `read_role_capability_graph`、
+`explain_role_capability` 工具名同样保留，但内部走 discovery/call，并返回 replacement tool metadata。
+禁用 Instance 后旧别名也不可继续运行；历史固定引用仍可读取。
+
+## 7. 五核与证据边界
+
+岗位图谱是领域知识供给，不是学习者画像、掌握声明或第六个 Kernel。以下行为都不能产生
+`KernelMutation`：安装/启用插件、生成/校验 Snapshot、解释/阅读对象、迭代/升级、打开 Surface、创建
+Action proposal。
+
+外部插件只能提议 manifest 已声明的零 Kernel target 事件，宿主经统一 `record_event()` 写入。即使岗位对象
+被确认转成 Roadmap、Checkpoint 或 LearningTask，也只证明核心对象已创建；学习状态仍唯一经过：
+
+```text
+LearningAttempt / 已登记用户行为
+  -> EvidenceEvent
+  -> five_kernel_reducer
+  -> KernelMutation
+  -> KernelState
+```
+
+## 8. 失败与验收
+
+- 生成失败、协议失败或 runner 崩溃：Run 可审计，current snapshot 不移动。
+- 无变化迭代：Run 为 `no_change`，不创建新版本。
+- expected snapshot 过期或同幂等键异请求：返回 `409`。
+- 发布者/release 撤销：历史可读，立即阻止新运行。
+- 升级失败：旧 release/snapshot 继续可用。
+- 同输入生成稳定对象 ID 与 root hash；索引删除后可从 Snapshot 重建。
+- 解释结果固定精确 snapshot、输出有界且 citation 可解析。
+- 迭代必须有结构/证据/语义校验和 meaningful diff，悬空引用不得提交。
+- 迁移前后 root hash、对象内容和固定引用一致；旧接口返回 deprecation metadata。
+- generate/explain/iterate/validate/upgrade 与 Surface 阅读均不产生 `KernelMutation`。
+
+Contract impact：专用岗位三表、四 API 和两个静态 Tutor tool 从事实权威降为只读迁移源/兼容别名；新增
+通用 Plugin Instance/Snapshot/ObjectIndex/Run、官方 Bundle、声明式 Surface 与动态只读工具发现路径。
+该迁移保持旧数据和引用可读，不改变三类主 Agent、五核 schema、EvidenceEvent schema、reducer、
+RemediationStrategy 或核心学习对象 API。

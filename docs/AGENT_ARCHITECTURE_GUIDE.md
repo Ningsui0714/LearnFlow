@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-30.3`）：插件能力统一进入“确定性宿主 + 可变 Agent runner”边界。Bundle 只声明能力，项目 Instance 只保存配置与授权，不可变 Snapshot 承载领域事实，ObjectIndex 只负责寻址。Tutor 不为每个插件常驻硬编码工具，而通过 `discover_project_plugin_tools` 和 `call_project_plugin_tool` 发现、调用当前项目已启用且获授权的只读能力；任何写核心对象的意图只能持久化为 Action Board 待确认动作。插件 runner 不获得 ORM、数据库会话或密钥，外部事件只允许零 Kernel target；宿主把实例配置作为不可伪造 runtime envelope 注入，并以实际 Host Port 读取重建来源 provenance。受信签名本机进程仍明确没有文件、网络、密钥、CPU 或内存隔离。岗位能力图谱是首个官方插件，旧专用 API/工具名只作 deprecated 兼容转发。三类主 Agent、五核、评分、掌握与 EvidenceEvent reducer 语义不变。
+
 Contract impact（`2026-08-30.1`）：Tutor 的视觉工具面采用双重显式意图门。普通解释、文件共学和资源策展不暴露图解/动画工具；明确“画图/流程图/时序图”等只暴露图解，明确“动画/逐帧/演示变化”等只暴露动画，执行器再次校验。Learning Design 的 VisualSpec 必须具有可教学的语义对象、真实关系或状态变化，并通过确定性布局、安全和重放门；未知主题的单节点降级被取消。文件提案在真正物化前只能称为待确认提案。事件序号改由数据库行原子分配，五核仍只消费既有 EvidenceEvent/reducer 链。
 
 Contract impact（`2026-08-29.1`）：引入统一领域知识供给平面。Tutor 仍只使用现有的知识库读取、Search 和 Page Reader ACI；`source_version_runtime`、`domain_knowledge_packet_compiler` 和 `source_integrity_monitor` 都是 Harness/Policy，不向模型新增工具。学习设计在正式步骤前必须得到可发布 Packet；讲义和练习共用同一 TeachingContentBrief。用户资料决定语境、范围和课程版本，但其中的指令始终是不可信数据，事实权威不会静默压过官方或学习者已确认的项目版本。所有来源健康事件零 Kernel target。
@@ -358,6 +360,24 @@ Action Board 是所有聊天按钮和页面按钮共享的语义事务层。每�
 
 后台任务的完成、产物生成与失败也必须使用已登记的 EventContract：内容生成或来源
 处理只记录产物/操作状态，失败只记录当前结构阻塞，均不能被解释为学习掌握证据。
+
+### 通用插件工具面与 Action proposal
+
+插件不把每个 manifest tool 永久加入 Tutor 的模型工具面。Tutor 只有两个通用只读 ACI：
+
+1. `discover_project_plugin_tools` 按当前 learner/project、描述、scope、已固定 release 和 Host Port 授权，
+   返回本轮可用只读工具及其 schema 和固定 snapshot 约束。
+2. `call_project_plugin_tool` 只接受本轮发现结果；Harness 再次校验 project ownership、Instance 状态、
+   release、snapshot、权限和输入 schema 后启动有界 runner。
+
+发现结果不是永久授权；禁用、升级、撤销、项目切换或 snapshot 变化都会使旧结果失效。插件 workflow 和带
+副作用 tool 不暴露给模型。插件如需创建或修改 Roadmap、Checkpoint、LearningTask、LearningFile 等核心对象，
+只能经 `action.propose.v1` 返回携带固定 `PluginObjectRef` 的结构化 proposal；Action Board 展示确认卡，并在
+用户确认后调用核心 capability。插件 Agent 可以生成候选，但不能批准自己的结果、移动 snapshot 指针或写五核。
+
+插件运行事件只能是 manifest 声明且经核心注册表校验的 namespaced 零 Kernel target 事件。安装、启用、
+生成、解释、阅读、校验、迭代、升级或禁用插件均不表示理解、独立成功或迁移；正式学习证据仍只能沿
+`LearningAttempt -> EvidenceEvent -> five_kernel_reducer` 进入 Knowledge / Practice 等核。
 
 ### 8.1 全局复习工作台
 
@@ -894,6 +914,11 @@ canonical frontend binding，不得出现在 available 工作台或被文档描�
 
 页面只显示用户能理解和行动的信息。内部 Kernel 名称、工具 handler、路由权重和原始 JSON 不应直接暴露在主要学习体验中。
 
+项目页面可在 `project.context.tabs` 槽位挂载 `PluginSurfaceHost`。宿主只渲染 `section`、`text`、`metric`、
+`list`、`table`、`graph`、`form`、`input`、`citation`、`status` 与 `action`；插件不得注入 HTML、脚本、CSS、
+任意 URL 或 React 组件。Surface 只是固定 Snapshot/Run 的投影，action 只能指向当前 release manifest 声明的
+workflow，并继续遵守 project ownership、expected snapshot、幂等和 Action Board 确认边界。
+
 ## 17. 失败与降级语义
 
 系统应优先保证事实正确，而不是保持“什么都成功”的表象：
@@ -986,6 +1011,9 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 12. **跨用户读取**：根据客户端 ID 直接查询资源，没有 learner owner scope。
 13. **旁路 Action Board**：聊天按钮和页面按钮调用两套不一致的业务逻辑。
 14. **不可追溯记忆**：长期画像声明找不到原始事件或事实支持。
+15. **插件成为状态旁路**：runner 直接访问 ORM、覆盖核心对象或声明带 Kernel target 的事件。
+16. **签名冒充沙箱**：把受信发布者签名描述成文件、网络、密钥、CPU 或内存隔离。
+17. **动态前端注入**：插件用 React/JavaScript/HTML/CSS 或任意 URL 绕过 Surface DSL。
 
 ## 21. 扩展新能力的检查清单
 
@@ -1008,6 +1036,10 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 - provenance 如何回到来源、消息、任务、题目或产物？
 - 用户纠正时怎样保留历史并排除错误投影？
 - 所有查询与任务是否受 CurrentLearner 隔离？
+- 若是插件能力，Bundle / Instance / Snapshot / Object 分层是否明确，事实是否只存在不可变 Snapshot？
+- 插件声明的 Host Port 是否最小化并在项目启用时获得授权？runner 是否持续披露全部未隔离边界？
+- 写 workflow 是否校验 `expected_snapshot_id`，幂等键是否绑定 canonical request hash？
+- 模型是否只能通过通用发现/调用工具执行只读能力，副作用是否只形成 Action Board proposal？
 - 前端刷新后能否从服务端恢复真实状态？
 - 是否覆盖直接指令、失败、重试、越权和移动端交互测试？
 
@@ -1044,6 +1076,8 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 唯一前端路由、Chat、页签与 Tutor UI | `frontend/src/main.tsx` |
 | 项目列表、侧栏、工作台与对话联动 | `frontend/src/ProjectsPage.tsx`、`frontend/src/ProjectWorkspacePage.tsx`、`frontend/src/ProjectContextPanel.tsx` |
 | 有界 Agent 回合与原生工具运行时 | `frontend/server/agent-runtime.ts`、`frontend/server/tool-runtime.ts` |
+| 插件包、制品、runner 与宿主 API | `backend/app/services/plugin_packages.py`、`backend/app/services/plugin_artifacts.py`、`backend/app/services/plugin_runner.py`、`backend/app/services/plugin_host.py`、`backend/app/api/plugins.py` |
+| 声明式插件界面与通用 Tutor 工具 | `frontend/src/PluginSurfaceHost.tsx`、`frontend/src/plugin-runtime.ts`、`frontend/server/tool-runtime.ts` |
 | 正式 API、桌面 sidecar 地址与认证适配 | `frontend/src/formal-runtime.ts`、`frontend/src/runtime-client.ts` |
 | 学习任务、复习、路径与画像工作台 | `frontend/src/LearningTasksPage.tsx`、`frontend/src/ReviewWorkbenchPage.tsx`、`frontend/src/LearningPathPage.tsx`、`frontend/src/LearnerProfilePage.tsx` |
 | 讲义与练习文件工作台 | `frontend/src/LearningFilesPage.tsx`、`frontend/src/LectureFilePage.tsx`、`frontend/src/PracticeFilePage.tsx` |
@@ -1062,8 +1096,24 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 
 这七条比“让某一次模型回复更聪明”更重要。
 
-## 岗位能力图谱插件
+## 通用插件宿主与岗位能力图谱首插件
 
-`role_capability_graphing` 是 `learning_design_agent` 后的领域 Product Skill，不是新的主 Agent。它把项目来源和用户显式任务种子编译为不可变岗位快照，并提供固定快照解释和合同化迭代。Tutor 对话只能调用 `read_role_capability_graph` 与 `explain_role_capability` 两个只读工具；生成或迭代必须交接到项目“岗位图谱”工作台并由学习者显式触发。
+通用插件协议的四层是：可安装 `.lfplugin` Bundle、项目作用域 Instance、承载事实的不可变 Snapshot，以及
+Snapshot 中由可重建索引寻址的 Object。宿主拥有签名和 manifest 校验、发布者信任、项目授权、Host Port、
+固定对象引用、并发、幂等、候选验证、快照提交和事件登记；runner 内的 Agent 只生成候选。完整协议见
+`docs/implementation/PLUGIN_HOST.md`。
 
-岗位节点的 `accepted/candidate/deprecated` 是岗位制品生命周期，`documented_norm/inferred_pattern` 是岗位断言的认识状态，二者都不是 Knowledge 或 Practice 掌握等级。任何从岗位图谱到关卡、LearningTask 或评估的投影都必须继续遵守既有提案、确认、教学合同与正式 Attempt 证据链。
+`role_capability_graphing` 是 `learning_design_agent` 后的首个官方插件 Product Skill，不是新的主 Agent。
+它把项目来源和用户显式任务种子编译为含 evidence、semantic graph、process forest、views、retrieval index、
+validation report 和 reference migrations 的不可变岗位 Snapshot。解释 Agent 固定精确 snapshot 后执行有界
+读取；迭代 Agent 固定 base snapshot 后形成合同、patch、结构/证据/语义校验与 meaningful diff，只有宿主
+验证通过才提交后继 Snapshot。
+
+Tutor 新路径通过通用 discovery/call 工具访问该插件的两个只读工具。旧 `read_role_capability_graph`、
+`explain_role_capability` 名称和 `/api/role-capability/...` API 只保留 deprecated 兼容别名，内部转发通用宿主；
+生成或迭代仍必须交接到项目 Surface 并显式触发。历史专用表是只读迁移源，不得与通用 Snapshot 双写。
+
+岗位节点的 `accepted/candidate/deprecated` 是领域对象生命周期，`documented_norm/inferred_pattern` 是岗位断言
+的认识状态，二者都不是 Knowledge 或 Practice 掌握等级。从岗位 Object 创建 Roadmap、Checkpoint、
+LearningTask 或评估只能形成带固定 `PluginObjectRef` 的 proposal，并继续遵守既有确认、教学合同与正式
+Attempt 证据链。

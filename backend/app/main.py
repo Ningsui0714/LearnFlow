@@ -30,6 +30,7 @@ from app.api.learning_files import router as learning_files_router
 from app.api.vnext_projects import router as vnext_projects_router
 from app.api.assessment_design import router as assessment_design_router
 from app.api.role_capability import router as role_capability_router
+from app.api.plugins import router as plugins_router
 from app.services.auth import enforce_browser_request_security
 
 
@@ -38,9 +39,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     from app.services.task_manager import mark_stale_tasks_failed
     from app.services.local_agent_broker import mark_interrupted_runs_failed
+    from app.services.plugin_host import mark_interrupted_plugin_runs_failed
     from app.services.memory_worker import memory_worker_loop
     await mark_stale_tasks_failed()
     await mark_interrupted_runs_failed()
+    await mark_interrupted_plugin_runs_failed()
     stop_memory_worker = asyncio.Event()
     memory_task = asyncio.create_task(memory_worker_loop(stop_memory_worker))
     try:
@@ -110,3 +113,4 @@ app.include_router(learning_files_router, prefix="/api")
 app.include_router(vnext_projects_router, prefix="/api")
 app.include_router(assessment_design_router, prefix="/api")
 app.include_router(role_capability_router, prefix="/api")
+app.include_router(plugins_router, prefix="/api")

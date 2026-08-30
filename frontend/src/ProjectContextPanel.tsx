@@ -11,10 +11,16 @@ import {
   uploadFormalProjectFile,
 } from './formal-runtime'
 import type { FormalLearningFileRef, FormalLearningTask } from './formal-runtime'
+import ProjectPluginManager from './ProjectPluginManager'
+import PluginSurfaceHost from './PluginSurfaceHost'
+import { loadProjectPluginSurfaces, type ProjectPluginSurface } from './plugin-runtime'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace } from './project'
-import RoleCapabilityPluginPanel from './RoleCapabilityPluginPanel'
 
-type PanelTab = 'checkpoints' | 'sources' | 'files' | 'role'
+type PanelTab = 'checkpoints' | 'sources' | 'files' | 'plugins' | `plugin:${string}`
+
+function pluginTabId(surface: ProjectPluginSurface): PanelTab {
+  return `plugin:${surface.plugin_id}:${surface.surface_id}`
+}
 
 export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoint, onOpenFree, onOpenFile, onGenerateFiles, onWorkspaceChange }: {
   projectId: number
@@ -26,9 +32,11 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
   onWorkspaceChange?: (workspace: FormalProjectWorkspace) => void
 }) {
   const [workspace, setWorkspace] = useState<FormalProjectWorkspace>()
+  const [pluginSurfaces, setPluginSurfaces] = useState<ProjectPluginSurface[]>([])
   const [activeTab, setActiveTab] = useState<PanelTab>('checkpoints')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [pluginError, setPluginError] = useState('')
   const [url, setUrl] = useState('')
   const [baselineProposal, setBaselineProposal] = useState<Record<string, any>>()
   const fileInput = useRef<HTMLInputElement>(null)
@@ -45,7 +53,23 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
   }
   useEffect(() => { void refresh() }, [projectId])
 
+  const refreshPluginSurfaces = async () => {
+    try {
+      const page = await loadProjectPluginSurfaces(projectId)
+      setPluginSurfaces(page.surfaces)
+      const available = new Set(page.surfaces.map(pluginTabId))
+      setActiveTab(current => current.startsWith('plugin:') && !available.has(current) ? 'checkpoints' : current)
+      setPluginError('')
+    } catch (failure) {
+      setPluginSurfaces([])
+      setActiveTab(current => current.startsWith('plugin:') ? 'checkpoints' : current)
+      setPluginError(failure instanceof Error ? failure.message : '插件界面读取失败')
+    }
+  }
+  useEffect(() => { void refreshPluginSurfaces() }, [projectId])
+
   const files = useMemo(() => workspace ? [...workspace.files.lectures, ...workspace.files.practices] : [], [workspace])
+  const activePluginSurface = pluginSurfaces.find(surface => pluginTabId(surface) === activeTab)
 
   const addUrl = async () => {
     if (!url.trim()) return
@@ -137,9 +161,11 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
         <button type="button" className={activeTab === 'checkpoints' ? 'active' : ''} onClick={() => setActiveTab('checkpoints')}>关卡</button>
         <button type="button" className={activeTab === 'sources' ? 'active' : ''} onClick={() => setActiveTab('sources')}>来源</button>
         <button type="button" className={activeTab === 'files' ? 'active' : ''} onClick={() => setActiveTab('files')}>讲义与练习</button>
-        <button type="button" className={activeTab === 'role' ? 'active' : ''} onClick={() => setActiveTab('role')}>岗位图谱</button>
+        <button type="button" className={activeTab === 'plugins' ? 'active' : ''} onClick={() => setActiveTab('plugins')}>插件</button>
+        {pluginSurfaces.map(surface => <button type="button" key={pluginTabId(surface)} className={activeTab === pluginTabId(surface) ? 'active' : ''} onClick={() => setActiveTab(pluginTabId(surface))}>{surface.title}</button>)}
       </nav>
       {error && <div className="project-panel-error">{error}</div>}
+      {pluginError && <div className="project-plugin-warning">插件界面暂不可用：{pluginError}</div>}
       {!workspace && <div className="page-loading">正在读取项目…</div>}
       {workspace && activeTab === 'checkpoints' && (
         <div className="project-drawer-body">
@@ -176,12 +202,8 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
           {!files.length && <p className="project-drawer-empty">关卡生成的讲义与练习会集中保存在这里。</p>}
         </div>
       )}
-      {workspace && activeTab === 'role' && <RoleCapabilityPluginPanel
-        projectId={projectId}
-        projectName={workspace.project.name}
-        projectDescription={workspace.project.objective}
-        sourceIds={workspace.sources.filter(source => source.status === 'processed').map(source => source.id)}
-      />}
+      {workspace && activeTab === 'plugins' && <ProjectPluginManager projectId={projectId} onChanged={refreshPluginSurfaces} />}
+      {workspace && activePluginSurface && <PluginSurfaceHost key={pluginTabId(activePluginSurface)} projectId={projectId} surface={activePluginSurface} onChanged={refreshPluginSurfaces} />}
     </aside>
   )
 }

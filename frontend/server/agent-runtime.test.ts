@@ -64,28 +64,58 @@ test('provider requests expose real tool definitions in both API dialects', () =
   assert.equal((responses.body as any).tools[0].name, 'read_learner_context')
 })
 
-test('role capability dialogue tools are read-only and pinned to the project snapshot', async () => {
-  const definitions = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => ['read_role_capability_graph', 'explain_role_capability'].includes(tool.name))
-  assert.equal(definitions.length, 2)
-  assert.ok(definitions.every(tool => tool.risk === 'read_only'))
+test('project plugin tools are thin read-only host calls and role aliases stay compatible', async () => {
+  const genericDefinitions = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => ['discover_project_plugin_tools', 'call_project_plugin_tool'].includes(tool.name))
+  const legacyDefinitions = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => ['read_role_capability_graph', 'explain_role_capability'].includes(tool.name))
+  assert.equal(genericDefinitions.length, 2)
+  assert.equal(legacyDefinitions.length, 2)
+  assert.ok([...genericDefinitions, ...legacyDefinitions].every(tool => tool.risk === 'read_only'))
   const originalFetch = globalThis.fetch
   const calls: string[] = []
-  globalThis.fetch = (async (url: string | URL | Request) => {
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push(String(url))
+    if (!init?.method || init.method === 'GET') return new Response(JSON.stringify({ tools: [
+      {
+        qualified_tool_id: 'role_capability_graph:read_graph', title: '读取岗位图谱',
+        description: '读取固定快照', risk: 'read_only', snapshot_id: 9,
+      },
+      {
+        qualified_tool_id: 'role_capability_graph:explain', title: '解释岗位图谱',
+        description: '解释固定快照', mode: 'read', snapshot_id: 9,
+      },
+      { qualified_tool_id: 'role_capability_graph:iterate', risk: 'proposal' },
+    ] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
     return new Response(JSON.stringify({
-      package: { id: 4, role_title: 'LLM 应用工程师' },
-      snapshot: { id: 9, version: 2, root_hash: 'a'.repeat(64), validation: { stats: { nodes: 7, task: 2, capability: 2 } } },
+      snapshot_ref: { id: 9, root_hash: 'a'.repeat(64) },
+      result: { answer: '核心能力是设计可验证的 Agent 工作流。' },
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }) as typeof fetch
   try {
-    const result = await executeTutorAgentTool('read_role_capability_graph', { query: '核心能力' }, {
+    const options = {
       message: '这个岗位的核心能力是什么？', generate: async () => '', backendBase: 'http://backend.test',
       formalProjectContext: { project: { id: 31, name: '岗位项目' } } as any,
-    })
+    }
+    const discovery = await executeTutorAgentTool('discover_project_plugin_tools', { query: '岗位能力' }, options)
+    assert.equal((discovery.observation as any).tools.length, 2)
+    assert.equal((discovery.observation as any).tools.some((tool: any) => tool.qualified_tool_id.endsWith(':iterate')), false)
+
+    const result = await executeTutorAgentTool('call_project_plugin_tool', {
+      qualified_tool_id: 'role_capability_graph:read_graph', input: { query: '核心能力' },
+    }, options)
     assert.equal(result.run.status, 'completed')
     assert.equal((result.observation as any).snapshot_ref.root_hash, 'a'.repeat(64))
     assert.equal((result.observation as any).mastery_unchanged, true)
-    assert.deepEqual(calls, ['http://backend.test/api/role-capability/projects/31'])
+
+    const legacy = await executeTutorAgentTool('explain_role_capability', { query: '为什么需要评测能力？' }, options)
+    assert.equal((legacy.observation as any).qualified_tool_id, 'role_capability_graph:explain')
+    assert.equal((legacy.observation as any).compatibility_alias, 'explain_role_capability')
+    assert.deepEqual(calls, [
+      'http://backend.test/api/projects/31/plugin-tools?query=%E5%B2%97%E4%BD%8D%E8%83%BD%E5%8A%9B',
+      'http://backend.test/api/projects/31/plugin-tools?query=role_capability_graph%3Aread_graph',
+      'http://backend.test/api/projects/31/plugin-tools/role_capability_graph%3Aread_graph/calls',
+      'http://backend.test/api/projects/31/plugin-tools?query=role_capability_graph%3Aexplain',
+      'http://backend.test/api/projects/31/plugin-tools/role_capability_graph%3Aexplain/calls',
+    ])
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -1359,6 +1389,10 @@ test('project Tutor observes scoped project state and exposes proposals rather t
   assert.ok(exposed.includes('read_project_workspace'))
   assert.ok(exposed.includes('read_project_roadmap'))
   assert.ok(exposed.includes('read_project_sources'))
+  assert.ok(exposed.includes('discover_project_plugin_tools'))
+  assert.ok(exposed.includes('call_project_plugin_tool'))
+  assert.ok(!exposed.includes('read_role_capability_graph'))
+  assert.ok(!exposed.includes('explain_role_capability'))
   assert.ok(exposed.includes('propose_project_roadmap'))
   assert.ok(!exposed.some((name: string) => /apply|write|commit|delete|confirm/.test(name)))
 })
