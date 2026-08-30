@@ -21,6 +21,7 @@ import { inspectLearningVisualSpec } from './visual-spec/runtime.ts'
 import { visualSpecToArtifact } from './visual-spec/render.ts'
 import { deriveTeachingRequest } from './visual-spec/teaching-compiler.ts'
 import { teachingDerivationToSpec } from './visual-spec/teaching-spec.ts'
+import { compileDeclarativeAnimationPlan } from './visual-spec/declarative-animation.ts'
 
 export * from './visual-spec/types.ts'
 export {
@@ -36,7 +37,10 @@ export {
 } from './visual-spec/runtime.ts'
 export { visualSpecToArtifact } from './visual-spec/render.ts'
 
-function semanticSchemaHint(domain: LearningVisualDomain, abstraction: LearningVisualAbstraction) {
+type PlannerAbstraction = LearningVisualAbstraction | 'process_storyboard'
+
+function semanticSchemaHint(domain: LearningVisualDomain, abstraction: PlannerAbstraction) {
+  if (domain === 'computer' && abstraction === 'process_storyboard') return '{"type":"process_storyboard","stages":[{"id":"input","label":"输入","initial":true},{"id":"output","label":"输出","terminal":true}],"transitions":[{"id":"transform","from":"input","to":"output","event":"处理"}],"path":["transform"]}'
   if (domain === 'computer' && abstraction === 'protocol_sequence') return '{"type":"protocol_sequence","participants":[{"id":"client","label":"客户端"},{"id":"server","label":"服务端"}],"messages":[{"id":"m1","from":"client","to":"server","label":"请求","order":1}]}'
   if (domain === 'computer' && abstraction === 'state_machine') return '{"type":"state_machine","states":[{"id":"idle","label":"空闲","initial":true},{"id":"busy","label":"运行"}],"transitions":[{"id":"start","from":"idle","to":"busy","event":"start"}]}'
   if (domain === 'computer' && abstraction === 'data_structure') return '{"type":"data_structure","structure":"array","items":[{"id":"i0","label":"元素0","index":0}],"links":[],"pointers":[]}'
@@ -56,8 +60,12 @@ function semanticSchemaHint(domain: LearningVisualDomain, abstraction: LearningV
   return '{"type":"math_structure","terms":[{"id":"topic","label":"数学主题"}],"relations":[]}'
 }
 
-function visualPlannerPrompt(kind: LearningVisualKind, domain: LearningVisualDomain, abstraction: LearningVisualAbstraction) {
-  const timeline = kind === 'diagram'
+function visualPlannerPrompt(kind: LearningVisualKind, domain: LearningVisualDomain, abstraction: PlannerAbstraction) {
+  const timeline = abstraction === 'process_storyboard'
+    ? '这是声明式过程动画：只填写 semantic.stages、semantic.transitions 与一条连续 semantic.path。必须恰有一个 initial stage；path 中每个 transition 的 from 必须等于上一步到达状态。绝对不要输出 state、initialState、frames、invariants、finalState、patch、坐标或 prediction；运行时会验证连续性并确定性编译时间线。'
+    : kind === 'animation' && abstraction === 'protocol_sequence'
+      ? '这是声明式协议动画：只填写 semantic.participants 与带唯一 order 的 semantic.messages。绝对不要输出 state、initialState、frames、invariants、finalState、patch、坐标或 prediction；运行时按消息顺序确定性编译时间线。'
+      : kind === 'diagram'
     ? '图解只能有一个稳定 state，禁止 frames、initialState、finalState。state 使用 activeIds/currentStateId/activeLineId/values/pointers/positions/tensorShapes/expressions/series/stack/emittedMessageIds 的有限 JSON 数据。'
     : '动画必须给出 initialState、1-12 个 frames、invariants、finalState。每帧必须有 patches 且重放后真正改变状态；模型计划禁止 prediction，预测后揭晓只由可重新证明的确定性编译器产生。禁止只给 activeNodeIds/activeRelationIds。patch type 仅允许 send_message、transition_state、move_item、set_pointer、set_active_line、set_variable、push_stack、pop_stack、set_tensor_shape、set_parameter、set_probability_sample、replace_series、transform_object、replace_expression；patch 必须匹配当前 semantic.type，不能跨抽象借用。模型计划不得使用 set_trace_step 或任何可计算 semantic；这些由确定性编译器负责。'
   return `你是 LearnFlow 教学视觉语义规划器。只输出一个 JSON 对象，不输出 SVG、HTML、Mermaid、脚本、代码围栏或可执行表达式。\n\n目标：${kind}\n领域：${domain}\n抽象：${abstraction}\nsemantic 必须严格使用：${semanticSchemaHint(domain, abstraction)}\n\n共同字段：{"version":"${VISUAL_VERSION}","kind":"${kind}","title":"短标题","subtitle":"阅读提示","domain":"${domain}","abstraction":"${abstraction}","semantic":{...},"accessibility":{"summary":"完整文字摘要","readingOrder":["有效对象id"],"nonColorStateCue":"非颜色状态提示"},"explanation":"简短教学说明"}。${timeline}\n\n所有 ID 必须是小写 ASCII 稳定 ID；所有引用必须存在；关系缺失时不得猜测或自动连线。函数、分布和变换只能提供有限数值采样点，不能提供待 eval 的表达式。代码 trace 只是转义后的展示数据，绝不要求执行模型代码。无法确认的数值、关系或中间状态不要编造。`
@@ -208,22 +216,30 @@ export async function generateLearningVisual(
       syntaxRepairApplied = true
       stage('syntax_repaired')
     }
-    const payload = extracted.payload
+    const declarative = compileDeclarativeAnimationPlan(extracted.payload, kind)
+    const payload = declarative.payload
     let candidateSpec: LearningVisualSpec
     if (payload.nodes !== undefined || (Array.isArray(payload.frames) && payload.semantic === undefined)) {
       const legacy = parseLegacySpec(payload, kind, request)
       modelError = kind === 'animation' ? 'animation_requires_typed_semantic_patches' : 'legacy_visual_plan_not_v3'
       candidateSpec = legacyToSafeDiagram(legacy, request, modelError)
     } else {
-      candidateSpec = parseV2Spec(payload, kind, request, { initialRepairs: extracted.repairs })
+      candidateSpec = parseV2Spec(payload, kind, request, { initialRepairs: [...extracted.repairs, ...declarative.repairs] })
     }
-    assertRequestIntent(candidateSpec, inferred)
+    assertRequestIntent(candidateSpec, declarative.expectedAbstraction
+      ? { domain: inferred.domain, abstraction: declarative.expectedAbstraction }
+      : inferred)
     stage('validation_started')
     const inspected = inspectLearningVisualSpec(candidateSpec)
     if (inspected.status === 'rejected' || inspected.score < 68) throw new Error(`visual_spec_quality_gate:${inspected.issues.join(',')}`)
     return { spec: candidateSpec, rendered: visualSpecToArtifact(candidateSpec) }
   }
-  const initialPrompt = visualPlannerPrompt(kind, inferred.domain, inferred.abstraction)
+  const plannerAbstraction: PlannerAbstraction = kind === 'animation'
+    && inferred.domain === 'computer'
+    && ['system_structure', 'state_machine'].includes(inferred.abstraction)
+    ? 'process_storyboard'
+    : inferred.abstraction
+  const initialPrompt = visualPlannerPrompt(kind, inferred.domain, plannerAbstraction)
   const initialTimeoutMs = kind === 'animation' ? 90_000 : 60_000
   const initialStartedAt = Date.now()
   try {

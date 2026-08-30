@@ -688,6 +688,99 @@ test('planner punctuation repair salvages JSON without a second model call or se
   assert.equal(generated.quality.status, 'passed')
 })
 
+test('an unseen process compiles from declarative stages into a validated animation without authored frames', async () => {
+  let calls = 0
+  const generated = await generateLearningVisual('animation', '用动画演示编译器从源代码到中间表示的处理过程', async instructions => {
+    calls += 1
+    assert.match(instructions, /声明式过程动画/)
+    return JSON.stringify({
+      version: 'learnflow.visual.v3', kind: 'animation', title: '编译器前端流水线', subtitle: '按阶段观察表示变化',
+      domain: 'computer', abstraction: 'process_storyboard',
+      semantic: {
+        type: 'process_storyboard',
+        stages: [
+          { id: 'source', label: '源代码', initial: true },
+          { id: 'tokens', label: '词法单元' },
+          { id: 'ast', label: '语法树' },
+          { id: 'ir', label: '中间表示', terminal: true },
+        ],
+        transitions: [
+          { id: 'lex', from: 'source', to: 'tokens', event: '词法分析' },
+          { id: 'parse', from: 'tokens', to: 'ast', event: '语法分析' },
+          { id: 'lower', from: 'ast', to: 'ir', event: '降低表示' },
+        ],
+        path: ['lex', 'parse', 'lower'],
+      },
+      accessibility: { summary: '源代码依次经过词法分析、语法分析和降低表示形成中间表示。', readingOrder: ['source', 'tokens', 'ast', 'ir', 'lex', 'parse', 'lower'], nonColorStateCue: '当前阶段使用文字和粗边框标记。' },
+      explanation: '逐步观察编译器前端如何改变程序表示。',
+    })
+  })
+  assert.equal(calls, 1)
+  assert.equal(generated.spec.abstraction, 'state_machine')
+  assert.equal(generated.spec.semantic.type, 'state_machine')
+  assert.equal(generated.spec.kind, 'animation')
+  if (generated.spec.kind === 'animation') {
+    assert.equal(generated.spec.frames.length, 3)
+    assert.deepEqual(generated.spec.frames.map(frame => frame.patches[0]?.type), ['transition_state', 'transition_state', 'transition_state'])
+    assert.equal(generated.spec.finalState.currentStateId, 'ir')
+  }
+  assert.ok(generated.spec.generation.repairs.some(repair => repair.code === 'declarative_process_timeline_compiled'))
+  assert.equal(generated.quality.replayable, true)
+  assert.equal(generated.quality.verification.level, 'structural')
+  assert.equal(JSON.stringify(generated.spec).includes('positions'), true)
+  assert.doesNotMatch(JSON.stringify(generated.spec.frames), /"to":\s*\[/)
+})
+
+test('a semantic-only protocol plan receives a deterministic message timeline', async () => {
+  const generated = await generateLearningVisual('animation', '用动画演示一个新的请求、确认、完成协议', async instructions => {
+    assert.match(instructions, /声明式协议动画/)
+    return JSON.stringify({
+      version: 'learnflow.visual.v3', kind: 'animation', title: '三步协议', domain: 'computer', abstraction: 'protocol_sequence',
+      semantic: {
+        type: 'protocol_sequence',
+        participants: [{ id: 'client', label: '客户端' }, { id: 'server', label: '服务端' }],
+        messages: [
+          { id: 'request', from: 'client', to: 'server', label: '请求', order: 1 },
+          { id: 'ack', from: 'server', to: 'client', label: '确认', order: 2 },
+          { id: 'done', from: 'server', to: 'client', label: '完成', order: 3 },
+        ],
+      },
+      accessibility: { summary: '客户端请求，服务端确认并完成。', readingOrder: ['client', 'server', 'request', 'ack', 'done'], nonColorStateCue: '已发送消息带有顺序编号。' },
+      explanation: '按消息编号阅读。',
+    })
+  })
+  assert.equal(generated.spec.semantic.type, 'protocol_sequence')
+  assert.equal(generated.spec.kind, 'animation')
+  if (generated.spec.kind === 'animation') {
+    assert.equal(generated.spec.frames.length, 3)
+    assert.deepEqual(generated.spec.finalState.emittedMessageIds, ['request', 'ack', 'done'])
+  }
+  assert.ok(generated.spec.generation.repairs.some(repair => repair.code === 'declarative_protocol_timeline_compiled'))
+})
+
+test('declarative process continuity is validated before the one bounded repair', async () => {
+  let calls = 0
+  const base = {
+    version: 'learnflow.visual.v3', kind: 'animation', title: '发布过程', domain: 'computer', abstraction: 'process_storyboard',
+    semantic: {
+      type: 'process_storyboard',
+      stages: [{ id: 'draft', label: '草稿', initial: true }, { id: 'review', label: '审核' }, { id: 'live', label: '上线', terminal: true }],
+      transitions: [{ id: 'submit', from: 'draft', to: 'review', event: '提交' }, { id: 'publish', from: 'review', to: 'live', event: '发布' }],
+      path: ['publish'],
+    },
+    accessibility: { summary: '草稿经过审核后上线。', readingOrder: ['draft', 'review', 'live', 'submit', 'publish'], nonColorStateCue: '当前状态有文字标记。' },
+    explanation: '观察发布状态变化。',
+  }
+  const generated = await generateLearningVisual('animation', '用动画演示内容发布流程', async () => {
+    calls += 1
+    if (calls === 1) return JSON.stringify(base)
+    return JSON.stringify({ ...base, semantic: { ...base.semantic, path: ['submit', 'publish'] } })
+  })
+  assert.equal(calls, 2)
+  assert.match(generated.modelError || '', /visual_declarative_path_discontinuous/)
+  assert.deepEqual(generated.generation.attempts.map(attempt => attempt.status), ['rejected', 'accepted'])
+})
+
 test('an incomplete natural-frequency request never falls through to the model', async () => {
   let modelCalls = 0
   await assert.rejects(

@@ -50,6 +50,23 @@
   → 安全 SVG + scene manifest + quality report
 ```
 
+### 声明式动画语法
+
+确定性主题编译器负责可以从输入重新计算真值的机制；长尾主题不再要求模型直接手写帧、补丁或坐标。动画 Harness 另提供两种可复用的声明式宏：
+
+- `process_storyboard`：模型只声明 2–12 个阶段、带引用的转移和一条连续路径。运行时要求恰有一个初始阶段，逐项验证 `from` 与上一步终态一致，再编译成受限 `state_machine`、`transition_state` 帧、初态、终态和 invariant。
+- 声明式 `protocol_sequence`：模型只声明参与者和带唯一顺序的消息；运行时按顺序生成 `send_message` 帧和可重放终态。
+
+`process_storyboard` 是 planner 内部 IR，不是新的持久化 VisualSpec 版本，也不是新工具。编译后只保存既有 VisualSpec v3 的 `state_machine` 或 `protocol_sequence`，因此旧 renderer、播放器、持久化读取和安全门可以直接复用。模型提供的阶段名称和因果关系仍只具有 `structural` 证据等级；只有专用真值编译器的结果可以标记为 `derived_verified`。
+
+这形成三层泛化结构：
+
+1. 视觉原语：节点、边、状态、消息、矩阵、曲线和稳定对象身份。
+2. 声明式宏：把新主题的阶段/消息声明编译为受限时间线。
+3. 真值编译器：对矩阵、图算法、概率、事件循环、优化和卷积等可计算机制重新推导并复核答案。
+
+新增主题应优先复用前两层；只有存在可重算领域不变量且高频时，才增加第三层适配器。不得为每个课程主题增加专用工具或 renderer。
+
 `SceneIR` 不属于模型协议。它包含面板、矩阵格、图节点与边、表格、频数树、比例条、代码区、队列、函数图、切线和箭头等已布局对象。动画帧只选择确定性 trace step，不携带可伪造的距离、后验或下一迭代点。
 
 ## Prediction gate
