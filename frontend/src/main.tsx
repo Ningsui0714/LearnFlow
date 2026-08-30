@@ -129,6 +129,13 @@ import {
 import type { AgentDecisionSummary, AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
+import {
+  closeProjectPanel,
+  initialProjectPanelRequest,
+  requestProjectPanel,
+  toggleProjectPanel,
+  type ProjectPanelTab,
+} from './project-plugin-navigation'
 import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
 import {
   deletePaperSheet,
@@ -567,7 +574,7 @@ function App({ auth }: { auth: AuthGateSession }) {
   const [formalProjects, setFormalProjects] = useState<FormalProjectWorkspace['project'][]>([])
   const [formalProjectWorkspaces, setFormalProjectWorkspaces] = useState<Record<number, FormalProjectWorkspace>>({})
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({})
-  const [projectPanelConversationId, setProjectPanelConversationId] = useState('')
+  const [projectPanelRequest, setProjectPanelRequest] = useState(initialProjectPanelRequest)
   const formalChatHydrated = useRef(false)
   const formalChatFingerprints = useRef<Record<string, string>>({})
   const paperAttachIntents = useRef(new Map<string, string>())
@@ -838,7 +845,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     if (existing) {
       syncProjectWorkspace(projectWorkspace)
       openTab(chatTab({ ...existing, projectSources: projectWorkspace.sources }))
-      return
+      return existing.id
     }
     const now = Date.now()
     const base = createConversation()
@@ -880,14 +887,18 @@ function App({ auth }: { auth: AuthGateSession }) {
       tabs: [...previous.tabs, tab].slice(-12),
       activeTabId: tab.id,
     }))
+    return conversation.id
   }
 
-  const openProjectTutor = async (projectId: number) => {
+  const openProjectTutor = async (projectId: number, requestedTab?: ProjectPanelTab) => {
     try {
       const projectWorkspace = await loadFormalProject(projectId)
       syncProjectWorkspace(projectWorkspace)
       setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
-      openProjectConversation(projectWorkspace, 'tutor')
+      const conversationId = openProjectConversation(projectWorkspace, 'tutor')
+      if (requestedTab) {
+        setProjectPanelRequest(current => requestProjectPanel(current, conversationId, requestedTab))
+      }
     } catch (error) {
       setFormalError(error instanceof Error ? error.message : '项目加载失败')
     }
@@ -2417,7 +2428,8 @@ function App({ auth }: { auth: AuthGateSession }) {
         <header className="chat-heading">
           <h1>{conversation.title}</h1>
           <div className="chat-state-stack">
-            {conversation.projectId && <button type="button" className="project-panel-toggle" aria-expanded={projectPanelConversationId === conversation.id} onClick={() => setProjectPanelConversationId(current => current === conversation.id ? '' : conversation.id)}>项目面板</button>}
+            {conversation.projectId && <button type="button" className="project-panel-toggle" aria-expanded={projectPanelRequest.conversationId === conversation.id} onClick={() => setProjectPanelRequest(current => toggleProjectPanel(current, conversation.id))}>项目面板</button>}
+            {conversation.projectId && <button type="button" className="project-panel-toggle project-plugin-capability-toggle" aria-expanded={projectPanelRequest.conversationId === conversation.id} onClick={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}>插件能力</button>}
             <span className={`mode-badge mode-badge-${visibleMode}`}>
               {TUTOR_MODE_LABELS[visibleMode]}{visibleSubstateLabel ? ` · ${visibleSubstateLabel}` : ''}
             </span>
@@ -2939,11 +2951,13 @@ function App({ auth }: { auth: AuthGateSession }) {
             </div>
           </form>
         </div>
-        {conversation.projectId && projectPanelConversationId === conversation.id && (
+        {conversation.projectId && projectPanelRequest.conversationId === conversation.id && (
           <Suspense fallback={<aside className="project-context-panel"><div className="page-loading">正在读取项目…</div></aside>}>
             <ProjectContextPanel
               projectId={conversation.projectId}
-              onClose={() => setProjectPanelConversationId('')}
+              requestedTab={projectPanelRequest.requestedTab}
+              requestKey={projectPanelRequest.requestKey}
+              onClose={() => setProjectPanelRequest(closeProjectPanel)}
               onOpenCheckpoint={(projectWorkspace, checkpoint) => openProjectConversation(projectWorkspace, 'checkpoint', { checkpoint })}
               onOpenFree={(projectWorkspace, session) => openProjectConversation(projectWorkspace, 'free', { session })}
               onOpenFile={file => openTab(learningFileTab(file))}
@@ -2983,6 +2997,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                   <div className="sidebar-project-row">
                     <button type="button" className="project-folder-toggle" onClick={() => setExpandedProjects(previous => ({ ...previous, [project.id]: !expanded }))} aria-label={`${expanded ? '收起' : '展开'}${project.name}`}>{expanded ? '⌄' : '›'}</button>
                     <button type="button" className="project-folder-open" onClick={() => void openProjectTutor(project.id)}><span>▱</span><strong>{project.name}</strong></button>
+                    <button type="button" className="project-folder-plugin" onClick={() => void openProjectTutor(project.id, 'plugins')} aria-label={`打开${project.name}的插件能力`}>插件</button>
                     <button type="button" className="project-folder-add-chat" onClick={event => { event.stopPropagation(); void addProjectFreeConversation(project.id) }} disabled={formalBusyKey === `project-free:${project.id}`} aria-label={`在${project.name}中新建自由对话`} title="新建项目自由对话">＋</button>
                   </div>
                   {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(entry => <button
