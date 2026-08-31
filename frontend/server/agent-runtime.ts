@@ -33,6 +33,7 @@ import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
 import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
+import type { LearnFlowPluginRegistry, PluginActivationContext } from '../src/plugin-api.ts'
 import {
   completeVisualTeachingBundle,
   explanationOnlyVisualTeachingBundle,
@@ -135,6 +136,8 @@ export type TutorAgentRuntimeInput = {
     options: TutorAgentToolRuntimeOptions,
     meta?: { callId?: string; sequence?: number; sourceUrls?: string[]; searchSources?: SearchSource[]; videoCandidates?: LearningVideoCandidate[] },
   ) => Promise<TutorAgentToolExecution>
+  pluginRegistry?: LearnFlowPluginRegistry
+  activePluginIds?: string[]
   observe?: (event: AgentTurnStreamEvent) => void
 }
 
@@ -147,7 +150,7 @@ function compactDecisionText(value: unknown, fallback: string, limit = 220) {
   return (text || fallback).slice(0, limit)
 }
 
-function toolDecisionReason(call: AgentToolCall) {
+function toolDecisionReason(call: AgentToolCall, definitions: AgentToolDefinition[] = TUTOR_AGENT_TOOL_DEFINITIONS) {
   const reasons: Record<string, string> = {
     read_learner_context: '先确认与当前问题相关的基础、目标和已记录学习线索，避免使用不合适的讲法',
     read_learning_workspace: '先确认当前任务、练习、错题和复习位置，避免脱离正在进行的学习现场',
@@ -170,8 +173,24 @@ function toolDecisionReason(call: AgentToolCall) {
     generate_learning_diagram: '文字不足以同时表达当前对象与关系，因此补充一张可检查的结构图解',
     generate_learning_animation: '当前机制包含不可交换的状态变化，因此用可暂停的逐帧动画呈现',
   }
-  const definition = TUTOR_AGENT_TOOL_DEFINITIONS.find(tool => tool.name === call.name)
+  const definition = definitions.find(tool => tool.name === call.name)
   return compactDecisionText(reasons[call.name], `为完成当前学习动作，调用“${definition?.title || call.name}”取得结构化观察`)
+}
+
+function pluginActivation(input: TutorAgentRuntimeInput): PluginActivationContext {
+  return {
+    mode: input.mode,
+    activePluginIds: input.activePluginIds,
+    projectId: input.formalProjectContext?.project?.id,
+    checkpointId: input.formalProjectContext?.checkpoint_id || undefined,
+  }
+}
+
+function runtimeToolDefinitions(input: TutorAgentRuntimeInput) {
+  return [
+    ...TUTOR_AGENT_TOOL_DEFINITIONS,
+    ...(input.pluginRegistry?.toolDefinitions(pluginActivation(input)) || []),
+  ]
 }
 
 function toolDecisionNextAction(run: TutorToolRun) {
@@ -499,7 +518,7 @@ function availableTools(input: TutorAgentRuntimeInput) {
   const projectTutor = input.formalProjectContext?.tool_policy?.roadmap_tool_access === 'project_tutor'
   const latestMessage = [...input.messages].reverse().find(item => item.role === 'user')?.content || ''
   const visualIntent = resolveExplicitVisualIntent(input.toolChoice, latestMessage)
-  const tools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
+  const coreTools = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => (
     (!['lookup_learning_path_node', 'search_learning_path_graph', 'propose_personal_path_node'].includes(tool.name) || Boolean(input.learnerPathState))
     && (tool.name !== 'read_domain_knowledge' || Boolean(input.formalDomainKnowledgeContext))
     && (tool.name !== 'read_review_context' || Boolean(input.formalReviewContext))
@@ -514,6 +533,8 @@ function availableTools(input: TutorAgentRuntimeInput) {
     && (tool.name !== 'generate_learning_diagram' || visualIntent === 'diagram')
     && (tool.name !== 'generate_learning_animation' || visualIntent === 'animation')
   ))
+  const pluginTools = input.pluginRegistry?.toolDefinitions(pluginActivation(input)) || []
+  const tools = [...coreTools, ...pluginTools]
   if (visualIntent !== 'none') {
     const visualToolName = visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'
     return tools.filter(tool => tool.name === visualToolName)
@@ -539,7 +560,7 @@ function availableTools(input: TutorAgentRuntimeInput) {
     allowed.add('generate_similar_practice')
     allowed.add('inspect_practice_quality')
   }
-  return tools.filter(tool => allowed.has(tool.name))
+  return tools.filter(tool => allowed.has(tool.name) || Boolean(input.pluginRegistry?.resolveTool(tool.name, pluginActivation(input))))
 }
 
 function explicitToolCall(choice: TutorToolChoice, message: string, projectScoped = false): AgentToolCall | undefined {
@@ -742,6 +763,81 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       record({ phase: 'act', detail: labels[stage] || stage, status: 'started' })
     },
   }
+  const toolDefinitions = runtimeToolDefinitions(input)
+
+  const executeRegisteredPluginTool = async (
+    call: AgentToolCall,
+    callSequence: number,
+  ): Promise<TutorAgentToolExecution> => {
+    const activation = pluginActivation(input)
+    const registered = input.pluginRegistry?.resolveTool(call.name, activation)
+    if (!registered || !input.pluginRegistry) {
+      return executeTutorAgentTool(call.name, call.arguments, toolOptions, {
+        callId: call.id,
+        sequence: callSequence,
+      })
+    }
+    const pluginStartedAt = Date.now()
+    try {
+      const execution = await input.pluginRegistry.execute(call.name, call.arguments, {
+        ...activation,
+        scope: {
+          mode: input.mode,
+          conversationId: input.conversationId,
+          projectId: activation.projectId,
+          checkpointId: activation.checkpointId,
+        },
+        signal: AbortSignal.timeout(registered.contribution.timeoutMs || 30_000),
+      })
+      return {
+        run: {
+          id: `plugin-tool-${pluginStartedAt}-${callSequence}`,
+          kind: 'plugin',
+          status: 'completed',
+          title: execution.contribution.title,
+          detail: execution.result.summary,
+          observationSummary: execution.result.summary.slice(0, 500),
+          durationMs: Date.now() - pluginStartedAt,
+          startedAt: pluginStartedAt,
+          sequence: callSequence,
+          toolName: call.name,
+          toolCallId: call.id,
+          inputSummary: safeJson(call.arguments, 500),
+          plugin: {
+            pluginId: execution.pluginId,
+            toolId: execution.contribution.id,
+            result: execution.result,
+          },
+        },
+        observation: {
+          authority: 'learnflow_plugin_tool',
+          pluginId: execution.pluginId,
+          toolId: execution.contribution.id,
+          ...execution.result,
+        },
+      }
+    } catch (error) {
+      const message = compactDecisionText(error instanceof Error ? error.message : error, '插件工具调用失败', 500)
+      return {
+        run: {
+          id: `plugin-tool-${pluginStartedAt}-${callSequence}`,
+          kind: 'plugin',
+          status: 'failed',
+          title: registered.contribution.title,
+          detail: message,
+          observationSummary: '插件工具失败，未产生可信对象',
+          errorType: /plugin_contract_invalid|missing|unknown fields|unavailable/i.test(message) ? 'user_fixable' : 'unexpected',
+          durationMs: Date.now() - pluginStartedAt,
+          startedAt: pluginStartedAt,
+          sequence: callSequence,
+          toolName: call.name,
+          toolCallId: call.id,
+          inputSummary: safeJson(call.arguments, 500),
+        },
+        observation: { error: message, recoverableByModel: false },
+      }
+    }
+  }
 
   const execute = async (call: AgentToolCall, searchSources: SearchSource[] = []) => {
     if (
@@ -787,18 +883,28 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     toolCalls += 1
     input.observe?.({
       type: 'tool_started', toolCallId: call.id, toolName: call.name,
-      title: TUTOR_AGENT_TOOL_DEFINITIONS.find(tool => tool.name === call.name)?.title || call.name,
+      title: toolDefinitions.find(tool => tool.name === call.name)?.title || call.name,
       startedAt: Date.now(),
     })
     record({ phase: 'act', detail: `调用 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'started' })
     runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
-    const result = await (input.executeTool || executeTutorAgentTool)(call.name, call.arguments, toolOptions, {
-      callId: call.id,
-      sequence: toolCalls,
-      sourceUrls: searchSources.map(source => source.url),
-      searchSources,
-      videoCandidates: currentVideoCandidates,
-    })
+    const result = input.executeTool
+      ? await input.executeTool(call.name, call.arguments, toolOptions, {
+        callId: call.id,
+        sequence: toolCalls,
+        sourceUrls: searchSources.map(source => source.url),
+        searchSources,
+        videoCandidates: currentVideoCandidates,
+      })
+      : input.pluginRegistry?.resolveTool(call.name, pluginActivation(input))
+        ? await executeRegisteredPluginTool(call, toolCalls)
+        : await executeTutorAgentTool(call.name, call.arguments, toolOptions, {
+          callId: call.id,
+          sequence: toolCalls,
+          sourceUrls: searchSources.map(source => source.url),
+          searchSources,
+          videoCandidates: currentVideoCandidates,
+        })
     if (result.videoCandidates) currentVideoCandidates = result.videoCandidates
     runs.push(result.run)
     input.observe?.({ type: 'tool_completed', run: result.run })
@@ -809,7 +915,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       at: Date.now(),
       toolCallId: call.id,
       toolName: call.name,
-      reason: toolDecisionReason(call),
+      reason: toolDecisionReason(call, toolDefinitions),
       observation: compactDecisionText(
         result.run.observationSummary || result.run.detail,
         result.run.status === 'completed' ? '工具返回了结构化观察' : '工具没有返回可用观察',
@@ -980,7 +1086,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   )
   const tools = availableTools(input).filter(tool => !visualAlreadyAttempted || !['generate_learning_diagram', 'generate_learning_animation'].includes(tool.name))
   const modelVisibleToolNames = new Set(tools.map(tool => tool.name))
-  const instructions = buildTutorInstructions({
+  const coreInstructions = buildTutorInstructions({
     mode: input.mode,
     selectionContext: input.selectionContext,
     activeArtifactContext: input.activeArtifactContext,
@@ -988,6 +1094,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     learningPlanContext: input.learningPlanContext,
     toolContext: envelopePrompt(envelope),
   })
+  const pluginInstructions = input.pluginRegistry?.skillInstructions(pluginActivation(input)) || ''
+  const instructions = pluginInstructions ? `${coreInstructions}\n\n${pluginInstructions}` : coreInstructions
 
   let reply = ''
   let visualBrief: VisualTeachingBrief | undefined

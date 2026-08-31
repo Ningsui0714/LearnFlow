@@ -1,5 +1,6 @@
 import type { LearningPathPlanProposal, PersonalPathNodeProposal } from './learning-path-graph.ts'
 import type { ProjectLearningFileProposal, ProjectRoadmapProposal } from './project.ts'
+import type { PluginToolResult } from './plugin-api.ts'
 
 export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation'
 
@@ -68,7 +69,7 @@ export type VisualArtifact = {
 
 export type TutorToolRun = {
   id: string
-  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'assessment' | 'file' | 'search' | 'video' | 'image' | 'animation'
+  kind: 'memory' | 'workspace' | 'domain' | 'review' | 'path' | 'project' | 'assessment' | 'file' | 'search' | 'video' | 'image' | 'animation' | 'plugin'
   status: 'running' | 'completed' | 'failed'
   title: string
   detail: string
@@ -130,6 +131,11 @@ export type TutorToolRun = {
     checkpointId?: number
     questionCount?: number
     qualityStatus?: string
+  }
+  plugin?: {
+    pluginId: string
+    toolId: string
+    result: PluginToolResult
   }
 }
 

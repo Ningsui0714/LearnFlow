@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-31.2"
+REGISTRY_VERSION = "2026-08-31.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -208,6 +208,48 @@ class PublicationContract:
     lifecycle: str
     bindings: tuple[str, ...] = ()
     note: str = ""
+
+
+@dataclass(frozen=True)
+class PluginExtensionPointContract:
+    id: str
+    contribution: str
+    runtime_owner: str
+    namespace_rule: str
+    authority: str
+    restrictions: tuple[str, ...]
+    bindings: tuple[str, ...]
+
+
+PLUGIN_EXTENSION_POINTS = {
+    item.id: item
+    for item in (
+        PluginExtensionPointContract(
+            "tool", "versioned model-callable schema + trusted in-process handler", "tutor_agent",
+            "plugin_id__tool_id", "plugin handler may return observations or artifacts only",
+            ("read_only_or_artifact", "bounded_json_input_output", "no_kernel_write", "no_core_object_write"),
+            ("frontend:plugin.registry", "frontend:plugin.loader", "frontend:agent_runtime.run"),
+        ),
+        PluginExtensionPointContract(
+            "skill", "routing conditions + bounded Agent instructions + declared tool/object references", "tutor_agent",
+            "plugin_id:skill_id", "instructions guide plugin tool use but cannot replace a core pedagogical runtime",
+            ("no_fourth_primary_agent", "no_scoring_authority", "no_evidence_or_kernel_authority"),
+            ("frontend:plugin.registry", "frontend:agent_runtime.run"),
+        ),
+        PluginExtensionPointContract(
+            "object", "immutable versioned JSON envelope validated by the contributing plugin", "tutor_agent",
+            "plugin_id:object_type:object_id", "plugin object is a tool-result fact boundary, not a LearnFlow core-object authority",
+            ("json_only", "schema_version_required", "plugin_ownership_required", "no_mastery_inference"),
+            ("frontend:plugin.registry",),
+        ),
+        PluginExtensionPointContract(
+            "tool_renderer", "trusted client component selected by a declared renderer id", "tutor_agent",
+            "plugin_id:renderer_id", "renderer receives the validated tool result and has no tool or state-write capability",
+            ("no_html_injection", "no_script_payload", "generic_fallback_required", "conversation_output_only"),
+            ("frontend:plugin.renderer",),
+        ),
+    )
+}
 
 
 # Three primary contracts are responsibility families, not three competing
@@ -1508,6 +1550,8 @@ _API_BINDING_TARGETS = {
 
 _FRONTEND_HANDLER_TARGETS = {
     "frontend:agent_runtime.run": ("frontend/server/agent-runtime.ts", "runTutorAgentTurn", ""),
+    "frontend:plugin.registry": ("frontend/src/plugin-api.ts", "LearnFlowPluginRegistry", ""),
+    "frontend:plugin.loader": ("frontend/server/plugin-loader.ts", "loadLearnFlowPluginRegistry", ""),
     "frontend:visual.generate": ("frontend/server/learning-visual-spec.ts", "generateLearningVisual", ""),
     "frontend:visual_teaching.run": ("frontend/server/visual-teaching-skill.ts", "visualTeachingPrompt", ""),
     "frontend:paper.ancestors": ("frontend/src/paper-workbench.ts", "paperAncestorChain", ""),
@@ -1541,6 +1585,7 @@ _FRONTEND_HANDLER_TARGETS = {
 
 _FRONTEND_COMPONENT_TARGETS = {
     "workbench:vnext_chat": ("frontend/src/main.tsx", "App", "/chat/"),
+    "frontend:plugin.renderer": ("frontend/src/PluginToolResultView.tsx", "PluginToolResultView", "/chat/"),
     "workbench:vnext_learning_path": ("frontend/src/LearningPathPage.tsx", "LearningPathPage", "/learning-path"),
     "workbench:vnext_profile": ("frontend/src/LearnerProfilePage.tsx", "LearnerProfilePage", "/learner-profile"),
     "workbench:vnext_learning_files": ("frontend/src/LearningFilesPage.tsx", "LearningFilesPage", "/learning-files"),
@@ -2042,6 +2087,18 @@ def detect_learning_skill(message: str) -> SkillContract | None:
 
 def validate_registry() -> list[str]:
     errors: list[str] = []
+    if tuple(PLUGIN_EXTENSION_POINTS) != ("tool", "skill", "object", "tool_renderer"):
+        errors.append("plugin extension API must expose exactly tool, skill, object and tool_renderer")
+    for extension in PLUGIN_EXTENSION_POINTS.values():
+        if extension.runtime_owner not in AGENTS or not extension.namespace_rule or not extension.restrictions:
+            errors.append(f"invalid plugin extension point: {extension.id}")
+        if extension.id in {"tool", "skill", "object"} and not any(
+            boundary in extension.restrictions
+            for boundary in ("no_kernel_write", "no_evidence_or_kernel_authority", "no_mastery_inference")
+        ):
+            errors.append(f"plugin extension point lacks learner-state boundary: {extension.id}")
+        if not extension.bindings or any(binding not in IMPLEMENTATION_BINDINGS for binding in extension.bindings):
+            errors.append(f"plugin extension point lacks a valid implementation binding: {extension.id}")
     if len(AGENTS) != 3:
         errors.append("exactly three primary agent contracts are required")
     if tuple(CHAT_MODES) != ("free", "explain", "learn", "plan"):
@@ -2294,6 +2351,7 @@ def registry_manifest() -> dict[str, Any]:
             "tool_ontology": "ACI tools are Agent-callable affordances; harness, projection, policy and adapter objects are service-side infrastructure",
             "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
             "skill_spec_authority": "SkillSpec v3 with knowledge_requirements in architecture_registry.py -> backend runtime + generated frontend manifest; no handwritten frontend workflow copy",
+            "plugin_extension_authority": "trusted in-process Agent packages may contribute only namespaced tool, Agent skill, versioned JSON object and tool-result renderer contracts; the host validates and routes them generically and none can write kernels, evidence or core objects",
             "assessment_design_authority": "AssessmentBlueprint + Rubric are versioned learner-scoped proposals; generation is zero-target and deterministic grading remains Practice Agent authority",
         },
         "agents": [asdict(item) for item in AGENTS.values()],
@@ -2307,6 +2365,7 @@ def registry_manifest() -> dict[str, Any]:
         "skills": skill_manifest(binding_failures),
         "workbenches": workbench_manifest(binding_failures),
         "important_events": event_manifest(binding_failures),
+        "plugin_extension_points": [asdict(item) for item in PLUGIN_EXTENSION_POINTS.values()],
         "implementation_bindings": [
             {
                 **asdict(binding),

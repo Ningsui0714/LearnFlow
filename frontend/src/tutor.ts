@@ -473,6 +473,7 @@ export async function requestTutorReply(options: {
   domainSourceIds?: number[]
   conversationId?: string
   sheetId?: string
+  activePluginIds?: string[]
   onEvent?: (event: AgentTurnStreamEvent) => void
 }): Promise<AgentTurnResponse> {
   const controller = new AbortController()

@@ -39,6 +39,7 @@ import {
   type LearningTaskProjection,
 } from './learning'
 import VisualArtifact from './VisualArtifact'
+import PluginToolResultView from './PluginToolResultView'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
 import {
@@ -3233,6 +3234,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile,
         </div>
       )}
       {run.artifact && <VisualArtifact artifact={run.artifact} />}
+      {run.plugin && <PluginToolResultView run={run} />}
     </section>
   )
 }

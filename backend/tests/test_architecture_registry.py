@@ -17,6 +17,7 @@ from app.services.architecture_registry import (
     KERNEL_NAMES,
     LIFECYCLE_STATES,
     PUBLICATIONS,
+    PLUGIN_EXTENSION_POINTS,
     REGISTRY_VERSION,
     SKILLS,
     SKILL_KINDS,
@@ -43,7 +44,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-31.2"
+    assert REGISTRY_VERSION == "2026-08-31.4"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -70,6 +71,10 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     )
     assert "cannot imply mastery" in manifest["authority"]["domain_knowledge_authority"]
     assert manifest["authority"]["frontend_authority"].startswith("frontend/ is the only product frontend")
+    assert tuple(PLUGIN_EXTENSION_POINTS) == ("tool", "skill", "object", "tool_renderer")
+    assert [item["id"] for item in manifest["plugin_extension_points"]] == list(PLUGIN_EXTENSION_POINTS)
+    assert all(item["bindings"] for item in manifest["plugin_extension_points"])
+    assert "none can write kernels" in manifest["authority"]["plugin_extension_authority"]
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [
         "free", "explain", "learn", "plan",

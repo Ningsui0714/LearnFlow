@@ -18,6 +18,7 @@ import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
 import { createAccountCredentialResolver, type ModelCredential } from './server/account-model-credential.ts'
 import { buildBackendProxyHeaders } from './server/backend-proxy-security.ts'
 import { AI_LATENCY_BUDGETS } from './src/latency-budgets.ts'
+import { loadLearnFlowPluginRegistry } from './server/plugin-loader.ts'
 
 function loadTutorKey(mode: string): ModelCredential {
   const localEnv = loadEnv(mode, process.cwd(), '')
@@ -136,6 +137,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
     runtimeBridgeToken,
     legacyDevelopmentCredential: legacyKeyConfiguration,
   })
+  const pluginRegistryPromise = loadLearnFlowPluginRegistry()
 
   const callProvider = async (options: {
     endpoint: string
@@ -287,6 +289,11 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       const domainSourceIds = Array.isArray(input.domainSourceIds)
         ? [...new Set(input.domainSourceIds.filter(positiveInteger))].slice(0, 12) as number[]
         : []
+      const activePluginIds = Array.isArray(input.activePluginIds)
+        ? [...new Set(input.activePluginIds.filter((value): value is string => (
+          typeof value === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(value)
+        )))].slice(0, 16)
+        : undefined
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
       if (configurationIssue) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
@@ -470,6 +477,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         requestCookie: typeof request.headers.cookie === 'string' ? request.headers.cookie : undefined,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
+        pluginRegistry: await pluginRegistryPromise,
+        activePluginIds,
         generate,
         searchConfiguration,
         invokeProvider,

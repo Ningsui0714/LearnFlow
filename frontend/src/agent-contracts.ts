@@ -160,6 +160,7 @@ export type AgentTurnRequest = {
   formalProjectContext?: AgentProjectContext
   conversationId?: string
   sheetId?: string
+  activePluginIds?: string[]
 }
 
 export type AgentTurnResponse = {
