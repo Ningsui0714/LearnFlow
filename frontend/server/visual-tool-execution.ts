@@ -10,6 +10,7 @@ import {
 import { hasVisualTopic } from './visual-spec/intent-contract.ts'
 import type { VisualTeachingBrief } from '../src/visual-teaching.ts'
 import { visualTeachingContext } from './visual-teaching-skill.ts'
+import { compileVisualStoryboard, designAsciiStoryboard } from './visual-storyboard-tool.ts'
 
 export type ResolvedVisualRequest = {
   originalRequest: string
@@ -116,6 +117,20 @@ export async function executeLearningVisual(
   teachingBrief?: VisualTeachingBrief,
 ): Promise<{ generated: GeneratedLearningVisual; request: ResolvedVisualRequest }> {
   const request = resolveVisualRequest(query, messages)
+  if (teachingBrief?.storyboardContext) {
+    try {
+      const designed = await designAsciiStoryboard(teachingBrief.storyboardContext, generate)
+      return { generated: compileVisualStoryboard(designed, kind), request }
+    } catch (error) {
+      const generated = compileVisualStoryboard(teachingBrief.storyboardContext, kind)
+      generated.modelError = error instanceof Error ? error.message : 'ascii_storyboard_design_failed'
+      generated.degraded = true
+      generated.artifact.degraded = true
+      generated.artifact.status = 'degraded'
+      generated.artifact.fallbackUsed = true
+      return { generated, request }
+    }
+  }
   const preparedBrief = teachingBrief ? compact(visualTeachingContext(teachingBrief), 12_000) : ''
   const enrichedRequest = preparedBrief
     ? {

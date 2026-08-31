@@ -16,6 +16,7 @@ import {
   type ReadableLearningVisualSpec,
   type ReadableVisualStep,
   type ReplayableVisualArtifact,
+  type SemanticSceneSemantic,
   type StateMachineSemantic,
   type SystemStructureSemantic,
   type TensorShapeFlowSemantic,
@@ -287,7 +288,135 @@ function semanticGraph(spec: LearningVisualSpec, state: VisualStateSnapshot): { 
   return { nodes: [], edges: [] }
 }
 
+function semanticSceneSvg(
+  spec: LearningVisualSpec & { semantic: SemanticSceneSemantic },
+  state: VisualStateSnapshot,
+  stateCue: string,
+): RenderResult {
+  const visible = new Set(state.visibleIds || spec.semantic.entities.map(item => item.id))
+  const focus = new Set(state.focusIds || [])
+  const entities = spec.semantic.entities.filter(item => visible.has(item.id))
+  const relations = spec.semantic.relations.filter(item => visible.has(item.id) && visible.has(item.from) && visible.has(item.to))
+  const entityIds = new Set(entities.map(item => item.id))
+  const indegree = new Map(entities.map(item => [item.id, 0]))
+  const outgoing = new Map(entities.map(item => [item.id, [] as string[]]))
+  const incoming = new Map(entities.map(item => [item.id, [] as string[]]))
+  relations.forEach(relation => {
+    indegree.set(relation.to, (indegree.get(relation.to) || 0) + 1)
+    outgoing.get(relation.from)?.push(relation.to)
+    incoming.get(relation.to)?.push(relation.from)
+  })
+  const layers = new Map<string, number>()
+  const queue = entities.filter(item => (indegree.get(item.id) || 0) === 0).map(item => item.id)
+  queue.forEach(id => layers.set(id, 0))
+  while (queue.length) {
+    const current = queue.shift()!
+    for (const next of outgoing.get(current) || []) {
+      layers.set(next, Math.max(layers.get(next) || 0, (layers.get(current) || 0) + 1))
+      indegree.set(next, (indegree.get(next) || 0) - 1)
+      if (indegree.get(next) === 0) queue.push(next)
+    }
+  }
+  const hasUsefulGraph = relations.length >= Math.max(1, Math.floor(entities.length / 2)) && layers.size === entities.length
+  const positions = new Map<string, { x: number; y: number }>()
+  let maximumLaneSize = 1
+  if (hasUsefulGraph) {
+    const maxLayer = Math.max(0, ...layers.values())
+    const byLayer = new Map<number, typeof entities>()
+    entities.forEach(entity => {
+      const layer = layers.get(entity.id) || 0
+      byLayer.set(layer, [...(byLayer.get(layer) || []), entity])
+    })
+    const rank = new Map<string, number>()
+    for (let layer = 0; layer <= maxLayer; layer += 1) {
+      const items = [...(byLayer.get(layer) || [])]
+      if (layer > 0) items.sort((left, right) => {
+        const barycenter = (entityId: string) => {
+          const parents = incoming.get(entityId) || []
+          const parentRanks = parents.map(parent => rank.get(parent)).filter((value): value is number => value !== undefined)
+          return parentRanks.length ? parentRanks.reduce((sum, value) => sum + value, 0) / parentRanks.length : Number.MAX_SAFE_INTEGER
+        }
+        const delta = barycenter(left.id) - barycenter(right.id)
+        return delta || entities.findIndex(entity => entity.id === left.id) - entities.findIndex(entity => entity.id === right.id)
+      })
+      items.forEach((item, index) => rank.set(item.id, index))
+      maximumLaneSize = Math.max(maximumLaneSize, items.length)
+      items.forEach((item, index) => positions.set(item.id, {
+        x: 80 + (layer / Math.max(1, maxLayer)) * 640,
+        y: 90 + ((index + 0.5) / items.length) * 280,
+      }))
+    }
+  } else {
+    const activeGroups = spec.semantic.groups.filter(group => (state.groupMembers?.[group.id] || []).some(id => entityIds.has(id)))
+    const groupByEntity = new Map<string, string>()
+    activeGroups.forEach(group => (state.groupMembers?.[group.id] || []).forEach(id => {
+      if (entityIds.has(id) && !groupByEntity.has(id)) groupByEntity.set(id, group.id)
+    }))
+    const ungroupedIds = entities.filter(item => !groupByEntity.has(item.id)).map(item => item.id)
+    const lanes = activeGroups.length
+      ? [...activeGroups, ...(ungroupedIds.length ? [{ id: '__ungrouped', label: '', layout: 'row' as const }] : [])]
+      : [{ id: '__ungrouped', label: '', layout: 'row' as const }]
+    const laneWidth = 690 / Math.max(1, lanes.length)
+    lanes.forEach((group, laneIndex) => {
+      const declared = group.id === '__ungrouped'
+        ? ungroupedIds
+        : (state.orders?.[group.id] || state.groupMembers?.[group.id] || []).filter(id => entityIds.has(id))
+      if (group.id === '__ungrouped' && laneIndex > 0) declared.sort((left, right) => {
+        const connectedY = (entityId: string) => {
+          const neighbors = relations.flatMap(relation => relation.from === entityId ? [relation.to] : relation.to === entityId ? [relation.from] : [])
+          const values = neighbors.map(neighbor => positions.get(neighbor)?.y).filter((value): value is number => value !== undefined)
+          return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : Number.MAX_SAFE_INTEGER
+        }
+        const delta = connectedY(left) - connectedY(right)
+        return delta || entities.findIndex(entity => entity.id === left) - entities.findIndex(entity => entity.id === right)
+      })
+      maximumLaneSize = Math.max(maximumLaneSize, declared.length)
+      declared.forEach((id, index) => positions.set(id, {
+        x: 55 + laneIndex * laneWidth + laneWidth / 2,
+        y: 82 + ((index + 0.5) / Math.max(1, declared.length)) * 292,
+      }))
+    })
+    entities.filter(item => !positions.has(item.id)).forEach((item, index, rest) => positions.set(item.id, {
+      x: 70 + ((index + 1) / (rest.length + 1)) * 660,
+      y: 360,
+    }))
+  }
+  const groupSummary = spec.semantic.groups
+    .map(group => {
+      const members = (state.groupMembers?.[group.id] || []).filter(id => entityIds.has(id))
+      if (!members.length) return ''
+      const labels = members.map(id => spec.semantic.entities.find(item => item.id === id)?.label || id)
+      return `${group.label}: ${labels.join(' · ')}`
+    }).filter(Boolean).join('　|　')
+  const relationSvg = relations.map(relation => {
+    const from = positions.get(relation.from); const to = positions.get(relation.to)
+    if (!from || !to) return ''
+    const active = focus.has(relation.id)
+    const middleX = (from.x + to.x) / 2; const middleY = (from.y + to.y) / 2
+    return `<path d="M ${from.x} ${from.y} L ${to.x} ${to.y}" fill="none" stroke="${active ? '#765000' : '#71887c'}" stroke-width="${active ? 4 : 2}" ${active ? 'stroke-dasharray="8 4"' : ''} marker-end="url(#lf-arrow)"></path>${relation.label ? svgTextLines(relation.label, middleX, middleY - 8, { size: 9, color: '#52675c', lineLength: 14 }) : ''}`
+  }).join('')
+  const nodeWidth = maximumLaneSize >= 6 ? 92 : maximumLaneSize >= 5 ? 100 : 108
+  const nodeHeight = maximumLaneSize >= 6 ? 34 : maximumLaneSize >= 5 ? 46 : 60
+  const nodeSvg = entities.map(entity => {
+    const position = positions.get(entity.id)!
+    const active = focus.has(entity.id)
+    const properties = Object.entries(state.properties?.[entity.id] || {}).slice(0, 3).map(([key, value]) => `${key}=${String(value)}`).join(' · ')
+    const detail = properties || entity.detail || ''
+    const compactNode = nodeHeight <= 40
+    return `<g><rect x="${position.x - nodeWidth / 2}" y="${position.y - nodeHeight / 2}" width="${nodeWidth}" height="${nodeHeight}" rx="${entity.kind === 'value' ? nodeHeight / 2 : 12}" fill="${active ? '#fff0c4' : '#fff'}" stroke="${active ? '#765000' : '#68887a'}" stroke-width="${active ? 3.2 : 1.7}" ${active ? 'stroke-dasharray="7 3"' : ''}></rect>${active ? `<rect x="${position.x - 22}" y="${position.y - nodeHeight / 2 - 12}" width="44" height="16" rx="8" fill="#765000"></rect>${svgTextLines('当前', position.x, position.y - nodeHeight / 2, { size: 8, color: '#fff', lineLength: 6 })}` : ''}${svgTextLines(entity.label, position.x, position.y - (detail && !compactNode ? 6 : 0), { size: compactNode ? 10 : 12, lineLength: compactNode ? 12 : 10 })}${detail && !compactNode ? svgTextLines(detail, position.x, position.y + 14, { size: 8.5, weight: 520, color: '#687970', lineLength: 17 }) : ''}</g>`
+  }).join('')
+  const summary = groupSummary ? `<rect x="24" y="30" width="752" height="36" rx="11" fill="#edf5f0" stroke="#bfd2c7"></rect>${svgTextLines(groupSummary, 38, 51, { anchor: 'start', size: 10, weight: 650, lineLength: 96 })}` : ''
+  let collisions = 0
+  const positioned = [...positions.values()]
+  for (let left = 0; left < positioned.length; left += 1) for (let right = left + 1; right < positioned.length; right += 1) {
+    if (Math.abs(positioned[left].x - positioned[right].x) < nodeWidth + 4 && Math.abs(positioned[left].y - positioned[right].y) < nodeHeight + 4) collisions += 1
+  }
+  const outOfBounds = positioned.filter(item => item.x - nodeWidth / 2 < 18 || item.x + nodeWidth / 2 > 782 || item.y - nodeHeight / 2 < 72 || item.y + nodeHeight / 2 > 390).length
+  return { svg: svgShell(spec.title, spec.accessibility.summary, summary + relationSvg + nodeSvg, stateCue), collisions, outOfBounds }
+}
+
 function renderSpec(spec: LearningVisualSpec, state: VisualStateSnapshot, stateCue = ''): RenderResult {
+  if (spec.semantic.type === 'semantic_scene') return semanticSceneSvg(spec as LearningVisualSpec & { semantic: SemanticSceneSemantic }, state, stateCue)
   if (spec.semantic.type === 'convolution_trace') return convolutionSvg(spec as LearningVisualSpec & { semantic: ConvolutionTraceSemantic }, state, stateCue)
   if (isDerivedSemantic(spec.semantic)) return renderDerivedTeachingVisual(spec, state, stateCue)
   if (spec.semantic.type === 'protocol_sequence') return protocolSvg(spec as LearningVisualSpec & { semantic: ProtocolSequenceSemantic }, state, stateCue)

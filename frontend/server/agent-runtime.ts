@@ -1178,7 +1178,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             responseFormat: 'json_object',
           }), deadline, false)).trim()
           try {
-            visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage)
+            visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage, explanation)
             if (visualBrief.explanation !== explanation) throw new Error('visual_teaching_explanation_mismatch')
           } catch (firstError) {
             if (Date.now() >= deadline - 1_000) throw firstError
@@ -1197,7 +1197,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
               includeTools: false,
               responseFormat: 'json_object',
             }), deadline, false)).trim()
-            visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage)
+            visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage, explanation)
             if (visualBrief.explanation !== explanation) throw new Error('visual_teaching_explanation_mismatch')
           }
         } catch (briefError) {

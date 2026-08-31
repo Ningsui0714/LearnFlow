@@ -28,6 +28,7 @@ import {
   type OptimizationSemantic,
   type ProbabilitySemantic,
   type ProtocolSequenceSemantic,
+  type SemanticSceneSemantic,
   type ReadableLearningVisualSpec,
   type StateMachineSemantic,
   type SystemStructureSemantic,
@@ -55,7 +56,7 @@ const LEGACY_V2_VERSION = 'learnflow.visual.v2' as const
 const LEGACY_V2_PROMPT_VERSION = 'learnflow.visual-planner.v2' as const
 const LEGACY_V2_RENDERER_VERSION = 'learnflow.deterministic-svg.v2' as const
 const LEGACY_V2_ABSTRACTIONS = {
-  computer: new Set(['protocol_sequence', 'state_machine', 'data_structure', 'code_trace', 'tensor_shape_flow', 'system_structure']),
+  computer: new Set(['protocol_sequence', 'state_machine', 'data_structure', 'code_trace', 'tensor_shape_flow', 'semantic_scene', 'system_structure']),
   mathematics: new Set(['function', 'probability', 'transformation', 'derivation', 'math_structure']),
 } as const
 const LEGACY_V2_PATCH_TYPES = new Set([
@@ -242,6 +243,11 @@ export function cloneState(state: VisualStateSnapshot): VisualStateSnapshot {
     series: Object.fromEntries(Object.entries(state.series).map(([key, value]) => [key, value.map(item => [...item] as VisualPoint)])),
     stack: [...state.stack],
     emittedMessageIds: [...state.emittedMessageIds],
+    visibleIds: state.visibleIds === undefined ? undefined : [...state.visibleIds],
+    focusIds: state.focusIds === undefined ? undefined : [...state.focusIds],
+    groupMembers: state.groupMembers === undefined ? undefined : Object.fromEntries(Object.entries(state.groupMembers).map(([key, value]) => [key, [...value]])),
+    orders: state.orders === undefined ? undefined : Object.fromEntries(Object.entries(state.orders).map(([key, value]) => [key, [...value]])),
+    properties: state.properties === undefined ? undefined : Object.fromEntries(Object.entries(state.properties).map(([key, value]) => [key, { ...value }])),
   }
 }
 
@@ -558,6 +564,41 @@ function parseStructure(value: unknown, context: ParseContext): SystemStructureS
   return { type: 'system_structure', entities, relations }
 }
 
+function parseSemanticScene(value: unknown, context: ParseContext): SemanticSceneSemantic {
+  const source = record(value, 'semantic')
+  const entities = records(source.entities, 'semantic.entities', 2, 32).map((item, index) => ({
+    id: id(item.id, `semantic.entities[${index}].id`),
+    label: text(item.label, `semantic.entities[${index}].label`, 34, context),
+    kind: String(item.kind) as SemanticSceneSemantic['entities'][number]['kind'],
+    detail: compact(item.detail, 56, context, `semantic.entities[${index}].detail`) || undefined,
+  }))
+  entities.forEach((item, index) => {
+    if (!['item', 'actor', 'state', 'value', 'operator', 'result'].includes(item.kind)) throw new Error(`visual_spec_scene_entity_kind_invalid:${index}`)
+  })
+  uniqueIds(entities, 'semantic.entities')
+  const entityIds = new Set(entities.map(item => item.id))
+  const relations = optionalRecords(source.relations, 'semantic.relations', 48).map((item, index) => {
+    const output = {
+      id: id(item.id, `semantic.relations[${index}].id`), from: id(item.from, `semantic.relations[${index}].from`),
+      to: id(item.to, `semantic.relations[${index}].to`), label: compact(item.label, 32, context, `semantic.relations[${index}].label`) || undefined,
+      kind: String(item.kind) as SemanticSceneSemantic['relations'][number]['kind'],
+    }
+    if (!['flow', 'link', 'membership', 'comparison', 'message'].includes(output.kind)) throw new Error(`visual_spec_scene_relation_kind_invalid:${index}`)
+    assertReferences([output.from, output.to], entityIds, `semantic.relations[${index}]`)
+    return output
+  })
+  uniqueIds(relations, 'semantic.relations')
+  const groups = optionalRecords(source.groups, 'semantic.groups', 12).map((item, index) => ({
+    id: id(item.id, `semantic.groups[${index}].id`), label: text(item.label, `semantic.groups[${index}].label`, 28, context),
+    layout: String(item.layout) as SemanticSceneSemantic['groups'][number]['layout'],
+  }))
+  groups.forEach((item, index) => {
+    if (!['row', 'column', 'cluster'].includes(item.layout)) throw new Error(`visual_spec_scene_group_layout_invalid:${index}`)
+  })
+  uniqueIds(groups, 'semantic.groups')
+  return { type: 'semantic_scene', entities, relations, groups }
+}
+
 function parseFunction(value: unknown, context: ParseContext): FunctionSemantic {
   const source = record(value, 'semantic')
   const axes = record(source.axes, 'semantic.axes')
@@ -810,6 +851,7 @@ function parseSemantic(domain: LearningVisualDomain, abstraction: LearningVisual
     if (abstraction === 'convolution_trace') return parseConvolution(value, context)
     if (abstraction === 'graph_algorithm') return parseGraphAlgorithm(value, context)
     if (abstraction === 'event_loop') return parseEventLoop(value, context)
+    if (abstraction === 'semantic_scene') return parseSemanticScene(value, context)
     if (abstraction === 'system_structure') return parseStructure(value, context)
   } else {
     if (abstraction === 'function') return parseFunction(value, context)
@@ -836,6 +878,7 @@ export function entityIdsForSemantic(semantic: ComputerVisualSemantic | Mathemat
     case 'convolution_trace': add([{ id: semantic.id }, semantic.input, semantic.kernel, { id: semantic.outputId }]); break
     case 'graph_algorithm': add([{ id: semantic.id }]); add(semantic.nodes); add(semantic.edges); break
     case 'event_loop': add([{ id: semantic.id }]); add(semantic.lines); add(semantic.operations); break
+    case 'semantic_scene': add(semantic.entities); add(semantic.relations); add(semantic.groups); break
     case 'system_structure': add(semantic.entities); add(semantic.relations); break
     case 'function': add(semantic.series); add(semantic.parameters); break
     case 'probability': add(semantic.samples); break
@@ -878,6 +921,22 @@ function parseState(value: unknown, path: string, references: Set<string>, conte
   const emittedMessageIds = source.emittedMessageIds === undefined ? [] : ids(source.emittedMessageIds, `${path}.emittedMessageIds`, 16)
   assertReferences(stack, references, `${path}.stack`)
   assertReferences(emittedMessageIds, references, `${path}.emittedMessageIds`)
+  const visibleIds = source.visibleIds === undefined ? undefined : ids(source.visibleIds, `${path}.visibleIds`, 64)
+  const focusIds = source.focusIds === undefined ? undefined : ids(source.focusIds, `${path}.focusIds`, 24)
+  const groupMembers = source.groupMembers === undefined ? undefined : Object.fromEntries(Object.entries(record(source.groupMembers, `${path}.groupMembers`)).map(([key, value]) => [id(key, `${path}.groupMembers.${key}`), ids(value, `${path}.groupMembers.${key}`, 32)]))
+  const orders = source.orders === undefined ? undefined : Object.fromEntries(Object.entries(record(source.orders, `${path}.orders`)).map(([key, value]) => [id(key, `${path}.orders.${key}`), ids(value, `${path}.orders.${key}`, 32)]))
+  const properties = source.properties === undefined ? undefined : Object.fromEntries(Object.entries(record(source.properties, `${path}.properties`)).map(([key, value]) => [id(key, `${path}.properties.${key}`), Object.fromEntries(Object.entries(record(value, `${path}.properties.${key}`)).slice(0, 8).map(([propertyKey, propertyValue]) => [id(propertyKey, `${path}.properties.${key}.${propertyKey}`), scalar(propertyValue, `${path}.properties.${key}.${propertyKey}`, context)]))]))
+  if (visibleIds) assertReferences(visibleIds, references, `${path}.visibleIds`)
+  if (focusIds) assertReferences(focusIds, references, `${path}.focusIds`)
+  Object.entries(groupMembers || {}).forEach(([groupId, members]) => {
+    assertReferences([groupId], references, `${path}.groupMembers`)
+    assertReferences(members, references, `${path}.groupMembers.${groupId}`)
+  })
+  Object.entries(orders || {}).forEach(([groupId, members]) => {
+    assertReferences([groupId], references, `${path}.orders`)
+    assertReferences(members, references, `${path}.orders.${groupId}`)
+  })
+  Object.keys(properties || {}).forEach(targetId => assertReferences([targetId], references, `${path}.properties`))
   return {
     activeIds,
     currentStateId,
@@ -894,6 +953,11 @@ function parseState(value: unknown, path: string, references: Set<string>, conte
     series: parseMap(source.series, `${path}.series`, references, (item, itemPath) => points(item, itemPath, 1, MAX_POINTS)),
     stack,
     emittedMessageIds,
+    visibleIds,
+    focusIds,
+    groupMembers,
+    orders,
+    properties,
   }
 }
 
@@ -953,6 +1017,32 @@ function assertPatchMatchesSemantic(
     if (patch.type !== 'move_item') return notAllowed()
     if (!has(semantic.entities, patch.itemId)) targetInvalid(patch.itemId)
     return
+  }
+  if (semantic.type === 'semantic_scene') {
+    const entityIds = new Set(semantic.entities.map(item => item.id))
+    const relationIds = new Set(semantic.relations.map(item => item.id))
+    const groupIds = new Set(semantic.groups.map(item => item.id))
+    if (patch.type === 'set_visibility') {
+      if (!entityIds.has(patch.targetId) && !relationIds.has(patch.targetId)) targetInvalid(patch.targetId)
+      return
+    }
+    if (patch.type === 'set_focus') {
+      patch.targetIds.forEach(target => {
+        if (!entityIds.has(target) && !relationIds.has(target) && !groupIds.has(target)) targetInvalid(target)
+      })
+      return
+    }
+    if (patch.type === 'set_property') {
+      if (!entityIds.has(patch.targetId) && !groupIds.has(patch.targetId)) targetInvalid(patch.targetId)
+      return
+    }
+    if (patch.type === 'set_group_members' || patch.type === 'set_order') {
+      if (!groupIds.has(patch.groupId)) targetInvalid(patch.groupId)
+      const itemIds = patch.type === 'set_order' ? patch.itemIds : patch.memberIds
+      itemIds.forEach(target => { if (!entityIds.has(target)) targetInvalid(target) })
+      return
+    }
+    return notAllowed()
   }
   if (semantic.type === 'function') {
     if (patch.type === 'set_parameter') {
@@ -1033,6 +1123,11 @@ function parsePatch(
   else if (type === 'replace_series') patch = { type, seriesId: ref(source.seriesId, 'seriesId'), points: points(source.points, `${path}.points`, 2, MAX_POINTS) }
   else if (type === 'transform_object') patch = { type, objectId: ref(source.objectId, 'objectId'), points: points(source.points, `${path}.points`, 1, 24) }
   else if (type === 'set_trace_step') patch = { type, semanticId: ref(source.semanticId, 'semanticId'), step: integer(source.step, `${path}.step`, 0, 32) }
+  else if (type === 'set_visibility') patch = { type, targetId: ref(source.targetId, 'targetId'), visible: source.visible === true }
+  else if (type === 'set_focus') patch = { type, targetIds: ids(source.targetIds, `${path}.targetIds`, 16) }
+  else if (type === 'set_property') patch = { type, targetId: ref(source.targetId, 'targetId'), key: id(source.key, `${path}.key`), value: scalar(source.value, `${path}.value`, context) }
+  else if (type === 'set_group_members') patch = { type, groupId: ref(source.groupId, 'groupId'), memberIds: ids(source.memberIds, `${path}.memberIds`, 32) }
+  else if (type === 'set_order') patch = { type, groupId: ref(source.groupId, 'groupId'), itemIds: ids(source.itemIds, `${path}.itemIds`, 32) }
   if (type === 'replace_expression') {
     const expression = text(source.expression, `${path}.expression`, 120, context)
     if (FORBIDDEN_EXECUTABLE.test(expression)) throw new Error(`visual_spec_executable_content_rejected:${path}.expression`)
@@ -1115,6 +1210,7 @@ function readingOrder(semantic: ComputerVisualSemantic | MathematicsVisualSemant
     case 'convolution_trace': return [semantic.id, semantic.input.id, semantic.kernel.id, semantic.outputId]
     case 'graph_algorithm': return [semantic.id, ...semantic.nodes.map(item => item.id), ...semantic.edges.map(item => item.id)]
     case 'event_loop': return [semantic.id, ...semantic.lines.map(item => item.id), ...semantic.operations.map(item => item.id)]
+    case 'semantic_scene': return [...semantic.entities.map(item => item.id), ...semantic.relations.map(item => item.id), ...semantic.groups.map(item => item.id)]
     case 'system_structure': return semantic.entities.map(item => item.id)
     case 'function': return [...semantic.series.map(item => item.id), ...semantic.parameters.map(item => item.id)]
     case 'probability': return semantic.samples.map(item => item.id)
@@ -1157,7 +1253,7 @@ function parseStoredRepairs(value: unknown): VisualRepair[] {
 function parseStoredGeneration(value: unknown): VisualGenerationReport {
   const source = record(value, 'generation')
   const origin = String(source.source)
-  if (!['model_plan', 'deterministic_compiler', 'deterministic_template', 'legacy_reader'].includes(origin)) throw new Error('visual_spec_generation_source_invalid')
+  if (!['model_plan', 'context_compiler', 'deterministic_compiler', 'deterministic_template', 'legacy_reader'].includes(origin)) throw new Error('visual_spec_generation_source_invalid')
   if (typeof source.plannerSucceeded !== 'boolean' || typeof source.degraded !== 'boolean') throw new Error('visual_spec_generation_status_invalid')
   const degradedTo = source.degradedTo === undefined ? undefined : String(source.degradedTo)
   if (degradedTo && !['diagram', 'storyboard', 'deterministic_animation'].includes(degradedTo)) throw new Error('visual_spec_generation_degraded_to_invalid')
@@ -1167,7 +1263,7 @@ function parseStoredGeneration(value: unknown): VisualGenerationReport {
     id: text(compilerSource.id, 'generation.compiler.id', 100, { repairs: [] }),
     version: text(compilerSource.version, 'generation.compiler.version', 40, { repairs: [] }),
   } : undefined
-  if (source.plannerSucceeded && (source.degraded || degradedTo || modelError || !['model_plan', 'deterministic_compiler'].includes(origin))) throw new Error('visual_spec_generation_success_claim_invalid')
+  if (source.plannerSucceeded && (source.degraded || degradedTo || modelError || !['model_plan', 'context_compiler', 'deterministic_compiler'].includes(origin))) throw new Error('visual_spec_generation_success_claim_invalid')
   if (origin === 'deterministic_compiler' && !compiler) throw new Error('visual_spec_generation_compiler_required')
   if (origin === 'deterministic_compiler' && compiler
     && (compiler.id !== TEACHING_COMPILER_ID || compiler.version !== TEACHING_COMPILER_VERSION)) {

@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-31.5"
+REGISTRY_VERSION = "2026-08-31.6"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -393,11 +393,11 @@ TOOLS = {
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
-                     (), (), "explicit learner visual intent -> visual_teaching_composition commits an independently valid explanation and validates VisualBrief -> exact/illustrative deterministic compiler including convolution_trace | long-tail provider-native JSON plan -> request-derived topic coverage + minimum process substance -> scalar-preserving local punctuation repair -> at most one budgeted model repair -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG + bounded frame grounding for Tutor claims; renderer failure terminates as explanation_only and cannot revoke the committed explanation; each stage is observable and no requested visual may drift into another modality"),
+                     (), (), "explicit learner visual intent -> independently valid explanation -> semantic VisualStoryboardContext -> deterministic replay and assertions -> read-only complete frame snapshots -> model-designed ASCII canvases and entity anchors -> object coverage, size and control-character gates -> inspectable ASCII artifact; omitted persistent objects enter a disclosed generic state ledger and mark the artifact degraded; model failure uses a disclosed generic ASCII state-list fallback and cannot revoke the explanation; legacy VisualSpec/SVG remains a non-storyboard compatibility path; zero learner-state write"),
         ToolContract("learning_diagram_generator", "Learning Diagram Generator", "learning_design_agent", "vnext", "artifact",
-                     (), (), "explicit diagram intent -> computer/math abstraction selection -> validated useful VisualSpec -> deterministic static SVG; zero learner-state write"),
+                     (), (), "explicit diagram intent + validated VisualStoryboardContext -> deterministic semantic replay -> final complete state snapshot -> model-designed ASCII canvas + object coverage and safety gates; legacy non-storyboard VisualSpec may still render deterministic static SVG; zero learner-state write"),
         ToolContract("learning_animation_generator", "Learning Animation Generator", "learning_design_agent", "vnext", "artifact",
-                     (), (), "explicit animation intent + recoverable topic -> request-specific state-changing computer/math process with at least two transitions for process storyboards -> validated VisualSpec frames -> deterministic inspectable SVG timeline + truthful bounded Tutor grounding; zero learner-state write"),
+                     (), (), "explicit animation intent + validated VisualStoryboardContext -> stable-ID state-changing operations with at least two meaningful transitions -> assertion-checked replay -> complete ASCII frame snapshots with stable object anchors and learner-controlled playback; the Tool validates supplied semantics and the ASCII Designer owns only spatial presentation; zero learner-state write"),
         ToolContract("selection_followup_context", "Selection Follow-up Context Assembler", "tutor_agent", "vnext", "orchestration",
                      (), (), "main conversation + ancestor sheets -> current branch context; no learner-state write"),
         ToolContract("vnext_learning_task_runtime", "vNext In-chat Learning Task Runtime", "tutor_agent", "vnext", "orchestration",
@@ -983,8 +983,8 @@ SKILLS = {
         SkillContract(
             "visual_teaching_composition", "讲解优先的视觉教学编排", "learning_design_agent",
             ("safe_visual_generation", "learning_diagram_generator", "learning_animation_generator", "teaching_contract_gate"),
-            "VisualTeachingBundle = independently committed TeachingExplanationArtifact + validated VisualBrief + optional VisualArtifact; renderer failure is a legal explanation_only terminal",
-            "Learning Design owns explanation and brief candidates; Harness owns commit/state/failure semantics; deterministic visual tools only compile, validate and render; no output is mastery evidence",
+            "VisualTeachingBundle = independently committed TeachingExplanationArtifact + validated VisualStoryboardContext/legacy VisualBrief + optional VisualArtifact; renderer failure is a legal explanation_only terminal",
+            "Learning Design owns explanation and semantic context candidates; Harness owns commit/state/failure semantics; ASCII Designer owns only spatial presentation; deterministic visual tools validate references, replay, assertions and object coverage; no output is mastery evidence",
             "vnext",
             description="先形成并保留可独立学习的讲解，再按对象、关系、状态和变化生成图解或动画；视觉失败不能撤销讲解。",
             best_for=("明确要求知识图解", "明确要求逐帧动画", "关系或状态变化需要可检查视觉增强"),
@@ -1553,6 +1553,8 @@ _FRONTEND_HANDLER_TARGETS = {
     "frontend:plugin.registry": ("frontend/src/plugin-api.ts", "LearnFlowPluginRegistry", ""),
     "frontend:plugin.loader": ("frontend/server/plugin-loader.ts", "loadLearnFlowPluginRegistry", ""),
     "frontend:visual.generate": ("frontend/server/learning-visual-spec.ts", "generateLearningVisual", ""),
+    "frontend:visual_storyboard.compile": ("frontend/server/visual-storyboard-tool.ts", "compileVisualStoryboard", ""),
+    "frontend:visual_storyboard.design_ascii": ("frontend/server/visual-storyboard-tool.ts", "designAsciiStoryboard", ""),
     "frontend:visual_teaching.run": ("frontend/server/visual-teaching-skill.ts", "visualTeachingPrompt", ""),
     "frontend:paper.ancestors": ("frontend/src/paper-workbench.ts", "paperAncestorChain", ""),
     "frontend:learning.create": ("frontend/src/learning.ts", "createLearningTask", ""),
@@ -1660,9 +1662,9 @@ _TOOL_BINDING_IDS = {
     "domain_knowledge_packet_compiler": ("py:domain_packet.compile", "api:knowledge_library.web_evidence"),
     "source_integrity_monitor": ("py:source_integrity.inspect", "api:vnext_projects.source_health"),
     "checkpoint_delivery_readiness": ("py:delivery_readiness.read",),
-    "safe_visual_generation": ("frontend:visual.generate", "api:agent.visual_plan"),
+    "safe_visual_generation": ("frontend:visual_storyboard.compile", "frontend:visual_storyboard.design_ascii", "frontend:visual.generate", "api:agent.visual_plan"),
     "learning_diagram_generator": ("frontend:tool:generate_learning_diagram",),
-    "learning_animation_generator": ("frontend:tool:generate_learning_animation",),
+    "learning_animation_generator": ("frontend:tool:generate_learning_animation", "frontend:visual_storyboard.design_ascii", "frontend:visual_storyboard.compile"),
     "selection_followup_context": ("frontend:paper.ancestors",),
     "vnext_learning_task_runtime": ("py:learning_skill.prepare",),
     "vnext_learning_plan_runtime": ("frontend:planning.create",),
@@ -1758,7 +1760,7 @@ _SKILL_BINDING_IDS = {
     "learning_resource_curation": ("frontend:agent_runtime.run", "frontend:tool:search_computer_knowledge"),
     "project_apprenticeship_orchestration": ("api:vnext_projects.context", "api:vnext_projects.apply_roadmap"),
     "evidence_grounded_teaching": ("py:lecture.agent",),
-    "visual_teaching_composition": ("frontend:visual_teaching.run", "frontend:agent_runtime.run", "frontend:visual.generate"),
+    "visual_teaching_composition": ("frontend:visual_teaching.run", "frontend:agent_runtime.run", "frontend:visual_storyboard.design_ascii", "frontend:visual_storyboard.compile", "frontend:visual.generate"),
     "practice_verification": ("api:phase3.submit_concept", "api:phase3.submit_exercise"),
     "assessment_blueprint_design": ("py:assessment.create",),
     "dynamic_practice_loop": ("py:practice.create", "py:practice.grade"),

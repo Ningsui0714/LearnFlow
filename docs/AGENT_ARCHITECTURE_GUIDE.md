@@ -1,8 +1,12 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-31.6`）：`visual_teaching_composition` 的视觉执行改为“语义 Skill → 确定性状态重放 → ASCII Designer → Tool 验证”。Skill 必须先提供可独立成立的讲解，再只描述对象、关系、初始状态、逐帧状态变化与事实边界；Designer 接收 Tool 重放后的完整帧快照，拥有空间布局和帧间节奏自由，但只可提交 ASCII 画布及实体锚点。Tool 逐帧验证主体对象覆盖、引用、断言、尺寸和控制字符；遗漏的持久对象只可补入显式状态台账并标记 degraded，模型失败则显式降级为通用 ASCII 状态清单。视觉失败不撤销已提交讲解，不新增 Agent、EvidenceEvent、Kernel writer 或数据库迁移。
+
 Contract impact（`2026-08-31.5`）：`learnflow.plugin-api.v1` 完成首个官方岗位图谱消费包。通用客户端贡献增加可选名称、描述和图标，宿主据此在对话选项栏动态显示已安装插件，并把当前对话选择作为 `activePluginIds` 传给 Tutor；宿主不登记岗位插件 ID、对象枚举或 Renderer 分支。岗位包在插件内部按目录发现，固定 `packageId + packageVersion + snapshotId + rootHash`，校验组件 hash 后只开放六个有界只读工具、一个操作 Skill、五类版本化 Plugin Object 与五个 ToolRun Renderer。解释仍由 Tutor 负责；冷启动、迭代、发布、数据库和学习状态写入均未接入。
 
 Contract impact（`2026-08-31.4`）：新增极小的内置 Agent Package 扩展面，只开放 namespaced Tool、Agent Skill、版本化 JSON Plugin Object 与对话 ToolRun Renderer。插件 Skill 只提供路由条件和工具操作说明，不成为可选择教学法或第四类主 Agent；Tool 第一版只允许只读/产物结果；Object 不进入核心对象或学习证据；Renderer 只读取已校验结果，缺失时回退通用对象卡。宿主通过目录发现和注册表合并贡献，不按插件 ID、岗位、对象类型或图表类型写产品分支。无插件进程、工作台、数据库、Snapshot、Kernel writer 或 EventContract。
+
+Contract impact（`2026-08-31.3`）：Learning Design 的 `visual_teaching_composition` 现在把“教学决定”和“确定性渲染”明确分层。Skill 在讲解已经独立提交后生成 `learnflow.visual-storyboard.v1`：稳定对象、关系、分组、初始状态、类型化操作、逐帧断言、学习目标和事实边界；Tool 只验证引用、重放状态、检查断言、布局并渲染，不从短提示猜主题，也不保存或复制讲解正文。视觉失败仍进入 `explanation_only`，已提交讲解保持有效。旧 VisualBrief/VisualSpec v3 保持兼容；无新增 Agent、EventContract、Kernel writer 或数据库迁移。
 
 Contract impact（`2026-08-31.2`）：Tutor 的动态上下文继续由“有 scope 的五核只读投影 + 领域知识 Packet + 学习路径/正式文件/插件等其他增强”组成；领域增强不建立第二套用户画像。Learning Design 消费的 `domain-knowledge-packet-v2` 把事实 Claim、带归因真人观点、来源多维画像和覆盖依据分开。Harness 以类型化 Chunk 和 RRF 进行确定性召回；模型只可帮助理解查询或表达候选，不决定来源晋升、关键覆盖、项目基线或掌握状态。规划态推荐只把来源推进到 `recommended`，学习者显式确认后才能进入项目并由基线固定到不可变 SourceVersion。来源读取、推荐、晋升、固定和失效仍全部为零 Kernel target，不新增主 Agent、Kernel writer 或数据库表。
 
@@ -291,9 +295,11 @@ EvidenceEvent 网关。
 必须拒绝该草稿，不能用确定性补句掩盖安全问题。
 
 显式图解或动画请求是上述草稿协议的一个受限例外：`visual_teaching_composition` 先生成
-`TeachingExplanationArtifact + VisualBrief`，Harness 通过结构门后发送 `teaching_segment_committed`。
+`TeachingExplanationArtifact`，Harness 提交该讲解后，再从已提交讲解生成 `VisualStoryboardContext`（旧请求可继续使用 VisualBrief）。
+上下文必须包含稳定对象 ID、关系、分组、初始可见状态、类型化状态操作、逐帧可执行断言和事实边界；
+Tool 只消费已校验上下文，不得自行补写教学策略或从题目关键词选择硬编码主题模板。
 这个教学段不再属于可撤销草稿；之后的 `text_reset` 只能回到已提交讲解，不能清空它。图解/动画 Tool
-只消费已校验 Brief，不得自己决定教学策略。视觉成功形成 `bundle_ready`，任何视觉阶段失败形成
+只消费已校验 Context（或兼容 VisualBrief），不得自己决定教学策略。视觉成功形成 `bundle_ready`，任何视觉阶段失败形成
 `explanation_only`；两者都是 Playbook 的合法终态，且都不产生掌握证据。Desktop 必须先让正式 Tutor
 回复持久化，再异步/顺序调用视觉增强，禁止把回复和视觉放在同一失败域并行提交。
 

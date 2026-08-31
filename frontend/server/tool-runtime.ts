@@ -1577,7 +1577,7 @@ export async function executeTutorAgentTool(
           kind: effectiveKind === 'diagram' ? 'image' : 'animation',
           status: 'completed',
           title: requestedKind === 'diagram' ? '生成知识图解' : '生成过程动画',
-          detail: `${effectiveKind === 'diagram' ? '图解' : `${visual.artifact.steps.length} 帧动画`}已通过主题对齐、结构、布局与 SVG 安全门；结构质量分 ${visual.quality.score}${degradedLabel}${contextLabel}。`,
+          detail: `${effectiveKind === 'diagram' ? 'ASCII 图解' : `${visual.artifact.steps.length} 帧 ASCII 动画`}已通过主题对齐、语义重放、对象覆盖、文本尺寸与控制字符安全门；结构质量分 ${visual.quality.score}${degradedLabel}${contextLabel}。`,
           observationSummary: visual.artifact.title,
           durationMs: Date.now() - startedAt,
           artifact: visual.artifact,

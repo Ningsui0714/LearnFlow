@@ -1,8 +1,12 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-31.6`）：学习图解与动画的 `learnflow.visual-storyboard` 合同升级到 v2，并将主呈现从模型生成 SVG 调整为逐帧 ASCII。Skill 只建立主题事实边界、稳定对象/关系/分组及类型化状态变化；Tool 先确定性重放完整语义状态，再把只读的逐帧对象快照交给独立 ASCII Designer。Designer 可自由选择树、队列、矩阵、泳道、时间线等空间表达，但只能返回画布与对象锚点，不能改写实体、关系、状态操作或断言。Tool 对每帧执行对象覆盖、锚点逐字匹配、宽高、控制字符、重放及断言门；遗漏的持久对象只可由 Tool 补入显式状态台账并标记 degraded，模型失败时退回明确标记的通用 ASCII 状态清单。ASCII 设计与一次修复共享 720 秒总预算，单次输出上限 32768 token。稳定视觉 Tool ID、三类主 Agent、五核、EvidenceEvent 和数据库 schema 不变；旧 VisualSpec v3/SVG 路径仅作为非 storyboard 兼容路径保留。
+
 Contract impact（`2026-08-31.5`）：首个 `role_capability_graph` 官方内置包只通过既有 `tool / skill / object / tool_renderer` 扩展合同进入 Tutor。客户端包可声明通用展示元数据，`PluginCapabilityPicker` 根据构建时发现结果提供当前对话激活，不维护插件白名单；服务端仍按目录发现并验证 manifest。岗位插件固定并校验不可变 Static Role Package，六个 namespaced Tool 均为 read-only，Skill 只指导 Tutor 的有据读取，岗位对象不进入 LearnFlow 核心对象或掌握证据，雷达、事理森林、卡片、证据与审计只渲染本次有界 ToolResult。无新增 Agent、Workbench、数据库、EvidenceEvent、Kernel writer、生成或迭代入口。
 
 Contract impact（`2026-08-31.4`）：LearnFlow 新增 `learnflow.plugin-api.v1` 内置扩展合同，且扩展点严格限定为 `tool / skill / object / tool_renderer`。包由宿主按目录发现；Tool 使用 `plugin_id__tool_id` 模型命名空间并只允许 read-only/artifact；Skill 是 Tutor 上下文中的 Agent 操作说明，不覆盖核心 SkillSpec；Object 使用带 plugin ownership 与 schema version 的 JSON 信封；Renderer 使用 `plugin_id:renderer_id`，只在对话 ToolRun 内读取已验证结果，缺失时确定性退回通用卡片。插件不新增 Agent、Workbench、持久化权威、核心对象写入、EvidenceEvent 或 Kernel writer。具体合同见 `docs/implementation/PLUGIN_EXTENSION_API.md`。
+
+Contract impact（`2026-08-31.3`）：动画生成在既有 `visual_teaching_composition` 与稳定 Tool ID 下新增 `learnflow.visual-storyboard.v1` 上下文合同。Skill 先提交独立成立的讲解，再把讲解以带稳定对象 ID、关系、分组、初始状态、类型化操作、逐帧断言和事实边界的 `VisualStoryboardContext` 交给 Tool；讲解正文不再复制进模型 JSON，也不再与视觉调用共享失败域。Tool 不解释主题或选择教学策略，只做引用校验、确定性状态重放、断言验证、密度自适应布局、真实碰撞/越界检查、SVG 安全门和逐帧渲染。既有 VisualBrief/VisualSpec v3 与模型规划路径保留为兼容回退；三类主 Agent、五核、EvidenceEvent、稳定视觉 Tool ID 和数据库 schema 不变，无迁移、无新增 Kernel writer。
 
 Contract impact（`2026-08-31.2`）：领域知识供给从单一来源等级升级为 `source-profile-v1` 多维来源向量与 `domain-knowledge-packet-v2` 声明证据合同。来源同时声明内容角色、文档类型、版本适配以及可信度、全面度、时效性、真人观点性、教学适配和可复现性；不同问题按用途选择维度，不再把社区经验、官方规范和教材压成同一总分。Chunk 新增代码、API、论文、视频字幕和社区讨论等类型化切分元数据，Packet 以词法、结构、来源和显式选择四路 RRF 召回，语义路保持可选增强。关键覆盖门现在要求可定位 Claim 支持，社区经验单列为带归因 `viewpoints`，不得冒充事实共识。来源选择状态按 `discovered -> inspected -> recommended -> confirmed -> pinned` 单调推进；个人知识库来源只有经过显式项目晋升 API 和后续基线确认才能进入项目约束，晋升事件为零 Kernel target。稳定 Source/SourceVersion/Chunk 表、旧等级字段和旧 API 保持兼容，新增信息存入既有 JSON，无数据库迁移；三类主 Agent、五核与 EvidenceEvent 掌握语义不变。
 
@@ -277,7 +281,7 @@ Contract impact：注册表版本提升到 `2026-08-26.16`。扩展既有
 `vnext_learning_workspace_reader` 的只读输出和新增 answer-free 查询端点；稳定工具、Capability、
 事件、数据库 schema、五核 reducer 与 writer 均保持兼容，没有新增模型可调用写工具。
 
-正式前端 `frontend/` 的零 Kernel 写入能力包括：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_diagram` 与 `generate_learning_animation` 共享版本化 `VisualSpec`，但只在学习者明确请求对应视觉形式时进入模型工具面：模型只规划计算机或数学知识的语义对象，确定性代码负责布局、时间线、语义有效性、SVG 安全和可重放质量门；无合格产物时诚实失败，只有精确匹配的已验证模板允许降级。前者呈现静态关系，后者只呈现有真实状态变化的逐帧过程。`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
+正式前端 `frontend/` 的零 Kernel 写入能力包括：`search_computer_knowledge` 先确定讲解/对比/排错/实现/研究/时效意图和证据角度，再按“规范与官方文档、教材与大学课程、论文、社区实践、代码仓库”分层召回和确定性重排；网页片段始终视为不可信输入，社区或仓库不得覆盖高层来源。`generate_learning_diagram` 与 `generate_learning_animation` 只在学习者明确请求对应视觉形式时进入模型工具面。两者的 storyboard 主路径由 Skill 提供已校验 `VisualStoryboardContext`：模型从已提交讲解提取语义对象、关系、状态和变化，Tool 确定性重放后把只读完整状态交给 ASCII Designer，再验证对象覆盖、断言、尺寸与控制字符；图解取最终 ASCII 状态，动画保留可暂停逐帧 ASCII 时间线。旧 VisualBrief、VisualSpec v3 和 SVG renderer 仅作非 storyboard 兼容路径。无合格产物时显式降级或诚实失败。`open_selection_followup` 按主对话、祖先纸、当前纸装配分支上下文。工具调用、搜索与讲解、图解、动画与纸张都不是掌握证据，也不建立第二套学习者状态。
 
 Contract impact：注册表版本提升到 `2026-08-25.3`。`computer_knowledge_search` 的稳定 ID、owner、能力入口和零 Kernel 写入边界保持不变；其内部契约从“来源路由 + 实时适配器”收紧为“意图/证据角度规划 → 分层召回 → 确定性重排 → 有界不可信 Evidence Bundle”。没有新增 Agent、EventContract、Kernel writer 或既有 API 破坏。
 

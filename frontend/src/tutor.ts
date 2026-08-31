@@ -350,9 +350,9 @@ async function executeDesktopVisualTool(options: {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         instructions: visualTeachingBriefPrompt(options.kind, options.query, options.teachingExplanation),
-        input: `以下讲解已经由正式 Tutor 独立提交。保持它的事实边界，并据此填写 VisualBrief；explanation 字段逐字使用这段讲解：\n${options.teachingExplanation}`,
-        timeout_ms: 60_000,
-        max_tokens: 2_000,
+        input: `以下讲解已经由正式 Tutor 独立提交。保持它的事实边界，并据此填写语义可执行 storyboard；不要在 JSON 中复制讲解：\n${options.teachingExplanation}`,
+        timeout_ms: 180_000,
+        max_tokens: 12_000,
         response_format: 'json_object',
       }),
       signal: options.signal,
@@ -361,12 +361,7 @@ async function executeDesktopVisualTool(options: {
     if (!briefResponse.ok || typeof briefPayload?.text !== 'string') {
       throw new Error('visual_teaching_brief_failed:视觉教学 Brief 服务不可用')
     }
-    const visualBrief = parseVisualTeachingBrief(briefPayload.text, options.kind, options.query)
-    const authoritativeExplanation = options.teachingExplanation.replace(/\s+/g, ' ').trim()
-    if (visualBrief.explanation.replace(/\s+/g, ' ').trim() !== authoritativeExplanation) {
-      throw new Error('visual_teaching_explanation_mismatch:VisualBrief 改写了已提交讲解')
-    }
-    visualBrief.explanation = options.teachingExplanation.trim()
+    const visualBrief = parseVisualTeachingBrief(briefPayload.text, options.kind, options.query, options.teachingExplanation)
     const execution = await executeLearningVisual(options.kind, options.query, options.messages, async (
       instructions, input, timeoutMs = 26_000, maxTokens = 2_200, generationOptions,
     ) => {
@@ -399,7 +394,7 @@ async function executeDesktopVisualTool(options: {
       kind: effectiveKind === 'animation' ? 'animation' : 'image',
       status: 'completed',
       title,
-      detail: `${effectiveKind === 'animation' ? `${visual.artifact.steps.length} 帧动画` : '图解'}已通过结构、布局与 SVG 安全门；质量分 ${visual.quality.score}${visual.degraded ? '；已如实降级' : ''}${execution.request.contextEnriched ? '；已结合最近对话主题' : ''}。`,
+      detail: `${effectiveKind === 'animation' ? `${visual.artifact.steps.length} 帧 ASCII 动画` : 'ASCII 图解'}已通过语义重放、对象覆盖、文本尺寸与控制字符安全门；质量分 ${visual.quality.score}${visual.degraded ? '；使用了通用文本布局' : ''}${execution.request.contextEnriched ? '；已结合最近对话主题' : ''}。`,
       durationMs: Date.now() - startedAt,
       startedAt,
       inputSummary: request.effectiveRequest.slice(0, 240),

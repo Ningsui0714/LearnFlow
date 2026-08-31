@@ -25,6 +25,11 @@ function patchTargets(patch: VisualPatch) {
     case 'transform_object': return [patch.objectId]
     case 'replace_expression': return [patch.stepId]
     case 'set_trace_step': return [patch.semanticId]
+    case 'set_visibility': return [patch.targetId]
+    case 'set_focus': return patch.targetIds
+    case 'set_property': return [patch.targetId]
+    case 'set_group_members': return [patch.groupId, ...patch.memberIds]
+    case 'set_order': return [patch.groupId, ...patch.itemIds]
   }
 }
 
@@ -65,6 +70,11 @@ function semanticValue(spec: LearningVisualSpec, state: VisualStateSnapshot, pat
     return state.expressions[patch.stepId] || (spec.semantic.type === 'derivation' ? spec.semantic.steps.find(item => item.id === patch.stepId)?.expression : undefined)
   }
   if (patch.type === 'set_trace_step') return state.values[patch.semanticId] ?? 0
+  if (patch.type === 'set_visibility') return (state.visibleIds || []).includes(patch.targetId)
+  if (patch.type === 'set_focus') return state.focusIds || []
+  if (patch.type === 'set_property') return state.properties?.[patch.targetId]?.[patch.key]
+  if (patch.type === 'set_group_members') return state.groupMembers?.[patch.groupId] || []
+  if (patch.type === 'set_order') return state.orders?.[patch.groupId] || []
   return undefined
 }
 
@@ -81,6 +91,11 @@ function rejectNoOp(spec: LearningVisualSpec, state: VisualStateSnapshot, patch:
                   : patch.type === 'transform_object' ? patch.points
                     : patch.type === 'replace_expression' ? patch.expression
                       : patch.type === 'set_trace_step' ? patch.step
+                        : patch.type === 'set_visibility' ? patch.visible
+                          : patch.type === 'set_focus' ? patch.targetIds
+                            : patch.type === 'set_property' ? patch.value
+                              : patch.type === 'set_group_members' ? patch.memberIds
+                                : patch.type === 'set_order' ? patch.itemIds
                       : undefined
   if (after !== undefined && equivalent(before, after)) throw new Error(`visual_patch_no_change:${patch.type}.${patchTargets(patch)[0]}`)
 }
@@ -119,6 +134,19 @@ function applyPatch(spec: LearningVisualSpec, state: VisualStateSnapshot, patch:
     case 'transform_object': state.series[patch.objectId] = patch.points.map(item => [...item]); break
     case 'replace_expression': state.expressions[patch.stepId] = patch.expression; break
     case 'set_trace_step': state.values[patch.semanticId] = patch.step; break
+    case 'set_visibility': {
+      const visible = new Set(state.visibleIds || [])
+      if (patch.visible) visible.add(patch.targetId); else visible.delete(patch.targetId)
+      state.visibleIds = [...visible]
+      break
+    }
+    case 'set_focus': state.focusIds = [...patch.targetIds]; break
+    case 'set_property': state.properties = {
+      ...(state.properties || {}),
+      [patch.targetId]: { ...(state.properties?.[patch.targetId] || {}), [patch.key]: patch.value },
+    }; break
+    case 'set_group_members': state.groupMembers = { ...(state.groupMembers || {}), [patch.groupId]: [...patch.memberIds] }; break
+    case 'set_order': state.orders = { ...(state.orders || {}), [patch.groupId]: [...patch.itemIds] }; break
   }
   state.activeIds = Array.from(new Set([...state.activeIds, ...patchTargets(patch)]))
 }
@@ -200,6 +228,11 @@ export function describePatch(patch: VisualPatch) {
     case 'transform_object': return `对象 ${patch.objectId} 完成坐标变换`
     case 'replace_expression': return `推导步骤 ${patch.stepId} 的表达式发生替换`
     case 'set_trace_step': return `可计算教学轨迹 ${patch.semanticId} 前进到第 ${patch.step} 步`
+    case 'set_visibility': return `${patch.visible ? '显示' : '隐藏'}对象 ${patch.targetId}`
+    case 'set_focus': return `聚焦 ${patch.targetIds.join('、')}`
+    case 'set_property': return `${patch.targetId}.${patch.key} 更新为 ${String(patch.value)}`
+    case 'set_group_members': return `集合 ${patch.groupId} 的成员更新为 ${patch.memberIds.join('、') || '空'}`
+    case 'set_order': return `集合 ${patch.groupId} 的顺序更新为 ${patch.itemIds.join(' → ')}`
   }
 }
 

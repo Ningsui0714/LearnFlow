@@ -25,6 +25,8 @@ export type VisualStep = {
   title: string
   text: string
   svg: string
+  /** Plain text is the primary canvas for deterministic ASCII visuals. */
+  ascii?: string
   durationMs?: number
   stateDescription?: string
   prediction?: {
@@ -57,6 +59,7 @@ export type VisualArtifact = {
   domain?: 'computer' | 'mathematics' | 'general'
   abstraction?: string
   renderer?: string
+  canvasFormat?: 'svg' | 'ascii'
   quality?: { score: number; issues: string[]; repaired: boolean }
   fallbackUsed?: boolean
   readable?: {
@@ -85,7 +88,7 @@ export type TutorToolRun = {
     requestedKind: 'diagram' | 'animation'
     effectiveKind: 'diagram' | 'animation'
     contextEnriched: boolean
-    generationSource: 'deterministic_compiler' | 'model_plan' | 'deterministic_template' | 'legacy_reader'
+    generationSource: 'deterministic_compiler' | 'context_compiler' | 'model_plan' | 'deterministic_template' | 'legacy_reader'
     compileStatus: 'exact' | 'illustrative_example' | 'not_applicable' | 'ambiguous' | 'invalid'
     plannerAttempts: number
     syntaxRepairApplied?: boolean

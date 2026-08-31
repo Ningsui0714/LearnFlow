@@ -104,6 +104,7 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
   const stepIndex = playback.index
   const playing = playback.playing
   const safeSvgs = useMemo(() => steps.map(step => sanitizeSvg(step.svg)), [steps])
+  const asciiCanvases = useMemo(() => steps.map(step => String(step.ascii || '').replace(/\r\n?/g, '\n')), [steps])
 
   useEffect(() => {
     dispatchPlayback({ type: 'RESET' })
@@ -129,6 +130,7 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
   const selectedChoiceId = answerForGate(playback, activePrediction?.id)
   const predictionResolved = gateResolved(playback, activeStep)
   const imageUrl = safeSvgs[activeIndex] ? svgDataUrl(safeSvgs[activeIndex]) : ''
+  const asciiCanvas = asciiCanvases[activeIndex]
   const frameDescription = accessibleArtifact.readable?.frameDescriptions?.[activeIndex]
     || activeStep.stateDescription
     || activeStep.text
@@ -172,9 +174,11 @@ export default function VisualArtifact({ artifact }: { artifact: VisualArtifactD
       </figcaption>
       <p id={descriptionId} className="visual-sr-only">{currentAccessibleSummary}。{accessibleArtifact.readable?.nonColorStateCue}</p>
       <div id={canvasId} className="visual-canvas" aria-live="off">
-        {imageUrl
-          ? <img src={imageUrl} alt={frameDescription} />
-          : <span role="alert">可视化内容未通过安全校验</span>}
+        {asciiCanvas
+          ? <pre className="visual-ascii-canvas" aria-label={frameDescription}>{asciiCanvas}</pre>
+          : imageUrl
+            ? <img src={imageUrl} alt={frameDescription} />
+            : <span role="alert">可视化内容未通过安全校验</span>}
       </div>
       {(isAnimation || degradedToStoryboard || showStepNavigation) && (
         <div className="animation-caption" role="status" aria-live="polite" aria-atomic="true">

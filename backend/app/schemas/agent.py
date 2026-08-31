@@ -55,9 +55,9 @@ class TutorTurnRequest(BaseModel):
 
 class VisualPlannerRequest(BaseModel):
     instructions: str = Field(min_length=20, max_length=24_000)
-    input: str = Field(min_length=1, max_length=16_000)
-    timeout_ms: int = Field(default=180_000, ge=1_000, le=240_000)
-    max_tokens: int = Field(default=2_200, ge=400, le=4_000)
+    input: str = Field(min_length=1, max_length=100_000)
+    timeout_ms: int = Field(default=180_000, ge=1_000, le=900_000)
+    max_tokens: int = Field(default=2_200, ge=400, le=32_768)
     response_format: Literal["json_object"] = "json_object"
 
 

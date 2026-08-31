@@ -39,6 +39,8 @@ export type VisualTeachingBrief = {
   invariants: string[]
   misconceptions: string[]
   claimBoundary: string
+  /** Preferred v2 path: semantic-executable input consumed directly by the Tool. */
+  storyboardContext?: import('./visual-storyboard.ts').VisualStoryboardContext
 }
 
 export type VisualTeachingFailure = {

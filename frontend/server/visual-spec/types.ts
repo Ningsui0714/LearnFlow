@@ -3,6 +3,7 @@ import type { VisualArtifact, VisualStep } from '../../src/tooling.ts'
 export const VISUAL_VERSION = 'learnflow.visual.v3' as const
 export const PROMPT_VERSION = 'learnflow.visual-planner.v3' as const
 export const RENDERER_VERSION = 'learnflow.deterministic-svg.v3' as const
+export const ASCII_RENDERER_VERSION = 'learnflow.deterministic-ascii.v1' as const
 
 export type LearningVisualKind = 'diagram' | 'animation'
 export type LearningVisualDomain = 'computer' | 'mathematics'
@@ -15,6 +16,7 @@ export type ComputerVisualAbstraction =
   | 'convolution_trace'
   | 'graph_algorithm'
   | 'event_loop'
+  | 'semantic_scene'
   | 'system_structure'
 export type MathematicsVisualAbstraction =
   | 'function'
@@ -81,6 +83,33 @@ export type SystemStructureSemantic = {
   type: 'system_structure'
   entities: Array<{ id: string; label: string; detail?: string; role?: 'input' | 'process' | 'state' | 'output' | 'concept' }>
   relations: Array<{ id: string; from: string; to: string; label?: string; kind: 'flow' | 'dependency' | 'transition' | 'comparison' | 'mapping' }>
+}
+
+/**
+ * Topic-independent scene graph used by the visual Tool after a teaching
+ * Skill has already supplied stable objects and executable state changes.
+ * It deliberately contains no coordinates, SVG, CSS, or executable code.
+ */
+export type SemanticSceneSemantic = {
+  type: 'semantic_scene'
+  entities: Array<{
+    id: string
+    label: string
+    kind: 'item' | 'actor' | 'state' | 'value' | 'operator' | 'result'
+    detail?: string
+  }>
+  relations: Array<{
+    id: string
+    from: string
+    to: string
+    label?: string
+    kind: 'flow' | 'link' | 'membership' | 'comparison' | 'message'
+  }>
+  groups: Array<{
+    id: string
+    label: string
+    layout: 'row' | 'column' | 'cluster'
+  }>
 }
 
 export type FunctionSemantic = {
@@ -194,6 +223,7 @@ export type ComputerVisualSemantic =
   | ConvolutionTraceSemantic
   | GraphAlgorithmSemantic
   | EventLoopSemantic
+  | SemanticSceneSemantic
   | SystemStructureSemantic
 
 export type MathematicsVisualSemantic =
@@ -218,6 +248,11 @@ export type VisualStateSnapshot = {
   series: Record<string, VisualPoint[]>
   stack: string[]
   emittedMessageIds: string[]
+  visibleIds?: string[]
+  focusIds?: string[]
+  groupMembers?: Record<string, string[]>
+  orders?: Record<string, string[]>
+  properties?: Record<string, Record<string, VisualScalar>>
 }
 
 export type VisualPatch =
@@ -236,6 +271,11 @@ export type VisualPatch =
   | { type: 'transform_object'; objectId: string; points: VisualPoint[] }
   | { type: 'replace_expression'; stepId: string; expression: string }
   | { type: 'set_trace_step'; semanticId: string; step: number }
+  | { type: 'set_visibility'; targetId: string; visible: boolean }
+  | { type: 'set_focus'; targetIds: string[] }
+  | { type: 'set_property'; targetId: string; key: string; value: VisualScalar }
+  | { type: 'set_group_members'; groupId: string; memberIds: string[] }
+  | { type: 'set_order'; groupId: string; itemIds: string[] }
 
 export type VisualPredictionGate = {
   id: string
@@ -265,7 +305,7 @@ export type VisualInvariant =
 export type VisualRepair = { code: string; path: string; detail: string }
 
 export type VisualGenerationReport = {
-  source: 'model_plan' | 'deterministic_compiler' | 'deterministic_template' | 'legacy_reader'
+  source: 'model_plan' | 'context_compiler' | 'deterministic_compiler' | 'deterministic_template' | 'legacy_reader'
   plannerSucceeded: boolean
   degraded: boolean
   degradedTo?: 'diagram' | 'storyboard' | 'deterministic_animation'
@@ -277,7 +317,7 @@ export type VisualGenerationReport = {
 export type VisualProvenance = {
   schemaVersion: typeof VISUAL_VERSION
   promptVersion: typeof PROMPT_VERSION
-  rendererVersion: typeof RENDERER_VERSION
+  rendererVersion: typeof RENDERER_VERSION | typeof ASCII_RENDERER_VERSION
   requestHash: string
   requestText: string
 }
@@ -316,6 +356,7 @@ export type ComputerLearningVisualSpec = VisualSpecCommon & { domain: 'computer'
   | { abstraction: 'convolution_trace'; semantic: ConvolutionTraceSemantic }
   | { abstraction: 'graph_algorithm'; semantic: GraphAlgorithmSemantic }
   | { abstraction: 'event_loop'; semantic: EventLoopSemantic }
+  | { abstraction: 'semantic_scene'; semantic: SemanticSceneSemantic }
   | { abstraction: 'system_structure'; semantic: SystemStructureSemantic }
 ) & (DiagramTimeline | AnimationTimeline)
 
@@ -426,7 +467,7 @@ export type ReplayableVisualArtifact = VisualArtifact & {
     frameDescriptions: string[]
     nonColorStateCue: string
   }
-  replay: { spec: ReadableLearningVisualSpec; rendererVersion: typeof RENDERER_VERSION }
+  replay: { spec: ReadableLearningVisualSpec; rendererVersion: typeof RENDERER_VERSION | typeof ASCII_RENDERER_VERSION }
 }
 
 export type GenerateText = (
