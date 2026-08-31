@@ -175,7 +175,6 @@ PERSONAL_CONCEPT_GRAPH_MIGRATION = "v17-personal-concept-learning-graph"
 ASSESSMENT_BLUEPRINT_MIGRATION = "v18-assessment-blueprint-rubric"
 AUTH_PHASE_A_MIGRATION = "v19-auth-rbac-phase-a"
 DOMAIN_KNOWLEDGE_MIGRATION = "v20-domain-knowledge-supply"
-ROLE_CAPABILITY_PLUGIN_MIGRATION = "v21-role-capability-plugin"
 
 
 def _sqlite_path() -> Path | None:
@@ -1356,21 +1355,6 @@ async def _mark_assessment_blueprint_migration():
         print(f"[migrate] applied {ASSESSMENT_BLUEPRINT_MIGRATION}")
 
 
-async def _mark_role_capability_plugin_migration():
-    """Record additive role package, snapshot and workflow-run tables."""
-    from app.models.learning import SchemaMigration
-
-    async with async_session() as db:
-        applied = (await db.execute(select(SchemaMigration).where(
-            SchemaMigration.version == ROLE_CAPABILITY_PLUGIN_MIGRATION
-        ))).scalar_one_or_none()
-        if applied:
-            return
-        db.add(SchemaMigration(version=ROLE_CAPABILITY_PLUGIN_MIGRATION))
-        await db.commit()
-        print(f"[migrate] applied {ROLE_CAPABILITY_PLUGIN_MIGRATION}")
-
-
 async def _backfill_domain_knowledge_supply():
     """Create immutable version 1 records for legacy processed sources."""
     from app.models.learning import SchemaMigration
@@ -1563,7 +1547,7 @@ async def init_db():
     _backup_before_memory_module_versioning_migration()
     _backup_before_auth_phase_a_migration()
     async with engine.begin() as conn:
-        from app.models import project, learning, role_capability  # noqa: F401
+        from app.models import project, learning  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
     await _ensure_columns()
     await _backfill_five_kernel()
@@ -1585,4 +1569,3 @@ async def init_db():
     await _backfill_personal_concept_graph()
     await _mark_assessment_blueprint_migration()
     await _backfill_domain_knowledge_supply()
-    await _mark_role_capability_plugin_migration()

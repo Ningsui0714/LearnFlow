@@ -412,33 +412,6 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert guided["skill_kind"] == "pedagogical_method"
 
 
-def test_role_capability_plugin_is_learning_design_owned_and_zero_target():
-    assert CAPABILITY_OWNERS["generate_role_capability_package"] == (
-        "learning_design_agent", "role_capability_package_runtime", "role_capability_plugin",
-    )
-    assert CAPABILITY_OWNERS["read_role_capability_graph"] == (
-        "learning_design_agent", "role_capability_graph_reader", "role_capability_plugin",
-    )
-    assert CAPABILITY_OWNERS["explain_role_capability"] == (
-        "learning_design_agent", "role_capability_explainer", "role_capability_plugin",
-    )
-    assert CAPABILITY_OWNERS["iterate_role_capability_package"] == (
-        "learning_design_agent", "role_capability_iteration_runtime", "role_capability_plugin",
-    )
-    assert WORKBENCHES["role_capability_plugin"].surface == "/projects/:projectId"
-    assert SKILL_KINDS["role_capability_graphing"] == "playbook"
-    assert TOOL_INTERFACE_ROLES["role_capability_graph_reader"] == "aci_tool"
-    assert TOOL_MODEL_EXPOSURE["role_capability_graph_reader"] == "vnext_native"
-    assert TOOL_INTERFACE_ROLES["role_capability_explainer"] == "aci_tool"
-    assert TOOL_MODEL_EXPOSURE["role_capability_explainer"] == "vnext_native"
-    assert TOOL_INTERFACE_ROLES["role_capability_package_runtime"] == "harness"
-    assert TOOL_MODEL_EXPOSURE["role_capability_package_runtime"] == "not_model_callable"
-    assert TOOL_INTERFACE_ROLES["role_capability_iteration_runtime"] == "harness"
-    assert TOOL_MODEL_EXPOSURE["role_capability_iteration_runtime"] == "not_model_callable"
-    assert EVENTS["role_capability_package_generated"].kernel_targets == ()
-    assert EVENTS["role_capability_snapshot_iterated"].kernel_targets == ()
-
-
 def test_remediation_events_have_standard_authority_provenance():
     expected = {
         "remediation_started",

@@ -121,26 +121,6 @@ ACTION_BOARD = {
             ("revise_project_roadmap", "navigate_checkpoint"),
         ),
         ActionDefinition(
-            "generate_role_capability_package", "生成项目岗位能力包", "artifact", "explicit_or_click",
-            {},
-            ("read_role_capability_graph", "explain_role_capability", "iterate_role_capability_package"),
-        ),
-        ActionDefinition(
-            "read_role_capability_graph", "读取当前项目岗位能力图谱", "none", "none",
-            {},
-            ("explain_role_capability", "iterate_role_capability_package"),
-        ),
-        ActionDefinition(
-            "explain_role_capability", "基于固定岗位快照解释任务与能力", "none", "none",
-            {},
-            ("read_role_capability_graph",),
-        ),
-        ActionDefinition(
-            "iterate_role_capability_package", "按合同迭代岗位能力快照", "artifact", "explicit_or_click",
-            {},
-            ("read_role_capability_graph", "explain_role_capability"),
-        ),
-        ActionDefinition(
             "revise_project_roadmap", "修订当前项目未开始关卡", "write", "explicit_or_click",
             {"structure": "confirmed_project_roadmap_revision"},
             ("read_project_roadmap", "navigate_checkpoint"),

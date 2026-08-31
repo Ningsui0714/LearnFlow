@@ -12,7 +12,6 @@ import {
 import { createInitialLearnerPathState } from '../src/learning-path-graph.ts'
 import { createLearningTask, learningTaskTutorContext, projectLearningTask } from '../src/learning.ts'
 import { executeTutorAgentTool } from './tool-runtime.ts'
-import { TUTOR_AGENT_TOOL_DEFINITIONS } from './tool-runtime.ts'
 import { buildProviderRequest } from '../src/tutor.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
 
@@ -88,33 +87,6 @@ test('visual planning requests use provider-native JSON object mode in both API 
     messages: [{ role: 'user', content: 'plan' }], responseFormat: 'json_object',
   })
   assert.deepEqual((responses.body as any).text, { format: { type: 'json_object' } })
-})
-
-test('role capability dialogue tools are read-only and pinned to the project snapshot', async () => {
-  const definitions = TUTOR_AGENT_TOOL_DEFINITIONS.filter(tool => ['read_role_capability_graph', 'explain_role_capability'].includes(tool.name))
-  assert.equal(definitions.length, 2)
-  assert.ok(definitions.every(tool => tool.risk === 'read_only'))
-  const originalFetch = globalThis.fetch
-  const calls: string[] = []
-  globalThis.fetch = (async (url: string | URL | Request) => {
-    calls.push(String(url))
-    return new Response(JSON.stringify({
-      package: { id: 4, role_title: 'LLM 应用工程师' },
-      snapshot: { id: 9, version: 2, root_hash: 'a'.repeat(64), validation: { stats: { nodes: 7, task: 2, capability: 2 } } },
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
-  }) as typeof fetch
-  try {
-    const result = await executeTutorAgentTool('read_role_capability_graph', { query: '核心能力' }, {
-      message: '这个岗位的核心能力是什么？', generate: async () => '', backendBase: 'http://backend.test',
-      formalProjectContext: { project: { id: 31, name: '岗位项目' } } as any,
-    })
-    assert.equal(result.run.status, 'completed')
-    assert.equal((result.observation as any).snapshot_ref.root_hash, 'a'.repeat(64))
-    assert.equal((result.observation as any).mastery_unchanged, true)
-    assert.deepEqual(calls, ['http://backend.test/api/role-capability/projects/31'])
-  } finally {
-    globalThis.fetch = originalFetch
-  }
 })
 
 test('final-state verifier rejects unconfirmed writes, mastery overclaims and hidden failures', () => {

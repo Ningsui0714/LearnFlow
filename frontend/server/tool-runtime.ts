@@ -230,32 +230,6 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
     },
   },
   {
-    name: 'read_role_capability_graph',
-    title: '读取岗位能力图谱',
-    description: '读取当前项目插件的不可变岗位快照、任务、能力、知识技能、证据引用和校验状态。只读，不生成岗位事实，也不推断学习者掌握。',
-    toolClass: 'perception',
-    risk: 'read_only',
-    inputSchema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: '要从岗位图谱定位的任务、能力或知识技能' } },
-      required: ['query'],
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'explain_role_capability',
-    title: '解释岗位任务与能力',
-    description: '把问题固定到当前不可变岗位快照，进行有界对象与关系读取并返回来源引用。适合“这个岗位做什么、为什么需要某能力、任务与知识如何关联”；不能修改图谱或五核。',
-    toolClass: 'perception',
-    risk: 'read_only',
-    inputSchema: {
-      type: 'object',
-      properties: { query: { type: 'string', description: '需要基于岗位包回答的问题' } },
-      required: ['query'],
-      additionalProperties: false,
-    },
-  },
-  {
     name: 'read_active_learning_file',
     title: '读取当前纸张文件',
     description: '精确读取当前纸张绑定的讲义、练习或一般资料。讲义与资料返回有来源正文；练习保持答案隔离。只读，不改变掌握状态。',
@@ -846,30 +820,6 @@ async function callFormalPracticeApi(
   return payload
 }
 
-async function callRoleCapabilityApi(
-  options: TutorAgentToolRuntimeOptions,
-  projectId: number,
-  path: string,
-  init: RequestInit = {},
-) {
-  if (!options.backendBase) throw new Error('岗位能力插件后端未连接')
-  const response = await fetch(`${options.backendBase}/api/role-capability/projects/${projectId}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.requestCookie ? { Cookie: options.requestCookie } : {}),
-      ...(init.headers || {}),
-    },
-    signal: AbortSignal.timeout(AI_LATENCY_BUDGETS.formalApi),
-  })
-  const payload = await response.json().catch(() => ({})) as any
-  if (!response.ok) {
-    const detail = typeof payload.detail === 'string' ? payload.detail : payload.detail?.message || payload.error
-    throw new Error(compactText(detail || `岗位能力插件返回 ${response.status}`, 500))
-  }
-  return payload
-}
-
 async function readActiveLearningFile(options: TutorAgentToolRuntimeOptions) {
   const artifact = options.activeArtifactContext
   if (!artifact) throw new Error('当前纸张没有绑定学习文件')
@@ -1227,43 +1177,6 @@ export async function executeTutorAgentTool(
           durationMs: Date.now() - startedAt,
         },
         observation: { authority: 'managed_learning_file', project: project.project, file },
-      }
-    }
-
-    if (name === 'read_role_capability_graph' || name === 'explain_role_capability') {
-      const project = compactProjectContext(options.formalProjectContext)
-      const projectId = Number(project?.project?.id)
-      if (!project || !Number.isInteger(projectId) || projectId <= 0) throw new Error('当前对话没有正式项目 scope')
-      const payload = name === 'read_role_capability_graph'
-        ? await callRoleCapabilityApi(options, projectId, '')
-        : await callRoleCapabilityApi(options, projectId, '/explain', {
-            method: 'POST', body: JSON.stringify({ query: compactText(args.query || query, 1000) }),
-          })
-      if (!payload.package && name === 'read_role_capability_graph') {
-        throw new Error('当前项目尚未在“岗位图谱”插件页显式生成岗位能力包')
-      }
-      const snapshot = payload.snapshot || {}
-      const explanation = payload.explanation
-      return {
-        run: {
-          ...base, kind: 'project', status: 'completed',
-          title: name === 'read_role_capability_graph' ? '读取岗位能力图谱' : '解释岗位任务与能力',
-          detail: name === 'read_role_capability_graph'
-            ? `已固定岗位快照 v${snapshot.version}，读取 ${snapshot.validation?.stats?.nodes || 0} 个对象；岗位制品不等于学习者掌握。`
-            : `已基于固定快照读取相关对象、关系与 ${explanation?.citations?.length || 0} 条来源引用。`,
-          observationSummary: name === 'read_role_capability_graph'
-            ? `${snapshot.validation?.stats?.task || 0} 任务 / ${snapshot.validation?.stats?.capability || 0} 能力`
-            : compactText(explanation?.answer, 180),
-          durationMs: Date.now() - startedAt,
-        },
-        observation: {
-          authority: 'immutable_role_capability_snapshot',
-          ...(name === 'read_role_capability_graph' ? payload : explanation),
-          snapshot_ref: name === 'read_role_capability_graph'
-            ? { id: snapshot.id, root_hash: snapshot.root_hash, version: snapshot.version }
-            : payload.snapshot,
-          mastery_unchanged: true,
-        },
       }
     }
 

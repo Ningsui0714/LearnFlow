@@ -12,9 +12,8 @@ import {
 } from './formal-runtime'
 import type { FormalLearningFileRef, FormalLearningTask } from './formal-runtime'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace } from './project'
-import RoleCapabilityPluginPanel from './RoleCapabilityPluginPanel'
 
-type PanelTab = 'checkpoints' | 'sources' | 'files' | 'role'
+type PanelTab = 'checkpoints' | 'sources' | 'files'
 
 export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoint, onOpenFree, onOpenFile, onGenerateFiles, onWorkspaceChange }: {
   projectId: number
@@ -137,7 +136,6 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
         <button type="button" className={activeTab === 'checkpoints' ? 'active' : ''} onClick={() => setActiveTab('checkpoints')}>关卡</button>
         <button type="button" className={activeTab === 'sources' ? 'active' : ''} onClick={() => setActiveTab('sources')}>来源</button>
         <button type="button" className={activeTab === 'files' ? 'active' : ''} onClick={() => setActiveTab('files')}>讲义与练习</button>
-        <button type="button" className={activeTab === 'role' ? 'active' : ''} onClick={() => setActiveTab('role')}>岗位图谱</button>
       </nav>
       {error && <div className="project-panel-error">{error}</div>}
       {!workspace && <div className="page-loading">正在读取项目…</div>}
@@ -176,12 +174,6 @@ export default function ProjectContextPanel({ projectId, onClose, onOpenCheckpoi
           {!files.length && <p className="project-drawer-empty">关卡生成的讲义与练习会集中保存在这里。</p>}
         </div>
       )}
-      {workspace && activeTab === 'role' && <RoleCapabilityPluginPanel
-        projectId={projectId}
-        projectName={workspace.project.name}
-        projectDescription={workspace.project.objective}
-        sourceIds={workspace.sources.filter(source => source.status === 'processed').map(source => source.id)}
-      />}
     </aside>
   )
 }

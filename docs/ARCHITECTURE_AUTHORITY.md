@@ -10,8 +10,6 @@ Contract impact（`2026-08-30.4`）：Web 与 Desktop 的显式图解/动画请�
 
 Contract impact（`2026-08-30.1`）：学习图解与动画从“模型可自动补充”收紧为显式意图能力：只有学习者明确要求图解或动画时，相应工具才进入本轮模型工具面，执行器还会再次校验意图。视觉规划失败不再生成单节点主题锚点冒充图解；只有与请求精确匹配、可重放且通过语义/布局/安全门的确定性模板允许降级，否则返回无产物失败。学习文件待确认提案不得被 Tutor 描述成已生成文件，提案错误按任务隔离展示。新增 `learner_event_sequences` 以数据库原子更新分配 `EvidenceEvent.learner_seq`，兼容既有事件并消除并发 `MAX + 1` 冲突；EvidenceEvent schema、五核 reducer、稳定工具 ID 和掌握语义不变。
 
-Contract impact（`2026-08-29.2`）：新增项目内 `role_capability_graph` 插件，把岗位包冷启动、固定快照解释与合同化迭代收敛到 `learning_design_agent` 后的领域能力。新增 `RoleCapabilityPackage / Snapshot / Run`、四个 Tool、一个 Product Skill、一个 Workbench、四个 Capability、两个零 Kernel target 事件和四个 learner-owned API。生成与迭代只允许项目工作台显式动作；Tutor 模型只获得读图谱与固定快照解释两个只读工具。岗位图谱是带来源、稳定 ID、root hash 和协议校验的领域供给，不是学习者画像或掌握证据；三类主 Agent、五核 schema、EvidenceEvent schema、唯一 reducer 链与 RemediationStrategy 均不变。实现与迁移见 `docs/implementation/ROLE_CAPABILITY_PLUGIN.md`。
-
 Contract impact（`2026-08-29.1`）：新增不可变 `SourceVersion`、版本绑定 Chunk 和只读 `DomainKnowledgePacket`，并将 Teaching Contract 升级到 v2。项目 Tutor、简单讲解和五种带领学习 Skill 共用 `DomainBrief -> SourceVersion -> DomainKnowledgePacket -> TeachingContentBrief` 供给链；正式教学缺失关键知识时进入 `blocked_knowledge`，保留任务但不再发布 generic scaffold。Search/Page Reader 模型工具面不变；Harness 只在已读网页原文后回填 temporary SourceVersion。项目基线长期晋升仍需学习者确认。污染、冲突、过期和版本漂移只使来源/Packet/产物失效，新增事件均为零 Kernel target，五核、EvidenceEvent 掌握语义和唯一 reducer 链不变。迁移 `v20-domain-knowledge-supply` 为历史 processed Source 创建 version 1 并回填 Chunk；旧 Source/Chunk 读取保持兼容。实现详见 `docs/implementation/DOMAIN_KNOWLEDGE_SUPPLY.md`。
 
 本文规定 LearnFlow 的架构权威、两个维护域的边界和交叉修改流程。设计语义以 `docs/AGENT_ARCHITECTURE_GUIDE.md` 为准；可执行枚举、归属与写权限以 `backend/app/services/architecture_registry.py` 为准；实现是否符合契约以测试为准。
