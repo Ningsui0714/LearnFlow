@@ -1,8 +1,0 @@
-{
-  "algorithm": "ed25519",
-  "key_id": "learnflow-official-ed25519-v1",
-  "protocol": "learnflow.plugin-signature.v1",
-  "publisher_id": "learnflow_official",
-  "root_hash": "8385913204acc20d6cdfa246bf0e2fc7a0be94df1cf4e5708a39a5ce46af592f",
-  "signature": "8wsln6dgP7a4mp+3Jp4GoZcY+lPc53a5Dd7GzSlLiUtutId80POSRYuKuFXZqqWSUzUIsovUZUwU4l6Qgob8CA=="
-}

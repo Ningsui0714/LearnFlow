@@ -176,7 +176,6 @@ ASSESSMENT_BLUEPRINT_MIGRATION = "v18-assessment-blueprint-rubric"
 AUTH_PHASE_A_MIGRATION = "v19-auth-rbac-phase-a"
 DOMAIN_KNOWLEDGE_MIGRATION = "v20-domain-knowledge-supply"
 ROLE_CAPABILITY_PLUGIN_MIGRATION = "v21-role-capability-plugin"
-GENERIC_PLUGIN_HOST_MIGRATION = "v22-generic-plugin-host"
 
 
 def _sqlite_path() -> Path | None:
@@ -1372,31 +1371,6 @@ async def _mark_role_capability_plugin_migration():
         print(f"[migrate] applied {ROLE_CAPABILITY_PLUGIN_MIGRATION}")
 
 
-async def _mark_generic_plugin_host_migration():
-    """Install bundled releases and move v21 role truth to generic snapshots.
-
-    The migration marker and database rows are committed together. Content
-    artifacts are committed first and are immutable; an interrupted database
-    transaction can therefore leave only safe, unreferenced CAS blobs for the
-    normal artifact collector to reclaim.
-    """
-    from app.models.learning import SchemaMigration
-    from app.services.bundled_plugins import install_and_migrate_bundled_plugins
-
-    async with async_session() as db:
-        applied = (await db.execute(select(SchemaMigration).where(
-            SchemaMigration.version == GENERIC_PLUGIN_HOST_MIGRATION
-        ))).scalar_one_or_none()
-        # Re-running the idempotent installer also repairs databases that were
-        # briefly started by a build which only recorded the additive tables.
-        result = await install_and_migrate_bundled_plugins(db)
-        if not applied:
-            db.add(SchemaMigration(version=GENERIC_PLUGIN_HOST_MIGRATION))
-        await db.commit()
-        if not applied:
-            print(f"[migrate] applied {GENERIC_PLUGIN_HOST_MIGRATION}: {result}")
-
-
 async def _backfill_domain_knowledge_supply():
     """Create immutable version 1 records for legacy processed sources."""
     from app.models.learning import SchemaMigration
@@ -1589,7 +1563,7 @@ async def init_db():
     _backup_before_memory_module_versioning_migration()
     _backup_before_auth_phase_a_migration()
     async with engine.begin() as conn:
-        from app.models import project, learning, plugin, role_capability  # noqa: F401
+        from app.models import project, learning, role_capability  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
     await _ensure_columns()
     await _backfill_five_kernel()
@@ -1612,4 +1586,3 @@ async def init_db():
     await _mark_assessment_blueprint_migration()
     await _backfill_domain_knowledge_supply()
     await _mark_role_capability_plugin_migration()
-    await _mark_generic_plugin_host_migration()

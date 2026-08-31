@@ -12,7 +12,7 @@ import importlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any
 
 from app.services.action_board import ACTION_BOARD
 
@@ -24,10 +24,6 @@ SKILL_SPEC_VERSION = "learnflow.skill.v3"
 FRONTEND_SKILL_MANIFEST_REGISTRY_VERSION = "2026-08-29.1"
 KERNEL_NAMES = ("structure", "knowledge", "human", "value", "practice")
 LIFECYCLE_STATES = ("implemented", "optional_unimplemented", "deprecated")
-PLUGIN_PACKAGE_PROTOCOL = "learnflow.plugin-package.v1"
-PLUGIN_REGISTRY_PROJECTION_PROTOCOL = "learnflow.plugin-registry-projection.v1"
-_PLUGIN_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,127}$")
-_PLUGIN_LOCAL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 # This is the canonical allow-list used by Tutor semantic observations. The
 # runtime imports it instead of maintaining a second copy.
@@ -214,36 +210,6 @@ class PublicationContract:
     note: str = ""
 
 
-@dataclass(frozen=True)
-class HostInterfaceContract:
-    id: str
-    mode: str
-    provider: str
-    input_contract: str
-    output_contract: str
-    write_boundary: str
-    content_trust: str = "trusted_metadata"
-
-
-@dataclass(frozen=True)
-class PluginContract:
-    id: str
-    package_protocol: str
-    release_version: str
-    owner_agent: str
-    scope: str
-    object_types: tuple[str, ...]
-    host_interfaces: tuple[str, ...]
-    workflows: tuple[str, ...]
-    tools: tuple[str, ...]
-    skills: tuple[str, ...]
-    surface_slots: tuple[str, ...]
-    events: tuple[str, ...]
-    kernel_allow_list: tuple[str, ...]
-    manifest_path: str
-    execution_boundary: str
-
-
 # Three primary contracts are responsibility families, not three competing
 # chat personas. Concrete domain workers stay behind the corresponding
 # structured interface.
@@ -354,372 +320,10 @@ KERNELS = {
 }
 
 
-HOST_INTERFACES = {
-    item.id: item for item in (
-        HostInterfaceContract(
-            "project.read.v1", "read", "project_service",
-            "project-scoped identity request", "owned Project identity and goal scope",
-            "read only; ownership is revalidated on every call",
-        ),
-        HostInterfaceContract(
-            "source.read.v1", "read", "source_version_runtime",
-            "fixed source ids and bounded chunk budget", "immutable SourceVersion refs and bounded Chunks",
-            "read only; never returns another project", "untrusted_content",
-        ),
-        HostInterfaceContract(
-            "knowledge_baseline.read.v1", "read", "domain_knowledge_packet_compiler",
-            "project packet ids or bounded query", "confirmed DomainKnowledgePacket projection",
-            "read only; domain truth never implies learner mastery",
-        ),
-        HostInterfaceContract(
-            "roadmap.read.v1", "read", "project_roadmap_reader",
-            "current project scope", "versioned Roadmap and checkpoint DAG",
-            "read only; changes require an Action Board proposal",
-        ),
-        HostInterfaceContract(
-            "checkpoint.read.v1", "read", "checkpoint_context",
-            "owned checkpoint ids", "checkpoint brief and teaching contract",
-            "read only; direct checkpoint mutation is forbidden",
-        ),
-        HostInterfaceContract(
-            "learning_task.read.v1", "read", "learning_task_runtime",
-            "owned task ids and bounded list", "formal LearningTask refs and versions",
-            "read only; changes require an Action Board proposal",
-        ),
-        HostInterfaceContract(
-            "learning_file.read.v1", "read", "learning_file_service",
-            "owned managed file refs", "answer-safe lecture and practice projection",
-            "read only; hidden answers and judge data are excluded",
-        ),
-        HostInterfaceContract(
-            "learner_context.read.v1", "read", "context_packet_assembler",
-            "manifest kernel allow-list plus project scope", "bounded answer-safe ContextPacket",
-            "no Kernel write interface exists",
-        ),
-        HostInterfaceContract(
-            "artifact.resolve.v1", "read", "managed_artifact_service",
-            "typed ArtifactRef or fixed PluginObjectRef", "verified immutable artifact or object projection",
-            "does not provide arbitrary filesystem or database access",
-        ),
-        HostInterfaceContract(
-            "model.generate_structured.v1", "host_mediated", "plugin_host",
-            "bounded prompt and JSON schema", "schema-validated structured candidate",
-            "host owns credential, budget and audit; plugin never receives model secrets",
-        ),
-        HostInterfaceContract(
-            "action.propose.v1", "proposal", "action_board",
-            "registered core capability plus fixed PluginObjectRef", "learner-visible Action Board proposal",
-            "never executes the side effect inside the plugin process",
-        ),
-        HostInterfaceContract(
-            "event.record.v1", "event_gateway", "evidence_ledger",
-            "manifest-declared zero-target plugin event", "scoped append-only EvidenceEvent",
-            "external plugin events cannot declare Kernel targets",
-        ),
-    )
-}
-
-
-PLUGIN_CONTRACTS = {
-    item.id: item for item in (
-        PluginContract(
-            id="role_capability_graph",
-            package_protocol="learnflow.plugin-package.v1",
-            release_version="1.0.0",
-            owner_agent="learning_design_agent",
-            scope="project",
-            object_types=(
-                "role", "task", "capability", "knowledge_skill", "claim",
-                "semantic_edge", "scenario", "process_event", "actor",
-                "work_object", "artifact", "risk", "bridge",
-            ),
-            host_interfaces=(
-                "project.read.v1", "source.read.v1", "knowledge_baseline.read.v1",
-                "model.generate_structured.v1", "event.record.v1",
-            ),
-            workflows=("generate", "explain", "iterate", "validate", "upgrade"),
-            tools=("read_graph", "explain"),
-            skills=("role_capability_graphing",),
-            surface_slots=("project.context.tabs",),
-            events=("package_generated", "snapshot_iterated", "snapshot_explained", "release_upgraded"),
-            kernel_allow_list=(),
-            manifest_path="plugins/role_capability_graph/manifest.json",
-            execution_boundary=(
-                "trusted_signed_process only; filesystem/network/secrets/CPU/memory isolation are false"
-            ),
-        ),
-    )
-}
-
-
-def _plugin_manifest_items(
-    manifest: Mapping[str, Any], field: str,
-) -> list[dict[str, Any]]:
-    value = manifest.get(field, [])
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, Mapping)]
-
-
-def _plugin_local_ids(
-    manifest: Mapping[str, Any], field: str,
-) -> list[str]:
-    return [str(item.get("id") or "") for item in _plugin_manifest_items(manifest, field)]
-
-
-def _plugin_qualified_id(plugin_id: str, kind: str, local_id: str) -> str:
-    if kind == "tool":
-        # This is the exact identifier accepted by call_project_plugin_tool.
-        return f"{plugin_id}:{local_id}"
-    if kind == "event":
-        # This is the exact zero-target event type admitted by event.record.v1.
-        return f"plugin:{plugin_id}:{local_id}"
-    return f"{plugin_id}:{kind}:{local_id}"
-
-
-def validate_plugin_manifest_projection(manifest: Mapping[str, Any]) -> list[str]:
-    """Validate one installable manifest before it contributes registry rows.
-
-    Installed packages contribute only namespaced projections.  They can bind
-    to one of the three existing Agent owners and registered Host Interfaces,
-    but cannot publish primary Agents, reuse core IDs, or introduce an event
-    that can reach the five-kernel reducer.
-    """
-
-    errors: list[str] = []
-    plugin_id = str(manifest.get("plugin_id") or "")
-    if manifest.get("protocol") != PLUGIN_PACKAGE_PROTOCOL:
-        errors.append("plugin manifest must use learnflow.plugin-package.v1")
-    if not _PLUGIN_ID_PATTERN.fullmatch(plugin_id):
-        errors.append("plugin_id must be a lowercase stable identifier")
-    owner = str(manifest.get("owner") or "")
-    if owner not in AGENTS:
-        errors.append("plugin owner must be one of the three primary Agents")
-    if manifest.get("scope") != "project":
-        errors.append("plugin instance scope must be project")
-    forbidden_contribution_fields = {
-        "agents": "primary Agents",
-        "primary_agents": "primary Agents",
-        "agent_contracts": "primary Agents",
-        "capabilities": "core capabilities",
-        "workbenches": "core workbenches",
-        "reducers": "Kernel reducers",
-        "kernel_mutations": "Kernel mutations",
-    }
-    for field, label in forbidden_contribution_fields.items():
-        if manifest.get(field):
-            errors.append(f"plugin manifest cannot contribute {label}: {field}")
-    explicit_namespace = manifest.get("namespace")
-    if explicit_namespace is not None and str(explicit_namespace) != f"plugin:{plugin_id}":
-        errors.append("plugin manifest cannot override its deterministic namespace")
-
-    kernel_allow_list = manifest.get("kernel_allow_list", [])
-    if not isinstance(kernel_allow_list, list):
-        errors.append("kernel_allow_list must be an array")
-    elif len({str(item) for item in kernel_allow_list}) != len(kernel_allow_list):
-        errors.append("kernel_allow_list must contain unique Kernels")
-    elif set(str(item) for item in kernel_allow_list) - set(KERNEL_NAMES):
-        errors.append("plugin kernel_allow_list contains an unknown Kernel")
-
-    host_ports = manifest.get("host_ports", [])
-    if not isinstance(host_ports, list):
-        errors.append("host_ports must be an array")
-        host_ports = []
-    elif len({str(item) for item in host_ports}) != len(host_ports):
-        errors.append("host_ports must contain unique Host Interfaces")
-    unknown_ports = sorted(set(str(item) for item in host_ports) - set(HOST_INTERFACES))
-    if unknown_ports:
-        errors.append(f"plugin manifest references unknown Host Interfaces: {', '.join(unknown_ports)}")
-
-    object_types = manifest.get("object_types", [])
-    if not isinstance(object_types, list) or not object_types:
-        errors.append("plugin manifest must declare object_types")
-        object_types = []
-    if len({str(item) for item in object_types}) != len(object_types):
-        errors.append("plugin manifest object_types must be unique")
-    if any(not _PLUGIN_LOCAL_ID_PATTERN.fullmatch(str(item)) for item in object_types):
-        errors.append("plugin object type must be a local stable identifier")
-
-    registered_plugin = PLUGIN_CONTRACTS.get(plugin_id)
-    allowed_core_local_ids = set()
-    if registered_plugin:
-        allowed_core_local_ids.update(registered_plugin.workflows)
-        allowed_core_local_ids.update(registered_plugin.tools)
-        allowed_core_local_ids.update(registered_plugin.skills)
-        allowed_core_local_ids.update(registered_plugin.events)
-    reserved_core_ids = (
-        set(AGENTS) | set(KERNELS) | set(TOOLS) | set(SKILLS) |
-        set(WORKBENCHES) | set(ACTION_BOARD) | set(EVENTS) |
-        set(HOST_INTERFACES)
-    ) - allowed_core_local_ids
-
-    item_fields = {
-        "workflows": "workflow",
-        "tools": "tool",
-        "skills": "skill",
-        "surfaces": "surface",
-        "events": "event",
-    }
-    workflow_items = _plugin_manifest_items(manifest, "workflows")
-    declared_workflows = set(_plugin_local_ids(manifest, "workflows"))
-    workflow_by_id = {
-        str(item.get("id") or ""): item
-        for item in workflow_items
-        if item.get("id")
-    }
-    for field, kind in item_fields.items():
-        raw = manifest.get(field, [])
-        if not isinstance(raw, list):
-            errors.append(f"plugin manifest {field} must be an array")
-            continue
-        items = _plugin_manifest_items(manifest, field)
-        if len(items) != len(raw):
-            errors.append(f"plugin manifest {field} entries must be objects")
-        ids = [str(item.get("id") or "") for item in items]
-        if len(set(ids)) != len(ids):
-            errors.append(f"plugin manifest {field} ids must be unique")
-        for item, local_id in zip(items, ids):
-            if not _PLUGIN_LOCAL_ID_PATTERN.fullmatch(local_id):
-                errors.append(f"plugin {kind} id must be a local stable identifier: {local_id or '<empty>'}")
-                continue
-            if local_id in reserved_core_ids:
-                errors.append(f"plugin {kind} cannot override core registry id: {local_id}")
-            qualified_id = _plugin_qualified_id(plugin_id, kind, local_id)
-            for explicit_field in ("qualified_id", "registry_id", "core_id"):
-                explicit_id = item.get(explicit_field)
-                if explicit_id is not None and str(explicit_id) != qualified_id:
-                    errors.append(
-                        f"plugin {kind} cannot override its deterministic namespace: {local_id}"
-                    )
-            for owner_field in ("owner", "owner_agent"):
-                item_owner = item.get(owner_field)
-                if item_owner is not None and str(item_owner) not in AGENTS:
-                    errors.append(
-                        f"plugin {kind} owner must be one of the three primary Agents: {local_id}"
-                    )
-            if kind == "event" and list(
-                item.get("kernel_targets", item.get("target_kernels", [])) or []
-            ):
-                errors.append(f"external plugin event cannot target Kernels: {local_id}")
-            if kind in {"tool", "skill"}:
-                workflow_refs: list[str] = []
-                if kind == "tool" and item.get("workflow") is not None:
-                    workflow_refs = [str(item.get("workflow"))]
-                elif kind == "skill":
-                    workflow_refs = [str(value) for value in list(item.get("workflows") or [])]
-                unknown_workflows = sorted(set(workflow_refs) - declared_workflows)
-                if unknown_workflows:
-                    errors.append(
-                        f"plugin {kind} references unknown workflows: {local_id}:"
-                        f"{','.join(unknown_workflows)}"
-                    )
-                if kind == "tool" and item.get("mode") == "read" and workflow_refs:
-                    target = workflow_by_id.get(workflow_refs[0])
-                    if target and str(target.get("mode") or "").casefold() != "read":
-                        errors.append(
-                            f"plugin read tool must reference a read workflow: {local_id}"
-                        )
-                    required_ports = (
-                        target.get(
-                            "host_ports",
-                            target.get("required_host_ports", manifest.get("host_ports", [])),
-                        )
-                        if target else []
-                    )
-                    if isinstance(required_ports, list) and {
-                        "action.propose.v1", "event.record.v1"
-                    } & set(required_ports):
-                        errors.append(
-                            f"plugin read tool cannot use write Host Ports: {local_id}"
-                        )
-    return errors
-
-
-def plugin_registry_projection(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the order-independent namespaced projection of one manifest."""
-
-    errors = validate_plugin_manifest_projection(manifest)
-    if errors:
-        raise ValueError("; ".join(errors))
-    plugin_id = str(manifest["plugin_id"])
-    owner = str(manifest["owner"])
-
-    def rows(field: str, kind: str) -> list[dict[str, Any]]:
-        result = []
-        for item in sorted(_plugin_manifest_items(manifest, field), key=lambda value: str(value["id"])):
-            local_id = str(item["id"])
-            row = {
-                "id": _plugin_qualified_id(plugin_id, kind, local_id),
-                "local_id": local_id,
-                "owner_agent": str(item.get("owner") or item.get("owner_agent") or owner),
-            }
-            if kind == "tool":
-                mode = str(item.get("mode") or "")
-                row.update({
-                    "mode": mode,
-                    "model_exposure": "project_discovery" if mode == "read" else "not_model_callable",
-                })
-            if kind == "event":
-                row["kernel_targets"] = []
-            result.append(row)
-        return result
-
-    return {
-        "protocol": PLUGIN_REGISTRY_PROJECTION_PROTOCOL,
-        "plugin_id": plugin_id,
-        "release_version": str(manifest.get("version") or ""),
-        "owner_agent": owner,
-        "scope": "project",
-        "namespace": f"plugin:{plugin_id}",
-        "object_types": [
-            {
-                "id": _plugin_qualified_id(plugin_id, "object", local_id),
-                "local_id": local_id,
-            }
-            for local_id in sorted(str(item) for item in manifest.get("object_types", []))
-        ],
-        "host_interfaces": [
-            {"id": interface_id, "mode": HOST_INTERFACES[interface_id].mode}
-            for interface_id in sorted(str(item) for item in manifest.get("host_ports", []))
-        ],
-        "workflows": rows("workflows", "workflow"),
-        "tools": rows("tools", "tool"),
-        "skills": rows("skills", "skill"),
-        "surfaces": rows("surfaces", "surface"),
-        "events": rows("events", "event"),
-        "kernel_allow_list": sorted(str(item) for item in manifest.get("kernel_allow_list", [])),
-    }
-
-
 TOOLS = {
     item.id: item for item in (
         ToolContract("action_board", "Action Board", "tutor_agent", "learnflow", "transaction",
                      KERNEL_NAMES, (), "EvidenceEvent"),
-        ToolContract(
-            "plugin_package_runtime", "Signed LearnFlow Plugin Package Host", "tutor_agent",
-            "learnflow", "harness", (), (),
-            ".lfplugin validation + publisher trust + immutable release/instance/snapshot/object/run contracts; no direct core-object or Kernel write",
-        ),
-        ToolContract(
-            "plugin_process_runner", "Trusted Signed Plugin Process Broker", "tutor_agent",
-            "learnflow", "harness", (), (),
-            "fixed argv + sanitized environment + bounded JSON-RPC/Host Ports in a fresh process; filesystem/network/secrets/CPU/memory remain explicitly unisolated",
-        ),
-        ToolContract(
-            "discover_project_plugin_tools", "Project Plugin Tool Discovery", "tutor_agent",
-            "learnflow", "read", KERNEL_NAMES, (),
-            "owned project + enabled signed release + grants -> bounded read-only qualified tool schemas",
-        ),
-        ToolContract(
-            "call_project_plugin_tool", "Project Plugin Read-only Tool Dispatcher", "tutor_agent",
-            "learnflow", "read", KERNEL_NAMES, (),
-            "previously discovered qualified tool + pinned snapshot -> audited read-only plugin result; side effects are rejected",
-        ),
-        ToolContract(
-            "plugin_action_proposer", "Plugin-to-Action Board Proposal Gateway", "tutor_agent",
-            "learnflow", "proposal", (), (),
-            "fixed PluginObjectRef + registered core capability -> learner confirmation proposal; plugin never executes core mutation",
-        ),
         ToolContract("tutor_context", "Tutor Context Assembler", "tutor_agent", "learnflow", "read",
                      KERNEL_NAMES),
         ToolContract("chat_mode_runtime", "Deterministic Chat Mode Runtime", "tutor_agent", "learnflow", "orchestration",
@@ -908,7 +512,7 @@ TOOL_INTERFACE_ROLES = {
         "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector",
         "project_workspace_reader", "project_source_reader", "project_learning_file_reader",
         "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
-        "discover_project_plugin_tools", "call_project_plugin_tool",
+        "role_capability_graph_reader", "role_capability_explainer",
     }},
     **{tool_id: "harness" for tool_id in {
         "tutor_context", "chat_mode_runtime", "vnext_agent_turn_runtime", "vnext_learning_path_graph_reader",
@@ -917,7 +521,7 @@ TOOL_INTERFACE_ROLES = {
         "learning_skill_runtime", "learning_task_runtime", "learning_task_planner",
         "checkpoint_context", "context_packet_assembler", "task_runtime", "seeded_demo",
         "source_version_runtime", "domain_knowledge_packet_compiler",
-        "plugin_package_runtime", "plugin_process_runner", "plugin_action_proposer",
+        "role_capability_package_runtime", "role_capability_iteration_runtime",
     }},
     **{tool_id: "projection" for tool_id in {
         "review_scheduler", "review_proficiency_projector", "five_kernel_reducer", "memory_graph", "kernel_head_projector", "checkpoint_delivery_readiness",
@@ -928,12 +532,6 @@ TOOL_INTERFACE_ROLES = {
     "vnext_chat_session_store": "adapter",
     "workflow_gateway": "adapter",
     "workflow_validator": "adapter",
-    # These four static objects are compatibility aliases over the generic
-    # plugin host.  They are deliberately not part of the model tool surface.
-    "role_capability_package_runtime": "adapter",
-    "role_capability_graph_reader": "adapter",
-    "role_capability_explainer": "adapter",
-    "role_capability_iteration_runtime": "adapter",
 }
 
 # Exposure is intentionally narrower than the ACI catalog. vNext currently gives
@@ -947,7 +545,7 @@ TOOL_MODEL_EXPOSURE = {
             "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
-            "discover_project_plugin_tools", "call_project_plugin_tool",
+            "role_capability_graph_reader", "role_capability_explainer",
             "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector", "active_learning_file_reader",
         }
         else "agent_mediated"
@@ -1348,14 +946,8 @@ SKILLS = {
                        "learning_task_runtime", "learning_file_service", "five_kernel_retriever"),
                       "topic-locked project Tutor -> confirmed checkpoint DAG -> checkpoint LearningTasks -> managed files and evidence-safe practice",
                       "Tutor owns orchestration; Learning Design proposes; user confirms structure/artifacts; reducer alone owns five-kernel mutations"),
-        SkillContract(
-            "project_plugin_orchestration", "项目插件发现、运行与提案协调", "tutor_agent",
-            ("discover_project_plugin_tools", "call_project_plugin_tool", "plugin_package_runtime", "plugin_process_runner", "plugin_action_proposer"),
-            "enabled project plugin -> pinned read tool or validated workflow candidate -> optional core Action Board proposal",
-            "deterministic host owns grants, version, validation, commit and confirmation; plugin Agents only generate candidates",
-        ),
         SkillContract("role_capability_graphing", "岗位能力包生成、解释与迭代", "learning_design_agent",
-                      ("role_capability_package_runtime", "role_capability_graph_reader", "role_capability_explainer", "role_capability_iteration_runtime", "project_source_reader", "discover_project_plugin_tools", "call_project_plugin_tool", "plugin_process_runner"),
+                      ("role_capability_package_runtime", "role_capability_graph_reader", "role_capability_explainer", "role_capability_iteration_runtime", "project_source_reader"),
                       "project-scoped immutable role package + evidence-bound explanation + validated semantic successor",
                       "Learning Design owns artifacts; explicit workspace actions own generation/iteration; snapshots never imply learner mastery"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
@@ -1427,7 +1019,7 @@ SKILL_KINDS = {
             "worked_example_fading", "learning_file_study", "feynman_teach_back",
         }
         else "coordination_skill"
-        if skill_id in {"intent_and_handoff", "checkpoint_tutoring", "project_plugin_orchestration"}
+        if skill_id in {"intent_and_handoff", "checkpoint_tutoring"}
         else "playbook"
     )
     for skill_id in SKILLS
@@ -1480,11 +1072,6 @@ WORKBENCHES = {
                            "manage_project_conversations", "manage_learning_tasks", "plan_learning_task",
                            "run_learning_task", "generate_learning_files", "open_learning_file",
                            "attach_learning_file_to_chat", "delete_project"), "vnext"),
-        WorkbenchContract(
-            "plugin_surface_host", "Project Plugin Surface Host", "/projects/:projectId", "tutor_agent",
-            ("manage_project_plugin_instance", "run_project_plugin_workflow",
-             "discover_project_plugin_tools", "call_project_plugin_tool", "propose_plugin_core_action"),
-        ),
         WorkbenchContract("role_capability_plugin", "Role Capability Graph Plugin", "/projects/:projectId", "learning_design_agent",
                           ("generate_role_capability_package", "read_role_capability_graph", "explain_role_capability", "iterate_role_capability_package")),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
@@ -1574,11 +1161,6 @@ CAPABILITY_OWNERS = {
     "add_source": ("tutor_agent", "source_ingestion", "project_tutor"),
     "read_project_roadmap": ("tutor_agent", "project_roadmap_reader", "project_tutor"),
     "revise_project_roadmap": ("tutor_agent", "project_roadmap_proposer", "project_tutor"),
-    "discover_project_plugin_tools": ("tutor_agent", "discover_project_plugin_tools", "plugin_surface_host"),
-    "call_project_plugin_tool": ("tutor_agent", "call_project_plugin_tool", "plugin_surface_host"),
-    "manage_project_plugin_instance": ("tutor_agent", "plugin_package_runtime", "plugin_surface_host"),
-    "run_project_plugin_workflow": ("tutor_agent", "plugin_process_runner", "plugin_surface_host"),
-    "propose_plugin_core_action": ("tutor_agent", "plugin_action_proposer", "plugin_surface_host"),
     "generate_role_capability_package": ("learning_design_agent", "role_capability_package_runtime", "role_capability_plugin"),
     "read_role_capability_graph": ("learning_design_agent", "role_capability_graph_reader", "role_capability_plugin"),
     "explain_role_capability": ("learning_design_agent", "role_capability_explainer", "role_capability_plugin"),
@@ -1723,12 +1305,6 @@ EVENTS = {
         _event("source_added", "add_source", ("structure", "practice"), "artifact"),
         _event("source_processed", "add_source", ("structure", "practice"), "artifact"),
         _event("project_source_removed", "add_source", (), "confirmed_source_removal", origin="vnext"),
-        _event("plugin_instance_enabled", "manage_project_plugin_instance", (), "plugin_lifecycle", origin="plugin_host"),
-        _event("plugin_instance_disabled", "manage_project_plugin_instance", (), "plugin_lifecycle", origin="plugin_host"),
-        _event("plugin_release_upgraded", "manage_project_plugin_instance", (), "plugin_lifecycle", origin="plugin_host"),
-        _event("plugin_workflow_completed", "run_project_plugin_workflow", (), "plugin_run_audit", origin="plugin_host"),
-        _event("plugin_snapshot_committed", "run_project_plugin_workflow", (), "versioned_domain_artifact", origin="plugin_host"),
-        _event("plugin_action_proposed", "propose_plugin_core_action", (), "confirmation_required_proposal", origin="plugin_host"),
         _event("role_capability_package_generated", "generate_role_capability_package", (), "versioned_domain_artifact", origin="role_capability_plugin"),
         _event("role_capability_snapshot_iterated", "iterate_role_capability_package", (), "versioned_domain_artifact", origin="role_capability_plugin"),
         _event("roadmap_discussed", "plan_learning_path", ("structure",), "proposal"),
@@ -1774,15 +1350,6 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 _PYTHON_BINDING_TARGETS = {
     "py:action_board.execute": ("app.services.tutor_service", "execute_action"),
-    "py:plugin.package.load": ("app.services.plugin_packages", "load_plugin_package"),
-    "py:plugin.release.import": ("app.services.plugin_host", "import_plugin_release"),
-    "py:plugin.instance.enable": ("app.services.plugin_host", "enable_plugin_instance"),
-    "py:plugin.instance.update": ("app.services.plugin_host", "update_plugin_instance"),
-    "py:plugin.workflow.execute": ("app.services.plugin_host", "execute_plugin_operation"),
-    "py:plugin.tool.discover": ("app.services.plugin_host", "discover_plugin_tools"),
-    "py:plugin.surfaces.read": ("app.services.plugin_host", "plugin_surfaces"),
-    "py:plugin.host_port.call": ("app.services.plugin_host_ports", "call_plugin_host_port"),
-    "py:plugin.process.broker": ("app.services.plugin_runner", "PluginProcessBroker"),
     "py:tutor.process_turn": ("app.services.tutor_service", "process_turn"),
     "py:tutor.context": ("app.services.tutor_service", "get_session_state_summary"),
     "py:tutor.search_projects": ("app.services.tutor_service", "search_learning_projects"),
@@ -1842,28 +1409,10 @@ _PYTHON_MEMBER_BINDING_TARGETS = {
         "guided_explanation", "socratic_dialogue", "feynman_dialogue",
         "worked_example_fading", "learning_file_study",
     )
-} | {
-    f"host-interface:{interface_id}": (
-        "app.services.plugin_host", "HOST_PORT_POLICIES", interface_id,
-    )
-    for interface_id in HOST_INTERFACES
 }
 
 
 _API_BINDING_TARGETS = {
-    "api:plugins.publishers.create": ("app.api.plugins", "/admin/plugin-publishers", "POST", "create_plugin_publisher"),
-    "api:plugins.releases.import": ("app.api.plugins", "/admin/plugin-releases/import", "POST", "import_plugin_release_bundle"),
-    "api:plugins.instances.list": ("app.api.plugins", "/projects/{project_id}/plugin-instances", "GET", "list_project_plugin_instances"),
-    "api:plugins.instances.enable": ("app.api.plugins", "/projects/{project_id}/plugin-instances/{plugin_id}", "PUT", "put_project_plugin_instance"),
-    "api:plugins.instances.patch": ("app.api.plugins", "/projects/{project_id}/plugin-instances/{plugin_id}", "PATCH", "patch_project_plugin_instance"),
-    "api:plugins.workflows.run": ("app.api.plugins", "/projects/{project_id}/plugin-instances/{plugin_id}/workflows/{workflow_id}/runs", "POST", "run_project_plugin_workflow"),
-    "api:plugins.runs.read": ("app.api.plugins", "/plugin-runs/{run_id}", "GET", "get_plugin_run"),
-    "api:plugins.snapshots.list": ("app.api.plugins", "/projects/{project_id}/plugin-instances/{plugin_id}/snapshots", "GET", "list_plugin_snapshots"),
-    "api:plugins.objects.list": ("app.api.plugins", "/projects/{project_id}/plugin-instances/{plugin_id}/objects", "GET", "list_plugin_objects"),
-    "api:plugins.objects.read": ("app.api.plugins", "/projects/{project_id}/plugin-instances/{plugin_id}/objects/{object_id:path}", "GET", "get_plugin_object"),
-    "api:plugins.surfaces.list": ("app.api.plugins", "/projects/{project_id}/plugin-surfaces", "GET", "list_project_plugin_surfaces"),
-    "api:plugins.tools.discover": ("app.api.plugins", "/projects/{project_id}/plugin-tools", "GET", "discover_project_plugin_tools"),
-    "api:plugins.tools.call": ("app.api.plugins", "/projects/{project_id}/plugin-tools/{qualified_tool_id}/calls", "POST", "call_project_plugin_tool"),
     "api:agent.sync_vnext_session": ("app.api.agent", "/agent/sessions/{session_id}/vnext", "PUT", "sync_vnext_session"),
     "api:agent.start_skill_run": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs", "POST", "start_learning_skill_run"),
     "api:agent.advance_skill_turn": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs/{run_id}/turns", "POST", "advance_learning_skill_turn"),
@@ -1966,7 +1515,6 @@ _FRONTEND_HANDLER_TARGETS = {
             "read_project_learning_file", "read_project_roadmap", "propose_project_roadmap",
             "propose_project_learning_files", "search_computer_knowledge", "read_web_evidence",
             "read_role_capability_graph", "explain_role_capability",
-            "discover_project_plugin_tools", "call_project_plugin_tool",
             "search_learning_videos", "inspect_learning_video", "generate_learning_diagram",
             "generate_learning_animation", "design_assessment_blueprint",
             "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
@@ -1987,16 +1535,10 @@ _FRONTEND_COMPONENT_TARGETS = {
     "workbench:vnext_practice_file": ("frontend/src/PracticeFilePage.tsx", "PracticeFilePage", "/files/practice/"),
     "workbench:learning_tasks": ("frontend/src/LearningTasksPage.tsx", "LearningTasksPage", "/tasks"),
     "workbench:project_tutor": ("frontend/src/ProjectWorkspacePage.tsx", "ProjectWorkspacePage", "/projects/"),
-    "workbench:plugin_surface_host": ("frontend/src/PluginSurfaceHost.tsx", "PluginSurfaceHost", "/projects/"),
     "workbench:role_capability_plugin": ("frontend/src/RoleCapabilityPluginPanel.tsx", "RoleCapabilityPluginPanel", "/projects/"),
     "workbench:review": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:competition_demo": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:desktop_workspace": ("frontend/src/main.tsx", "App", ""),
-}
-
-
-_REPOSITORY_FILE_TARGETS = {
-    "plugin-manifest:role_capability_graph": "plugins/role_capability_graph/manifest.json",
 }
 
 
@@ -2034,12 +1576,6 @@ IMPLEMENTATION_BINDINGS = {
         for binding_id, (path, symbol, route) in _FRONTEND_COMPONENT_TARGETS.items()
     },
     **{
-        binding_id: ImplementationBinding(
-            binding_id, "repository_file", path=path,
-        )
-        for binding_id, path in _REPOSITORY_FILE_TARGETS.items()
-    },
-    **{
         event.reducer_binding: ImplementationBinding(
             event.reducer_binding or "", "reducer_event",
             module="app.services.learning_runtime", symbol="REDUCER_EVENT_TYPES",
@@ -2052,25 +1588,6 @@ IMPLEMENTATION_BINDINGS = {
 
 _TOOL_BINDING_IDS = {
     "action_board": ("py:action_board.execute",),
-    "plugin_package_runtime": (
-        "py:plugin.package.load", "py:plugin.release.import",
-        "py:plugin.instance.enable", "py:plugin.instance.update",
-        "api:plugins.releases.import", "api:plugins.instances.enable",
-        "api:plugins.instances.patch",
-    ),
-    "plugin_process_runner": (
-        "py:plugin.process.broker", "py:plugin.workflow.execute",
-        "api:plugins.workflows.run",
-    ),
-    "discover_project_plugin_tools": (
-        "py:plugin.tool.discover", "api:plugins.tools.discover",
-        "frontend:tool:discover_project_plugin_tools",
-    ),
-    "call_project_plugin_tool": (
-        "py:plugin.workflow.execute", "api:plugins.tools.call",
-        "frontend:tool:call_project_plugin_tool",
-    ),
-    "plugin_action_proposer": ("py:plugin.host_port.call",),
     "tutor_context": ("py:tutor.context",),
     "chat_mode_runtime": ("py:chat_modes.classify",),
     "vnext_agent_turn_runtime": ("frontend:agent_runtime.run",),
@@ -2159,34 +1676,11 @@ _OPTIONAL_TOOL_NOTES = {
 }
 
 
-_DEPRECATED_TOOL_NOTES = {
-    "role_capability_package_runtime": (
-        "Compatibility alias; generation is implemented by the generic plugin workflow host."
-    ),
-    "role_capability_graph_reader": (
-        "Compatibility alias; Tutor discovers the namespaced read_graph tool at runtime."
-    ),
-    "role_capability_explainer": (
-        "Compatibility alias; Tutor discovers the namespaced explain tool at runtime."
-    ),
-    "role_capability_iteration_runtime": (
-        "Compatibility alias; iteration is implemented by the generic plugin workflow host."
-    ),
-}
-
-
 TOOL_PUBLICATIONS = {
     tool_id: PublicationContract(
-        (
-            "optional_unimplemented" if tool_id in _OPTIONAL_TOOL_NOTES
-            else "deprecated" if tool_id in _DEPRECATED_TOOL_NOTES
-            else "implemented"
-        ),
-        (
-            () if tool_id in _OPTIONAL_TOOL_NOTES
-            else _TOOL_BINDING_IDS.get(tool_id, ())
-        ),
-        _OPTIONAL_TOOL_NOTES.get(tool_id, _DEPRECATED_TOOL_NOTES.get(tool_id, "")),
+        "optional_unimplemented" if tool_id in _OPTIONAL_TOOL_NOTES else "implemented",
+        () if tool_id in _OPTIONAL_TOOL_NOTES else _TOOL_BINDING_IDS.get(tool_id, ()),
+        _OPTIONAL_TOOL_NOTES.get(tool_id, ""),
     )
     for tool_id in TOOLS
 }
@@ -2208,15 +1702,7 @@ _SKILL_BINDING_IDS = {
     "learning_path_planning": ("frontend:path.plan", "py:roadmap.agent"),
     "learning_resource_curation": ("frontend:agent_runtime.run", "frontend:tool:search_computer_knowledge"),
     "project_apprenticeship_orchestration": ("api:vnext_projects.context", "api:vnext_projects.apply_roadmap"),
-    "project_plugin_orchestration": (
-        "py:plugin.tool.discover", "py:plugin.workflow.execute",
-        "py:plugin.host_port.call", "api:plugins.tools.discover",
-        "api:plugins.tools.call",
-    ),
-    "role_capability_graphing": (
-        "plugin-manifest:role_capability_graph", "py:plugin.workflow.execute",
-        "api:plugins.workflows.run", "api:plugins.tools.call",
-    ),
+    "role_capability_graphing": ("api:role_capability.generate", "api:role_capability.explain", "api:role_capability.iterate"),
     "evidence_grounded_teaching": ("py:lecture.agent",),
     "practice_verification": ("api:phase3.submit_concept", "api:phase3.submit_exercise"),
     "assessment_blueprint_design": ("py:assessment.create",),
@@ -2253,10 +1739,6 @@ _WORKBENCH_LIFECYCLES = {
     "profile": ("deprecated", "Legacy /profile redirect is not a canonical frontend workbench."),
     "memory": ("deprecated", "Legacy /memory redirect is not a canonical frontend workbench."),
     "xingchen_studio": ("optional_unimplemented", "No Xingchen Studio runtime or repository-owned route exists."),
-    "role_capability_plugin": (
-        "deprecated",
-        "Compatibility surface replaced by the generic PluginSurfaceHost declaration renderer.",
-    ),
 }
 
 
@@ -2305,35 +1787,12 @@ EVENT_PUBLICATIONS = {
 }
 
 
-HOST_INTERFACE_PUBLICATIONS = {
-    interface_id: PublicationContract(
-        "implemented", (f"host-interface:{interface_id}",),
-    )
-    for interface_id in HOST_INTERFACES
-}
-
-
-PLUGIN_PUBLICATIONS = {
-    "role_capability_graph": PublicationContract(
-        "implemented",
-        (
-            "plugin-manifest:role_capability_graph",
-            "py:plugin.package.load",
-            "py:plugin.workflow.execute",
-            "workbench:plugin_surface_host",
-        ),
-    ),
-}
-
-
 PUBLICATIONS = {
     "tools": TOOL_PUBLICATIONS,
     "skills": SKILL_PUBLICATIONS,
     "workbenches": WORKBENCH_PUBLICATIONS,
     "capabilities": CAPABILITY_PUBLICATIONS,
     "events": EVENT_PUBLICATIONS,
-    "host_interfaces": HOST_INTERFACE_PUBLICATIONS,
-    "plugins": PLUGIN_PUBLICATIONS,
 }
 
 
@@ -2395,11 +1854,6 @@ def _binding_failure(
                 )
                 if binding.route not in route_source:
                     return f"frontend route marker {binding.route} is not wired in main.tsx"
-            return None
-        if binding.kind == "repository_file":
-            path = _REPOSITORY_ROOT / binding.path
-            if not path.is_file():
-                return f"repository file does not exist: {binding.path}"
             return None
         return f"unknown implementation binding kind: {binding.kind}"
     except Exception as exc:  # Validation must report a broken binding, not fail the endpoint.
@@ -2559,31 +2013,6 @@ def event_manifest(
     return result
 
 
-def host_interface_manifest(
-    binding_failures: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
-    result = []
-    for interface in HOST_INTERFACES.values():
-        row = asdict(interface)
-        row.update(_publication_fields("host_interfaces", interface.id, failures))
-        result.append(row)
-    return result
-
-
-def plugin_contract_manifest(
-    binding_failures: dict[str, str] | None = None,
-) -> list[dict[str, Any]]:
-    failures = binding_failures if binding_failures is not None else implementation_binding_failures()
-    result = []
-    for contract in PLUGIN_CONTRACTS.values():
-        row = asdict(contract)
-        row["namespace"] = f"plugin:{contract.id}"
-        row.update(_publication_fields("plugins", contract.id, failures))
-        result.append(row)
-    return result
-
-
 def selectable_learning_skill(skill_id: str | None) -> SkillContract | None:
     skill = SKILLS.get(str(skill_id or "").strip())
     return skill if skill and skill.learner_selectable else None
@@ -2600,48 +2029,6 @@ def detect_learning_skill(message: str) -> SkillContract | None:
         ):
             return skill
     return None
-
-
-def _plugin_contract_manifest_issues(contract: PluginContract) -> list[str]:
-    path = _REPOSITORY_ROOT / contract.manifest_path
-    if not path.is_file():
-        return [f"plugin contract manifest is missing: {contract.id}"]
-    try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return [f"plugin contract manifest is unreadable: {contract.id}: {exc}"]
-    if not isinstance(manifest, dict):
-        return [f"plugin contract manifest must be an object: {contract.id}"]
-    errors = [
-        f"plugin contract projection invalid: {contract.id}: {issue}"
-        for issue in validate_plugin_manifest_projection(manifest)
-    ]
-    actual = {
-        "package_protocol": str(manifest.get("protocol") or ""),
-        "id": str(manifest.get("plugin_id") or ""),
-        "release_version": str(manifest.get("version") or ""),
-        "owner_agent": str(manifest.get("owner") or ""),
-        "scope": str(manifest.get("scope") or ""),
-        "object_types": tuple(str(item) for item in manifest.get("object_types", [])),
-        "host_interfaces": tuple(str(item) for item in manifest.get("host_ports", [])),
-        "workflows": tuple(_plugin_local_ids(manifest, "workflows")),
-        "tools": tuple(_plugin_local_ids(manifest, "tools")),
-        "skills": tuple(_plugin_local_ids(manifest, "skills")),
-        "surface_slots": tuple(
-            str(item.get("slot") or "")
-            for item in _plugin_manifest_items(manifest, "surfaces")
-        ),
-        "events": tuple(_plugin_local_ids(manifest, "events")),
-        "kernel_allow_list": tuple(str(item) for item in manifest.get("kernel_allow_list", [])),
-    }
-    expected = {
-        field: getattr(contract, field)
-        for field in actual
-    }
-    for field, expected_value in expected.items():
-        if actual[field] != expected_value:
-            errors.append(f"plugin contract differs from manifest: {contract.id}:{field}")
-    return errors
 
 
 def validate_registry() -> list[str]:
@@ -2675,20 +2062,6 @@ def validate_registry() -> list[str]:
         for tool_id, exposure in TOOL_MODEL_EXPOSURE.items()
     ):
         errors.append("only ACI tools may be exposed as native model tools")
-    if any(
-        TOOL_INTERFACE_ROLES.get(tool_id) != "aci_tool"
-        or TOOL_MODEL_EXPOSURE.get(tool_id) != "vnext_native"
-        for tool_id in ("discover_project_plugin_tools", "call_project_plugin_tool")
-    ):
-        errors.append("generic plugin discovery and call tools must be model-visible ACI tools")
-    if any(
-        TOOL_MODEL_EXPOSURE.get(tool_id) != "not_model_callable"
-        for tool_id in (
-            "role_capability_package_runtime", "role_capability_graph_reader",
-            "role_capability_explainer", "role_capability_iteration_runtime",
-        )
-    ):
-        errors.append("legacy role capability tools must not be model callable")
     if set(SKILL_KINDS) != set(SKILLS):
         errors.append("every skill contract must have exactly one skill kind")
     publication_items = {
@@ -2697,14 +2070,9 @@ def validate_registry() -> list[str]:
         "workbenches": set(WORKBENCHES),
         "capabilities": set(ACTION_BOARD),
         "events": set(EVENTS),
-        "host_interfaces": set(HOST_INTERFACES),
-        "plugins": set(PLUGIN_CONTRACTS),
     }
     if set(PUBLICATIONS) != set(publication_items):
-        errors.append(
-            "publication registry must cover tools, skills, workbenches, capabilities, "
-            "events, Host Interfaces and plugins"
-        )
+        errors.append("publication registry must cover tools, skills, workbenches, capabilities and events")
     for category, expected_ids in publication_items.items():
         publications = PUBLICATIONS.get(category, {})
         if set(publications) != expected_ids:
@@ -2728,7 +2096,6 @@ def validate_registry() -> list[str]:
         "api_route": ("module", "symbol", "method", "route", "endpoint"),
         "frontend_handler": ("path", "symbol"),
         "frontend_component": ("path", "symbol"),
-        "repository_file": ("path",),
         "reducer_event": ("module", "symbol", "member"),
     }
     for binding_id, binding in IMPLEMENTATION_BINDINGS.items():
@@ -2767,25 +2134,6 @@ def validate_registry() -> list[str]:
                     errors.append(f"event publication omits reducer binding: {event.id}")
         elif event.payload_version or event.reducer_binding:
             errors.append(f"zero-target event must not declare a reducer binding: {event.id}")
-    for interface_id, interface in HOST_INTERFACES.items():
-        if interface.id != interface_id:
-            errors.append(f"Host Interface key/id mismatch: {interface_id}")
-        if interface.mode not in {"read", "host_mediated", "proposal", "event_gateway"}:
-            errors.append(f"invalid Host Interface mode: {interface_id}")
-        if not interface.write_boundary:
-            errors.append(f"Host Interface lacks write boundary: {interface_id}")
-    for plugin_id, contract in PLUGIN_CONTRACTS.items():
-        if contract.id != plugin_id:
-            errors.append(f"plugin contract key/id mismatch: {plugin_id}")
-        if contract.package_protocol != PLUGIN_PACKAGE_PROTOCOL:
-            errors.append(f"plugin contract uses unknown package protocol: {plugin_id}")
-        if contract.owner_agent not in AGENTS or contract.scope != "project":
-            errors.append(f"invalid plugin owner or scope: {plugin_id}")
-        if set(contract.host_interfaces) - set(HOST_INTERFACES):
-            errors.append(f"plugin contract references unknown Host Interfaces: {plugin_id}")
-        if set(contract.kernel_allow_list) - set(KERNEL_NAMES):
-            errors.append(f"plugin contract references unknown Kernels: {plugin_id}")
-        errors.extend(_plugin_contract_manifest_issues(contract))
     for workbench in WORKBENCHES.values():
         if set(workbench.capabilities) - set(ACTION_BOARD):
             errors.append(f"workbench references unknown capability: {workbench.id}")
@@ -2918,9 +2266,6 @@ def registry_manifest() -> dict[str, Any]:
             "memory_consolidation": "enabled async worker; startup queue reconciliation; deterministic offline/provider-failure fallback",
             "context_read_path": "ContextPolicy -> KernelHead + scoped Memory Graph -> ContextPacket",
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
-            "plugin_host_authority": "signed bundle -> project-scoped instance -> immutable snapshot -> indexed PluginObjectRef; deterministic host alone grants ports, validates candidates and commits successors",
-            "plugin_execution_boundary": "trusted_signed_process is operator-enabled; filesystem/network/secrets/CPU/memory isolation are all explicitly false in v1",
-            "plugin_state_boundary": "external plugin events are namespaced and zero-target; core changes are Action Board proposals; no plugin receives a Kernel or ORM write interface",
             "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
             "teaching_delivery_projection": "DomainBrief -> versioned SourceVersion evidence -> DomainKnowledgePacket -> TeachingContentBrief -> lecture/practice; formal publication blocks on critical knowledge gaps while learner Knowledge remains a separate answer-free design hint",
             "domain_knowledge_authority": "Source identity + immutable SourceVersion/Chunk history -> scoped DomainKnowledgePacket; this source-truth plane is read-only to learner kernels and cannot imply mastery",
@@ -2944,8 +2289,6 @@ def registry_manifest() -> dict[str, Any]:
         "agents": [asdict(item) for item in AGENTS.values()],
         "chat_modes": [asdict(item) for item in CHAT_MODES.values()],
         "kernels": [asdict(item) for item in KERNELS.values()],
-        "host_interfaces": host_interface_manifest(binding_failures),
-        "plugins": plugin_contract_manifest(binding_failures),
         "capabilities": capabilities,
         "available_capabilities": [
             item["capability"] for item in capabilities if item["available"]

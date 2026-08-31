@@ -12,14 +12,10 @@ from app.services.architecture_registry import (
     CAPABILITY_OWNERS,
     EVENT_SCHEMA_VERSION,
     EVENTS,
-    HOST_INTERFACES,
     IMPLEMENTATION_BINDINGS,
     KERNELS,
     KERNEL_NAMES,
     LIFECYCLE_STATES,
-    PLUGIN_CONTRACTS,
-    PLUGIN_PACKAGE_PROTOCOL,
-    PLUGIN_REGISTRY_PROJECTION_PROTOCOL,
     PUBLICATIONS,
     REGISTRY_VERSION,
     SKILLS,
@@ -30,7 +26,6 @@ from app.services.architecture_registry import (
     TOOL_MODEL_EXPOSURE,
     WORKBENCHES,
     normalize_event_provenance,
-    plugin_registry_projection,
     registry_manifest,
     registry_validation_report,
     chat_mode_manifest,
@@ -38,7 +33,6 @@ from app.services.architecture_registry import (
     implementation_binding_failures,
     selectable_learning_skill_manifest,
     validate_implementation,
-    validate_plugin_manifest_projection,
     validate_registry,
 )
 
@@ -75,9 +69,6 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
         "DomainBrief -> versioned SourceVersion evidence"
     )
     assert "cannot imply mastery" in manifest["authority"]["domain_knowledge_authority"]
-    assert "immutable snapshot" in manifest["authority"]["plugin_host_authority"]
-    assert "explicitly false" in manifest["authority"]["plugin_execution_boundary"]
-    assert "zero-target" in manifest["authority"]["plugin_state_boundary"]
     assert manifest["authority"]["frontend_authority"].startswith("frontend/ is the only product frontend")
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [
@@ -94,10 +85,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
 def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable():
     manifest = registry_manifest()
     assert tuple(manifest["lifecycle_states"]) == LIFECYCLE_STATES
-    for category in (
-        "tools", "skills", "workbenches", "capabilities", "important_events",
-        "host_interfaces", "plugins",
-    ):
+    for category in ("tools", "skills", "workbenches", "capabilities", "important_events"):
         for row in manifest[category]:
             assert row["lifecycle"] in LIFECYCLE_STATES
             assert isinstance(row["binding_ids"], list)
@@ -122,11 +110,6 @@ def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable(
     assert "search_learning_resources" not in manifest["available_capabilities"]
     assert tools["action_board"]["binding_ids"] == ["py:action_board.execute"]
     assert workbenches["vnext_chat"]["binding_ids"] == ["workbench:vnext_chat"]
-    assert manifest["host_interfaces"]
-    assert all(row["binding_ids"] == [f"host-interface:{row['id']}"] for row in manifest["host_interfaces"])
-    plugin = next(row for row in manifest["plugins"] if row["id"] == "role_capability_graph")
-    assert plugin["available"] is True
-    assert "plugin-manifest:role_capability_graph" in plugin["binding_ids"]
 
 
 def test_targeted_events_declare_payload_and_explicit_reducer_bindings():
@@ -429,39 +412,7 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert guided["skill_kind"] == "pedagogical_method"
 
 
-def test_generic_plugin_host_owns_runtime_and_role_aliases_are_compatibility_only():
-    assert set(HOST_INTERFACES) == {
-        "project.read.v1", "source.read.v1", "knowledge_baseline.read.v1",
-        "roadmap.read.v1", "checkpoint.read.v1", "learning_task.read.v1",
-        "learning_file.read.v1", "learner_context.read.v1",
-        "artifact.resolve.v1", "model.generate_structured.v1",
-        "action.propose.v1", "event.record.v1",
-    }
-    assert CAPABILITY_OWNERS["discover_project_plugin_tools"] == (
-        "tutor_agent", "discover_project_plugin_tools", "plugin_surface_host",
-    )
-    assert CAPABILITY_OWNERS["call_project_plugin_tool"] == (
-        "tutor_agent", "call_project_plugin_tool", "plugin_surface_host",
-    )
-    assert CAPABILITY_OWNERS["manage_project_plugin_instance"] == (
-        "tutor_agent", "plugin_package_runtime", "plugin_surface_host",
-    )
-    assert CAPABILITY_OWNERS["run_project_plugin_workflow"] == (
-        "tutor_agent", "plugin_process_runner", "plugin_surface_host",
-    )
-    assert WORKBENCHES["plugin_surface_host"].surface == "/projects/:projectId"
-    assert TOOL_INTERFACE_ROLES["discover_project_plugin_tools"] == "aci_tool"
-    assert TOOL_MODEL_EXPOSURE["discover_project_plugin_tools"] == "vnext_native"
-    assert TOOL_INTERFACE_ROLES["call_project_plugin_tool"] == "aci_tool"
-    assert TOOL_MODEL_EXPOSURE["call_project_plugin_tool"] == "vnext_native"
-    assert all(EVENTS[event_id].kernel_targets == () for event_id in {
-        "plugin_instance_enabled", "plugin_instance_disabled",
-        "plugin_release_upgraded", "plugin_workflow_completed",
-        "plugin_snapshot_committed", "plugin_action_proposed",
-    })
-
-    # The old IDs remain routable compatibility aliases, but no longer expand
-    # the model's standing tool surface or form a second data authority.
+def test_role_capability_plugin_is_learning_design_owned_and_zero_target():
     assert CAPABILITY_OWNERS["generate_role_capability_package"] == (
         "learning_design_agent", "role_capability_package_runtime", "role_capability_plugin",
     )
@@ -476,98 +427,16 @@ def test_generic_plugin_host_owns_runtime_and_role_aliases_are_compatibility_onl
     )
     assert WORKBENCHES["role_capability_plugin"].surface == "/projects/:projectId"
     assert SKILL_KINDS["role_capability_graphing"] == "playbook"
-    assert TOOL_INTERFACE_ROLES["role_capability_graph_reader"] == "adapter"
-    assert TOOL_MODEL_EXPOSURE["role_capability_graph_reader"] == "not_model_callable"
-    assert TOOL_INTERFACE_ROLES["role_capability_explainer"] == "adapter"
-    assert TOOL_MODEL_EXPOSURE["role_capability_explainer"] == "not_model_callable"
-    assert TOOL_INTERFACE_ROLES["role_capability_package_runtime"] == "adapter"
+    assert TOOL_INTERFACE_ROLES["role_capability_graph_reader"] == "aci_tool"
+    assert TOOL_MODEL_EXPOSURE["role_capability_graph_reader"] == "vnext_native"
+    assert TOOL_INTERFACE_ROLES["role_capability_explainer"] == "aci_tool"
+    assert TOOL_MODEL_EXPOSURE["role_capability_explainer"] == "vnext_native"
+    assert TOOL_INTERFACE_ROLES["role_capability_package_runtime"] == "harness"
     assert TOOL_MODEL_EXPOSURE["role_capability_package_runtime"] == "not_model_callable"
-    assert TOOL_INTERFACE_ROLES["role_capability_iteration_runtime"] == "adapter"
+    assert TOOL_INTERFACE_ROLES["role_capability_iteration_runtime"] == "harness"
     assert TOOL_MODEL_EXPOSURE["role_capability_iteration_runtime"] == "not_model_callable"
-    assert PUBLICATIONS["tools"]["role_capability_graph_reader"].lifecycle == "deprecated"
-    assert PUBLICATIONS["workbenches"]["role_capability_plugin"].lifecycle == "deprecated"
     assert EVENTS["role_capability_package_generated"].kernel_targets == ()
     assert EVENTS["role_capability_snapshot_iterated"].kernel_targets == ()
-
-
-def test_official_plugin_contract_matches_manifest_and_projects_namespaced_rows():
-    repository_root = Path(__file__).resolve().parents[2]
-    manifest = json.loads(
-        (repository_root / "plugins/role_capability_graph/manifest.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    contract = PLUGIN_CONTRACTS["role_capability_graph"]
-    assert contract.package_protocol == PLUGIN_PACKAGE_PROTOCOL
-    assert contract.owner_agent == "learning_design_agent"
-    assert contract.object_types == tuple(manifest["object_types"])
-    assert contract.host_interfaces == tuple(manifest["host_ports"])
-    assert contract.workflows == tuple(item["id"] for item in manifest["workflows"])
-    assert contract.tools == tuple(item["id"] for item in manifest["tools"])
-    assert contract.skills == tuple(item["id"] for item in manifest["skills"])
-    assert contract.events == tuple(item["id"] for item in manifest["events"])
-    assert validate_plugin_manifest_projection(manifest) == []
-
-    projection = plugin_registry_projection(manifest)
-    assert projection["protocol"] == PLUGIN_REGISTRY_PROJECTION_PROTOCOL
-    assert projection["namespace"] == "plugin:role_capability_graph"
-    assert {item["id"] for item in projection["tools"]} == {
-        "role_capability_graph:read_graph", "role_capability_graph:explain",
-    }
-    assert all(item["model_exposure"] == "project_discovery" for item in projection["tools"])
-    assert all(item["kernel_targets"] == [] for item in projection["events"])
-
-    reordered = json.loads(json.dumps(manifest))
-    for field in ("object_types", "host_ports", "workflows", "tools", "skills", "surfaces", "events"):
-        reordered[field] = list(reversed(reordered[field]))
-    assert plugin_registry_projection(reordered) == projection
-
-
-def test_dynamic_plugin_projection_rejects_core_override_fourth_agent_and_kernel_events():
-    repository_root = Path(__file__).resolve().parents[2]
-    base = json.loads(
-        (repository_root / "plugins/role_capability_graph/manifest.json").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    fourth_agent = json.loads(json.dumps(base))
-    fourth_agent["agents"] = [{"id": "plugin_agent"}]
-    assert any("cannot contribute primary Agents" in issue for issue in validate_plugin_manifest_projection(fourth_agent))
-
-    invalid_owner = json.loads(json.dumps(base))
-    invalid_owner["owner"] = "plugin_agent"
-    assert any("three primary Agents" in issue for issue in validate_plugin_manifest_projection(invalid_owner))
-
-    kernel_event = json.loads(json.dumps(base))
-    kernel_event["events"][0]["kernel_targets"] = ["knowledge"]
-    assert any("cannot target Kernels" in issue for issue in validate_plugin_manifest_projection(kernel_event))
-
-    core_override = json.loads(json.dumps(base))
-    core_override["tools"][0]["id"] = "tutor_agent"
-    assert any("override core registry id" in issue for issue in validate_plugin_manifest_projection(core_override))
-
-    explicit_override = json.loads(json.dumps(base))
-    explicit_override["tools"][0]["qualified_id"] = "action_board"
-    assert any("deterministic namespace" in issue for issue in validate_plugin_manifest_projection(explicit_override))
-
-    unknown_port = json.loads(json.dumps(base))
-    unknown_port["host_ports"].append("database.write.v1")
-    assert any("unknown Host Interfaces" in issue for issue in validate_plugin_manifest_projection(unknown_port))
-
-    write_alias = json.loads(json.dumps(base))
-    write_alias["tools"][0]["workflow"] = "iterate"
-    assert any(
-        "read workflow" in issue
-        for issue in validate_plugin_manifest_projection(write_alias)
-    )
-
-    read_port_write = json.loads(json.dumps(base))
-    read_port_write["workflows"][1]["host_ports"] = ["event.record.v1"]
-    assert any(
-        "write Host Ports" in issue
-        for issue in validate_plugin_manifest_projection(read_port_write)
-    )
 
 
 def test_remediation_events_have_standard_authority_provenance():

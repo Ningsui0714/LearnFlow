@@ -1,9 +1,0 @@
-{
-  "protocol": "learnflow.plugin-publisher.v1",
-  "publisher_key": "learnflow_official",
-  "display_name": "LearnFlow Official",
-  "key_id": "learnflow-official-ed25519-v1",
-  "algorithm": "ed25519",
-  "public_key": "Tv+le588HF2hbtVX2OTMUkalAV/6+KLpOg+ieB45+WU=",
-  "trust_status": "trusted"
-}

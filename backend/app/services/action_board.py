@@ -121,31 +121,6 @@ ACTION_BOARD = {
             ("revise_project_roadmap", "navigate_checkpoint"),
         ),
         ActionDefinition(
-            "discover_project_plugin_tools", "发现当前项目插件的只读工具", "none", "none",
-            {},
-            ("call_project_plugin_tool",),
-        ),
-        ActionDefinition(
-            "call_project_plugin_tool", "调用已发现的项目插件只读工具", "none", "none",
-            {},
-            ("discover_project_plugin_tools", "propose_plugin_core_action"),
-        ),
-        ActionDefinition(
-            "manage_project_plugin_instance", "启用、配置、升级或停用项目插件", "write", "explicit_or_click",
-            {},
-            ("run_project_plugin_workflow", "discover_project_plugin_tools"),
-        ),
-        ActionDefinition(
-            "run_project_plugin_workflow", "运行项目插件工作流并校验候选快照", "artifact", "explicit_or_click",
-            {},
-            ("discover_project_plugin_tools", "propose_plugin_core_action"),
-        ),
-        ActionDefinition(
-            "propose_plugin_core_action", "把插件候选变更提交给核心 Action Board", "proposal", "explicit_or_click",
-            {},
-            (),
-        ),
-        ActionDefinition(
             "generate_role_capability_package", "生成项目岗位能力包", "artifact", "explicit_or_click",
             {},
             ("read_role_capability_graph", "explain_role_capability", "iterate_role_capability_package"),
@@ -507,18 +482,6 @@ ACTION_BOARD = {
         ),
     )
 }
-
-
-# External plugins may only ask the existing Tutor confirmation pipeline to
-# execute this deliberately small set.  Each capability below already has a
-# deterministic, learner-owned handler in ``tutor_service.execute_action``.
-# Expanding this set is a core-host contract change, never a manifest choice.
-PLUGIN_PROPOSABLE_CAPABILITIES = frozenset({
-    "plan_learning_path",
-    "apply_learning_path",
-    "generate_lecture",
-    "generate_assessment",
-})
 
 
 def definition(capability: str) -> ActionDefinition:

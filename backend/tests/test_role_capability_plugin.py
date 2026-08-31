@@ -3,43 +3,13 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import EvidenceEvent, KernelMutation
-from app.models.plugin import (
-    PluginInstance,
-    PluginObjectIndex,
-    PluginRelease,
-    PluginRun,
-    PluginSnapshot,
-)
-from app.models.project import Project
-from app.models.role_capability import (
-    RoleCapabilityPackage,
-    RoleCapabilityRun,
-    RoleCapabilitySnapshot,
-)
-from app.services.bundled_plugins import (
-    ROLE_PLUGIN_ID,
-    ROLE_PLUGIN_ROOT_HASH,
-    backfill_legacy_role_plugin,
-    ensure_official_role_plugin_release,
-)
-from app.services.plugin_host import (
-    PluginHostError,
-    _release_schema,
-    _validate_contract_value,
-    resolve_indexed_object,
-    snapshot_view,
-)
 from app.services.role_capability_plugin import (
-    apply_iteration,
-    compile_role_graph,
-    create_snapshot,
-    explain_role_graph,
-    inspect_role_graph,
+    apply_iteration, compile_role_graph, explain_role_graph, inspect_role_graph,
 )
 
 
@@ -67,36 +37,6 @@ def test_compiler_builds_stable_evidence_bound_role_graph():
     assert validation["valid"] is True
     assert validation["stats"]["task"] == 2
     assert all(node["evidence_refs"] for node in first["nodes"] if node["type"] != "role")
-
-
-def test_official_workflow_output_schema_resolves_packaged_object_ref(client: TestClient):
-    async def load_release():
-        async with async_session() as db:
-            release = await ensure_official_role_plugin_release(db)
-            await db.commit()
-            return release
-
-    release = asyncio.run(load_release())
-    schema_path = "schemas/workflow-output.schema.json"
-    schema = _release_schema(release, schema_path)
-    malformed = {
-        "snapshot": {
-            "schema_version": "role-capability.object.v1",
-            "components": {},
-            "objects": [{"id": "task:missing-label", "type": "task"}],
-            "validation": {"valid": True},
-            "provenance": {},
-        }
-    }
-    with pytest.raises(PluginHostError) as caught:
-        _validate_contract_value(
-            malformed,
-            schema,
-            kind="output",
-            release=release,
-            schema_reference=schema_path,
-        )
-    assert caught.value.code == "plugin_output_schema_invalid"
 
 
 def test_compiler_keeps_each_source_sentence_bound_to_its_own_version_ref():
@@ -152,9 +92,6 @@ def test_project_plugin_generation_explanation_iteration_and_idempotency(client:
     body = generated.json()
     assert body["snapshot"]["validation"]["valid"] is True
     assert body["authority"].endswith("never mutate five-kernel learner state")
-    assert body["deprecation"]["deprecated"] is True
-    assert body["deprecation"]["legacy_tables"] == "frozen_read_only"
-    assert body["compatibility_grant"]["implicit_from_legacy_mutation_endpoint"] is True
     replay = client.post(f"/api/role-capability/projects/{project_id}/generate", json=payload)
     assert replay.status_code == 200, replay.text
     assert replay.json()["idempotent_replay"] is True
@@ -183,190 +120,20 @@ def test_project_plugin_generation_explanation_iteration_and_idempotency(client:
     assert iterated_body["snapshot"]["version"] == body["snapshot"]["version"] + 1
     assert iterated_body["diff"]["change_count"] == 1
     assert iterated_body["snapshot"]["root_hash"] != body["snapshot"]["root_hash"]
-    assert iterated_body["deprecated_implicit_expected_snapshot"] is True
-
-    stale = client.post(f"/api/role-capability/projects/{project_id}/iterate", json={
-        "objective": "验证过期基线保护",
-        "target_ids": [role_id],
-        "operations": [{
-            "op": "update_node", "target_id": role_id,
-            "summary": "这个请求不应覆盖新快照",
-        }],
-        "expected_snapshot_id": body["snapshot"]["id"],
-        "idempotency_key": f"role-stale-{uuid.uuid4().hex}",
-    })
-    assert stale.status_code == 409, stale.text
-    assert stale.json()["detail"]["code"] == "snapshot_conflict"
-
-    objects = client.get(
-        f"/api/projects/{project_id}/plugin-instances/{ROLE_PLUGIN_ID}/objects",
-        params={"snapshot_id": iterated_body["snapshot"]["id"]},
-    )
-    assert objects.status_code == 200, objects.text
-    assert objects.json()["objects"]
-    assert all(
-        item["ref"]["snapshot_root_hash"] == iterated_body["snapshot"]["root_hash"]
-        for item in objects.json()["objects"]
-    )
 
     async def inspect_events():
         async with async_session() as db:
             events = list((await db.execute(select(EvidenceEvent).where(
                 EvidenceEvent.project_id == project_id,
-                EvidenceEvent.event_type.in_({
-                    "plugin:role_capability_graph:package_generated",
-                    "plugin:role_capability_graph:snapshot_explained",
-                    "plugin:role_capability_graph:snapshot_iterated",
-                }),
+                EvidenceEvent.event_type.in_({"role_capability_package_generated", "role_capability_snapshot_iterated"}),
             ))).scalars())
             mutations = list((await db.execute(select(KernelMutation).where(
                 KernelMutation.event_id.in_([item.id for item in events]),
             ))).scalars()) if events else []
-            legacy_counts = {
-                "packages": (await db.execute(select(func.count(RoleCapabilityPackage.id)).where(
-                    RoleCapabilityPackage.project_id == project_id,
-                ))).scalar_one(),
-                "snapshots": (await db.execute(select(func.count(RoleCapabilitySnapshot.id)).join(
-                    RoleCapabilityPackage,
-                    RoleCapabilityPackage.id == RoleCapabilitySnapshot.package_id,
-                ).where(RoleCapabilityPackage.project_id == project_id))).scalar_one(),
-                "runs": (await db.execute(select(func.count(RoleCapabilityRun.id)).where(
-                    RoleCapabilityRun.project_id == project_id,
-                ))).scalar_one(),
-            }
-            runs = list((await db.execute(select(PluginRun).where(
-                PluginRun.project_id == project_id,
-            ))).scalars())
-            return events, mutations, legacy_counts, runs
+            return events, mutations
 
-    events, mutations, legacy_counts, runs = asyncio.run(inspect_events())
+    events, mutations = asyncio.run(inspect_events())
     assert {item.event_type for item in events} == {
-        "plugin:role_capability_graph:package_generated",
-        "plugin:role_capability_graph:snapshot_explained",
-        "plugin:role_capability_graph:snapshot_iterated",
+        "role_capability_package_generated", "role_capability_snapshot_iterated",
     }
     assert mutations == []
-    assert legacy_counts == {"packages": 0, "snapshots": 0, "runs": 0}
-    assert all(run.execution_boundary["filesystem_isolation"] is False for run in runs)
-    assert all(run.execution_boundary["network_isolation"] is False for run in runs)
-
-
-def test_bundled_release_is_installed_and_legacy_rows_migrate_idempotently(
-    client: TestClient,
-):
-    created = client.post("/api/vnext-projects", json={
-        "name": f"岗位旧数据迁移 {uuid.uuid4().hex[:6]}",
-        "objective": "验证 v21 到 v22 的只读迁移",
-        "expected_outcome": "通用快照和可重建对象索引",
-        "user_level": "intermediate",
-    })
-    assert created.status_code == 200, created.text
-    project_id = created.json()["project"]["id"]
-
-    async def migrate_and_inspect():
-        async with async_session() as db:
-            project = await db.get(Project, project_id)
-            assert project is not None
-            release = await ensure_official_role_plugin_release(db)
-            assert release.root_hash == ROLE_PLUGIN_ROOT_HASH
-            assert release.trust_state == "trusted_signed"
-
-            package = RoleCapabilityPackage(
-                learner_id=project.learner_id,
-                project_id=project.id,
-                role_title="遗留 Agent 工程师",
-                status="ready",
-            )
-            db.add(package)
-            await db.flush()
-            graph = compile_role_graph(
-                role_title=package.role_title,
-                role_summary="迁移前的岗位图谱",
-                task_seeds=["设计工具协议", "验证回答质量"],
-                source_refs=[],
-                source_texts=[],
-            )
-            legacy = await create_snapshot(
-                db,
-                package,
-                graph,
-                [],
-                {"source": "migration_test", "mastery_unchanged": True},
-            )
-            legacy_run = RoleCapabilityRun(
-                learner_id=project.learner_id,
-                project_id=project.id,
-                package_id=package.id,
-                kind="generate",
-                status="completed",
-                idempotency_key=f"legacy-migration-{uuid.uuid4().hex}",
-                request={"role_title": package.role_title},
-                contract={"protocol_version": "learnflow.role-capability.v1"},
-                inspection=dict(legacy.validation or {}),
-                result_snapshot_id=legacy.id,
-                summary="遗留生成运行",
-            )
-            db.add(legacy_run)
-            await db.commit()
-
-            first = await backfill_legacy_role_plugin(db, release)
-            await db.commit()
-            await db.refresh(package)
-            instance = (await db.execute(select(PluginInstance).where(
-                PluginInstance.project_id == project.id,
-                PluginInstance.plugin_id == ROLE_PLUGIN_ID,
-            ))).scalar_one()
-            migrated = await db.get(PluginSnapshot, instance.current_snapshot_id)
-            assert migrated is not None
-            edge_index = (await db.execute(select(PluginObjectIndex).where(
-                PluginObjectIndex.snapshot_id == migrated.id,
-                PluginObjectIndex.object_type == "semantic_edge",
-            ).limit(1))).scalar_one()
-            resolved_edge = resolve_indexed_object(migrated, edge_index)
-            materialized = snapshot_view(migrated, include_component_data=True)
-            migration_map = materialized["components"]["reference-migrations"]
-
-            second = await backfill_legacy_role_plugin(db, release)
-            await db.commit()
-            migrated_count = (await db.execute(select(func.count(PluginSnapshot.id)).where(
-                PluginSnapshot.instance_id == instance.id,
-            ))).scalar_one()
-            migrated_legacy_run = (await db.execute(select(PluginRun).where(
-                PluginRun.instance_id == instance.id,
-                PluginRun.idempotency_key == f"migration:v22:role-run:{legacy_run.id}",
-            ))).scalar_one()
-            return {
-                "first": first,
-                "second": second,
-                "package_status": package.status,
-                "instance_status": instance.status,
-                "legacy": legacy,
-                "migrated": migrated,
-                "edge_index": edge_index,
-                "resolved_edge": resolved_edge,
-                "migration_map": migration_map,
-                "migrated_count": migrated_count,
-                "migrated_legacy_run": migrated_legacy_run,
-            }
-
-    result = asyncio.run(migrate_and_inspect())
-    assert result["first"]["instances"] == 1
-    assert result["first"]["snapshots"] == 1
-    assert result["first"]["runs"] == 2
-    assert result["second"]["skipped"] == 1
-    assert result["migrated_count"] == 1
-    assert result["package_status"] == "frozen_read_only"
-    assert result["instance_status"] == "disabled"
-    assert result["migrated"].parent_snapshot_id is None
-    assert result["migrated_legacy_run"].result_snapshot_id == result["migrated"].id
-    assert result["migrated_legacy_run"].operation_id == "generate"
-    assert result["migration_map"]["legacy_snapshot_id"] == result["legacy"].id
-    assert result["migration_map"]["legacy_root_hash"] == result["legacy"].root_hash
-    assert result["migrated"].root_hash == result["legacy"].root_hash
-    assert result["migrated"].validation["snapshot_root_protocol"] == "legacy-role-root-v1"
-    assert len(result["migrated"].validation["component_root_hash"]) == 64
-    assert result["edge_index"].component == "semantic-graph"
-    assert result["resolved_edge"]["object_type"] == "semantic_edge"
-    assert result["resolved_edge"]["type"] in {
-        "owns_task", "requires_capability", "requires_knowledge_skill",
-    }

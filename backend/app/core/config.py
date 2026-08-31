@@ -111,17 +111,6 @@ class Settings(BaseSettings):
     local_agent_runs_dir: str = ""  # empty -> platform temp directory
     local_agent_default_timeout_seconds: int = 900
     local_agent_max_output_bytes: int = 2 * 1024 * 1024
-    # External LearnFlow plugin runners are an operator-owned, trusted local
-    # process boundary.  They stay disabled by default in every deployment;
-    # enabling them does not imply filesystem, network, secret, CPU or memory
-    # isolation.
-    plugin_execution_mode: str = "disabled"  # disabled | trusted_signed_process
-    plugin_allow_unsigned_dev: bool = False
-    plugin_artifact_dir: str = "data/plugin-artifacts"
-    plugin_runner_timeout_seconds: int = 600
-    plugin_runner_max_message_bytes: int = 256 * 1024
-    plugin_runner_max_output_bytes: int = 1024 * 1024
-    plugin_runner_max_host_calls: int = 32
     auth_cookie_name: str = "learnflow_session"
     # The existing setting remains the absolute browser-session lifetime.
     auth_session_days: int = 7
@@ -169,16 +158,6 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_llm_base_url(cls, value: str) -> str:
         return normalize_openai_base_url(value)
-
-    @field_validator("plugin_execution_mode")
-    @classmethod
-    def validate_plugin_execution_mode(cls, value: str) -> str:
-        normalized = str(value or "disabled").strip().casefold()
-        if normalized not in {"disabled", "trusted_signed_process"}:
-            raise ValueError(
-                "PLUGIN_EXECUTION_MODE must be disabled or trusted_signed_process"
-            )
-        return normalized
 
     @property
     def cors_origins_list(self) -> List[str]:
