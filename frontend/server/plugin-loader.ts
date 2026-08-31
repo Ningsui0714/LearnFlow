@@ -39,3 +39,19 @@ export async function loadLearnFlowPluginRegistry(root = resolve(process.cwd(), 
   }
   return new LearnFlowPluginRegistry(packages)
 }
+
+export function createLearnFlowPluginRegistryProvider(options: {
+  root?: string
+  reload?: boolean
+  load?: typeof loadLearnFlowPluginRegistry
+} = {}) {
+  const load = options.load || loadLearnFlowPluginRegistry
+  let cached: Promise<LearnFlowPluginRegistry> | undefined
+  return {
+    get() {
+      if (options.reload) return load(options.root)
+      cached ||= load(options.root)
+      return cached
+    },
+  }
+}

@@ -7,6 +7,7 @@ import {
   LearnFlowPluginRegistry,
 } from '../src/plugin-api.ts'
 import { runTutorAgentTurn } from './agent-runtime.ts'
+import { createLearnFlowPluginRegistryProvider } from './plugin-loader.ts'
 
 function fixturePlugin(options: { id?: string; defaultEnabled?: boolean } = {}) {
   const id = options.id || 'fixture_graph'
@@ -51,6 +52,27 @@ function fixturePlugin(options: { id?: string; defaultEnabled?: boolean } = {}) 
     },
   })
 }
+
+test('development registry provider refreshes while production keeps one immutable catalog', async () => {
+  let developmentLoads = 0
+  const development = createLearnFlowPluginRegistryProvider({
+    reload: true,
+    load: async () => new LearnFlowPluginRegistry([fixturePlugin({ id: `dev_graph_${++developmentLoads}` })]),
+  })
+  assert.deepEqual((await development.get()).packages.map(item => item.manifest.id), ['dev_graph_1'])
+  assert.deepEqual((await development.get()).packages.map(item => item.manifest.id), ['dev_graph_2'])
+
+  let productionLoads = 0
+  const production = createLearnFlowPluginRegistryProvider({
+    reload: false,
+    load: async () => {
+      productionLoads += 1
+      return new LearnFlowPluginRegistry([fixturePlugin({ id: 'production_graph' })])
+    },
+  })
+  assert.equal(await production.get(), await production.get())
+  assert.equal(productionLoads, 1)
+})
 
 test('plugin contributions are namespaced and inactive packages expose no tools or skills', () => {
   const registry = new LearnFlowPluginRegistry([fixturePlugin()])

@@ -18,7 +18,7 @@ import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
 import { createAccountCredentialResolver, type ModelCredential } from './server/account-model-credential.ts'
 import { buildBackendProxyHeaders } from './server/backend-proxy-security.ts'
 import { AI_LATENCY_BUDGETS } from './src/latency-budgets.ts'
-import { loadLearnFlowPluginRegistry } from './server/plugin-loader.ts'
+import { createLearnFlowPluginRegistryProvider } from './server/plugin-loader.ts'
 
 function loadTutorKey(mode: string): ModelCredential {
   const localEnv = loadEnv(mode, process.cwd(), '')
@@ -137,7 +137,11 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
     runtimeBridgeToken,
     legacyDevelopmentCredential: legacyKeyConfiguration,
   })
-  const pluginRegistryPromise = loadLearnFlowPluginRegistry()
+  // Production packages are immutable for the life of the server. During local
+  // development, however, the client glob can discover a newly added plugin
+  // without restarting Vite. Reload the server registry per turn as well so the
+  // UI never advertises a capability that the Tutor process cannot resolve.
+  const pluginRegistryProvider = createLearnFlowPluginRegistryProvider({ reload: mode !== 'production' })
 
   const callProvider = async (options: {
     endpoint: string
@@ -453,6 +457,12 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         if (!text) throw new Error('模型没有返回可用的生成内容')
         return text
       }
+      const pluginRegistry = await pluginRegistryProvider.get()
+      console.info('[tutor] plugin activation', {
+        requestId,
+        requestedPluginIds: activePluginIds || [],
+        installedPluginIds: pluginRegistry.packages.map(item => item.manifest.id),
+      })
       const result = await runTutorAgentTurn({
         baseUrl,
         model,
@@ -477,7 +487,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         requestCookie: typeof request.headers.cookie === 'string' ? request.headers.cookie : undefined,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
-        pluginRegistry: await pluginRegistryPromise,
+        pluginRegistry,
         activePluginIds,
         generate,
         searchConfiguration,

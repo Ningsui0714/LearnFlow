@@ -208,6 +208,7 @@ type Conversation = {
   projectId?: number
   checkpointId?: number
   projectRole?: 'tutor' | 'checkpoint' | 'free'
+  pluginIds: string[]
 }
 
 type WorkspaceTab = {
@@ -282,6 +283,7 @@ function createConversation(): Conversation {
     planningEvents: [],
     domainSources: [],
     projectSources: [],
+    pluginIds: [],
     messages: [{
       id: uid('message'),
       role: 'assistant',
@@ -458,6 +460,11 @@ function restoreState(learnerId: number): PersistedState {
       planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
       domainSources: Array.isArray(conversation.domainSources) ? conversation.domainSources : [],
       projectSources: Array.isArray(conversation.projectSources) ? conversation.projectSources : [],
+      pluginIds: Array.isArray(conversation.pluginIds)
+        ? [...new Set(conversation.pluginIds.filter((value): value is string => (
+            typeof value === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(value)
+          )))].slice(0, 16)
+        : [],
       preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
       activeSheetId: conversation.activeSheetId === 'main'
         || sheets.some(sheet => sheet.id === conversation.activeSheetId)
@@ -552,7 +559,6 @@ function App({ auth }: { auth: AuthGateSession }) {
   const [workspace, setWorkspace] = useState<PersistedState>(() => restoreState(auth.account.learner_id))
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [toolChoices, setToolChoices] = useState<Record<string, TutorToolChoice>>({})
-  const [conversationPluginIds, setConversationPluginIds] = useState<Record<string, string[]>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
@@ -1727,7 +1733,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
-        activePluginIds: conversationPluginIds[conversationId] || [],
+        activePluginIds: conversation.pluginIds,
         onEvent: event => updateLiveTurn(conversationId, event),
       })
       finishTurn(conversationId, sheetId, mode, {
@@ -2951,9 +2957,14 @@ function App({ auth }: { auth: AuthGateSession }) {
                   onToolChange={choice => setToolChoices(previous => ({ ...previous, [draftKey]: choice }))}
                 />
                 <PluginCapabilityPicker
-                  activePluginIds={conversationPluginIds[conversation.id] || []}
+                  activePluginIds={conversation.pluginIds}
                   disabled={Boolean(pendingMode)}
-                  onChange={pluginIds => setConversationPluginIds(previous => ({ ...previous, [conversation.id]: pluginIds }))}
+                  onChange={pluginIds => setWorkspace(previous => ({
+                    ...previous,
+                    conversations: previous.conversations.map(item => item.id === conversation.id
+                      ? { ...item, pluginIds }
+                      : item),
+                  }))}
                 />
                 <span className="composer-shortcut-hint">Shift + Enter 换行</span>
               </div>
