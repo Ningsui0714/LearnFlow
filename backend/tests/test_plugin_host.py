@@ -36,7 +36,12 @@ def _manifest(version: str) -> dict:
             {"id": "generate", "mode": "write_snapshot", "host_ports": ["project.read.v1"]},
             {"id": "invalid", "mode": "write_snapshot", "host_ports": []},
             {"id": "spoof_source", "mode": "write_snapshot", "host_ports": []},
-            {"id": "inspect", "mode": "read", "host_ports": []},
+            {
+                "id": "inspect",
+                "mode": "read",
+                "snapshot_input": "current",
+                "host_ports": [],
+            },
             {"id": "propose", "mode": "proposal", "host_ports": ["action.propose.v1"]},
             {"id": "upgrade", "mode": "migration", "host_ports": []},
         ],
@@ -293,6 +298,14 @@ def test_instance_configuration_grants_snapshot_objects_tools_and_surfaces(clien
     assert run["execution_boundary"]["filesystem_isolation"] is False
     assert run["execution_boundary"]["cpu_isolation"] is False
     assert run["result"]["observed_configuration"] == {"max_items": 5}
+
+    inspected = client.post(
+        f"/api/projects/{project_id}/plugin-instances/{PLUGIN_ID}/workflows/inspect/runs",
+        json={"input": {}, "idempotency_key": f"inspect-workflow-{uuid.uuid4().hex}"},
+    )
+    assert inspected.status_code == 200, inspected.text
+    assert inspected.json()["run"]["result"]["snapshot_id"] == snapshot_id
+    assert inspected.json()["run"]["result"]["node_count"] == 1
 
     replay = client.post(
         f"/api/projects/{project_id}/plugin-instances/{PLUGIN_ID}/workflows/generate/runs",

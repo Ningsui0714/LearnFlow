@@ -49,7 +49,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-30.10"
+    assert REGISTRY_VERSION == "2026-08-31.1"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -129,6 +129,10 @@ def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable(
     assert plugin["available"] is True
     assert "plugin-manifest:role_capability_graph" in plugin["binding_ids"]
     assert "py:plugin.role_capability_agent_package" in plugin["binding_ids"]
+    task_plugin = next(row for row in manifest["plugins"] if row["id"] == "learning_task_conversion")
+    assert task_plugin["available"] is True
+    assert "plugin-manifest:learning_task_conversion" in task_plugin["binding_ids"]
+    assert "workbench:learning_task_plugin" in task_plugin["binding_ids"]
 
 
 def test_targeted_events_declare_payload_and_explicit_reducer_bindings():
@@ -524,6 +528,29 @@ def test_official_plugin_contract_matches_manifest_and_projects_namespaced_rows(
     for field in ("object_types", "host_ports", "workflows", "tools", "skills", "surfaces", "events"):
         reordered[field] = list(reversed(reordered[field]))
     assert plugin_registry_projection(reordered) == projection
+
+
+def test_learning_task_plugin_contract_matches_manifest_and_keeps_zero_kernel_events():
+    repository_root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (repository_root / "plugins/learning_task_conversion/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    contract = PLUGIN_CONTRACTS["learning_task_conversion"]
+    assert contract.object_types == tuple(manifest["object_types"])
+    assert contract.host_interfaces == tuple(manifest["host_ports"])
+    assert contract.workflows == tuple(item["id"] for item in manifest["workflows"])
+    assert contract.tools == tuple(item["id"] for item in manifest["tools"])
+    assert contract.skills == tuple(item["id"] for item in manifest["skills"])
+    assert validate_plugin_manifest_projection(manifest) == []
+    projection = plugin_registry_projection(manifest)
+    assert {item["id"] for item in projection["events"]} == {
+        "plugin:learning_task_conversion:task_generated",
+        "plugin:learning_task_conversion:revision_submitted",
+        "plugin:learning_task_conversion:handoff_prepared",
+    }
+    assert all(item["kernel_targets"] == [] for item in projection["events"])
 
 
 def test_dynamic_plugin_projection_rejects_core_override_fourth_agent_and_kernel_events():

@@ -612,6 +612,9 @@ Agent 只能生成候选，不能批准自己的结果。四层对象的权威�
 主 Agent。写 workflow 必须携带 `expected_snapshot_id` 和绑定 request hash 的 instance 级幂等键；候选只有在
 宿主验证并原子提交后才成为后继 Snapshot。Surface 只能使用受限声明式 DSL；Tutor 只通过
 `discover_project_plugin_tools` 与 `call_project_plugin_tool` 发现和调用当前项目获授权的只读能力。
+仓库自带官方插件若需要产品级中央工作区，只能使用注册表登记的宿主 React 绑定；绑定代码属于 LearnFlow 前端，
+安装包仍不能携带 HTML、CSS、JavaScript 或任意组件名。当前学习型任务转化工作台读取插件固定快照，并把拖动、
+批注和交接操作重新提交给通用 Plugin Host，因此不形成第二份任务真相或五核旁路。
 
 破坏性接口调整必须保留迁移说明。仅增加讲法、模型或供应商 adapter，不应改变 EvidenceEvent 和五核语义。
 

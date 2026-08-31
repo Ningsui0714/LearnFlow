@@ -128,8 +128,10 @@ runner 或操作员进程开关。以下四层描述的是安装/实例/数据�
 - stdout 只能承载 RPC 帧，stderr 作为有界诊断记录，不参与协议。
 
 runner 先接收带 instance、release、workflow/tool、固定 snapshot、输入 schema 版本和调用预算的启动请求。
-宿主在校验调用者输入后注入只读 `plugin_configuration`，并将应用过 JSON Schema default 的配置纳入
-request hash 与 Snapshot envelope；调用者不能覆盖该字段。
+需要当前固定快照的 workflow 必须声明 `snapshot_input: current`；宿主完成冲突检查后才注入只读
+`snapshot` 与 `snapshot_ref`，调用者不能伪造。宿主同时在校验调用者输入后注入只读
+`plugin_configuration`，并将应用过 JSON Schema default 的配置纳入 request hash 与 Snapshot envelope；
+调用者不能覆盖这些字段。
 它可以返回候选组件、引用、解释或 proposal，也可以调用获授权 Host Port；它不能批准自己的结果、移动
 实例指针、创建核心对象、写数据库或声明掌握。宿主对最终结果重新做 schema、权限、引用、hash 和预算校验。
 
@@ -247,12 +249,18 @@ body。Surface 不允许 HTML、脚本、插件 CSS、任意 URL、动态 import
 只能解析受管引用；action 只能引用当前 release manifest 中声明的 workflow。Surface 只是 Snapshot/Run 的
 投影，不保存领域事实，也不能直接触发核心对象写入。
 
-项目内的插件操作沿用 Tutor 与项目上下文，不建立第二套路由或插件专属页面：
+项目内的插件操作沿用 Tutor 与项目上下文。默认插件不建立第二套路由或自行提供页面：
 
 - 左栏展示项目已启用插件；点击插件只选择既有项目 Tutor 对话及其 `PluginChatContext`。
 - Product Skill 与插件状态位于 Composer；领域 workflow 可以由 Tutor Harness 按插件契约在对话中调度。
 - Surface 是聊天输入控件与工具输出 renderer 的声明，不在消息区顶部建立独立插件工作台。
 - 管理抽屉只负责安装、授权、配置、停用和升级；实例失效时聊天撤下相应工具与控件。
+
+仓库自带的官方产品插件可以声明一个**宿主管理的产品绑定**作为例外。该绑定的 React/CSS 必须位于
+`frontend/src`，在 `architecture_registry.py` 中登记为可验证 Workbench，并且只能读取通用插件 API 返回的
+固定 Surface/Snapshot；安装包不能携带、选择或替换该组件。外部 `.lfplugin` 即使使用相同 plugin ID 也不能
+注入前端代码。当前 `learning_task_conversion` 使用该机制打开项目中央任务工作台，左侧项目栏、顶部标签和
+项目 Tutor 仍属于 LearnFlow 外壳。
 
 这组入口只改变宿主导航状态；权限、Surface 发现、workflow 运行与对象写入仍经过相同的通用插件 API 和宿主校验。
 
@@ -303,7 +311,17 @@ deprecation metadata。详见 `docs/implementation/ROLE_CAPABILITY_PLUGIN.md`。
 `snapshot_root_protocol=legacy-role-root-v1` 标明兼容身份；由通用 Artifact Store 重写的组件集合另以
 `component_root_hash` 校验。所有原生通用快照仍使用完整 snapshot-envelope hash。
 
-## 12. 验收不变量
+## 12. 学习型任务转化官方插件
+
+内置 `learning_task_conversion` Agent Package 接收已确认的真实工作任务、上游任务 JSON 和固定项目来源，生成
+`learning_task / task_step / knowledge_point / skill_point / task_relation / learning_resource` 等对象。它的中央
+工作台是宿主仓库中的官方绑定：步骤可拖动调整顺序，正文可选中批注，知识技能按步骤展示，知识点可准备下游
+个性化学习启动包。批注和顺序调整都通过 `revise` workflow 形成后继快照，不在浏览器保存第二份领域真相。
+
+该插件的 `task_generated / revision_submitted / handoff_prepared` 事件全部是零 Kernel target。任务规划产物、资源
+访问和下游导航均不等于学习者已掌握；只有下游正式学习与评估事件可进入五核证据链。
+
+## 13. 验收不变量
 
 - Bundle 校验能拒绝穿越、符号链接、超限、缺件、hash/signature/version/信任错误。
 - Runner 的固定 argv、环境清理、预算、超时、取消、崩溃和全部 `isolation=false` 可观测且可测试。

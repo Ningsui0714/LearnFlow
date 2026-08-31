@@ -914,6 +914,7 @@ Badge 使用 learner 范围内的幂等 `award_key`。记忆后续被纠正时�
 | `/review` | 独立复习队列、确定性调度、判题与纠错闭环 |
 | `/projects` | 项目组合、待创建提案和项目管理 |
 | `/projects/:id` | 当前项目目标、来源、正式路线和 Project Tutor |
+| `/projects/:id/plugins/learning-task` | 官方学习型任务插件的中央步骤、映射、批注与交接工作区 |
 | `/learning-path` | 官方与个人学习路径图、节点检索和确认管理 |
 | `/learner-profile` | 五核只读画像、可追溯依据与明确资料管理 |
 | `/learning-files` | 正式讲义与练习文件目录 |
@@ -930,6 +931,10 @@ canonical frontend binding，不得出现在 available 工作台或被文档描�
 `list`、`table`、`graph`、`form`、`input`、`citation`、`status` 与 `action`；插件不得注入 HTML、脚本、CSS、
 任意 URL 或 React 组件。Surface 只是固定 Snapshot/Run 的投影，action 只能指向当前 release manifest 声明的
 workflow，并继续遵守 project ownership、expected snapshot、幂等和 Action Board 确认边界。
+
+官方仓库可以为内置产品插件提供注册表可验证的宿主绑定，但绑定必须由 LearnFlow 前端实现且只消费固定插件
+Snapshot。它不是 package Surface 的扩展点：外部包不能声明组件名、加载 React/CSS 或覆盖绑定。学习型任务转化
+使用这一绑定在中央区域呈现步骤、知识技能、资源和批注；外围导航、标签与 Tutor 始终由 LearnFlow 控制。
 
 ## 17. 失败与降级语义
 
@@ -1025,7 +1030,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 14. **不可追溯记忆**：长期画像声明找不到原始事件或事实支持。
 15. **插件成为状态旁路**：runner 直接访问 ORM、覆盖核心对象或声明带 Kernel target 的事件。
 16. **签名冒充沙箱**：把受信发布者签名描述成文件、网络、密钥、CPU 或内存隔离。
-17. **动态前端注入**：插件用 React/JavaScript/HTML/CSS 或任意 URL 绕过 Surface DSL。
+17. **动态前端注入**：插件包用 React/JavaScript/HTML/CSS、任意 URL 或组件名绕过 Surface DSL；仓库内登记的官方宿主绑定不由插件包提供，不能被外部 release 替换。
 
 ## 21. 扩展新能力的检查清单
 

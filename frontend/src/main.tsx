@@ -221,13 +221,14 @@ type Conversation = {
 
 type WorkspaceTab = {
   id: string
-  kind: 'chat' | 'settings' | 'projects' | 'project' | 'learning-path' | 'profile' | 'tasks' | 'review' | 'learning-files' | 'lecture-file' | 'practice-file'
+  kind: 'chat' | 'settings' | 'projects' | 'project' | 'learning-task-plugin' | 'learning-path' | 'profile' | 'tasks' | 'review' | 'learning-files' | 'lecture-file' | 'practice-file'
   title: string
   conversationId?: string
   originConversationId?: string
   originSheetId?: string
   fileRef?: string
   projectId?: number
+  pluginId?: string
 }
 
 type SettingsState = {
@@ -264,6 +265,7 @@ const SourceFilePage = lazy(() => import('./SourceFilePage'))
 const ProjectsPage = lazy(() => import('./ProjectsPage'))
 const ProjectWorkspacePage = lazy(() => import('./ProjectWorkspacePage'))
 const ProjectContextPanel = lazy(() => import('./ProjectContextPanel'))
+const LearningTaskPluginWorkspace = lazy(() => import('./LearningTaskPluginWorkspace'))
 
 function uid(prefix: string) {
   return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
@@ -403,6 +405,14 @@ function tabFromCurrentPath(conversations: Conversation[]): WorkspaceTab | undef
   const path = window.location.pathname
   if (path === '/settings') return SETTINGS_TAB
   if (path === '/projects') return PROJECTS_TAB
+  const learningTaskPluginRoute = path.match(/^\/projects\/(\d+)\/plugins\/learning-task$/)
+  if (learningTaskPluginRoute) {
+    const projectId = Number(learningTaskPluginRoute[1])
+    return {
+      id: `plugin:${projectId}:learning_task_conversion`, kind: 'learning-task-plugin',
+      title: '学习型任务转化', projectId, pluginId: 'learning_task_conversion',
+    }
+  }
   if (path.startsWith('/projects/')) {
     const projectId = Number(path.slice('/projects/'.length))
     if (Number.isInteger(projectId) && projectId > 0) return { id: `project:${projectId}`, kind: 'project', title: `项目 #${projectId}`, projectId }
@@ -487,7 +497,7 @@ function restoreState(learnerId: number): PersistedState {
     }})
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
-      ? value.tabs.filter(tab => ['settings', 'projects', 'project', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
+      ? value.tabs.filter(tab => ['settings', 'projects', 'project', 'learning-task-plugin', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
       : []
     let safeTabs = tabs.length > 0 ? tabs.slice(-12) : [chatTab(conversations[0])]
     const routeTab = tabFromCurrentPath(conversations)
@@ -519,6 +529,7 @@ function pathForTab(tab: WorkspaceTab) {
   if (tab.kind === 'settings') return '/settings'
   if (tab.kind === 'projects') return '/projects'
   if (tab.kind === 'project') return `/projects/${tab.projectId}`
+  if (tab.kind === 'learning-task-plugin') return `/projects/${tab.projectId}/plugins/learning-task`
   if (tab.kind === 'learning-path') return '/learning-path'
   if (tab.kind === 'profile') return '/learner-profile'
   if (tab.kind === 'tasks') return '/tasks'
@@ -565,7 +576,7 @@ function inheritedContextMessages(conversation: Conversation) {
 }
 
 function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
-  const icon = kind === 'settings' ? '⚙' : ['projects', 'project'].includes(kind) ? '◇' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : ['learning-files', 'lecture-file', 'practice-file'].includes(kind) ? '▤' : '□'
+  const icon = kind === 'settings' ? '⚙' : ['projects', 'project'].includes(kind) ? '◇' : kind === 'learning-task-plugin' ? '✦' : kind === 'learning-path' ? '⌁' : kind === 'profile' ? '◉' : kind === 'tasks' ? '☷' : kind === 'review' ? '↺' : ['learning-files', 'lecture-file', 'practice-file'].includes(kind) ? '▤' : '□'
   return <span aria-hidden="true" className="tab-icon">{icon}</span>
 }
 
@@ -936,7 +947,34 @@ function App({ auth }: { auth: AuthGateSession }) {
     }
   }
 
+  const openLearningTaskPlugin = async (projectId: number) => {
+    try {
+      const [projectWorkspace, surfaces] = await Promise.all([
+        loadFormalProject(projectId),
+        refreshProjectPluginSurfaces(projectId),
+      ])
+      const surface = surfaces.find(item => item.plugin_id === 'learning_task_conversion')
+      if (!surface) throw new Error('学习型任务转化插件尚未启用，请先在项目插件管理中启用。')
+      syncProjectWorkspace(projectWorkspace)
+      setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
+      openTab({
+        id: `plugin:${projectId}:learning_task_conversion`,
+        kind: 'learning-task-plugin',
+        title: surface.title || '学习型任务转化',
+        projectId,
+        pluginId: surface.plugin_id,
+      })
+      setProjectPanelRequest(closeProjectPanel)
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '学习型任务工作台打开失败')
+    }
+  }
+
   const openProjectPluginChat = async (projectId: number, pluginId: string) => {
+    if (pluginId === 'learning_task_conversion') {
+      await openLearningTaskPlugin(projectId)
+      return
+    }
     try {
       const [projectWorkspace, surfaces] = await Promise.all([
         loadFormalProject(projectId),
@@ -2439,6 +2477,23 @@ function App({ auth }: { auth: AuthGateSession }) {
         </Suspense>
       )
     }
+    if (tab.kind === 'learning-task-plugin' && tab.projectId) {
+      const surface = (pluginSurfacesByProject[tab.projectId] || [])
+        .find(item => item.plugin_id === 'learning_task_conversion')
+      return (
+        <Suspense fallback={<div className="page-loading">正在载入学习型任务工作台…</div>}>
+          <LearningTaskPluginWorkspace
+            projectId={tab.projectId}
+            surface={surface}
+            onRefresh={async () => {
+              const surfaces = await refreshProjectPluginSurfaces(tab.projectId!)
+              return surfaces.find(item => item.plugin_id === 'learning_task_conversion')
+            }}
+            onOpenPersonalized={() => openTab(LEARNING_PATH_TAB)}
+          />
+        </Suspense>
+      )
+    }
     if (tab.kind === 'learning-path') {
       return (
         <Suspense fallback={<div className="page-loading">正在载入学习路径…</div>}>
@@ -3139,7 +3194,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                     <div className="composer-plugin-popover">
                       <header><div><span>CHAT PLUGINS</span><strong>选择本对话使用的插件</strong></div><button type="button" onClick={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}>管理</button></header>
                       <div className="composer-plugin-list">
-                        {(pluginSurfacesByProject[conversation.projectId] || []).map(surface => <button type="button" key={`${surface.plugin_id}:${surface.surface_id}`} onClick={() => void openProjectPluginChat(conversation.projectId!, surface.plugin_id)}><span>{pluginChatGlyph(surface.plugin_id)}</span><div><strong>{surface.title}</strong><small>工具、Skill 与聊天产物</small></div></button>)}
+                        {(pluginSurfacesByProject[conversation.projectId] || []).map(surface => <button type="button" key={`${surface.plugin_id}:${surface.surface_id}`} onClick={() => void openProjectPluginChat(conversation.projectId!, surface.plugin_id)}><span>{pluginChatGlyph(surface.plugin_id)}</span><div><strong>{surface.title}</strong><small>{surface.plugin_id === 'learning_task_conversion' ? '打开中央任务工作台' : '工具、Skill 与聊天产物'}</small></div></button>)}
                         {!(pluginSurfacesByProject[conversation.projectId] || []).length && <p>当前项目还没有启用插件，请先进入管理完成安装和授权。</p>}
                       </div>
                     </div>
@@ -3218,9 +3273,11 @@ function App({ auth }: { auth: AuthGateSession }) {
                     {(pluginSurfacesByProject[project.id] || []).map(surface => <button
                       type="button"
                       key={`${surface.plugin_id}:${surface.surface_id}`}
-                      className={activeConversation?.pluginContext?.pluginId === surface.plugin_id && activeConversation.projectId === project.id ? 'active' : ''}
+                      className={(surface.plugin_id === 'learning_task_conversion'
+                        ? activeTab?.kind === 'learning-task-plugin' && activeTab.projectId === project.id
+                        : activeConversation?.pluginContext?.pluginId === surface.plugin_id && activeConversation.projectId === project.id) ? 'active' : ''}
                       onClick={() => void openProjectPluginChat(project.id, surface.plugin_id)}
-                    ><span>{pluginChatGlyph(surface.plugin_id)}</span><strong>{surface.title}</strong><small>在聊天中使用</small></button>)}
+                    ><span>{pluginChatGlyph(surface.plugin_id)}</span><strong>{surface.title}</strong><small>{surface.plugin_id === 'learning_task_conversion' ? '打开任务工作台' : '在聊天中使用'}</small></button>)}
                   </div>}
                   {expanded && projectChats.length > 0 && <div className="project-chat-list">{projectChats.map(entry => <button
                     type="button"

@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.10"
+REGISTRY_VERSION = "2026-08-31.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -446,6 +446,31 @@ PLUGIN_CONTRACTS = {
             manifest_path="plugins/role_capability_graph/manifest.json",
             execution_boundary=(
                 "built-in Agent Package behind deterministic Plugin Host; optional signed native runner is distribution-only"
+            ),
+        ),
+        PluginContract(
+            id="learning_task_conversion",
+            package_protocol="learnflow.plugin-package.v1",
+            release_version="1.0.0",
+            owner_agent="learning_design_agent",
+            scope="project",
+            object_types=(
+                "learning_task", "task_step", "knowledge_point", "skill_point",
+                "task_relation", "learning_resource", "review_note",
+            ),
+            host_interfaces=(
+                "project.read.v1", "source.read.v1", "knowledge_baseline.read.v1",
+                "model.generate_structured.v1", "event.record.v1",
+            ),
+            workflows=("generate", "revise", "review", "handoff"),
+            tools=("read_task", "prepare_handoff"),
+            skills=("learning_task_planning",),
+            surface_slots=("project.context.tabs",),
+            events=("task_generated", "revision_submitted", "handoff_prepared"),
+            kernel_allow_list=(),
+            manifest_path="plugins/learning_task_conversion/manifest.json",
+            execution_boundary=(
+                "built-in Agent Package behind deterministic Plugin Host with a repository-owned central workspace binding"
             ),
         ),
     )
@@ -1487,6 +1512,11 @@ WORKBENCHES = {
         ),
         WorkbenchContract("role_capability_plugin", "Role Capability Graph Chat Plugin", "/chat/:conversationId", "learning_design_agent",
                           ("generate_role_capability_package", "read_role_capability_graph", "explain_role_capability", "iterate_role_capability_package")),
+        WorkbenchContract(
+            "learning_task_plugin", "Learning Task Conversion Plugin Workspace",
+            "/projects/:projectId/plugins/learning-task", "learning_design_agent",
+            ("run_project_plugin_workflow", "discover_project_plugin_tools", "call_project_plugin_tool"),
+        ),
         WorkbenchContract("lecture", "Checkpoint Tutor · Lecture", "/projects/:projectId/checkpoints/:checkpointId", "tutor_agent",
                           ("generate_lecture", "explain_selection", "generate_assessment")),
         WorkbenchContract("assessment", "Checkpoint Tutor · Assessment", "/projects/:projectId/checkpoints/:checkpointId/exercises", "tutor_agent",
@@ -1782,6 +1812,9 @@ _PYTHON_BINDING_TARGETS = {
     "py:plugin.role_capability_agent_package": (
         "app.services.role_capability_agent_package", "run_role_capability_workflow",
     ),
+    "py:plugin.learning_task_agent_package": (
+        "app.services.learning_task_agent_package", "run_learning_task_workflow",
+    ),
     "py:plugin.tool.discover": ("app.services.plugin_host", "discover_plugin_tools"),
     "py:plugin.surfaces.read": ("app.services.plugin_host", "plugin_surfaces"),
     "py:plugin.host_port.call": ("app.services.plugin_host_ports", "call_plugin_host_port"),
@@ -1992,6 +2025,7 @@ _FRONTEND_COMPONENT_TARGETS = {
     "workbench:project_tutor": ("frontend/src/ProjectWorkspacePage.tsx", "ProjectWorkspacePage", "/projects/"),
     "workbench:plugin_surface_host": ("frontend/src/ProjectPluginManager.tsx", "ProjectPluginManager", "/projects/"),
     "workbench:role_capability_plugin": ("frontend/src/RoleCapabilityChatPlugin.tsx", "RoleCapabilityChatPlugin", "/chat/"),
+    "workbench:learning_task_plugin": ("frontend/src/LearningTaskPluginWorkspace.tsx", "LearningTaskPluginWorkspace", "/projects/"),
     "workbench:review": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:competition_demo": ("frontend/src/ReviewWorkbenchPage.tsx", "ReviewWorkbenchPage", "/review"),
     "workbench:desktop_workspace": ("frontend/src/main.tsx", "App", ""),
@@ -2000,6 +2034,7 @@ _FRONTEND_COMPONENT_TARGETS = {
 
 _REPOSITORY_FILE_TARGETS = {
     "plugin-manifest:role_capability_graph": "plugins/role_capability_graph/manifest.json",
+    "plugin-manifest:learning_task_conversion": "plugins/learning_task_conversion/manifest.json",
 }
 
 
@@ -2322,6 +2357,16 @@ PLUGIN_PUBLICATIONS = {
             "py:plugin.workflow.execute",
             "workbench:plugin_surface_host",
             "workbench:role_capability_plugin",
+        ),
+    ),
+    "learning_task_conversion": PublicationContract(
+        "implemented",
+        (
+            "plugin-manifest:learning_task_conversion",
+            "py:plugin.learning_task_agent_package",
+            "py:plugin.workflow.execute",
+            "workbench:plugin_surface_host",
+            "workbench:learning_task_plugin",
         ),
     ),
 }

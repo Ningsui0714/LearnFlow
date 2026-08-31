@@ -1173,6 +1173,197 @@ button { cursor: pointer; }
   .path-layout{grid-template-columns:1fr}.path-inspector{border-top:1px solid #dfe6e1}.path-filters{grid-template-columns:1fr}.path-active-plan{padding-inline:16px}.formal-profile-overview,.formal-profile-summary-card,.profile-input-disclosure,.kernel-tabs,.kernel-definition-card,.kernel-explicit-editor,.concept-graph-disclosure,.formal-profile-grid,.profile-page-heading{width:calc(100% - 24px)}.formal-profile-overview,.formal-profile-source dl,.formal-profile-grid{grid-template-columns:1fr}.profile-page-heading{align-items:flex-start;flex-direction:column}.profile-version{margin-top:8px}
   .paper-tree-map{grid-template-columns:1fr}.paper-tree-branches{display:block}.paper-tree-branches>section{margin:12px 0}.paper-tree-branches>section::before{display:none}.practice-reflection>div{grid-template-columns:1fr}
 }
+
+/* Repository-owned learning-task plugin binding.  The surrounding LearnFlow
+   shell stays untouched; this styling is scoped to the central workspace. */
+.learning-task-plugin-page {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f5f7f4;
+  container-type: inline-size;
+}
+
+.learning-task-plugin-header {
+  display: flex;
+  min-height: 72px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #dfe6e1;
+  background: #fff;
+  padding: 12px 20px;
+}
+
+.learning-task-plugin-header > div,
+.learning-task-plugin-header > div:first-child,
+.learning-task-plugin-actions { display: flex; align-items: center; }
+.learning-task-plugin-header > div:first-child { min-width: 0; gap: 11px; }
+.learning-task-plugin-header > div:first-child > div { min-width: 0; }
+.learning-task-plugin-mark { display: grid; width: 34px; height: 34px; flex: none; place-items: center; border-radius: 9px; background: #1f7252; color: #fff; font-size: 15px; }
+.learning-task-plugin-header p { margin: 0 0 3px; color: #789086; font-size: 8px; font-weight: 800; letter-spacing: .08em; }
+.learning-task-plugin-header h1 { max-width: 650px; margin: 0; overflow: hidden; color: #192a22; font-size: 17px; font-weight: 720; letter-spacing: -.015em; text-overflow: ellipsis; white-space: nowrap; }
+.learning-task-plugin-actions { flex: none; gap: 6px; }
+.learning-task-plugin-actions button { min-height: 30px; border: 1px solid #d4ded8; border-radius: 8px; background: #fff; padding: 0 10px; color: #4d6358; font-size: 9px; font-weight: 700; }
+.learning-task-plugin-actions button:hover { border-color: #9fc2b1; background: #f1f8f4; color: #176848; }
+.learning-task-plugin-ready { display: inline-flex; align-items: center; gap: 6px; margin-right: 3px; border-radius: 99px; background: #e9f5ee; padding: 6px 9px; color: #2f7054; font-size: 8px; font-weight: 750; }
+.learning-task-plugin-ready i { width: 6px; height: 6px; border-radius: 50%; background: #22a268; }
+
+.learning-task-evidence-strip { display: flex; min-height: 34px; flex: none; align-items: center; gap: 15px; border-bottom: 1px solid #e1e7e3; background: #fbfcfa; padding: 0 20px; color: #62756b; font-size: 8px; }
+.learning-task-evidence-strip span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.learning-task-evidence-strip span i { display: grid; width: 14px; height: 14px; place-items: center; border-radius: 50%; background: #e2f2e9; color: #20805a; font-size: 8px; font-style: normal; font-weight: 850; }
+.learning-task-evidence-strip strong { margin-left: auto; color: #8a6a25; font-size: 8px; font-weight: 720; white-space: nowrap; }
+
+.learning-task-plugin-workspace { display: grid; min-height: 0; flex: 1; grid-template-columns: minmax(170px, .7fr) minmax(370px, 2.1fr) minmax(245px, 1fr); overflow: hidden; }
+.learning-task-step-rail, .learning-task-inspector { min-height: 0; overflow-y: auto; background: #fbfcfa; }
+.learning-task-step-rail { display: flex; flex-direction: column; border-right: 1px solid #dfe6e1; padding: 16px 11px 12px; }
+.learning-task-step-rail > header { padding: 0 7px 10px; }
+.learning-task-step-rail > header span, .learning-task-inspector > header span, .learning-task-annotation-drawer > header span { display: block; color: #82928a; font-size: 7px; font-weight: 850; letter-spacing: .13em; }
+.learning-task-step-rail > header strong, .learning-task-inspector > header strong, .learning-task-annotation-drawer > header strong { display: block; margin-top: 3px; color: #25382e; font-size: 12px; }
+.learning-task-step-rail > header small { display: block; margin-top: 4px; color: #a0aaa5; font-size: 7px; }
+.learning-task-step-rail ol { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.learning-task-step-rail li button { display: grid; width: 100%; min-width: 0; grid-template-columns: 29px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; padding: 8px; color: #4d6156; text-align: left; }
+.learning-task-step-rail li button:hover { border-color: #d8e4dd; background: #f2f6f3; }
+.learning-task-step-rail li button.active { border-color: #b8d6c7; background: #e7f3eb; color: #175e41; box-shadow: 0 1px 0 rgba(31,82,57,.04); }
+.learning-task-step-rail li button > span { display: grid; width: 29px; height: 29px; place-items: center; border-radius: 8px; background: #eef2ef; color: #73847b; font-size: 8px; font-weight: 850; }
+.learning-task-step-rail li button.active > span { background: #247655; color: #fff; }
+.learning-task-step-rail li button div { min-width: 0; }
+.learning-task-step-rail li button strong, .learning-task-step-rail li button small { display: block; overflow: hidden; text-overflow: ellipsis; }
+.learning-task-step-rail li button strong { font-size: 9px; font-weight: 720; white-space: nowrap; }
+.learning-task-step-rail li button small { margin-top: 3px; color: #8b9891; font-size: 7px; white-space: nowrap; }
+.learning-task-step-rail li button > i { color: #d1804b; font-size: 16px; font-style: normal; }
+.learning-task-step-rail > footer { display: flex; align-items: center; gap: 6px; margin-top: auto; border-top: 1px solid #e5eae7; padding: 12px 7px 0; color: #8b9891; font-size: 7px; }
+.learning-task-step-rail > footer strong { color: #3d6f59; }
+
+.learning-task-document-area { min-height: 0; overflow-y: auto; background: #f5f7f4; padding: 15px 18px 42px; }
+.learning-task-breadcrumb { display: flex; width: min(100%, 760px); align-items: center; gap: 7px; margin: 0 auto 8px; color: #8b9992; font-size: 8px; }
+.learning-task-breadcrumb strong { color: #50655a; }
+.learning-task-breadcrumb i { font-style: normal; }
+.learning-task-step-document { width: min(100%, 760px); margin: 0 auto; border: 1px solid #dbe3de; border-radius: 12px; background: #fff; box-shadow: 0 5px 18px rgba(37,57,46,.045); }
+.learning-task-step-document > header { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #e5ebe7; padding: 17px 19px 14px; }
+.learning-task-step-document > header > span { display: grid; width: 39px; height: 39px; flex: none; place-items: center; border-radius: 10px; background: #e6f2eb; color: #257356; font-size: 11px; font-weight: 850; }
+.learning-task-step-document > header p { margin: 0 0 3px; color: #5b8873; font-size: 7px; font-weight: 850; letter-spacing: .13em; }
+.learning-task-step-document > header h2 { margin: 0; color: #1c2c24; font-size: 19px; font-weight: 720; letter-spacing: -.02em; }
+.learning-task-step-document > header small { display: block; margin-top: 5px; color: #8c9892; font-size: 8px; }
+.learning-task-step-document > section { padding: 16px 19px; }
+.learning-task-section-label { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.learning-task-section-label span { color: #398064; font-size: 7px; font-weight: 850; }
+.learning-task-section-label strong { color: #385147; font-size: 9px; }
+.learning-task-operation > p { margin: 0; color: #34473e; font-size: 12px; line-height: 1.75; }
+.learning-task-delivery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; padding: 0 19px 16px; }
+.learning-task-delivery-grid section { border: 1px solid #dfe7e2; border-radius: 9px; background: #f7f9f7; padding: 11px 12px; }
+.learning-task-delivery-grid span { display: block; color: #75877e; font-size: 7px; font-weight: 750; }
+.learning-task-delivery-grid strong { display: block; margin-top: 5px; color: #234035; font-size: 10px; line-height: 1.45; }
+.learning-task-delivery-grid p { margin: 6px 0 0; color: #919c96; font-size: 7px; line-height: 1.45; }
+.learning-task-dependency-section, .learning-task-context-section { border-top: 1px solid #edf0ee; }
+.learning-task-dependency-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.learning-task-dependency-flow span, .learning-task-dependency-flow strong { border: 1px solid #d9e3dd; border-radius: 7px; background: #f8faf8; padding: 6px 8px; color: #597066; font-size: 8px; font-weight: 650; }
+.learning-task-dependency-flow strong { border-color: #a9d0bc; background: #e9f5ee; color: #176848; }
+.learning-task-dependency-flow i { color: #90a097; font-size: 9px; font-style: normal; }
+.learning-task-context-section dl { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin: 0; }
+.learning-task-context-section dl div { border-left: 2px solid #c5dbcf; padding-left: 9px; }
+.learning-task-context-section dt { color: #71837a; font-size: 7px; font-weight: 750; }
+.learning-task-context-section dd { margin: 5px 0 0; color: #52655b; font-size: 8px; line-height: 1.65; }
+
+.learning-task-inspector { border-left: 1px solid #dfe6e1; padding: 15px 13px 30px; }
+.learning-task-inspector > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; border-bottom: 1px solid #e3e8e5; padding: 0 2px 11px; }
+.learning-task-inspector > header small { border-radius: 99px; background: #edf4f0; padding: 4px 6px; color: #5f7a6d; font-size: 7px; white-space: nowrap; }
+.learning-task-inspector > section { margin-top: 13px; }
+.learning-task-inspector h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 7px; color: #50645a; font-size: 8px; }
+.learning-task-inspector h3 i { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 7px; background: #e6f2eb; color: #217153; font-size: 7px; font-style: normal; }
+.learning-task-inspector article { border: 1px solid #dce5df; border-radius: 9px; background: #fff; padding: 10px; }
+.learning-task-inspector article + article { margin-top: 6px; }
+.learning-task-inspector article strong { color: #263b31; font-size: 9px; }
+.learning-task-inspector article p, .learning-task-relation-list > p, .learning-task-resource-list > p { margin: 6px 0 0; color: #74847b; font-size: 7px; line-height: 1.55; }
+.learning-task-inspector article button { display: flex; width: 100%; align-items: center; justify-content: space-between; margin-top: 9px; border: 0; border-radius: 7px; background: #207654; padding: 7px 8px; color: #fff; font-size: 8px; font-weight: 750; }
+.learning-task-inspector article button:hover { background: #176347; }
+.learning-task-relation-list > p { border-left: 2px solid #b7d4c5; padding-left: 8px; }
+.learning-task-resource-list a { display: grid; grid-template-columns: 23px minmax(0, 1fr) auto; align-items: center; gap: 7px; border: 1px solid #dde6e0; border-radius: 8px; background: #fff; padding: 8px; color: #38594a; text-decoration: none; }
+.learning-task-resource-list a:hover { border-color: #a8cbb9; background: #f1f8f4; }
+.learning-task-resource-list a > span { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 6px; background: #edf4f0; color: #2b7a59; font-size: 8px; }
+.learning-task-resource-list a div { min-width: 0; }
+.learning-task-resource-list a strong, .learning-task-resource-list a small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.learning-task-resource-list a strong { font-size: 8px; }
+.learning-task-resource-list a small { margin-top: 2px; color: #84928a; font-size: 6px; }
+.learning-task-resource-list a > i { color: #84978d; font-size: 9px; font-style: normal; }
+.learning-task-handoff-status { margin: 12px 0 0; border-radius: 8px; background: #eef6f2; padding: 8px; color: #39725a; font-size: 7px; line-height: 1.5; }
+
+.learning-task-annotation-drawer { position: absolute; z-index: 20; top: 0; right: 0; bottom: 0; display: flex; width: min(330px, 88%); flex-direction: column; overflow-y: auto; border-left: 1px solid #ccd9d1; background: #fbfcfb; padding: 16px; box-shadow: -13px 0 32px rgba(34,52,42,.12); transform: translateX(105%); transition: transform .18s ease; }
+.learning-task-plugin-page.annotation-open .learning-task-annotation-drawer { transform: translateX(0); }
+.learning-task-annotation-drawer > header { display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid #e1e7e3; padding-bottom: 11px; }
+.learning-task-annotation-drawer > header button { display: grid; width: 27px; height: 27px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #78877f; font-size: 17px; }
+.learning-task-annotation-drawer > header button:hover { background: #edf2ef; color: #2c4236; }
+.learning-task-annotation-drawer > p { margin: 12px 0; color: #718078; font-size: 8px; line-height: 1.6; }
+.learning-task-annotation-drawer blockquote { margin: 0 0 12px; border-left: 2px solid #4d8b6d; background: #eff6f2; padding: 9px 10px; color: #4d6458; font-size: 8px; line-height: 1.55; }
+.learning-task-annotation-drawer blockquote span { display: block; margin-bottom: 4px; color: #347058; font-size: 7px; font-weight: 800; }
+.learning-task-annotation-drawer form { display: grid; gap: 7px; }
+.learning-task-annotation-drawer form label { color: #52675c; font-size: 8px; font-weight: 750; }
+.learning-task-annotation-drawer textarea { width: 100%; border: 1px solid #d6e0da; border-radius: 9px; background: #fff; padding: 9px; color: #2d4137; font-size: 9px; line-height: 1.6; outline: 0; resize: vertical; }
+.learning-task-annotation-drawer textarea:focus { border-color: #6eaa8b; box-shadow: 0 0 0 3px rgba(46,130,91,.08); }
+.learning-task-annotation-drawer form button { border: 0; border-radius: 8px; background: #1e7352; padding: 8px; color: #fff; font-size: 8px; font-weight: 750; }
+.learning-task-annotation-drawer form button:disabled { cursor: default; opacity: .45; }
+.learning-task-annotation-drawer > section { margin-top: 19px; border-top: 1px solid #e3e8e5; padding-top: 12px; }
+.learning-task-annotation-drawer > section h3 { margin: 0 0 8px; color: #4b6156; font-size: 9px; }
+.learning-task-annotation-drawer > section > p { color: #8b9891; font-size: 8px; }
+.learning-task-annotation-drawer > section article { position: relative; border: 1px solid #dce4df; border-radius: 8px; background: #fff; padding: 9px; }
+.learning-task-annotation-drawer > section article + article { margin-top: 6px; }
+.learning-task-annotation-drawer > section article p { margin: 0 0 5px; color: #43574c; font-size: 8px; line-height: 1.55; }
+.learning-task-annotation-drawer > section article small { display: block; color: #89958e; font-size: 7px; line-height: 1.45; }
+.learning-task-annotation-drawer > section article span { display: inline-block; margin-top: 7px; border-radius: 99px; background: #fff1e8; padding: 3px 6px; color: #a95d2c; font-size: 6px; font-weight: 750; }
+.learning-task-plugin-error { flex: none; margin: 0; border-bottom: 1px solid #eccfc9; background: #fff5f3; padding: 8px 20px; color: #a44437; font-size: 8px; }
+
+.learning-task-plugin-empty { display: grid; place-items: center; overflow-y: auto; padding: 32px; }
+.learning-task-plugin-empty-card { width: min(620px, 100%); border: 1px solid #dbe4de; border-radius: 14px; background: #fff; padding: 34px; box-shadow: 0 12px 38px rgba(38,57,47,.07); }
+.learning-task-plugin-empty-card > .learning-task-plugin-mark { margin-bottom: 17px; }
+.learning-task-plugin-kicker { margin: 0 0 7px; color: #4f7b66; font-size: 8px; font-weight: 850; letter-spacing: .14em; }
+.learning-task-plugin-empty-card h1 { margin: 0; color: #1b2d24; font-size: 25px; letter-spacing: -.025em; }
+.learning-task-plugin-empty-card > p:not(.learning-task-plugin-kicker):not(.learning-task-plugin-error) { max-width: 520px; margin: 10px 0 24px; color: #6c7d74; font-size: 10px; line-height: 1.75; }
+.learning-task-plugin-empty-card form label { display: block; margin-bottom: 7px; color: #496056; font-size: 8px; font-weight: 750; }
+.learning-task-plugin-empty-card form > div { display: flex; gap: 7px; }
+.learning-task-plugin-empty-card input { min-width: 0; height: 38px; flex: 1; border: 1px solid #d2ddd6; border-radius: 9px; padding: 0 11px; color: #263a30; font-size: 10px; outline: 0; }
+.learning-task-plugin-empty-card input:focus { border-color: #71a98c; box-shadow: 0 0 0 3px rgba(46,130,91,.08); }
+.learning-task-plugin-empty-card form button { flex: none; border: 0; border-radius: 9px; background: #1d7251; padding: 0 15px; color: #fff; font-size: 9px; font-weight: 750; }
+.learning-task-plugin-empty-card form button:disabled { cursor: default; opacity: .45; }
+.learning-task-plugin-examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.learning-task-plugin-examples button { border: 1px solid #dde5e0; border-radius: 99px; background: #f7f9f7; padding: 5px 8px; color: #667970; font-size: 7px; }
+.learning-task-plugin-examples button:hover { border-color: #b6d1c2; background: #edf6f1; color: #236b4d; }
+.learning-task-plugin-empty-card .learning-task-plugin-error { margin-top: 12px; border: 0; border-radius: 8px; padding: 8px 10px; }
+
+@container (max-width: 900px) {
+  .learning-task-plugin-workspace { grid-template-columns: 185px minmax(360px, 1fr); overflow-y: auto; }
+  .learning-task-step-rail { position: sticky; top: 0; height: 100%; }
+  .learning-task-document-area { overflow: visible; }
+  .learning-task-inspector { grid-column: 2; border-top: 1px solid #dfe6e1; border-left: 0; overflow: visible; padding: 16px 20px 36px; }
+  .learning-task-inspector > section { display: inline-block; width: calc(50% - 6px); vertical-align: top; }
+  .learning-task-inspector > section:nth-of-type(even) { margin-left: 8px; }
+}
+
+@container (max-width: 650px) {
+  .learning-task-plugin-header { align-items: flex-start; flex-direction: column; padding: 11px 13px; }
+  .learning-task-plugin-actions { width: 100%; flex-wrap: wrap; }
+  .learning-task-plugin-ready { margin-right: auto; }
+  .learning-task-evidence-strip { gap: 8px; overflow-x: auto; padding-inline: 13px; }
+  .learning-task-plugin-workspace { display: block; overflow-y: auto; }
+  .learning-task-step-rail { position: static; height: auto; overflow: hidden; border-right: 0; border-bottom: 1px solid #dfe6e1; padding: 11px; }
+  .learning-task-step-rail > header { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+  .learning-task-step-rail > header small { margin: 0 0 0 auto; }
+  .learning-task-step-rail ol { display: flex; overflow-x: auto; padding-bottom: 3px; }
+  .learning-task-step-rail li { min-width: 180px; }
+  .learning-task-step-rail > footer { display: none; }
+  .learning-task-document-area { overflow: visible; padding: 12px 10px 24px; }
+  .learning-task-delivery-grid, .learning-task-context-section dl { grid-template-columns: 1fr; }
+  .learning-task-inspector { padding: 14px 11px 30px; }
+  .learning-task-inspector > section { display: block; width: auto; }
+  .learning-task-inspector > section:nth-of-type(even) { margin-left: 0; }
+  .learning-task-plugin-empty { padding: 13px; }
+  .learning-task-plugin-empty-card { padding: 22px; }
+  .learning-task-plugin-empty-card form > div { align-items: stretch; flex-direction: column; }
+  .learning-task-plugin-empty-card form button { min-height: 36px; }
+}
 .project-plugin-list {
   display: grid;
   gap: 6px;

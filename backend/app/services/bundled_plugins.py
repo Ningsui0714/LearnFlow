@@ -28,6 +28,7 @@ from app.services.plugin_artifacts import canonical_json_bytes
 from app.services.plugin_host import artifact_store, canonical_hash
 from app.services.role_capability_plugin import inspect_role_graph
 from app.services.role_capability_agent_package import register_role_capability_agent_package
+from app.services.learning_task_agent_package import register_learning_task_agent_package
 
 
 OFFICIAL_PUBLISHER_KEY = "learnflow_official"
@@ -37,6 +38,9 @@ ROLE_PLUGIN_ID = "role_capability_graph"
 ROLE_PLUGIN_VERSION = "1.0.0"
 ROLE_PLUGIN_ROOT_HASH = "8385913204acc20d6cdfa246bf0e2fc7a0be94df1cf4e5708a39a5ce46af592f"
 ROLE_OBJECT_SCHEMA = "role-capability.object.v1"
+LEARNING_TASK_PLUGIN_ID = "learning_task_conversion"
+LEARNING_TASK_PLUGIN_VERSION = "1.0.0"
+LEARNING_TASK_PLUGIN_ROOT_HASH = "7fb7133fdfd9abeb4afc5898def672c4b720d3fda71b4b46f1038de7f495a8e6"
 
 
 # Official product plugins are Agent Packages linked directly into LearnFlow.
@@ -44,6 +48,7 @@ ROLE_OBJECT_SCHEMA = "role-capability.object.v1"
 # exportable third-party distribution artifact, but normal product execution
 # never depends on the optional native-process runner.
 register_role_capability_agent_package()
+register_learning_task_agent_package()
 
 
 def _repository_root() -> Path:
@@ -122,6 +127,79 @@ async def ensure_official_role_plugin_release(db: AsyncSession) -> PluginRelease
         package_artifact_uri=manifest_artifact.uri,
         runner_artifacts={
             "builtin_agent_package": "app.services.role_capability_agent_package",
+            "resources": resources,
+            "runners": {},
+        },
+        trust_state="built_in",
+        status="active",
+    )
+    db.add(release)
+    await db.flush()
+    return release
+
+
+async def ensure_official_learning_task_plugin_release(db: AsyncSession) -> PluginRelease:
+    """Install the official learning-task Agent Package as a built-in release."""
+
+    publisher = (await db.execute(select(PluginPublisher).where(
+        PluginPublisher.publisher_key == OFFICIAL_PUBLISHER_KEY,
+    ))).scalar_one_or_none()
+    if not publisher:
+        publisher = PluginPublisher(
+            publisher_key=OFFICIAL_PUBLISHER_KEY,
+            display_name="LearnFlow Official",
+            key_id=OFFICIAL_PUBLISHER_KEY_ID,
+            public_key=OFFICIAL_PUBLISHER_PUBLIC_KEY,
+            trust_status="trusted",
+        )
+        db.add(publisher)
+        await db.flush()
+
+    existing = (await db.execute(select(PluginRelease).where(
+        PluginRelease.plugin_id == LEARNING_TASK_PLUGIN_ID,
+        PluginRelease.version == LEARNING_TASK_PLUGIN_VERSION,
+    ))).scalar_one_or_none()
+    if existing:
+        if existing.root_hash != LEARNING_TASK_PLUGIN_ROOT_HASH:
+            raise RuntimeError("bundled learning-task plugin version has conflicting content")
+        existing.trust_state = "built_in"
+        return existing
+
+    package_root = _repository_root() / "plugins" / LEARNING_TASK_PLUGIN_ID
+    manifest_path = package_root / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(f"built-in learning-task Agent Package is missing: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("plugin_id") != LEARNING_TASK_PLUGIN_ID
+        or manifest.get("version") != LEARNING_TASK_PLUGIN_VERSION
+    ):
+        raise RuntimeError("built-in learning-task manifest conflicts with the architecture contract")
+
+    store = artifact_store()
+    manifest_artifact = store.put_json(manifest, name="manifest.json")
+    resources: dict[str, Any] = {}
+    for directory in ("schemas", "surfaces"):
+        for path in sorted((package_root / directory).rglob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            relative = path.relative_to(package_root).as_posix()
+            resources[relative] = store.put_bytes(
+                path.read_bytes(),
+                media_type="application/json" if path.suffix == ".json" else "application/octet-stream",
+                name=relative,
+            ).to_dict()
+    release = PluginRelease(
+        publisher_id=publisher.id,
+        plugin_id=LEARNING_TASK_PLUGIN_ID,
+        version=LEARNING_TASK_PLUGIN_VERSION,
+        package_protocol=str(manifest.get("protocol") or "learnflow.plugin-package.v1"),
+        manifest=manifest,
+        signature={"kind": "repository_built_in"},
+        root_hash=LEARNING_TASK_PLUGIN_ROOT_HASH,
+        package_artifact_uri=manifest_artifact.uri,
+        runner_artifacts={
+            "builtin_agent_package": "app.services.learning_task_agent_package",
             "resources": resources,
             "runners": {},
         },
@@ -539,8 +617,13 @@ async def backfill_legacy_role_plugin(
 
 async def install_and_migrate_bundled_plugins(db: AsyncSession) -> dict[str, Any]:
     release = await ensure_official_role_plugin_release(db)
+    learning_task_release = await ensure_official_learning_task_plugin_release(db)
     counts = await backfill_legacy_role_plugin(db, release)
-    return {"release_id": release.id, "role_capability": counts}
+    return {
+        "release_id": release.id,
+        "learning_task_release_id": learning_task_release.id,
+        "role_capability": counts,
+    }
 
 
 __all__ = [
@@ -550,8 +633,12 @@ __all__ = [
     "ROLE_PLUGIN_ID",
     "ROLE_PLUGIN_ROOT_HASH",
     "ROLE_PLUGIN_VERSION",
+    "LEARNING_TASK_PLUGIN_ID",
+    "LEARNING_TASK_PLUGIN_ROOT_HASH",
+    "LEARNING_TASK_PLUGIN_VERSION",
     "backfill_legacy_role_plugin",
     "bundled_role_plugin_path",
     "ensure_official_role_plugin_release",
+    "ensure_official_learning_task_plugin_release",
     "install_and_migrate_bundled_plugins",
 ]

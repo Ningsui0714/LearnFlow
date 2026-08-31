@@ -1733,7 +1733,10 @@ async def execute_plugin_operation(
         raise _error("expected_snapshot_required", "write workflow must explicitly submit expected_snapshot_id", status_code=409, current=instance.current_snapshot_id)
     if write_operation and require_expected_snapshot and expected_snapshot_id != instance.current_snapshot_id:
         raise _error("snapshot_conflict", "write workflow expected snapshot is stale or missing", status_code=409, expected=expected_snapshot_id, current=instance.current_snapshot_id)
-    inject_snapshot = workflow_id in {"explain", "iterate", "validate", "upgrade"} or (
+    snapshot_input = str(operation.get("snapshot_input") or "").strip().casefold()
+    inject_snapshot = snapshot_input == "current" or workflow_id in {
+        "explain", "iterate", "validate", "upgrade",
+    } or (
         invocation_kind == "tool" and str(operation.get("mode") or "") == "read"
     )
     if inject_snapshot:

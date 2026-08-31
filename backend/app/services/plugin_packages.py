@@ -662,6 +662,12 @@ def validate_manifest(manifest: Mapping[str, Any], entries: Mapping[str, Package
             raise _package_error(
                 "invalid_manifest", "plugin workflow mode is unsupported"
             )
+        snapshot_input = workflow.get("snapshot_input")
+        if snapshot_input is not None and snapshot_input != "current":
+            raise _package_error(
+                "invalid_manifest",
+                "workflow.snapshot_input must be current when declared",
+            )
         required_ports = workflow.get(
             "host_ports", workflow.get("required_host_ports", host_ports)
         )

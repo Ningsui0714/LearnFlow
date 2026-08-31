@@ -1,0 +1,30 @@
+{
+  "protocol": "learnflow.plugin-surface.v1",
+  "id": "learning_task_workspace",
+  "slot": "project.context.tabs",
+  "label": "学习型任务转化",
+  "body": {
+    "type": "section",
+    "title": "学习型任务工作台",
+    "children": [
+      {"type": "status", "source": "instance.status", "label": "插件状态"},
+      {"type": "metric", "source": "snapshot.validation.stats.steps", "label": "任务步骤"},
+      {"type": "metric", "source": "snapshot.validation.stats.relations", "label": "知识技能关系"},
+      {
+        "type": "form",
+        "id": "generate_learning_task",
+        "workflow": "generate",
+        "submit_label": "生成学习型任务",
+        "children": [
+          {"type": "input", "name": "task_title", "label": "真实工作任务", "required": true},
+          {"type": "input", "name": "upstream_task", "label": "上游任务 JSON"}
+        ]
+      },
+      {
+        "type": "action",
+        "workflow": "review",
+        "label": "检查当前任务快照"
+      }
+    ]
+  }
+}

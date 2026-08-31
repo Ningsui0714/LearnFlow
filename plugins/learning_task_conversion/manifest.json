@@ -1,0 +1,116 @@
+{
+  "protocol": "learnflow.plugin-package.v1",
+  "plugin_id": "learning_task_conversion",
+  "version": "1.0.0",
+  "name": "学习型任务转化",
+  "description": "把上游真实工作任务编译为可执行、可验收、可追溯的学习型任务步骤，并形成知识点级学习交接。",
+  "host_compatibility": {
+    "learnflow": ">=0.1.0 <1.0.0",
+    "plugin_host": "learnflow.plugin-host.v1"
+  },
+  "owner": "learning_design_agent",
+  "scope": "project",
+  "schema_version": "learning-task.object.v1",
+  "kernel_allow_list": [],
+  "object_types": [
+    "learning_task",
+    "task_step",
+    "knowledge_point",
+    "skill_point",
+    "task_relation",
+    "learning_resource",
+    "review_note"
+  ],
+  "host_ports": [
+    "project.read.v1",
+    "source.read.v1",
+    "knowledge_baseline.read.v1",
+    "model.generate_structured.v1",
+    "event.record.v1"
+  ],
+  "workflows": [
+    {
+      "id": "generate",
+      "mode": "write_snapshot",
+      "description": "从项目目标、上游任务 JSON 与固定来源生成学习型任务步骤快照。",
+      "host_ports": ["project.read.v1", "source.read.v1", "model.generate_structured.v1"],
+      "input_schema": "schemas/workflow-input.schema.json",
+      "output_schema": "schemas/workflow-output.schema.json"
+    },
+    {
+      "id": "revise",
+      "mode": "write_snapshot",
+      "snapshot_input": "current",
+      "description": "把步骤或文本批注编译为后继快照，保留稳定对象标识。",
+      "host_ports": [],
+      "input_schema": "schemas/workflow-input.schema.json",
+      "output_schema": "schemas/workflow-output.schema.json"
+    },
+    {
+      "id": "review",
+      "mode": "read",
+      "snapshot_input": "current",
+      "description": "对固定任务快照执行同一性、依赖、证据、安全、交付和教学六维检查。",
+      "host_ports": [],
+      "input_schema": "schemas/workflow-input.schema.json",
+      "output_schema": "schemas/workflow-output.schema.json"
+    },
+    {
+      "id": "handoff",
+      "mode": "read",
+      "snapshot_input": "current",
+      "description": "为选定知识点生成下游个性化学习启动包。",
+      "host_ports": [],
+      "input_schema": "schemas/workflow-input.schema.json",
+      "output_schema": "schemas/workflow-output.schema.json"
+    }
+  ],
+  "tools": [
+    {
+      "id": "read_task",
+      "mode": "read",
+      "description": "读取当前固定学习型任务快照、步骤与知识技能映射。",
+      "workflow": "review",
+      "input_schema": "schemas/tool-input.schema.json",
+      "output_schema": "schemas/workflow-output.schema.json"
+    },
+    {
+      "id": "prepare_handoff",
+      "mode": "read",
+      "description": "为指定知识点准备个性化学习交接数据。",
+      "workflow": "handoff",
+      "input_schema": "schemas/tool-input.schema.json",
+      "output_schema": "schemas/workflow-output.schema.json"
+    }
+  ],
+  "skills": [
+    {
+      "id": "learning_task_planning",
+      "kind": "product_skill",
+      "owner": "learning_design_agent",
+      "workflows": ["generate", "revise", "review", "handoff"]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "learning_task_workspace",
+      "slot": "project.context.tabs",
+      "label": "学习型任务转化",
+      "definition": "surfaces/project.json"
+    }
+  ],
+  "events": [
+    {"id": "task_generated", "kernel_targets": []},
+    {"id": "revision_submitted", "kernel_targets": []},
+    {"id": "handoff_prepared", "kernel_targets": []}
+  ],
+  "config_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "target_steps": {"type": "integer", "minimum": 4, "maximum": 10, "default": 6},
+      "allow_model_fallback": {"type": "boolean", "default": true}
+    },
+    "additionalProperties": false
+  }
+}

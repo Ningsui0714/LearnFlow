@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "task_title": {"type": "string", "maxLength": 240},
+    "upstream_task": {"type": ["object", "string", "null"]},
+    "source_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
+    "target_id": {"type": "string", "maxLength": 160},
+    "quote": {"type": "string", "maxLength": 1000},
+    "note": {"type": "string", "maxLength": 2000},
+    "knowledge_id": {"type": "string", "maxLength": 160}
+  },
+  "additionalProperties": true
+}
