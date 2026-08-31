@@ -276,13 +276,6 @@ capability、knowledge_skill、claim、semantic_edge、scenario、process_event�
 bridge 对象；`generate / explain / iterate / validate / upgrade` workflow；Product Skill
 `role_capability_graphing`；项目 Surface 和两个只读对话工具。
 
-学习者使用路径以聊天为主：项目左栏把已启用插件显示为可进入的插件项，点击后复用项目 Tutor 对话并绑定
-`PluginChatContext`。Tutor 先通过 `discover_project_plugin_tools` 获得当前项目、当前实例、当前权限下的只读能力，
-再用 `call_project_plugin_tool` 固定快照读取。插件选择、Product Skill、快照版本和 workflow 入口位于 Composer
-对话选项栏；岗位雷达图、事理森林、对象卡片由宿主对 Snapshot 组件确定性投影为 Tutor 工具消息，不在消息区
-顶部形成独立工作台，也不保存第二份领域真相。`generate` 与 `iterate` 只由选项栏确认卡调用，模型不能代替
-学习者确认；项目抽屉仅负责安装、授权、配置、停用和升级。
-
 其快照组件包括 evidence、semantic graph、process forest、views、retrieval index、validation report 和
 reference migrations。解释固定精确 snapshot，执行有界检索、关系遍历和证据读取；迭代固定 base snapshot，
 形成合同、检查覆盖、生成 patch、执行结构/证据/语义校验和 meaningful diff。Agent 只能提供候选，宿主验证

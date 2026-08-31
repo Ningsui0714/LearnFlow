@@ -501,24 +501,3 @@ export function loadProjectPluginObject(projectId: number, pluginId: string, obj
     object: unknown
   }>(`/api/projects/${projectId}/plugin-instances/${encodeURIComponent(pluginId)}/objects/${encodeURIComponent(objectId)}${suffix}`)
 }
-
-export function discoverProjectPluginReadTools(projectId: number, query: string) {
-  return jsonRequest<{
-    protocol: 'learnflow.plugin-tool-discovery.v1'
-    tools: Array<{ qualified_tool_id: string; title?: string; description?: string; snapshot_id?: number; risk?: string; mode?: string }>
-  }>(`/api/projects/${projectId}/plugin-tools?query=${encodeURIComponent(query.slice(0, 500))}`)
-}
-
-export function callProjectPluginReadTool(projectId: number, qualifiedToolId: string, input: Record<string, unknown>, snapshotId?: number) {
-  return jsonRequest<Record<string, any>>(
-    `/api/projects/${projectId}/plugin-tools/${encodeURIComponent(qualifiedToolId)}/calls`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        input,
-        snapshot_id: snapshotId || null,
-        idempotency_key: requestKey(qualifiedToolId.split(':', 1)[0] || 'plugin', 'chat-read'),
-      }),
-    },
-  )
-}

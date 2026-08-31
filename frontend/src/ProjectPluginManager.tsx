@@ -264,7 +264,7 @@ function PluginReleaseCard({
     {notice && <div className="project-plugin-card-notice" role="status">{notice}</div>}
     <footer>
       <button type="button" disabled={!canApply} onClick={() => void onApply(selectedRelease, configuration, grants)}>{busy ? '处理中…' : actionLabel}</button>
-      {instance?.status === 'enabled' && <button type="button" className="project-plugin-open-workspace" disabled={busy} onClick={() => onOpenPluginWorkspace(group.pluginId)}>在 Tutor 对话中使用</button>}
+      {instance?.status === 'enabled' && <button type="button" className="project-plugin-open-workspace" disabled={busy} onClick={() => onOpenPluginWorkspace(group.pluginId)}>打开插件工作台</button>}
       {instance?.status === 'enabled' && <button type="button" className="project-plugin-disable" disabled={busy} onClick={() => void onDisable(instance)}>停用</button>}
     </footer>
   </article>

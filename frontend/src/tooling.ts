@@ -1,6 +1,5 @@
 import type { LearningPathPlanProposal, PersonalPathNodeProposal } from './learning-path-graph.ts'
 import type { ProjectLearningFileProposal, ProjectRoadmapProposal } from './project.ts'
-import type { RoleCapabilityChatArtifact } from './plugin-chat.ts'
 
 export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation'
 
@@ -110,7 +109,6 @@ export type TutorToolRun = {
     pageRead?: boolean
   }
   artifact?: VisualArtifact
-  pluginArtifact?: RoleCapabilityChatArtifact
   pathProposal?: PersonalPathNodeProposal
   pathPlanProposal?: LearningPathPlanProposal
   projectRoadmapProposal?: ProjectRoadmapProposal

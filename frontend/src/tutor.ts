@@ -15,9 +15,6 @@ import {
   resolveExplicitVisualIntent,
   resolveVisualRequest,
 } from '../server/visual-tool-execution.ts'
-import type { PluginChatContext } from './plugin-chat.ts'
-import { roleCapabilityArtifactFromToolObservation } from './plugin-chat.ts'
-import { callProjectPluginReadTool, discoverProjectPluginReadTools } from './plugin-runtime.ts'
 import { AI_LATENCY_BUDGETS } from './latency-budgets.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
@@ -455,7 +452,6 @@ export async function requestTutorReply(options: {
   taskQueue?: AgentTaskQueueItem[]
   knowledgeDomains?: AgentKnowledgeDomain[]
   formalScope?: AgentFormalScope
-  activePlugin?: PluginChatContext
   domainSourceIds?: number[]
   conversationId?: string
   sheetId?: string
@@ -486,50 +482,6 @@ export async function requestTutorReply(options: {
         messages: options.messages,
         signal: controller.signal,
       })
-      let pluginObservation: Record<string, unknown> | undefined
-      let pluginRun: TutorToolRun | undefined
-      if (options.activePlugin && options.formalScope.projectId) {
-        const pluginStartedAt = Date.now()
-        const desiredTool = /解释|为什么|如何|关系|依据|证据|核心|能力|任务|知识/i.test(latestUserMessage) ? 'explain' : 'read_graph'
-        try {
-          const discovery = await discoverProjectPluginReadTools(options.formalScope.projectId, `${options.activePlugin.pluginId} ${latestUserMessage}`)
-          const descriptor = discovery.tools.find(item => item.qualified_tool_id === `${options.activePlugin!.pluginId}:${desiredTool}`)
-            || discovery.tools.find(item => item.qualified_tool_id.startsWith(`${options.activePlugin!.pluginId}:`))
-          if (!descriptor) throw new Error('当前插件没有可用于对话的只读工具')
-          const payload = await callProjectPluginReadTool(
-            options.formalScope.projectId,
-            descriptor.qualified_tool_id,
-            { query: latestUserMessage },
-            options.activePlugin.snapshotId || descriptor.snapshot_id,
-          )
-          pluginObservation = {
-            authority: 'project_plugin_host_read_only_tool',
-            qualified_tool_id: descriptor.qualified_tool_id,
-            snapshot_ref: payload.snapshot_ref || payload.snapshot,
-            result: payload.result ?? payload.observation ?? payload.run?.result ?? payload.run ?? payload,
-            mastery_unchanged: true,
-          }
-          pluginRun = {
-            id: `desktop-plugin-${Date.now()}`, kind: 'project', status: 'completed',
-            title: descriptor.title || options.activePlugin.title,
-            detail: `已通过通用插件宿主固定快照并调用 ${descriptor.qualified_tool_id}；这是只读观察。`,
-            durationMs: Date.now() - pluginStartedAt,
-            toolName: 'call_project_plugin_tool',
-            observationSummary: String(payload.summary || payload.observation_summary || descriptor.description || '插件返回了固定快照观察').slice(0, 180),
-            pluginArtifact: options.activePlugin.pluginId === 'role_capability_graph'
-              ? roleCapabilityArtifactFromToolObservation(pluginObservation)
-              : undefined,
-          }
-        } catch (failure) {
-          pluginRun = {
-            id: `desktop-plugin-${Date.now()}`, kind: 'project', status: 'failed',
-            title: options.activePlugin.title,
-            detail: failure instanceof Error ? failure.message : '插件只读工具调用失败',
-            durationMs: Date.now() - pluginStartedAt,
-            toolName: 'call_project_plugin_tool', errorType: 'unexpected',
-          }
-        }
-      }
       const response = await runtimeFetch(`/api/agent/sessions/${options.formalScope.sessionId}/turns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -544,11 +496,6 @@ export async function requestTutorReply(options: {
             selection_context: options.selectionContext,
             active_artifact: options.activeArtifactContext,
             sheet_id: options.sheetId,
-            active_plugin: options.activePlugin ? {
-              ...options.activePlugin,
-              observation: pluginObservation,
-              boundary: 'read_only_fixed_snapshot_no_kernel_mutation',
-            } : undefined,
           },
         }),
         signal: controller.signal,
@@ -557,14 +504,13 @@ export async function requestTutorReply(options: {
       if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : `桌面 Tutor 返回 HTTP ${response.status}`)
       if (typeof payload?.message !== 'string' || !payload.message.trim()) throw new Error('桌面 Tutor 没有返回可显示的文本')
       const visualRun = await visualPromise
-      const desktopRuns = [pluginRun, visualRun].filter(Boolean) as TutorToolRun[]
       const at = Date.now()
       return {
         reply: payload.message.trim(),
-        toolRuns: desktopRuns,
+        toolRuns: visualRun ? [visualRun] : [],
         trace: {
           version: 'vnext-agent-trace.v1', turnId: `desktop-${at}`,
-          modelRounds: 1, toolCalls: desktopRuns.length, stopReason: 'final_answer',
+          modelRounds: 1, toolCalls: visualRun ? 1 : 0, stopReason: 'final_answer',
           events: [
             ...(visualRun ? [{ sequence: 1, phase: 'verify' as const, detail: visualRun.detail, at, toolCallId: visualRun.toolCallId, toolName: visualRun.toolName, status: visualRun.status === 'completed' ? 'completed' as const : 'failed' as const }] : []),
             { sequence: visualRun ? 2 : 1, phase: 'finalize', detail: '正式 Tutor 完成桌面回合', at },

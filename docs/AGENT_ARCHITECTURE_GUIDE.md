@@ -1085,7 +1085,7 @@ Tutor 将用户带入第一关。Lecture Agent 生成来源约束讲义；Concep
 | 项目列表、侧栏、工作台与对话联动 | `frontend/src/ProjectsPage.tsx`、`frontend/src/ProjectWorkspacePage.tsx`、`frontend/src/ProjectContextPanel.tsx` |
 | 有界 Agent 回合与原生工具运行时 | `frontend/server/agent-runtime.ts`、`frontend/server/tool-runtime.ts` |
 | 插件包、制品、runner 与宿主 API | `backend/app/services/plugin_packages.py`、`backend/app/services/plugin_artifacts.py`、`backend/app/services/plugin_runner.py`、`backend/app/services/plugin_host.py`、`backend/app/api/plugins.py` |
-| 插件管理、聊天状态、快照投影与通用 Tutor 工具 | `frontend/src/ProjectPluginManager.tsx`、`frontend/src/plugin-chat.ts`、`frontend/src/RoleCapabilityChatPlugin.tsx`、`frontend/src/plugin-runtime.ts`、`frontend/server/tool-runtime.ts` |
+| 声明式插件界面与通用 Tutor 工具 | `frontend/src/PluginSurfaceHost.tsx`、`frontend/src/plugin-runtime.ts`、`frontend/server/tool-runtime.ts` |
 | 正式 API、桌面 sidecar 地址与认证适配 | `frontend/src/formal-runtime.ts`、`frontend/src/runtime-client.ts` |
 | 学习任务、复习、路径与画像工作台 | `frontend/src/LearningTasksPage.tsx`、`frontend/src/ReviewWorkbenchPage.tsx`、`frontend/src/LearningPathPage.tsx`、`frontend/src/LearnerProfilePage.tsx` |
 | 讲义与练习文件工作台 | `frontend/src/LearningFilesPage.tsx`、`frontend/src/LectureFilePage.tsx`、`frontend/src/PracticeFilePage.tsx` |
@@ -1117,12 +1117,9 @@ validation report 和 reference migrations 的不可变岗位 Snapshot。解释 
 读取；迭代 Agent 固定 base snapshot 后形成合同、patch、结构/证据/语义校验与 meaningful diff，只有宿主
 验证通过才提交后继 Snapshot。
 
-Tutor 新路径通过项目左栏进入带插件上下文的既有项目 Tutor，并通过通用 discovery/call 工具访问该插件的两个只读工具。
-插件选择、Product Skill、固定 snapshot 与 generate/explain/iterate 入口位于 Composer 对话选项栏；雷达图、事理森林和展开卡片仅作为
-Tutor 工具消息内的受管 snapshot 投影渲染，不在消息区顶部形成独立工作台，也不建立第二份岗位事实。生成与迭代从选项栏确认卡触发，安装、授权、配置和升级
-仍留在项目管理抽屉。旧 `read_role_capability_graph`、
+Tutor 新路径通过通用 discovery/call 工具访问该插件的两个只读工具。旧 `read_role_capability_graph`、
 `explain_role_capability` 名称和 `/api/role-capability/...` API 只保留 deprecated 兼容别名，内部转发通用宿主；
-生成或迭代仍必须由学习者在 Composer 插件选项的确认卡显式触发。历史专用表是只读迁移源，不得与通用 Snapshot 双写。
+生成或迭代仍必须交接到项目 Surface 并显式触发。历史专用表是只读迁移源，不得与通用 Snapshot 双写。
 
 岗位节点的 `accepted/candidate/deprecated` 是领域对象生命周期，`documented_norm/inferred_pattern` 是岗位断言
 的认识状态，二者都不是 Knowledge 或 Practice 掌握等级。从岗位 Object 创建 Roadmap、Checkpoint、
