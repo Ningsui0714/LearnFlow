@@ -4,7 +4,7 @@
 
 Search Harness v2 为 LearnFlow 的讲解、规划、项目 Tutor 和原子学习任务提供外部计算机知识证据。它由 `learning_design_agent` 负责，`tutor_agent` 决定何时调用和如何把证据组织成教学回答。
 
-本次没有新增主 Agent，也没有新增五核写入路径。注册表版本为 `2026-08-27.5`。
+本次没有新增主 Agent，也没有新增五核写入路径。当前来源合同与架构注册表版本为 `2026-08-31.2`；Search Harness 仍保留 v2 外部工具面，并与 `source-profile-v1` / `domain-knowledge-packet-v2` 对齐。
 
 ## 2. ACI 与职责边界
 
@@ -76,6 +76,8 @@ completed | empty | failed | circuit_open
 - MMR 风格相似度惩罚和单域名上限。
 
 排序目标不是单纯相关，而是给 Tutor 留下互补证据。
+
+这些信号在进入领域 Packet 时归一为多维来源画像，而不是永久合成为一个质量总分。不同意图选择不同维度：规范核对看可信度和版本，学习规划看全面度和教学适配，排错看真人观点和可复现性，近期变化看时效。Search 摘要只能发现候选；`read_web_evidence` 捕获的原文才会形成临时 SourceVersion。社区材料在 Packet 中进入带归因 `viewpoints`，除非另有事实证据，否则不能满足关键 Claim 覆盖。
 
 ### 4.4 覆盖审计与补搜
 

@@ -35,6 +35,7 @@ from app.services.learning_runtime import record_event
 from app.services.source_locator import SOURCE_LOCATOR, SourceLocationError
 from app.services.source_knowledge import derive_source_knowledge_domains
 from app.services.domain_knowledge import (
+    advance_source_selection,
     compile_domain_knowledge_packet,
     ensure_source_version,
     packet_view,
@@ -99,6 +100,7 @@ def _source_view(source: Source, chunk_count: int = 0) -> dict:
         "format": dict(meta.get("format_validation") or {}),
         "created_at": source.created_at.isoformat() if source.created_at else None,
         "active_source_version_id": meta.get("active_source_version_id"),
+        "selection_state": meta.get("selection_state", "discovered"),
         "health_status": "quarantined" if source.status == "quarantined" else "healthy",
         "mastery_inference": False,
     }
@@ -433,6 +435,7 @@ async def capture_web_evidence(
         source_meta={"version": data.published_at or "retrieved"},
     )
     version.source_role = "temporary"
+    advance_source_selection(source, "inspected", evidence_origin="search_harness")
     if data.published_at:
         try:
             version.published_at = datetime.fromisoformat(

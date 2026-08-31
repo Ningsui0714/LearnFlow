@@ -24,8 +24,8 @@ from app.models.project import (
 )
 from app.services.auth import CurrentLearner, get_current_learner, require_owned_project, require_owned_source
 from app.services.domain_knowledge import (
-    compile_domain_knowledge_packet, freshness_due, mark_packets_stale_for_source_version,
-    packet_view,
+    advance_source_selection, compile_domain_knowledge_packet, ensure_source_version,
+    freshness_due, infer_source_profile, mark_packets_stale_for_source_version, packet_view,
 )
 from app.services.five_kernel_context import build_five_kernel_context
 from app.services.learning_runtime import record_event
@@ -87,6 +87,13 @@ class KnowledgeBaselineProposalRequest(BaseModel):
     source_ids: list[int] = Field(default_factory=list, max_length=30)
 
 
+class ProjectSourcePromotionRequest(BaseModel):
+    source_id: int = Field(ge=1)
+    source_version_id: int = Field(ge=1)
+    recommendation_reason: str = Field(min_length=2, max_length=1200)
+    client_action_id: str = Field(min_length=4, max_length=160)
+
+
 class SourceHealthRequest(BaseModel):
     action: Literal["quarantine", "restore", "mark_stale", "mark_conflicted"]
     reason: str = Field(default="", max_length=500)
@@ -132,7 +139,9 @@ async def _source_views(db: AsyncSession, project_id: int) -> list[dict[str, Any
             "freshness_class": version.freshness_class,
             "retrieved_at": version.retrieved_at.isoformat() if version.retrieved_at else None,
             "refresh_due": freshness_due(version), "health": version.health,
+            "source_profile": infer_source_profile(source, version),
         },
+        "selection_state": dict(source.meta_data or {}).get("selection_state", "discovered"),
         "mastery_inference": False,
         })
     return views
@@ -785,6 +794,148 @@ async def read_project_knowledge_baseline(
     }
 
 
+@router.post("/{project_id}/knowledge-sources/promotions")
+async def promote_project_knowledge_source(
+    project_id: int,
+    data: ProjectSourcePromotionRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm one inspected source version into a project without silently pinning it."""
+    project = await require_owned_project(db, current.learner.id, project_id)
+    origin = await require_owned_source(db, current.learner.id, data.source_id)
+    if origin.project_id == project.id:
+        raise HTTPException(409, "来源已经属于当前项目，无需再次晋升")
+    origin_version = (await db.execute(select(SourceVersion).where(
+        SourceVersion.id == data.source_version_id,
+        SourceVersion.source_id == origin.id,
+    ))).scalar_one_or_none()
+    if not origin_version:
+        raise HTTPException(404, "待晋升的来源版本不存在")
+    if origin_version.status not in {"active", "stale", "conflicted"}:
+        raise HTTPException(409, f"来源版本状态 {origin_version.status} 不允许进入项目")
+
+    project_sources = list((await db.execute(select(Source).where(
+        Source.project_id == project.id,
+    ).order_by(Source.id))).scalars().all())
+    for candidate in project_sources:
+        promotion = dict(dict(candidate.meta_data or {}).get("promotion") or {})
+        if (
+            promotion.get("client_action_id") == data.client_action_id
+            or int(promotion.get("from_source_version_id") or 0) == origin_version.id
+        ):
+            views = await _source_views(db, project.id)
+            existing = next(item for item in views if item["id"] == candidate.id)
+            return {
+                "source": existing, "selection_state": existing["selection_state"],
+                "baseline_inclusion_required": True, "idempotent_replay": True,
+                "mastery_unchanged": True,
+            }
+
+    origin_chunks = list((await db.execute(select(Chunk).where(
+        Chunk.source_id == origin.id,
+        Chunk.source_version_id == origin_version.id,
+    ).order_by(Chunk.index))).scalars().all())
+    if not origin_chunks:
+        raise HTTPException(409, "来源版本没有可晋升的已处理正文")
+    copied = Source(
+        project_id=project.id,
+        type=origin.type,
+        url=origin.url,
+        role="auxiliary",
+        status="processing",
+        meta_data={
+            **{
+                key: value
+                for key, value in dict(origin.meta_data or {}).items()
+                if key != "active_source_version_id"
+                and not key.startswith(("selection_", "recommended_", "confirmed_", "pinned_"))
+            },
+            "promotion": {
+                "from_source_id": origin.id,
+                "from_source_version_id": origin_version.id,
+                "recommendation_reason": data.recommendation_reason,
+                "client_action_id": data.client_action_id,
+                "snapshot_only": True,
+            },
+        },
+    )
+    db.add(copied)
+    await db.flush()
+    payload = [{
+        "index": chunk.index,
+        "content": chunk.content,
+        "tokens": chunk.tokens,
+        "meta": dict(chunk.meta_data or {}),
+    } for chunk in origin_chunks]
+    copied_version, _ = await ensure_source_version(
+        db, source=copied, chunks=payload,
+        source_meta={"version": origin_version.version_label or f"source-version-{origin_version.version}"},
+    )
+    copied_version.source_role = (
+        "complementary" if origin_version.source_role in {"temporary", "learner_context"}
+        else origin_version.source_role
+    )
+    copied_version.authority_tier = origin_version.authority_tier
+    copied_version.published_at = origin_version.published_at
+    copied_version.effective_at = origin_version.effective_at
+    copied_version.freshness_class = origin_version.freshness_class
+    copied_version.status = origin_version.status
+    copied_version.health = dict(origin_version.health or {})
+    copied_version.provenance = {
+        **dict(origin_version.provenance or {}),
+        "promoted_from_source_id": origin.id,
+        "promoted_from_source_version_id": origin_version.id,
+        "project_id": project.id,
+        "explicit_user_confirmation": True,
+    }
+    advance_source_selection(
+        copied, "confirmed",
+        confirmed_project_id=project.id,
+        confirmed_source_version_id=copied_version.id,
+    )
+    copied_version.inspection = {
+        **dict(origin_version.inspection or {}),
+        "source_profile": infer_source_profile(copied, copied_version, payload),
+    }
+    for chunk in origin_chunks:
+        db.add(Chunk(
+            source_id=copied.id,
+            source_version_id=copied_version.id,
+            index=chunk.index,
+            content=chunk.content,
+            tokens=chunk.tokens,
+            meta_data=dict(chunk.meta_data or {}),
+        ))
+    await record_event(
+        db,
+        learner_id=current.learner.id,
+        project_id=project.id,
+        event_type="project_knowledge_source_promoted",
+        source="user",
+        payload={
+            "source_id": copied.id,
+            "source_version_id": copied_version.id,
+            "origin_source_id": origin.id,
+            "origin_source_version_id": origin_version.id,
+            "selection_state": "confirmed",
+            "mastery_unchanged": True,
+        },
+        provenance={"explicit_click": True, "recommendation_reason": data.recommendation_reason},
+        client_event_id=f"project-source-promotion:{project.id}:{data.client_action_id}",
+    )
+    await db.commit()
+    views = await _source_views(db, project.id)
+    promoted = next(item for item in views if item["id"] == copied.id)
+    return {
+        "source": promoted,
+        "selection_state": promoted["selection_state"],
+        "baseline_inclusion_required": True,
+        "idempotent_replay": False,
+        "mastery_unchanged": True,
+    }
+
+
 @router.post("/{project_id}/knowledge-baseline/proposals")
 async def propose_project_knowledge_baseline(
     project_id: int,
@@ -799,11 +950,13 @@ async def propose_project_knowledge_baseline(
         ).order_by(Source.id))).scalars().all())
     ]
     if source_ids:
-        owned = set((await db.execute(select(Source.id).where(
+        owned_sources = list((await db.execute(select(Source).where(
             Source.project_id == project.id, Source.id.in_(source_ids),
         ))).scalars().all())
-        if owned != set(source_ids):
+        if {source.id for source in owned_sources} != set(source_ids):
             raise HTTPException(400, "来源基线只能引用当前项目中已拥有的来源")
+        for source in owned_sources:
+            advance_source_selection(source, "recommended", recommended_for_project_id=project.id)
     packet = await compile_domain_knowledge_packet(
         db,
         learner_id=current.learner.id,
@@ -849,6 +1002,30 @@ async def confirm_project_knowledge_baseline(
             )
         packet.status = gate_status
         packet.updated_at = datetime.utcnow()
+    pinned_ids = {
+        int(ref.get("source_id"))
+        for ref in list(packet.source_version_refs or [])
+        if isinstance(ref, dict) and str(ref.get("source_id") or "").isdigit()
+    }
+    if pinned_ids:
+        pinned_sources = list((await db.execute(select(Source).where(
+            Source.project_id == project_id,
+            Source.id.in_(pinned_ids),
+        ))).scalars().all())
+        version_by_source = {
+            int(ref["source_id"]): int(ref["source_version_id"])
+            for ref in list(packet.source_version_refs or [])
+            if isinstance(ref, dict)
+            and str(ref.get("source_id") or "").isdigit()
+            and str(ref.get("source_version_id") or "").isdigit()
+        }
+        for source in pinned_sources:
+            advance_source_selection(
+                source, "pinned",
+                pinned_project_id=project_id,
+                pinned_source_version_id=version_by_source.get(source.id),
+                pinned_packet_id=packet.id,
+            )
     await record_event(
         db, learner_id=current.learner.id, project_id=project_id,
         event_type="project_knowledge_baseline_confirmed", source="user",

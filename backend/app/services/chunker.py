@@ -437,8 +437,73 @@ class SourceProcessor:
 
     # ── Per-file chunking (T4) ──
 
+    _CODE_EXTS = {
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs",
+        ".c", ".h", ".cc", ".cpp", ".cs", ".rb", ".php", ".swift", ".kt",
+    }
+
+    def _document_kind(self, content: str, file_path: str, source_type: str) -> str:
+        suffix = Path(file_path).suffix.casefold()
+        lowered = content[:8000].casefold()
+        if suffix in self._CODE_EXTS:
+            return "code"
+        if suffix in {".srt", ".vtt"} or source_type in {"video", "subtitle"}:
+            return "video_transcript"
+        if suffix in {".yaml", ".yml", ".json"} and re.search(r"\b(openapi|swagger)\b", lowered):
+            return "api_reference"
+        if suffix == ".pdf" or (
+            re.search(r"(?m)^#{1,3}\s+(abstract|摘要)\b", content, re.I)
+            and re.search(r"(?m)^#{1,3}\s+(references|参考文献)\b", content, re.I)
+        ):
+            return "paper"
+        if source_type in {"community", "discussion", "forum"}:
+            return "community_thread"
+        return "structured_document"
+
+    @staticmethod
+    def _retrieval_lanes(document_kind: str) -> list[str]:
+        return {
+            "code": ["lexical", "symbol", "path", "semantic_optional"],
+            "api_reference": ["lexical", "schema_path", "semantic_optional"],
+            "paper": ["lexical", "section", "citation", "semantic_optional"],
+            "video_transcript": ["lexical", "timestamp", "semantic_optional"],
+            "community_thread": ["lexical", "thread_role", "recency", "semantic_optional"],
+        }.get(document_kind, ["lexical", "heading", "semantic_optional"])
+
+    @staticmethod
+    def _extract_symbols(text: str) -> list[str]:
+        symbols = re.findall(
+            r"(?m)^\s*(?:async\s+)?(?:def|class|function|interface|type|enum|func)\s+([A-Za-z_$][\w$]*)",
+            text,
+        )
+        return list(dict.fromkeys(symbols))[:30]
+
+    def _base_chunk_meta(self, content: str, file_path: str, source_type: str) -> dict:
+        kind = self._document_kind(content, file_path, source_type)
+        strategy = {
+            "code": "code_symbol",
+            "api_reference": "schema_section",
+            "paper": "paper_section",
+            "video_transcript": "video_timestamp",
+            "community_thread": "community_thread",
+        }.get(kind, "heading_parent_child")
+        return {
+            "source_type": source_type,
+            "file": file_path,
+            "format_registry_version": FORMAT_REGISTRY_VERSION,
+            "format_id": format_id_for_filename(file_path),
+            "source_trust": "untrusted",
+            "mastery_inference": False,
+            "execution_performed": False,
+            "document_kind": kind,
+            "chunking_strategy": strategy,
+            "retrieval_lanes": self._retrieval_lanes(kind),
+        }
+
     def _chunk_file(self, content: str, file_path: str, source_type: str) -> List[dict]:
         """Chunk a single file: markdown → heading-based; other → line split."""
+        if self._document_kind(content, file_path, source_type) == "code":
+            return self._chunk_code(content, file_path, source_type)
         # Markdown detection: any # heading?
         if re.search(r"^#{1,6}\s+", content, re.MULTILINE):
             return self._chunk_markdown(content, file_path, source_type)
@@ -523,15 +588,45 @@ class SourceProcessor:
                 "content": text,
                 "tokens": len(text) // 4,
                 "meta": {
-                    "source_type": source_type,
-                    "file": file_path,
-                    "format_registry_version": FORMAT_REGISTRY_VERSION,
-                    "format_id": format_id_for_filename(file_path),
-                    "source_trust": "untrusted",
-                    "mastery_inference": False,
-                    "execution_performed": False,
+                    **self._base_chunk_meta(text, file_path, source_type),
                     "headings": headings[:20],
                     "heading_chain": chain[:20],
+                    "topic_hints": self._extract_topic_hints(text),
+                    "chunk_index": 0,
+                },
+            })
+        return result
+
+    def _chunk_code(self, content: str, file_path: str, source_type: str) -> List[dict]:
+        """Keep code symbols and line locators available to hybrid retrieval."""
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=2400,
+            chunk_overlap=160,
+            separators=["\nclass ", "\nasync def ", "\ndef ", "\nfunction ", "\ninterface ", "\n", " "],
+        )
+        cursor = 0
+        result = []
+        for text in splitter.split_text(content):
+            if not text.strip():
+                continue
+            start = content.find(text, cursor)
+            if start < 0:
+                start = content.find(text)
+            start = max(0, start)
+            cursor = start + len(text)
+            line_start = content.count("\n", 0, start) + 1
+            line_end = line_start + text.count("\n")
+            result.append({
+                "index": 0,
+                "content": text.strip(),
+                "tokens": max(1, len(text) // 4),
+                "meta": {
+                    **self._base_chunk_meta(text, file_path, source_type),
+                    "headings": [],
+                    "heading_chain": [],
+                    "symbols": self._extract_symbols(text),
+                    "line_start": line_start,
+                    "line_end": line_end,
                     "topic_hints": self._extract_topic_hints(text),
                     "chunk_index": 0,
                 },
@@ -550,13 +645,7 @@ class SourceProcessor:
                 "content": fc.strip(),
                 "tokens": len(fc) // 4,
                 "meta": {
-                    "source_type": source_type,
-                    "file": file_path,
-                    "format_registry_version": FORMAT_REGISTRY_VERSION,
-                    "format_id": format_id_for_filename(file_path),
-                    "source_trust": "untrusted",
-                    "mastery_inference": False,
-                    "execution_performed": False,
+                    **self._base_chunk_meta(fc, file_path, source_type),
                     "headings": [],
                     "heading_chain": [],
                     "topic_hints": self._extract_topic_hints(fc),

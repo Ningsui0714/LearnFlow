@@ -43,7 +43,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-31.1"
+    assert REGISTRY_VERSION == "2026-08-31.2"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -328,6 +328,10 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
     assert "bounded read-only Tutor context" in TOOLS["vnext_five_kernel_profile_reader"].write_path
     assert EVENTS["knowledge_source_added"].kernel_targets == ()
     assert EVENTS["knowledge_source_processed"].kernel_targets == ()
+    assert EVENTS["project_knowledge_source_promoted"].kernel_targets == ()
+    assert "source vectors" in TOOLS["domain_knowledge_packet_compiler"].write_path
+    assert "viewpoints separated from facts" in registry_manifest()["authority"]["domain_knowledge_authority"]
+    assert "learner-confirmed project snapshot" in registry_manifest()["authority"]["project_source_selection"]
     assert EVENTS["learning_file_generated"].kernel_targets == ()
     assert EVENTS["learning_file_opened"].kernel_targets == ()
     assert EVENTS["learning_file_attached_to_chat"].kernel_targets == ()

@@ -111,11 +111,13 @@ def test_project_source_baseline_requires_coverage_confirmation_and_invalidates_
     proposal = proposed.json()["proposal"]
     assert proposal["status"] == "draft"
     assert proposal["coverage"]["gate_status"] == "ready"
+    assert client.get(f"/api/vnext-projects/{project_id}").json()["sources"][0]["selection_state"] == "recommended"
     confirmed = client.post(
         f"/api/vnext-projects/{project_id}/knowledge-baseline/{proposal['id']}/confirm"
     )
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["baseline"]["status"] == "ready"
+    assert client.get(f"/api/vnext-projects/{project_id}").json()["sources"][0]["selection_state"] == "pinned"
 
     quarantined = client.post(f"/api/vnext-projects/{project_id}/sources/{source_id}/health", json={
         "action": "quarantine", "reason": "学习者发现资料被污染",
@@ -125,6 +127,62 @@ def test_project_source_baseline_requires_coverage_confirmation_and_invalidates_
     assert baseline.status_code == 200, baseline.text
     assert baseline.json()["baseline"]["status"] == "quarantined"
     assert baseline.json()["baseline"]["mastery_inference"] is False
+
+
+def test_inspected_library_source_requires_explicit_project_promotion(client: TestClient):
+    captured = client.post("/api/knowledge-library/web-evidence", json={
+        "query": "RAG 引用闭包与覆盖审计",
+        "url": f"https://example.org/rag-evidence-{uuid.uuid4().hex}",
+        "title": "RAG evidence reference",
+        "excerpt": (
+            "A retrieval system should bind each generated claim to an inspected source locator. "
+            "Coverage auditing identifies missing definitions, mechanisms, examples, and risks before publication."
+        ),
+    })
+    assert captured.status_code == 200, captured.text
+    evidence = captured.json()
+    workspace = _create(client)
+    project_id = workspace["project"]["id"]
+    action_id = f"promote-{uuid.uuid4().hex}"
+    payload = {
+        "source_id": evidence["source_id"],
+        "source_version_id": evidence["source_version_id"],
+        "recommendation_reason": "Tutor 推荐把已核验的引用闭包资料加入这个 RAG 项目",
+        "client_action_id": action_id,
+    }
+    promoted = client.post(
+        f"/api/vnext-projects/{project_id}/knowledge-sources/promotions",
+        json=payload,
+    )
+    assert promoted.status_code == 200, promoted.text
+    body = promoted.json()
+    assert body["selection_state"] == "confirmed"
+    assert body["baseline_inclusion_required"] is True
+    assert body["mastery_unchanged"] is True
+    assert body["source"]["active_version"]["source_profile"]["selection_state"] == "confirmed"
+
+    replay = client.post(
+        f"/api/vnext-projects/{project_id}/knowledge-sources/promotions",
+        json=payload,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["idempotent_replay"] is True
+    assert replay.json()["source"]["id"] == body["source"]["id"]
+
+    async def inspect_promotion() -> tuple[list[EvidenceEvent], list[KernelMutation]]:
+        async with async_session() as db:
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.project_id == project_id,
+                EvidenceEvent.event_type == "project_knowledge_source_promoted",
+            ))).scalars().all())
+            mutations = [] if not events else list((await db.execute(select(KernelMutation).where(
+                KernelMutation.event_id.in_([event.id for event in events]),
+            ))).scalars().all())
+            return events, mutations
+
+    events, mutations = asyncio.run(inspect_promotion())
+    assert len(events) == 1
+    assert mutations == []
 
 
 def test_confirmed_roadmap_creates_checkpoint_sessions_and_formal_tasks(client: TestClient):

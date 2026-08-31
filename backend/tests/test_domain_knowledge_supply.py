@@ -10,6 +10,7 @@ from app.db.database import async_session
 from app.main import app
 from app.models.learning import EvidenceEvent, KernelMutation, LearningTask
 from app.models.project import Chunk, DomainKnowledgePacket, Lecture, Source, SourceVersion
+from app.services.chunker import SourceProcessor
 from app.services.domain_knowledge import build_domain_brief
 
 
@@ -88,8 +89,18 @@ def test_gradient_descent_file_is_domain_dense_and_packet_bound():
         packet, lecture_row, mutations = asyncio.run(inspect())
         assert packet.status == "ready"
         assert packet.coverage["ratio"] == 1.0
+        assert packet.policy_version == "domain-knowledge-packet-v2"
+        assert packet.coverage["claim_support_policy"] == "traceable_claim_per_required_facet"
+        assert "intent_source_fit" in packet.coverage["retrieval"]["lanes"]
+        assert all(
+            item["supporting_claim_ids"]
+            for item in packet.coverage["facets"]
+            if item["covered"]
+        )
         assert packet.source_version_refs
         assert all(item.get("source_version_id") for item in packet.source_version_refs)
+        assert all(item["source_profile"]["schema_version"] == "source-profile-v1" for item in packet.source_version_refs)
+        assert all("credibility" in item["source_profile"]["dimensions"] for item in packet.source_version_refs)
         assert lecture_row.sections[0]["domain_knowledge_packet_id"] == packet.id
         assert mutations == 0
 
@@ -175,3 +186,47 @@ def test_read_web_evidence_capture_is_temporary_and_versioned():
         assert body["source_version_id"] > 0
         assert body["domain_knowledge_packet"]["source_version_refs"]
         assert body["mastery_unchanged"] is True
+
+
+def test_community_experience_is_separate_from_factual_claims():
+    with TestClient(app) as client:
+        _register(client)
+        response = client.post("/api/knowledge-library/web-evidence", json={
+            "query": "事件循环与微任务为什么会饿死后续任务",
+            "url": "https://stackoverflow.com/questions/1/event-loop-starvation",
+            "title": "Practitioner discussion",
+            "excerpt": (
+                "In my production experience, recursively scheduling microtasks delayed rendering and timers. "
+                "Several commenters reported different behavior in other hosts, so this discussion records experience rather than a normative runtime guarantee."
+            ),
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        packet = body["domain_knowledge_packet"]
+        assert packet["knowledge_units"]["viewpoints"]
+        assert all(
+            item["factual_authority"] == "not_established"
+            for item in packet["knowledge_units"]["viewpoints"]
+        )
+        community_ref = next(
+            item for item in packet["source_version_refs"]
+            if item["source_id"] == body["source_id"]
+        )
+        assert "experience" in community_ref["source_profile"]["content_roles"]
+        assert community_ref["source_profile"]["dimensions"]["human_perspective"]["score"] == 4
+        assert community_ref["source_profile"]["selection_state"] == "inspected"
+
+
+def test_chunker_records_type_specific_retrieval_metadata():
+    chunks = SourceProcessor().chunk_text(
+        "=== src/queue.py ===\nclass Queue:\n    def enqueue(self, item):\n        self.items.append(item)\n\n    def dequeue(self):\n        return self.items.pop(0)\n",
+        source_type="github",
+    )
+    assert chunks
+    meta = chunks[0]["meta"]
+    assert meta["document_kind"] == "code"
+    assert meta["chunking_strategy"] == "code_symbol"
+    assert {"symbol", "path", "semantic_optional"} <= set(meta["retrieval_lanes"])
+    assert {"Queue", "enqueue", "dequeue"} <= set(meta["symbols"])
+    assert meta["line_start"] >= 1
+    assert meta["line_end"] >= meta["line_start"]

@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-31.1"
+REGISTRY_VERSION = "2026-08-31.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -343,9 +343,9 @@ TOOLS = {
         ToolContract("teaching_contract_gate", "Deterministic Teaching Contract Gate", "learning_design_agent", "learnflow", "policy",
                      (), (), "DomainKnowledgePacketRef + TeachingContentBrief -> ready | ready_with_gaps | blocked_knowledge; blocked knowledge never publishes a generic scaffold"),
         ToolContract("source_version_runtime", "Immutable Source Version Runtime", "learning_design_agent", "learnflow", "harness",
-                     (), (), "learner-owned Source + inspected content hash -> immutable SourceVersion + version-bound Chunk history; zero learner-state write"),
+                     (), (), "learner-owned Source + inspected content hash -> immutable SourceVersion + typed Chunk history + multidimensional source profile; zero learner-state write"),
         ToolContract("domain_knowledge_packet_compiler", "Scoped Domain Knowledge Packet Compiler", "learning_design_agent", "learnflow", "harness",
-                     (), (), "DomainBrief + uploaded/project/curated/temporary evidence -> versioned claim-level DomainKnowledgePacket with source closure, coverage, freshness and conflicts; zero learner-state write"),
+                     (), (), "DomainBrief + uploaded/project/curated/temporary evidence -> RRF-selected claim-level DomainKnowledgePacket with source vectors, traceable facet support, separate viewpoints, freshness and conflicts; zero learner-state write"),
         ToolContract("source_integrity_monitor", "Source Integrity and Freshness Monitor", "learning_design_agent", "learnflow", "policy",
                      (), (), "hash/version/freshness/injection/conflict checks -> active | stale | conflicted | quarantined | superseded; affected packets become stale without changing mastery"),
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
@@ -1281,6 +1281,7 @@ EVENTS = {
         _event("knowledge_source_added", "manage_domain_knowledge_sources", (), "artifact_ingest", origin="vnext"),
         _event("knowledge_source_processed", "manage_domain_knowledge_sources", (), "artifact_indexed", origin="vnext"),
         _event("web_evidence_captured", "manage_domain_knowledge_sources", (), "temporary_versioned_evidence", origin="vnext"),
+        _event("project_knowledge_source_promoted", "manage_domain_knowledge_sources", (), "learner_confirmed_source_promotion", origin="vnext"),
         _event("project_knowledge_baseline_proposed", "manage_domain_knowledge_sources", (), "source_baseline_proposal", origin="vnext"),
         _event("project_knowledge_baseline_confirmed", "manage_domain_knowledge_sources", (), "confirmed_source_baseline", origin="vnext"),
         _event("knowledge_source_health_changed", "manage_domain_knowledge_sources", (), "source_integrity_state", origin="vnext"),
@@ -1460,6 +1461,7 @@ _API_BINDING_TARGETS = {
     "api:vnext_projects.create": ("app.api.vnext_projects", "/vnext-projects", "POST", "create_vnext_project"),
     "api:vnext_projects.context": ("app.api.vnext_projects", "/vnext-projects/{project_id}/agent-context", "GET", "get_project_agent_context"),
     "api:vnext_projects.baseline": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-baseline", "GET", "read_project_knowledge_baseline"),
+    "api:vnext_projects.source_promote": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-sources/promotions", "POST", "promote_project_knowledge_source"),
     "api:vnext_projects.baseline_propose": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-baseline/proposals", "POST", "propose_project_knowledge_baseline"),
     "api:vnext_projects.baseline_confirm": ("app.api.vnext_projects", "/vnext-projects/{project_id}/knowledge-baseline/{packet_id}/confirm", "POST", "confirm_project_knowledge_baseline"),
     "api:vnext_projects.source_health": ("app.api.vnext_projects", "/vnext-projects/{project_id}/sources/{source_id}/health", "POST", "update_project_source_health"),
@@ -1646,7 +1648,7 @@ _TOOL_BINDING_IDS = {
     "vnext_five_kernel_explicit_editor": ("api:profile.update", "api:learner_state.value_claim"),
     "workspace_lifecycle": ("py:workspace.delete_conversation", "py:workspace.delete_project"),
     "checkpoint_context": ("py:checkpoint.context",),
-    "source_ingestion": ("py:source.processor",),
+    "source_ingestion": ("py:source.processor", "api:vnext_projects.source_promote"),
     "repository_knowledge_domains": ("py:source.domains",),
     "hierarchical_rag": ("py:lecture.agent",),
     "content_generation": ("py:roadmap.agent", "py:lecture.agent", "py:concept.agent", "py:exercise.agent"),
@@ -2275,7 +2277,8 @@ def registry_manifest() -> dict[str, Any]:
             "external_workflow_role": "optional content adapter; never strategy or kernel authority",
             "learning_task_projection": "task lifecycle is operational; phases advance only from managed artifacts, scoped attempts and review schedules",
             "teaching_delivery_projection": "DomainBrief -> versioned SourceVersion evidence -> DomainKnowledgePacket -> TeachingContentBrief -> lecture/practice; formal publication blocks on critical knowledge gaps while learner Knowledge remains a separate answer-free design hint",
-            "domain_knowledge_authority": "Source identity + immutable SourceVersion/Chunk history -> scoped DomainKnowledgePacket; this source-truth plane is read-only to learner kernels and cannot imply mastery",
+            "domain_knowledge_authority": "Source identity + immutable SourceVersion/typed Chunk history + multidimensional source profile -> scoped claim-supported DomainKnowledgePacket with viewpoints separated from facts; this source-truth plane is read-only to learner kernels and cannot imply mastery",
+            "project_source_selection": "discovered -> inspected -> recommended -> learner-confirmed project snapshot -> baseline-pinned SourceVersion; health state remains orthogonal and every transition is zero-kernel",
             "chat_mode_authority": "deterministic Tutor posture in AgentSession context; never a fourth Agent or mastery source",
             "learning_action_projection": "completed non-free chat segment -> registered EvidenceEvent -> reducer -> scoped Memory Graph facts",
             "interactive_model_latency": "wall-clock budgets with deterministic fallback; one shared Tutor deadline across structured and plain attempts",

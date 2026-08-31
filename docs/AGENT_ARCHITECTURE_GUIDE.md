@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-31.2`）：Tutor 的动态上下文继续由“有 scope 的五核只读投影 + 领域知识 Packet + 学习路径/正式文件/插件等其他增强”组成；领域增强不建立第二套用户画像。Learning Design 消费的 `domain-knowledge-packet-v2` 把事实 Claim、带归因真人观点、来源多维画像和覆盖依据分开。Harness 以类型化 Chunk 和 RRF 进行确定性召回；模型只可帮助理解查询或表达候选，不决定来源晋升、关键覆盖、项目基线或掌握状态。规划态推荐只把来源推进到 `recommended`，学习者显式确认后才能进入项目并由基线固定到不可变 SourceVersion。来源读取、推荐、晋升、固定和失效仍全部为零 Kernel target，不新增主 Agent、Kernel writer 或数据库表。
+
 Contract impact（`2026-08-31.1`）：Learning Design 新增 `visual_teaching_composition` Playbook，统一承担讲解、VisualBrief 和视觉失败降级，图解/动画生成器继续只是渲染 Tool。视觉请求先提交不可由后续 `text_reset` 清除的教学段，再调用 Tool；渲染失败进入 `explanation_only`，已经提交的讲解和正式 Desktop Tutor 消息保持有效。底层 Tool 缺少已校验 Brief 时快速失败，动画/图解不得静默互换。新增 VisualBrief v1 和 `VisualTeachingBundle`，不新增主 Agent、数据库、EvidenceEvent 或 Kernel writer。
 
 Contract impact（`2026-08-30.10`）：Tutor 与 Learning Design 的视觉交接改为“上下文锚定—请求主题契约—可重放产物—有界事实回灌”。“给我一个动画示例”等追问可从最近视觉 artifact 或用户主题恢复目标；没有目标则在规划前失败。长尾模型计划必须通过动态主题覆盖；声明式过程还要求 semantic/帧内容实际覆盖主题并具有最小状态变化，标题不能替代过程内容。这是一条动态请求契约，不是按算法硬编码。Tutor 最终文案只能解释工具 grounding 已列出的帧和变化，不得凭主题知识声称产物展示了不存在的动作。该调整不新增主 Agent、模型工具、状态权威或五核写入。

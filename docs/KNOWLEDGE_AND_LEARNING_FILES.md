@@ -21,7 +21,8 @@ LearningTask
 ## 对象权威
 
 - 领域知识底座复用正式 `Project -> Source -> SourceVersion -> Chunk`。每个 learner 有一个 `project_kind=knowledge_library`、`visibility=internal` 的隐藏 Project，纯粹作为权限与存储边界。当前对话明确附加的 source id 优先进入工作集；即使词面得分低也不会被静默丢弃。其余个人库只按主题相关性补缺。
-- `DomainKnowledgePacket` 是任务级事实投影，不是第二套学习者画像，也不是掌握证据。
+- 每个已检查 SourceVersion 具有多维 `source-profile-v1`，分别描述可信度、全面度、时效性、真人观点性、教学适配与可复现性；不存在对所有意图都成立的单一“最佳来源”总分。
+- `DomainKnowledgePacket` 是任务级事实投影，不是第二套学习者画像，也不是掌握证据。事实 Claim 与带归因的真人 `viewpoints` 分开存放；观点材料不能静默满足事实覆盖门。
 - 讲义权威仍是 `Lecture`；练习权威仍是 `ConceptQuestion` 与 `Exercise`。`.lflecture` / `.lfexercise` 是逻辑文件名，不复制数据库内容。
 - 对话纸张只保存 `{kind, ref, title}`，打开时由服务端重新检查 learner ownership，并返回答案安全视图。
 
@@ -40,6 +41,7 @@ LearningTask
 |---|---:|---|
 | `knowledge_source_added/processed` | 无 | 资料进入上下文空间 |
 | `web_evidence_captured` | 无 | 已读网页原文进入临时版本化证据 |
+| `project_knowledge_source_promoted` | 无 | 学习者显式把精确来源版本复制到目标项目；仍未成为项目基线 |
 | `project_knowledge_baseline_proposed/confirmed` | 无 | 项目来源基线提案与用户确认 |
 | `knowledge_source_health_changed` | 无 | 过期、冲突、隔离或恢复的完整性事实 |
 | `learning_task_knowledge_blocked` | 无 | 任务保留，但知识不足时不发布教学产物 |
@@ -54,4 +56,4 @@ LearningTask
 
 ## 后续项目来源迁移
 
-隐藏领域底座中的 Source 具有稳定 owner、Source ID、Chunk ID 与 provenance。项目创建后应通过显式 Action 选择“链接/复制哪些来源到项目 scope”，而不是让规划态静默把全部个人资料变成项目主来源。项目路线仍以项目已确认来源为约束。
+隐藏领域底座中的 Source 具有稳定 owner、Source ID、Chunk ID 与 provenance。项目创建后通过 `POST /api/vnext-projects/{project_id}/knowledge-sources/promotions` 显式选择精确 SourceVersion；服务端校验 learner ownership，快照复制版本与 Chunk，记录幂等、零 Kernel 的晋升事件。晋升只得到 `confirmed` 候选，仍需经过覆盖提案与基线确认才能成为 `pinned` 项目约束。规划态推荐最多把来源推进到 `recommended`，不得静默把个人资料或 Tutor 推荐变成项目主来源。

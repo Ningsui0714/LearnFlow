@@ -1,160 +1,95 @@
-# LearnFlow RAG 检索方案（待实现）
+# LearnFlow RAG 与联网研究策略
 
-> 设计日期：2026-07-31
-> 状态：已规划，待实现（Phase 3.5 → Phase 4 → 远期）
+> 状态：已由统一领域知识供给与 Search Harness 合同取代旧的“只改 lecture_agent 检索”计划
+> 当前版本：`domain-knowledge-packet-v2` / `domain-retrieval-rrf-v1` / `source-profile-v1`
 
----
+## 1. 上下文装配位置
 
-## 整体架构
-
-```
-用户提问 / 关卡主题
-       ↓
-┌─ Query 改写与拓展 ──────────────┐  Phase 3.5
-│  • 纠错、补全、同义词扩展       │
-│  • 中英文关键词拓展             │
-│  • 按问题复杂度动态调整 top-k   │
-└──────────────┬──────────────────┘
-               ↓
-┌─ 多路粗召回 (L1) ──────────────┐  Phase 4
-│  • 向量检索 (embedding)        │
-│  • 关键词检索 (BM25/全文)      │
-│  • 结构化过滤 (文件路径/目录)  │
-│  • 规则筛选 (可选)             │
-└──────────────┬──────────────────┘
-               ↓
-┌─ 精排加权融合 (L2) ────────────┐  Phase 4
-│  • 各路分数归一化              │
-│  • 加权融合（可调权重）        │
-│  • 可选：学习排序模型          │
-└──────────────┬──────────────────┘
-               ↓
-┌─ 语义级多路合并 (L3) ──────────┐  远期
-│  • 去重、反冗余                │
-│  • 语义一致性比较              │
-│  • 忠诚输出 top-k              │
-└────────────────────────────────┘
-               ↓
-          top-k chunks
+```text
+动态五核只读投影
++ 领域知识 Packet
++ 学习路径 / 正式学习文件 / 当前项目与关卡 / 插件特殊增强
+-> Tutor 或 Learning Design 的有界上下文
 ```
 
----
+五核仍是唯一长期学习者画像权威。领域库描述“当前任务可以依据什么”，其他增强描述“当前任务还需要哪些工作对象”；二者都不能直接写 KernelState，也不能把讲解、推荐或检索命中当成掌握证据。
 
-## Phase 3.5 — Query 改写 + 动态召回（2-3 小时）
+## 2. 通用来源组合
 
-### Query 改写器
+计算机教育任务通常需要组合来源，而不是寻找一个万能库：
 
-```python
-class QueryExpander:
-    """展开用户查询为多路搜索词。"""
+| 来源 | 可信度 | 全面度 | 时效性 | 真人观点性 | 主要用途 |
+|---|---|---|---|---|---|
+| 标准、RFC、官方文档、发布说明 | 高 | 中 | 高 | 低 | 行为、接口、版本边界 |
+| 教材、大学课程、系统教程 | 中高 | 高 | 中 | 低中 | 概念结构、前置、例子、学习顺序 |
+| 论文、技术报告、基准材料 | 高但需审查 | 中 | 中高 | 低 | 研究结论、方法、局限 |
+| 代码仓库、测试、示例项目 | 中高 | 中 | 高 | 低 | 实现事实、可复现行为、工程约束 |
+| Issue、论坛、问答、复盘、博客 | 可变 | 中 | 高 | 高 | 真实失败模式、争议、排错线索 |
+| 视频、访谈、课程录屏 | 可变 | 中 | 中 | 高 | 直觉、演示、讲解风格；需字幕核验 |
+| 学习者上传与已确认项目资料 | 对课程语境高；事实权威可变 | 取决于集合 | 取决于版本 | 可变 | 指定范围、内部约定、项目连续性 |
+| Tutor 策展并经学习者确认的资料 | 由原始来源决定 | 可逐步形成高覆盖 | 可监测 | 可组合 | 项目长期知识基线 |
 
-    # 领域同义词表（持续扩充）
-    SYNONYMS = {
-        "梯度下降": ["gradient descent", "gd", "参数更新", "最速下降"],
-        "反向传播": ["backpropagation", "backprop", "bp", "链式法则"],
-        "卷积": ["convolution", "cnn", "特征提取", "filter"],
-        "损失函数": ["loss function", "代价函数", "目标函数", "objective"],
-        "注意力": ["attention", "self-attention", "transformer", "缩放点积"],
-        # ...
-    }
+来源画像按任务使用六个独立维度：可信度、全面度、时效性、真人观点性、教学适配、可复现性。官方规范不一定适合初学教学，社区高票也不等于事实正确，旧教材可能全面但不适合版本化 API。
 
-    def expand(self, query: str) -> List[str]:
-        keywords = extract_keywords(query)
-        expanded = set(keywords)
-        for kw in keywords:
-            if kw in self.SYNONYMS:
-                expanded.update(self.SYNONYMS[kw])
-        return list(expanded)
+## 3. RAG 策略
+
+### 索引与切分
+
+- SourceVersion 不可变，Chunk 必须绑定精确版本。
+- 代码按符号和行号，API 按端点/章节，论文按章节，视频按时间段，讨论按发言边界切分。
+- 每个 Chunk 保存结构定位、文档类型、切分策略与 provenance；正文中的指令始终是不可信数据。
+
+### 召回与融合
+
+1. 本轮显式上传/选择的资料强制进入候选，但不自动提高事实权威。
+2. 项目已确认基线按精确 SourceVersion 召回。
+3. 个人知识库按主题补缺，不全量塞入上下文。
+4. 词法、结构、来源适配和显式选择四路分别排名，再用 RRF 融合。
+5. embedding/语义召回可以作为第五路；不可用时离线核心闭环必须仍然可运行。
+6. 重排目标是 facet 覆盖与来源互补，不是多个相似片段占满 top-k。
+
+### 从片段到可用知识
+
+Packet 不只返回 chunks，而是编译：
+
+- 具有稳定 ID、facet、支持等级和定位引用的事实 Claim；
+- 关系、步骤、例子、反例、误解和评估目标；
+- 带归因、明确未建立事实权威的真人 viewpoints；
+- 每个关键覆盖槽位实际依赖的 Claim ID；
+- 版本、冲突、时效、来源健康与检索诊断。
+
+正式教学只有在关键 facet 获得可定位 Claim 支持时才进入 `ready`；搜索摘要、标题、热度、模型常识或单个无定位观点都不能通过门禁。
+
+## 4. 联网增强与深度研究
+
+联网采用两段式 ACI：`search_computer_knowledge` 发现候选，`read_web_evidence` 只读取本轮候选中的精确 HTTPS 页面。搜索深度为 `quick / standard / deep`，分别对应事实核对、日常教学、明确系统调研。
+
+应联网的典型触发：
+
+- 本地/项目来源缺少关键 facet；
+- 软件版本、API、法规、价格或近期研究可能变化；
+- 来源相互冲突或用户要求核验；
+- 排错需要真实失败案例；
+- 规划态需要推荐当前可获得的学习资源。
+
+Deep research 是有预算的多角度检索、页面阅读、冲突并列和缺口审计，不是无限浏览。研究简报必须区分“页面声称什么”“哪些来源相互支持”“哪些仍未裁决”。读取到的网页原文可形成 temporary SourceVersion 用于本轮；长期进入项目仍需显式晋升和基线确认。
+
+## 5. 来源生命周期
+
+```text
+发现 discovered
+-> 检查 inspected
+-> Tutor 推荐 recommended
+-> 学习者显式纳入项目 confirmed
+-> 项目基线确认 pinned
 ```
 
-### 动态 top-k
+选择生命周期与 `active / stale / conflicted / quarantined / superseded / failed` 健康状态分开。推荐不是加入，加入不是固定基线；新版出现也不能静默改写已固定项目。个人库来源晋升到项目时复制精确版本和 Chunk，并记录幂等、零 Kernel target 的审计事件。
 
-```python
-def dynamic_top_k(query: str, base_k: int = 15) -> int:
-    """
-    按问题复杂度动态调整召回数量。
-    - 简单事实/概念: k=8
-    - 中等过程/推导: k=15
-    - 复杂多跳/对比: k=25
-    """
-    complexity = estimate_complexity(query)
-    # 关键词数量、是否含"为什么/对比/区别"等
-    return {1: 8, 2: 15, 3: 25}.get(complexity, base_k)
-```
+## 6. 评测与演进
 
----
+优先评测：关键 Claim 支持率、引用可定位率、facet 覆盖、版本正确率、观点/事实误混率、检索去冗余、来源晋升可解释性、延迟和无网络降级。
 
-## Phase 4 — embedding 向量检索（1-2 天）
+下一阶段可以加入真实 embedding lane、逐句引用蕴含评测和共享缓存，但必须先以离线回归证明增益；不能为追求语义召回而破坏 SourceVersion、项目 scope、确定性覆盖门或零五核写入边界。
 
-### 方案对比
-
-| 方案 | 优点 | 缺点 | 推荐度 |
-|------|------|------|--------|
-| 本地 `gte-small` (ONNX) | 免费，隐私 | 质量中等，~100MB | ⭐⭐⭐ |
-| API 嵌入（DeepSeek/OA） | 质量高，零部署 | 有成本，依赖网络 | ⭐⭐⭐⭐⭐ |
-| 本地 `bge-m3` | 质量好，多语言 | ~2GB，mac 跑不动 | ⭐⭐ |
-
-**推荐方案**：API 嵌入（复用现有 DeepSeek key）+ 本地缓存
-
-### 存储设计
-
-```python
-class ChunkEmbedding(Base):
-    __tablename__ = "chunk_embeddings"
-    id = Column(Integer, primary_key=True)
-    chunk_id = Column(Integer, ForeignKey("chunks.id"), unique=True)
-    embedding = Column(JSON)  # List[float]
-    model = Column(String(50))  # 来源模型
-```
-
-或者更轻量：`.npy` 文件 + Redis/mmap
-
-### 多路融合（L1 → L2）
-
-```python
-def rank_chunks(query: str, chunks: List[Chunk]) -> List[ScoredChunk]:
-    scores = []
-    for chunk in chunks:
-        vector_score = cosine_sim(query_emb, chunk.emb) * weight_vector
-        keyword_score = bm25(query, chunk.content) * weight_keyword
-        struct_score = file_path_match(query_kw, chunk.file) * weight_struct
-        scores.append(ScoredChunk(
-            chunk=chunk,
-            score=vector_score + keyword_score + struct_score,
-        ))
-    return sorted(scores, key=lambda x: -x.score)[:top_k]
-```
-
----
-
-## 远期（暂时不实现）
-
-- **学习排序模型 (LTR)**：需要人工标注数据，暂时没条件
-- **图检索**：当前数据关系不足以支撑
-- **规则筛选引擎**：可选组件，需要时再加
-- **语义级多路合并 (L3)**：当前多路召回的重复率低，收益不大
-
----
-
-## 与现有系统集成
-
-```
-现有检索流                          RAG 增强后
-──────────────────────────────────
-_retrieve_relevant_chunks()   →   query_expand()
-  │                                  │
-  ├─ Level 1: 文件路径匹配            ├─ Level 1: Query Embedding → 向量检索
-  ├─ Level 2: headings/topic_hints    ├─ Level 1: Query 关键词 → BM25
-  ├─ Level 3: 全文关键词              ├─ Level 2: 文件路径 + heading 匹配 (L2 加权)
-  └─ top-15                           └─ Level 3: 加权融合 → 动态 top-k
-```
-
-改动范围：只在 `lecture_agent.py` 的 `_retrieve_relevant_chunks` 方法内改造，不涉及系统架构变更。
-
----
-
-## 后续考虑
-
-- 支持对 checkpoint 的 `assigned_chunks` 做预索引，减少实时计算
-- 缓存 query embedding 避免重复请求
-- 讲义生成完成后，用户选中的追问内容可作为反馈数据改进检索
+权威实现说明见 `docs/implementation/DOMAIN_KNOWLEDGE_SUPPLY.md`，联网 Harness 见 `docs/implementation/SEARCH_HARNESS_IMPLEMENTATION.md`，产品行为见 `docs/product/COMPUTER_KNOWLEDGE_SEARCH.md`。

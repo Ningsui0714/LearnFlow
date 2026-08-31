@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,11 +20,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import Chunk, DomainKnowledgePacket, Project, Source, SourceVersion
 
 
-PACKET_POLICY_VERSION = "domain-knowledge-packet-v1"
+PACKET_POLICY_VERSION = "domain-knowledge-packet-v2"
 SOURCE_POLICY_VERSION = "source-integrity-v1"
+SOURCE_PROFILE_VERSION = "source-profile-v1"
+RETRIEVAL_POLICY_VERSION = "domain-retrieval-rrf-v1"
 
 ACTIVE_SOURCE_STATUSES = {"active", "conflicted"}
 RETRIEVABLE_SOURCE_STATUSES = {"active", "conflicted", "stale"}
+
+SOURCE_SELECTION_STATES = (
+    "discovered", "inspected", "recommended", "confirmed", "pinned",
+)
+_SELECTION_RANK = {state: index for index, state in enumerate(SOURCE_SELECTION_STATES)}
+
+
+def advance_source_selection(source: Source, target: str, **details: Any) -> str:
+    """Advance the non-mastery source-selection lifecycle without regressing it."""
+    if target not in _SELECTION_RANK:
+        raise ValueError(f"unsupported source selection state: {target}")
+    meta = dict(source.meta_data or {})
+    current = str(meta.get("selection_state") or "discovered")
+    if current not in _SELECTION_RANK:
+        current = "discovered"
+    selected = target if _SELECTION_RANK[target] >= _SELECTION_RANK[current] else current
+    meta.update({
+        "selection_state": selected,
+        "selection_policy_version": SOURCE_PROFILE_VERSION,
+        "selection_updated_at": datetime.utcnow().isoformat(),
+        **{key: value for key, value in details.items() if value is not None},
+    })
+    source.meta_data = meta
+    return selected
 
 _INJECTION_PATTERNS = (
     re.compile(r"ignore\s+(?:all\s+)?previous\s+instructions", re.I),
@@ -334,6 +361,128 @@ def infer_source_policy(source: Source) -> tuple[str, str, str]:
     return "learner_context", "learner_owned", "stable"
 
 
+def _bounded_level(score: int) -> str:
+    return ("very_low", "low", "medium", "high", "very_high")[max(0, min(4, score))]
+
+
+def infer_source_profile(
+    source: Source,
+    version: SourceVersion | None = None,
+    chunks: Iterable[Chunk | dict[str, Any]] = (),
+) -> dict[str, Any]:
+    """Return an intent-neutral source vector; ranking remains intent-specific."""
+    items = list(chunks)
+    meta = dict(source.meta_data or {})
+    location = str(source.url or "")
+    host = urlparse(location).netloc.casefold()
+    authority_tier = str(version.authority_tier if version else "learner_owned")
+    freshness_class = str(version.freshness_class if version else "stable")
+    status = str(version.status if version else source.status or "pending")
+
+    official = (
+        authority_tier == "official"
+        or any(token in host for token in ("docs.python.org", "ietf.org", "rfc-editor.org", "w3.org"))
+    )
+    academic = authority_tier == "academic" or any(
+        token in host for token in ("arxiv.org", "acm.org", "ieee.org", "openreview.net")
+    )
+    curriculum = any(token in host for token in ("ocw.mit.edu", "csed.acm.org", ".edu"))
+    community = any(token in host for token in (
+        "stackoverflow.com", "stackexchange.com", "reddit.com", "v2ex.com", "discourse.",
+    ))
+    video = any(token in host for token in ("youtube.com", "youtu.be", "bilibili.com"))
+    repository = authority_tier == "repository" or source.type == "github"
+    curated = authority_tier == "curated" or bool(meta.get("foundation"))
+    learner_owned = authority_tier == "learner_owned" or source.type in {"file", "inline"}
+
+    roles: list[str] = []
+    if official:
+        roles.extend(["normative", "reference"])
+    if academic:
+        roles.append("research")
+    if curriculum or curated:
+        roles.append("explanatory")
+    if repository:
+        roles.append("implementation")
+    if community:
+        roles.append("experience")
+    if video:
+        roles.extend(["explanatory", "experience"])
+    if learner_owned:
+        roles.append("local_context")
+    roles = list(dict.fromkeys(roles or ["reference"]))
+
+    kinds: list[str] = []
+    headings: set[str] = set()
+    for item in items:
+        item_meta = dict(item.meta_data or {}) if isinstance(item, Chunk) else dict(item.get("meta") or {})
+        kind = str(item_meta.get("document_kind") or "")
+        if kind:
+            kinds.append(kind)
+        headings.update(str(value) for value in list(item_meta.get("headings") or []) if value)
+    if not kinds:
+        suffix = location.casefold().rsplit(".", 1)[-1] if "." in location else ""
+        if repository or suffix in {"py", "js", "ts", "tsx", "java", "go", "rs", "c", "cpp"}:
+            kinds.append("code")
+        elif academic or suffix == "pdf":
+            kinds.append("paper")
+        elif video or suffix in {"srt", "vtt"}:
+            kinds.append("video_transcript")
+        elif community:
+            kinds.append("community_thread")
+        else:
+            kinds.append("structured_document")
+    kinds = list(dict.fromkeys(kinds))
+
+    authority_score = {
+        "official": 4, "curated": 3, "academic": 3,
+        "repository": 3, "learner_owned": 2,
+    }.get(authority_tier, 1)
+    breadth_score = min(4, 1 + int(len(items) >= 3) + int(len(items) >= 8) + int(len(headings) >= 6))
+    freshness_score = {
+        "live": 4, "current": 4, "versioned": 3, "stable": 2,
+    }.get(freshness_class, 2)
+    if status in {"stale", "superseded"}:
+        freshness_score = 1
+    elif status in {"quarantined", "failed"}:
+        freshness_score = 0
+    humanity_score = 4 if community else 3 if video else 2 if repository else 1
+    pedagogy_score = 4 if curriculum or curated else 3 if learner_owned else 2 if official or academic else 1
+    reproducibility_score = 4 if repository else 3 if official or academic else 2 if learner_owned else 1
+    selection_state = str(meta.get("selection_state") or (
+        "inspected" if version or source.status == "processed" else "discovered"
+    ))
+    if selection_state not in _SELECTION_RANK:
+        selection_state = "discovered"
+
+    strategy = (
+        "code_symbol" if "code" in kinds
+        else "paper_section" if "paper" in kinds
+        else "video_timestamp" if "video_transcript" in kinds
+        else "community_thread" if "community_thread" in kinds
+        else "heading_parent_child"
+    )
+    dimensions = {
+        "credibility": {"score": authority_score, "level": _bounded_level(authority_score)},
+        "breadth": {"score": breadth_score, "level": _bounded_level(breadth_score)},
+        "freshness": {"score": freshness_score, "level": _bounded_level(freshness_score)},
+        "human_perspective": {"score": humanity_score, "level": _bounded_level(humanity_score)},
+        "pedagogical_fit": {"score": pedagogy_score, "level": _bounded_level(pedagogy_score)},
+        "reproducibility": {"score": reproducibility_score, "level": _bounded_level(reproducibility_score)},
+    }
+    return {
+        "schema_version": SOURCE_PROFILE_VERSION,
+        "authority_tier": authority_tier,
+        "content_roles": roles,
+        "document_kinds": kinds,
+        "retrieval_strategy": strategy,
+        "selection_state": selection_state,
+        "version_fit": "declared" if version and version.version_label else "unspecified",
+        "dimensions": dimensions,
+        "ranking_rule": "vector_not_scalar; intent policy chooses dimensions",
+    }
+
+
 async def mark_packets_stale_for_source_version(
     db: AsyncSession, source_version_id: int, *, reason: str, packet_status: str = "stale",
 ) -> int:
@@ -371,6 +520,7 @@ async def ensure_source_version(
         existing.retrieved_at = datetime.utcnow()
         source.status = "quarantined" if existing.status == "quarantined" else "processed"
         source.meta_data = {**dict(source.meta_data or {}), "active_source_version_id": existing.id}
+        advance_source_selection(source, "inspected")
         return existing, False
 
     latest = (await db.execute(select(SourceVersion).where(
@@ -398,6 +548,10 @@ async def ensure_source_version(
     )
     db.add(version)
     await db.flush()
+    version.inspection = {
+        **dict(version.inspection or {}),
+        "source_profile": infer_source_profile(source, version, chunks),
+    }
     if latest and latest.status in ACTIVE_SOURCE_STATUSES:
         latest.status = "superseded"
         await mark_packets_stale_for_source_version(
@@ -405,6 +559,7 @@ async def ensure_source_version(
         )
     source.status = "quarantined" if inspection["quarantined"] else "processed"
     source.meta_data = {**dict(source.meta_data or {}), "active_source_version_id": version.id}
+    advance_source_selection(source, "inspected")
     return version, True
 
 
@@ -466,6 +621,32 @@ _RETRIEVAL_STOP_TERMS = {
 }
 
 
+def _intent_source_fit(query: str, profile: dict[str, Any]) -> int:
+    """Choose source-vector dimensions for this query without producing a global score."""
+    text = str(query or "").casefold()
+    dimensions = dict(profile.get("dimensions") or {})
+    scores = {
+        key: int(dict(dimensions.get(key) or {}).get("score") or 0)
+        for key in (
+            "credibility", "breadth", "freshness", "human_perspective",
+            "pedagogical_fit", "reproducibility",
+        )
+    }
+    if re.search(r"报错|排错|故障|踩坑|失败|debug|troubleshoot|error|incident", text, re.I):
+        selected = ("human_perspective", "reproducibility", "freshness")
+    elif re.search(r"实现|代码|仓库|API|工程|implement|code|repository", text, re.I):
+        selected = ("reproducibility", "freshness", "credibility")
+    elif re.search(r"最新|当前|版本|变化|发布|current|latest|version|release", text, re.I):
+        selected = ("freshness", "credibility", "reproducibility")
+    elif re.search(r"论文|研究|证据|调研|paper|research|evidence", text, re.I):
+        selected = ("credibility", "breadth", "freshness")
+    elif re.search(r"学习|课程|路线|教程|讲义|理解|learn|course|tutorial|curriculum", text, re.I):
+        selected = ("breadth", "pedagogical_fit", "credibility")
+    else:
+        selected = ("credibility", "pedagogical_fit", "breadth")
+    return sum(scores[key] for key in selected)
+
+
 def _rank_rows(
     rows: list[tuple[Chunk, SourceVersion, Source]],
     *,
@@ -477,26 +658,60 @@ def _rank_rows(
         if term not in _RETRIEVAL_STOP_TERMS
         and not any(stop in term for stop in ("带我学", "完整讲义", "然后用"))
     }
-    authority = {"official": 8, "curated": 7, "academic": 6, "repository": 4, "learner_owned": 2}
-    ranked = []
+    candidates: list[dict[str, Any]] = []
     for chunk, version, source in rows:
         meta = dict(chunk.meta_data or {})
-        heading = str(meta.get("heading") or meta.get("title") or "").casefold()
+        heading = " ".join([
+            str(meta.get("heading") or meta.get("title") or ""),
+            *[str(item) for item in list(meta.get("headings") or [])],
+            *[str(item) for item in list(meta.get("heading_chain") or [])],
+        ]).casefold()
+        structural = " ".join([
+            heading,
+            str(meta.get("file") or ""),
+            *[str(item) for item in list(meta.get("topic_hints") or [])],
+            *[str(item) for item in list(meta.get("symbols") or [])],
+        ]).casefold()
         content = str(chunk.content or "").casefold()
-        lexical_score = sum(4 if term in heading else 1 for term in terms if term in heading or term in content)
-        score = lexical_score + authority.get(version.authority_tier, 0)
-        if source.id in explicit_source_ids:
-            score += 20
-        if lexical_score > 0 or source.id in explicit_source_ids:
-            ranked.append((score, lexical_score, chunk, version, source))
-    ranked.sort(key=lambda item: (-item[0], item[3].status != "active", item[4].id, item[2].index))
+        lexical_score = sum(1 + min(3, content.count(term)) for term in terms if term in content)
+        structural_score = sum(4 if term in heading else 2 for term in terms if term in structural)
+        source_fit_score = _intent_source_fit(query, infer_source_profile(source, version, [chunk]))
+        explicit_score = 1 if source.id in explicit_source_ids else 0
+        if lexical_score > 0 or structural_score > 0 or explicit_score:
+            candidates.append({
+                "row": (chunk, version, source),
+                "lexical": lexical_score,
+                "structural": structural_score,
+                "source_fit": source_fit_score,
+                "explicit": explicit_score,
+            })
+
+    rank_fields = ("lexical", "structural", "source_fit", "explicit")
+    fused: dict[int, float] = {chunk.id: 0.0 for chunk, _, _ in (item["row"] for item in candidates)}
+    for field in rank_fields:
+        ordered = sorted(
+            candidates,
+            key=lambda item: (-int(item[field]), item["row"][1].status != "active", item["row"][2].id, item["row"][0].index),
+        )
+        for rank, item in enumerate(ordered, start=1):
+            if int(item[field]) > 0:
+                fused[item["row"][0].id] += 1.0 / (60 + rank)
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            -fused[item["row"][0].id], item["row"][1].status != "active",
+            item["row"][2].id, item["row"][0].index,
+        ),
+    )
     selected: list[tuple[Chunk, SourceVersion, Source]] = []
     seen_sources: set[int] = set()
-    for _, _, chunk, version, source in ranked:
+    for item in ranked:
+        chunk, version, source = item["row"]
         if source.id not in seen_sources:
             selected.append((chunk, version, source))
             seen_sources.add(source.id)
-    for _, _, chunk, version, source in ranked:
+    for item in ranked:
+        chunk, version, source = item["row"]
         row = (chunk, version, source)
         if row not in selected:
             selected.append(row)
@@ -523,6 +738,72 @@ def _section_blocks(text: str) -> list[tuple[str, str]]:
     return blocks or [("", str(text or ""))]
 
 
+def _claim_facets(section_heading: str, sentence: str, profile: dict[str, Any]) -> list[str]:
+    text = f"{section_heading} {sentence}".casefold()
+    facets: list[str] = []
+    patterns = {
+        "definition": r"定义|概念|是什么|definition|concept",
+        "mechanism": r"机制|原理|因为|因此|导致|意味着|取决于|mechanism|because|therefore|depends",
+        "example": r"例子|示例|例如|比如|example|for instance|case",
+        "boundary": r"边界|限制|不保证|不能|仅当|limitation|boundary|not always",
+        "misconception": r"误区|混淆|错误|并不|mistake|pitfall|misconception",
+        "assessment_basis": r"可验证|练习|问题|评估|检查|assessment|exercise|question|verify",
+        "scope": r"范围|目标|覆盖|scope|overview|objective",
+        "prerequisites": r"前置|依赖|先理解|基础|prerequisite|dependency|foundation",
+        "implementation": r"实现|步骤|算法|流程|代码|调用|implementation|procedure|algorithm|step|code",
+        "risks": r"风险|失败|注入|过期|冲突|泄露|risk|failure|stale|conflict|leak",
+    }
+    for facet, pattern in patterns.items():
+        if re.search(pattern, text, re.I):
+            facets.append(facet)
+    if "normative" in profile["content_roles"] or "research" in profile["content_roles"]:
+        facets.append("canonical_sources")
+    if "implementation" in profile["content_roles"]:
+        facets.append("implementation")
+    return list(dict.fromkeys(facets))
+
+
+def _support_level(authority: int, independent_sources: int) -> str:
+    if authority >= 4 and independent_sources >= 2:
+        return "corroborated_authoritative"
+    if authority >= 3:
+        return "traceable_high_authority"
+    if independent_sources >= 2:
+        return "corroborated_context"
+    return "traceable_single_source"
+
+
+def _merge_evidence_rows(values: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for item in values:
+        raw = str(item.get(key) or "")
+        normalized = re.sub(r"\s+", " ", raw).strip().casefold()
+        if not normalized:
+            continue
+        if normalized not in merged:
+            merged[normalized] = {**item, "evidence_refs": [dict(item["evidence"])]}
+            continue
+        current = merged[normalized]
+        evidence = dict(item["evidence"])
+        if evidence not in current["evidence_refs"]:
+            current["evidence_refs"].append(evidence)
+        current["facets"] = list(dict.fromkeys([
+            *list(current.get("facets") or []), *list(item.get("facets") or []),
+        ]))
+        authority = max(
+            int(dict(current.get("support") or {}).get("strongest_authority_score") or 0),
+            int(dict(item.get("support") or {}).get("strongest_authority_score") or 0),
+        )
+        independent = len({int(ref["source_id"]) for ref in current["evidence_refs"]})
+        current["support"] = {
+            "traceable": True,
+            "strongest_authority_score": authority,
+            "independent_source_count": independent,
+            "level": _support_level(authority, independent),
+        }
+    return list(merged.values())
+
+
 def _knowledge_units(rows: list[tuple[Chunk, SourceVersion, Source]]) -> dict[str, Any]:
     concepts: list[dict[str, Any]] = []
     claims: list[dict[str, Any]] = []
@@ -531,18 +812,46 @@ def _knowledge_units(rows: list[tuple[Chunk, SourceVersion, Source]]) -> dict[st
     relations: list[dict[str, Any]] = []
     procedures: list[dict[str, Any]] = []
     counterexamples: list[dict[str, Any]] = []
+    viewpoints: list[dict[str, Any]] = []
+    by_version: dict[int, list[Chunk]] = {}
+    for chunk, version, _ in rows:
+        by_version.setdefault(version.id, []).append(chunk)
     for chunk, version, source in rows[:24]:
         meta = dict(chunk.meta_data or {})
-        locator = str(meta.get("heading") or meta.get("title") or f"chunk-{chunk.index}")[:240]
+        heading_candidates: list[str] = []
+        for value in (meta.get("heading"), meta.get("title")):
+            if value and str(value).strip():
+                heading_candidates.append(str(value).strip())
+        for key in ("headings", "heading_chain"):
+            values = meta.get(key) or []
+            if isinstance(values, str):
+                values = [values]
+            for value in values:
+                if value and str(value).strip():
+                    heading_candidates.append(str(value).strip())
+        heading_candidates = list(dict.fromkeys(heading_candidates))
+        locator = str(heading_candidates[0] if heading_candidates else f"chunk-{chunk.index}")[:240]
+        profile = infer_source_profile(source, version, by_version.get(version.id, [chunk]))
         evidence = {
             "source_id": source.id,
             "source_version_id": version.id,
             "chunk_id": chunk.id,
             "locator": locator,
         }
-        heading = str(meta.get("heading") or meta.get("title") or "").strip()
-        if heading:
-            concepts.append({"label": heading[:180], "evidence": evidence})
+        for heading in heading_candidates:
+            authority_score = int(profile["dimensions"]["credibility"]["score"])
+            concepts.append({
+                "id": f"concept:{hashlib.sha256(heading.casefold().encode('utf-8')).hexdigest()[:16]}",
+                "label": heading[:180],
+                "evidence": evidence,
+                "facets": _claim_facets(heading, heading, profile),
+                "support": {
+                    "traceable": True,
+                    "strongest_authority_score": authority_score,
+                    "independent_source_count": 1,
+                    "level": _support_level(authority_score, 1),
+                },
+            })
         for section_heading, section_text in _section_blocks(str(chunk.content or ""))[:12]:
             section_evidence = {
                 **evidence,
@@ -550,50 +859,104 @@ def _knowledge_units(rows: list[tuple[Chunk, SourceVersion, Source]]) -> dict[st
             }
             section_kind = section_heading.casefold()
             for sentence in _sentences(section_text)[:8]:
-                row = {"statement": sentence, "evidence": section_evidence, "critical": True}
+                viewpoint = (
+                    "community_thread" in profile["document_kinds"]
+                    or bool(re.search(r"观点|经验|讨论|评论|复盘|opinion|experience|discussion|postmortem", section_kind, re.I))
+                )
+                if viewpoint:
+                    viewpoints.append({
+                        "statement": sentence,
+                        "attribution": str(dict(source.meta_data or {}).get("title") or source.url or f"source:{source.id}")[:300],
+                        "stance": "reported_experience",
+                        "factual_authority": "not_established",
+                        "evidence": section_evidence,
+                        "source_profile": profile,
+                    })
+                    continue
+                facets = _claim_facets(section_heading, sentence, profile)
+                authority_score = int(profile["dimensions"]["credibility"]["score"])
+                claim_id = hashlib.sha256(sentence.casefold().encode("utf-8")).hexdigest()[:16]
+                row = {
+                    "id": f"claim:{claim_id}",
+                    "statement": sentence,
+                    "evidence": section_evidence,
+                    "facets": facets,
+                    "critical": True,
+                    "support": {
+                        "traceable": True,
+                        "strongest_authority_score": authority_score,
+                        "independent_source_count": 1,
+                        "level": _support_level(authority_score, 1),
+                    },
+                }
                 claims.append(row)
-                if re.search(r"例|示例|example|case", section_kind, re.I) or re.search(
-                    r"例如|举例|for instance|比如|令\s*f\(", sentence, re.I
-                ):
+                if "example" in facets:
                     examples.append(row)
-                if re.search(r"边界|误区|混淆|注意|limitation|pitfall|mistake", section_kind, re.I) or re.search(
-                    r"并不|不能|不保证|not always|common mistake|pitfall", sentence, re.I
-                ):
+                if "boundary" in facets or "misconception" in facets:
                     misconceptions.append(row)
-                if re.search(r"因为|因此|导致|意味着|取决于|because|therefore|depends on|means", sentence, re.I):
+                if "mechanism" in facets:
                     relations.append({**row, "relation": "explanatory"})
-                if re.search(r"步骤|算法|更新|流程|procedure|algorithm|step", section_kind, re.I):
+                if "implementation" in facets:
                     procedures.append(row)
                 if re.search(r"反例|counterexample|失败|振荡|发散", section_kind + sentence, re.I):
                     counterexamples.append(row)
-    dedupe = lambda values, key: list({str(item.get(key)): item for item in values if item.get(key)}.values())
+    merged_claims = _merge_evidence_rows(claims, "statement")
+    by_id = {item["id"]: item for item in merged_claims}
+    def merged_subset(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return list(dict.fromkeys(item["id"] for item in values if item["id"] in by_id))
+    def rows_for(ids: list[str]) -> list[dict[str, Any]]:
+        return [by_id[item] for item in ids]
+    concepts = _merge_evidence_rows(concepts, "label")
+    viewpoints = _merge_evidence_rows(viewpoints, "statement")
     return {
-        "concepts": dedupe(concepts, "label")[:20],
-        "claims": dedupe(claims, "statement")[:30],
-        "relations": dedupe(relations, "statement")[:12],
-        "procedures": dedupe(procedures, "statement")[:10],
-        "examples": dedupe(examples, "statement")[:8],
-        "counterexamples": dedupe(counterexamples, "statement")[:8],
-        "misconceptions": dedupe(misconceptions, "statement")[:8],
-        "assessment_basis": dedupe(claims, "statement")[:8],
+        "concepts": concepts[:20],
+        "claims": merged_claims[:30],
+        "relations": rows_for(merged_subset(relations))[:12],
+        "procedures": rows_for(merged_subset(procedures))[:10],
+        "examples": rows_for(merged_subset(examples))[:8],
+        "counterexamples": rows_for(merged_subset(counterexamples))[:8],
+        "misconceptions": rows_for(merged_subset(misconceptions))[:8],
+        "assessment_basis": [item for item in merged_claims if "assessment_basis" in item["facets"]][:8],
+        "viewpoints": viewpoints[:12],
+        "viewpoint_boundary": "reported experience is preserved separately and never establishes a factual claim",
     }
 
 
 def _coverage(brief: dict[str, Any], units: dict[str, Any], rows: list[tuple[Chunk, SourceVersion, Source]]) -> dict[str, Any]:
-    mapping = {
-        "definition": bool(units["concepts"] or units["claims"]),
-        "mechanism": bool(units["relations"] or len(units["claims"]) >= 2),
-        "example": bool(units["examples"]),
-        "boundary": bool(units["misconceptions"]),
-        "misconception": bool(units["misconceptions"]),
-        "assessment_basis": bool(units["assessment_basis"]),
-        "scope": bool(units["concepts"] or units["claims"]),
-        "prerequisites": bool(units["relations"]),
-        "canonical_sources": any(version.authority_tier in {"official", "academic"} for _, version, _ in rows),
-        "implementation": any(version.authority_tier == "repository" for _, version, _ in rows) or bool(units["procedures"]),
-        "risks": bool(units["misconceptions"]),
+    claims = [
+        *list(units.get("claims") or []),
+        *[
+            {**concept, "statement": concept.get("label", "")}
+            for concept in list(units.get("concepts") or [])
+            if set(concept.get("facets") or []) & {"definition", "scope"}
+        ],
+    ]
+    profiles = {
+        version.id: infer_source_profile(source, version, [row for row, row_version, _ in rows if row_version.id == version.id])
+        for _, version, source in rows
     }
-    facets = [{"id": item, "covered": bool(mapping.get(item))} for item in brief["required_knowledge"]]
+    facets = []
+    for facet_id in brief["required_knowledge"]:
+        supporting = [
+            claim for claim in claims
+            if facet_id in list(claim.get("facets") or [])
+            and bool(dict(claim.get("support") or {}).get("traceable"))
+        ]
+        if facet_id == "canonical_sources":
+            supporting = [
+                claim for claim in supporting
+                if int(dict(claim.get("support") or {}).get("strongest_authority_score") or 0) >= 3
+            ]
+        strongest = max(
+            (int(dict(claim.get("support") or {}).get("strongest_authority_score") or 0) for claim in supporting),
+            default=0,
+        )
+        facets.append({
+            "id": facet_id,
+            "covered": bool(supporting),
+            "supporting_claim_ids": [claim["id"] for claim in supporting[:8]],
+            "strongest_authority_score": strongest,
+        })
     covered = sum(item["covered"] for item in facets)
     return {
         "facets": facets,
@@ -601,6 +964,8 @@ def _coverage(brief: dict[str, Any], units: dict[str, Any], rows: list[tuple[Chu
         "total": len(facets),
         "ratio": round(covered / len(facets), 3) if facets else 1.0,
         "gaps": [item["id"] for item in facets if not item["covered"]],
+        "claim_support_policy": "traceable_claim_per_required_facet",
+        "source_profile_count": len(profiles),
     }
 
 
@@ -698,6 +1063,21 @@ async def compile_domain_knowledge_packet(
         "blocked" if critical_gap or conflicts or (stale_refs and kind in {"guided_skill", "teaching_artifact"})
         else "ready_with_gaps" if gaps or stale_refs else "ready"
     )
+    coverage = {
+        **coverage,
+        "retrieval": {
+            "policy_version": RETRIEVAL_POLICY_VERSION,
+            "scope_filter_applied": True,
+            "explicit_source_count": len(explicit_ids),
+            "selected_chunk_count": len(rows),
+            "lanes": ["lexical", "structure", "intent_source_fit", "explicit_source"],
+            "fusion": "reciprocal_rank_fusion",
+            "dense_semantic_lane": "optional_existing_embedding_index_not_required_for_packet_gate",
+        },
+    }
+    version_chunks: dict[int, list[Chunk]] = {}
+    for chunk, version, _ in rows:
+        version_chunks.setdefault(version.id, []).append(chunk)
     refs = list({version.id: {
         "source_id": source.id,
         "source_version_id": version.id,
@@ -705,6 +1085,7 @@ async def compile_domain_knowledge_packet(
         "content_hash": version.content_hash,
         "status": version.status,
         "authority_tier": version.authority_tier,
+        "source_profile": infer_source_profile(source, version, version_chunks.get(version.id, [])),
     } for _, version, source in rows}.values())
     gate_status = status
     if initial_status:
@@ -748,6 +1129,8 @@ def packet_view(packet: DomainKnowledgePacket, *, compact: bool = False) -> dict
             "relations": list(units.get("relations") or [])[:5],
             "examples": list(units.get("examples") or [])[:3],
             "misconceptions": list(units.get("misconceptions") or [])[:3],
+            "viewpoints": list(units.get("viewpoints") or [])[:4],
+            "viewpoint_boundary": units.get("viewpoint_boundary"),
         }
     return {
         "id": packet.id, "kind": packet.kind, "subject_key": packet.subject_key,

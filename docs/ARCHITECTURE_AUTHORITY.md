@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-31.2`）：领域知识供给从单一来源等级升级为 `source-profile-v1` 多维来源向量与 `domain-knowledge-packet-v2` 声明证据合同。来源同时声明内容角色、文档类型、版本适配以及可信度、全面度、时效性、真人观点性、教学适配和可复现性；不同问题按用途选择维度，不再把社区经验、官方规范和教材压成同一总分。Chunk 新增代码、API、论文、视频字幕和社区讨论等类型化切分元数据，Packet 以词法、结构、来源和显式选择四路 RRF 召回，语义路保持可选增强。关键覆盖门现在要求可定位 Claim 支持，社区经验单列为带归因 `viewpoints`，不得冒充事实共识。来源选择状态按 `discovered -> inspected -> recommended -> confirmed -> pinned` 单调推进；个人知识库来源只有经过显式项目晋升 API 和后续基线确认才能进入项目约束，晋升事件为零 Kernel target。稳定 Source/SourceVersion/Chunk 表、旧等级字段和旧 API 保持兼容，新增信息存入既有 JSON，无数据库迁移；三类主 Agent、五核与 EvidenceEvent 掌握语义不变。
+
 Contract impact（`2026-08-31.1`）：图解与动画新增非学习者可选的 `visual_teaching_composition` Playbook。显式视觉请求必须先形成并提交一段脱离视觉也成立的教学讲解，再把讲解编译为版本化 `VisualBrief`；只有通过对象、关系、状态、变化和事实边界门后，底层 `learning_diagram_generator` / `learning_animation_generator` 才能渲染。流式 `teaching_segment_committed` 与可撤销 `text_delta` 分离，后续 `text_reset` 只能清除草稿；视觉规划、语法、校验、布局、渲染或传输失败均合法终止为 `explanation_only`，不得撤销讲解、静默切换视觉形式或伪造占位产物。Desktop 先持久化正式 Tutor 回复再启动视觉增强。新增 `VisualTeachingBundle`/VisualBrief v1，既有 VisualSpec v3、稳定视觉 Tool ID、三类主 Agent、五核、EvidenceEvent 与掌握语义保持兼容，无数据库迁移。
 
 Contract impact（`2026-08-30.10`）：长尾图解/动画新增通用的请求—产物语义契约。省略式视觉追问优先继承最近已验证视觉产物的有界标题/摘要，其次继承最近用户主题；无法恢复主题时在模型调用前返回 `needs_input`，不再生成通用占位物。模型候选必须通过动态请求主题覆盖；其中声明式过程必须在 semantic 或帧叙述中实际覆盖主题，且至少包含三个主题阶段与两个连续变化，标题不能替代过程内容。规则不维护课程、算法或岗位白名单。视觉工具回灌 Tutor 的观察新增有界摘要、帧标题、帧描述、状态线索与语义变化数，并把它们设为最终回答的唯一产物事实边界，禁止用主题常识补写未展示的指针、交换或结果。稳定 Tool ID、VisualSpec v3、三类主 Agent、五核、EvidenceEvent 与掌握语义保持兼容，无数据库迁移。
