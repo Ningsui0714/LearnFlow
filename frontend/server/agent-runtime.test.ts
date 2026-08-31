@@ -191,6 +191,21 @@ test('a useful teaching draft is repaired for observable tool gaps instead of be
   }).violations, [])
 })
 
+test('plugin grounding disclosure is enforced without a plugin-specific host branch', () => {
+  const repaired = repairTutorDraftForObservedGaps('这是插件返回的领域说明。', [{
+    id: 'plugin-grounding', kind: 'plugin', status: 'completed', title: '领域概览', detail: '完成', durationMs: 1,
+    plugin: {
+      pluginId: 'fixture_domain', toolId: 'overview',
+      result: {
+        summary: '完成',
+        payload: { grounding: { requiredDisclosure: '事实固定于 snapshot:fixture；其他内容必须标为非插件结论。' } },
+      },
+    },
+  } as any])
+  assert.match(repaired, /事实边界：事实固定于 snapshot:fixture/)
+  assert.doesNotMatch(repaired, /role_capability_graph|岗位图谱/)
+})
+
 test('Tutor runs a bounded observe-act-observe loop and preserves tool results', async () => {
   const requests: any[] = []
   let round = 0

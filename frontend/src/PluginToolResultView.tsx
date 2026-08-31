@@ -7,6 +7,7 @@ export type PluginToolRendererProps = {
   toolId: string
   result: PluginToolResult
   objects: readonly LearnFlowPluginObject[]
+  onPrompt?: (prompt: string) => void
 }
 
 export type LearnFlowPluginClientPackage = {
@@ -55,14 +56,14 @@ function GenericPluginObjects({ objects }: { objects: readonly LearnFlowPluginOb
   )
 }
 
-export default function PluginToolResultView({ run }: { run: TutorToolRun }) {
+export default function PluginToolResultView({ run, onPrompt }: { run: TutorToolRun; onPrompt?: (prompt: string) => void }) {
   const plugin = run.plugin
   if (!plugin) return null
   const objects = plugin.result.objects || []
   const rendererId = plugin.result.presentation?.renderer
   const Renderer = rendererId ? rendererRegistry.get(rendererId) : undefined
   if (Renderer) {
-    return <Renderer pluginId={plugin.pluginId} toolId={plugin.toolId} result={plugin.result} objects={objects} />
+    return <Renderer pluginId={plugin.pluginId} toolId={plugin.toolId} result={plugin.result} objects={objects} onPrompt={onPrompt} />
   }
   return (
     <div aria-label={`${run.title}插件结果`}>

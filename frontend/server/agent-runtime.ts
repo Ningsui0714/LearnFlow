@@ -267,6 +267,18 @@ export function repairTutorDraftForObservedGaps(reply: string, runs: TutorToolRu
     repaired += '\n\n讲义与练习目前只是待确认的生成提案，尚未生成；确认卡成功完成后，我再从文件中的第一个锚点继续带你学习。'
   }
 
+  const pluginGroundingDisclosures = runs.flatMap(run => {
+    const payload = run.plugin?.result.payload
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return []
+    const grounding = (payload as Record<string, unknown>).grounding
+    if (!grounding || typeof grounding !== 'object' || Array.isArray(grounding)) return []
+    const disclosure = (grounding as Record<string, unknown>).requiredDisclosure
+    return typeof disclosure === 'string' && disclosure.trim() ? [disclosure.trim()] : []
+  })
+  if (pluginGroundingDisclosures.length && !/(?:固定快照|数据快照|事实版本|非岗位快照|非插件结论)/i.test(repaired)) {
+    repaired += `\n\n事实边界：${pluginGroundingDisclosures[0]}`
+  }
+
   return repaired
 }
 
@@ -452,6 +464,25 @@ function compactPriorRuns(messages: TutorContextMessage[]) {
     status: run.status,
     detail: run.detail.slice(0, 360),
     observationSummary: run.observationSummary,
+    ...(run.plugin ? {
+      plugin: {
+        pluginId: run.plugin.pluginId,
+        toolId: run.plugin.toolId,
+        result: {
+          summary: run.plugin.result.summary.slice(0, 500),
+          presentation: run.plugin.result.presentation,
+          objects: (run.plugin.result.objects || []).slice(0, 16).map(object => ({
+            protocol: object.protocol,
+            pluginId: object.pluginId,
+            objectType: object.objectType,
+            objectId: object.objectId,
+            schemaVersion: object.schemaVersion,
+            label: object.label,
+            value: object.value,
+          })),
+        },
+      },
+    } : {}),
   })) as TutorToolRun[]
 }
 

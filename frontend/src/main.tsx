@@ -2648,6 +2648,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                   )}
                   <MessageList
                     messages={messages}
+                    onPluginPrompt={prompt => setDrafts(previous => ({ ...previous, [draftKey]: prompt }))}
                     onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
                     onAcceptPathProposal={acceptPersonalPathNode}
                     onAcceptPathPlan={acceptLearningPathPlan}
@@ -3137,10 +3138,11 @@ function App({ auth }: { auth: AuthGateSession }) {
   )
 }
 
-function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
+function ToolRunCard({ run, sourceMessageId, conversationId, onPluginPrompt, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
   run: TutorToolRun
   sourceMessageId: string
   conversationId: string
+  onPluginPrompt: (prompt: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
@@ -3253,7 +3255,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onOpenLearningFile,
         </div>
       )}
       {run.artifact && <VisualArtifact artifact={run.artifact} />}
-      {run.plugin && <PluginToolResultView run={run} />}
+      {run.plugin && <PluginToolResultView run={run} onPrompt={onPluginPrompt} />}
     </section>
   )
 }
@@ -3316,9 +3318,10 @@ function ToolDecisionBridge({
   )
 }
 
-function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
+function MessageList({ messages, conversationId, onPluginPrompt, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
   messages: Message[]
   conversationId: string
+  onPluginPrompt: (prompt: string) => void
   onQuoteFollowUp: (messageId: string, quote: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
@@ -3426,6 +3429,7 @@ function MessageList({ messages, conversationId, onQuoteFollowUp, onOpenLearning
                       run={run}
                       sourceMessageId={message.id}
                       conversationId={conversationId}
+                      onPluginPrompt={onPluginPrompt}
                       onOpenLearningFile={onOpenLearningFile}
                       onAttachLearningFile={onAttachLearningFile}
                       onAcceptPathProposal={onAcceptPathProposal}

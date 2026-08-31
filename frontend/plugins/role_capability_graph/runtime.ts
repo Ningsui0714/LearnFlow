@@ -89,12 +89,41 @@ type EvidenceBinding = JsonObject & {
   limitations?: string[]
 }
 
+type RoleViewSection = JsonObject & {
+  id: string
+  title: string
+  summary: string
+  status?: string
+  itemIds: string[]
+  evidenceBindingIds?: string[]
+}
+
+type RetrievalEntry = JsonObject & {
+  id: string
+  snapshotId: string
+  targetId: string
+  text: string
+}
+
+type ObjectIndexEntry = JsonObject & {
+  id: string
+  kind: string
+  label: string
+  summary: string
+  type: string
+}
+
 type LoadedRolePackage = {
   manifest: StaticPackageManifest
   semantic: { nodes: RoleNode[]; edges: RoleRelation[]; claims: JsonObject[] }
   process: { scenarios: ProcessScenario[]; nodes: ProcessNode[]; edges: RoleRelation[]; bridges: RoleRelation[] }
   sources: { assets: SourceAsset[]; segments: SourceSegment[]; evidenceBindings: EvidenceBinding[] }
   validation: JsonObject
+  snapshot: JsonObject
+  views: { sections: RoleViewSection[] }
+  retrieval: RetrievalEntry[]
+  objectIndex: ObjectIndexEntry[]
+  referenceMigrations: JsonObject[]
   objects: Map<string, RoleNode | ProcessScenario | ProcessNode>
   relations: RoleRelation[]
   outgoing: Map<string, RoleRelation[]>
@@ -148,20 +177,28 @@ function loadPackage(manifestPath: string): LoadedRolePackage {
     throw new Error(`role_package_invalid:${manifestPath}`)
   }
   const directory = dirname(manifestPath)
-  function component(entrypoint: string, label: string) {
+  function componentValue(entrypoint: string, label: string) {
     const filename = manifest.entrypoints[entrypoint]
     if (!filename || filename.includes('..') || filename.startsWith('/')) throw new Error(`role_package_invalid:${label}_entrypoint`)
     const loaded = readJson(join(directory, filename))
     if (manifest.hashes[filename] !== sha256(loaded.raw)) throw new Error(`role_package_hash_mismatch:${filename}`)
-    return asObject(loaded.value, label)
+    return loaded.value
   }
+  const component = (entrypoint: string, label: string) => asObject(componentValue(entrypoint, label), label)
   const semantic = component('semanticGraph', 'semantic') as unknown as LoadedRolePackage['semantic']
   const process = component('workProcessForest', 'process') as unknown as LoadedRolePackage['process']
   const sources = component('sources', 'sources') as unknown as LoadedRolePackage['sources']
   const validation = component('validation', 'validation')
+  const snapshot = component('snapshot', 'snapshot')
+  const views = component('views', 'views') as unknown as LoadedRolePackage['views']
+  const retrieval = componentValue('retrieval', 'retrieval') as RetrievalEntry[]
+  const objectIndex = componentValue('objectIndex', 'object_index') as ObjectIndexEntry[]
+  const referenceMigrations = componentValue('referenceMigrations', 'reference_migrations') as JsonObject[]
   if (!Array.isArray(semantic.nodes) || !Array.isArray(semantic.edges)
     || !Array.isArray(process.scenarios) || !Array.isArray(process.nodes) || !Array.isArray(process.edges)
-    || !Array.isArray(sources.assets) || !Array.isArray(sources.segments) || !Array.isArray(sources.evidenceBindings)) {
+    || !Array.isArray(sources.assets) || !Array.isArray(sources.segments) || !Array.isArray(sources.evidenceBindings)
+    || !Array.isArray(views.sections) || !Array.isArray(retrieval) || !Array.isArray(objectIndex)
+    || !Array.isArray(referenceMigrations)) {
     throw new Error(`role_package_invalid:${manifest.packageId}`)
   }
   const objects = new Map<string, RoleNode | ProcessScenario | ProcessNode>()
@@ -185,7 +222,10 @@ function loadPackage(manifestPath: string): LoadedRolePackage {
   sources.evidenceBindings.forEach(binding => bindingsByTarget.set(binding.targetId, [
     ...(bindingsByTarget.get(binding.targetId) || []), binding,
   ]))
-  return { manifest, semantic, process, sources, validation, objects, relations, outgoing, incoming, assets, segments, bindingsByTarget }
+  return {
+    manifest, semantic, process, sources, validation, snapshot, views, retrieval, objectIndex, referenceMigrations,
+    objects, relations, outgoing, incoming, assets, segments, bindingsByTarget,
+  }
 }
 
 function normalize(value: string) {
@@ -210,7 +250,7 @@ function relationEndpoints(relation: RoleRelation) {
 
 function objectKind(object: RoleNode | ProcessScenario | ProcessNode) {
   if ('kind' in object && typeof object.kind === 'string') return object.kind
-  if ('scenarioId' in object && typeof object.scenarioId === 'string') return 'scenario'
+  if ('taskRefs' in object && !('scenarioId' in object) && Array.isArray(object.taskRefs)) return 'scenario'
   return typeof object.type === 'string' ? object.type : 'object'
 }
 
@@ -238,6 +278,32 @@ export class RolePackageRuntime {
         : 'role_package_not_found:the requested immutable package is not installed')
     }
     return matches[0]
+  }
+
+  private hasSelector(selector: PackageSelector) {
+    return Boolean(selector.packageId || selector.packageVersion || selector.snapshotId)
+  }
+
+  private resolveForQuery(selector: PackageSelector, query: string) {
+    if (this.hasSelector(selector) || this.packages.length === 1) return this.resolve(selector)
+    const ranked = this.packages.map(pkg => {
+      const roleText = `${pkg.manifest.roleTitle} ${pkg.manifest.packageId}`
+      const score = tokens(query).filter(token => new Set(tokens(roleText)).has(token)).length
+        + (normalize(query).includes(normalize(pkg.manifest.roleTitle)) ? 20 : 0)
+      return { pkg, score }
+    }).sort((left, right) => right.score - left.score || left.pkg.manifest.packageId.localeCompare(right.pkg.manifest.packageId))
+    if (ranked[0]?.score && ranked[0].score > (ranked[1]?.score || 0)) return ranked[0].pkg
+    throw new Error('role_package_ambiguous:list installed packages and provide an exact package or snapshot selector')
+  }
+
+  private resolveForObjects(selector: PackageSelector, objectIds: string[]) {
+    if (this.hasSelector(selector) || this.packages.length === 1) return this.resolve(selector)
+    const ids = new Set(objectIds)
+    const matches = this.packages.filter(pkg => [...ids].every(id => pkg.objects.has(id)))
+    if (matches.length === 1) return matches[0]
+    throw new Error(matches.length
+      ? 'role_package_ambiguous:the object ids exist in multiple packages; pin a snapshot'
+      : 'role_object_not_found:no installed package contains all requested object ids')
   }
 
   descriptor(pkg: LoadedRolePackage) {
@@ -280,16 +346,144 @@ export class RolePackageRuntime {
   }
 
   private result(pkg: LoadedRolePackage, summary: string, renderer: string, objects: LearnFlowPluginObject[], payload: JsonObject): PluginToolResult {
+    const focusObjectIds = objects.filter(object => object.objectType === 'role_object').map(object => object.objectId).slice(0, 24)
     return {
       summary,
       objects,
       payload: { snapshot: this.descriptor(pkg), ...payload },
-      presentation: { renderer, state: { snapshotId: pkg.manifest.snapshotId } },
+      presentation: {
+        renderer,
+        state: {
+          packageId: pkg.manifest.packageId,
+          packageVersion: pkg.manifest.packageVersion,
+          snapshotId: pkg.manifest.snapshotId,
+          rootHash: pkg.manifest.rootHash,
+          focusObjectIds,
+        },
+      },
     }
   }
 
+  listPackages() {
+    const packages = this.packages.map(pkg => this.descriptor(pkg))
+    return {
+      summary: `已安装 ${packages.length} 个不可变岗位包版本。`,
+      objects: this.packages.map(pkg => this.pluginObject(
+        pkg, 'role_snapshot', pkg.manifest.snapshotId, pkg.manifest.roleTitle, 'snapshot', this.descriptor(pkg),
+      )),
+      payload: { kind: 'role_package_catalog', packages, count: packages.length },
+      presentation: { renderer: ROLE_RENDERERS.catalog, state: { snapshotIds: packages.map(item => item.snapshotId) } },
+    } satisfies PluginToolResult
+  }
+
+  explore(selector: PackageSelector, query: string) {
+    const pkg = this.resolveForQuery(selector, query)
+    const root = this.rank(pkg, query, true).find(item => item.object.type === 'market_role')?.object
+      || this.rank(pkg, query, true)[0]?.object
+      || pkg.semantic.nodes.find(item => item.type === 'market_role')
+    if (!root) throw new Error('role_package_invalid:missing role root')
+    const take = (kind: string, count: number) => pkg.views.sections.flatMap(section => section.itemIds)
+      .map(objectId => pkg.objects.get(objectId))
+      .filter((item): item is RoleNode | ProcessScenario | ProcessNode => Boolean(item) && objectKind(item!) === kind)
+      .filter((item, index, values) => values.findIndex(candidate => candidate.id === item.id) === index)
+      .slice(0, count)
+    const tasks = take('task', 6)
+    const capabilities = take('capability', 6)
+    const scenarios = take('scenario', 4)
+    const related = take('related_role', 4)
+    const nodes = [...new Map([root, ...tasks, ...capabilities, ...scenarios, ...related].map(item => [item.id, item])).values()]
+    const facts = nodes.map(item => ({
+      objectId: item.id,
+      statement: `${item.label}：${item.summary}`,
+      lifecycle: item.lifecycle || ('knowledgeState' in item ? item.knowledgeState : undefined) || 'snapshot',
+      evidenceBindingIds: (pkg.bindingsByTarget.get(item.id) || []).map(binding => binding.id).slice(0, 4),
+    }))
+    return this.result(pkg, `一次读取“${root.label}”的岗位定位、${tasks.length} 项任务、${capabilities.length} 项核心能力和 ${scenarios.length} 个工作场景。`, ROLE_RENDERERS.overview,
+      nodes.map(item => this.nodeObject(pkg, item)), {
+        kind: 'role_overview', rootId: root.id,
+        sections: {
+          tasks: tasks.map(item => item.id), capabilities: capabilities.map(item => item.id),
+          scenarios: scenarios.map(item => item.id), relatedRoles: related.map(item => item.id),
+        },
+        grounding: {
+          policy: 'snapshot_facts_only', facts,
+          requiredDisclosure: `岗位事实固定于 ${pkg.manifest.snapshotAsOf} 的 ${pkg.manifest.snapshotId}；未出现在 facts 中的内容必须明确标为“通用补充（非岗位快照）”。`,
+          boundary: '岗位对象不是学习者掌握证据；本工具只读，不创建或迭代岗位包。',
+        },
+      })
+  }
+
+  capabilityRadar(selector: PackageSelector, query: string) {
+    const pkg = this.resolveForQuery(selector, query)
+    const section = pkg.views.sections.find(item => item.itemIds.some(id => {
+      const object = pkg.objects.get(id)
+      return Boolean(object) && objectKind(object!) === 'capability'
+    }))
+    const capabilities = (section?.itemIds || []).map(id => pkg.objects.get(id))
+      .filter((item): item is RoleNode => Boolean(item) && objectKind(item!) === 'capability')
+      .sort((left, right) => (right.confidence || 0) - (left.confidence || 0) || left.id.localeCompare(right.id))
+      .slice(0, 8)
+    const selected = query.trim()
+      ? capabilities.sort((left, right) => this.score(right, query) - this.score(left, query))
+      : capabilities
+    return this.result(pkg, `读取 ${selected.length} 个岗位能力维度，形成独立能力雷达。`, ROLE_RENDERERS.radar,
+      selected.map(item => this.nodeObject(pkg, item)), {
+        kind: 'capability_radar', sectionId: section?.id || '',
+        axes: selected.map(item => ({ objectId: item.id, label: item.label, value: item.confidence || 0.65 })),
+        scale: { minimum: 0, maximum: 1, meaning: '岗位包证据强度兼容投影，不是学习者能力分数或统计概率。' },
+      })
+  }
+
+  compare(baseSelector: PackageSelector, targetSelector: PackageSelector) {
+    const base = this.resolve(baseSelector)
+    const target = this.resolve(targetSelector)
+    const baseIds = new Set(base.objects.keys())
+    const targetIds = new Set(target.objects.keys())
+    const added = [...targetIds].filter(id => !baseIds.has(id))
+    const removed = [...baseIds].filter(id => !targetIds.has(id))
+    const changed = [...targetIds].filter(id => {
+      const before = base.objects.get(id)
+      const after = target.objects.get(id)
+      return before && after && JSON.stringify(before) !== JSON.stringify(after)
+    })
+    const migrationIds = new Set(target.referenceMigrations.flatMap(item => Array.isArray(item.newIds) ? item.newIds as string[] : []))
+    return {
+      summary: `比较 ${base.manifest.packageVersion} → ${target.manifest.packageVersion}：新增 ${added.length}、移除 ${removed.length}、变更 ${changed.length}。`,
+      objects: [
+        this.pluginObject(base, 'role_snapshot', base.manifest.snapshotId, base.manifest.roleTitle, 'comparison_base', this.descriptor(base)),
+        this.pluginObject(target, 'role_snapshot', target.manifest.snapshotId, target.manifest.roleTitle, 'comparison_target', this.descriptor(target)),
+      ],
+      payload: {
+        kind: 'role_package_comparison', base: this.descriptor(base), target: this.descriptor(target),
+        added: added.slice(0, 40), removed: removed.slice(0, 40), changed: changed.slice(0, 40),
+        referenceMigrationHits: [...migrationIds].filter(id => added.includes(id) || changed.includes(id)).slice(0, 40),
+        truncated: added.length > 40 || removed.length > 40 || changed.length > 40,
+      },
+      presentation: {
+        renderer: ROLE_RENDERERS.comparison,
+        state: { snapshotIds: [base.manifest.snapshotId, target.manifest.snapshotId] },
+      },
+    } satisfies PluginToolResult
+  }
+
+  private score(object: RoleNode | ProcessScenario | ProcessNode, query: string) {
+    const queryTokens = tokens(query)
+    const text = [object.id, object.label, object.summary, objectKind(object), ...(('aliases' in object && Array.isArray(object.aliases)) ? object.aliases : [])].join(' ')
+    const targetTokens = new Set(tokens(text))
+    const overlap = queryTokens.filter(token => targetTokens.has(token)).length
+    return overlap + (normalize(text).includes(normalize(query)) ? Math.max(3, queryTokens.length) : 0)
+  }
+
+  private rank(pkg: LoadedRolePackage, query: string, includeCandidate: boolean) {
+    const retrievalText = new Map(pkg.retrieval.map(item => [item.targetId, item.text]))
+    return [...pkg.objects.values()].filter(object => includeCandidate || object.lifecycle !== 'candidate').map(object => ({
+      object,
+      score: this.score({ ...object, summary: `${object.summary} ${retrievalText.get(object.id) || ''}` }, query),
+    })).filter(item => item.score > 0).sort((left, right) => right.score - left.score || left.object.id.localeCompare(right.object.id))
+  }
+
   readObjects(selector: PackageSelector, objectIds: string[], includeRelations: boolean) {
-    const pkg = this.resolve(selector)
+    const pkg = this.resolveForObjects(selector, objectIds)
     const ids = [...new Set(objectIds)].slice(0, MAX_OBJECT_IDS)
     const objects = ids.map(id => pkg.objects.get(id)).filter((item): item is RoleNode | ProcessScenario | ProcessNode => Boolean(item))
     const relations = includeRelations
@@ -305,15 +499,8 @@ export class RolePackageRuntime {
   }
 
   search(selector: PackageSelector, query: string, topK: number, includeCandidate: boolean) {
-    const pkg = this.resolve(selector)
-    const queryTokens = tokens(query)
-    const scored = [...pkg.objects.values()].filter(object => includeCandidate || object.lifecycle !== 'candidate').map(object => {
-      const text = [object.id, object.label, object.summary, objectKind(object), ...(('aliases' in object && Array.isArray(object.aliases)) ? object.aliases : [])].join(' ')
-      const targetTokens = new Set(tokens(text))
-      const overlap = queryTokens.filter(token => targetTokens.has(token)).length
-      const exact = normalize(text).includes(normalize(query)) ? Math.max(3, queryTokens.length) : 0
-      return { object, score: overlap + exact }
-    }).filter(item => item.score > 0).sort((left, right) => right.score - left.score || left.object.id.localeCompare(right.object.id))
+    const pkg = this.resolveForQuery(selector, query)
+    const scored = this.rank(pkg, query, includeCandidate)
     const selected = scored.slice(0, Math.min(Math.max(1, topK), MAX_SEARCH_RESULTS))
     return this.result(pkg, `在固定快照中找到 ${selected.length} 个与“${query.slice(0, 80)}”相关的对象。`, ROLE_RENDERERS.cards,
       selected.map(item => this.nodeObject(pkg, item.object)), {
@@ -327,7 +514,7 @@ export class RolePackageRuntime {
   }
 
   queryGraph(selector: PackageSelector, objectId: string, depth: number, direction: 'outgoing' | 'incoming' | 'both', maxNodes: number) {
-    const pkg = this.resolve(selector)
+    const pkg = this.resolveForObjects(selector, [objectId])
     if (!pkg.objects.has(objectId)) throw new Error(`role_object_not_found:${objectId}`)
     const limit = Math.min(Math.max(2, maxNodes), MAX_GRAPH_NODES)
     const nodeIds = new Set([objectId])
@@ -365,7 +552,7 @@ export class RolePackageRuntime {
   }
 
   traceProcess(selector: PackageSelector, objectId: string, maxNodes: number) {
-    const pkg = this.resolve(selector)
+    const pkg = this.resolveForObjects(selector, [objectId])
     const scenarioIds = new Set<string>()
     if (pkg.process.scenarios.some(item => item.id === objectId)) scenarioIds.add(objectId)
     pkg.process.scenarios.filter(item => item.taskRefs?.includes(objectId)).forEach(item => scenarioIds.add(item.id))
@@ -396,7 +583,7 @@ export class RolePackageRuntime {
   }
 
   inspectEvidence(selector: PackageSelector, objectIds: string[]) {
-    const pkg = this.resolve(selector)
+    const pkg = this.resolveForObjects(selector, objectIds)
     const ids = [...new Set(objectIds)].slice(0, MAX_EVIDENCE_TARGETS)
     const evidence = ids.flatMap(targetId => (pkg.bindingsByTarget.get(targetId) || []).slice(0, 6).map(binding => {
       const segment = pkg.segments.get(binding.segmentId)

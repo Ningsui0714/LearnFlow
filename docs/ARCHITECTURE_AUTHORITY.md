@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-31.7`）：插件仍只开放 `tool / skill / object / tool_renderer` 四类扩展点，但 Tool Renderer 新增一个通用 `onPrompt(prompt)` 对话续接回调；插件组件只能把结构化对象引用转成下一轮用户草稿，不能直接调用工具或写核心状态。Tutor 的近期 ToolRun 投影保留有界的插件 `pluginId / toolId / presentation.state / Plugin Object`，从而让“这个能力、第二项任务”等追问继续固定同一快照；宿主不识别具体插件、岗位、对象类型或 Renderer。首个岗位插件升级为目标级岗位全景工具，恢复 Static Role Package 的 views、retrieval、object-index、snapshot 与 reference-migrations，只读支持能力雷达、关系图、事理森林、包目录和版本比较。三类主 Agent、五核、EvidenceEvent、数据库和四类扩展点不变。
+
 Contract impact（`2026-08-31.6`）：学习图解与动画的 `learnflow.visual-storyboard` 合同升级到 v2，并将主呈现从模型生成 SVG 调整为逐帧 ASCII。Skill 只建立主题事实边界、稳定对象/关系/分组及类型化状态变化；Tool 先确定性重放完整语义状态，再把只读的逐帧对象快照交给独立 ASCII Designer。Designer 可自由选择树、队列、矩阵、泳道、时间线等空间表达，但只能返回画布与对象锚点，不能改写实体、关系、状态操作或断言。Tool 对每帧执行对象覆盖、锚点逐字匹配、宽高、控制字符、重放及断言门；遗漏的持久对象只可由 Tool 补入显式状态台账并标记 degraded，模型失败时退回明确标记的通用 ASCII 状态清单。ASCII 设计与一次修复共享 720 秒总预算，单次输出上限 32768 token。稳定视觉 Tool ID、三类主 Agent、五核、EvidenceEvent 和数据库 schema 不变；旧 VisualSpec v3/SVG 路径仅作为非 storyboard 兼容路径保留。
 
 Contract impact（`2026-08-31.5`）：首个 `role_capability_graph` 官方内置包只通过既有 `tool / skill / object / tool_renderer` 扩展合同进入 Tutor。客户端包可声明通用展示元数据，`PluginCapabilityPicker` 根据构建时发现结果提供当前对话激活，不维护插件白名单；服务端仍按目录发现并验证 manifest。岗位插件固定并校验不可变 Static Role Package，六个 namespaced Tool 均为 read-only，Skill 只指导 Tutor 的有据读取，岗位对象不进入 LearnFlow 核心对象或掌握证据，雷达、事理森林、卡片、证据与审计只渲染本次有界 ToolResult。无新增 Agent、Workbench、数据库、EvidenceEvent、Kernel writer、生成或迭代入口。

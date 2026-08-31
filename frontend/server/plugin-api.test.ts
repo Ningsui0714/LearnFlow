@@ -145,3 +145,39 @@ test('Tutor discovers plugin tools, applies plugin Skill instructions and return
   assert.equal(result.toolRuns[0].plugin?.result.presentation?.renderer, 'fixture_graph:radar')
   assert.match(result.reply, /0\.8/)
 })
+
+test('Tutor keeps bounded plugin snapshot state and object references for the next turn', async () => {
+  const registry = new LearnFlowPluginRegistry([fixturePlugin()])
+  const requests: any[] = []
+  await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain', toolChoice: 'auto',
+    pluginRegistry: registry, activePluginIds: ['fixture_graph'], generate: async () => 'unused',
+    messages: [
+      { role: 'user', content: '解释当前图谱节点' },
+      { role: 'assistant', content: '节点一。', toolRuns: [{
+        id: 'prior-plugin-run', kind: 'plugin', status: 'completed', title: 'Read graph', detail: 'matched', durationMs: 1,
+        toolName: 'fixture_graph__read_graph', observationSummary: 'matched',
+        plugin: {
+          pluginId: 'fixture_graph', toolId: 'read_graph',
+          result: {
+            summary: 'matched',
+            objects: [{
+              protocol: LEARNFLOW_PLUGIN_OBJECT_VERSION, pluginId: 'fixture_graph', objectType: 'node', objectId: 'node:1',
+              schemaVersion: 'fixture.node.v1', label: 'Node 1', value: { score: 0.8 },
+            }],
+            presentation: { renderer: 'fixture_graph:radar', state: { snapshotId: 'snapshot:fixture', focusObjectIds: ['node:1'] } },
+          },
+        },
+      }] },
+      { role: 'user', content: '这个节点呢？' },
+    ],
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '继续解释 Node 1。' } }] }
+    },
+  })
+  const body = JSON.stringify(requests[0].body)
+  assert.match(body, /snapshot:fixture/)
+  assert.match(body, /node:1/)
+  assert.match(body, /fixture_graph/)
+})

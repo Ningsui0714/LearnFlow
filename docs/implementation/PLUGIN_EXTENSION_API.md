@@ -72,6 +72,10 @@ Renderer 只获得已校验的 Tool result 和 Plugin Object；接口不提供�
 找不到组件时，宿主显示通用对象卡和转义后的 JSON，不丢失结果。这让雷达图、事理森林、领域卡片等表现
 由插件包自行实现，LearnFlow 主界面不出现岗位名称、对象类型或 renderer 的条件分支。
 
+Renderer 还可以使用宿主提供的通用 `onPrompt(prompt)` 回调，把用户点击的对象和快照引用写入当前输入框。
+该回调不发送消息、不调用工具、不改变插件数据或核心对象；用户仍需编辑或发送下一轮消息。Tutor 的近期
+ToolRun 投影会有界保留 `presentation.state` 和最多 16 个 Plugin Object，支持代词式追问继续固定原快照。
+
 ## 5. 包目录与发现
 
 内置插件放在 `frontend/plugins/<plugin_id>/`：
@@ -92,12 +96,13 @@ client.tsx      renderer components，导出 default 或 plugin
 
 `frontend/plugins/role_capability_graph/` 是首个官方实现，只消费已发布的不可变 Static Role Package：
 
-- 六个只读 Tool：精确读取、岗位检索、关系查询、事理追踪、证据检查与岗位包审计；
+- 十个只读 Tool：目标级岗位全景、能力雷达、精确读取、岗位检索、关系查询、事理追踪、证据检查、岗位包审计、包目录与版本比较；
 - 一个 `role_capability_graphing` Agent Skill；
 - 岗位对象、关系、证据、审计和快照五类 Plugin Object；
-- 岗位卡片、岗位雷达、事理森林、证据和审计五个 Tool Renderer。
+- 岗位全景、岗位卡片、能力雷达、岗位关系图、事理森林、证据、审计、包目录和版本比较九个 Tool Renderer。
 
-插件 runtime 按自身数据目录发现包并校验 manifest 中的组件 SHA-256；代码不写具体岗位、对象 ID 或快照 ID。
+插件 runtime 按自身数据目录发现包并校验 manifest 中全部组件 SHA-256，包括 views、retrieval-index、
+object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
 每次返回都固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。它不包含原系统的
 冷启动、迭代、工作区实例化、发布、Tag、回滚或 Registry；这些能力不能伪装成只读 Tool 或提示词 Skill。
 

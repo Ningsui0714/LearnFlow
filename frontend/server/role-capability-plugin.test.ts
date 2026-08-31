@@ -15,21 +15,64 @@ async function registry() {
   return loadLearnFlowPluginRegistry(resolve(process.cwd(), 'plugins'))
 }
 
-test('role capability plugin is discovered declaratively with six bounded read tools and one Skill', async () => {
+test('role capability plugin is discovered declaratively with ten bounded read tools and one Skill', async () => {
   const loaded = await registry()
   const tools = loaded.toolDefinitions(activation)
   assert.deepEqual(tools.map(tool => tool.name), [
+    'role_capability_graph__explore_role',
+    'role_capability_graph__read_capability_radar',
     'role_capability_graph__read_role_objects',
     'role_capability_graph__search_role_knowledge',
     'role_capability_graph__query_role_graph',
     'role_capability_graph__trace_work_process',
     'role_capability_graph__inspect_role_evidence',
     'role_capability_graph__audit_role_package',
+    'role_capability_graph__list_role_packages',
+    'role_capability_graph__compare_role_packages',
   ])
   assert.ok(tools.every(tool => tool.risk === 'read_only'))
   assert.match(loaded.skillInstructions(activation), /唯一岗位事实版本/)
-  assert.match(loaded.skillInstructions(activation), /第一步调用 role_capability_graph__search_role_knowledge/)
+  assert.match(loaded.skillInstructions(activation), /第一步调用 role_capability_graph__explore_role/)
+  assert.match(loaded.skillInstructions(activation), /通用补充（非岗位快照）/)
   assert.match(loaded.skillInstructions(activation), /不能覆盖 LearnFlow 的教学状态/)
+})
+
+test('one overview call returns grounded role, task, capability and scenario sections', async () => {
+  const loaded = await registry()
+  const execution = await loaded.execute('role_capability_graph__explore_role', {
+    query: '介绍一下大模型应用工程师',
+  }, executionContext)
+  assert.equal(execution.result.presentation?.renderer, 'role_capability_graph:role_overview')
+  const payload = execution.result.payload as any
+  assert.equal(payload.kind, 'role_overview')
+  assert.ok(payload.sections.tasks.length >= 4)
+  assert.ok(payload.sections.capabilities.length >= 4)
+  assert.ok(payload.sections.scenarios.length >= 3)
+  assert.equal(payload.grounding.policy, 'snapshot_facts_only')
+  assert.ok(payload.grounding.facts.every((fact: any) => fact.objectId && fact.statement))
+  assert.equal((execution.result.presentation?.state as any).snapshotId, payload.snapshot.snapshotId)
+  assert.ok((execution.result.presentation?.state as any).focusObjectIds.includes(payload.rootId))
+})
+
+test('capability radar is independent from relation graph and package catalog is version-addressable', async () => {
+  const loaded = await registry()
+  const radar = await loaded.execute('role_capability_graph__read_capability_radar', { query: '' }, executionContext)
+  assert.equal(radar.result.presentation?.renderer, 'role_capability_graph:capability_radar')
+  assert.ok((radar.result.payload as any).axes.length >= 4)
+  assert.match((radar.result.payload as any).scale.meaning, /不是学习者能力分数/)
+
+  const catalog = await loaded.execute('role_capability_graph__list_role_packages', {}, executionContext)
+  assert.equal(catalog.result.presentation?.renderer, 'role_capability_graph:role_package_catalog')
+  const snapshots = (catalog.result.payload as any).packages
+  assert.ok(snapshots.length >= 1)
+  const comparison = await loaded.execute('role_capability_graph__compare_role_packages', {
+    baseSnapshotId: snapshots[0].snapshotId,
+    targetSnapshotId: snapshots[0].snapshotId,
+  }, executionContext)
+  assert.equal(comparison.result.presentation?.renderer, 'role_capability_graph:role_package_comparison')
+  assert.deepEqual((comparison.result.payload as any).added, [])
+  assert.deepEqual((comparison.result.payload as any).removed, [])
+  assert.deepEqual((comparison.result.payload as any).changed, [])
 })
 
 test('search pins one immutable package and returns typed objects with explicit coverage', async () => {
