@@ -161,7 +161,6 @@ function PluginReleaseCard({
   notice,
   onApply,
   onDisable,
-  onOpenPluginWorkspace,
 }: {
   group: PluginGroup
   busy: boolean
@@ -169,7 +168,6 @@ function PluginReleaseCard({
   notice?: string
   onApply: (release: PluginReleaseView, configuration: Record<string, unknown>, grants: string[]) => Promise<void>
   onDisable: (instance: PluginInstanceView) => Promise<void>
-  onOpenPluginWorkspace: (pluginId: string) => void
 }) {
   const { releases, instance } = group
   const initialReleaseId = instance?.release_id ?? releases[0]?.id ?? 0
@@ -264,16 +262,14 @@ function PluginReleaseCard({
     {notice && <div className="project-plugin-card-notice" role="status">{notice}</div>}
     <footer>
       <button type="button" disabled={!canApply} onClick={() => void onApply(selectedRelease, configuration, grants)}>{busy ? '处理中…' : actionLabel}</button>
-      {instance?.status === 'enabled' && <button type="button" className="project-plugin-open-workspace" disabled={busy} onClick={() => onOpenPluginWorkspace(group.pluginId)}>打开插件工作台</button>}
       {instance?.status === 'enabled' && <button type="button" className="project-plugin-disable" disabled={busy} onClick={() => void onDisable(instance)}>停用</button>}
     </footer>
   </article>
 }
 
-export default function ProjectPluginManager({ projectId, onChanged, onOpenPluginWorkspace }: {
+export default function ProjectPluginManager({ projectId, onChanged }: {
   projectId: number
   onChanged?: () => Promise<void> | void
-  onOpenPluginWorkspace: (pluginId: string) => void
 }) {
   const [releases, setReleases] = useState<PluginReleaseView[]>([])
   const [instances, setInstances] = useState<PluginInstanceView[]>([])
@@ -402,7 +398,6 @@ export default function ProjectPluginManager({ projectId, onChanged, onOpenPlugi
       notice={notices[group.pluginId]}
       onApply={(release, configuration, grants) => apply(group, release, configuration, grants)}
       onDisable={disable}
-      onOpenPluginWorkspace={onOpenPluginWorkspace}
     />)}
   </div>
 }
