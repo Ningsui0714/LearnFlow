@@ -4,8 +4,6 @@ Contract impact（`2026-08-30.10`）：Tutor 与 Learning Design 的视觉交接
 
 Contract impact（`2026-08-30.9`）：Tutor 与 Learning Design 的用户可见异步工作采用统一分层预算。浏览器等待时间长于 Agent 回合，Agent 回合长于单次 provider/工具请求；普通解释、规划、带领学习、图解和动画分别按工作复杂度递增。后端内容生成、插件 runner、来源获取和模型连通性检查同步扩容，但所有路径仍有确定性硬上限，且重试、工具面、五核写入与掌握判定不变。密码哈希、数据库锁、代码执行和进程退出等安全/资源保护超时保持原值。
 
-Contract impact（`2026-08-30.8`）：岗位插件不再以 Composer 内独立 Workflow 产品存在。Tutor Harness 在项目目标或用户消息给出明确岗位名、且实例尚无首个快照时，生成通用有界 bootstrap contract 并自动启动内置 Agent Package；项目/实例级幂等键防止重复生成，结果进入 Tutor 工具消息。无岗位名时只在对话中追问；解释和调整也从对话发起。插件继续位于 `learning_design_agent` 之后，宿主继续掌握副作用、校验和提交，生成物不写五核也不构成掌握。
-
 Contract impact（`2026-08-30.7`）：官方产品插件统一定义为内置 Agent Package，而非本机可执行 Bundle。Agent、Product Skill、Tool、Workflow、Schema 与聊天 binding 随 LearnFlow 注册；通用宿主继续掌握项目 scope、Host Port、幂等、校验、快照与事件提交。岗位图谱默认走同进程 handler，不需要操作员开启 `trusted_signed_process`。签名 `.lfplugin` 与 JSON-RPC runner 只保留为第三方分发适配器；三类主 Agent、五核和掌握证据边界不变。
 
 Contract impact（`2026-08-30.6`）：Learning Design 的安全视觉 Harness 把 CNN 卷积过程纳入确定性 `convolution_trace`，并将长尾模型输出约束为 provider 原生 JSON object。只可本地修复尾逗号与相邻 JSON 容器之间的缺失逗号，所有标量、引用、语义、布局、安全与重放规则仍完整校验；失败后只有一次有预算的结构化修复。Tutor 以结构化主题锚点处理“演示一下”等省略表达，并对显式视觉意图执行单一视觉调用，失败后不切换形式或反复搜索视频。规划阶段和尝试诊断进入 Tool Run/轨迹，但不是学习证据，也不新增状态权威。
@@ -1116,17 +1114,17 @@ Snapshot 中由可重建索引寻址的 Object。宿主拥有签名和 manifest 
 `docs/implementation/PLUGIN_HOST.md`。
 
 `role_capability_graphing` 是 `learning_design_agent` 后的首个官方插件 Product Skill，不是新的主 Agent。
-它把项目来源和 Tutor 从明确岗位名构造的有界研究种子编译为含 evidence、semantic graph、process forest、views、retrieval index、
+它把项目来源和用户显式任务种子编译为含 evidence、semantic graph、process forest、views、retrieval index、
 validation report 和 reference migrations 的不可变岗位 Snapshot。解释 Agent 固定精确 snapshot 后执行有界
 读取；迭代 Agent 固定 base snapshot 后形成合同、patch、结构/证据/语义校验与 meaningful diff，只有宿主
 验证通过才提交后继 Snapshot。
 
 Tutor 新路径通过项目左栏进入带插件上下文的既有项目 Tutor，并通过通用 discovery/call 工具访问该插件的两个只读工具。
-项目目标或最新消息里已有岗位名且没有首个 snapshot 时，Tutor Harness 自动形成 bootstrap contract 并调用生成 workflow；否则 Tutor 只在对话中追问岗位名。
-Composer 只显示 Product Skill、固定 snapshot 状态、对话动作与管理入口；雷达图、事理森林和展开卡片仅作为 Tutor 工具消息内的受管 snapshot 投影渲染，
-不在消息区顶部形成独立工作台，也不建立第二份岗位事实。安装、授权、配置和升级仍留在项目管理抽屉。旧 `read_role_capability_graph`、
+插件选择、Product Skill、固定 snapshot 与 generate/explain/iterate 入口位于 Composer 对话选项栏；雷达图、事理森林和展开卡片仅作为
+Tutor 工具消息内的受管 snapshot 投影渲染，不在消息区顶部形成独立工作台，也不建立第二份岗位事实。生成与迭代从选项栏确认卡触发，安装、授权、配置和升级
+仍留在项目管理抽屉。旧 `read_role_capability_graph`、
 `explain_role_capability` 名称和 `/api/role-capability/...` API 只保留 deprecated 兼容别名，内部转发通用宿主；
-历史专用表是只读迁移源，不得与通用 Snapshot 双写。
+生成或迭代仍必须由学习者在 Composer 插件选项的确认卡显式触发。历史专用表是只读迁移源，不得与通用 Snapshot 双写。
 
 岗位节点的 `accepted/candidate/deprecated` 是领域对象生命周期，`documented_norm/inferred_pattern` 是岗位断言
 的认识状态，二者都不是 Knowledge 或 Practice 掌握等级。从岗位 Object 创建 Roadmap、Checkpoint、

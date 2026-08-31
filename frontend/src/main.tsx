@@ -42,7 +42,6 @@ import VisualArtifact from './VisualArtifact'
 import RoleCapabilityChatPlugin, { RoleCapabilityArtifactView } from './RoleCapabilityChatPlugin'
 import { pluginChatContext, pluginChatGlyph, type PluginChatContext, type RoleCapabilityChatArtifact } from './plugin-chat'
 import { loadProjectPluginSurfaces, type ProjectPluginSurface } from './plugin-runtime'
-import { activateRoleCapabilityForTutor } from './role-capability-tutor'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
 import {
@@ -948,86 +947,23 @@ function App({ auth }: { auth: AuthGateSession }) {
       setExpandedProjects(previous => ({ ...previous, [projectId]: true }))
       const conversationId = openProjectConversation(projectWorkspace, 'tutor')
       const context = pluginChatContext(surface)
-      const alreadyActive = workspace.conversations.find(item => item.id === conversationId)?.pluginContext?.pluginId === context.pluginId
       setWorkspace(previous => ({
         ...previous,
         conversations: previous.conversations.map(conversation => {
           if (conversation.id !== conversationId) return conversation
+          const alreadyActive = conversation.pluginContext?.pluginId === context.pluginId
           return {
             ...conversation,
             pluginContext: context,
             updatedAt: Date.now(),
             messages: alreadyActive ? conversation.messages : [...conversation.messages, {
               id: uid('message'), role: 'assistant' as const, createdAt: Date.now(), tutorMode: conversation.mode,
-              content: context.snapshotId
-                ? `已把“${context.title}”接入项目 Tutor。后续直接在这里提问，我会固定到当前快照解释。`
-                : `已把“${context.title}”接入项目 Tutor。我正在从项目目标识别岗位并启动首个岗位包，不需要额外表单。`,
+              content: `已为当前对话选择“${context.title}”。我会先发现它公开的只读工具，再固定到确切快照解释；生成和迭代只会通过输入框下方的插件选项确认运行。`,
             }],
           }
         }),
       }))
       setProjectPanelRequest(closeProjectPanel)
-      if (pluginId === 'role_capability_graph' && !context.snapshotId) {
-        try {
-          const activation = await activateRoleCapabilityForTutor({
-            projectId,
-            surface,
-            project: projectWorkspace.project,
-            sourceIds: projectWorkspace.sources.filter(item => item.status === 'ready' || item.status === 'processed').map(item => item.id),
-          })
-          if (activation.status === 'needs_role') {
-            setWorkspace(previous => ({
-              ...previous,
-              conversations: previous.conversations.map(conversation => conversation.id === conversationId ? {
-                ...conversation,
-                messages: [...conversation.messages, {
-                  id: uid('message'), role: 'assistant' as const, createdAt: Date.now(), tutorMode: conversation.mode,
-                  content: '岗位图谱已经接入。当前项目目标里还没有明确岗位名；直接在这里告诉我一个岗位名即可，例如“大模型应用工程师”。',
-                }],
-              } : conversation),
-            }))
-          } else if (activation.status === 'generated' && activation.artifact) {
-            const createdAt = Date.now()
-            const artifact = activation.artifact
-            setWorkspace(previous => ({
-              ...previous,
-              conversations: previous.conversations.map(conversation => conversation.id === conversationId ? {
-                ...conversation,
-                updatedAt: createdAt,
-                pluginContext: activation.context,
-                messages: [...conversation.messages, {
-                  id: uid('message'), role: 'assistant' as const, createdAt, tutorMode: conversation.mode,
-                  content: `已从项目目标识别“${activation.roleTitle}”，并自动生成首个候选岗位快照。候选关系属于待核验的领域供给，不改变五核；你可以继续在本对话里要求解释或调整。`,
-                  toolRuns: [{
-                    id: uid('plugin-run'), kind: 'project' as const, status: 'completed' as const,
-                    title: artifact.title,
-                    detail: '项目 Tutor 自动启动岗位包生成并由插件宿主提交不可变快照',
-                    durationMs: 0,
-                    toolName: 'run_project_plugin_workflow',
-                    pluginArtifact: artifact,
-                  }],
-                }],
-              } : conversation),
-            }))
-            setPluginSurfacesByProject(previous => ({
-              ...previous,
-              [projectId]: (previous[projectId] || []).map(item => item.plugin_id === pluginId ? activation.surface : item),
-            }))
-          }
-        } catch (failure) {
-          const message = failure instanceof Error ? failure.message : '岗位包自动启动失败'
-          setWorkspace(previous => ({
-            ...previous,
-            conversations: previous.conversations.map(conversation => conversation.id === conversationId ? {
-              ...conversation,
-              messages: [...conversation.messages, {
-                id: uid('message'), role: 'system' as const, createdAt: Date.now(), tutorMode: conversation.mode,
-                content: `岗位图谱自动启动失败：${message}。你可以继续在对话中补充岗位名后重试。`,
-              }],
-            } : conversation),
-          }))
-        }
-      }
     } catch (error) {
       setFormalError(error instanceof Error ? error.message : '插件对话打开失败')
     }
@@ -1807,40 +1743,6 @@ function App({ auth }: { auth: AuthGateSession }) {
       replayInterruptedTurn,
     )
     const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
-    let activePluginForTurn = conversation.pluginContext
-
-    if (
-      activePluginForTurn?.pluginId === 'role_capability_graph'
-      && !activePluginForTurn.snapshotId
-      && conversation.projectId
-    ) {
-      const projectWorkspace = formalProjectWorkspaces[conversation.projectId]
-      const surface = (pluginSurfacesByProject[conversation.projectId] || []).find(item => item.plugin_id === activePluginForTurn?.pluginId)
-      if (projectWorkspace && surface) {
-        try {
-          const activation = await activateRoleCapabilityForTutor({
-            projectId: conversation.projectId,
-            surface,
-            project: projectWorkspace.project,
-            latestUserMessage: content,
-            sourceIds: projectWorkspace.sources.filter(item => item.status === 'ready' || item.status === 'processed').map(item => item.id),
-          })
-          if (activation.status === 'generated' && activation.artifact) {
-            activePluginForTurn = activation.context
-            appendPluginArtifact(conversationId, activation.artifact, `项目 Tutor 已从“${activation.roleTitle}”自动启动岗位包生成`)
-            setPluginSurfacesByProject(previous => ({
-              ...previous,
-              [conversation.projectId!]: (previous[conversation.projectId!] || []).map(item => item.plugin_id === activation.surface.plugin_id ? activation.surface : item),
-            }))
-          } else if (activation.status === 'needs_role') {
-            activePluginForTurn = undefined
-          }
-        } catch (failure) {
-          activePluginForTurn = undefined
-          setFormalError(failure instanceof Error ? failure.message : '岗位图谱自动启动失败')
-        }
-      }
-    }
 
     if (configurationIssue) {
       finishTurn(conversationId, sheetId, mode, {
@@ -1910,7 +1812,7 @@ function App({ auth }: { auth: AuthGateSession }) {
           checkpointId: conversation.checkpointId || formalTaskForTurn?.checkpoint_id || undefined,
           projectRole: conversation.projectRole,
         },
-        activePlugin: activePluginForTurn,
+        activePlugin: conversation.pluginContext,
         domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
@@ -3128,10 +3030,10 @@ function App({ auth }: { auth: AuthGateSession }) {
                   <RoleCapabilityChatPlugin
                     projectId={conversation.projectId}
                     pluginId={conversation.pluginContext.pluginId}
-                    snapshotId={conversation.pluginContext.snapshotId}
                     disabled={Boolean(pendingMode)}
                     onManage={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}
                     onPrompt={prompt => { void runTutorTurn(conversation.id, prompt) }}
+                    onArtifact={(artifact, detail) => appendPluginArtifact(conversation.id, artifact, detail)}
                   />
                 ) : (
                   <details className="composer-plugin-control composer-plugin-picker">

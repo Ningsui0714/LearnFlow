@@ -15,7 +15,7 @@
     "test:planning": "node --experimental-strip-types --test server/planning.test.ts",
     "test:profile": "node --experimental-strip-types --test server/five-kernel-profile.test.ts server/profile-presentation.test.ts",
     "test:path": "node --experimental-strip-types --test server/learning-path-graph.test.ts server/learning-path-production-eval.test.ts",
-    "test:formal": "node --experimental-strip-types --test server/formal-runtime.test.ts server/project-sidebar.test.ts server/review-runtime.test.ts server/plugin-runtime.test.ts server/plugin-chat.test.ts server/role-capability-tutor.test.ts",
+    "test:formal": "node --experimental-strip-types --test server/formal-runtime.test.ts server/project-sidebar.test.ts server/review-runtime.test.ts server/plugin-runtime.test.ts server/plugin-chat.test.ts",
     "test:auth": "node --experimental-strip-types --test server/auth-runtime.test.ts server/account-model-credential.test.ts server/password-policy.test.ts",
     "test": "npm run test:search && npm run test:learning && npm run test:planning && npm run test:profile && npm run test:path && npm run test:formal && npm run test:auth"
   },

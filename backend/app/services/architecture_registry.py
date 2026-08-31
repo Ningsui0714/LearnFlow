@@ -1357,7 +1357,7 @@ SKILLS = {
         SkillContract("role_capability_graphing", "岗位能力包生成、解释与迭代", "learning_design_agent",
                       ("role_capability_package_runtime", "role_capability_graph_reader", "role_capability_explainer", "role_capability_iteration_runtime", "project_source_reader", "discover_project_plugin_tools", "call_project_plugin_tool", "plugin_process_runner"),
                       "project-scoped immutable role package + evidence-bound explanation + validated semantic successor",
-                      "Tutor derives a bounded bootstrap contract from an explicit role and owns conversational activation; Learning Design owns candidates; host owns idempotent validation/commit; snapshots never imply learner mastery"),
+                      "Learning Design owns artifacts; explicit workspace actions own generation/iteration; snapshots never imply learner mastery"),
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
                       ("hierarchical_rag", "content_generation", "process_animation", "teaching_contract_gate", "checkpoint_delivery_readiness", "learning_video_inspector"),
                       "structured teaching artifact; never mastery evidence", "artifact contract"),

@@ -5,7 +5,7 @@
 产品形态：内置 Agent Package
 可选分发协议：`learnflow.plugin-package.v1`
 对象协议：`role-capability.object.v1`
-架构注册表：`2026-08-30.8`
+架构注册表：`2026-08-30.7`
 
 岗位能力图谱是 LearnFlow 通用插件宿主的首个官方 Agent Package。它参考 `/Users/a1-6/CEG C/role-agent` 的可观察
 产品不变量，按 LearnFlow 契约独立实现，不复制其运行代码、数据库或岗位包数据。通用安装、运行、权限、
@@ -14,10 +14,7 @@
 ## 1. 架构位置
 
 ```text
-Project Tutor + 明确岗位名 + 固定来源（若有）
-                            │
-                            ▼
-              确定性 bootstrap contract
+Project + 固定 SourceVersion / DomainKnowledgePacket / 显式任务种子
                             │
                             ▼
        role_capability_graph Agent Package + Instance
@@ -35,7 +32,7 @@ Project Tutor + 明确岗位名 + 固定来源（若有）
                                             │
                          ┌──────────────────┴─────────────────┐
                          ▼                                    ▼
-               Tutor 消息内快照投影               Tutor 通用只读工具
+              聊天确认卡与快照投影               Tutor 通用只读工具
                          │                                    │
                          └──────── Action proposal / zero-target event
 ```
@@ -92,7 +89,7 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 ### 4.1 `generate`
 
 1. 宿主验证 learner/project ownership、Instance/release、授权、配置、幂等键和输入 schema。
-2. Tutor 从项目目标或最新用户消息提取明确岗位名，并构造三类通用有界研究种子（职责与任务、能力与质量标准、过程与风险）；同时固定可用的 SourceVersion ID/hash 与已确认 DomainKnowledgePacket。来源正文标为不可信，自动种子产生的节点标记为 inferred。
+2. 固定 SourceVersion ID/hash、已确认的 DomainKnowledgePacket 和显式任务种子；来源正文标为不可信。
    每个 Chunk 保留自己的 SourceVersion ref，不得把多来源内容统一归因到第一条来源。宿主注入的
    `max_tasks` 与 `include_process_view` 配置分别约束任务预算和过程视图投影。
 3. 内置 generation handler 建立有预算和停止条件的 contract，并生成候选 evidence、semantic graph、process forest
@@ -101,7 +98,7 @@ snapshot root hash、object type/ID、schema version 和 object content hash。�
 5. 宿主重新校验组件、构建 retrieval/object index、计算 canonical root hash 并原子提交 Snapshot。
 6. 宿主通过 `record_event()` 记录声明过的生成事件；该事件零 Kernel target。
 
-没有明确岗位名时 Tutor 在对话中追问，不启动 Run。明确岗位名本身足以由 Harness 形成 bootstrap contract；相同 instance 的自动启动幂等键
+没有可用的已处理来源且没有显式任务种子时，Run 进入 blocked，不发布通用岗位壳。相同 instance 幂等键
 绑定 canonical request hash：同键同请求返回原 Run，同键不同请求返回 `409 Conflict`。
 
 ### 4.2 `explain`
@@ -134,9 +131,10 @@ Snapshot 上运行兼容/迁移；只有候选满足新 release 的 schemas、�
 
 ## 5. 聊天插件、Tool 与管理 Surface
 
-项目左栏显示已启用的岗位插件，点击后为项目 Tutor 对话选择 `PluginChatContext`。Product Skill 与
-snapshot/version 状态位于 Composer；首次 `generate` 由 Tutor 从明确岗位名自动启动，雷达图、事理森林、展开卡片只作为 Tutor 工具消息读取 Snapshot 的 semantic graph、
-process forest 与 validation report，不复制或修改领域事实。后续解释与调整从对话发起，workflow 仍遵守 expected snapshot、幂等和候选校验。项目管理抽屉只保留安装、Host Port 授权、配置、停用和升级；不再
+项目左栏显示已启用的岗位插件，点击后为项目 Tutor 对话选择 `PluginChatContext`。插件选择、Product Skill、
+snapshot/version 和运行入口都位于 Composer 对话选项栏；雷达图、事理森林、展开卡片只作为 Tutor 工具消息读取 Snapshot 的 semantic graph、
+process forest 与 validation report，不复制或修改领域事实。generate/iterate 确认卡只能引用 manifest workflow，
+并遵守 expected snapshot、幂等和用户确认。项目管理抽屉只保留安装、Host Port 授权、配置、停用和升级；不再
 把独立 `PluginSurfaceHost` 当作学习者的主要工作空间。所有渲染均不执行插件脚本、HTML、CSS 或任意 URL。
 
 Tutor 不把岗位插件专用工具常驻硬编码进模型工具面。标准路径为：

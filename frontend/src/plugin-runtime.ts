@@ -394,13 +394,7 @@ function requestKey(pluginId: string, workflowId: string) {
   return `plugin:${pluginId}:${workflowId}:${suffix}`
 }
 
-export async function runProjectPluginWorkflow(
-  projectId: number,
-  surface: ProjectPluginSurface,
-  workflowId: string,
-  input: Record<string, unknown> = {},
-  options: { idempotencyKey?: string } = {},
-) {
+export async function runProjectPluginWorkflow(projectId: number, surface: ProjectPluginSurface, workflowId: string, input: Record<string, unknown> = {}) {
   const declared = new Set(surface.workflows.map(workflowId => typeof workflowId === 'string' ? workflowId : workflowId.id))
   if (!declared.has(workflowId)) throw new Error(`插件未声明 workflow：${workflowId}`)
   const snapshot = record(surface.data?.snapshot)
@@ -413,7 +407,7 @@ export async function runProjectPluginWorkflow(
       method: 'POST',
       body: JSON.stringify({
         input: workflowInput,
-        idempotency_key: options.idempotencyKey || requestKey(surface.plugin_id, workflowId),
+        idempotency_key: requestKey(surface.plugin_id, workflowId),
         expected_snapshot_id: Number.isInteger(expected) && expected > 0 ? expected : null,
       }),
     },

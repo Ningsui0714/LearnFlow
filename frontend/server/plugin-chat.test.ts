@@ -65,16 +65,12 @@ test('explain tool observations become bounded in-message artifacts', () => {
   assert.equal(artifact?.citations[0].locator, 'source:1#chunk:2')
 })
 
-test('plugin control stays lightweight while Tutor owns workflow and in-message projection', () => {
+test('plugin operations live in the composer and projections live in tool messages', () => {
   const main = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
-  const control = readFileSync(new URL('../src/RoleCapabilityChatPlugin.tsx', import.meta.url), 'utf8')
   const composer = main.indexOf('className="composer-tools composer-tools-capability"')
   const pluginControl = main.indexOf('<RoleCapabilityChatPlugin', composer)
   assert.ok(composer > 0)
   assert.ok(pluginControl > composer)
   assert.equal(main.includes('plugin-chat-dock'), false)
-  assert.equal(control.includes('任务种子'), false)
-  assert.equal(control.includes('确认生成候选快照'), false)
-  assert.match(main, /activateRoleCapabilityForTutor/)
   assert.match(main, /run\.pluginArtifact && <RoleCapabilityArtifactView/)
 })
