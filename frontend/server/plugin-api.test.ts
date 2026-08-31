@@ -82,6 +82,7 @@ test('plugin contributions are namespaced and inactive packages expose no tools 
   const active = { mode: 'free' as const, activePluginIds: ['fixture_graph'] }
   assert.deepEqual(registry.toolDefinitions(active).map(item => item.name), ['fixture_graph__read_graph'])
   assert.match(registry.skillInstructions(active), /fixture_graph__read_graph/)
+  assert.match(registry.skillInstructions(active), /必须在形成回答或追问前至少调用该插件的一个可用工具/)
   assert.match(registry.toolDefinitions(active)[0].description, /不要用于/)
 })
 
@@ -137,7 +138,7 @@ test('Tutor discovers plugin tools, applies plugin Skill instructions and return
       return { choices: [{ message: { content: '当前节点的结构化分数是 0.8；这只是插件对象，不表示学习者掌握。' } }] }
     },
   })
-  assert.ok(requests[0].body.tools.some((tool: any) => tool.function?.name === 'fixture_graph__read_graph'))
+  assert.equal(requests[0].body.tools[0].function?.name, 'fixture_graph__read_graph')
   assert.match(JSON.stringify(requests[0].body), /Read the graph once/)
   assert.equal(result.toolRuns[0].kind, 'plugin')
   assert.equal(result.toolRuns[0].plugin?.pluginId, 'fixture_graph')

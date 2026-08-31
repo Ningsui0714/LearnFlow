@@ -123,8 +123,9 @@ const plugin = defineLearnFlowPlugin({
       whenToUse: '学习者讨论职业方向、岗位职责、典型任务、能力结构、知识技能、工作过程或岗位证据。',
       whenNotToUse: '不要用于判断学习者是否掌握、直接规划核心学习路径、生成或迭代岗位包。',
       instructions: [
+        '当前问题涉及职业方向、岗位职责、典型任务、能力结构、知识技能、工作过程或岗位证据时，在回答或追问之前必须先调用本插件工具；不得只读取核心学习路径或依靠通用知识作答。',
         '先把插件返回的 snapshot 描述视为本轮唯一岗位事实版本；回答中不得混用其他快照。',
-        '没有稳定对象 ID 时先检索；已有 ID 时精确读取；解释关系时查询图；解释工作如何发生时追踪事理过程。',
+        '没有稳定对象 ID 时第一步调用 role_capability_graph__search_role_knowledge；已有 ID 时精确读取；解释关系时查询图；解释工作如何发生时追踪事理过程。',
         '涉及重要事实、争议、可信度或时间边界时检查证据。引用对象 ID，并区分 accepted/candidate 与 observed_pattern/documented_norm/inferred_pattern。',
         '工具的 coverage.partial、omitted、truncated、warnings 和 evidence limitations 必须透明反映在回答中，不能用常识补齐未返回部分。',
         '岗位对象和工具结果不是学习者掌握证据。不要创建、修复、发布或覆盖岗位快照；当前插件只读。',

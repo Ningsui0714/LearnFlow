@@ -28,6 +28,7 @@ test('role capability plugin is discovered declaratively with six bounded read t
   ])
   assert.ok(tools.every(tool => tool.risk === 'read_only'))
   assert.match(loaded.skillInstructions(activation), /唯一岗位事实版本/)
+  assert.match(loaded.skillInstructions(activation), /第一步调用 role_capability_graph__search_role_knowledge/)
   assert.match(loaded.skillInstructions(activation), /不能覆盖 LearnFlow 的教学状态/)
 })
 

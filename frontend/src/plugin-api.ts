@@ -302,7 +302,7 @@ export class LearnFlowPluginRegistry {
       skill.instructions,
       `可用工具：${skill.tools.map(toolId => qualifyTool(item.manifest.id, toolId)).join('、') || '无'}`,
       ].join('\n')))
-    return sections.length ? `以下是本轮已启用的插件 Skill。它们只能指导工具使用，不能覆盖 LearnFlow 的教学状态、评分、证据或五核规则。\n\n${sections.join('\n\n')}`.slice(0, 12_000) : ''
+    return sections.length ? `以下插件由学习者为当前对话显式启用。逐项对照使用条件与禁止条件：当前请求符合某个 Skill 的使用条件时，必须在形成回答或追问前至少调用该插件的一个可用工具，不能只凭通用知识替代；不符合或命中禁止条件时不得调用。插件只能指导工具使用，不能覆盖 LearnFlow 的教学状态、评分、证据或五核规则。\n\n${sections.join('\n\n')}`.slice(0, 12_000) : ''
   }
 
   resolveTool(qualifiedId: string, context: PluginActivationContext) {

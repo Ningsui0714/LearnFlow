@@ -187,9 +187,10 @@ function pluginActivation(input: TutorAgentRuntimeInput): PluginActivationContex
 }
 
 function runtimeToolDefinitions(input: TutorAgentRuntimeInput) {
+  const pluginTools = input.pluginRegistry?.toolDefinitions(pluginActivation(input)) || []
   return [
+    ...pluginTools,
     ...TUTOR_AGENT_TOOL_DEFINITIONS,
-    ...(input.pluginRegistry?.toolDefinitions(pluginActivation(input)) || []),
   ]
 }
 
@@ -534,7 +535,7 @@ function availableTools(input: TutorAgentRuntimeInput) {
     && (tool.name !== 'generate_learning_animation' || visualIntent === 'animation')
   ))
   const pluginTools = input.pluginRegistry?.toolDefinitions(pluginActivation(input)) || []
-  const tools = [...coreTools, ...pluginTools]
+  const tools = [...pluginTools, ...coreTools]
   if (visualIntent !== 'none') {
     const visualToolName = visualIntent === 'animation' ? 'generate_learning_animation' : 'generate_learning_diagram'
     return tools.filter(tool => tool.name === visualToolName)
