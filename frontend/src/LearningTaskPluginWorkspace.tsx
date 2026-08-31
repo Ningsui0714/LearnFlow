@@ -142,6 +142,7 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
   const [quote, setQuote] = useState('')
   const [note, setNote] = useState('')
   const [taskTitle, setTaskTitle] = useState('')
+  const [createPanelOpen, setCreatePanelOpen] = useState(true)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [draggedStepId, setDraggedStepId] = useState('')
@@ -171,7 +172,12 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
     event.preventDefault()
     const title = taskTitle.trim()
     if (!title) return
-    try { await runAndRefresh('generate', { task_title: title }) } catch { /* displayed above */ }
+    try {
+      await runAndRefresh('generate', { task_title: title })
+      setTaskTitle('')
+      setSelectedStepId('')
+      setCreatePanelOpen(false)
+    } catch { /* displayed above */ }
   }
 
   const captureSelection = (_event: MouseEvent<HTMLDivElement>) => {
@@ -245,10 +251,32 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
         </div>
         <div className="learning-task-plugin-actions">
           <span className="learning-task-plugin-ready"><i />已生成 · {document.steps.length} 个步骤</span>
+          <button
+            type="button"
+            className="learning-task-create-trigger"
+            onClick={() => setCreatePanelOpen(value => !value)}
+            aria-expanded={createPanelOpen}
+            aria-controls="learning-task-create-panel"
+          >{createPanelOpen ? '收起输入' : '＋ 新建任务'}</button>
           <button type="button" onClick={() => setDrawerOpen(value => !value)} aria-expanded={drawerOpen}>批注复核{document.notes.length ? ` ${document.notes.length}` : ''}</button>
           <button type="button" onClick={() => downloadJson(`${document.task.source_title || 'learning-task'}.json`, document)}>导出 JSON</button>
         </div>
       </header>
+
+      {createPanelOpen && <form id="learning-task-create-panel" className="learning-task-create-panel" onSubmit={generate} aria-label="生成新的学习型任务">
+        <label htmlFor="learning-task-new-title">新的真实工作任务</label>
+        <div>
+          <input
+            id="learning-task-new-title"
+            value={taskTitle}
+            onChange={event => setTaskTitle(event.target.value)}
+            placeholder="例如：实现 Python FastAPI 文件上传服务并完成接口测试"
+            autoFocus
+          />
+          <button type="submit" disabled={busy === 'generate' || !taskTitle.trim()}>{busy === 'generate' ? '正在生成…' : '生成新任务'}</button>
+          <button type="button" onClick={() => { setCreatePanelOpen(false); setTaskTitle('') }} disabled={busy === 'generate'}>取消</button>
+        </div>
+      </form>}
 
       <div className="learning-task-evidence-strip">
         <span><i>✓</i>任务对象已锁定</span><span><i>✓</i>步骤产物可检查</span><span><i>✓</i>知识技能跟随步骤</span><strong>规划产物不等于掌握证据</strong>
