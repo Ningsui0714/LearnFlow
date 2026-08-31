@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-31.5`）：`learnflow.plugin-api.v1` 完成首个官方岗位图谱消费包。通用客户端贡献增加可选名称、描述和图标，宿主据此在对话选项栏动态显示已安装插件，并把当前对话选择作为 `activePluginIds` 传给 Tutor；宿主不登记岗位插件 ID、对象枚举或 Renderer 分支。岗位包在插件内部按目录发现，固定 `packageId + packageVersion + snapshotId + rootHash`，校验组件 hash 后只开放六个有界只读工具、一个操作 Skill、五类版本化 Plugin Object 与五个 ToolRun Renderer。解释仍由 Tutor 负责；冷启动、迭代、发布、数据库和学习状态写入均未接入。
+
 Contract impact（`2026-08-31.4`）：新增极小的内置 Agent Package 扩展面，只开放 namespaced Tool、Agent Skill、版本化 JSON Plugin Object 与对话 ToolRun Renderer。插件 Skill 只提供路由条件和工具操作说明，不成为可选择教学法或第四类主 Agent；Tool 第一版只允许只读/产物结果；Object 不进入核心对象或学习证据；Renderer 只读取已校验结果，缺失时回退通用对象卡。宿主通过目录发现和注册表合并贡献，不按插件 ID、岗位、对象类型或图表类型写产品分支。无插件进程、工作台、数据库、Snapshot、Kernel writer 或 EventContract。
 
 Contract impact（`2026-08-31.2`）：Tutor 的动态上下文继续由“有 scope 的五核只读投影 + 领域知识 Packet + 学习路径/正式文件/插件等其他增强”组成；领域增强不建立第二套用户画像。Learning Design 消费的 `domain-knowledge-packet-v2` 把事实 Claim、带归因真人观点、来源多维画像和覆盖依据分开。Harness 以类型化 Chunk 和 RRF 进行确定性召回；模型只可帮助理解查询或表达候选，不决定来源晋升、关键覆盖、项目基线或掌握状态。规划态推荐只把来源推进到 `recommended`，学习者显式确认后才能进入项目并由基线固定到不可变 SourceVersion。来源读取、推荐、晋升、固定和失效仍全部为零 Kernel target，不新增主 Agent、Kernel writer 或数据库表。

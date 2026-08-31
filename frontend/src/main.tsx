@@ -40,6 +40,7 @@ import {
 } from './learning'
 import VisualArtifact from './VisualArtifact'
 import PluginToolResultView from './PluginToolResultView'
+import PluginCapabilityPicker from './PluginCapabilityPicker'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
 import {
@@ -551,6 +552,7 @@ function App({ auth }: { auth: AuthGateSession }) {
   const [workspace, setWorkspace] = useState<PersistedState>(() => restoreState(auth.account.learner_id))
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [toolChoices, setToolChoices] = useState<Record<string, TutorToolChoice>>({})
+  const [conversationPluginIds, setConversationPluginIds] = useState<Record<string, string[]>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
   const [pendingSheetDelete, setPendingSheetDelete] = useState<PendingSheetDelete | null>(null)
@@ -1725,6 +1727,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
+        activePluginIds: conversationPluginIds[conversationId] || [],
         onEvent: event => updateLiveTurn(conversationId, event),
       })
       finishTurn(conversationId, sheetId, mode, {
@@ -2946,6 +2949,11 @@ function App({ auth }: { auth: AuthGateSession }) {
                   sourceKind={conversation.projectId ? 'project' : 'conversation'}
                   onSkillChange={choice => selectLearningSkill(conversation.id, choice)}
                   onToolChange={choice => setToolChoices(previous => ({ ...previous, [draftKey]: choice }))}
+                />
+                <PluginCapabilityPicker
+                  activePluginIds={conversationPluginIds[conversation.id] || []}
+                  disabled={Boolean(pendingMode)}
+                  onChange={pluginIds => setConversationPluginIds(previous => ({ ...previous, [conversation.id]: pluginIds }))}
                 />
                 <span className="composer-shortcut-hint">Shift + Enter 换行</span>
               </div>

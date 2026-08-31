@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-31.4"
+REGISTRY_VERSION = "2026-08-31.5"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -228,13 +228,13 @@ PLUGIN_EXTENSION_POINTS = {
             "tool", "versioned model-callable schema + trusted in-process handler", "tutor_agent",
             "plugin_id__tool_id", "plugin handler may return observations or artifacts only",
             ("read_only_or_artifact", "bounded_json_input_output", "no_kernel_write", "no_core_object_write"),
-            ("frontend:plugin.registry", "frontend:plugin.loader", "frontend:agent_runtime.run"),
+            ("frontend:plugin.registry", "frontend:plugin.loader", "frontend:plugin.picker", "frontend:agent_runtime.run"),
         ),
         PluginExtensionPointContract(
             "skill", "routing conditions + bounded Agent instructions + declared tool/object references", "tutor_agent",
             "plugin_id:skill_id", "instructions guide plugin tool use but cannot replace a core pedagogical runtime",
             ("no_fourth_primary_agent", "no_scoring_authority", "no_evidence_or_kernel_authority"),
-            ("frontend:plugin.registry", "frontend:agent_runtime.run"),
+            ("frontend:plugin.registry", "frontend:plugin.picker", "frontend:agent_runtime.run"),
         ),
         PluginExtensionPointContract(
             "object", "immutable versioned JSON envelope validated by the contributing plugin", "tutor_agent",
@@ -246,7 +246,7 @@ PLUGIN_EXTENSION_POINTS = {
             "tool_renderer", "trusted client component selected by a declared renderer id", "tutor_agent",
             "plugin_id:renderer_id", "renderer receives the validated tool result and has no tool or state-write capability",
             ("no_html_injection", "no_script_payload", "generic_fallback_required", "conversation_output_only"),
-            ("frontend:plugin.renderer",),
+            ("frontend:plugin.renderer", "frontend:plugin.picker"),
         ),
     )
 }
@@ -1586,6 +1586,7 @@ _FRONTEND_HANDLER_TARGETS = {
 _FRONTEND_COMPONENT_TARGETS = {
     "workbench:vnext_chat": ("frontend/src/main.tsx", "App", "/chat/"),
     "frontend:plugin.renderer": ("frontend/src/PluginToolResultView.tsx", "PluginToolResultView", "/chat/"),
+    "frontend:plugin.picker": ("frontend/src/PluginCapabilityPicker.tsx", "PluginCapabilityPicker", "/chat/"),
     "workbench:vnext_learning_path": ("frontend/src/LearningPathPage.tsx", "LearningPathPage", "/learning-path"),
     "workbench:vnext_profile": ("frontend/src/LearnerProfilePage.tsx", "LearnerProfilePage", "/learner-profile"),
     "workbench:vnext_learning_files": ("frontend/src/LearningFilesPage.tsx", "LearningFilesPage", "/learning-files"),

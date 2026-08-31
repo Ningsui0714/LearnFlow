@@ -44,7 +44,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-31.4"
+    assert REGISTRY_VERSION == "2026-08-31.5"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -74,6 +74,8 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert tuple(PLUGIN_EXTENSION_POINTS) == ("tool", "skill", "object", "tool_renderer")
     assert [item["id"] for item in manifest["plugin_extension_points"]] == list(PLUGIN_EXTENSION_POINTS)
     assert all(item["bindings"] for item in manifest["plugin_extension_points"])
+    assert "frontend:plugin.picker" in PLUGIN_EXTENSION_POINTS["tool"].bindings
+    assert "frontend:plugin.picker" in PLUGIN_EXTENSION_POINTS["skill"].bindings
     assert "none can write kernels" in manifest["authority"]["plugin_extension_authority"]
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [

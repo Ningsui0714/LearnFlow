@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-31.5`）：首个 `role_capability_graph` 官方内置包只通过既有 `tool / skill / object / tool_renderer` 扩展合同进入 Tutor。客户端包可声明通用展示元数据，`PluginCapabilityPicker` 根据构建时发现结果提供当前对话激活，不维护插件白名单；服务端仍按目录发现并验证 manifest。岗位插件固定并校验不可变 Static Role Package，六个 namespaced Tool 均为 read-only，Skill 只指导 Tutor 的有据读取，岗位对象不进入 LearnFlow 核心对象或掌握证据，雷达、事理森林、卡片、证据与审计只渲染本次有界 ToolResult。无新增 Agent、Workbench、数据库、EvidenceEvent、Kernel writer、生成或迭代入口。
+
 Contract impact（`2026-08-31.4`）：LearnFlow 新增 `learnflow.plugin-api.v1` 内置扩展合同，且扩展点严格限定为 `tool / skill / object / tool_renderer`。包由宿主按目录发现；Tool 使用 `plugin_id__tool_id` 模型命名空间并只允许 read-only/artifact；Skill 是 Tutor 上下文中的 Agent 操作说明，不覆盖核心 SkillSpec；Object 使用带 plugin ownership 与 schema version 的 JSON 信封；Renderer 使用 `plugin_id:renderer_id`，只在对话 ToolRun 内读取已验证结果，缺失时确定性退回通用卡片。插件不新增 Agent、Workbench、持久化权威、核心对象写入、EvidenceEvent 或 Kernel writer。具体合同见 `docs/implementation/PLUGIN_EXTENSION_API.md`。
 
 Contract impact（`2026-08-31.2`）：领域知识供给从单一来源等级升级为 `source-profile-v1` 多维来源向量与 `domain-knowledge-packet-v2` 声明证据合同。来源同时声明内容角色、文档类型、版本适配以及可信度、全面度、时效性、真人观点性、教学适配和可复现性；不同问题按用途选择维度，不再把社区经验、官方规范和教材压成同一总分。Chunk 新增代码、API、论文、视频字幕和社区讨论等类型化切分元数据，Packet 以词法、结构、来源和显式选择四路 RRF 召回，语义路保持可选增强。关键覆盖门现在要求可定位 Claim 支持，社区经验单列为带归因 `viewpoints`，不得冒充事实共识。来源选择状态按 `discovered -> inspected -> recommended -> confirmed -> pinned` 单调推进；个人知识库来源只有经过显式项目晋升 API 和后续基线确认才能进入项目约束，晋升事件为零 Kernel target。稳定 Source/SourceVersion/Chunk 表、旧等级字段和旧 API 保持兼容，新增信息存入既有 JSON，无数据库迁移；三类主 Agent、五核与 EvidenceEvent 掌握语义不变。

@@ -85,7 +85,23 @@ client.tsx      renderer components，导出 default 或 plugin
 列表。包必须通过 `defineLearnFlowPlugin()` / `defineLearnFlowPluginClient()` 暴露贡献。缺少目录等价于没有
 安装插件，不改变 Tutor 核心行为。
 
-## 6. 当前边界
+客户端包还可以声明 `name / description / icon` 展示元数据。通用 `PluginCapabilityPicker` 根据同一个构建时发现结果在
+对话选项栏呈现插件，选择只形成当前对话的 `activePluginIds`；宿主不按插件 ID 添加按钮、文案或状态分支。
+
+## 6. 首个官方消费包
+
+`frontend/plugins/role_capability_graph/` 是首个官方实现，只消费已发布的不可变 Static Role Package：
+
+- 六个只读 Tool：精确读取、岗位检索、关系查询、事理追踪、证据检查与岗位包审计；
+- 一个 `role_capability_graphing` Agent Skill；
+- 岗位对象、关系、证据、审计和快照五类 Plugin Object；
+- 岗位卡片、岗位雷达、事理森林、证据和审计五个 Tool Renderer。
+
+插件 runtime 按自身数据目录发现包并校验 manifest 中的组件 SHA-256；代码不写具体岗位、对象 ID 或快照 ID。
+每次返回都固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。它不包含原系统的
+冷启动、迭代、工作区实例化、发布、Tag、回滚或 Registry；这些能力不能伪装成只读 Tool 或提示词 Skill。
+
+## 7. 当前边界
 
 - 这是受信、随应用发布的本机代码包，不提供第三方下载、签名、runner、沙箱或热安装。
 - 没有 Plugin Instance、Snapshot、独立工作台、专用侧栏或插件数据库。

@@ -11,6 +11,9 @@ export type PluginToolRendererProps = {
 
 export type LearnFlowPluginClientPackage = {
   pluginId: string
+  name?: string
+  description?: string
+  icon?: string
   renderers: Record<string, ComponentType<PluginToolRendererProps>>
 }
 
@@ -21,16 +24,22 @@ type ClientPluginModule = {
 
 const clientModules = import.meta.glob('../plugins/*/client.tsx', { eager: true }) as Record<string, ClientPluginModule>
 const rendererRegistry = new Map<string, ComponentType<PluginToolRendererProps>>()
+const installedPlugins: Array<Pick<LearnFlowPluginClientPackage, 'pluginId' | 'name' | 'description' | 'icon'>> = []
 
 for (const [path, loaded] of Object.entries(clientModules).sort(([left], [right]) => left.localeCompare(right))) {
   const plugin = loaded.default || loaded.plugin
   if (!plugin) throw new Error(`plugin_renderer_invalid:${path} does not export default or plugin`)
+  if (!/^[a-z][a-z0-9_]{1,23}$/.test(plugin.pluginId)) throw new Error(`plugin_renderer_invalid:${path} has invalid pluginId`)
+  if (installedPlugins.some(item => item.pluginId === plugin.pluginId)) throw new Error(`plugin_renderer_invalid:duplicate plugin ${plugin.pluginId}`)
+  installedPlugins.push({ pluginId: plugin.pluginId, name: plugin.name, description: plugin.description, icon: plugin.icon })
   for (const [rendererId, component] of Object.entries(plugin.renderers || {})) {
     const qualifiedId = `${plugin.pluginId}:${rendererId}`
     if (rendererRegistry.has(qualifiedId)) throw new Error(`plugin_renderer_invalid:duplicate ${qualifiedId}`)
     rendererRegistry.set(qualifiedId, component)
   }
 }
+
+export const installedClientPlugins = Object.freeze(installedPlugins.map(item => Object.freeze({ ...item })))
 
 function GenericPluginObjects({ objects }: { objects: readonly LearnFlowPluginObject[] }) {
   if (!objects.length) return null
