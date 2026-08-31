@@ -142,7 +142,7 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
   const [quote, setQuote] = useState('')
   const [note, setNote] = useState('')
   const [taskTitle, setTaskTitle] = useState('')
-  const [createPanelOpen, setCreatePanelOpen] = useState(true)
+  const [createPanelOpen, setCreatePanelOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [draggedStepId, setDraggedStepId] = useState('')
