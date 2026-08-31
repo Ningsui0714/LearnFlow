@@ -98,6 +98,9 @@ export type TutorToolRun = {
       errorType?: 'timeout' | 'syntax' | 'validation' | 'provider' | 'unexpected'
     }>
     outcomeStage: 'rendered' | 'planner' | 'validation' | 'layout'
+    skillId?: 'visual_teaching_composition'
+    briefVersion?: 'learnflow.visual-teaching-brief.v1'
+    explanationPreserved?: boolean
   }
   sources?: SearchSource[]
   searchMeta?: {

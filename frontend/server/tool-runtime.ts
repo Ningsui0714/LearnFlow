@@ -19,6 +19,7 @@ import type { LearningTaskTutorContext } from '../src/learning.ts'
 import type { LearningPlanTutorContext } from '../src/planning.ts'
 import type { TutorContextMessage } from '../src/tutor.ts'
 import { executeLearningVisual, resolveVisualRequest } from './visual-tool-execution.ts'
+import type { VisualTeachingBrief } from '../src/visual-teaching.ts'
 import type { AgentKnowledgeDomain, AgentTaskQueueItem, AgentToolDefinition } from '../src/agent-contracts.ts'
 import type { AgentProjectContext, ProjectCheckpointProposal } from '../src/project.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
@@ -424,7 +425,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'generate_learning_diagram',
     title: '生成学习图解',
-    description: '仅当学习者本轮明确要求画图、图解、流程图、时序图、结构图或可视化时调用。把结构、关系、对比、数据流或数学关系规划为 VisualSpec，再由确定性布局器生成安全 SVG；普通讲解不得为了装饰自动调用。query 应写清主题，例如“Dijkstra 从 S 到 T 的最短路径”；“把刚才那个画出来”等省略表达会由 Harness 结合最近对话主题补全并在结果中披露。可计算主题缺少具体输入时允许生成明确标注的教学示例，不会冒充用户数据。复杂长尾图解首轮最多等待 60 秒，并可进行一次 40 秒结构修复。',
+    description: '视觉教学 Skill 的底层渲染工具，不是独立教学方法。仅当学习者明确要求图解，且 visual_teaching_composition 已先提交独立讲解并产出已校验 VisualBrief 时调用；普通讲解、装饰图片或缺少 Brief 时不得调用。它把 Brief 中的稳定结构、关系、对比、数据流或数学关系编译为 VisualSpec，再由确定性布局器生成安全 SVG。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {
@@ -439,7 +440,7 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
   {
     name: 'generate_learning_animation',
     title: '生成学习动画',
-    description: '仅当学习者本轮明确要求动画、逐帧或演示状态变化时调用。把有机械因果、状态转移或逐步计算的过程规划为 VisualSpec 时间线，再由确定性渲染器生成身份稳定、可暂停逐帧检查的安全 SVG 动画；不得把静态关系或普通讲解自动动画化。query 应写清过程，例如“逐帧演示 Dijkstra 如何更新 tentative distance”；省略的主题会由 Harness 从最近对话恢复并披露。缺少具体数据时可以使用明确标注的教学示例。复杂长尾动画首轮最多等待 90 秒，并可进行一次 60 秒结构修复。',
+    description: '视觉教学 Skill 的底层渲染工具，不是独立教学方法。仅当学习者明确要求动画，且 visual_teaching_composition 已先提交独立讲解并产出含至少两个真实状态变化的 VisualBrief 时调用；静态关系、普通讲解或缺少 Brief 时不得调用。它把 Brief 中的对象身份、前后状态、变化和因果编译为 VisualSpec 时间线，再由确定性渲染器生成可暂停逐帧检查的安全 SVG 动画。',
     toolClass: 'communication',
     risk: 'artifact',
     inputSchema: {
@@ -531,8 +532,8 @@ export const TUTOR_AGENT_TOOL_DEFINITIONS: AgentToolDefinition[] = [
 
 export type TutorAgentToolRuntimeOptions = {
   message: string
-  /** Tutor's verified pre-animation explanation, supplied before visual planning. */
-  visualPreparation?: string
+  /** Validated Skill output. Visual tools render this brief; they do not invent the teaching strategy. */
+  visualTeachingBrief?: VisualTeachingBrief
   recentMessages?: TutorContextMessage[]
   generate: GenerateText
   searchConfiguration?: SearchProviderConfiguration
@@ -1550,9 +1551,15 @@ export async function executeTutorAgentTool(
 
     if (name === 'generate_learning_diagram' || name === 'generate_learning_animation' || name === 'generate_learning_visual') {
       const requestedKind = name === 'generate_learning_animation' || args.kind === 'animation' ? 'animation' : 'diagram'
-      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate, options.onVisualStage, options.visualPreparation)
+      if (!options.visualTeachingBrief || options.visualTeachingBrief.modality !== requestedKind) {
+        throw new Error('visual_skill_brief_required:视觉工具只能消费 visual_teaching_composition 已校验的 VisualBrief')
+      }
+      const execution = await executeLearningVisual(requestedKind, query, options.recentMessages || [], options.generate, options.onVisualStage, options.visualTeachingBrief)
       const visual = execution.generated
       const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
+      if (effectiveKind !== requestedKind) {
+        throw new Error(`visual_modality_mismatch:requested_${requestedKind}:produced_${effectiveKind}:需要学习者明确同意后才能改用另一视觉形式`)
+      }
       const degradedLabel = visual.degraded
         ? `；已如实降级为${effectiveKind === 'animation' ? '确定性动画' : '静态图解'}`
         : ''
@@ -1584,6 +1591,9 @@ export async function executeTutorAgentTool(
             syntaxRepairApplied: visual.generation.syntaxRepairApplied,
             plannerDiagnostics: visual.generation.attempts,
             outcomeStage: 'rendered',
+            skillId: 'visual_teaching_composition',
+            briefVersion: options.visualTeachingBrief.version,
+            explanationPreserved: true,
           },
         },
         observation: {
@@ -1746,6 +1756,11 @@ export async function executeTutorAgentTool(
             compileStatus: /inputs_ambiguous|needs_input/.test(rawMessage) ? 'ambiguous' as const : /derivation_failed|invalid|unsupported/.test(rawMessage) ? 'invalid' as const : 'not_applicable' as const,
             plannerAttempts: /after_2_attempts|repair|second_attempt/.test(rawMessage) ? 2 : /deterministic|inputs_ambiguous|needs_input|derivation_failed/i.test(rawMessage) ? 0 : 1,
             outcomeStage: /scene|layout|collision|route/.test(rawMessage) ? 'layout' as const : /quality|spec|parse|json|validation/.test(rawMessage) ? 'validation' as const : 'planner' as const,
+            ...(options.visualTeachingBrief ? {
+              skillId: 'visual_teaching_composition' as const,
+              briefVersion: options.visualTeachingBrief.version,
+              explanationPreserved: true,
+            } : {}),
           },
         } : {}),
       },

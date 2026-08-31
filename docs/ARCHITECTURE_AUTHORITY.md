@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-08-31.1`）：图解与动画新增非学习者可选的 `visual_teaching_composition` Playbook。显式视觉请求必须先形成并提交一段脱离视觉也成立的教学讲解，再把讲解编译为版本化 `VisualBrief`；只有通过对象、关系、状态、变化和事实边界门后，底层 `learning_diagram_generator` / `learning_animation_generator` 才能渲染。流式 `teaching_segment_committed` 与可撤销 `text_delta` 分离，后续 `text_reset` 只能清除草稿；视觉规划、语法、校验、布局、渲染或传输失败均合法终止为 `explanation_only`，不得撤销讲解、静默切换视觉形式或伪造占位产物。Desktop 先持久化正式 Tutor 回复再启动视觉增强。新增 `VisualTeachingBundle`/VisualBrief v1，既有 VisualSpec v3、稳定视觉 Tool ID、三类主 Agent、五核、EvidenceEvent 与掌握语义保持兼容，无数据库迁移。
+
 Contract impact（`2026-08-30.10`）：长尾图解/动画新增通用的请求—产物语义契约。省略式视觉追问优先继承最近已验证视觉产物的有界标题/摘要，其次继承最近用户主题；无法恢复主题时在模型调用前返回 `needs_input`，不再生成通用占位物。模型候选必须通过动态请求主题覆盖；其中声明式过程必须在 semantic 或帧叙述中实际覆盖主题，且至少包含三个主题阶段与两个连续变化，标题不能替代过程内容。规则不维护课程、算法或岗位白名单。视觉工具回灌 Tutor 的观察新增有界摘要、帧标题、帧描述、状态线索与语义变化数，并把它们设为最终回答的唯一产物事实边界，禁止用主题常识补写未展示的指针、交换或结果。稳定 Tool ID、VisualSpec v3、三类主 Agent、五核、EvidenceEvent 与掌握语义保持兼容，无数据库迁移。
 
 Contract impact（`2026-08-30.9`）：所有用户可见的 AI、检索、视觉规划与正式 API 改用分层长预算，普通 Tutor 外层/Agent 内层为 420/360 秒，图解为 660/600 秒，动画为 780/720 秒，单次模型调用上限 180 秒；后端 Tutor、学习任务与微学习默认模型预算同步提高。外层始终覆盖其拥有的内层工作，并保留最终回答余量；预算仍有硬上限，不改变重试次数、工具权限、Action Board、副作用确认、五核或 EvidenceEvent 语义。密码哈希、数据库锁、代码执行和进程终止等资源保护超时不随之放大。完整矩阵见 `docs/implementation/INTERACTIVE_LATENCY_BUDGETS.md`。

@@ -16,6 +16,11 @@ import {
   resolveVisualRequest,
 } from '../server/visual-tool-execution.ts'
 import { AI_LATENCY_BUDGETS } from './latency-budgets.ts'
+import {
+  parseVisualTeachingBrief,
+  visualTeachingBriefPrompt,
+} from '../server/visual-teaching-skill.ts'
+import { VISUAL_TEACHING_BRIEF_VERSION, VISUAL_TEACHING_SKILL_ID } from './visual-teaching.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -332,6 +337,7 @@ async function executeDesktopVisualTool(options: {
   sessionId: number
   kind: 'diagram' | 'animation'
   query: string
+  teachingExplanation: string
   messages: TutorContextMessage[]
   signal: AbortSignal
 }): Promise<TutorToolRun> {
@@ -340,24 +346,27 @@ async function executeDesktopVisualTool(options: {
   const title = options.kind === 'animation' ? '生成过程动画' : '生成知识图解'
   const request = resolveVisualRequest(options.query, options.messages)
   try {
-    let animationPreparation = ''
-    if (options.kind === 'animation') {
-      const preparationInstructions = `你正在为学习动画准备讲解文字。先不要输出 JSON，也不要描述视觉布局。围绕原始请求写准确、可检查的中文教学文字，明确对象、初始状态、关键中间状态、最终状态，以及至少两个真实的状态变化和它们的顺序。尽量给出具体值、参与者和因果关系，不要使用没有主题内容的“输入/处理/输出”占位词。`
-      const preparationResponse = await runtimeFetch(`/api/agent/sessions/${options.sessionId}/visual-plans`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instructions: preparationInstructions, input: `原始请求：${options.query}`, timeout_ms: 45_000, max_tokens: 1_200 }),
-        signal: options.signal,
-      })
-      const preparationPayload = await preparationResponse.json().catch(() => null) as { text?: unknown; detail?: unknown } | null
-      if (!preparationResponse.ok || typeof preparationPayload?.text !== 'string') {
-        throw new Error('visual_preparation_failed:前置讲解服务不可用')
-      }
-      animationPreparation = preparationPayload.text.replace(/\s+/g, ' ').trim()
-      const sufficient = [...animationPreparation].length >= 80
-        && animationPreparation.split(/[。！？.!?]+/).filter(Boolean).length >= 2
-        && (animationPreparation.match(/(?:对象|输入|输出|初始|状态|步骤|过程|先|然后|接着|随后|最后|变为|移动|更新|比较|交换|传递|经过|结果|变化|关系|连接|分成|合并|循环|递归|阶段)/g)?.length || 0) >= 2
-      if (!sufficient) throw new Error('visual_preparation_insufficient:前置讲解没有充分描述对象与过程')
+    const briefResponse = await runtimeFetch(`/api/agent/sessions/${options.sessionId}/visual-plans`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instructions: visualTeachingBriefPrompt(options.kind, options.query, options.teachingExplanation),
+        input: `以下讲解已经由正式 Tutor 独立提交。保持它的事实边界，并据此填写 VisualBrief；explanation 字段逐字使用这段讲解：\n${options.teachingExplanation}`,
+        timeout_ms: 60_000,
+        max_tokens: 2_000,
+        response_format: 'json_object',
+      }),
+      signal: options.signal,
+    })
+    const briefPayload = await briefResponse.json().catch(() => null) as { text?: unknown; detail?: unknown } | null
+    if (!briefResponse.ok || typeof briefPayload?.text !== 'string') {
+      throw new Error('visual_teaching_brief_failed:视觉教学 Brief 服务不可用')
     }
+    const visualBrief = parseVisualTeachingBrief(briefPayload.text, options.kind, options.query)
+    const authoritativeExplanation = options.teachingExplanation.replace(/\s+/g, ' ').trim()
+    if (visualBrief.explanation.replace(/\s+/g, ' ').trim() !== authoritativeExplanation) {
+      throw new Error('visual_teaching_explanation_mismatch:VisualBrief 改写了已提交讲解')
+    }
+    visualBrief.explanation = options.teachingExplanation.trim()
     const execution = await executeLearningVisual(options.kind, options.query, options.messages, async (
       instructions, input, timeoutMs = 26_000, maxTokens = 2_200, generationOptions,
     ) => {
@@ -377,9 +386,12 @@ async function executeDesktopVisualTool(options: {
       if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : `视觉规划返回 HTTP ${response.status}`)
       if (typeof payload?.text !== 'string' || !payload.text.trim()) throw new Error('视觉规划没有返回可验证的 JSON')
       return payload.text
-    }, undefined, animationPreparation)
+    }, undefined, visualBrief)
     const visual = execution.generated
     const effectiveKind = visual.artifact.kind === 'animation' ? 'animation' : 'diagram'
+    if (effectiveKind !== options.kind) {
+      throw new Error(`visual_modality_mismatch:requested_${options.kind}:produced_${effectiveKind}:需要学习者明确同意后才能改用另一视觉形式`)
+    }
     return {
       id: `desktop-visual-${startedAt}`,
       toolCallId: `desktop-visual-${startedAt}`,
@@ -403,6 +415,9 @@ async function executeDesktopVisualTool(options: {
         syntaxRepairApplied: visual.generation.syntaxRepairApplied,
         plannerDiagnostics: visual.generation.attempts,
         outcomeStage: 'rendered',
+        skillId: VISUAL_TEACHING_SKILL_ID,
+        briefVersion: visualBrief.version,
+        explanationPreserved: true,
       },
     }
   } catch (error) {
@@ -428,6 +443,9 @@ async function executeDesktopVisualTool(options: {
         compileStatus: /needs_input|ambiguous/i.test(message) ? 'ambiguous' : 'invalid',
         plannerAttempts: /after_2_attempts/i.test(message) ? 2 : 1,
         outcomeStage: /layout|collision|route/i.test(message) ? 'layout' : /spec|json|validation|quality/i.test(message) ? 'validation' : 'planner',
+        skillId: VISUAL_TEACHING_SKILL_ID,
+        briefVersion: VISUAL_TEACHING_BRIEF_VERSION,
+        explanationPreserved: true,
       },
     }
   }
@@ -461,6 +479,7 @@ export async function requestTutorReply(options: {
   const observedToolRuns: TutorToolRun[] = []
   const observedDecisionSummaries: NonNullable<AgentTurnTrace['decisionSummaries']> = []
   const observedTrajectory: AgentTurnTrace['events'] = []
+  let observedCommittedExplanation = ''
   const latestUserMessage = [...options.messages].reverse().find(message => message.role === 'user')?.content || ''
   const visualIntent = resolveExplicitVisualIntent(options.toolChoice, latestUserMessage)
   const baseTimeoutMs = options.mode === 'guided_learning'
@@ -475,13 +494,6 @@ export async function requestTutorReply(options: {
   try {
     if (isDesktopRuntime()) {
       if (!options.formalScope?.sessionId) throw new Error('桌面 Tutor 尚未取得正式会话，请重试本轮')
-      const visualPromise = visualIntent === 'none' ? undefined : executeDesktopVisualTool({
-        sessionId: options.formalScope.sessionId,
-        kind: visualIntent,
-        query: latestUserMessage,
-        messages: options.messages,
-        signal: controller.signal,
-      })
       const response = await runtimeFetch(`/api/agent/sessions/${options.formalScope.sessionId}/turns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -503,7 +515,16 @@ export async function requestTutorReply(options: {
       const payload = await response.json().catch(() => null) as { message?: unknown; detail?: unknown } | null
       if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : `桌面 Tutor 返回 HTTP ${response.status}`)
       if (typeof payload?.message !== 'string' || !payload.message.trim()) throw new Error('桌面 Tutor 没有返回可显示的文本')
-      const visualRun = await visualPromise
+      // The formal Tutor reply is persisted before visual_teaching_composition
+      // starts. A renderer timeout can therefore never invalidate the lesson.
+      const visualRun = visualIntent === 'none' ? undefined : await executeDesktopVisualTool({
+        sessionId: options.formalScope.sessionId,
+        kind: visualIntent,
+        query: latestUserMessage,
+        teachingExplanation: payload.message.trim(),
+        messages: options.messages,
+        signal: controller.signal,
+      })
       const at = Date.now()
       return {
         reply: payload.message.trim(),
@@ -541,6 +562,7 @@ export async function requestTutorReply(options: {
           if (event.type === 'tool_completed') observedToolRuns.push(event.run)
           if (event.type === 'decision_summary') observedDecisionSummaries.push(event.summary)
           if (event.type === 'trajectory') observedTrajectory.push(event.event)
+          if (event.type === 'teaching_segment_committed') observedCommittedExplanation = event.content
           options.onEvent(event)
           if (event.type === 'done') result = event.result
           if (event.type === 'error') throw new Error(event.error)
@@ -565,6 +587,25 @@ export async function requestTutorReply(options: {
       trace: payload.trace as AgentTurnTrace,
     }
   } catch (error) {
+    if (observedCommittedExplanation) {
+      const at = Date.now()
+      return {
+        reply: `${observedCommittedExplanation}\n\n视觉增强或传输在后续阶段失败，但已经提交的讲解仍然保留并有效。`,
+        toolRuns: observedToolRuns,
+        trace: {
+          version: 'vnext-agent-trace.v1',
+          turnId: `visual-teaching-recovery-${at}`,
+          modelRounds: 0,
+          toolCalls: observedToolRuns.length,
+          stopReason: 'forced_finalize',
+          events: [
+            ...observedTrajectory,
+            { sequence: observedTrajectory.length + 1, phase: 'finalize', detail: '视觉失败后保留已提交讲解', at, status: 'completed' },
+          ],
+          decisionSummaries: observedDecisionSummaries,
+        },
+      }
+    }
     if (options.mode === 'guided_learning' && options.learningTaskContext) {
       const at = Date.now()
       const detail = error instanceof Error ? error.message.slice(0, 180) : 'Tutor 传输异常'

@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-30.10"
+REGISTRY_VERSION = "2026-08-31.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -248,25 +248,25 @@ AGENTS = {
 CHAT_MODES = {
     item.id: item for item in (
         ChatModeContract(
-            "free", "自由探索", "tutor_agent", ("intent_and_handoff",),
+            "free", "自由探索", "tutor_agent", ("intent_and_handoff", "visual_teaching_composition"),
             "直接回应开放问题，并把清楚的短期、深度或长期意图收敛到其他模式",
             "检测到明确意图时塌陷；否则保持自由",
         ),
         ChatModeContract(
-            "explain", "简单讲解", "tutor_agent", ("guided_explanation",),
+            "explain", "简单讲解", "tutor_agent", ("guided_explanation", "visual_teaching_composition"),
             "完成一个边界清楚的定义、区别或最小示例，不自动创建 LearningTask",
             "讲解交付后标记完成，下一轮从自由模式重新判断",
         ),
         ChatModeContract(
             "learn", "学习任务引导", "tutor_agent",
             ("atomic_learning_loop", "guided_explanation", "socratic_dialogue",
-             "feynman_dialogue", "worked_example_fading"),
+             "feynman_dialogue", "worked_example_fading", "visual_teaching_composition"),
             "围绕一个 LearningTask 组合讲解、练习、验证、纠错与复习转交",
             "任务或 SkillRun 结束、退出或明确转向后返回自由",
         ),
         ChatModeContract(
             "plan", "学习规划", "tutor_agent",
-            ("intent_and_handoff", "learning_path_planning"),
+            ("intent_and_handoff", "learning_path_planning", "visual_teaching_composition"),
             "澄清跨多个任务、来源、阶段或真实产物的目标，并优先形成项目提案",
             "提案完成、接受、放弃或明确转向后返回自由",
         ),
@@ -351,7 +351,7 @@ TOOLS = {
         ToolContract("checkpoint_delivery_readiness", "Teaching Package and Atomic Task Readiness Projection", "learning_design_agent", "learnflow", "projection",
                      (), (), "existing Source/Lecture/Question/Exercise/Assessment -> package readiness; learner-owned LearningTask -> task readiness; optional answer-free Knowledge ContextPacket stays a separate read-only design input; compatibility summary retained and no mastery inference"),
         ToolContract("safe_visual_generation", "Shared Learning VisualSpec Runtime", "learning_design_agent", "vnext", "harness",
-                     (), (), "explicit learner visual intent + bounded request/prior-artifact topic anchor -> exact/illustrative deterministic compiler including convolution_trace | long-tail provider-native JSON plan -> request-derived topic coverage + minimum process substance -> scalar-preserving local punctuation repair -> at most one budgeted model repair -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG + bounded frame grounding for Tutor claims; each stage and attempt is observable, Desktop and Web share the same TS runtime, and one requested visual cannot drift into another visual or repeated video search"),
+                     (), (), "explicit learner visual intent -> visual_teaching_composition commits an independently valid explanation and validates VisualBrief -> exact/illustrative deterministic compiler including convolution_trace | long-tail provider-native JSON plan -> request-derived topic coverage + minimum process substance -> scalar-preserving local punctuation repair -> at most one budgeted model repair -> deterministic layout/state timeline -> semantic usefulness and safety gates -> sanitized SVG + bounded frame grounding for Tutor claims; renderer failure terminates as explanation_only and cannot revoke the committed explanation; each stage is observable and no requested visual may drift into another modality"),
         ToolContract("learning_diagram_generator", "Learning Diagram Generator", "learning_design_agent", "vnext", "artifact",
                      (), (), "explicit diagram intent -> computer/math abstraction selection -> validated useful VisualSpec -> deterministic static SVG; zero learner-state write"),
         ToolContract("learning_animation_generator", "Learning Animation Generator", "learning_design_agent", "vnext", "artifact",
@@ -938,6 +938,45 @@ SKILLS = {
         SkillContract("evidence_grounded_teaching", "有来源的讲义与概念教学", "learning_design_agent",
                       ("hierarchical_rag", "content_generation", "process_animation", "teaching_contract_gate", "checkpoint_delivery_readiness", "learning_video_inspector"),
                       "structured teaching artifact; never mastery evidence", "artifact contract"),
+        SkillContract(
+            "visual_teaching_composition", "讲解优先的视觉教学编排", "learning_design_agent",
+            ("safe_visual_generation", "learning_diagram_generator", "learning_animation_generator", "teaching_contract_gate"),
+            "VisualTeachingBundle = independently committed TeachingExplanationArtifact + validated VisualBrief + optional VisualArtifact; renderer failure is a legal explanation_only terminal",
+            "Learning Design owns explanation and brief candidates; Harness owns commit/state/failure semantics; deterministic visual tools only compile, validate and render; no output is mastery evidence",
+            "vnext",
+            description="先形成并保留可独立学习的讲解，再按对象、关系、状态和变化生成图解或动画；视觉失败不能撤销讲解。",
+            best_for=("明确要求知识图解", "明确要求逐帧动画", "关系或状态变化需要可检查视觉增强"),
+            avoid_when=("普通文字讲解", "装饰性图片", "没有明确主题或视觉意图", "视觉不增加结构或时间信息"),
+            runtime=SkillRuntimeContract(
+                version="visual-teaching-skill-runtime-v1",
+                bound_chat_modes=("free", "explain", "learn", "plan"),
+                initial_state="compose_explanation",
+                states=(
+                    SkillStateContract("compose_explanation", "形成独立讲解", "讲解", "explanation", "讲解态", "形成脱离视觉也成立的教学解释。", "覆盖核心对象、关系或过程、结果和边界。", "提交讲解", requires_learner_reply=False),
+                    SkillStateContract("commit_explanation", "提交教学段", "提交", "commit", "提交态", "建立视觉失败不可撤销的教学边界。", "把讲解作为稳定消息段提交；后续 text_reset 只能撤销草稿。", "编译 VisualBrief", requires_learner_reply=False),
+                    SkillStateContract("compile_visual_brief", "编译视觉 Brief", "建模", "brief", "建模态", "把讲解转换为稳定对象、关系、状态和变化。", "校验引用、变化数量、事实边界和模态理由。", "调用视觉工具", requires_learner_reply=False),
+                    SkillStateContract("render_visual", "渲染视觉增强", "渲染", "render", "渲染态", "调用图解或动画底层工具并检查产物。", "工具只消费已校验 Brief，不得重新决定教学内容。", "形成组合终态", requires_learner_reply=False),
+                    SkillStateContract("bundle_ready_or_explanation_only", "组合终态", "完成", "terminal", "终态", "成功附加视觉，或在失败时保留讲解。", "视觉失败进入 explanation_only，禁止撤销或重写已提交讲解。", "返回 Tutor", accepted_signals=(), can_loop=False, requires_learner_reply=False),
+                ),
+                turn_budget=4,
+                verification_required=False,
+                required_context=("explicit_visual_intent", "scoped_conversation_context", "answer_free_domain_knowledge_when_available"),
+                input_objects=("AgentMessage", "DomainKnowledgePacket", "VisualRequest"),
+                output_objects=("TeachingExplanationArtifact", "VisualBrief", "VisualTeachingBundle"),
+                allowed_event_types=(),
+                evidence_policy="explanation, brief, rendering and viewing are zero-target learning exposure; no mastery inference",
+                failure_policy="explanation failure blocks rendering; brief or renderer failure terminates explanation_only with the committed explanation unchanged; no silent modality switch",
+                eval_suite="visual-teaching-composition-v1",
+                knowledge_requirements={
+                    "required_slots": ("objects", "relations_or_transitions", "initial_state", "result", "boundary"),
+                    "minimum_authority_tiers": ("official", "curated", "academic", "learner_owned"),
+                    "freshness": "task_dependent",
+                    "minimum_coverage": 1.0,
+                    "formal_publish_requires_packet": False,
+                    "missing_behavior": "do_not_render_and_return_an_honest_explanation_gap",
+                },
+            ),
+        ),
         SkillContract("practice_verification", "代码实践与确定性验证", "practice_agent",
                       ("code_executor", "deterministic_assessment", "evidence_ledger"),
                       "graded LearningAttempt + evidence", "test/grading rules"),
@@ -1468,6 +1507,7 @@ _API_BINDING_TARGETS = {
 _FRONTEND_HANDLER_TARGETS = {
     "frontend:agent_runtime.run": ("frontend/server/agent-runtime.ts", "runTutorAgentTurn", ""),
     "frontend:visual.generate": ("frontend/server/learning-visual-spec.ts", "generateLearningVisual", ""),
+    "frontend:visual_teaching.run": ("frontend/server/visual-teaching-skill.ts", "visualTeachingPrompt", ""),
     "frontend:paper.ancestors": ("frontend/src/paper-workbench.ts", "paperAncestorChain", ""),
     "frontend:learning.create": ("frontend/src/learning.ts", "createLearningTask", ""),
     "frontend:planning.create": ("frontend/src/planning.ts", "createLearningPlan", ""),
@@ -1670,6 +1710,7 @@ _SKILL_BINDING_IDS = {
     "learning_resource_curation": ("frontend:agent_runtime.run", "frontend:tool:search_computer_knowledge"),
     "project_apprenticeship_orchestration": ("api:vnext_projects.context", "api:vnext_projects.apply_roadmap"),
     "evidence_grounded_teaching": ("py:lecture.agent",),
+    "visual_teaching_composition": ("frontend:visual_teaching.run", "frontend:agent_runtime.run", "frontend:visual.generate"),
     "practice_verification": ("api:phase3.submit_concept", "api:phase3.submit_exercise"),
     "assessment_blueprint_design": ("py:assessment.create",),
     "dynamic_practice_loop": ("py:practice.create", "py:practice.grade"),

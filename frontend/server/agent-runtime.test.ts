@@ -14,6 +14,32 @@ import { createLearningTask, learningTaskTutorContext, projectLearningTask } fro
 import { executeTutorAgentTool } from './tool-runtime.ts'
 import { buildProviderRequest } from '../src/tutor.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
+import { parseVisualTeachingBrief } from './visual-teaching-skill.ts'
+
+function visualTeachingPayload(kind: 'diagram' | 'animation', topic = '联邦学习聚合过程') {
+  return JSON.stringify({
+    topic,
+    learning_goal: `理解${topic}中的对象、关系与结果`,
+    modality_rationale: kind === 'animation' ? '过程包含按顺序发生的训练、上传与聚合变化' : '图解适合同时检查客户端与聚合服务器的稳定关系',
+    explanation: '联邦学习由多个客户端和一个聚合服务器组成，各客户端保留自己的本地数据。初始时客户端持有同一轮全局模型，随后分别训练并上传参数更新，服务器聚合这些更新形成新的全局模型。整个过程中原始训练数据不上传，但参数更新仍可能带来隐私风险，因此不能把联邦学习理解为天然安全。',
+    objects: [
+      { id: 'client', label: '客户端', role: '本地训练并上传参数更新' },
+      { id: 'server', label: '聚合服务器', role: '聚合更新并发布全局模型' },
+    ],
+    relations: [{ from: 'client', to: 'server', label: '上传参数更新' }],
+    initial_state: '客户端持有同一轮全局模型，服务器等待更新',
+    steps: kind === 'animation' ? [
+      { id: 'local_train', title: '本地训练', before: '客户端持有全局模型', change: '客户端使用本地数据训练', after: '客户端得到本地更新', why: '原始数据留在本地' },
+      { id: 'aggregate', title: '聚合更新', before: '服务器收到多个本地更新', change: '服务器对更新进行聚合', after: '形成新一轮全局模型', why: '合并分散学习结果' },
+    ] : [],
+    final_state: '服务器形成新的全局模型并可广播给客户端',
+    invariants: ['原始训练数据不直接上传'],
+    misconceptions: ['参数不等于完全没有隐私风险'],
+    claim_boundary: '只说明客户端训练、上传更新和服务器聚合，不声称具体聚合算法或隐私保证',
+  })
+}
+
+const visualTeachingExplanation = '联邦学习由多个客户端和一个聚合服务器组成，各客户端保留自己的本地数据。初始时客户端持有同一轮全局模型，随后分别训练并上传参数更新，服务器聚合这些更新形成新的全局模型。整个过程中原始训练数据不上传，但参数更新仍可能带来隐私风险，因此不能把联邦学习理解为天然安全。'
 
 test('interactive budgets preserve outer ownership and bounded provider calls', () => {
   assert.ok(AI_LATENCY_BUDGETS.tutorClient.standard > AI_LATENCY_BUDGETS.agentTurn.standard)
@@ -846,8 +872,10 @@ test('explicit visual intent prepares animation prose before the requested visua
       },
       invokeProvider: async request => {
         requests.push(request)
-        return { choices: [{ message: { content: item.expected === 'generate_learning_animation'
-          ? '联邦学习由多个客户端和一个聚合服务器组成。初始时客户端分别持有本地模型，随后各客户端训练并上传更新，服务器按顺序接收并聚合这些更新，最后形成新的全局模型并广播回客户端。'
+        return { choices: [{ message: { content: item.expected
+          ? ((request.body as any).response_format
+              ? visualTeachingPayload(item.expected === 'generate_learning_animation' ? 'animation' : 'diagram')
+              : visualTeachingExplanation)
           : '先用一句话说明核心，再按需要补充学习动作。' } }] }
       },
     })
@@ -859,9 +887,9 @@ test('explicit visual intent prepares animation prose before the requested visua
   }
 })
 
-test('a failed animation cannot drift into diagram or repeated video search', async () => {
+test('a failed animation preserves the committed explanation and cannot drift', async () => {
   const executions: string[] = []
-  let round = 0
+  const events: any[] = []
   const result = await runTutorAgentTurn({
     baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain',
     messages: [
@@ -870,6 +898,7 @@ test('a failed animation cannot drift into diagram or repeated video search', as
       { role: 'user', content: '用动画演示一下' },
     ],
     toolChoice: 'auto', generate: async () => 'unused',
+    observe: event => events.push(event),
     executeTool: async (name, _args, _options, meta) => {
       executions.push(name)
       return {
@@ -877,15 +906,43 @@ test('a failed animation cannot drift into diagram or repeated video search', as
         observation: { error: 'planner failed' },
       } as any
     },
-    invokeProvider: async () => {
-      round += 1
-      if (round === 1) return { choices: [{ message: { tool_calls: [{ id: 'drift-video', function: { name: 'search_learning_videos', arguments: '{"target":"CNN"}' } }] } }] }
-      return { choices: [{ message: { content: '动画没有生成成功；我会保留失败信息，不自动改成图解或外部视频。' } }] }
+    invokeProvider: async request => ({ choices: [{ message: { content: (request.body as any).response_format
+      ? visualTeachingPayload('animation', 'CNN 卷积过程')
+      : visualTeachingExplanation } }] }),
+  })
+  assert.deepEqual(executions, ['generate_learning_animation'])
+  assert.equal(result.toolRuns.some(run => run.kind === 'video' || run.kind === 'image'), false)
+  assert.equal(result.visualTeaching?.terminalState, 'explanation_only')
+  assert.equal(result.visualTeaching?.explanationPreserved, true)
+  assert.match(result.reply, /^联邦学习由多个客户端/)
+  const committed = events.findIndex(event => event.type === 'teaching_segment_committed')
+  const toolStarted = events.findIndex(event => event.type === 'tool_started')
+  assert.ok(committed >= 0 && toolStarted > committed)
+  assert.equal(events.slice(committed + 1).some(event => event.type === 'text_reset'), false)
+})
+
+test('a brief failure after explanation commit never invokes the renderer', async () => {
+  const executions: string[] = []
+  const events: any[] = []
+  let calls = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain',
+    messages: [{ role: 'user', content: '用动画演示联邦学习聚合过程' }],
+    toolChoice: 'auto', generate: async () => 'unused', observe: event => events.push(event),
+    executeTool: async name => {
+      executions.push(name)
+      throw new Error('renderer must not run')
+    },
+    invokeProvider: async request => {
+      calls += 1
+      return { choices: [{ message: { content: (request.body as any).response_format ? '{"topic":"broken"}' : visualTeachingExplanation } }] }
     },
   })
+  assert.equal(calls, 3)
   assert.deepEqual(executions, [])
-  assert.equal(result.toolRuns.some(run => run.kind === 'video' || run.kind === 'image'), false)
-  assert.ok(result.trace.events.some(event => event.status === 'failed' && /前置讲解/.test(event.detail)))
+  assert.equal(result.visualTeaching?.terminalState, 'explanation_only')
+  assert.match(result.reply, new RegExp(`^${visualTeachingExplanation}`))
+  assert.ok(events.some(event => event.type === 'teaching_segment_committed'))
 })
 
 test('visual tool observations expose bounded frame grounding for truthful Tutor narration', async () => {
@@ -894,6 +951,7 @@ test('visual tool observations expose bounded frame grounding for truthful Tutor
   }, {
     message: '用动画逐步演示联邦学习聚合过程',
     recentMessages: [{ role: 'user', content: '用动画逐步演示联邦学习聚合过程' }],
+    visualTeachingBrief: parseVisualTeachingBrief(visualTeachingPayload('animation'), 'animation', '用动画逐步演示联邦学习聚合过程'),
     generate: async () => { throw new Error('deterministic visual must not call the model') },
   })
   const observation = result.observation as any

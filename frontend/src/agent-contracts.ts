@@ -166,6 +166,7 @@ export type AgentTurnResponse = {
   reply: string
   toolRuns: TutorToolRun[]
   trace: AgentTurnTrace
+  visualTeaching?: import('./visual-teaching.ts').VisualTeachingBundle
 }
 
 export type AgentTurnStreamEvent =
@@ -173,6 +174,14 @@ export type AgentTurnStreamEvent =
   | { type: 'decision_summary'; summary: AgentDecisionSummary }
   | { type: 'tool_started'; toolCallId: string; toolName: string; title: string; startedAt: number }
   | { type: 'tool_completed'; run: TutorToolRun }
+  | {
+    type: 'teaching_segment_committed'
+    segmentId: string
+    skillId: typeof import('./visual-teaching.ts').VISUAL_TEACHING_SKILL_ID
+    briefVersion: typeof import('./visual-teaching.ts').VISUAL_TEACHING_BRIEF_VERSION
+    modality: import('./visual-teaching.ts').VisualTeachingModality
+    content: string
+  }
   | { type: 'text_delta'; delta: string }
   | { type: 'text_reset'; reason: 'tool_call' | 'retry' | 'verification' | 'reconcile' }
   | { type: 'done'; result: AgentTurnResponse; requestId?: string }

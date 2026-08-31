@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-08-31.1`）：Learning Design 新增 `visual_teaching_composition` Playbook，统一承担讲解、VisualBrief 和视觉失败降级，图解/动画生成器继续只是渲染 Tool。视觉请求先提交不可由后续 `text_reset` 清除的教学段，再调用 Tool；渲染失败进入 `explanation_only`，已经提交的讲解和正式 Desktop Tutor 消息保持有效。底层 Tool 缺少已校验 Brief 时快速失败，动画/图解不得静默互换。新增 VisualBrief v1 和 `VisualTeachingBundle`，不新增主 Agent、数据库、EvidenceEvent 或 Kernel writer。
+
 Contract impact（`2026-08-30.10`）：Tutor 与 Learning Design 的视觉交接改为“上下文锚定—请求主题契约—可重放产物—有界事实回灌”。“给我一个动画示例”等追问可从最近视觉 artifact 或用户主题恢复目标；没有目标则在规划前失败。长尾模型计划必须通过动态主题覆盖；声明式过程还要求 semantic/帧内容实际覆盖主题并具有最小状态变化，标题不能替代过程内容。这是一条动态请求契约，不是按算法硬编码。Tutor 最终文案只能解释工具 grounding 已列出的帧和变化，不得凭主题知识声称产物展示了不存在的动作。该调整不新增主 Agent、模型工具、状态权威或五核写入。
 
 Contract impact（`2026-08-30.9`）：Tutor 与 Learning Design 的用户可见异步工作采用统一分层预算。浏览器等待时间长于 Agent 回合，Agent 回合长于单次 provider/工具请求；普通解释、规划、带领学习、图解和动画分别按工作复杂度递增。后端内容生成、来源获取和模型连通性检查同步扩容，但所有路径仍有确定性硬上限，且重试、工具面、五核写入与掌握判定不变。密码哈希、数据库锁、代码执行和进程退出等安全/资源保护超时保持原值。
@@ -281,6 +283,13 @@ EvidenceEvent 网关。
 来源链接，Harness MUST 确定性补齐这些可审计缺口并保留原教学正文；不得因收尾连接中断而用通用 fallback
 覆盖已经形成的有效教学内容。涉及越权写入、无证据掌握、未知引用、记忆冲突或历史臆断等语义违规时仍
 必须拒绝该草稿，不能用确定性补句掩盖安全问题。
+
+显式图解或动画请求是上述草稿协议的一个受限例外：`visual_teaching_composition` 先生成
+`TeachingExplanationArtifact + VisualBrief`，Harness 通过结构门后发送 `teaching_segment_committed`。
+这个教学段不再属于可撤销草稿；之后的 `text_reset` 只能回到已提交讲解，不能清空它。图解/动画 Tool
+只消费已校验 Brief，不得自己决定教学策略。视觉成功形成 `bundle_ready`，任何视觉阶段失败形成
+`explanation_only`；两者都是 Playbook 的合法终态，且都不产生掌握证据。Desktop 必须先让正式 Tutor
+回复持久化，再异步/顺序调用视觉增强，禁止把回复和视觉放在同一失败域并行提交。
 
 `dynamic_practice_loop` 是 Playbook，不是第四类 Agent，也不是单一 Tool。Tutor 决定是否进入“生成—作答—
 纠错—变式—复习”闭环；Learning Design 只生成题目候选，`dynamic_practice` 服务检查题型、target skill、

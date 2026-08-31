@@ -166,6 +166,7 @@ type LiveTurn = {
   sheetId: string
   messageId: string
   content: string
+  committedContent: string
   toolRuns: TutorToolRun[]
   decisionSummaries: AgentDecisionSummary[]
   phase: string
@@ -1313,7 +1314,18 @@ function App({ auth }: { auth: AuthGateSession }) {
       const current = previous[conversationId]
       if (!current || event.type === 'done' || event.type === 'error') return previous
       if (event.type === 'text_reset') {
-        return { ...previous, [conversationId]: { ...current, content: '', phase: '正在调整回答' } }
+        return { ...previous, [conversationId]: { ...current, content: current.committedContent, phase: '正在调整回答' } }
+      }
+      if (event.type === 'teaching_segment_committed') {
+        return {
+          ...previous,
+          [conversationId]: {
+            ...current,
+            committedContent: event.content,
+            content: event.content,
+            phase: '讲解已保留，正在生成视觉增强',
+          },
+        }
       }
       if (event.type === 'text_delta') {
         return { ...previous, [conversationId]: { ...current, content: current.content + event.delta, phase: '正在回答' } }
@@ -1481,6 +1493,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         sheetId,
         messageId: uid('stream'),
         content: '',
+        committedContent: '',
         toolRuns: [],
         decisionSummaries: [],
         phase: formalConnection.status === 'connected' ? '正在同步学习状态' : '正在理解问题',

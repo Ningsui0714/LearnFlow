@@ -8,6 +8,8 @@ import {
   type VisualGenerationStage,
 } from './learning-visual-spec.ts'
 import { hasVisualTopic } from './visual-spec/intent-contract.ts'
+import type { VisualTeachingBrief } from '../src/visual-teaching.ts'
+import { visualTeachingContext } from './visual-teaching-skill.ts'
 
 export type ResolvedVisualRequest = {
   originalRequest: string
@@ -111,14 +113,14 @@ export async function executeLearningVisual(
   messages: TutorContextMessage[],
   generate: GenerateText,
   onStage?: (stage: VisualGenerationStage) => void,
-  explanationContext = '',
+  teachingBrief?: VisualTeachingBrief,
 ): Promise<{ generated: GeneratedLearningVisual; request: ResolvedVisualRequest }> {
   const request = resolveVisualRequest(query, messages)
-  const preparedExplanation = compact(explanationContext, 4200)
-  const enrichedRequest = preparedExplanation
+  const preparedBrief = teachingBrief ? compact(visualTeachingContext(teachingBrief), 12_000) : ''
+  const enrichedRequest = preparedBrief
     ? {
       ...request,
-      effectiveRequest: `${request.effectiveRequest}\n【动画前置讲解上下文】${preparedExplanation}`,
+      effectiveRequest: `${request.effectiveRequest}\n【已校验视觉教学 Brief】${preparedBrief}`,
       contextEnriched: request.contextEnriched,
     }
     : request

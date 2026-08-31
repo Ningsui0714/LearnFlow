@@ -43,7 +43,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-30.10"
+    assert REGISTRY_VERSION == "2026-08-31.1"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -410,6 +410,25 @@ def test_agent_interface_ontology_separates_tools_harness_and_skills():
     assert runtime["interface_role"] == "harness"
     guided = next(skill for skill in manifest["skills"] if skill["id"] == "guided_explanation")
     assert guided["skill_kind"] == "pedagogical_method"
+
+
+def test_visual_generation_is_owned_by_a_registered_explanation_first_skill():
+    skill = SKILLS["visual_teaching_composition"]
+    assert SKILL_KINDS[skill.id] == "playbook"
+    assert skill.owner_agent == "learning_design_agent"
+    assert skill.learner_selectable is False
+    assert {"safe_visual_generation", "learning_diagram_generator", "learning_animation_generator"} <= set(skill.tools)
+    runtime = skill.runtime
+    assert runtime is not None
+    assert runtime.version == "visual-teaching-skill-runtime-v1"
+    assert [state.id for state in runtime.states] == [
+        "compose_explanation", "commit_explanation", "compile_visual_brief",
+        "render_visual", "bundle_ready_or_explanation_only",
+    ]
+    assert "VisualTeachingBundle" in runtime.output_objects
+    assert "explanation_only" in runtime.failure_policy
+    assert "no mastery inference" in runtime.evidence_policy
+    assert "commits an independently valid explanation" in TOOLS["safe_visual_generation"].write_path
 
 
 def test_remediation_events_have_standard_authority_provenance():

@@ -73,3 +73,24 @@ LearningTask + scoped context
 - 前端清单漂移由架构测试比较生成 JSON 与注册表。
 
 多轮评测衡量信号分类、状态转换、支架边界、单步推进、验证交接和零 target 边界。它是工程验收，不替代学生实验、知识前后测或长期保留率研究。
+
+## 5. 视觉教学 Playbook
+
+`visual_teaching_composition` 是 Learning Design Agent 拥有、Tutor 触发的内部 Playbook，不出现在学习方法选择器。它统一编排图解和动画，但不替代两个底层渲染 Tool：
+
+```text
+compose_explanation
+  -> commit_explanation
+  -> compile_visual_brief
+  -> render_visual
+  -> bundle_ready | explanation_only
+```
+
+- `TeachingExplanationArtifact` 必须在渲染前独立成立并提交；视觉失败不能改写或撤销它。
+- `VisualBrief` 固定包含主题、学习目标、稳定对象、真实关系、初末状态、步骤变化、不变量、误解与 claim boundary。
+- 动画至少包含两个有意义的状态变化；图解至少包含一个真实关系。
+- Tool 缺少已校验 Brief 时必须快速失败，不得从裸 query 私自恢复教学策略。
+- `explanation_only` 是成功保留教学现场的合法终态，不是占位视觉或伪成功。
+- 讲解、Brief、生成、观看与重播都是零 target 暴露，不构成 Knowledge / Practice 掌握证据。
+
+详细实现和故障注入矩阵见 `docs/implementation/VISUAL_TEACHING_SKILL.md`。

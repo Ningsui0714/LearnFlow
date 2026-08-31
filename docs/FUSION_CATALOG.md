@@ -29,6 +29,7 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 | 对话式学习方法 | `LearningSkillRun` + `LearningTask` + `learning_skill_runtime` | 清晰讲解/苏格拉底/费曼/示例渐隐在 Session 内有界运行并绑定原子任务；推荐需确认，独立验证才进入能力证据链 |
 | Teaching Contract 与内容门禁 | `Checkpoint.learning_contract` + `teaching_contract_gate` + `checkpoint_delivery_readiness` | Knowledge 通过可选 answer-free 输入契约辅助起点设计；包成熟度只由教学资产重建，任务就绪度只组合 learner-owned LearningTask；模型最多修订一次，失败仍交付答案安全 fallback，三者均不等同学习进度或掌握 |
 | 视频推荐与内容核验 | `learning_video_search` + `learning_video_inspector` + `learning_resource_curation` | 模型只看“搜索候选/核验本轮候选”两个目标级只读 ACI；平台 API、字幕和 ASR 留在 Harness，标题与热度不能替代内容核验，观看不形成掌握 |
+| 讲解优先的视觉教学 | `visual_teaching_composition` + diagram/animation generators | Playbook 先提交独立讲解并编译 VisualBrief，底层 Tool 只渲染；视觉失败合法降级为 `explanation_only`，不能撤销讲解或写掌握证据 |
 
 ## 已登记但未实现（optional_unimplemented）
 
