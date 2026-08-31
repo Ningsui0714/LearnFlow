@@ -69,6 +69,27 @@ MAX_MODEL_PROMPT_CHARS = 20_000
 MAX_MODEL_OUTPUT_CHARS = 32_000
 
 
+def _schema_constrained_prompt(prompt: str, schema: Mapping[str, Any]) -> str:
+    """Make the Host Port's validation contract visible to JSON-only models.
+
+    OpenAI-compatible providers commonly support ``json_object`` without
+    supporting server-side JSON Schema enforcement.  Supplying the exact
+    schema in the prompt keeps those providers on the same strict contract as
+    the post-generation validator instead of needlessly falling back after a
+    structurally useful response.
+    """
+
+    schema_text = json.dumps(
+        dict(schema), ensure_ascii=False, separators=(",", ":"), sort_keys=True,
+    )
+    return (
+        f"{prompt}\n\n"
+        "严格只返回一个符合下列 JSON Schema 的 JSON 对象；"
+        "不得把字符串数组改成对象数组，不得增加未声明字段。\n"
+        f"JSON Schema:\n{schema_text}"
+    )[:MAX_MODEL_PROMPT_CHARS]
+
+
 class PluginHostPortError(ValueError):
     def __init__(self, code: str, message: str, *, details: Mapping[str, Any] | None = None):
         super().__init__(message)
@@ -615,7 +636,7 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
     )
     try:
         response = await asyncio.wait_for(
-            llm.ainvoke([HumanMessage(content=prompt)]),
+            llm.ainvoke([HumanMessage(content=_schema_constrained_prompt(prompt, schema))]),
             timeout=min(180.0, max(1.0, settings.learning_task_plan_model_budget_seconds)),
         )
         raw = str(response.content or "")[:MAX_MODEL_OUTPUT_CHARS]

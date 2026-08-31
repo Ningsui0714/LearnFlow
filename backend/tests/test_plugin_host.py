@@ -16,6 +16,23 @@ from app.services.plugin_host import (
     rebuild_snapshot_object_index,
     register_builtin_workflow,
 )
+from app.services.plugin_host_ports import _schema_constrained_prompt
+
+
+def test_model_prompt_embeds_the_exact_json_schema_contract():
+    schema = {
+        "type": "object",
+        "properties": {"tools": {"type": "array", "items": {"type": "string"}}},
+        "required": ["tools"],
+        "additionalProperties": False,
+    }
+
+    prompt = _schema_constrained_prompt("生成学习任务", schema)
+
+    assert prompt.startswith("生成学习任务")
+    assert '"tools":{"items":{"type":"string"},"type":"array"}' in prompt
+    assert "不得把字符串数组改成对象数组" in prompt
+
 
 
 PLUGIN_ID = "test_generic_plugin"
