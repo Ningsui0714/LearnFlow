@@ -4,8 +4,6 @@ Contract impact（`2026-08-30.10`）：Tutor 与 Learning Design 的视觉交接
 
 Contract impact（`2026-08-30.9`）：Tutor 与 Learning Design 的用户可见异步工作采用统一分层预算。浏览器等待时间长于 Agent 回合，Agent 回合长于单次 provider/工具请求；普通解释、规划、带领学习、图解和动画分别按工作复杂度递增。后端内容生成、插件 runner、来源获取和模型连通性检查同步扩容，但所有路径仍有确定性硬上限，且重试、工具面、五核写入与掌握判定不变。密码哈希、数据库锁、代码执行和进程退出等安全/资源保护超时保持原值。
 
-Contract impact（`2026-08-30.7`）：官方产品插件统一定义为内置 Agent Package，而非本机可执行 Bundle。Agent、Product Skill、Tool、Workflow、Schema 与聊天 binding 随 LearnFlow 注册；通用宿主继续掌握项目 scope、Host Port、幂等、校验、快照与事件提交。岗位图谱默认走同进程 handler，不需要操作员开启 `trusted_signed_process`。签名 `.lfplugin` 与 JSON-RPC runner 只保留为第三方分发适配器；三类主 Agent、五核和掌握证据边界不变。
-
 Contract impact（`2026-08-30.6`）：Learning Design 的安全视觉 Harness 把 CNN 卷积过程纳入确定性 `convolution_trace`，并将长尾模型输出约束为 provider 原生 JSON object。只可本地修复尾逗号与相邻 JSON 容器之间的缺失逗号，所有标量、引用、语义、布局、安全与重放规则仍完整校验；失败后只有一次有预算的结构化修复。Tutor 以结构化主题锚点处理“演示一下”等省略表达，并对显式视觉意图执行单一视觉调用，失败后不切换形式或反复搜索视频。规划阶段和尝试诊断进入 Tool Run/轨迹，但不是学习证据，也不新增状态权威。
 
 Contract impact（`2026-08-30.4`）：学习设计视觉能力新增共享的上下文补全、三态确定性编译和一次结构化修复。浏览器与 Desktop 不再拥有两套视觉执行路径：两端共同运行 VisualSpec parser/compiler/verifier/renderer，Desktop 后端桥接仅为长尾候选提供有界模型文本。教学示例必须在标题、说明和无障碍摘要中披露，不能冒充学习者输入；缺失了部分关键参数的请求仍返回可追问失败。该变化不新增主 Agent，不改变五核、掌握判定或证据链。

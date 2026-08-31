@@ -25,9 +25,8 @@ from app.models.role_capability import (
     RoleCapabilitySnapshot,
 )
 from app.services.plugin_artifacts import canonical_json_bytes
-from app.services.plugin_host import artifact_store, canonical_hash
+from app.services.plugin_host import artifact_store, canonical_hash, import_plugin_release
 from app.services.role_capability_plugin import inspect_role_graph
-from app.services.role_capability_agent_package import register_role_capability_agent_package
 
 
 OFFICIAL_PUBLISHER_KEY = "learnflow_official"
@@ -39,13 +38,6 @@ ROLE_PLUGIN_ROOT_HASH = "8385913204acc20d6cdfa246bf0e2fc7a0be94df1cf4e5708a39a5c
 ROLE_OBJECT_SCHEMA = "role-capability.object.v1"
 
 
-# Official product plugins are Agent Packages linked directly into LearnFlow.
-# The signed bundle remains useful as immutable release metadata and as an
-# exportable third-party distribution artifact, but normal product execution
-# never depends on the optional native-process runner.
-register_role_capability_agent_package()
-
-
 def _repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -55,7 +47,7 @@ def bundled_role_plugin_path() -> Path:
 
 
 async def ensure_official_role_plugin_release(db: AsyncSession) -> PluginRelease:
-    """Install the repository-owned Agent Package without requiring a ZIP runner."""
+    """Trust the repository-owned key and import the immutable signed bundle."""
 
     publisher = (await db.execute(select(PluginPublisher).where(
         PluginPublisher.publisher_key == OFFICIAL_PUBLISHER_KEY,
@@ -84,52 +76,24 @@ async def ensure_official_role_plugin_release(db: AsyncSession) -> PluginRelease
     if existing:
         if existing.root_hash != ROLE_PLUGIN_ROOT_HASH:
             raise RuntimeError("bundled role plugin version has conflicting content")
-        # v22 initially installed the official product plugin through its
-        # optional signed export bundle.  Preserve the release/root identity
-        # while correcting its runtime classification in place.
-        existing.trust_state = "built_in"
         return existing
-
-    package_root = _repository_root() / "plugins" / ROLE_PLUGIN_ID
-    manifest_path = package_root / "manifest.json"
-    if not manifest_path.is_file():
-        raise RuntimeError(f"built-in role Agent Package is missing: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("plugin_id") != ROLE_PLUGIN_ID or manifest.get("version") != ROLE_PLUGIN_VERSION:
-        raise RuntimeError("built-in role Agent Package manifest conflicts with the architecture contract")
-
-    store = artifact_store()
-    manifest_artifact = store.put_json(manifest, name="manifest.json")
-    resources: dict[str, Any] = {}
-    for directory in ("schemas", "surfaces"):
-        for path in sorted((package_root / directory).rglob("*")):
-            if not path.is_file() or path.is_symlink():
-                continue
-            relative = path.relative_to(package_root).as_posix()
-            resources[relative] = store.put_bytes(
-                path.read_bytes(),
-                media_type="application/json" if path.suffix == ".json" else "application/octet-stream",
-                name=relative,
-            ).to_dict()
-    release = PluginRelease(
-        publisher_id=publisher.id,
-        plugin_id=ROLE_PLUGIN_ID,
-        version=ROLE_PLUGIN_VERSION,
-        package_protocol=str(manifest.get("protocol") or "learnflow.plugin-package.v1"),
-        manifest=manifest,
-        signature={"kind": "repository_built_in", "optional_export_root_hash": ROLE_PLUGIN_ROOT_HASH},
-        root_hash=ROLE_PLUGIN_ROOT_HASH,
-        package_artifact_uri=manifest_artifact.uri,
-        runner_artifacts={
-            "builtin_agent_package": "app.services.role_capability_agent_package",
-            "resources": resources,
-            "runners": {},
-        },
-        trust_state="built_in",
-        status="active",
+    if (
+        publisher.revoked_at is not None
+        or publisher.trust_status != "trusted"
+    ):
+        raise RuntimeError(
+            "LearnFlow official plugin publisher is not trusted; bundled release cannot be installed"
+        )
+    package_path = bundled_role_plugin_path()
+    if not package_path.is_file():
+        raise RuntimeError(f"bundled role plugin is missing: {package_path}")
+    release, _ = await import_plugin_release(
+        db,
+        package_path.read_bytes(),
+        filename=package_path.name,
     )
-    db.add(release)
-    await db.flush()
+    if release.root_hash != ROLE_PLUGIN_ROOT_HASH:
+        raise RuntimeError("bundled role plugin root hash does not match the architecture contract")
     return release
 
 

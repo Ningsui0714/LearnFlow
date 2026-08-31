@@ -337,7 +337,6 @@ def workflow_required_ports(
 
 
 def execution_boundary(*, adapter: str) -> dict[str, Any]:
-    built_in = adapter == "builtin_agent_package"
     return {
         "protocol": PLUGIN_HOST_PROTOCOL,
         "adapter": adapter,
@@ -348,26 +347,16 @@ def execution_boundary(*, adapter: str) -> dict[str, Any]:
         "cpu_isolation": False,
         "memory_isolation": False,
         "native_process_is_sandbox": False,
-        "in_process": built_in,
-        "operator_process_opt_in_required": not built_in,
-        "descendant_cleanup_guaranteed": built_in or platform.system().casefold() != "windows",
+        "descendant_cleanup_guaranteed": platform.system().casefold() != "windows",
         "process_tree_boundary": (
-            "learnflow_application_process"
-            if built_in
-            else (
-                "posix_process_group"
-                if platform.system().casefold() != "windows"
-                else "windows_best_effort_process_group"
-            )
+            "posix_process_group"
+            if platform.system().casefold() != "windows"
+            else "windows_best_effort_process_group"
         ),
         "host_port_call_limit": MAX_HOST_PORT_CALLS,
         "single_rpc_byte_limit": 256 * 1024,
         "total_output_byte_limit": MAX_TOOL_RESULT_BYTES,
-        "disclosure": (
-            "LearnFlow 内置 Agent Package；不启动外部插件进程"
-            if built_in
-            else "受信本机进程；签名不代表主机隔离"
-        ),
+        "disclosure": "受信本机进程；签名不代表主机隔离",
     }
 
 
@@ -613,7 +602,7 @@ async def _require_release_runnable(db: AsyncSession, release: PluginRelease) ->
         raise _error("plugin_release_unavailable", "plugin release is revoked or inactive", status_code=409)
     if release.trust_state not in {"trusted_signed", "untrusted_development", "built_in"}:
         raise _error("plugin_release_untrusted", "plugin release is not runnable", status_code=403)
-    if release.publisher_id is not None and release.trust_state != "built_in":
+    if release.publisher_id is not None:
         publisher = await db.get(PluginPublisher, release.publisher_id)
         if not publisher or publisher.trust_status == "revoked" or publisher.revoked_at is not None:
             raise _error("plugin_publisher_revoked", "plugin publisher is no longer trusted", status_code=403)
@@ -636,13 +625,6 @@ def publisher_view(row: PluginPublisher) -> dict[str, Any]:
 
 def release_view(row: PluginRelease) -> dict[str, Any]:
     manifest = dict(row.manifest or {})
-    workflow_ids = {
-        str(item.get("id") or "") for item in _manifest_items(manifest, "workflows")
-    }
-    built_in = bool(workflow_ids) and all(
-        (row.plugin_id, workflow_id) in _BUILTIN_WORKFLOWS
-        for workflow_id in workflow_ids
-    )
     return {
         "id": row.id,
         "plugin_id": row.plugin_id,
@@ -660,9 +642,7 @@ def release_view(row: PluginRelease) -> dict[str, Any]:
         "workflows": _manifest_items(manifest, "workflows"),
         "tools": _manifest_items(manifest, "tools"),
         "execution_boundary": execution_boundary(
-            adapter="builtin_agent_package"
-            if built_in or row.trust_state == "built_in"
-            else "trusted_signed_process"
+            adapter="builtin" if row.trust_state == "built_in" else "trusted_signed_process"
         ),
         "imported_at": row.imported_at.isoformat() if row.imported_at else None,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
@@ -1759,11 +1739,7 @@ async def execute_plugin_operation(
     # workflow schemas to expose this host-owned runtime envelope.
     effective_input["plugin_configuration"] = effective_configuration
 
-    adapter = (
-        "builtin_agent_package"
-        if (instance.plugin_id, workflow_id) in _BUILTIN_WORKFLOWS
-        else "trusted_signed_process"
-    )
+    adapter = "builtin" if (instance.plugin_id, workflow_id) in _BUILTIN_WORKFLOWS else "trusted_signed_process"
     run = PluginRun(
         learner_id=current.learner.id,
         project_id=project.id,

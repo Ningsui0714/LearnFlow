@@ -389,7 +389,7 @@ export default function ProjectPluginManager({ projectId, onChanged, onOpenPlugi
   return <div className="project-drawer-body project-plugin-manager">
     <div className="project-plugin-manager-boundary">
       <strong>插件运行边界</strong>
-      <p>LearnFlow 官方插件作为内置 Agent Package 运行，不需要开启本机插件进程。只有第三方原生 runner 才要求操作员显式开启 trusted_signed_process；签名只证明发布者与内容完整性，不代表安全隔离。</p>
+      <p>签名只证明发布者身份与包内容完整性，不代表安全隔离。当前文件系统、网络、密钥、CPU 和内存隔离均为 false；只有操作员显式开启 trusted_signed_process 后才能运行本机插件进程。</p>
     </div>
     {loading && <p className="project-drawer-empty">正在读取已安装插件目录…</p>}
     {loadError && <div className="project-plugin-card-error" role="alert">{loadError}</div>}

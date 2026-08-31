@@ -3,21 +3,17 @@
 状态：implemented
 包协议：`learnflow.plugin-package.v1`
 对象引用协议：`learnflow.plugin-object-ref.v1`
-架构注册表：`2026-08-30.7`
+架构注册表：`2026-08-30.3`
 
-本文规定 LearnFlow 插件的运行、持久化、可选分发和产品接入边界。插件的产品定义是 Agent Package：
-由 Agent、Skill、Tool、Workflow、Schema 与聊天 UI binding 组成。插件是项目作用域的领域能力扩展，
+本文规定 LearnFlow 插件的安装、运行、持久化和产品接入边界。插件是项目作用域的领域能力扩展，
 不是第四类主 Agent、第二套用户画像、任意代码注入机制或数据库扩展机制。核心注册表、项目 ownership、
 Action Board、EvidenceEvent gateway 和五核 reducer 始终由宿主控制。
 
-## 1. 产品 Package 与四层持久化对象
-
-官方 Agent Package 随 LearnFlow 构建加载，并在通用宿主登记同进程 handler。它不需要 ZIP、签名、平台
-runner 或操作员进程开关。以下四层描述的是安装/实例/数据版本，不是说每个产品插件都必须以外部进程存在：
+## 1. 四层对象
 
 | 层次 | 定义 | 是否承载领域事实 |
 |---|---|---|
-| Plugin Bundle | 可选的 `.lfplugin` 分发包；主要服务第三方安装、签名与跨部署传输 | 否 |
+| Plugin Bundle | 可安装的 `.lfplugin` 发布包，声明协议、能力、runner 和界面 | 否 |
 | Plugin Instance | 某 learner-owned Project 对已安装 release 的启用、固定版本、配置和 Host Port 授权 | 否 |
 | Plugin Snapshot | 一次通过宿主验证并提交的不可变领域数据版本 | 是 |
 | Plugin Object | 快照组件中的岗位、任务、能力、过程或其他领域对象 | 由 Snapshot 承载；索引只负责寻址 |
@@ -46,10 +42,9 @@ runner 或操作员进程开关。以下四层描述的是安装/实例/数据�
 
 数据库提交失败时，实例指针不移动；未被数据库引用的制品属于可回收孤儿，不得被读作已发布快照。
 
-## 2. 可选的 `.lfplugin` 分发包
+## 2. `.lfplugin` 包
 
-`learnflow.plugin-package.v1` 是第三方或可导出插件的 ZIP 分发容器；它不定义 LearnFlow 内置插件的运行形态。
-容器固定允许下列内容：
+`learnflow.plugin-package.v1` 是 ZIP 容器，固定允许下列内容：
 
 ```text
 <plugin>.lfplugin
@@ -83,7 +78,7 @@ runner 或操作员进程开关。以下四层描述的是安装/实例/数据�
 大小超限、组件 hash 不符、平台 runner 缺失、无效 SemVer/宿主范围、同版本内容冲突、核心 ID 覆盖、
 无效签名、已撤销发布者以及生产环境 unsigned 包。
 
-## 3. 外部分发的签名、信任与真实安全边界
+## 3. 签名、信任与真实安全边界
 
 `signature.json` 保存发布者 ID、key ID、Ed25519 签名和整个包的 canonical root hash。签名只证明：
 
@@ -95,8 +90,7 @@ runner 或操作员进程开关。以下四层描述的是安装/实例/数据�
 才能安装 unsigned 包，并且 Instance、Run 和 UI 必须持续标记“未受信开发包”。发布者或 release 撤销后，
 现有历史仍可读取，但立即阻止该 release 的任何新 workflow/tool run。
 
-内置 Agent Package 不经过本节的原生进程边界。外部执行支持所有部署形态，但默认关闭；操作员必须显式
-启用 `trusted_signed_process`。v1 对每次第三方原生运行都
+外部执行支持所有部署形态，但默认关闭。操作员必须显式启用 `trusted_signed_process`。v1 对每次运行都
 必须披露以下真实字段，界面和 API 不得隐藏或改写：
 
 ```json
@@ -113,9 +107,9 @@ runner 或操作员进程开关。以下四层描述的是安装/实例/数据�
 因此管理员承担“受信本机进程”风险；签名包不是沙箱。若未来采用 WASM 或 OCI，只替换 runner 隔离层，
 不得改变 Bundle、Instance、Snapshot、ObjectRef 或 Host Port 协议。
 
-## 4. 第三方 Runner 与 JSON-RPC
+## 4. Runner 与 JSON-RPC
 
-仅第三方原生插件 runner 使用 JSON-RPC 2.0 over stdin/stdout。每个 workflow 或 tool run 启动一个独立进程：
+插件 runner 使用 JSON-RPC 2.0 over stdin/stdout。每个 workflow 或 tool run 启动一个独立进程：
 
 - 根据当前平台从 `bin/<os-arch>/runner` 确定性选择入口；
 - 使用固定参数数组，不经 shell；
@@ -249,10 +243,11 @@ body。Surface 不允许 HTML、脚本、插件 CSS、任意 URL、动态 import
 
 项目内的插件操作沿用 Tutor 与项目上下文，不建立第二套路由或插件专属页面：
 
-- 左栏展示项目已启用插件；点击插件只选择既有项目 Tutor 对话及其 `PluginChatContext`。
-- Product Skill、插件状态和 workflow 确认入口位于 Composer 选项栏。
-- Surface 是聊天输入控件与工具输出 renderer 的声明，不在消息区顶部建立独立插件工作台。
-- 管理抽屉只负责安装、授权、配置、停用和升级；实例失效时聊天撤下相应工具与控件。
+- 左侧每个项目行的“插件”入口会复用或创建该项目的项目 Tutor 对话，并直接打开项目面板的“插件能力 / 管理”。
+- 项目 Tutor 顶部把“项目面板”和“插件能力”并列呈现；重复点击“插件能力”只会重新请求插件标签，不会关闭面板。
+- 项目面板导航分为“项目”和“插件能力”两组。启用实例在管理页提供“打开插件工作台”，宿主按 `plugin_id`
+  选择该插件当前 release 声明的第一个可用 Surface，而不是硬编码岗位插件或其他具体插件 ID。
+- Surface 因停用、撤销或升级而消失时，面板回退到“插件能力 / 管理”，避免停留在失效的动态标签。
 
 这组入口只改变宿主导航状态；权限、Surface 发现、workflow 运行与对象写入仍经过相同的通用插件 API 和宿主校验。
 
@@ -276,8 +271,7 @@ LearningAttempt / 已登记用户行为
 
 ## 11. 岗位能力图谱首插件
 
-内置 `role_capability_graph` Agent Package 是该协议的首个官方产品实现，owner 为 `learning_design_agent`；
-可选 `role_capability_graph.lfplugin` 只提供分发 envelope。Package 声明 role、task、
+官方 `role_capability_graph.lfplugin` 是该协议的首个实现，owner 为 `learning_design_agent`。它声明 role、task、
 capability、knowledge_skill、claim、semantic_edge、scenario、process_event、actor、work_object、artifact、risk、
 bridge 对象；`generate / explain / iterate / validate / upgrade` workflow；Product Skill
 `role_capability_graphing`；项目 Surface 和两个只读对话工具。

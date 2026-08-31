@@ -543,12 +543,10 @@ def test_snapshot_envelope_versions_configuration_even_when_components_match(cli
     assert new.provenance["host"]["configuration"] == {"max_items": 6}
 
 
-def test_publisher_revocation_is_admin_only_and_does_not_disable_built_in_packages(client: TestClient):
+def test_publisher_revocation_is_admin_only_and_blocks_new_project_runs(client: TestClient):
     project_id = _project(client)
     catalog = client.get(f"/api/projects/{project_id}/plugin-releases").json()["releases"]
     official = next(item for item in catalog if item["plugin_id"] == "role_capability_graph")
-    assert official["execution_boundary"]["adapter"] == "builtin_agent_package"
-    assert official["execution_boundary"]["operator_process_opt_in_required"] is False
     enabled = client.put(
         f"/api/projects/{project_id}/plugin-instances/role_capability_graph",
         json={
@@ -582,13 +580,12 @@ def test_publisher_revocation_is_admin_only_and_does_not_disable_built_in_packag
         )
         assert revoked.status_code == 200, revoked.text
         asyncio.run(set_legacy_role("user"))
-        visible = client.get(f"/api/projects/{project_id}/plugin-releases")
-        built_in = next(
-            item for item in visible.json()["releases"]
-            if item["plugin_id"] == "role_capability_graph"
+        hidden = client.get(f"/api/projects/{project_id}/plugin-releases")
+        assert all(
+            item["plugin_id"] != "role_capability_graph"
+            for item in hidden.json()["releases"]
         )
-        assert built_in["trust_state"] == "built_in"
-        generated = client.post(
+        blocked = client.post(
             f"/api/projects/{project_id}/plugin-instances/role_capability_graph/workflows/generate/runs",
             json={
                 "input": {"role_title": "安全工程师", "task_seeds": ["审计插件权限"]},
@@ -596,9 +593,9 @@ def test_publisher_revocation_is_admin_only_and_does_not_disable_built_in_packag
                 "expected_snapshot_id": None,
             },
         )
-        assert generated.status_code == 200, generated.text
-        assert generated.json()["run"]["execution_boundary"]["adapter"] == "builtin_agent_package"
-        assert client.get(f"/api/projects/{project_id}/plugin-surfaces").json()["surfaces"]
+        assert blocked.status_code == 403
+        assert blocked.json()["detail"]["code"] == "plugin_publisher_revoked"
+        assert client.get(f"/api/projects/{project_id}/plugin-surfaces").json()["surfaces"] == []
     finally:
         asyncio.run(set_legacy_role("admin"))
         restored = client.patch(

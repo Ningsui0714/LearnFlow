@@ -4,8 +4,6 @@ Contract impact（`2026-08-30.10`）：长尾图解/动画新增通用的请求�
 
 Contract impact（`2026-08-30.9`）：所有用户可见的 AI、检索、视觉规划、正式 API 与插件生成路径改用分层长预算，普通 Tutor 外层/Agent 内层为 420/360 秒，图解为 660/600 秒，动画为 780/720 秒，单次模型调用上限 180 秒；后端 Tutor、学习任务与微学习默认模型预算同步提高，插件运行上限为 600 秒。外层始终覆盖其拥有的内层工作，并保留最终回答余量；预算仍有硬上限，不改变重试次数、工具权限、Action Board、副作用确认、五核或 EvidenceEvent 语义。密码哈希、数据库锁、代码执行和进程终止等资源保护超时不随之放大。完整矩阵见 `docs/implementation/INTERACTIVE_LATENCY_BUDGETS.md`。
 
-Contract impact（`2026-08-30.7`）：纠正插件产品定义与外部分发机制的混层。LearnFlow 官方插件现在是随应用加载的内置 Agent Package，由 Agent、Product Skill、Tool、Workflow、Schema 和聊天 UI binding 组成；岗位图谱的 `generate / explain / iterate / validate / upgrade` 注册为同进程 handler，默认配置下不启动本机插件进程，也不依赖 `PLUGIN_EXECUTION_MODE`。通用 Plugin Host 继续确定性负责项目权限、Host Port、输入输出 schema、幂等、快照校验、ObjectIndex、提交和零目标事件。`.lfplugin`、Ed25519 签名、JSON-RPC runner 与 `trusted_signed_process` 保留为可选的第三方分发/执行适配器，不再定义官方插件的产品形态。既有 PluginInstance、Snapshot、ObjectRef、API、聊天 UI、三类主 Agent、五核与 EvidenceEvent 语义保持兼容，无数据库迁移。
-
 Contract impact（`2026-08-30.6`）：安全视觉能力新增 `convolution_trace` 确定性语义，可从小型输入矩阵、卷积核、步长与偏置计算滑窗乘加、ReLU 和最大池化，并生成稳定可重放时间线；概念级 CNN 请求使用明确披露的固定教学示例，零模型调用。长尾规划统一请求 provider 原生 JSON object，解析失败时只允许不改变标量内容的尾逗号/相邻容器逗号修复，之后仍至多一次模型修复。Tool Run 新增阶段进度、每次尝试的预算/耗时/结果/错误分类和标点修复标记；省略请求使用结构化有界主题锚点，显式动画或图解每轮只执行所请求的一类视觉工具，失败后不漂移到另一视觉形式或重复视频搜索。稳定工具 ID、VisualSpec v3、三类主 Agent、五核、EvidenceEvent 与掌握语义保持兼容，无数据库迁移。
 
 Contract impact（`2026-08-30.5`）：插件的学习者入口改为 Tutor 对话内能力。项目左栏展示已启用插件并为既有项目 Tutor 选择 `PluginChatContext`；插件选择、Product Skill、固定快照、生成/解释/迭代入口位于 Composer 对话选项栏，通用 discovery/call 工具仍是模型唯一只读入口。岗位插件的雷达图、事理森林和可展开对象卡片只作为 Tutor 工具消息的受管 Snapshot 投影出现，不另存领域事实，也不在消息区顶部形成独立工作台。生成与迭代由选项栏中的确认卡触发既有 workflow，管理抽屉仅保留安装、授权、配置和版本。三类主 Agent、五核、EvidenceEvent、核心对象写入与插件 Host Port 协议均不变。

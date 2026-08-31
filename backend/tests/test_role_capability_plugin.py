@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.db.database import async_session
-from app.core.config import settings
 from app.main import app
 from app.models.learning import EvidenceEvent, KernelMutation
 from app.models.plugin import (
@@ -42,7 +41,6 @@ from app.services.role_capability_plugin import (
     explain_role_graph,
     inspect_role_graph,
 )
-from app.services.plugin_runner import PluginProcessBroker
 
 
 @pytest.fixture(scope="module")
@@ -253,42 +251,6 @@ def test_project_plugin_generation_explanation_iteration_and_idempotency(client:
     assert all(run.execution_boundary["network_isolation"] is False for run in runs)
 
 
-def test_official_agent_package_runs_when_native_plugin_execution_is_disabled(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(settings, "plugin_execution_mode", "disabled")
-
-    async def reject_native_runner(*_args, **_kwargs):
-        raise AssertionError("official Agent Package must not start the native runner")
-
-    monkeypatch.setattr(PluginProcessBroker, "run", reject_native_runner)
-    created = client.post("/api/vnext-projects", json={
-        "name": f"内置岗位包 {uuid.uuid4().hex[:6]}",
-        "objective": "验证官方插件默认可运行",
-        "expected_outcome": "形成岗位快照",
-        "user_level": "intermediate",
-    })
-    assert created.status_code == 200, created.text
-    project_id = created.json()["project"]["id"]
-    generated = client.post(f"/api/role-capability/projects/{project_id}/generate", json={
-        "role_title": "大模型应用工程师",
-        "task_seeds": ["设计并验证 Agent 工具契约"],
-        "source_ids": [],
-        "idempotency_key": f"builtin-agent-package-{uuid.uuid4().hex}",
-    })
-    assert generated.status_code == 200, generated.text
-
-    async def load_run():
-        async with async_session() as db:
-            return await db.get(PluginRun, generated.json()["run_id"])
-
-    run = asyncio.run(load_run())
-    assert run is not None
-    assert run.execution_boundary["adapter"] == "builtin_agent_package"
-    assert run.execution_boundary["operator_process_opt_in_required"] is False
-    assert run.execution_boundary["in_process"] is True
-
-
 def test_bundled_release_is_installed_and_legacy_rows_migrate_idempotently(
     client: TestClient,
 ):
@@ -307,11 +269,7 @@ def test_bundled_release_is_installed_and_legacy_rows_migrate_idempotently(
             assert project is not None
             release = await ensure_official_role_plugin_release(db)
             assert release.root_hash == ROLE_PLUGIN_ROOT_HASH
-            assert release.trust_state == "built_in"
-            assert release.runner_artifacts["runners"] == {}
-            assert release.runner_artifacts["builtin_agent_package"].endswith(
-                "role_capability_agent_package"
-            )
+            assert release.trust_state == "trusted_signed"
 
             package = RoleCapabilityPackage(
                 learner_id=project.learner_id,
