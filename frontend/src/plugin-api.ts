@@ -4,6 +4,15 @@ import type { TutorMode } from './tutor.ts'
 export const LEARNFLOW_PLUGIN_API_VERSION = 'learnflow.plugin-api.v1' as const
 export const LEARNFLOW_PLUGIN_OBJECT_VERSION = 'learnflow.plugin-object.v1' as const
 
+/** Propagate the loader's package fingerprint through server-side plugin dependencies. */
+export function versionedPluginModuleUrl(relativePath: string, parentUrl: string) {
+  const parent = new URL(parentUrl)
+  const target = new URL(relativePath, parent)
+  const version = parent.searchParams.get('v')
+  if (version) target.searchParams.set('v', version)
+  return target.href
+}
+
 export type PluginJson = null | boolean | number | string | PluginJson[] | { [key: string]: PluginJson }
 
 export type PluginJsonSchema = {

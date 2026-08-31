@@ -89,6 +89,10 @@ client.tsx      renderer components，导出 default 或 plugin
 列表。包必须通过 `defineLearnFlowPlugin()` / `defineLearnFlowPluginClient()` 暴露贡献。缺少目录等价于没有
 安装插件，不改变 Tutor 核心行为。
 
+开发态服务端以整个插件目录的文件指纹作为加载版本，并由 `versionedPluginModuleUrl()` 把同一版本令牌传给
+插件内部动态依赖。这样 manifest、runtime 与共享常量只会作为同一依赖图切换，不会把新入口和旧模块缓存
+混合。生产态仍在进程生命周期内只加载一次不可变目录。
+
 客户端包还可以声明 `name / description / icon` 展示元数据。通用 `PluginCapabilityPicker` 根据同一个构建时发现结果在
 对话选项栏呈现插件，选择只形成当前对话的 `activePluginIds`；宿主不按插件 ID 添加按钮、文案或状态分支。
 

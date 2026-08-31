@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import test from 'node:test'
 import {
   defineLearnFlowPlugin,
@@ -7,7 +11,7 @@ import {
   LearnFlowPluginRegistry,
 } from '../src/plugin-api.ts'
 import { runTutorAgentTurn } from './agent-runtime.ts'
-import { createLearnFlowPluginRegistryProvider } from './plugin-loader.ts'
+import { createLearnFlowPluginRegistryProvider, loadLearnFlowPluginRegistry } from './plugin-loader.ts'
 
 function fixturePlugin(options: { id?: string; defaultEnabled?: boolean } = {}) {
   const id = options.id || 'fixture_graph'
@@ -72,6 +76,34 @@ test('development registry provider refreshes while production keeps one immutab
   })
   assert.equal(await production.get(), await production.get())
   assert.equal(productionLoads, 1)
+})
+
+test('development reload invalidates a plugin dependency graph atomically', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'learnflow-plugin-reload-'))
+  const directory = join(root, 'reload_graph')
+  await mkdir(directory)
+  const pluginApiUrl = pathToFileURL(resolve(process.cwd(), 'src/plugin-api.ts')).href
+  await writeFile(join(directory, 'server.mjs'), `
+    import { defineLearnFlowPlugin, LEARNFLOW_PLUGIN_API_VERSION, versionedPluginModuleUrl } from ${JSON.stringify(pluginApiUrl)}
+    const { rendererId } = await import(versionedPluginModuleUrl('./shared.mjs', import.meta.url))
+    export default defineLearnFlowPlugin({
+      manifest: {
+        apiVersion: LEARNFLOW_PLUGIN_API_VERSION, id: 'reload_graph', name: 'Reload Graph', version: '1.0.0', description: 'Reload fixture.',
+        objects: [], tools: [], skills: [], renderers: [{ id: rendererId, title: 'Renderer', description: 'Reload fixture renderer.' }],
+      }, handlers: {},
+    })
+  `)
+  try {
+    await writeFile(join(directory, 'shared.mjs'), `export const rendererId = 'radar_first'\n`)
+    const first = await loadLearnFlowPluginRegistry(root)
+    assert.deepEqual(first.packages[0].manifest.renderers.map(item => item.id), ['radar_first'])
+
+    await writeFile(join(directory, 'shared.mjs'), `export const rendererId = 'radar_second_version'\n`)
+    const second = await loadLearnFlowPluginRegistry(root)
+    assert.deepEqual(second.packages[0].manifest.renderers.map(item => item.id), ['radar_second_version'])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('plugin contributions are namespaced and inactive packages expose no tools or skills', () => {

@@ -4,15 +4,16 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   LEARNFLOW_PLUGIN_OBJECT_VERSION,
+  versionedPluginModuleUrl,
   type LearnFlowPluginObject,
   type PluginJson,
   type PluginToolResult,
 } from '../../src/plugin-api.ts'
-import {
+const {
   ROLE_CAPABILITY_PLUGIN,
   ROLE_OBJECT_SCHEMA_VERSION,
   ROLE_RENDERERS,
-} from './shared.ts'
+} = await import(versionedPluginModuleUrl('./shared.ts', import.meta.url)) as typeof import('./shared.ts')
 
 type JsonObject = Record<string, PluginJson>
 

@@ -1,16 +1,19 @@
 import {
   defineLearnFlowPlugin,
   LEARNFLOW_PLUGIN_API_VERSION,
+  versionedPluginModuleUrl,
   type PluginJson,
   type PluginJsonSchema,
 } from '../../src/plugin-api.ts'
-import { packageSelector, rolePackageRuntime } from './runtime.ts'
-import {
+const { packageSelector, rolePackageRuntime } = await import(
+  versionedPluginModuleUrl('./runtime.ts', import.meta.url)
+) as typeof import('./runtime.ts')
+const {
   ROLE_CAPABILITY_PLUGIN,
   ROLE_OBJECT_SCHEMA_VERSION,
   ROLE_OBJECT_TYPES,
   ROLE_RENDERERS,
-} from './shared.ts'
+} = await import(versionedPluginModuleUrl('./shared.ts', import.meta.url)) as typeof import('./shared.ts')
 
 const selectorProperties = {
   packageId: { type: 'string', maxLength: 220, description: '可选的精确岗位包 ID；安装多个包时必须用于消歧。' },
