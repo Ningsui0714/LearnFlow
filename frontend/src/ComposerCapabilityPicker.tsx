@@ -22,6 +22,7 @@ type ComposerCapabilityPickerProps = {
   toolDisabled: boolean
   sourceCount: number
   sourceKind: 'conversation' | 'project'
+  learningTaskAvailable: boolean
   onSkillChange: (choice: ComposerLearningSkillChoice) => void
   onToolChange: (choice: TutorToolChoice) => void
 }
@@ -47,6 +48,7 @@ const TOOL_META: Record<TutorToolChoice, { glyph: string; purpose: string }> = {
   search: { glyph: '⌕', purpose: '用于检索公开网页资料' },
   image: { glyph: '◇', purpose: '用静态图解组织关系与步骤' },
   animation: { glyph: '▷', purpose: '用分步动画演示变化过程' },
+  learning_task: { glyph: '✦', purpose: '把下一条消息转成可执行任务步骤并在工作台打开' },
 }
 
 function Chevron() {
@@ -67,6 +69,7 @@ export default function ComposerCapabilityPicker({
   toolDisabled,
   sourceCount,
   sourceKind,
+  learningTaskAvailable,
   onSkillChange,
   onToolChange,
 }: ComposerCapabilityPickerProps) {
@@ -97,18 +100,24 @@ export default function ComposerCapabilityPicker({
       status: formalSkillRunActive && skillChoice !== skillId ? '切换' : undefined,
     })),
   ]
-  const toolOptions: PickerOption<TutorToolChoice>[] = TOOL_CHOICE_IDS.map(choice => ({
-    value: choice,
-    label: choice === 'domain' ? sourceLabel : TOOL_CHOICE_LABELS[choice],
-    purpose: choice === 'domain'
-      ? sourceCount > 0
-        ? `使用已附加的 ${sourceCount} 项${sourceLabel}`
-        : `尚无${sourceLabel}，请先通过“＋资料”添加`
-      : TOOL_META[choice].purpose,
-    glyph: TOOL_META[choice].glyph,
-    disabled: choice === 'domain' && sourceCount === 0,
-    status: choice === 'domain' && sourceCount === 0 ? '未附加' : undefined,
-  }))
+  const toolOptions: PickerOption<TutorToolChoice>[] = TOOL_CHOICE_IDS.map(choice => {
+    const domainUnavailable = choice === 'domain' && sourceCount === 0
+    const learningTaskUnavailable = choice === 'learning_task' && !learningTaskAvailable
+    return {
+      value: choice,
+      label: choice === 'domain' ? sourceLabel : TOOL_CHOICE_LABELS[choice],
+      purpose: choice === 'domain'
+        ? sourceCount > 0
+          ? `使用已附加的 ${sourceCount} 项${sourceLabel}`
+          : `尚无${sourceLabel}，请先通过“＋资料”添加`
+        : learningTaskUnavailable
+          ? '请先进入已启用任务转化插件的学习项目'
+          : TOOL_META[choice].purpose,
+      glyph: TOOL_META[choice].glyph,
+      disabled: domainUnavailable || learningTaskUnavailable,
+      status: domainUnavailable ? '未附加' : learningTaskUnavailable ? '需项目' : undefined,
+    }
+  })
 
   const selectedSkill = skillOptions.find(option => option.value === skillChoice) || skillOptions[0]
   const selectedTool = toolOptions.find(option => option.value === toolChoice) || toolOptions[0]

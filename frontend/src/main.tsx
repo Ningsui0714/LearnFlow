@@ -41,7 +41,7 @@ import {
 import VisualArtifact from './VisualArtifact'
 import RoleCapabilityChatPlugin, { RoleCapabilityArtifactView } from './RoleCapabilityChatPlugin'
 import { pluginChatContext, pluginChatGlyph, type PluginChatContext, type RoleCapabilityChatArtifact } from './plugin-chat'
-import { loadProjectPluginSurfaces, type ProjectPluginSurface } from './plugin-runtime'
+import { loadProjectPluginSurfaces, runProjectPluginWorkflow, type ProjectPluginSurface } from './plugin-runtime'
 import { activateRoleCapabilityForTutor } from './role-capability-tutor'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
@@ -1566,6 +1566,119 @@ function App({ auth }: { auth: AuthGateSession }) {
     })
   }
 
+  const runLearningTaskComposerTool = async (conversation: Conversation, rawTitle: string) => {
+    const title = rawTitle.trim()
+    if (!title || pendingTurns[conversation.id]) return
+    const projectId = conversation.projectId
+    const sheetId = conversation.activeSheetId
+    const draftKey = surfaceKey(conversation.id, sheetId)
+    const now = Date.now()
+    const mode = conversation.mode
+
+    if (!projectId) {
+      setFormalError('学习型任务转化需要在已启用该插件的学习项目对话中使用。')
+      return
+    }
+
+    setPendingTurns(previous => ({ ...previous, [conversation.id]: mode }))
+    setDrafts(previous => ({ ...previous, [draftKey]: '' }))
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(item => {
+        if (item.id !== conversation.id) return item
+        const firstStudentMessage = !item.messages.some(message => message.role === 'user')
+        const userMessage: Message = {
+          id: uid('message'), role: 'user', content: title, createdAt: now, tutorMode: mode,
+        }
+        return {
+          ...item,
+          title: sheetId === 'main' && firstStudentMessage ? title.slice(0, 22) : item.title,
+          updatedAt: now,
+          messages: sheetId === 'main' ? [...item.messages, userMessage] : item.messages,
+          sheets: sheetId === 'main' ? item.sheets : item.sheets.map(sheet => (
+            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, userMessage] } : sheet
+          )),
+        }
+      }),
+    }))
+
+    try {
+      const surfaces = (pluginSurfacesByProject[projectId] || []).length
+        ? pluginSurfacesByProject[projectId]
+        : await refreshProjectPluginSurfaces(projectId)
+      const surface = surfaces.find(item => item.plugin_id === 'learning_task_conversion')
+      if (!surface) throw new Error('当前项目尚未启用学习型任务转化插件')
+      await runProjectPluginWorkflow(
+        projectId,
+        surface,
+        'generate',
+        { task_title: title },
+        { idempotencyKey: `composer-learning-task:${conversation.id}:${now}` },
+      )
+      const refreshed = await refreshProjectPluginSurfaces(projectId)
+      const refreshedSurface = refreshed.find(item => item.plugin_id === 'learning_task_conversion') || surface
+      const assistantMessage: Message = {
+        id: uid('message'), role: 'assistant', createdAt: Date.now(), tutorMode: mode,
+        content: `已将“${title}”转成学习型任务步骤，并在中间工作台打开。规划产物不等于掌握证据。`,
+        toolRuns: [{
+          id: `learning-task-tool:${now}`,
+          kind: 'project',
+          status: 'completed',
+          title: '学习型任务转化',
+          detail: '已通过项目插件宿主生成新的固定快照，并打开中央任务工作台。',
+          durationMs: Date.now() - now,
+          toolName: 'learning_task_conversion:generate',
+          inputSummary: title,
+          observationSummary: '任务步骤、产物、验收依据及知识技能映射已生成；没有写入掌握状态。',
+        }],
+      }
+      setWorkspace(previous => ({
+        ...previous,
+        conversations: previous.conversations.map(item => item.id !== conversation.id ? item : {
+          ...item,
+          updatedAt: Date.now(),
+          messages: sheetId === 'main' ? [...item.messages, assistantMessage] : item.messages,
+          sheets: sheetId === 'main' ? item.sheets : item.sheets.map(sheet => (
+            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, assistantMessage] } : sheet
+          )),
+        }),
+      }))
+      openTab({
+        id: `plugin:${projectId}:learning_task_conversion`,
+        kind: 'learning-task-plugin',
+        title: refreshedSurface.title || '学习型任务转化',
+        projectId,
+        pluginId: refreshedSurface.plugin_id,
+      })
+      setProjectPanelRequest(closeProjectPanel)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '学习型任务转化失败'
+      const systemMessage: Message = {
+        id: uid('message'), role: 'system', createdAt: Date.now(), tutorMode: mode,
+        content: `学习型任务转化失败：${detail}`,
+      }
+      setWorkspace(previous => ({
+        ...previous,
+        conversations: previous.conversations.map(item => item.id !== conversation.id ? item : {
+          ...item,
+          updatedAt: Date.now(),
+          messages: sheetId === 'main' ? [...item.messages, systemMessage] : item.messages,
+          sheets: sheetId === 'main' ? item.sheets : item.sheets.map(sheet => (
+            sheet.id === sheetId ? { ...sheet, messages: [...sheet.messages, systemMessage] } : sheet
+          )),
+        }),
+      }))
+      setFormalError(detail)
+    } finally {
+      setPendingTurns(previous => {
+        const next = { ...previous }
+        delete next[conversation.id]
+        return next
+      })
+      setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
+    }
+  }
+
   const runTutorTurn = async (
     conversationId: string,
     rawContent: string,
@@ -1981,7 +2094,12 @@ function App({ auth }: { auth: AuthGateSession }) {
     const conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) return
     const draftKey = surfaceKey(conversationId, conversation.activeSheetId)
-    await runTutorTurn(conversationId, drafts[draftKey] || '')
+    const draft = drafts[draftKey] || ''
+    if (toolChoices[draftKey] === 'learning_task') {
+      await runLearningTaskComposerTool(conversation, draft)
+      return
+    }
+    await runTutorTurn(conversationId, draft)
   }
 
   const updateLearningTask = async (
@@ -3210,6 +3328,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                   toolDisabled={Boolean(pendingMode)}
                   sourceCount={attachedSources.length}
                   sourceKind={conversation.projectId ? 'project' : 'conversation'}
+                  learningTaskAvailable={Boolean(conversation.projectId && (pluginSurfacesByProject[conversation.projectId] || []).some(surface => surface.plugin_id === 'learning_task_conversion'))}
                   onSkillChange={choice => selectLearningSkill(conversation.id, choice)}
                   onToolChange={choice => setToolChoices(previous => ({ ...previous, [draftKey]: choice }))}
                 />

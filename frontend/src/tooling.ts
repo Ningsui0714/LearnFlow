@@ -2,7 +2,7 @@ import type { LearningPathPlanProposal, PersonalPathNodeProposal } from './learn
 import type { ProjectLearningFileProposal, ProjectRoadmapProposal } from './project.ts'
 import type { RoleCapabilityChatArtifact } from './plugin-chat.ts'
 
-export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation'
+export type TutorToolChoice = 'auto' | 'domain' | 'search' | 'image' | 'animation' | 'learning_task'
 
 export type SearchSource = {
   id?: string
@@ -138,8 +138,9 @@ export const TOOL_CHOICE_LABELS: Record<TutorToolChoice, string> = {
   search: '联网搜索',
   image: '生成图解',
   animation: '生成动画',
+  learning_task: '学习型任务转化',
 }
 
 export function isTutorToolChoice(value: unknown): value is TutorToolChoice {
-  return value === 'auto' || value === 'domain' || value === 'search' || value === 'image' || value === 'animation'
+  return value === 'auto' || value === 'domain' || value === 'search' || value === 'image' || value === 'animation' || value === 'learning_task'
 }
