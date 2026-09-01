@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-31.7"
+REGISTRY_VERSION = "2026-09-01.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -244,8 +244,8 @@ PLUGIN_EXTENSION_POINTS = {
         ),
         PluginExtensionPointContract(
             "tool_renderer", "trusted client component selected by a declared renderer id", "tutor_agent",
-            "plugin_id:renderer_id", "renderer receives the validated tool result and has no tool or state-write capability",
-            ("no_html_injection", "no_script_payload", "generic_fallback_required", "conversation_output_only"),
+            "plugin_id:renderer_id", "renderer receives the validated tool result and can only request draft references or a read-only paper projection",
+            ("no_html_injection", "no_script_payload", "generic_fallback_required", "conversation_output_only", "prompt_reference_only", "paper_projection_only"),
             ("frontend:plugin.renderer", "frontend:plugin.picker"),
         ),
     )

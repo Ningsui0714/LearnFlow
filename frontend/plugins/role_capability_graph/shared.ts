@@ -1,8 +1,8 @@
 export const ROLE_CAPABILITY_PLUGIN = {
   id: 'role_capability_graph',
   name: '岗位图谱',
-  version: '1.1.0',
-  description: '在 Tutor 对话中一次读取岗位概览，并继续探索能力雷达、关系图、事理森林、证据与版本。',
+  version: '1.2.0',
+  description: '在 Tutor 对话中交互阅读岗位快照，切换全景、能力雷达与卡片，并继续探索关系、事理、证据与版本。',
   icon: '岗',
 } as const
 

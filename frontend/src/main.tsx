@@ -40,6 +40,12 @@ import {
 } from './learning'
 import VisualArtifact from './VisualArtifact'
 import PluginToolResultView from './PluginToolResultView'
+import {
+  PLUGIN_OBJECT_DRAG_TYPE,
+  parsePluginObjectDragData,
+  pluginObjectReferenceText,
+  type LearnFlowPluginObject,
+} from './plugin-api'
 import PluginCapabilityPicker from './PluginCapabilityPicker'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
@@ -162,6 +168,7 @@ type Message = {
   persistedByTutor?: boolean
   streaming?: boolean
   streamingPhase?: string
+  pluginResultProjection?: boolean
 }
 
 type LiveTurn = {
@@ -558,6 +565,7 @@ function WorkspaceIcon({ kind }: { kind: WorkspaceTab['kind'] }) {
 function App({ auth }: { auth: AuthGateSession }) {
   const [workspace, setWorkspace] = useState<PersistedState>(() => restoreState(auth.account.learner_id))
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [pluginDraftReferences, setPluginDraftReferences] = useState<Record<string, LearnFlowPluginObject[]>>({})
   const [toolChoices, setToolChoices] = useState<Record<string, TutorToolChoice>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null)
@@ -1003,6 +1011,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     setDrafts(previous => {
       return Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(`${conversationId}:`)))
     })
+    setPluginDraftReferences(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(`${conversationId}:`))))
     setToolChoices(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => !key.startsWith(`${conversationId}:`))))
     setPendingTurns(previous => {
       const next = { ...previous }
@@ -1044,6 +1053,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     }))
     const deletedSurface = surfaceKey(conversationId, sheetId)
     setDrafts(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== deletedSurface)))
+    setPluginDraftReferences(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== deletedSurface)))
     setToolChoices(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== deletedSurface)))
     setPendingSheetDelete(null)
   }
@@ -1094,6 +1104,48 @@ function App({ auth }: { auth: AuthGateSession }) {
           ? { ...conversation, sheets: [...conversation.sheets, sheet], activeSheetId: sheet.id, updatedAt: Date.now() }
           : conversation
       )),
+    }))
+  }
+
+  const addPluginDraftReference = (draftKey: string, object: LearnFlowPluginObject) => {
+    setPluginDraftReferences(previous => {
+      const current = previous[draftKey] || []
+      const key = `${object.pluginId}:${object.objectType}:${object.objectId}:${object.schemaVersion}`
+      if (current.some(item => `${item.pluginId}:${item.objectType}:${item.objectId}:${item.schemaVersion}` === key)) return previous
+      return { ...previous, [draftKey]: [...current, object].slice(-12) }
+    })
+  }
+
+  const openPluginResultPaper = (conversationId: string, sourceMessageId: string, run: TutorToolRun) => {
+    if (!run.plugin) return
+    setPaperDeskView(null)
+    setWorkspace(previous => ({
+      ...previous,
+      conversations: previous.conversations.map(conversation => {
+        if (conversation.id !== conversationId) return conversation
+        const existing = conversation.sheets.find(sheet => sheet.messages.some(message => (
+          message.pluginResultProjection && message.toolRuns?.some(candidate => candidate.id === run.id)
+        )))
+        if (existing) return { ...conversation, activeSheetId: existing.id, updatedAt: Date.now() }
+        const snapshotLabel = run.plugin?.result.objects?.[0]?.label || run.title
+        const sheet: FollowUpSheet = {
+          id: uid('sheet'),
+          title: snapshotLabel.slice(0, 28),
+          quote: `插件快照：${snapshotLabel}`,
+          sourceMessageId,
+          parentSheetId: conversation.activeSheetId || 'main',
+          messages: [{
+            id: uid('message'),
+            role: 'assistant',
+            content: '这是主对话中该次插件工具结果的只读投影。',
+            createdAt: Date.now(),
+            toolRuns: [run],
+            pluginResultProjection: true,
+          }],
+          createdAt: Date.now(),
+        }
+        return { ...conversation, sheets: [...conversation.sheets, sheet], activeSheetId: sheet.id, updatedAt: Date.now() }
+      }),
     }))
   }
 
@@ -1763,7 +1815,14 @@ function App({ auth }: { auth: AuthGateSession }) {
     const conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) return
     const draftKey = surfaceKey(conversationId, conversation.activeSheetId)
-    await runTutorTurn(conversationId, drafts[draftKey] || '')
+    const references = pluginDraftReferences[draftKey] || []
+    const message = (drafts[draftKey] || '').trim() || (references.length ? '请解释我引用的插件对象。' : '')
+    const content = references.length
+      ? `${message}\n\n引用插件对象（固定到产生它们的 ToolRun）：\n${references.map(pluginObjectReferenceText).join('\n')}`
+      : message
+    if (!content.trim()) return
+    setPluginDraftReferences(previous => ({ ...previous, [draftKey]: [] }))
+    await runTutorTurn(conversationId, content)
   }
 
   const updateLearningTask = async (
@@ -2372,6 +2431,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     const sheet = activeSheet(conversation)
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
+    const draftPluginObjects = pluginDraftReferences[draftKey] || []
     const pages = [
       { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '', sourceMessageId: '', artifact: undefined as PaperArtifact | undefined },
       ...conversation.sheets.map((item, index) => ({
@@ -2649,6 +2709,8 @@ function App({ auth }: { auth: AuthGateSession }) {
                   <MessageList
                     messages={messages}
                     onPluginPrompt={prompt => setDrafts(previous => ({ ...previous, [draftKey]: prompt }))}
+                    onPluginReference={object => addPluginDraftReference(draftKey, object)}
+                    onOpenPluginResult={(run, sourceMessageId) => openPluginResultPaper(conversation.id, sourceMessageId, run)}
                     onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
                     onAcceptPathProposal={acceptPersonalPathNode}
                     onAcceptPathPlan={acceptLearningPathPlan}
@@ -2875,9 +2937,41 @@ function App({ auth }: { auth: AuthGateSession }) {
                 ))}
               </div>
             )}
+            {draftPluginObjects.length > 0 && <div className="composer-plugin-references" aria-label="已引用的插件对象">
+              {draftPluginObjects.map(object => <span key={`${object.pluginId}:${object.objectType}:${object.objectId}`}>
+                <i>↳</i>
+                <strong>{object.label}</strong>
+                <small>{object.objectType}</small>
+                <button type="button" onClick={() => setPluginDraftReferences(previous => ({
+                  ...previous,
+                  [draftKey]: (previous[draftKey] || []).filter(item => !(
+                    item.pluginId === object.pluginId && item.objectType === object.objectType && item.objectId === object.objectId
+                  )),
+                }))} aria-label={`移除插件对象引用${object.label}`}>×</button>
+              </span>)}
+            </div>}
             <textarea
               value={drafts[draftKey] || ''}
               onChange={event => setDrafts(previous => ({ ...previous, [draftKey]: event.target.value }))}
+              onDragOver={event => {
+                if (event.dataTransfer.types.includes(PLUGIN_OBJECT_DRAG_TYPE)) {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'copy'
+                }
+              }}
+              onDrop={event => {
+                const raw = event.dataTransfer.getData(PLUGIN_OBJECT_DRAG_TYPE)
+                if (!raw) return
+                event.preventDefault()
+                const candidate = parsePluginObjectDragData(raw)
+                const object = candidate && messages.flatMap(message => message.toolRuns || [])
+                  .flatMap(run => run.plugin?.result.objects || [])
+                  .find(item => item.pluginId === candidate.pluginId
+                    && item.objectType === candidate.objectType
+                    && item.objectId === candidate.objectId
+                    && item.schemaVersion === candidate.schemaVersion)
+                if (object) addPluginDraftReference(draftKey, object)
+              }}
               disabled={Boolean(pendingMode)}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {
@@ -2969,7 +3063,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                 />
                 <span className="composer-shortcut-hint">Shift + Enter 换行</span>
               </div>
-              <button type="submit" disabled={Boolean(pendingMode) || !(drafts[draftKey] || '').trim()} aria-label={pendingMode ? 'Tutor 回复中' : '发送消息'}>{pendingMode ? '…' : '↑'}</button>
+              <button type="submit" disabled={Boolean(pendingMode) || (!(drafts[draftKey] || '').trim() && draftPluginObjects.length === 0)} aria-label={pendingMode ? 'Tutor 回复中' : '发送消息'}>{pendingMode ? '…' : '↑'}</button>
             </div>
           </form>
         </div>
@@ -3138,11 +3232,13 @@ function App({ auth }: { auth: AuthGateSession }) {
   )
 }
 
-function ToolRunCard({ run, sourceMessageId, conversationId, onPluginPrompt, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
+function ToolRunCard({ run, sourceMessageId, conversationId, onPluginPrompt, onPluginReference, onOpenPluginResult, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
   run: TutorToolRun
   sourceMessageId: string
   conversationId: string
   onPluginPrompt: (prompt: string) => void
+  onPluginReference: (object: LearnFlowPluginObject) => void
+  onOpenPluginResult: (run: TutorToolRun, sourceMessageId: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
   onAcceptPathProposal: (proposal: PersonalPathNodeProposal) => void
@@ -3255,7 +3351,12 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onPluginPrompt, onO
         </div>
       )}
       {run.artifact && <VisualArtifact artifact={run.artifact} />}
-      {run.plugin && <PluginToolResultView run={run} onPrompt={onPluginPrompt} />}
+      {run.plugin && <PluginToolResultView
+        run={run}
+        onPrompt={onPluginPrompt}
+        onReference={onPluginReference}
+        onOpenPaper={() => onOpenPluginResult(run, sourceMessageId)}
+      />}
     </section>
   )
 }
@@ -3318,10 +3419,12 @@ function ToolDecisionBridge({
   )
 }
 
-function MessageList({ messages, conversationId, onPluginPrompt, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
+function MessageList({ messages, conversationId, onPluginPrompt, onPluginReference, onOpenPluginResult, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
   messages: Message[]
   conversationId: string
   onPluginPrompt: (prompt: string) => void
+  onPluginReference: (object: LearnFlowPluginObject) => void
+  onOpenPluginResult: (run: TutorToolRun, sourceMessageId: string) => void
   onQuoteFollowUp: (messageId: string, quote: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
@@ -3430,6 +3533,8 @@ function MessageList({ messages, conversationId, onPluginPrompt, onQuoteFollowUp
                       sourceMessageId={message.id}
                       conversationId={conversationId}
                       onPluginPrompt={onPluginPrompt}
+                      onPluginReference={onPluginReference}
+                      onOpenPluginResult={onOpenPluginResult}
                       onOpenLearningFile={onOpenLearningFile}
                       onAttachLearningFile={onAttachLearningFile}
                       onAcceptPathProposal={onAcceptPathProposal}
@@ -3445,13 +3550,13 @@ function MessageList({ messages, conversationId, onPluginPrompt, onQuoteFollowUp
                         ? learningFileProposalErrors[run.projectLearningFileProposal.learning_task_id]
                         : undefined}
                     />
-                    <ToolDecisionBridge run={run} nextRun={runs[index + 1]} summary={decisionSummary} />
+                    {!message.pluginResultProjection && <ToolDecisionBridge run={run} nextRun={runs[index + 1]} summary={decisionSummary} />}
                   </Fragment>
                 )
               })}
-              {message.agentTrace && <AgentTraceSummary trace={message.agentTrace} />}
+              {!message.pluginResultProjection && message.agentTrace && <AgentTraceSummary trace={message.agentTrace} />}
               {message.streaming && <div className="streaming-phase"><i />{message.streamingPhase || '正在形成回答'}</div>}
-              {message.learningActionLabel ? (
+              {message.pluginResultProjection ? null : message.learningActionLabel ? (
                 <div className="learning-action-chip"><span>学习任务</span>{message.learningActionLabel}</div>
               ) : (
                 <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>

@@ -1,6 +1,7 @@
-import type { CSSProperties } from 'react'
+import { useState, type CSSProperties } from 'react'
 import {
   defineLearnFlowPluginClient,
+  pluginObjectDragProps,
   type PluginToolRendererProps,
 } from '../../src/PluginToolResultView.tsx'
 import { ROLE_CAPABILITY_PLUGIN, ROLE_RENDERERS } from './shared.ts'
@@ -45,49 +46,68 @@ function SnapshotBadge({ result }: { result: PluginToolRendererProps['result'] }
   )
 }
 
+function SnapshotViewTabs<T extends string>({ active, views, onChange }: {
+  active: T
+  views: Array<{ id: T; label: string }>
+  onChange: (view: T) => void
+}) {
+  return <nav className="role-plugin-view-tabs" aria-label="切换岗位快照展示">
+    {views.map(view => <button
+      key={view.id}
+      type="button"
+      aria-pressed={active === view.id}
+      onClick={() => onChange(view.id)}
+    >{view.label}</button>)}
+  </nav>
+}
+
+function interactiveObjectProps(props: PluginToolRendererProps, object: PluginToolRendererProps['objects'][number]) {
+  return {
+    ...pluginObjectDragProps(object),
+    onDoubleClick: () => props.onReference?.(object),
+  }
+}
+
 function FollowActions({ props, objectId, label }: { props: PluginToolRendererProps; objectId: string; label: string }) {
-  if (!props.onPrompt) return null
+  const object = props.objects.find(item => item.objectId === objectId)
+  if (!props.onPrompt && !props.onReference) return null
   const snapshot = snapshotOf(props.result)
   const suffix = `（固定快照 ${String(snapshot.snapshotId || '')}，对象 ${objectId}）`
   return <div className="role-plugin-actions">
-    <button type="button" onClick={() => props.onPrompt?.(`详细解释“${label}”${suffix}`)}>继续解释</button>
-    <button type="button" onClick={() => props.onPrompt?.(`展示“${label}”与其他岗位对象的关系${suffix}`)}>查看关系</button>
-    <button type="button" onClick={() => props.onPrompt?.(`核对“${label}”的证据和适用边界${suffix}`)}>查看证据</button>
+    {props.onReference && object && <button type="button" onClick={() => props.onReference?.(object)}>引用到输入框</button>}
+    {props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`详细解释“${label}”${suffix}`)}>继续解释</button>}
+    {props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`展示“${label}”与其他岗位对象的关系${suffix}`)}>查看关系</button>}
+    {props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`核对“${label}”的证据和适用边界${suffix}`)}>查看证据</button>}
   </div>
 }
 
-function RoleOverview(props: PluginToolRendererProps) {
-  const payload = (props.result.payload || {}) as RecordValue
-  const sections = payload.sections || {}
-  const nodes = new Map(props.objects.filter(object => object.objectType === 'role_object').map(object => [object.objectId, object]))
-  const root = nodes.get(String(payload.rootId || ''))
-  const renderSection = (title: string, ids: string[], empty: string) => <section className="role-plugin-overview-section">
-    <header><strong>{title}</strong><small>{ids.length}</small></header>
-    <div>{ids.map(id => nodes.get(id)).filter(Boolean).map(object => {
-      const data = dataOf(object!)
-      return <article key={object!.objectId} style={{ '--role-accent': colorFor(categoryOf(object!)) } as CSSProperties}>
-        <span>{categoryOf(object!)}</span><strong>{object!.label}</strong><p>{String(data.summary || '')}</p>
-        <FollowActions props={props} objectId={object!.objectId} label={object!.label} />
+function ObjectCardGrid({ props, objects = props.objects.filter(object => object.objectType === 'role_object') }: {
+  props: PluginToolRendererProps
+  objects?: readonly PluginToolRendererProps['objects'][number][]
+}) {
+  return <div className="role-plugin-card-grid">
+    {objects.map(object => {
+      const data = dataOf(object)
+      const category = categoryOf(object)
+      return <article
+        key={object.objectId}
+        style={{ '--role-accent': colorFor(category) } as CSSProperties}
+        {...interactiveObjectProps(props, object)}
+      >
+        <header><span>{category}</span><small>{String(data.lifecycle || data.knowledgeState || 'snapshot')}</small></header>
+        <strong>{object.label}</strong>
+        <p>{String(data.summary || '')}</p>
+        <footer><code>{object.objectId}</code>{typeof data.confidence === 'number' && <b>{Math.round(data.confidence * 100)}%</b>}</footer>
+        <FollowActions props={props} objectId={object.objectId} label={object.label} />
       </article>
-    })}</div>
-    {!ids.length && <p>{empty}</p>}
-  </section>
-  return <section className="role-plugin-view role-plugin-overview" aria-label="岗位全景">
-    <SnapshotBadge result={props.result} />
-    {root && <article className="role-plugin-identity"><span>岗位定位</span><strong>{root.label}</strong><p>{String(dataOf(root).summary || '')}</p><FollowActions props={props} objectId={root.objectId} label={root.label} /></article>}
-    <div className="role-plugin-overview-grid">
-      {renderSection('典型任务', sections.tasks || [], '当前视图没有任务对象。')}
-      {renderSection('核心能力', sections.capabilities || [], '当前视图没有能力对象。')}
-      {renderSection('工作场景', sections.scenarios || [], '当前视图没有场景对象。')}
-      {renderSection('相邻岗位', sections.relatedRoles || [], '当前视图没有相邻岗位。')}
-    </div>
-    <p className="role-plugin-boundary">{String(payload.grounding?.requiredDisclosure || '')}</p>
-  </section>
+    })}
+  </div>
 }
 
-function CapabilityRadar(props: PluginToolRendererProps) {
-  const payload = (props.result.payload || {}) as RecordValue
-  const axes = (payload.axes || []) as Array<{ objectId: string; label: string; value: number }>
+function CapabilityRadarCanvas({ props, axes }: {
+  props: PluginToolRendererProps
+  axes: Array<{ objectId: string; label: string; value: number }>
+}) {
   const size = 420
   const center = size / 2
   const radius = 145
@@ -97,42 +117,82 @@ function CapabilityRadar(props: PluginToolRendererProps) {
   }
   const polygon = (value: number) => axes.map((_, index) => { const p = point(index, value); return `${p.x},${p.y}` }).join(' ')
   const values = axes.map((axis, index) => { const p = point(index, axis.value); return `${p.x},${p.y}` }).join(' ')
+  return <div className="role-plugin-radar-layout">
+    <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${axes.length} 个岗位能力维度的雷达图`}>
+      {[.25, .5, .75, 1].map(level => <polygon key={level} points={polygon(level)} className="grid" />)}
+      {axes.map((axis, index) => { const outer = point(index); const label = point(index, 1.18); return <g key={axis.objectId}><line x1={center} y1={center} x2={outer.x} y2={outer.y} /><text x={label.x} y={label.y}>{axis.label.length > 10 ? `${axis.label.slice(0, 9)}…` : axis.label}</text></g> })}
+      <polygon points={values} className="value" />
+      {axes.map((axis, index) => { const p = point(index, axis.value); return <circle key={axis.objectId} cx={p.x} cy={p.y} r="5"><title>{axis.label} · {Math.round(axis.value * 100)}%</title></circle> })}
+    </svg>
+    <div className="role-plugin-radar-legend">{axes.map(axis => {
+      const object = props.objects.find(item => item.objectId === axis.objectId)
+      return <article key={axis.objectId} {...(object ? interactiveObjectProps(props, object) : {})}>
+        <span style={{ width: `${Math.round(axis.value * 100)}%` }} /><strong>{axis.label}</strong><b>{Math.round(axis.value * 100)}%</b>
+        <FollowActions props={props} objectId={axis.objectId} label={axis.label} />
+      </article>
+    })}</div>
+  </div>
+}
+
+function RoleOverview(props: PluginToolRendererProps) {
+  const [view, setView] = useState<'overview' | 'radar' | 'cards'>('overview')
+  const payload = (props.result.payload || {}) as RecordValue
+  const sections = payload.sections || {}
+  const nodes = new Map(props.objects.filter(object => object.objectType === 'role_object').map(object => [object.objectId, object]))
+  const root = nodes.get(String(payload.rootId || ''))
+  const capabilityObjects = ((sections.capabilities || []) as string[]).map(id => nodes.get(id)).filter(Boolean) as PluginToolRendererProps['objects'][number][]
+  const axes = capabilityObjects.map(object => ({
+    objectId: object.objectId,
+    label: object.label,
+    value: typeof dataOf(object).confidence === 'number' ? Math.max(0, Math.min(1, Number(dataOf(object).confidence))) : .65,
+  }))
+  const renderSection = (title: string, ids: string[], empty: string) => <section className="role-plugin-overview-section">
+    <header><strong>{title}</strong><small>{ids.length}</small></header>
+    <div>{ids.map(id => nodes.get(id)).filter(Boolean).map(object => {
+      const data = dataOf(object!)
+      return <article key={object!.objectId} style={{ '--role-accent': colorFor(categoryOf(object!)) } as CSSProperties} {...interactiveObjectProps(props, object!)}>
+        <span>{categoryOf(object!)}</span><strong>{object!.label}</strong><p>{String(data.summary || '')}</p>
+        <FollowActions props={props} objectId={object!.objectId} label={object!.label} />
+      </article>
+    })}</div>
+    {!ids.length && <p>{empty}</p>}
+  </section>
+  return <section className="role-plugin-view role-plugin-overview" aria-label="岗位全景">
+    <SnapshotBadge result={props.result} />
+    <SnapshotViewTabs active={view} views={[{ id: 'overview', label: '岗位全景' }, { id: 'radar', label: '能力雷达' }, { id: 'cards', label: '对象卡片' }]} onChange={setView} />
+    {view === 'overview' && <>
+      {root && <article className="role-plugin-identity" {...interactiveObjectProps(props, root)}><span>岗位定位</span><strong>{root.label}</strong><p>{String(dataOf(root).summary || '')}</p><FollowActions props={props} objectId={root.objectId} label={root.label} /></article>}
+      <div className="role-plugin-overview-grid">
+        {renderSection('典型任务', sections.tasks || [], '当前视图没有任务对象。')}
+        {renderSection('核心能力', sections.capabilities || [], '当前视图没有能力对象。')}
+        {renderSection('工作场景', sections.scenarios || [], '当前视图没有场景对象。')}
+        {renderSection('相邻岗位', sections.relatedRoles || [], '当前视图没有相邻岗位。')}
+      </div>
+    </>}
+    {view === 'radar' && <CapabilityRadarCanvas props={props} axes={axes} />}
+    {view === 'cards' && <ObjectCardGrid props={props} />}
+    <p className="role-plugin-boundary">{String(payload.grounding?.requiredDisclosure || '')}</p>
+  </section>
+}
+
+function CapabilityRadar(props: PluginToolRendererProps) {
+  const [view, setView] = useState<'radar' | 'cards'>('radar')
+  const payload = (props.result.payload || {}) as RecordValue
+  const axes = (payload.axes || []) as Array<{ objectId: string; label: string; value: number }>
   return <section className="role-plugin-view role-plugin-radar" aria-label="岗位能力雷达">
     <SnapshotBadge result={props.result} />
-    <div className="role-plugin-radar-layout">
-      <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${axes.length} 个岗位能力维度的雷达图`}>
-        {[.25, .5, .75, 1].map(level => <polygon key={level} points={polygon(level)} className="grid" />)}
-        {axes.map((axis, index) => { const outer = point(index); const label = point(index, 1.18); return <g key={axis.objectId}><line x1={center} y1={center} x2={outer.x} y2={outer.y} /><text x={label.x} y={label.y}>{axis.label.length > 10 ? `${axis.label.slice(0, 9)}…` : axis.label}</text></g> })}
-        <polygon points={values} className="value" />
-        {axes.map((axis, index) => { const p = point(index, axis.value); return <circle key={axis.objectId} cx={p.x} cy={p.y} r="5"><title>{axis.label} · {Math.round(axis.value * 100)}%</title></circle> })}
-      </svg>
-      <div className="role-plugin-radar-legend">{axes.map(axis => <article key={axis.objectId}><span style={{ width: `${Math.round(axis.value * 100)}%` }} /><strong>{axis.label}</strong><b>{Math.round(axis.value * 100)}%</b><FollowActions props={props} objectId={axis.objectId} label={axis.label} /></article>)}</div>
-    </div>
+    <SnapshotViewTabs active={view} views={[{ id: 'radar', label: '能力雷达' }, { id: 'cards', label: '能力卡片' }]} onChange={setView} />
+    {view === 'radar' ? <CapabilityRadarCanvas props={props} axes={axes} /> : <ObjectCardGrid props={props} />}
     <p className="role-plugin-boundary">{String(payload.scale?.meaning || '')}</p>
   </section>
 }
 
 function RoleCards(props: PluginToolRendererProps) {
-  const nodes = props.objects.filter(object => object.objectType === 'role_object')
   const payload = (props.result.payload || {}) as RecordValue
   return (
     <section className="role-plugin-view role-plugin-cards" aria-label="岗位对象卡片">
       <SnapshotBadge result={props.result} />
-      <div className="role-plugin-card-grid">
-        {nodes.map(object => {
-          const data = dataOf(object)
-          const category = categoryOf(object)
-          return (
-            <article key={object.objectId} style={{ '--role-accent': colorFor(category) } as CSSProperties}>
-              <header><span>{category}</span><small>{String(data.lifecycle || data.knowledgeState || 'snapshot')}</small></header>
-              <strong>{object.label}</strong>
-              <p>{String(data.summary || '')}</p>
-              <footer><code>{object.objectId}</code>{typeof data.confidence === 'number' && <b>{Math.round(data.confidence * 100)}%</b>}</footer>
-              <FollowActions props={props} objectId={object.objectId} label={object.label} />
-            </article>
-          )
-        })}
-      </div>
+      <ObjectCardGrid props={props} />
       {payload.omittedIds?.length ? <p className="role-plugin-warning">未找到：{payload.omittedIds.join('、')}</p> : null}
       {payload.coverage?.omitted ? <p className="role-plugin-boundary">结果有界：另有 {payload.coverage.omitted} 个匹配对象未展示。</p> : null}
     </section>
@@ -187,7 +247,12 @@ function RoleGraph(props: PluginToolRendererProps) {
           })}
         </g>
       </svg>
-      <div className="role-plugin-graph-focus">{ordered.map(object => <button key={object.objectId} type="button" onClick={() => props.onPrompt?.(`以“${object.label}”为中心展开一层岗位关系（固定快照 ${String(snapshotOf(props.result).snapshotId || '')}，对象 ${object.objectId}）`)}>{object.label}</button>)}</div>
+      <div className="role-plugin-graph-focus">{ordered.map(object => <button
+        key={object.objectId}
+        type="button"
+        {...interactiveObjectProps(props, object)}
+        onClick={() => props.onPrompt?.(`以“${object.label}”为中心展开一层岗位关系（固定快照 ${String(snapshotOf(props.result).snapshotId || '')}，对象 ${object.objectId}）`)}
+      >{object.label}</button>)}</div>
       <p className="role-plugin-legend">关系类型：{[...new Set(visibleRelations.map(object => String(dataOf(object).type || 'relation')))].join(' · ')}</p>
       {payload.truncated && <p className="role-plugin-boundary">子图达到本次节点上限；这是有界投影，不是完整岗位包。</p>}
     </section>
@@ -213,7 +278,7 @@ function ProcessForest(props: PluginToolRendererProps) {
             {items.map((object, index) => {
               const data = dataOf(object)
               const category = categoryOf(object)
-              return <div className="role-plugin-process-step" key={object.objectId} style={{ '--role-accent': colorFor(category) } as CSSProperties}><i>{index + 1}</i><span><small>{category}</small><strong>{object.label}</strong><p>{String(data.summary || '')}</p></span></div>
+              return <div className="role-plugin-process-step" key={object.objectId} style={{ '--role-accent': colorFor(category) } as CSSProperties} {...interactiveObjectProps(props, object)}><i>{index + 1}</i><span><small>{category}</small><strong>{object.label}</strong><p>{String(data.summary || '')}</p><FollowActions props={props} objectId={object.objectId} label={object.label} /></span></div>
             })}
           </div>
         </article>

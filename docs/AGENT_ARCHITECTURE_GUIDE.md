@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-01.1`）：插件结果继续只存在于 Tutor ToolRun，但 Renderer 可通过通用宿主回调把同一结果展开成只读对话纸张，或把已校验 Plugin Object 拖入当前草稿成为稳定引用。纸张不复制领域权威，引用不自动发送；两者均不产生学习证据。岗位插件在自身客户端包内组合全景、能力雷达和对象卡片切换，宿主只处理 ToolRun、Plugin Object 和纸张，不出现岗位 ID、类型或视图分支。三类主 Agent、四类插件扩展点、五核和 EvidenceEvent 链不变。
+
 Contract impact（`2026-08-31.7`）：插件 ACI 从连续细粒度检索升级为“目标级工具优先、对象工具下钻”。岗位首次介绍优先一次读取定位、任务、能力、场景和相邻岗位，并返回 `snapshot_facts_only` grounding；Tutor 只能把列出的 statement 当作快照事实，其他常识必须标为非快照补充。最近插件 ToolRun 在 ContextEnvelope 中保留有界快照与对象引用，Renderer 可用通用 `onPrompt` 将精确引用写入下一轮草稿，因此插件对话可续接而无需宿主岗位分支。能力雷达表示岗位证据强度，不是学习者能力或掌握分数；关系图与事理森林各自保持独立语义。
 
 Contract impact（`2026-08-31.6`）：`visual_teaching_composition` 的视觉执行改为“语义 Skill → 确定性状态重放 → ASCII Designer → Tool 验证”。Skill 必须先提供可独立成立的讲解，再只描述对象、关系、初始状态、逐帧状态变化与事实边界；Designer 接收 Tool 重放后的完整帧快照，拥有空间布局和帧间节奏自由，但只可提交 ASCII 画布及实体锚点。Tool 逐帧验证主体对象覆盖、引用、断言、尺寸和控制字符；遗漏的持久对象只可补入显式状态台账并标记 degraded，模型失败则显式降级为通用 ASCII 状态清单。视觉失败不撤销已提交讲解，不新增 Agent、EvidenceEvent、Kernel writer 或数据库迁移。

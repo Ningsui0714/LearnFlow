@@ -293,6 +293,17 @@ button { cursor: pointer; }
 .tool-run-failed > header > i { color: #b05e4d; }
 .tool-run-running { background: linear-gradient(105deg, rgba(247,251,249,.88), rgba(220,239,228,.72), rgba(247,251,249,.88)); background-size: 220% 100%; animation: tool-run-shimmer 1.8s ease-in-out infinite; }
 .tool-run-running .tool-run-icon, .tool-run-running > header > i { animation: tool-run-pulse .9s ease-in-out infinite alternate; }
+.plugin-result-shell { position: relative; margin: 0 11px 11px 45px; }
+.plugin-result-toolbar { position: absolute; z-index: 3; top: 17px; right: 8px; display: flex; align-items: center; gap: 6px; }
+.plugin-result-toolbar > span { color: #809087; font-size: 7px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.plugin-result-toolbar > button { display: grid; width: 25px; height: 25px; place-items: center; border: 1px solid #d1ddd5; border-radius: 8px; background: rgba(255,255,255,.9); color: #416653; cursor: pointer; }
+.plugin-result-toolbar > button:hover { border-color: #7ca08c; background: #edf6f0; color: #087a51; }
+.composer-plugin-references { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+.composer-plugin-references > span { display: inline-flex; min-width: 0; align-items: center; gap: 6px; border: 1px solid #c9dbd0; border-radius: 999px; background: #edf6f0; padding: 5px 8px; color: #315947; font-size: 8px; }
+.composer-plugin-references i { display: grid; width: 16px; height: 16px; flex: none; place-items: center; border-radius: 50%; background: #315947; color: #fff; font-size: 7px; font-style: normal; font-weight: 850; }
+.composer-plugin-references strong { overflow: hidden; max-width: 240px; text-overflow: ellipsis; white-space: nowrap; }
+.composer-plugin-references small { color: #71867a; }
+.composer-plugin-references button { border: 0; background: transparent; padding: 0 1px; color: #6f8579; cursor: pointer; }
 .tool-decision-bridge { position: relative; display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 8px; margin: -10px 0 14px 11px; padding: 5px 9px 2px 24px; color: #728078; }
 .tool-decision-bridge::before { position: absolute; top: -5px; bottom: 0; left: 5px; width: 1px; background: linear-gradient(#cfdcd4, rgba(207,220,212,0)); content: ''; opacity: .62; }
 .tool-decision-bridge::after { position: absolute; top: 11px; left: 3px; width: 5px; height: 5px; border-radius: 50%; background: #76a68d; box-shadow: 0 0 0 4px rgba(118,166,141,.08); content: ''; }

@@ -3,6 +3,7 @@ import type { TutorMode } from './tutor.ts'
 
 export const LEARNFLOW_PLUGIN_API_VERSION = 'learnflow.plugin-api.v1' as const
 export const LEARNFLOW_PLUGIN_OBJECT_VERSION = 'learnflow.plugin-object.v1' as const
+export const PLUGIN_OBJECT_DRAG_TYPE = 'application/x-learnflow-plugin-object' as const
 
 /** Propagate the loader's package fingerprint through server-side plugin dependencies. */
 export function versionedPluginModuleUrl(relativePath: string, parentUrl: string) {
@@ -30,6 +31,33 @@ export type LearnFlowPluginObject = {
   schemaVersion: string
   label: string
   value: PluginJson
+}
+
+export function parsePluginObjectDragData(raw: string): LearnFlowPluginObject | undefined {
+  try {
+    if (!raw || raw.length > 128 * 1024) return undefined
+    const value = JSON.parse(raw) as Partial<LearnFlowPluginObject>
+    if (
+      value.protocol !== LEARNFLOW_PLUGIN_OBJECT_VERSION
+      || typeof value.pluginId !== 'string'
+      || typeof value.objectType !== 'string'
+      || typeof value.objectId !== 'string'
+      || typeof value.schemaVersion !== 'string'
+      || typeof value.label !== 'string'
+      || !value.pluginId || !value.objectType || !value.objectId || !value.schemaVersion || !value.label
+      || !/^[a-z][a-z0-9_]{1,23}$/.test(value.pluginId)
+      || !/^[a-z][a-z0-9_]{1,31}$/.test(value.objectType)
+      || value.objectId.length > 500 || value.schemaVersion.length > 120 || value.label.length > 300
+    ) return undefined
+    return value as LearnFlowPluginObject
+  } catch {
+    return undefined
+  }
+}
+
+export function pluginObjectReferenceText(object: LearnFlowPluginObject) {
+  const path = [object.pluginId, object.objectType, object.objectId].map(value => encodeURIComponent(value)).join('/')
+  return `- ${object.label}（plugin-object://${path}?schema=${encodeURIComponent(object.schemaVersion)}）`
 }
 
 export type PluginObjectContribution = {

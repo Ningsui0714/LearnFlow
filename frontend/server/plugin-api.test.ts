@@ -9,6 +9,8 @@ import {
   LEARNFLOW_PLUGIN_API_VERSION,
   LEARNFLOW_PLUGIN_OBJECT_VERSION,
   LearnFlowPluginRegistry,
+  parsePluginObjectDragData,
+  pluginObjectReferenceText,
 } from '../src/plugin-api.ts'
 import { runTutorAgentTurn } from './agent-runtime.ts'
 import { createLearnFlowPluginRegistryProvider, loadLearnFlowPluginRegistry } from './plugin-loader.ts'
@@ -76,6 +78,25 @@ test('development registry provider refreshes while production keeps one immutab
   })
   assert.equal(await production.get(), await production.get())
   assert.equal(productionLoads, 1)
+})
+
+test('plugin object drag payload stays versioned and produces an exact prompt reference', () => {
+  const object = {
+    protocol: LEARNFLOW_PLUGIN_OBJECT_VERSION,
+    pluginId: 'fixture_graph',
+    objectType: 'node',
+    objectId: 'node:1/alpha',
+    schemaVersion: 'fixture.node.v1',
+    label: 'Node 1',
+    value: { score: 0.8 },
+  }
+  assert.deepEqual(parsePluginObjectDragData(JSON.stringify(object)), object)
+  assert.equal(
+    pluginObjectReferenceText(object),
+    '- Node 1（plugin-object://fixture_graph/node/node%3A1%2Falpha?schema=fixture.node.v1）',
+  )
+  assert.equal(parsePluginObjectDragData('{"pluginId":"fixture_graph"}'), undefined)
+  assert.equal(parsePluginObjectDragData('not json'), undefined)
 })
 
 test('development reload invalidates a plugin dependency graph atomically', async () => {

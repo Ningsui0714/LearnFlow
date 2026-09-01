@@ -76,6 +76,13 @@ Renderer 还可以使用宿主提供的通用 `onPrompt(prompt)` 回调，把用
 该回调不发送消息、不调用工具、不改变插件数据或核心对象；用户仍需编辑或发送下一轮消息。Tutor 的近期
 ToolRun 投影会有界保留 `presentation.state` 和最多 16 个 Plugin Object，支持代词式追问继续固定原快照。
 
+宿主还提供两个不增加扩展点的确定性交互：`onReference(object)` 只接受已校验的 Plugin Object，并通过
+`application/x-learnflow-plugin-object` 拖拽载荷或点击操作把 `pluginId + objectType + objectId + schemaVersion`
+放入当前草稿；宿主会重新要求该引用命中当前可见 ToolRun 中的已校验对象，不信任任意外部拖拽 JSON。
+`onOpenPaper()` 把产生当前结果的原 ToolRun 作为只读投影附到对话纸张。引用不会自动发送，
+纸张不会复制 Plugin Object 的领域权威，两者都不能触发工具、Action、EvidenceEvent 或五核写入。视图切换
+属于插件 Renderer 内部状态，例如同一岗位全景结果可以切换为能力雷达或对象卡片；宿主不理解这些视图语义。
+
 ## 5. 包目录与发现
 
 内置插件放在 `frontend/plugins/<plugin_id>/`：
@@ -114,6 +121,7 @@ object-index、snapshot 与 reference-migrations；代码不写具体岗位、�
 
 - 这是受信、随应用发布的本机代码包，不提供第三方下载、签名、runner、沙箱或热安装。
 - 没有 Plugin Instance、Snapshot、独立工作台、专用侧栏或插件数据库。
+- “展开到新纸”只是既有 ToolRun 的对话内只读投影，不是 Plugin Snapshot 持久化对象或独立工作台。
 - `defaultEnabled` 只适合官方内置能力；其他包必须由调用方传入 `activePluginIds`。
 - Web Tutor 已具备 Tool/Skill 执行入口；Desktop 正式 Agent 在接入同一包加载器前不会自动执行前端插件 Tool。
 - 特殊显示只位于对话 ToolRun 内，不形成第二套产品导航。

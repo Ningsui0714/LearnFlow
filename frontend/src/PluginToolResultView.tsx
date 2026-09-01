@@ -1,5 +1,5 @@
-import type { ComponentType } from 'react'
-import type { LearnFlowPluginObject, PluginToolResult } from './plugin-api.ts'
+import type { ComponentType, DragEvent } from 'react'
+import { PLUGIN_OBJECT_DRAG_TYPE, type LearnFlowPluginObject, type PluginToolResult } from './plugin-api.ts'
 import type { TutorToolRun } from './tooling.ts'
 
 export type PluginToolRendererProps = {
@@ -8,6 +8,21 @@ export type PluginToolRendererProps = {
   result: PluginToolResult
   objects: readonly LearnFlowPluginObject[]
   onPrompt?: (prompt: string) => void
+  onReference?: (object: LearnFlowPluginObject) => void
+}
+
+export function writePluginObjectDragData(dataTransfer: DataTransfer, object: LearnFlowPluginObject) {
+  dataTransfer.effectAllowed = 'copy'
+  dataTransfer.setData(PLUGIN_OBJECT_DRAG_TYPE, JSON.stringify(object))
+  dataTransfer.setData('text/plain', object.label)
+}
+
+export function pluginObjectDragProps(object: LearnFlowPluginObject) {
+  return {
+    draggable: true,
+    title: `拖到输入框引用“${object.label}”`,
+    onDragStart: (event: DragEvent<HTMLElement>) => writePluginObjectDragData(event.dataTransfer, object),
+  }
 }
 
 export type LearnFlowPluginClientPackage = {
@@ -42,40 +57,57 @@ for (const [path, loaded] of Object.entries(clientModules).sort(([left], [right]
 
 export const installedClientPlugins = Object.freeze(installedPlugins.map(item => Object.freeze({ ...item })))
 
-function GenericPluginObjects({ objects }: { objects: readonly LearnFlowPluginObject[] }) {
+function GenericPluginObjects({ objects, onReference }: {
+  objects: readonly LearnFlowPluginObject[]
+  onReference?: (object: LearnFlowPluginObject) => void
+}) {
   if (!objects.length) return null
   return (
     <div className="project-tool-proposal">
       {objects.map(object => (
-        <details key={`${object.objectType}:${object.objectId}`}>
+        <details key={`${object.objectType}:${object.objectId}`} {...pluginObjectDragProps(object)}>
           <summary><strong>{object.label}</strong> <small>{object.objectType} · {object.schemaVersion}</small></summary>
           <pre>{JSON.stringify(object.value, null, 2)}</pre>
+          {onReference && <button type="button" onClick={() => onReference(object)}>引用到输入框</button>}
         </details>
       ))}
     </div>
   )
 }
 
-export default function PluginToolResultView({ run, onPrompt }: { run: TutorToolRun; onPrompt?: (prompt: string) => void }) {
+export default function PluginToolResultView({ run, onPrompt, onReference, onOpenPaper }: {
+  run: TutorToolRun
+  onPrompt?: (prompt: string) => void
+  onReference?: (object: LearnFlowPluginObject) => void
+  onOpenPaper?: () => void
+}) {
   const plugin = run.plugin
   if (!plugin) return null
   const objects = plugin.result.objects || []
   const rendererId = plugin.result.presentation?.renderer
   const Renderer = rendererId ? rendererRegistry.get(rendererId) : undefined
-  if (Renderer) {
-    return <Renderer pluginId={plugin.pluginId} toolId={plugin.toolId} result={plugin.result} objects={objects} onPrompt={onPrompt} />
-  }
-  return (
-    <div aria-label={`${run.title}插件结果`}>
-      <GenericPluginObjects objects={objects} />
-      {plugin.result.payload !== undefined && (
+  return <div className="plugin-result-shell">
+      <div className="plugin-result-toolbar">
+        <span>插件快照</span>
+        {onOpenPaper && <button type="button" onClick={onOpenPaper} aria-label="把插件结果展开到新纸" title="展开到新纸">↗</button>}
+      </div>
+      {Renderer ? <Renderer
+        pluginId={plugin.pluginId}
+        toolId={plugin.toolId}
+        result={plugin.result}
+        objects={objects}
+        onPrompt={onPrompt}
+        onReference={onReference}
+      /> : <div aria-label={`${run.title}插件结果`}>
+        <GenericPluginObjects objects={objects} onReference={onReference} />
+        {plugin.result.payload !== undefined && (
         <details>
           <summary>查看结构化结果</summary>
           <pre>{JSON.stringify(plugin.result.payload, null, 2)}</pre>
         </details>
-      )}
+        )}
+      </div>}
     </div>
-  )
 }
 
 export function defineLearnFlowPluginClient(plugin: LearnFlowPluginClientPackage) {
