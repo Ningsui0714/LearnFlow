@@ -47,6 +47,11 @@ import {
   type LearnFlowPluginObject,
 } from './plugin-api'
 import PluginCapabilityPicker from './PluginCapabilityPicker'
+import {
+  activeConversationPluginIds,
+  lockedConversationPluginIds,
+  stickyConversationPluginIds,
+} from './conversation-plugin-state.ts'
 import { humanizeLearningFileReferences } from './learning-file-message'
 import { detectHumanAdaptationSignals } from './human-adaptation'
 import {
@@ -352,7 +357,7 @@ function syncMessageMetaData(message: Message): Record<string, unknown> {
 function conversationFromFormal(session: FormalTutorSession, existing?: Conversation): Conversation {
   const base = existing || createConversation()
   const messages = (session.messages || []).map(messageFromFormal)
-  return {
+  const conversation = {
     ...base,
     id: session.client_conversation_id || base.id,
     title: session.title || base.title,
@@ -361,6 +366,7 @@ function conversationFromFormal(session: FormalTutorSession, existing?: Conversa
     formalSessionId: session.id,
     updatedAt: session.updated_at ? Date.parse(session.updated_at) || base.updatedAt : base.updatedAt,
   }
+  return { ...conversation, pluginIds: activeConversationPluginIds(conversation) }
 }
 
 function formalChatFingerprint(conversation: Conversation) {
@@ -452,32 +458,30 @@ function restoreState(learnerId: number): PersistedState {
     if (!value || !Array.isArray(value.conversations) || value.conversations.length === 0) return initialState()
     const conversations = value.conversations.map(conversation => {
       const sheets = sanitizePaperSheets<Message>(conversation.sheets)
-      return {
-      ...conversation,
-      mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
-      sheets,
-      learningTasks: Array.isArray(conversation.learningTasks)
-        ? conversation.learningTasks.map(task => ({
+      const restored = {
+        ...conversation,
+        mode: isTutorMode(conversation.mode) ? conversation.mode : 'free' as const,
+        sheets,
+        learningTasks: Array.isArray(conversation.learningTasks)
+          ? conversation.learningTasks.map(task => ({
             ...task,
             objective: learningObjectiveFromInput(task.objective),
           }))
-        : [],
-      learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
-      learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
-      planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
-      domainSources: Array.isArray(conversation.domainSources) ? conversation.domainSources : [],
-      projectSources: Array.isArray(conversation.projectSources) ? conversation.projectSources : [],
-      pluginIds: Array.isArray(conversation.pluginIds)
-        ? [...new Set(conversation.pluginIds.filter((value): value is string => (
-            typeof value === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(value)
-          )))].slice(0, 16)
-        : [],
-      preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
-      activeSheetId: conversation.activeSheetId === 'main'
-        || sheets.some(sheet => sheet.id === conversation.activeSheetId)
-        ? conversation.activeSheetId || 'main'
-        : 'main',
-    }})
+          : [],
+        learningEvents: Array.isArray(conversation.learningEvents) ? conversation.learningEvents : [],
+        learningPlans: Array.isArray(conversation.learningPlans) ? conversation.learningPlans : [],
+        planningEvents: Array.isArray(conversation.planningEvents) ? conversation.planningEvents : [],
+        domainSources: Array.isArray(conversation.domainSources) ? conversation.domainSources : [],
+        projectSources: Array.isArray(conversation.projectSources) ? conversation.projectSources : [],
+        pluginIds: Array.isArray(conversation.pluginIds) ? conversation.pluginIds : [],
+        preferredSkillId: isLearningSkillId(conversation.preferredSkillId) ? conversation.preferredSkillId : undefined,
+        activeSheetId: conversation.activeSheetId === 'main'
+          || sheets.some(sheet => sheet.id === conversation.activeSheetId)
+          ? conversation.activeSheetId || 'main'
+          : 'main',
+      }
+      return { ...restored, pluginIds: activeConversationPluginIds(restored) }
+    })
     const conversationIds = new Set(conversations.map(item => item.id))
     const tabs = Array.isArray(value.tabs)
       ? value.tabs.filter(tab => ['settings', 'projects', 'project', 'learning-path', 'profile', 'tasks', 'review', 'learning-files', 'lecture-file', 'practice-file'].includes(tab?.kind) || (tab?.kind === 'chat' && tab?.conversationId && conversationIds.has(tab.conversationId)))
@@ -1785,7 +1789,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         domainSourceIds: conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
         conversationId,
         sheetId,
-        activePluginIds: conversation.pluginIds,
+        activePluginIds: activeConversationPluginIds(conversation),
         onEvent: event => updateLiveTurn(conversationId, event),
       })
       finishTurn(conversationId, sheetId, mode, {
@@ -2432,6 +2436,8 @@ function App({ auth }: { auth: AuthGateSession }) {
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
     const draftPluginObjects = pluginDraftReferences[draftKey] || []
+    const lockedPluginIds = lockedConversationPluginIds(conversation)
+    const activePluginIds = activeConversationPluginIds(conversation)
     const pages = [
       { id: 'main', title: '主对话', quote: '', messages: conversation.messages, parentSheetId: '', sourceMessageId: '', artifact: undefined as PaperArtifact | undefined },
       ...conversation.sheets.map((item, index) => ({
@@ -3052,12 +3058,13 @@ function App({ auth }: { auth: AuthGateSession }) {
                   onToolChange={choice => setToolChoices(previous => ({ ...previous, [draftKey]: choice }))}
                 />
                 <PluginCapabilityPicker
-                  activePluginIds={conversation.pluginIds}
+                  activePluginIds={activePluginIds}
+                  lockedPluginIds={lockedPluginIds}
                   disabled={Boolean(pendingMode)}
                   onChange={pluginIds => setWorkspace(previous => ({
                     ...previous,
                     conversations: previous.conversations.map(item => item.id === conversation.id
-                      ? { ...item, pluginIds }
+                      ? { ...item, pluginIds: stickyConversationPluginIds(pluginIds, lockedConversationPluginIds(item)) }
                       : item),
                   }))}
                 />

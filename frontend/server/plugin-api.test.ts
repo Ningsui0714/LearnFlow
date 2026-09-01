@@ -14,6 +14,11 @@ import {
 } from '../src/plugin-api.ts'
 import { runTutorAgentTurn } from './agent-runtime.ts'
 import { createLearnFlowPluginRegistryProvider, loadLearnFlowPluginRegistry } from './plugin-loader.ts'
+import {
+  activeConversationPluginIds,
+  lockedConversationPluginIds,
+  stickyConversationPluginIds,
+} from '../src/conversation-plugin-state.ts'
 
 function fixturePlugin(options: { id?: string; defaultEnabled?: boolean } = {}) {
   const id = options.id || 'fixture_graph'
@@ -137,6 +142,44 @@ test('plugin contributions are namespaced and inactive packages expose no tools 
   assert.match(registry.skillInstructions(active), /fixture_graph__read_graph/)
   assert.match(registry.skillInstructions(active), /必须在形成回答或追问前至少调用该插件的一个可用工具/)
   assert.match(registry.toolDefinitions(active)[0].description, /不要用于/)
+})
+
+test('a plugin becomes conversation-sticky after its first tool run without plugin-specific state', () => {
+  const completed = {
+    id: 'used-plugin', kind: 'plugin' as const, status: 'completed' as const, title: 'Read graph', detail: 'matched', durationMs: 1,
+    toolName: 'fixture_graph__read_graph', plugin: { pluginId: 'fixture_graph', toolId: 'read_graph', result: { summary: 'matched' } },
+  }
+  const failed = {
+    id: 'failed-plugin', kind: 'plugin' as const, status: 'failed' as const, title: 'Read graph', detail: 'failed', durationMs: 1,
+    toolName: 'another_graph__read_graph',
+  }
+  const conversation = { pluginIds: [], messages: [{ toolRuns: [completed] }], sheets: [{ messages: [{ toolRuns: [failed] }] }] }
+  assert.deepEqual(lockedConversationPluginIds(conversation), ['fixture_graph', 'another_graph'])
+  assert.deepEqual(activeConversationPluginIds(conversation), ['fixture_graph', 'another_graph'])
+  assert.deepEqual(stickyConversationPluginIds([], ['fixture_graph']), ['fixture_graph'])
+})
+
+test('Tutor keeps a previously used plugin active when the caller omits it from the next selection', async () => {
+  const registry = new LearnFlowPluginRegistry([fixturePlugin()])
+  const requests: any[] = []
+  await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain', toolChoice: 'auto',
+    pluginRegistry: registry, activePluginIds: [], generate: async () => 'unused',
+    messages: [
+      { role: 'assistant', content: '图谱结果。', toolRuns: [{
+        id: 'prior-plugin-run', kind: 'plugin', status: 'completed', title: 'Read graph', detail: 'matched', durationMs: 1,
+        toolName: 'fixture_graph__read_graph', plugin: { pluginId: 'fixture_graph', toolId: 'read_graph', result: { summary: 'matched' } },
+      }] },
+      { role: 'user', content: '继续' },
+    ],
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '继续。' } }] }
+    },
+  })
+  const body = JSON.stringify(requests[0].body)
+  assert.match(body, /fixture_graph__read_graph/)
+  assert.match(body, /Read the graph once/)
 })
 
 test('tool execution validates input, object ownership and renderer declaration', async () => {

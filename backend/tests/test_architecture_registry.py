@@ -44,7 +44,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-09-01.1"
+    assert REGISTRY_VERSION == "2026-09-01.2"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -76,6 +76,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert all(item["bindings"] for item in manifest["plugin_extension_points"])
     assert "frontend:plugin.picker" in PLUGIN_EXTENSION_POINTS["tool"].bindings
     assert "frontend:plugin.picker" in PLUGIN_EXTENSION_POINTS["skill"].bindings
+    assert "conversation_sticky_after_first_tool_run" in PLUGIN_EXTENSION_POINTS["tool"].restrictions
     assert "prompt_reference_only" in PLUGIN_EXTENSION_POINTS["tool_renderer"].restrictions
     assert "paper_projection_only" in PLUGIN_EXTENSION_POINTS["tool_renderer"].restrictions
     assert "none can write kernels" in manifest["authority"]["plugin_extension_authority"]

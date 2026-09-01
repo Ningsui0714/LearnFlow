@@ -102,6 +102,10 @@ client.tsx      renderer components，导出 default 或 plugin
 
 客户端包还可以声明 `name / description / icon` 展示元数据。通用 `PluginCapabilityPicker` 根据同一个构建时发现结果在
 对话选项栏呈现插件，选择只形成当前对话的 `activePluginIds`；宿主不按插件 ID 添加按钮、文案或状态分支。
+显式启用但尚未产生工具记录的插件仍可关闭；一旦插件完成或尝试过一次 namespaced Tool，宿主会从主对话及
+纸张中的 `TutorToolRun` 确定性恢复其 `pluginId`，并把它单调合并进以后每轮的激活集合。选择器此后显示
+“已使用 · 锁定”，不能单独取消；删除整个对话才结束这项上下文。该规则也覆盖失败 ToolRun，并同时在客户端
+恢复层与 Tutor 运行时执行，不能通过刷新、切换纸张或省略 `activePluginIds` 破坏历史可重放性。
 
 ## 6. 首个官方消费包
 

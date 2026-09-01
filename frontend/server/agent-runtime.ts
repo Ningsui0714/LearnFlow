@@ -34,6 +34,7 @@ import type { AgentProjectContext } from '../src/project.ts'
 import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
 import type { LearnFlowPluginRegistry, PluginActivationContext } from '../src/plugin-api.ts'
+import { stickyConversationPluginIds, lockedConversationPluginIds } from '../src/conversation-plugin-state.ts'
 import {
   completeVisualTeachingBundle,
   explanationOnlyVisualTeachingBundle,
@@ -180,7 +181,10 @@ function toolDecisionReason(call: AgentToolCall, definitions: AgentToolDefinitio
 function pluginActivation(input: TutorAgentRuntimeInput): PluginActivationContext {
   return {
     mode: input.mode,
-    activePluginIds: input.activePluginIds,
+    activePluginIds: stickyConversationPluginIds(
+      input.activePluginIds,
+      lockedConversationPluginIds({ messages: input.messages }),
+    ),
     projectId: input.formalProjectContext?.project?.id,
     checkpointId: input.formalProjectContext?.checkpoint_id || undefined,
   }

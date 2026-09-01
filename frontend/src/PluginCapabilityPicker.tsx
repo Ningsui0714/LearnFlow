@@ -2,15 +2,18 @@ import { installedClientPlugins } from './PluginToolResultView.tsx'
 
 export default function PluginCapabilityPicker({
   activePluginIds,
+  lockedPluginIds = [],
   disabled,
   onChange,
 }: {
   activePluginIds: readonly string[]
+  lockedPluginIds?: readonly string[]
   disabled?: boolean
   onChange: (pluginIds: string[]) => void
 }) {
   if (!installedClientPlugins.length) return null
   const active = new Set(activePluginIds)
+  const locked = new Set(lockedPluginIds)
   return (
     <details className="plugin-capability-picker">
       <summary role="button" aria-label="选择对话插件">
@@ -22,24 +25,26 @@ export default function PluginCapabilityPicker({
         <header><strong>本轮对话插件</strong><span>插件只为 Tutor 增加声明过的工具、Skill、对象和结果显示。</span></header>
         {installedClientPlugins.map(plugin => {
           const selected = active.has(plugin.pluginId)
+          const isLocked = locked.has(plugin.pluginId)
           return (
             <button
               type="button"
               key={plugin.pluginId}
               className={selected ? 'selected' : ''}
               aria-pressed={selected}
-              disabled={disabled}
+              disabled={disabled || isLocked}
+              title={isLocked ? '这个插件已经在当前对话中产生工具记录，因此会随对话保持启用。' : undefined}
               onClick={() => onChange(selected
                 ? activePluginIds.filter(id => id !== plugin.pluginId)
                 : [...activePluginIds, plugin.pluginId])}
             >
               <i aria-hidden="true">{plugin.icon || '◇'}</i>
               <span><strong>{plugin.name || plugin.pluginId}</strong><small>{plugin.description || plugin.pluginId}</small></span>
-              <b>{selected ? '已启用' : '启用'}</b>
+              <b>{isLocked ? '已使用 · 锁定' : selected ? '已启用' : '启用'}</b>
             </button>
           )
         })}
-        <footer>选择只作用于当前对话；插件结果不会直接写入五核或核心学习对象。</footer>
+        <footer>选择只作用于当前对话；插件一旦参与该对话便保持启用，以保证历史工具、对象引用和后续追问可重放。插件结果不会直接写入五核或核心学习对象。</footer>
       </div>
     </details>
   )

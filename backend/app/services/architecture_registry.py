@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-09-01.1"
+REGISTRY_VERSION = "2026-09-01.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -227,7 +227,10 @@ PLUGIN_EXTENSION_POINTS = {
         PluginExtensionPointContract(
             "tool", "versioned model-callable schema + trusted in-process handler", "tutor_agent",
             "plugin_id__tool_id", "plugin handler may return observations or artifacts only",
-            ("read_only_or_artifact", "bounded_json_input_output", "no_kernel_write", "no_core_object_write"),
+            (
+                "read_only_or_artifact", "bounded_json_input_output", "no_kernel_write",
+                "no_core_object_write", "conversation_sticky_after_first_tool_run",
+            ),
             ("frontend:plugin.registry", "frontend:plugin.loader", "frontend:plugin.picker", "frontend:agent_runtime.run"),
         ),
         PluginExtensionPointContract(
