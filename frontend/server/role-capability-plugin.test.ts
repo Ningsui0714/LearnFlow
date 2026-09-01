@@ -186,3 +186,18 @@ test('role plugin implementation stays inside its package and host files contain
   ].map(path => readFileSync(path, 'utf8')).join('\n')
   assert.doesNotMatch(hostSource, /role_capability_graph|llm-app-engineer|process_forest/)
 })
+
+test('role object cards keep the source workspace lane interaction inside the plugin renderer', () => {
+  const clientSource = readFileSync(resolve(process.cwd(), 'plugins/role_capability_graph/client.tsx'), 'utf8')
+  const cssSource = readFileSync(resolve(process.cwd(), 'plugins/role_capability_graph/plugin.css'), 'utf8')
+
+  assert.match(clientSource, /上下浏览语义维度，左右浏览同维度节点/)
+  assert.match(clientSource, /clientWidth \* \.72/)
+  assert.match(clientSource, /behavior: 'smooth'/)
+  assert.match(clientSource, /向左浏览\$\{dimension\.label\}/)
+  assert.match(clientSource, /向右浏览\$\{dimension\.label\}/)
+  assert.match(cssSource, /scroll-snap-type:x proximity/)
+  assert.match(cssSource, /flex:0 0 218px/)
+  assert.match(cssSource, /flex-basis:292px/)
+  assert.match(cssSource, /max-height:min\(68vh,720px\)/)
+})

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react'
+import { useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   defineLearnFlowPluginClient,
   pluginObjectDragProps,
@@ -94,26 +94,155 @@ function FollowActions({ props, objectId, label }: { props: PluginToolRendererPr
   </div>
 }
 
+type RoleCardDimension = {
+  id: string
+  label: string
+  description: string
+  categories: string[]
+}
+
+const roleCardDimensions: RoleCardDimension[] = [
+  {
+    id: 'position',
+    label: '产业与岗位位置',
+    description: '产业链、岗位群、具体岗位与相邻岗位',
+    categories: ['industry_chain_node', 'job_family', 'occupation_standard', 'market_role', 'related_role'],
+  },
+  { id: 'task', label: '典型工作任务', description: '能形成独立交付物、可观察工作结果的任务', categories: ['task'] },
+  { id: 'capability', label: '岗位能力', description: '能够跨任务迁移的综合能力', categories: ['capability'] },
+  { id: 'capability-unit', label: '能力单元', description: '可训练、可观察、可评价的能力组成', categories: ['capability_unit'] },
+  { id: 'knowledge-skill', label: '知识点与技能点', description: '支撑任务完成与能力形成的学习对象', categories: ['knowledge_skill'] },
+]
+
+function simpleCardDetails(data: RecordValue) {
+  const ignored = new Set(['id', 'type', 'kind', 'label', 'summary', 'ring', 'lifecycle', 'confidence', 'assertion_refs', 'evidence_summary'])
+  return Object.entries(data).flatMap(([key, value]) => {
+    if (ignored.has(key)) return []
+    if (['string', 'number', 'boolean'].includes(typeof value)) return [[key, String(value)] as const]
+    if (Array.isArray(value)) {
+      const text = value.filter(item => ['string', 'number', 'boolean'].includes(typeof item)).slice(0, 4).join('、')
+      return text ? [[key, text] as const] : []
+    }
+    return []
+  }).slice(0, 3)
+}
+
+function ObjectCardLane({ props, dimension, objects, dimensionIndex, selectedId, relationCounts, onSelect }: {
+  props: PluginToolRendererProps
+  dimension: RoleCardDimension
+  objects: readonly PluginToolRendererProps['objects'][number][]
+  dimensionIndex: number
+  selectedId: string
+  relationCounts: Map<string, number>
+  onSelect: (objectId: string) => void
+}) {
+  const laneRef = useRef<HTMLDivElement | null>(null)
+  const moveLane = (direction: -1 | 1) => laneRef.current?.scrollBy({
+    left: direction * Math.max(240, laneRef.current.clientWidth * .72),
+    behavior: 'smooth',
+  })
+
+  return <section className="role-plugin-card-dimension" aria-labelledby={`role-plugin-card-dimension-${dimension.id}`}>
+    <header>
+      <div>
+        <span>维度 {String(dimensionIndex + 1).padStart(2, '0')}</span>
+        <strong id={`role-plugin-card-dimension-${dimension.id}`}>{dimension.label}</strong>
+        <p>{dimension.description}</p>
+      </div>
+      <div className="role-plugin-card-row-actions">
+        <b>{objects.length} 张卡片</b>
+        <button type="button" onClick={() => moveLane(-1)} aria-label={`向左浏览${dimension.label}`}>←</button>
+        <button type="button" onClick={() => moveLane(1)} aria-label={`向右浏览${dimension.label}`}>→</button>
+      </div>
+    </header>
+    <div className="role-plugin-card-lane" ref={laneRef}>
+      {objects.map(object => {
+        const data = dataOf(object)
+        const category = categoryOf(object)
+        const selected = selectedId === object.objectId
+        const evidence = (data.evidence_summary || {}) as RecordValue
+        const confidence = typeof data.confidence === 'number'
+          ? data.confidence
+          : typeof evidence.max_confidence === 'number' ? evidence.max_confidence : null
+        const sourceRefs = Array.isArray(evidence.source_refs)
+          ? evidence.source_refs
+          : Array.isArray(data.evidenceSegmentIds) ? data.evidenceSegmentIds
+            : Array.isArray(data.evidenceBindingIds) ? data.evidenceBindingIds : []
+        const sourceCount = new Set(sourceRefs.map(item => String(item))).size
+        const details = selected ? simpleCardDetails(data) : []
+        return <article
+          key={object.objectId}
+          className={`role-plugin-summary-card ${selected ? 'selected' : ''} ${String(data.lifecycle || data.knowledgeState || 'snapshot')}`}
+          style={{ '--role-accent': colorFor(category) } as CSSProperties}
+          {...interactiveObjectProps(props, object)}
+        >
+          <button className="role-plugin-card-select" type="button" aria-pressed={selected} onClick={() => onSelect(object.objectId)}>
+            <span className="role-plugin-card-type"><b>{category}</b><i>{String(data.lifecycle || data.knowledgeState || 'snapshot')}</i></span>
+            <strong>{object.label}</strong>
+            <p>{String(data.summary || '')}</p>
+            <div className="role-plugin-card-metrics">
+              <span><b>{confidence === null ? '—' : confidence.toFixed(2)}</b><small>置信</small></span>
+              <span><b>{sourceCount}</b><small>来源</small></span>
+              <span><b>{relationCounts.get(object.objectId) || 0}</b><small>关系</small></span>
+            </div>
+            {details.length > 0 && <div className="role-plugin-card-expanded">
+              {details.map(([key, value]) => <span key={key}><b>{key.replaceAll('_', ' ')}</b><small>{value}</small></span>)}
+            </div>}
+          </button>
+          <footer><code>{object.objectId}</code>{confidence !== null && <b>{Math.round(confidence * 100)}%</b>}</footer>
+          <FollowActions props={props} objectId={object.objectId} label={object.label} />
+        </article>
+      })}
+    </div>
+  </section>
+}
+
 function ObjectCardGrid({ props, objects = props.objects.filter(object => object.objectType === 'role_object') }: {
   props: PluginToolRendererProps
   objects?: readonly PluginToolRendererProps['objects'][number][]
 }) {
-  return <div className="role-plugin-card-grid">
-    {objects.map(object => {
-      const data = dataOf(object)
-      const category = categoryOf(object)
-      return <article
-        key={object.objectId}
-        style={{ '--role-accent': colorFor(category) } as CSSProperties}
-        {...interactiveObjectProps(props, object)}
-      >
-        <header><span>{category}</span><small>{String(data.lifecycle || data.knowledgeState || 'snapshot')}</small></header>
-        <strong>{object.label}</strong>
-        <p>{String(data.summary || '')}</p>
-        <footer><code>{object.objectId}</code>{typeof data.confidence === 'number' && <b>{Math.round(data.confidence * 100)}%</b>}</footer>
-        <FollowActions props={props} objectId={object.objectId} label={object.label} />
-      </article>
-    })}
+  const [selectedId, setSelectedId] = useState(objects[0]?.objectId || '')
+  const grouped = useMemo(() => {
+    const assigned = new Set(roleCardDimensions.flatMap(dimension => dimension.categories))
+    const rows = roleCardDimensions.map(dimension => ({
+      dimension,
+      objects: objects.filter(object => dimension.categories.includes(categoryOf(object))),
+    })).filter(row => row.objects.length > 0)
+    const otherObjects = objects.filter(object => !assigned.has(categoryOf(object)))
+    if (otherObjects.length > 0) rows.push({
+      dimension: { id: 'other', label: '其他语义对象', description: '场景、事理及尚未归入核心维度的岗位对象', categories: [] },
+      objects: otherObjects,
+    })
+    return rows
+  }, [objects])
+  const relationCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    props.objects.filter(object => object.objectType === 'role_relation').forEach(object => {
+      const relation = dataOf(object)
+      const source = String(relation.source || '')
+      const target = String(relation.target || '')
+      if (source) counts.set(source, (counts.get(source) || 0) + 1)
+      if (target) counts.set(target, (counts.get(target) || 0) + 1)
+    })
+    return counts
+  }, [props.objects])
+
+  if (!grouped.length) return <p className="role-plugin-card-empty">没有匹配当前结果的岗位卡片。</p>
+  return <div className="role-plugin-card-view">
+    <header className="role-plugin-card-view-intro">
+      <div><span>ROLE CARDS</span><strong>岗位卡片总览</strong></div>
+      <p>上下浏览语义维度，左右浏览同维度节点。选择卡片可展开细节，拖动或双击可引用到对话。</p>
+    </header>
+    {grouped.map((row, index) => <ObjectCardLane
+      key={row.dimension.id}
+      props={props}
+      dimension={row.dimension}
+      objects={row.objects}
+      dimensionIndex={index}
+      selectedId={selectedId}
+      relationCounts={relationCounts}
+      onSelect={setSelectedId}
+    />)}
   </div>
 }
 
