@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -196,6 +197,70 @@ def task_card_id_from_content(content: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def targeted_patch_from_content(content: str) -> dict[str, Any] | None:
+    """Extract the workflow's structured publish-gate repair response."""
+
+    source = str(content or "")
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", source):
+        try:
+            value, _ = decoder.raw_decode(source[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(value, dict)
+            and value.get("schema_version")
+            == "learning-work-task-targeted-patch-v1"
+        ):
+            return value
+    return None
+
+
+def _repair_workflow_input(task_title: str, patch: Mapping[str, Any]) -> str:
+    def safe_line(value: Any, limit: int = 320) -> str:
+        return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
+
+    hard_errors = [
+        safe_line(item) for item in list(patch.get("hard_errors") or [])
+        if safe_line(item)
+    ]
+    required_objects: list[str] = []
+    for error in hard_errors:
+        required_objects.extend(
+            item.strip() for item in re.findall(r"任务对象“([^”]+)”", error)
+            if item.strip()
+        )
+    target_lines: list[str] = []
+    for item in list(patch.get("targets") or []):
+        if not isinstance(item, Mapping):
+            continue
+        raw_step_id = safe_line(item.get("step_id"), 80)
+        step_id = (
+            raw_step_id if re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", raw_step_id)
+            else "未指定步骤"
+        )
+        reason_codes = "、".join(
+            code for code in (
+                safe_line(value, 80)
+                for value in list(item.get("reason_codes") or [])
+            )
+            if re.fullmatch(r"[A-Z0-9_:-]{1,80}", code)
+        )
+        target_lines.append(f"- {step_id}: {reason_codes or '需重新核对'}")
+    required_line = "、".join(dict.fromkeys(required_objects)) or task_title
+    error_lines = "\n".join(f"- {item}" for item in hard_errors) or "- 上一轮未通过发布门禁"
+    targets = "\n".join(target_lines) or "- 逐步检查动作、产物与验收依据"
+    return (
+        "请重新完整生成并发布下面的学习型工作任务，不要只返回修补说明。\n"
+        f"原始真实工作任务：{task_title}\n"
+        f"任务名称、关键步骤和可验收产物必须明确保留任务对象：{required_line}。\n"
+        "每个步骤必须写明动作、对象、方法、可观察产物和可执行检查方法。\n"
+        f"上一轮发布门禁问题：\n{error_lines}\n"
+        f"需要定向修订的步骤：\n{targets}\n"
+        "请完成全部内部校验，最终返回已发布任务卡的交互页面与 JSON 链接。"
+    )
 
 
 class LearningTaskBundleGateway:
@@ -402,7 +467,28 @@ async def generate_xingchen_learning_task(
     client = workflow_client or XingchenLearningTaskWorkflowClient()
     run = await client.run(task_title, uid=uid)
     task_card_id = task_card_id_from_content(str(run.get("content") or ""))
+    workflow_run_ids = [str(run.get("run_id") or "")]
+    patch = targeted_patch_from_content(str(run.get("content") or ""))
+    repair_attempted = patch is not None and not task_card_id
+    if repair_attempted:
+        run = await client.run(
+            _repair_workflow_input(task_title, patch),
+            uid=f"{uid[:32]}-repair",
+        )
+        workflow_run_ids.append(str(run.get("run_id") or ""))
+        task_card_id = task_card_id_from_content(str(run.get("content") or ""))
     if not task_card_id:
+        final_patch = targeted_patch_from_content(str(run.get("content") or ""))
+        hard_errors = [
+            str(item).strip() for item in list((final_patch or patch or {}).get("hard_errors") or [])
+            if str(item).strip()
+        ]
+        if hard_errors:
+            raise XingchenWorkflowError(
+                "讯飞工作流候选未通过发布门禁"
+                + ("，自动修订后仍未发布：" if repair_attempted else "：")
+                + "；".join(hard_errors[:4])
+            )
         raise XingchenWorkflowError(
             "讯飞工作流已完成，但没有返回可解析的任务卡 ID"
         )
@@ -411,6 +497,8 @@ async def generate_xingchen_learning_task(
         "protocol": "learnflow.xingchen-learning-task-generation.v1",
         "provider": "xunfei-xingchen",
         "workflow_run_id": str(run.get("run_id") or ""),
+        "workflow_run_ids": [item for item in workflow_run_ids if item],
+        "repair_attempted": repair_attempted,
         "task_card_id": task_card_id,
         "verification_status": str(bundle.get("verification_status") or ""),
         "usage": dict(run.get("usage") or {}),
@@ -428,5 +516,6 @@ __all__ = [
     "load_xingchen_credentials",
     "plan_from_task_bundle",
     "task_card_id_from_content",
+    "targeted_patch_from_content",
     "validate_task_bundle",
 ]

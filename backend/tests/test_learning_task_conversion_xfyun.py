@@ -11,6 +11,7 @@ from app.services.learning_task_conversion_xfyun import (
     XingchenWorkflowCredentials,
     XingchenWorkflowError,
     generate_xingchen_learning_task,
+    targeted_patch_from_content,
     validate_task_bundle,
 )
 
@@ -167,3 +168,96 @@ def test_bundle_validation_rejects_dangling_provider_mappings():
     ]
     with pytest.raises(XingchenWorkflowError, match="悬空映射"):
         validate_task_bundle(invalid, "ltc_generated_01")
+
+
+def _targeted_patch_content() -> str:
+    return """## 岗位典型工作任务转化结果
+{
+  "schema_version": "learning-work-task-targeted-patch-v1",
+  "hard_errors": ["候选内容没有保留任务对象“Windows可执行软件包”或其允许别名"],
+  "targets": [
+    {
+      "step_id": "step_01",
+      "reason_codes": ["ACTION_NOT_SPECIFIC", "DELIVERABLE_NOT_OBSERVABLE"],
+      "instruction": "仅修复该步骤的动作、产物、检查点或映射缺口。"
+    }
+  ]
+}
+"""
+
+
+def test_targeted_patch_is_extracted_from_markdown_workflow_content():
+    patch = targeted_patch_from_content(_targeted_patch_content())
+    assert patch is not None
+    assert patch["schema_version"] == "learning-work-task-targeted-patch-v1"
+    assert patch["targets"][0]["reason_codes"] == [
+        "ACTION_NOT_SPECIFIC", "DELIVERABLE_NOT_OBSERVABLE",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_xingchen_generation_automatically_repairs_publish_gate_patch_once():
+    class SequencedWorkflowClient:
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        async def run(self, user_input: str, *, uid: str) -> dict:
+            self.calls.append((user_input, uid))
+            if len(self.calls) == 1:
+                return {
+                    "run_id": "run_initial",
+                    "content": _targeted_patch_content(),
+                    "usage": {"total_tokens": 80},
+                }
+            return {
+                "run_id": "run_repair",
+                "content": (
+                    "/api/v1/learning-task-conversion/tasks/"
+                    "ltc_generated_01/interactive.html"
+                ),
+                "usage": {"total_tokens": 120},
+            }
+
+    async def bundle_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_bundle())
+
+    client = SequencedWorkflowClient()
+    generated = await generate_xingchen_learning_task(
+        "windows可执行软件的打包",
+        uid="learner-repair",
+        workflow_client=client,  # type: ignore[arg-type]
+        bundle_gateway=LearningTaskBundleGateway(
+            base_url="https://conversion.example",
+            transport=httpx.MockTransport(bundle_handler),
+        ),
+    )
+
+    assert len(client.calls) == 2
+    assert "请重新完整生成并发布" in client.calls[1][0]
+    assert "Windows可执行软件包" in client.calls[1][0]
+    assert "ACTION_NOT_SPECIFIC" in client.calls[1][0]
+    assert generated["repair_attempted"] is True
+    assert generated["workflow_run_id"] == "run_repair"
+    assert generated["workflow_run_ids"] == ["run_initial", "run_repair"]
+    assert generated["task_card_id"] == "ltc_generated_01"
+
+
+@pytest.mark.asyncio
+async def test_xingchen_generation_surfaces_publish_gate_reason_after_failed_repair():
+    class RejectedWorkflowClient:
+        async def run(self, _user_input: str, *, uid: str) -> dict:
+            return {
+                "run_id": f"run_{uid}",
+                "content": _targeted_patch_content(),
+                "usage": {},
+            }
+
+    with pytest.raises(
+        XingchenWorkflowError,
+        match="Windows可执行软件包",
+    ):
+        await generate_xingchen_learning_task(
+            "windows可执行软件的打包",
+            uid="learner-rejected",
+            workflow_client=RejectedWorkflowClient(),  # type: ignore[arg-type]
+        )

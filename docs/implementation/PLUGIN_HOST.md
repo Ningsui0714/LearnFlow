@@ -162,6 +162,8 @@ runner 先接收带 instance、release、workflow/tool、固定 snapshot、输�
 
 工作流调用、任务包读取或校验任一失败时，Plugin Run 必须失败，不得生成本地通用模板快照。成功快照的 provenance 保留 `provider=xunfei-xingchen`、workflow run ID、task card ID 与 verification status，但不保存 API key/secret。该产物仍为规划候选，不得触发五核写入或掌握推断。
 
+若工作流返回 `learning-work-task-targeted-patch-v1`，这表示 provider 已生成候选但未通过内部发布门禁。宿主只允许一次定向修订：提取有界 hard error、引用的任务对象、步骤 ID 与大写 reason code，不使用 provider 自由文本指令。成功时 provenance 额外保留 `workflow_run_ids` 和 `repair_attempted=true`；仍未发布时把最终 hard error 作为 Plugin Run 错误返回前端。
+
 Host Port 请求必须再次检查 learner/project ownership、instance 当前 release、manifest 声明、Instance 授权、
 调用预算和对象引用。来源正文以及所有外部字符串一律标记为不可信数据，不能作为宿主指令执行。
 宿主同时累计本次 `source.read.v1`、knowledge baseline 与 artifact resolve 的固定读取记录；写快照时只允许

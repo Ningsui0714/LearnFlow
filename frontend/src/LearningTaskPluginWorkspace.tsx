@@ -259,7 +259,10 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
           {document.provider === 'xunfei-xingchen' && <span
             className="learning-task-plugin-provider"
             title={text(document.providerProvenance.task_card_id, '讯飞星辰工作流')}
-          ><i />讯飞工作流 · {text(document.providerProvenance.verification_status) === 'verified' ? '已校验' : '已返回'}</span>}
+          ><i />讯飞工作流 · {document.providerProvenance.repair_attempted === true
+            ? (text(document.providerProvenance.verification_status) === 'verified' ? '自动修订后已校验' : '已自动修订')
+            : (text(document.providerProvenance.verification_status) === 'verified' ? '已校验' : '已返回')
+          }</span>}
           <span className="learning-task-plugin-ready"><i />已生成 · {document.steps.length} 个步骤</span>
           <button
             type="button"

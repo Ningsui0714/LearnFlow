@@ -662,6 +662,8 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
             "provider": "xunfei-xingchen",
             "provider_provenance": {
                 "workflow_run_id": generated["workflow_run_id"],
+                "workflow_run_ids": generated["workflow_run_ids"],
+                "repair_attempted": generated["repair_attempted"],
                 "task_card_id": generated["task_card_id"],
                 "verification_status": generated["verification_status"],
             },

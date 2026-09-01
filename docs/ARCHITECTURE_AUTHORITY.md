@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-01.2`）：讯飞星辰工作流可以用 `learning-work-task-targeted-patch-v1` 表示候选未通过发布门禁。学习型任务 adapter 现在只提取有界的 hard error、任务对象、步骤 ID 和原因码，保留原始任务后自动定向重生成一次。修订成功时快照 provenance 记录全部 workflow run 与 `repair_attempted`；修订后仍失败则把具体门禁原因返回界面，不再误报为“解析不到任务卡 ID”，也不使用本地模板。该变更不改变项目快照、零 Kernel target 或掌握证据边界。
+
 Contract impact（`2026-09-01.1`）：学习型任务插件的生成候选改由宿主受控调用固定的讯飞星辰工作流。凭证只在服务端私密配置中读取，插件与浏览器不获得密钥；工作流返回的任务卡必须经版本化 bundle、步骤字段和知识—技能映射校验，再编译为现有 Plugin Snapshot。讯飞或任务包服务失败时本轮失败，不再用本地通用模板冒充已生成。快照保存 provider、workflow run、task card 与校验状态；该链路仍是零 Kernel target 的规划产物，不表示学习者已执行或掌握。既有 Host Port、Plugin Snapshot、三类主 Agent、五核与 EvidenceEvent 契约保持兼容，无数据库迁移。
 
 Contract impact（`2026-08-30.10`）：长尾图解/动画新增通用的请求—产物语义契约。省略式视觉追问优先继承最近已验证视觉产物的有界标题/摘要，其次继承最近用户主题；无法恢复主题时在模型调用前返回 `needs_input`，不再生成通用占位物。模型候选必须通过动态请求主题覆盖；其中声明式过程必须在 semantic 或帧叙述中实际覆盖主题，且至少包含三个主题阶段与两个连续变化，标题不能替代过程内容。规则不维护课程、算法或岗位白名单。视觉工具回灌 Tutor 的观察新增有界摘要、帧标题、帧描述、状态线索与语义变化数，并把它们设为最终回答的唯一产物事实边界，禁止用主题常识补写未展示的指针、交换或结果。稳定 Tool ID、VisualSpec v3、三类主 Agent、五核、EvidenceEvent 与掌握语义保持兼容，无数据库迁移。
