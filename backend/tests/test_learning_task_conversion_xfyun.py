@@ -93,6 +93,16 @@ def _credentials() -> XingchenWorkflowCredentials:
     )
 
 
+def _minimum_five_step_schema() -> dict:
+    return {
+        "type": "object",
+        "required": ["steps"],
+        "properties": {
+            "steps": {"type": "array", "minItems": 5},
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_xingchen_client_invokes_fixed_workflow_without_exposing_credentials():
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -260,4 +270,89 @@ async def test_xingchen_generation_surfaces_publish_gate_reason_after_failed_rep
             "windows可执行软件的打包",
             uid="learner-rejected",
             workflow_client=RejectedWorkflowClient(),  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_xingchen_generation_retries_when_compiled_plan_fails_step_schema():
+    class SequencedWorkflowClient:
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        async def run(self, user_input: str, *, uid: str) -> dict:
+            self.calls.append((user_input, uid))
+            task_card_id = "ltc_short" if len(self.calls) == 1 else "ltc_repaired"
+            return {
+                "run_id": f"run_{len(self.calls)}",
+                "content": (
+                    "/api/v1/learning-task-conversion/tasks/"
+                    f"{task_card_id}/interactive.html"
+                ),
+                "usage": {},
+            }
+
+    async def bundle_handler(request: httpx.Request) -> httpx.Response:
+        task_card_id = request.url.path.split("/tasks/", 1)[1].split("/", 1)[0]
+        bundle = _bundle(task_card_id)
+        if task_card_id == "ltc_short":
+            bundle["task"]["work_task"]["task_steps"] = bundle["task"]["work_task"]["task_steps"][:4]
+        return httpx.Response(200, json=bundle)
+
+    client = SequencedWorkflowClient()
+    generated = await generate_xingchen_learning_task(
+        "配置企业园区交换机 VLAN",
+        uid="learner-schema-repair",
+        workflow_client=client,  # type: ignore[arg-type]
+        bundle_gateway=LearningTaskBundleGateway(
+            base_url="https://conversion.example",
+            transport=httpx.MockTransport(bundle_handler),
+        ),
+        plan_schema=_minimum_five_step_schema(),
+    )
+
+    assert len(client.calls) == 2
+    assert "$.steps" in client.calls[1][0]
+    assert "至少需要 5 项" in client.calls[1][0]
+    assert generated["repair_attempted"] is True
+    assert generated["repair_reasons"] == ["structure_schema"]
+    assert generated["workflow_run_ids"] == ["run_1", "run_2"]
+    assert generated["task_card_id"] == "ltc_repaired"
+
+
+@pytest.mark.asyncio
+async def test_xingchen_generation_surfaces_exact_schema_path_after_failed_structure_repair():
+    class AlwaysShortWorkflowClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, _user_input: str, *, uid: str) -> dict:
+            self.calls += 1
+            return {
+                "run_id": f"run_{self.calls}",
+                "content": (
+                    "/api/v1/learning-task-conversion/tasks/"
+                    f"ltc_short_{self.calls}/interactive.html"
+                ),
+                "usage": {},
+            }
+
+    async def bundle_handler(request: httpx.Request) -> httpx.Response:
+        task_card_id = request.url.path.split("/tasks/", 1)[1].split("/", 1)[0]
+        bundle = _bundle(task_card_id)
+        bundle["task"]["work_task"]["task_steps"] = bundle["task"]["work_task"]["task_steps"][:4]
+        return httpx.Response(200, json=bundle)
+
+    with pytest.raises(
+        XingchenWorkflowError,
+        match=r"讯飞任务结构自动修订后仍未通过：\$\.steps：至少需要 5 项，实际只有 4 项",
+    ):
+        await generate_xingchen_learning_task(
+            "配置企业园区交换机 VLAN",
+            uid="learner-schema-rejected",
+            workflow_client=AlwaysShortWorkflowClient(),  # type: ignore[arg-type]
+            bundle_gateway=LearningTaskBundleGateway(
+                base_url="https://conversion.example",
+                transport=httpx.MockTransport(bundle_handler),
+            ),
+            plan_schema=_minimum_five_step_schema(),
         )

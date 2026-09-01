@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-01.3`）：学习型任务转化的主要入口收敛为项目 Tutor Composer 的插件选择：学习者选择插件后，下一条消息直接作为真实工作任务运行 `generate`，成功后才打开中央固定快照；任务工作台只负责步骤阅读、排序、批注、导出与知识点交接，不再维护第二个生成表单。讯飞任务卡或编译计划若在 `task_steps`、`steps`、必填字段、类型、数量或映射上未通过本地结构契约，adapter 会把受控字段路径与确定性约束交回同一讯飞工作流完整重生成一次，再重新取包和校验；仍失败时返回中文字段路径和实际约束。provenance 记录 `repair_reasons`，不使用本地模板，不改变 Plugin Snapshot、零 Kernel target 或掌握证据边界。
+
 Contract impact（`2026-09-01.2`）：讯飞星辰工作流可以用 `learning-work-task-targeted-patch-v1` 表示候选未通过发布门禁。学习型任务 adapter 现在只提取有界的 hard error、任务对象、步骤 ID 和原因码，保留原始任务后自动定向重生成一次。修订成功时快照 provenance 记录全部 workflow run 与 `repair_attempted`；修订后仍失败则把具体门禁原因返回界面，不再误报为“解析不到任务卡 ID”，也不使用本地模板。该变更不改变项目快照、零 Kernel target 或掌握证据边界。
 
 Contract impact（`2026-09-01.1`）：学习型任务插件的生成候选改由宿主受控调用固定的讯飞星辰工作流。凭证只在服务端私密配置中读取，插件与浏览器不获得密钥；工作流返回的任务卡必须经版本化 bundle、步骤字段和知识—技能映射校验，再编译为现有 Plugin Snapshot。讯飞或任务包服务失败时本轮失败，不再用本地通用模板冒充已生成。快照保存 provider、workflow run、task card 与校验状态；该链路仍是零 Kernel target 的规划产物，不表示学习者已执行或掌握。既有 Host Port、Plugin Snapshot、三类主 Agent、五核与 EvidenceEvent 契约保持兼容，无数据库迁移。

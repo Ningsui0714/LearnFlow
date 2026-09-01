@@ -164,6 +164,10 @@ runner 先接收带 instance、release、workflow/tool、固定 snapshot、输�
 
 若工作流返回 `learning-work-task-targeted-patch-v1`，这表示 provider 已生成候选但未通过内部发布门禁。宿主只允许一次定向修订：提取有界 hard error、引用的任务对象、步骤 ID 与大写 reason code，不使用 provider 自由文本指令。成功时 provenance 额外保留 `workflow_run_ids` 和 `repair_attempted=true`；仍未发布时把最终 hard error 作为 Plugin Run 错误返回前端。
 
+已发布任务卡还必须通过任务包结构门和插件 `model.generate_structured.v1` 输出 Schema。若失败，宿主把确定性的 JSON 路径与约束（例如 `$.steps` 至少 5 项）作为数据交回固定讯飞工作流，最多完整重生成一次；随后重新读取新任务卡、重新校验任务包和插件输出 Schema。成功时 provenance 的 `repair_reasons` 包含 `structure_schema`；仍失败时向 Tutor 返回中文路径、期望约束和实际值。不得在宿主中填充步骤或用通用模板伪造通过。
+
+产品入口位于项目 Tutor Composer：学习者从“插件”菜单选择“学习型任务转化”，下一条消息直接进入 `generate`，成功快照在中央工作台打开。工作台只消费固定快照并提供阅读、排序、批注、导出和 handoff，不保存独立的首要生成输入器。
+
 Host Port 请求必须再次检查 learner/project ownership、instance 当前 release、manifest 声明、Instance 授权、
 调用预算和对象引用。来源正文以及所有外部字符串一律标记为不可信数据，不能作为宿主指令执行。
 宿主同时累计本次 `source.read.v1`、knowledge baseline 与 artifact resolve 的固定读取记录；写快照时只允许

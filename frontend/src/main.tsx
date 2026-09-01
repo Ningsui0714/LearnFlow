@@ -3307,12 +3307,28 @@ function App({ auth }: { auth: AuthGateSession }) {
                     onPrompt={prompt => { void runTutorTurn(conversation.id, prompt) }}
                   />
                 ) : (
-                  <details className="composer-plugin-control composer-plugin-picker">
-                    <summary role="button"><span className="composer-plugin-glyph">＋</span><strong>插件</strong><small>{(pluginSurfacesByProject[conversation.projectId] || []).length}</small></summary>
+                  <details className={`composer-plugin-control composer-plugin-picker${toolChoices[draftKey] === 'learning_task' ? ' selected' : ''}`}>
+                    <summary role="button"><span className="composer-plugin-glyph">{toolChoices[draftKey] === 'learning_task' ? '✦' : '＋'}</span><strong>{toolChoices[draftKey] === 'learning_task' ? '学习型任务转化' : '插件'}</strong><small>{toolChoices[draftKey] === 'learning_task' ? '本轮已选' : (pluginSurfacesByProject[conversation.projectId] || []).length}</small></summary>
                     <div className="composer-plugin-popover">
                       <header><div><span>CHAT PLUGINS</span><strong>选择本对话使用的插件</strong></div><button type="button" onClick={() => setProjectPanelRequest(current => requestProjectPanel(current, conversation.id, 'plugins'))}>管理</button></header>
                       <div className="composer-plugin-list">
-                        {(pluginSurfacesByProject[conversation.projectId] || []).map(surface => <button type="button" key={`${surface.plugin_id}:${surface.surface_id}`} onClick={() => void openProjectPluginChat(conversation.projectId!, surface.plugin_id)}><span>{pluginChatGlyph(surface.plugin_id)}</span><div><strong>{surface.title}</strong><small>{surface.plugin_id === 'learning_task_conversion' ? '打开中央任务工作台' : '工具、Skill 与聊天产物'}</small></div></button>)}
+                        {(pluginSurfacesByProject[conversation.projectId] || []).map(surface => {
+                          const selected = surface.plugin_id === 'learning_task_conversion' && toolChoices[draftKey] === 'learning_task'
+                          return <button
+                            type="button"
+                            key={`${surface.plugin_id}:${surface.surface_id}`}
+                            aria-pressed={selected}
+                            onClick={event => {
+                              event.currentTarget.closest('details')?.removeAttribute('open')
+                              if (surface.plugin_id === 'learning_task_conversion') {
+                                setToolChoices(previous => ({ ...previous, [draftKey]: 'learning_task' }))
+                                setFormalError('')
+                                return
+                              }
+                              void openProjectPluginChat(conversation.projectId!, surface.plugin_id)
+                            }}
+                          ><span>{pluginChatGlyph(surface.plugin_id)}</span><div><strong>{surface.title}</strong><small>{surface.plugin_id === 'learning_task_conversion' ? (selected ? '已选择：发送下一条消息即可生成' : '选择后，把下一条消息转成任务步骤') : '工具、Skill 与聊天产物'}</small></div></button>
+                        })}
                         {!(pluginSurfacesByProject[conversation.projectId] || []).length && <p>当前项目还没有启用插件，请先进入管理完成安装和授权。</p>}
                       </div>
                     </div>

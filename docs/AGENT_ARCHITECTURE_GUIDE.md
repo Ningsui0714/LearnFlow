@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-01.3`）：学习型任务 Agent Package 的学习者入口改为项目 Tutor Composer 插件选择；选中后下一条消息直接进入固定 `generate` workflow，成功快照才在中央工作台打开，工作台本身不再复制生成输入。讯飞已发布任务卡仍需通过任务包与插件输出 Schema；若 JSON 路径、数量、类型、必填字段或映射失败，Harness 将确定性路径与约束带回同一 provider 完整重生成一次并重新校验。最终失败显式返回路径与期望，不使用本地模板，不循环重试，也不写五核。
+
 Contract impact（`2026-09-01.2`）：学习型任务的星辰 adapter 把“工作流已运行”与“任务卡已发布”分开。工作流返回定向修补契约时，Harness 将有界门禁原因与失败步骤带回同一 provider 自动修订一次；不执行 provider 返回的自由文本指令，不循环重试。最终仍失败时对学习者显示具体 hard error 和步骤原因，生成仍不写五核。
 
 Contract impact（`2026-09-01.1`）：学习设计 Agent 后的学习型任务 Agent Package 通过既有结构化模型 Host Port 请求受限 provider `xingchen_learning_task`；宿主只允许 `learning_task_conversion` 实例调用该分支，并固定执行运维配置的讯飞星辰工作流。工作流只生成领域候选；宿主继续负责 bundle/schema/引用校验、不可变快照提交和项目作用域。provider 失败不允许静默回退为通用六步模板；快照的 provenance 必须记录真实 workflow run 与 task card。该产物不写五核，也不构成掌握证据。

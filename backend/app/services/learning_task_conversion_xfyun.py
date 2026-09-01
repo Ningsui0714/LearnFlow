@@ -16,6 +16,8 @@ from typing import Any, Mapping
 
 import httpx
 from dotenv import dotenv_values
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError, ValidationError
 
 from app.core.config import settings
 
@@ -30,6 +32,15 @@ class XingchenWorkflowError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 502):
         super().__init__(message)
         self.status_code = status_code
+
+
+class XingchenTaskStructureError(XingchenWorkflowError):
+    """A provider task card or compiled plan failed a local structure gate."""
+
+    def __init__(self, path: str, reason: str):
+        self.path = str(path or "$")[:240]
+        self.reason = re.sub(r"\s+", " ", str(reason or "结构不符合约束")).strip()[:500]
+        super().__init__(f"{self.path}：{self.reason}")
 
 
 @dataclass(frozen=True)
@@ -263,6 +274,54 @@ def _repair_workflow_input(task_title: str, patch: Mapping[str, Any]) -> str:
     )
 
 
+def _schema_failure(
+    value: Any,
+    schema: Mapping[str, Any],
+) -> tuple[str, str] | None:
+    try:
+        Draft202012Validator.check_schema(dict(schema))
+        error = next(Draft202012Validator(dict(schema)).iter_errors(value), None)
+    except SchemaError as exc:
+        raise XingchenWorkflowError("学习型任务插件的结构契约无效") from exc
+    if error is None:
+        return None
+    location = "$" + "".join(
+        f"[{item}]" if isinstance(item, int) else f".{item}"
+        for item in error.absolute_path
+    )
+    return location, _schema_failure_reason(error)
+
+
+def _schema_failure_reason(error: ValidationError) -> str:
+    if error.validator == "minItems":
+        return f"至少需要 {error.validator_value} 项，实际只有 {len(error.instance) if isinstance(error.instance, list) else 0} 项"
+    if error.validator == "maxItems":
+        return f"最多允许 {error.validator_value} 项"
+    if error.validator == "required":
+        missing = [
+            str(item) for item in list(error.validator_value or [])
+            if isinstance(error.instance, Mapping) and item not in error.instance
+        ]
+        return "缺少必填字段 " + "、".join(missing[:8])
+    if error.validator == "type":
+        return f"字段类型必须为 {error.validator_value}"
+    if error.validator == "additionalProperties":
+        return "包含契约未允许的额外字段"
+    return re.sub(r"\s+", " ", str(error.message or "结构不符合约束")).strip()[:500]
+
+
+def _schema_repair_workflow_input(task_title: str, path: str, reason: str) -> str:
+    safe_path = path if re.fullmatch(r"\$(?:\.[A-Za-z0-9_-]+|\[\d+\]){0,12}", path) else "$"
+    safe_reason = re.sub(r"\s+", " ", str(reason or "结构不符合约束")).strip()[:320]
+    return (
+        "请重新完整生成并发布下面的学习型工作任务，不要只解释错误，也不要返回局部补丁。\n"
+        f"原始真实工作任务：{task_title}\n"
+        f"上一任务包未通过 LearnFlow 结构校验：{safe_path}：{safe_reason}。\n"
+        "必须保留原始任务对象；每个步骤都要有动作、对象、方法、可观察产物、验收依据、知识点和技能点。\n"
+        "请完成全部内部校验，最终返回一个新的已发布任务卡及其交互页面与 JSON 链接。"
+    )
+
+
 class LearningTaskBundleGateway:
     """Resolve and validate the fixed WF03 artifact service contract."""
 
@@ -330,18 +389,18 @@ class LearningTaskBundleGateway:
 
 def validate_task_bundle(payload: Any, task_card_id: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        raise XingchenWorkflowError("讯飞任务包必须是 JSON 对象")
+        raise XingchenTaskStructureError("$", "讯飞任务包必须是 JSON 对象")
     if payload.get("schema_version") != "learning-task-conversion-integration-bundle-v1":
-        raise XingchenWorkflowError("不支持的讯飞任务包契约版本")
+        raise XingchenTaskStructureError("$.schema_version", "不支持的讯飞任务包契约版本")
     if payload.get("task_card_id") != task_card_id:
-        raise XingchenWorkflowError("讯飞任务包 ID 与工作流输出不一致")
+        raise XingchenTaskStructureError("$.task_card_id", "讯飞任务包 ID 与工作流输出不一致")
     task = payload.get("task")
     work_task = task.get("work_task") if isinstance(task, dict) else None
     if not isinstance(work_task, dict):
-        raise XingchenWorkflowError("讯飞任务包缺少 work_task")
+        raise XingchenTaskStructureError("$.task.work_task", "缺少 work_task 对象")
     steps = work_task.get("task_steps")
     if not isinstance(steps, list) or not steps:
-        raise XingchenWorkflowError("讯飞任务包缺少任务步骤")
+        raise XingchenTaskStructureError("$.task.work_task.task_steps", "缺少任务步骤")
     knowledge_ids = {
         str(item.get("knowledge_id"))
         for item in list(work_task.get("knowledge_points") or [])
@@ -354,15 +413,15 @@ def validate_task_bundle(payload: Any, task_card_id: str) -> dict[str, Any]:
     }
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
-            raise XingchenWorkflowError(f"讯飞任务包第 {index} 个步骤格式错误")
+            raise XingchenTaskStructureError(f"$.task.work_task.task_steps[{index - 1}]", "步骤必须是对象")
         if any(not str(step.get(key) or "").strip() for key in ("step_id", "action", "deliverable", "check")):
-            raise XingchenWorkflowError(f"讯飞任务包第 {index} 个步骤字段不完整")
+            raise XingchenTaskStructureError(f"$.task.work_task.task_steps[{index - 1}]", "步骤字段不完整")
         step_knowledge = {str(value) for value in list(step.get("knowledge_point_ids") or [])}
         step_skills = {str(value) for value in list(step.get("skill_point_ids") or [])}
         if not step_knowledge or not step_skills:
-            raise XingchenWorkflowError(f"讯飞任务包第 {index} 个步骤缺少知识或技能映射")
+            raise XingchenTaskStructureError(f"$.task.work_task.task_steps[{index - 1}]", "步骤缺少知识或技能映射")
         if step_knowledge - knowledge_ids or step_skills - skill_ids:
-            raise XingchenWorkflowError(f"讯飞任务包第 {index} 个步骤存在悬空映射")
+            raise XingchenTaskStructureError(f"$.task.work_task.task_steps[{index - 1}]", "步骤存在悬空映射")
     return payload
 
 
@@ -463,47 +522,73 @@ async def generate_xingchen_learning_task(
     uid: str,
     workflow_client: XingchenLearningTaskWorkflowClient | None = None,
     bundle_gateway: LearningTaskBundleGateway | None = None,
+    plan_schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     client = workflow_client or XingchenLearningTaskWorkflowClient()
+    gateway = bundle_gateway or LearningTaskBundleGateway()
     run = await client.run(task_title, uid=uid)
-    task_card_id = task_card_id_from_content(str(run.get("content") or ""))
-    workflow_run_ids = [str(run.get("run_id") or "")]
-    patch = targeted_patch_from_content(str(run.get("content") or ""))
-    repair_attempted = patch is not None and not task_card_id
-    if repair_attempted:
-        run = await client.run(
-            _repair_workflow_input(task_title, patch),
-            uid=f"{uid[:32]}-repair",
-        )
+    workflow_run_ids: list[str] = []
+    repair_reasons: list[str] = []
+    prior_patch: Mapping[str, Any] | None = None
+    while True:
         workflow_run_ids.append(str(run.get("run_id") or ""))
-        task_card_id = task_card_id_from_content(str(run.get("content") or ""))
-    if not task_card_id:
-        final_patch = targeted_patch_from_content(str(run.get("content") or ""))
-        hard_errors = [
-            str(item).strip() for item in list((final_patch or patch or {}).get("hard_errors") or [])
-            if str(item).strip()
-        ]
-        if hard_errors:
+        content = str(run.get("content") or "")
+        task_card_id = task_card_id_from_content(content)
+        patch = targeted_patch_from_content(content)
+        if patch is not None:
+            prior_patch = patch
+        if not task_card_id:
+            hard_errors = [
+                str(item).strip() for item in list((patch or prior_patch or {}).get("hard_errors") or [])
+                if str(item).strip()
+            ]
+            if patch is not None and "publish_gate" not in repair_reasons:
+                repair_reasons.append("publish_gate")
+                run = await client.run(
+                    _repair_workflow_input(task_title, patch),
+                    uid=f"{uid[:24]}-publish-repair",
+                )
+                continue
+            if hard_errors:
+                raise XingchenWorkflowError(
+                    "讯飞工作流候选未通过发布门禁"
+                    + ("，自动修订后仍未发布：" if "publish_gate" in repair_reasons else "：")
+                    + "；".join(hard_errors[:4])
+                )
             raise XingchenWorkflowError(
-                "讯飞工作流候选未通过发布门禁"
-                + ("，自动修订后仍未发布：" if repair_attempted else "：")
-                + "；".join(hard_errors[:4])
+                "讯飞工作流已完成，但没有返回可解析的任务卡 ID"
             )
-        raise XingchenWorkflowError(
-            "讯飞工作流已完成，但没有返回可解析的任务卡 ID"
-        )
-    bundle = await (bundle_gateway or LearningTaskBundleGateway()).task_bundle(task_card_id)
-    return {
-        "protocol": "learnflow.xingchen-learning-task-generation.v1",
-        "provider": "xunfei-xingchen",
-        "workflow_run_id": str(run.get("run_id") or ""),
-        "workflow_run_ids": [item for item in workflow_run_ids if item],
-        "repair_attempted": repair_attempted,
-        "task_card_id": task_card_id,
-        "verification_status": str(bundle.get("verification_status") or ""),
-        "usage": dict(run.get("usage") or {}),
-        "plan": plan_from_task_bundle(bundle, task_title),
-    }
+
+        try:
+            bundle = await gateway.task_bundle(task_card_id)
+            plan = plan_from_task_bundle(bundle, task_title)
+            failure = _schema_failure(plan, plan_schema) if plan_schema is not None else None
+            if failure is not None:
+                raise XingchenTaskStructureError(*failure)
+        except XingchenTaskStructureError as exc:
+            if "structure_schema" not in repair_reasons:
+                repair_reasons.append("structure_schema")
+                run = await client.run(
+                    _schema_repair_workflow_input(task_title, exc.path, exc.reason),
+                    uid=f"{uid[:24]}-schema-repair",
+                )
+                continue
+            raise XingchenWorkflowError(
+                f"讯飞任务结构自动修订后仍未通过：{exc.path}：{exc.reason}"
+            ) from exc
+
+        return {
+            "protocol": "learnflow.xingchen-learning-task-generation.v1",
+            "provider": "xunfei-xingchen",
+            "workflow_run_id": str(run.get("run_id") or ""),
+            "workflow_run_ids": [item for item in workflow_run_ids if item],
+            "repair_attempted": bool(repair_reasons),
+            "repair_reasons": repair_reasons,
+            "task_card_id": task_card_id,
+            "verification_status": str(bundle.get("verification_status") or ""),
+            "usage": dict(run.get("usage") or {}),
+            "plan": plan,
+        }
 
 
 __all__ = [
@@ -512,6 +597,7 @@ __all__ = [
     "XingchenWorkflowConfigError",
     "XingchenWorkflowCredentials",
     "XingchenWorkflowError",
+    "XingchenTaskStructureError",
     "generate_xingchen_learning_task",
     "load_xingchen_credentials",
     "plan_from_task_bundle",

@@ -147,8 +147,6 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [quote, setQuote] = useState('')
   const [note, setNote] = useState('')
-  const [taskTitle, setTaskTitle] = useState('')
-  const [createPanelOpen, setCreatePanelOpen] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [draggedStepId, setDraggedStepId] = useState('')
@@ -172,18 +170,6 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
       setError(error instanceof Error ? error.message : '插件运行失败')
       throw error
     } finally { setBusy('') }
-  }
-
-  const generate = async (event: FormEvent) => {
-    event.preventDefault()
-    const title = taskTitle.trim()
-    if (!title) return
-    try {
-      await runAndRefresh('generate', { task_title: title })
-      setTaskTitle('')
-      setSelectedStepId('')
-      setCreatePanelOpen(false)
-    } catch { /* displayed above */ }
   }
 
   const captureSelection = (_event: MouseEvent<HTMLDivElement>) => {
@@ -233,15 +219,8 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
         <div className="learning-task-plugin-empty-card">
           <span className="learning-task-plugin-mark">✦</span>
           <p className="learning-task-plugin-kicker">LEARNING TASK COMPILER</p>
-          <h1>把真实工作任务转成可执行步骤</h1>
-          <p>输入一个明确的计算机专业工作任务。系统会生成按作业先后排列的步骤、产物、验收依据，以及每一步需要的知识与技能。</p>
-          <form onSubmit={generate}>
-            <label htmlFor="learning-task-title">真实工作任务</label>
-            <div><input id="learning-task-title" value={taskTitle} onChange={event => setTaskTitle(event.target.value)} placeholder="例如：实现 Unity 第三人称摄像机跟随与遮挡处理" autoFocus /><button type="submit" disabled={busy === 'generate' || !taskTitle.trim()}>{busy === 'generate' ? '生成中…' : '生成任务步骤'}</button></div>
-          </form>
-          <div className="learning-task-plugin-examples">
-            {['配置交换机 VLAN 与 Trunk 并验收连通性', '实现 Java REST 接口并完成自动化测试', '实现 Unity 摄像机跟随与遮挡处理'].map(item => <button type="button" key={item} onClick={() => setTaskTitle(item)}>{item}</button>)}
-          </div>
+          <h1>等待对话生成学习型任务</h1>
+          <p>请回到项目 Tutor，在输入框的“插件”菜单选择“学习型任务转化”，然后直接发送真实工作任务。生成完成后，任务步骤会自动在这里打开。</p>
           {error && <p className="learning-task-plugin-error" role="alert">{error}</p>}
         </div>
       </section>
@@ -264,32 +243,10 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
             : (text(document.providerProvenance.verification_status) === 'verified' ? '已校验' : '已返回')
           }</span>}
           <span className="learning-task-plugin-ready"><i />已生成 · {document.steps.length} 个步骤</span>
-          <button
-            type="button"
-            className="learning-task-create-trigger"
-            onClick={() => setCreatePanelOpen(value => !value)}
-            aria-expanded={createPanelOpen}
-            aria-controls="learning-task-create-panel"
-          >{createPanelOpen ? '收起输入' : '＋ 新建任务'}</button>
           <button type="button" onClick={() => setDrawerOpen(value => !value)} aria-expanded={drawerOpen}>批注复核{document.notes.length ? ` ${document.notes.length}` : ''}</button>
           <button type="button" onClick={() => downloadJson(`${document.task.source_title || 'learning-task'}.json`, document)}>导出 JSON</button>
         </div>
       </header>
-
-      {createPanelOpen && <form id="learning-task-create-panel" className="learning-task-create-panel" onSubmit={generate} aria-label="生成新的学习型任务">
-        <label htmlFor="learning-task-new-title">新的真实工作任务</label>
-        <div>
-          <input
-            id="learning-task-new-title"
-            value={taskTitle}
-            onChange={event => setTaskTitle(event.target.value)}
-            placeholder="例如：实现 Python FastAPI 文件上传服务并完成接口测试"
-            autoFocus
-          />
-          <button type="submit" disabled={busy === 'generate' || !taskTitle.trim()}>{busy === 'generate' ? '正在生成…' : '生成新任务'}</button>
-          <button type="button" onClick={() => { setCreatePanelOpen(false); setTaskTitle('') }} disabled={busy === 'generate'}>取消</button>
-        </div>
-      </form>}
 
       <div className="learning-task-evidence-strip">
         <span><i>✓</i>任务对象已锁定</span><span><i>✓</i>步骤产物可检查</span><span><i>✓</i>知识技能跟随步骤</span><strong>规划产物不等于掌握证据</strong>

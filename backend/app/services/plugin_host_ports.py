@@ -645,6 +645,7 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
                     f"learnflow-lt-{context.learner_id}-{context.project_id}-"
                     f"{context.run_id or 0}"
                 ),
+                plan_schema=schema,
             )
         except (XingchenWorkflowConfigError, XingchenWorkflowError) as exc:
             raise _error(
@@ -664,6 +665,7 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
                 "workflow_run_id": generated["workflow_run_id"],
                 "workflow_run_ids": generated["workflow_run_ids"],
                 "repair_attempted": generated["repair_attempted"],
+                "repair_reasons": generated["repair_reasons"],
                 "task_card_id": generated["task_card_id"],
                 "verification_status": generated["verification_status"],
             },
