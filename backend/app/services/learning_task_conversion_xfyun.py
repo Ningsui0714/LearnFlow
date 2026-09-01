@@ -243,35 +243,15 @@ def _repair_workflow_input(task_title: str, patch: Mapping[str, Any]) -> str:
             item.strip() for item in re.findall(r"任务对象“([^”]+)”", error)
             if item.strip()
         )
-    target_lines: list[str] = []
-    for item in list(patch.get("targets") or []):
-        if not isinstance(item, Mapping):
-            continue
-        raw_step_id = safe_line(item.get("step_id"), 80)
-        step_id = (
-            raw_step_id if re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", raw_step_id)
-            else "未指定步骤"
-        )
-        reason_codes = "、".join(
-            code for code in (
-                safe_line(value, 80)
-                for value in list(item.get("reason_codes") or [])
-            )
-            if re.fullmatch(r"[A-Z0-9_:-]{1,80}", code)
-        )
-        target_lines.append(f"- {step_id}: {reason_codes or '需重新核对'}")
-    required_line = "、".join(dict.fromkeys(required_objects)) or task_title
-    error_lines = "\n".join(f"- {item}" for item in hard_errors) or "- 上一轮未通过发布门禁"
-    targets = "\n".join(target_lines) or "- 逐步检查动作、产物与验收依据"
-    return (
-        "请重新完整生成并发布下面的学习型工作任务，不要只返回修补说明。\n"
-        f"原始真实工作任务：{task_title}\n"
-        f"任务名称、关键步骤和可验收产物必须明确保留任务对象：{required_line}。\n"
-        "每个步骤必须写明动作、对象、方法、可观察产物和可执行检查方法。\n"
-        f"上一轮发布门禁问题：\n{error_lines}\n"
-        f"需要定向修订的步骤：\n{targets}\n"
-        "请完成全部内部校验，最终返回已发布任务卡的交互页面与 JSON 链接。"
+    required_line = safe_line("、".join(dict.fromkeys(required_objects)) or task_title, 140)
+    prompt = (
+        f"真实工作任务：{safe_line(task_title, 160)}\n"
+        f"固定对象锚点：{required_line}。"
+        "task_name、task_description必须逐字包含该锚点；至少一个workflow_steps的name、action或deliverable也必须逐字包含。"
+        "生成并发布完整学习型工作任务。每步写明动作、对象、方法、可观察产物、检查方法、知识点和技能点。"
+        "完成全部内部校验并返回已发布任务卡链接。"
     )
+    return prompt[:500]
 
 
 def _schema_failure(
@@ -312,14 +292,15 @@ def _schema_failure_reason(error: ValidationError) -> str:
 
 def _schema_repair_workflow_input(task_title: str, path: str, reason: str) -> str:
     safe_path = path if re.fullmatch(r"\$(?:\.[A-Za-z0-9_-]+|\[\d+\]){0,12}", path) else "$"
-    safe_reason = re.sub(r"\s+", " ", str(reason or "结构不符合约束")).strip()[:320]
-    return (
-        "请重新完整生成并发布下面的学习型工作任务，不要只解释错误，也不要返回局部补丁。\n"
-        f"原始真实工作任务：{task_title}\n"
-        f"上一任务包未通过 LearnFlow 结构校验：{safe_path}：{safe_reason}。\n"
-        "必须保留原始任务对象；每个步骤都要有动作、对象、方法、可观察产物、验收依据、知识点和技能点。\n"
-        "请完成全部内部校验，最终返回一个新的已发布任务卡及其交互页面与 JSON 链接。"
+    safe_reason = re.sub(r"\s+", " ", str(reason or "结构不符合约束")).strip()[:180]
+    prompt = (
+        f"真实工作任务：{re.sub(r'\s+', ' ', task_title).strip()[:180]}\n"
+        f"结构要求：{safe_path}：{safe_reason}。"
+        "生成并发布完整学习型工作任务，保留原始任务对象。"
+        "每个步骤包含动作、对象、方法、可观察产物、验收依据、知识点和技能点。"
+        "完成全部内部校验并返回已发布任务卡链接。"
     )
+    return prompt[:500]
 
 
 class LearningTaskBundleGateway:

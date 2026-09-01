@@ -243,9 +243,12 @@ async def test_xingchen_generation_automatically_repairs_publish_gate_patch_once
     )
 
     assert len(client.calls) == 2
-    assert "请重新完整生成并发布" in client.calls[1][0]
+    assert "生成并发布完整学习型工作任务" in client.calls[1][0]
     assert "Windows可执行软件包" in client.calls[1][0]
-    assert "ACTION_NOT_SPECIFIC" in client.calls[1][0]
+    assert "task_name、task_description必须逐字包含该锚点" in client.calls[1][0]
+    assert "workflow_step" in client.calls[1][0]
+    assert "局部补丁" not in client.calls[1][0]
+    assert len(client.calls[1][0]) <= 500
     assert generated["repair_attempted"] is True
     assert generated["workflow_run_id"] == "run_repair"
     assert generated["workflow_run_ids"] == ["run_initial", "run_repair"]
