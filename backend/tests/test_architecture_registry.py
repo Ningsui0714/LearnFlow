@@ -49,7 +49,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-08-31.1"
+    assert REGISTRY_VERSION == "2026-09-01.1"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -113,9 +113,14 @@ def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable(
     skills = {row["id"]: row for row in manifest["skills"]}
     workbenches = {row["id"]: row for row in manifest["workbenches"]}
     capabilities = {row["capability"]: row for row in manifest["capabilities"]}
-    assert tools["workflow_gateway"]["lifecycle"] == "optional_unimplemented"
+    assert tools["workflow_gateway"]["lifecycle"] == "implemented"
+    assert tools["workflow_gateway"]["available"] is True
+    assert tools["workflow_gateway"]["binding_ids"] == [
+        "py:workflow.learning_task.generate",
+    ]
     assert tools["workflow_validator"]["lifecycle"] == "optional_unimplemented"
-    assert skills["external_workflow_rendering"]["lifecycle"] == "optional_unimplemented"
+    assert skills["external_workflow_rendering"]["lifecycle"] == "implemented"
+    assert skills["external_workflow_rendering"]["available"] is True
     assert workbenches["xingchen_studio"]["lifecycle"] == "optional_unimplemented"
     assert capabilities["recommend_learning_resources"]["lifecycle"] == "optional_unimplemented"
     assert capabilities["search_learning_resources"]["lifecycle"] == "optional_unimplemented"

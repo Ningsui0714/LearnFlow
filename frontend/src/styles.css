@@ -1214,6 +1214,8 @@ button { cursor: pointer; }
 .learning-task-plugin-actions .learning-task-create-trigger:hover { border-color: #175d43; background: #175d43; color: #fff; }
 .learning-task-plugin-ready { display: inline-flex; align-items: center; gap: 6px; margin-right: 3px; border-radius: 99px; background: #e9f5ee; padding: 6px 9px; color: #2f7054; font-size: 8px; font-weight: 750; }
 .learning-task-plugin-ready i { width: 6px; height: 6px; border-radius: 50%; background: #22a268; }
+.learning-task-plugin-provider { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d8e4de; border-radius: 99px; background: #f8fbf9; padding: 5px 8px; color: #567064; font-size: 8px; font-weight: 750; }
+.learning-task-plugin-provider i { width: 7px; height: 7px; border: 2px solid #16865c; border-radius: 50%; box-shadow: inset 0 0 0 1px #f8fbf9; background: #38ad7c; }
 
 .learning-task-create-panel { display: flex; min-height: 58px; flex: none; align-items: center; gap: 13px; border-bottom: 1px solid #d9e4de; background: #f0f6f2; padding: 10px 20px; }
 .learning-task-create-panel label { flex: none; color: #385c4b; font-size: 8px; font-weight: 800; }

@@ -619,6 +619,56 @@ async def _model_generate(context: PluginHostPortContext, input_value: Mapping[s
     schema = input_value.get("schema")
     if not prompt or not isinstance(schema, dict):
         raise _error("model_request_invalid", "structured model port requires a prompt and JSON schema")
+    provider = str(input_value.get("provider") or "").strip()
+    if provider == "xingchen_learning_task":
+        if context.instance.plugin_id != "learning_task_conversion":
+            raise _error(
+                "model_provider_forbidden",
+                "the Xingchen learning-task workflow is restricted to its owning plugin",
+            )
+        task_title = str(input_value.get("task_title") or "").strip()[:500]
+        if not task_title:
+            raise _error(
+                "model_request_invalid",
+                "the Xingchen learning-task workflow requires task_title",
+            )
+        from app.services.learning_task_conversion_xfyun import (
+            XingchenWorkflowConfigError,
+            XingchenWorkflowError,
+            generate_xingchen_learning_task,
+        )
+
+        try:
+            generated = await generate_xingchen_learning_task(
+                task_title,
+                uid=(
+                    f"learnflow-lt-{context.learner_id}-{context.project_id}-"
+                    f"{context.run_id or 0}"
+                ),
+            )
+        except (XingchenWorkflowConfigError, XingchenWorkflowError) as exc:
+            raise _error(
+                "xingchen_workflow_failed",
+                str(exc),
+                provider="xunfei-xingchen",
+                retryable=True,
+            ) from exc
+        value = generated["plan"]
+        _validate_structured(value, schema)
+        return {
+            "protocol": "learnflow.model-structured-port.v1",
+            "value": value,
+            "model": "xunfei-xingchen-workflow",
+            "provider": "xunfei-xingchen",
+            "provider_provenance": {
+                "workflow_run_id": generated["workflow_run_id"],
+                "task_card_id": generated["task_card_id"],
+                "verification_status": generated["verification_status"],
+            },
+            "usage": generated["usage"],
+            "credential_exposed": False,
+            "audited": True,
+        }
     if not settings.llm_api_key or settings.llm_api_key in {"", "***", "sk-your-key-here"}:
         raise _error("model_unavailable", "host model provider is not configured")
     from langchain_core.messages import HumanMessage

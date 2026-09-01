@@ -17,7 +17,7 @@ from typing import Any, Mapping
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-08-31.1"
+REGISTRY_VERSION = "2026-09-01.1"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -1815,6 +1815,9 @@ _PYTHON_BINDING_TARGETS = {
     "py:plugin.learning_task_agent_package": (
         "app.services.learning_task_agent_package", "run_learning_task_workflow",
     ),
+    "py:workflow.learning_task.generate": (
+        "app.services.learning_task_conversion_xfyun", "generate_xingchen_learning_task",
+    ),
     "py:plugin.tool.discover": ("app.services.plugin_host", "discover_plugin_tools"),
     "py:plugin.surfaces.read": ("app.services.plugin_host", "plugin_surfaces"),
     "py:plugin.host_port.call": ("app.services.plugin_host_ports", "call_plugin_host_port"),
@@ -2090,6 +2093,7 @@ IMPLEMENTATION_BINDINGS = {
 
 _TOOL_BINDING_IDS = {
     "action_board": ("py:action_board.execute",),
+    "workflow_gateway": ("py:workflow.learning_task.generate",),
     "plugin_package_runtime": (
         "py:plugin.package.load", "py:plugin.release.import",
         "py:plugin.instance.enable", "py:plugin.instance.update",
@@ -2192,7 +2196,6 @@ _TOOL_BINDING_IDS = {
 
 
 _OPTIONAL_TOOL_NOTES = {
-    "workflow_gateway": "No Mock/Xingchen workflow runtime entry point exists in this repository.",
     "workflow_validator": "No workflow builder or validator implementation exists in this repository.",
 }
 
@@ -2232,6 +2235,7 @@ TOOL_PUBLICATIONS = {
 
 _SKILL_BINDING_IDS = {
     "intent_and_handoff": ("py:tutor.process_turn",),
+    "external_workflow_rendering": ("py:workflow.learning_task.generate",),
     **{
         skill_id: (f"py:learning_skill_runtime:{skill_id}",)
         for skill_id in (
@@ -2271,12 +2275,9 @@ _SKILL_BINDING_IDS = {
 
 SKILL_PUBLICATIONS = {
     skill_id: PublicationContract(
-        "optional_unimplemented" if skill_id == "external_workflow_rendering" else "implemented",
-        () if skill_id == "external_workflow_rendering" else _SKILL_BINDING_IDS.get(skill_id, ()),
-        (
-            "The optional external workflow adapter has no runtime entry point."
-            if skill_id == "external_workflow_rendering" else ""
-        ),
+        "implemented",
+        _SKILL_BINDING_IDS.get(skill_id, ()),
+        "",
     )
     for skill_id in SKILLS
 }

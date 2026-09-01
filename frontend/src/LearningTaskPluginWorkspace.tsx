@@ -44,6 +44,8 @@ type TaskDocument = {
   snapshotId?: number
   snapshotVersion?: number
   validation: Record<string, unknown>
+  provider: string
+  providerProvenance: Record<string, unknown>
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -76,6 +78,8 @@ function taskDocumentFromSurface(surface?: ProjectPluginSurface): TaskDocument |
   const taskDocument = record(components['task-document'])
   const knowledgeMap = record(components['knowledge-map'])
   const reviewNotes = record(components['review-notes'])
+  const provenance = record(snapshot.provenance)
+  const pluginProvenance = record(provenance.plugin)
   const rawTask = record(taskDocument.task)
   const rawSteps = objects(taskDocument.steps)
   if (!rawTask.id || !rawSteps.length) return null
@@ -117,6 +121,8 @@ function taskDocumentFromSurface(surface?: ProjectPluginSurface): TaskDocument |
     snapshotId: Number(snapshot.id) || undefined,
     snapshotVersion: Number(snapshot.version) || undefined,
     validation: record(snapshot.validation),
+    provider: text(pluginProvenance.provider),
+    providerProvenance: record(pluginProvenance.provider_provenance),
   }
 }
 
@@ -250,6 +256,10 @@ export default function LearningTaskPluginWorkspace({ projectId, surface, onRefr
           <div><p>学习型任务 · 快照 v{document.snapshotVersion || 1}</p><h1>{document.task.title}</h1></div>
         </div>
         <div className="learning-task-plugin-actions">
+          {document.provider === 'xunfei-xingchen' && <span
+            className="learning-task-plugin-provider"
+            title={text(document.providerProvenance.task_card_id, '讯飞星辰工作流')}
+          ><i />讯飞工作流 · {text(document.providerProvenance.verification_status) === 'verified' ? '已校验' : '已返回'}</span>}
           <span className="learning-task-plugin-ready"><i />已生成 · {document.steps.length} 个步骤</span>
           <button
             type="button"

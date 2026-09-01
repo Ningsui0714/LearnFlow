@@ -6,6 +6,7 @@ backend/**/__pycache__/
 backend/data/
 backend/*.db
 backend/.env
+backend/.private/
 
 # Node
 frontend/node_modules/

@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-01.1`）：学习设计 Agent 后的学习型任务 Agent Package 通过既有结构化模型 Host Port 请求受限 provider `xingchen_learning_task`；宿主只允许 `learning_task_conversion` 实例调用该分支，并固定执行运维配置的讯飞星辰工作流。工作流只生成领域候选；宿主继续负责 bundle/schema/引用校验、不可变快照提交和项目作用域。provider 失败不允许静默回退为通用六步模板；快照的 provenance 必须记录真实 workflow run 与 task card。该产物不写五核，也不构成掌握证据。
+
 Contract impact（`2026-08-30.10`）：Tutor 与 Learning Design 的视觉交接改为“上下文锚定—请求主题契约—可重放产物—有界事实回灌”。“给我一个动画示例”等追问可从最近视觉 artifact 或用户主题恢复目标；没有目标则在规划前失败。长尾模型计划必须通过动态主题覆盖；声明式过程还要求 semantic/帧内容实际覆盖主题并具有最小状态变化，标题不能替代过程内容。这是一条动态请求契约，不是按算法硬编码。Tutor 最终文案只能解释工具 grounding 已列出的帧和变化，不得凭主题知识声称产物展示了不存在的动作。该调整不新增主 Agent、模型工具、状态权威或五核写入。
 
 Contract impact（`2026-08-30.9`）：Tutor 与 Learning Design 的用户可见异步工作采用统一分层预算。浏览器等待时间长于 Agent 回合，Agent 回合长于单次 provider/工具请求；普通解释、规划、带领学习、图解和动画分别按工作复杂度递增。后端内容生成、插件 runner、来源获取和模型连通性检查同步扩容，但所有路径仍有确定性硬上限，且重试、工具面、五核写入与掌握判定不变。密码哈希、数据库锁、代码执行和进程退出等安全/资源保护超时保持原值。

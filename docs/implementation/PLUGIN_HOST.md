@@ -3,7 +3,7 @@
 状态：implemented
 包协议：`learnflow.plugin-package.v1`
 对象引用协议：`learnflow.plugin-object-ref.v1`
-架构注册表：`2026-08-30.8`
+架构注册表：`2026-09-01.1`
 
 本文规定 LearnFlow 插件的运行、持久化、可选分发和产品接入边界。插件的产品定义是 Agent Package：
 由 Agent、Skill、Tool、Workflow、Schema 与聊天 UI binding 组成。插件是项目作用域的领域能力扩展，
@@ -155,6 +155,12 @@ runner 先接收带 instance、release、workflow/tool、固定 snapshot、输�
 | `model.generate_structured.v1` | 宿主代调模型并按声明 schema 校验 | 有预算、可审计，插件拿不到密钥 |
 | `action.propose.v1` | 提交路线、任务、文件等核心变更建议 | 只生成 Action Board proposal |
 | `event.record.v1` | 记录 manifest 已声明的运行事件 | 外部插件只允许零 Kernel target |
+
+### 5.1 讯飞星辰学习型任务 provider
+
+`learning_task_conversion` 内置 Agent Package 可以在 `model.generate_structured.v1` 请求中声明受限 provider `xingchen_learning_task`。该分支不是通用模型选择器：宿主必须拒绝其他插件调用，只执行服务端私密配置中固定的工作流 ID。返回内容先提取 task card ID，再从固定任务包服务读取 `learning-task-conversion-integration-bundle-v1`，校验步骤字段、知识/技能引用和任务卡一致性，最后还必须通过本次 Host Port 请求的 JSON Schema。
+
+工作流调用、任务包读取或校验任一失败时，Plugin Run 必须失败，不得生成本地通用模板快照。成功快照的 provenance 保留 `provider=xunfei-xingchen`、workflow run ID、task card ID 与 verification status，但不保存 API key/secret。该产物仍为规划候选，不得触发五核写入或掌握推断。
 
 Host Port 请求必须再次检查 learner/project ownership、instance 当前 release、manifest 声明、Instance 授权、
 调用预算和对象引用。来源正文以及所有外部字符串一律标记为不可信数据，不能作为宿主指令执行。

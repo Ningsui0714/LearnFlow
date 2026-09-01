@@ -31,12 +31,12 @@ LearnFlow 与 [killoppen/-](https://github.com/killoppen/-) 保持两个独立�
 | 对话式学习方法 | `LearningSkillRun` + `LearningTask` + `learning_skill_runtime` | 清晰讲解/苏格拉底/费曼/示例渐隐在 Session 内有界运行并绑定原子任务；推荐需确认，独立验证才进入能力证据链 |
 | Teaching Contract 与内容门禁 | `Checkpoint.learning_contract` + `teaching_contract_gate` + `checkpoint_delivery_readiness` | Knowledge 通过可选 answer-free 输入契约辅助起点设计；包成熟度只由教学资产重建，任务就绪度只组合 learner-owned LearningTask；模型最多修订一次，失败仍交付答案安全 fallback，三者均不等同学习进度或掌握 |
 | 视频推荐与内容核验 | `learning_video_search` + `learning_video_inspector` + `learning_resource_curation` | 模型只看“搜索候选/核验本轮候选”两个目标级只读 ACI；平台 API、字幕和 ASR 留在 Harness，标题与热度不能替代内容核验，观看不形成掌握 |
+| 讯飞星辰学习型任务工作流 | `workflow_gateway` + `external_workflow_rendering` + `learning_task_conversion` | 宿主固定调用运维配置的星辰工作流，解析任务卡 ID，读取并校验 WF03 bundle，再提交项目内不可变 Plugin Snapshot；密钥不进入插件，provider 失败不回退模板，产物零 Kernel target |
 
 ## 已登记但未实现（optional_unimplemented）
 
 | 参考构件 | 稳定声明 | 当前事实 |
 |---|---|---|
-| 星辰三工作流 | `workflow_gateway`、`external_workflow_rendering` | 仓库内没有可调用 runtime、API route 或 handler；只保留未来 adapter 契约，不进入 available 能力 |
 | 工作流构建/校验脚本 | `workflow_validator` | 仓库内没有 builder/validator 实现；接入前不得报告可用 |
 | 星辰 Studio | `xingchen_studio` | canonical frontend 没有 route/component，工作台不可用 |
 
@@ -76,4 +76,4 @@ input、citation、status、action，不执行 HTML、脚本、插件 CSS 或任
 
 ## 暂不复制的部分
 
-参考仓库的原生 HTML 页面、单文件 Python HTTP 服务和第二套 SQLite 学生模型不进入主运行时。它们已经对应到 React workbench、FastAPI 服务和五核 Memory Graph；并行保留会造成身份、事件和画像冲突。星辰 YAML 若未来作为部署资产接入，必须先实现并验证 adapter；在此之前它不是 available 能力，也永远不得成为 LearnFlow 的本地业务真相。
+参考仓库的原生 HTML 页面、单文件 Python HTTP 服务和第二套 SQLite 学生模型不进入主运行时。它们已经对应到 React workbench、FastAPI 服务和五核 Memory Graph；并行保留会造成身份、事件和画像冲突。星辰工作流现在只经宿主 adapter 产生候选任务包；LearnFlow 的项目、快照、事件和五核仍是唯一业务权威。

@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     learning_task_plan_model_budget_seconds: float = 120.0
     micro_learning_artifact_model_budget_seconds: float = 180.0
 
+    # Published Xunfei Xingchen workflow used only by the learning-task
+    # conversion plugin.  Credentials live in a feature-private ignored file;
+    # the browser and plugin package only receive validated workflow artifacts.
+    learning_task_xfyun_credentials_path: str = ""
+    learning_task_conversion_base_url: str = "https://82.156.199.145"
+    learning_task_conversion_timeout_seconds: float = 30.0
+
     # Vision (image understanding) — Moonshot
     vision_api_key: str = ""
     vision_base_url: str = "https://api.moonshot.cn/v1"

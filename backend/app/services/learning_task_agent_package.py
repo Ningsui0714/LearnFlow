@@ -134,10 +134,18 @@ def _model_schema(target_steps: int) -> dict[str, Any]:
                     "type": "object",
                     "required": ["title", "operation", "deliverable", "acceptance", "knowledge", "skill"],
                     "properties": {
+                        "external_id": {"type": "string"},
                         "title": {"type": "string"}, "operation": {"type": "string"},
                         "deliverable": {"type": "string"}, "acceptance": {"type": "string"},
                         "knowledge": {"type": "string"}, "skill": {"type": "string"},
+                        "knowledge_items": {
+                            "type": "array", "items": {"type": "object"},
+                        },
+                        "skill_items": {
+                            "type": "array", "items": {"type": "object"},
+                        },
                         "prerequisites": {"type": "array", "items": {"type": "string"}},
+                        "safety": {"type": "string"},
                     },
                     "additionalProperties": False,
                 },
@@ -182,50 +190,142 @@ def _compile_components(title: str, plan: dict[str, Any]) -> dict[str, Any]:
     for order, raw in enumerate(plan["steps"], start=1):
         step_title = _compact(raw.get("title") or f"步骤 {order}", 160)
         step_id = _stable_id("task_step", task_id, order, step_title)
-        knowledge_title = _compact(raw.get("knowledge") or f"{step_title}相关原理", 160)
-        skill_title = _compact(raw.get("skill") or f"{step_title}实施技能", 160)
-        knowledge = knowledge_by_title.setdefault(knowledge_title, {
-            "id": _stable_id("knowledge_point", task_id, knowledge_title),
-            "type": "knowledge_point", "title": knowledge_title,
-            "summary": f"理解“{knowledge_title}”在本步骤中的适用对象、状态变化和验收边界。",
-            "lifecycle": "candidate", "references": [],
-        })
-        skill = skills_by_title.setdefault(skill_title, {
-            "id": _stable_id("skill_point", task_id, skill_title),
-            "type": "skill_point", "title": skill_title,
-            "summary": f"能够在任务环境中独立完成“{skill_title}”并留下可检查证据。",
-            "lifecycle": "candidate", "references": [],
-        })
-        resource = {
-            "id": _stable_id("learning_resource", task_id, step_id, knowledge_title),
-            "type": "learning_resource", "title": f"{knowledge_title}学习资源",
-            "kind": "search", "provider": "B站",
-            "query": f"{title} {knowledge_title} 实操 教程",
-            "url": f"https://search.bilibili.com/all?keyword={title} {knowledge_title} 实操 教程",
-            "lifecycle": "candidate", "references": [knowledge["id"]],
-        }
-        resources.append(resource)
+        raw_knowledge_items = [
+            dict(item) for item in list(raw.get("knowledge_items") or [])
+            if isinstance(item, dict)
+        ] or [{"name": raw.get("knowledge") or f"{step_title}相关原理"}]
+        raw_skill_items = [
+            dict(item) for item in list(raw.get("skill_items") or [])
+            if isinstance(item, dict)
+        ] or [{"name": raw.get("skill") or f"{step_title}实施技能"}]
+        step_knowledge: list[dict[str, Any]] = []
+        step_skills: list[dict[str, Any]] = []
+        step_resources: list[dict[str, Any]] = []
+
+        for raw_knowledge in raw_knowledge_items:
+            knowledge_title = _compact(
+                raw_knowledge.get("name") or raw_knowledge.get("title")
+                or raw.get("knowledge") or f"{step_title}相关原理",
+                160,
+            )
+            external_id = _compact(raw_knowledge.get("knowledge_id"), 160)
+            knowledge_key = external_id or knowledge_title
+            knowledge = knowledge_by_title.setdefault(knowledge_key, {
+                "id": _stable_id("knowledge_point", task_id, knowledge_key),
+                "external_id": external_id,
+                "type": "knowledge_point", "title": knowledge_title,
+                "summary": _compact(
+                    raw_knowledge.get("scope") or raw_knowledge.get("summary")
+                    or f"理解“{knowledge_title}”在本步骤中的适用对象、状态变化和验收边界。",
+                    700,
+                ),
+                "lifecycle": "candidate", "references": [],
+            })
+            step_knowledge.append(knowledge)
+            external_resources = [
+                dict(item) for item in list(raw_knowledge.get("learning_resources") or [])
+                if isinstance(item, dict)
+            ]
+            if not external_resources:
+                external_resources = [{
+                    "resource_name": f"{knowledge_title}学习资源",
+                    "resource_type": "search", "platform": "B站",
+                    "resource_url": (
+                        "https://search.bilibili.com/all?keyword="
+                        f"{title} {knowledge_title} 实操 教程"
+                    ),
+                }]
+            for raw_resource in external_resources[:6]:
+                resource_url = _compact(
+                    raw_resource.get("resource_url") or raw_resource.get("url"),
+                    1_000,
+                )
+                resource_key = _compact(
+                    raw_resource.get("resource_id") or resource_url
+                    or raw_resource.get("resource_name"),
+                    300,
+                )
+                resource = {
+                    "id": _stable_id(
+                        "learning_resource", task_id, knowledge["id"], resource_key,
+                    ),
+                    "external_id": _compact(raw_resource.get("resource_id"), 160),
+                    "type": "learning_resource",
+                    "title": _compact(
+                        raw_resource.get("resource_name") or raw_resource.get("title")
+                        or f"{knowledge_title}学习资源",
+                        220,
+                    ),
+                    "kind": _compact(
+                        raw_resource.get("resource_type") or raw_resource.get("kind")
+                        or "search",
+                        80,
+                    ),
+                    "provider": _compact(
+                        raw_resource.get("platform") or raw_resource.get("provider")
+                        or "外部资源",
+                        80,
+                    ),
+                    "query": _compact(raw_resource.get("query"), 500),
+                    "url": resource_url,
+                    "lifecycle": "candidate", "references": [knowledge["id"]],
+                }
+                if resource["id"] not in {item["id"] for item in resources}:
+                    resources.append(resource)
+                step_resources.append(resource)
+
+        for raw_skill in raw_skill_items:
+            skill_title = _compact(
+                raw_skill.get("name") or raw_skill.get("title")
+                or raw_skill.get("observable_action") or raw.get("skill")
+                or f"{step_title}实施技能",
+                160,
+            )
+            external_id = _compact(raw_skill.get("skill_id"), 160)
+            skill_key = external_id or skill_title
+            skill = skills_by_title.setdefault(skill_key, {
+                "id": _stable_id("skill_point", task_id, skill_key),
+                "external_id": external_id,
+                "type": "skill_point", "title": skill_title,
+                "summary": _compact(
+                    raw_skill.get("observable_action") or raw_skill.get("summary")
+                    or f"能够在任务环境中独立完成“{skill_title}”并留下可检查证据。",
+                    700,
+                ),
+                "lifecycle": "candidate", "references": [],
+            })
+            step_skills.append(skill)
+
         prereq = [previous_id] if previous_id else []
         prereq.extend(_compact(item, 160) for item in list(raw.get("prerequisites") or []) if _compact(item, 160))
+        knowledge_ids = list(dict.fromkeys(item["id"] for item in step_knowledge))
+        skill_ids = list(dict.fromkeys(item["id"] for item in step_skills))
+        resource_ids = list(dict.fromkeys(item["id"] for item in step_resources))
         step = {
             "id": step_id, "type": "task_step", "order": order, "title": step_title,
+            "external_id": _compact(raw.get("external_id"), 160),
             "operation": _compact(raw.get("operation"), 1_000),
             "deliverable": _compact(raw.get("deliverable"), 500),
             "acceptance": _compact(raw.get("acceptance"), 700),
+            "safety": _compact(raw.get("safety"), 500),
             "prerequisites": prereq[:8],
-            "knowledge_ids": [knowledge["id"]], "skill_ids": [skill["id"]],
-            "resource_ids": [resource["id"]], "review_state": "ready",
-            "lifecycle": "candidate", "references": [knowledge["id"], skill["id"], resource["id"]],
+            "knowledge_ids": knowledge_ids, "skill_ids": skill_ids,
+            "resource_ids": resource_ids, "review_state": "ready",
+            "lifecycle": "candidate",
+            "references": knowledge_ids + skill_ids + resource_ids,
         }
         steps.append(step)
-        for relation_type, target in (("requires_knowledge", knowledge), ("requires_skill", skill)):
-            relations.append({
-                "id": _stable_id("task_relation", step_id, relation_type, target["id"]),
-                "type": "task_relation", "relation": relation_type,
-                "source_id": step_id, "target_id": target["id"],
-                "reason": f"“{step_title}”需要{target['title']}，并通过“{step['deliverable']}”观察结果。",
-                "lifecycle": "candidate", "references": [step_id, target["id"]],
-            })
+        for relation_type, targets in (
+            ("requires_knowledge", step_knowledge), ("requires_skill", step_skills),
+        ):
+            for target in targets:
+                relations.append({
+                    "id": _stable_id("task_relation", step_id, relation_type, target["id"]),
+                    "type": "task_relation", "relation": relation_type,
+                    "source_id": step_id, "target_id": target["id"],
+                    "reason": f"“{step_title}”需要{target['title']}，并通过“{step['deliverable']}”观察结果。",
+                    "lifecycle": "candidate", "references": [step_id, target["id"]],
+                })
         previous_id = step_id
     task = {
         "id": task_id, "type": "learning_task", "title": plan["title"],
@@ -323,24 +423,34 @@ async def run_learning_task_workflow(
             f"任务：{title}\n项目：{project.get('name', '')}；{project.get('description', '')}\n"
             f"上游任务 JSON：{upstream_text or '未提供'}\n固定来源摘录：{source_excerpt or '无'}"
         )
-        generated: dict[str, Any] | None = None
-        try:
-            response = await context.call_host_port("model.generate_structured.v1", {
-                "prompt": prompt, "schema": _model_schema(target_steps),
-            })
-            value = dict(response or {}).get("value")
-            generated = dict(value) if isinstance(value, dict) else None
-        except Exception:
-            if not bool(configuration.get("allow_model_fallback", True)):
-                raise
+        response = await context.call_host_port("model.generate_structured.v1", {
+            "provider": "xingchen_learning_task",
+            "task_title": title,
+            "prompt": prompt,
+            "schema": _model_schema(target_steps),
+        })
+        provider_response = dict(response or {})
+        value = provider_response.get("value")
+        generated = dict(value) if isinstance(value, dict) else None
+        if generated is None:
+            raise ValueError("xingchen_learning_task_output_missing")
         plan = _normalize_plan(title, generated, target_steps)
         components = _compile_components(title, plan)
         candidate = _snapshot(components, source_refs, {
-            "workflow": "generate", "model_generated": generated is not None,
+            "workflow": "generate", "model_generated": True,
+            "provider": str(provider_response.get("provider") or "xunfei-xingchen"),
+            "provider_model": str(provider_response.get("model") or "xunfei-xingchen-workflow"),
+            "provider_provenance": dict(provider_response.get("provider_provenance") or {}),
+            "fallback_used": False,
             "upstream_present": bool(upstream_text), "effective_configuration": configuration,
         })
         return {
-            "result": {"status": "completed", "title": plan["title"], "step_count": len(plan["steps"])},
+            "result": {
+                "status": "completed", "title": plan["title"],
+                "step_count": len(plan["steps"]),
+                "provider": str(provider_response.get("provider") or "xunfei-xingchen"),
+                "provider_provenance": dict(provider_response.get("provider_provenance") or {}),
+            },
             "snapshot": candidate,
             "events": [{"type": "task_generated", "payload": {"step_count": len(plan["steps"])}}],
         }
