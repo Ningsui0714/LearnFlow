@@ -19,6 +19,19 @@ function categoryOf(object: PluginToolRendererProps['objects'][number]) {
   return String(value.category || dataOf(object).type || dataOf(object).kind || 'object')
 }
 
+function semanticRingOf(object: PluginToolRendererProps['objects'][number]) {
+  const explicit = Number(dataOf(object).ring)
+  if (Number.isInteger(explicit) && explicit >= 0) return explicit
+  const category = categoryOf(object)
+  if (category === 'market_role') return 0
+  if (['industry_chain_node', 'job_family', 'occupation_standard', 'related_role'].includes(category)) return 1
+  if (category === 'task') return 2
+  if (category === 'capability') return 3
+  if (category === 'capability_unit') return 4
+  if (category === 'knowledge_skill') return 5
+  return null
+}
+
 function snapshotOf(result: PluginToolRendererProps['result']) {
   const payload = (result.payload || {}) as RecordValue
   return (payload.snapshot || {}) as RecordValue
@@ -104,33 +117,69 @@ function ObjectCardGrid({ props, objects = props.objects.filter(object => object
   </div>
 }
 
-function CapabilityRadarCanvas({ props, axes }: {
-  props: PluginToolRendererProps
-  axes: Array<{ objectId: string; label: string; value: number }>
-}) {
-  const size = 420
-  const center = size / 2
-  const radius = 145
-  const point = (index: number, value = 1) => {
-    const angle = Math.PI * 2 * index / Math.max(axes.length, 1) - Math.PI / 2
-    return { x: center + Math.cos(angle) * radius * value, y: center + Math.sin(angle) * radius * value }
-  }
-  const polygon = (value: number) => axes.map((_, index) => { const p = point(index, value); return `${p.x},${p.y}` }).join(' ')
-  const values = axes.map((axis, index) => { const p = point(index, axis.value); return `${p.x},${p.y}` }).join(' ')
-  return <div className="role-plugin-radar-layout">
-    <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${axes.length} 个岗位能力维度的雷达图`}>
-      {[.25, .5, .75, 1].map(level => <polygon key={level} points={polygon(level)} className="grid" />)}
-      {axes.map((axis, index) => { const outer = point(index); const label = point(index, 1.18); return <g key={axis.objectId}><line x1={center} y1={center} x2={outer.x} y2={outer.y} /><text x={label.x} y={label.y}>{axis.label.length > 10 ? `${axis.label.slice(0, 9)}…` : axis.label}</text></g> })}
-      <polygon points={values} className="value" />
-      {axes.map((axis, index) => { const p = point(index, axis.value); return <circle key={axis.objectId} cx={p.x} cy={p.y} r="5"><title>{axis.label} · {Math.round(axis.value * 100)}%</title></circle> })}
-    </svg>
-    <div className="role-plugin-radar-legend">{axes.map(axis => {
-      const object = props.objects.find(item => item.objectId === axis.objectId)
-      return <article key={axis.objectId} {...(object ? interactiveObjectProps(props, object) : {})}>
-        <span style={{ width: `${Math.round(axis.value * 100)}%` }} /><strong>{axis.label}</strong><b>{Math.round(axis.value * 100)}%</b>
-        <FollowActions props={props} objectId={axis.objectId} label={axis.label} />
-      </article>
-    })}</div>
+type RadarRing = { ring: number; label: string; objectIds: string[]; total?: number }
+
+function RoleDimensionRadar({ props, radar }: { props: PluginToolRendererProps; radar: RecordValue }) {
+  const [selectedId, setSelectedId] = useState(String(radar.rootId || ''))
+  const objects = new Map(props.objects.filter(object => object.objectType === 'role_object').map(object => [object.objectId, object]))
+  const relations = props.objects.filter(object => object.objectType === 'role_relation')
+  const rings = ((radar.rings || []) as RadarRing[]).filter(ring => ring.objectIds.some(id => objects.has(id)))
+  const rootId = String(radar.rootId || rings.find(ring => ring.ring === 0)?.objectIds[0] || '')
+  const width = 820
+  const height = 580
+  const center = { x: width / 2, y: height / 2 }
+  const maxRadius = 242
+  const positions = new Map<string, { x: number; y: number; ring: number }>()
+  rings.forEach(ring => {
+    const visibleIds = ring.objectIds.filter(id => objects.has(id))
+    visibleIds.forEach((objectId, index) => {
+      if (ring.ring === 0) positions.set(objectId, { ...center, ring: 0 })
+      else {
+        const radius = maxRadius * (.28 + ring.ring * .14)
+        const angle = -Math.PI / 2 + Math.PI * 2 * index / Math.max(visibleIds.length, 1) + (ring.ring % 2 ? .08 : 0)
+        positions.set(objectId, { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius, ring: ring.ring })
+      }
+    })
+  })
+  const visibleIds = new Set(positions.keys())
+  const selected = objects.get(selectedId) || objects.get(rootId)
+  return <div className="role-plugin-dimension-radar">
+    <header><strong>岗位中心语义雷达</strong><span>{Math.max(0, rings.length - 1)} 个维度 · {Math.max(0, visibleIds.size - 1)} 个外围节点</span></header>
+    <div className="role-plugin-radar-stage" role="img" aria-label={`以${objects.get(rootId)?.label || '岗位'}为中心，按岗位边界、任务、能力、能力单元和知识技能向外展开`}>
+      <svg viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+        {rings.filter(ring => ring.ring > 0).map(ring => {
+          const radius = maxRadius * (.28 + ring.ring * .14)
+          return <circle key={ring.ring} cx={center.x} cy={center.y} r={radius} className={`ring ring-${ring.ring}`} />
+        })}
+        <g className="role-plugin-radar-edges">{relations.map(relationObject => {
+          const relation = dataOf(relationObject)
+          const source = positions.get(String(relation.source || ''))
+          const target = positions.get(String(relation.target || ''))
+          if (!source || !target) return null
+          return <line key={relationObject.objectId} x1={source.x} y1={source.y} x2={target.x} y2={target.y}><title>{String(relation.type || '')}</title></line>
+        })}</g>
+      </svg>
+      {rings.filter(ring => ring.ring > 0).map(ring => <span key={ring.ring} className={`role-plugin-ring-label ring-${ring.ring}`}>{ring.label}<small>{ring.objectIds.filter(id => objects.has(id)).length}{ring.total && ring.total > ring.objectIds.length ? ` / ${ring.total}` : ''}</small></span>)}
+      {[...positions].map(([objectId, position]) => {
+        const object = objects.get(objectId)
+        if (!object) return null
+        const category = categoryOf(object)
+        return <button
+          key={objectId}
+          type="button"
+          className={`role-plugin-radar-node ${position.ring === 0 ? 'root' : ''} ${selected?.objectId === objectId ? 'selected' : ''}`}
+          style={{ left: `${position.x / width * 100}%`, top: `${position.y / height * 100}%`, '--role-accent': colorFor(category) } as CSSProperties}
+          aria-label={`${object.label}，${category}`}
+          {...interactiveObjectProps(props, object)}
+          onClick={() => setSelectedId(objectId)}
+        ><i /><span>{object.label}</span></button>
+      })}
+    </div>
+    {selected && <article className="role-plugin-radar-selection" style={{ '--role-accent': colorFor(categoryOf(selected)) } as CSSProperties} {...interactiveObjectProps(props, selected)}>
+      <span>{categoryOf(selected)} · 第 {semanticRingOf(selected) ?? '—'} 环</span><strong>{selected.label}</strong><p>{String(dataOf(selected).summary || '')}</p>
+      <FollowActions props={props} objectId={selected.objectId} label={selected.label} />
+    </article>}
+    <footer>节点可点击查看、双击引用，也可直接拖入下方输入框。环表示岗位语义维度，不表示分数高低。</footer>
   </div>
 }
 
@@ -140,12 +189,20 @@ function RoleOverview(props: PluginToolRendererProps) {
   const sections = payload.sections || {}
   const nodes = new Map(props.objects.filter(object => object.objectType === 'role_object').map(object => [object.objectId, object]))
   const root = nodes.get(String(payload.rootId || ''))
-  const capabilityObjects = ((sections.capabilities || []) as string[]).map(id => nodes.get(id)).filter(Boolean) as PluginToolRendererProps['objects'][number][]
-  const axes = capabilityObjects.map(object => ({
-    objectId: object.objectId,
-    label: object.label,
-    value: typeof dataOf(object).confidence === 'number' ? Math.max(0, Math.min(1, Number(dataOf(object).confidence))) : .65,
-  }))
+  const inferredRings = [...nodes.values()].reduce<Map<number, string[]>>((groups, object) => {
+    const ring = semanticRingOf(object)
+    if (ring === null) return groups
+    groups.set(ring, [...(groups.get(ring) || []), object.objectId])
+    return groups
+  }, new Map())
+  const radar = (payload.radar || {
+    rootId: payload.rootId,
+    rings: [...inferredRings].sort(([left], [right]) => left - right).map(([ring, objectIds]) => ({
+      ring,
+      objectIds,
+      label: ({ 0: '岗位中心', 1: '岗位身份与边界', 2: '典型任务', 3: '抽象能力', 4: '能力单元', 5: '知识技能' } as Record<number, string>)[ring] || `第 ${ring} 层`,
+    })),
+  }) as RecordValue
   const renderSection = (title: string, ids: string[], empty: string) => <section className="role-plugin-overview-section">
     <header><strong>{title}</strong><small>{ids.length}</small></header>
     <div>{ids.map(id => nodes.get(id)).filter(Boolean).map(object => {
@@ -169,7 +226,7 @@ function RoleOverview(props: PluginToolRendererProps) {
         {renderSection('相邻岗位', sections.relatedRoles || [], '当前视图没有相邻岗位。')}
       </div>
     </>}
-    {view === 'radar' && <CapabilityRadarCanvas props={props} axes={axes} />}
+    {view === 'radar' && <RoleDimensionRadar props={props} radar={radar} />}
     {view === 'cards' && <ObjectCardGrid props={props} />}
     <p className="role-plugin-boundary">{String(payload.grounding?.requiredDisclosure || '')}</p>
   </section>
@@ -178,12 +235,11 @@ function RoleOverview(props: PluginToolRendererProps) {
 function CapabilityRadar(props: PluginToolRendererProps) {
   const [view, setView] = useState<'radar' | 'cards'>('radar')
   const payload = (props.result.payload || {}) as RecordValue
-  const axes = (payload.axes || []) as Array<{ objectId: string; label: string; value: number }>
   return <section className="role-plugin-view role-plugin-radar" aria-label="岗位能力雷达">
     <SnapshotBadge result={props.result} />
     <SnapshotViewTabs active={view} views={[{ id: 'radar', label: '能力雷达' }, { id: 'cards', label: '能力卡片' }]} onChange={setView} />
-    {view === 'radar' ? <CapabilityRadarCanvas props={props} axes={axes} /> : <ObjectCardGrid props={props} />}
-    <p className="role-plugin-boundary">{String(payload.scale?.meaning || '')}</p>
+    {view === 'radar' ? <RoleDimensionRadar props={props} radar={payload} /> : <ObjectCardGrid props={props} />}
+    <p className="role-plugin-boundary">{String(payload.boundary || '')}</p>
   </section>
 }
 

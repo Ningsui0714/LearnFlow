@@ -54,12 +54,17 @@ test('one overview call returns grounded role, task, capability and scenario sec
   assert.ok((execution.result.presentation?.state as any).focusObjectIds.includes(payload.rootId))
 })
 
-test('capability radar is independent from relation graph and package catalog is version-addressable', async () => {
+test('capability radar expands semantic rings around the role and package catalog is version-addressable', async () => {
   const loaded = await registry()
   const radar = await loaded.execute('role_capability_graph__read_capability_radar', { query: '' }, executionContext)
   assert.equal(radar.result.presentation?.renderer, 'role_capability_graph:capability_radar')
-  assert.ok((radar.result.payload as any).axes.length >= 4)
-  assert.match((radar.result.payload as any).scale.meaning, /不是学习者能力分数/)
+  const radarPayload = radar.result.payload as any
+  assert.equal(radarPayload.kind, 'role_dimension_radar')
+  assert.ok(radarPayload.rings.length >= 5)
+  assert.equal(radarPayload.rings[0].ring, 0)
+  assert.ok(radarPayload.rings.some((ring: any) => ring.label === '知识技能'))
+  assert.ok(radar.result.objects?.some(object => object.objectType === 'role_relation'))
+  assert.match(radarPayload.boundary, /不是学习者能力评分/)
 
   const catalog = await loaded.execute('role_capability_graph__list_role_packages', {}, executionContext)
   assert.equal(catalog.result.presentation?.renderer, 'role_capability_graph:role_package_catalog')

@@ -146,6 +146,7 @@ const MAX_SEARCH_RESULTS = 12
 const MAX_GRAPH_NODES = 28
 const MAX_PROCESS_NODES = 36
 const MAX_EVIDENCE_TARGETS = 8
+const RADAR_RING_LIMITS = new Map([[0, 1], [1, 6], [2, 6], [3, 5], [4, 5], [5, 4]])
 
 function asObject(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`role_package_invalid:${label}`)
@@ -339,10 +340,34 @@ export class RolePackageRuntime {
     return this.pluginObject(pkg, 'role_object', object.id, object.label, objectKind(object), object)
   }
 
+  private radarNodeObject(pkg: LoadedRolePackage, object: RoleNode) {
+    return this.pluginObject(pkg, 'role_object', object.id, object.label, objectKind(object), {
+      id: object.id,
+      type: object.type,
+      label: object.label,
+      summary: object.summary,
+      ring: object.ring || 0,
+      lifecycle: object.lifecycle || 'snapshot',
+      confidence: object.confidence,
+    })
+  }
+
   private relationObject(pkg: LoadedRolePackage, relation: RoleRelation) {
     return this.pluginObject(pkg, 'role_relation', relation.id, relation.type, relation.type, {
       ...relation,
       ...relationEndpoints(relation),
+    })
+  }
+
+
+  private radarRelationObject(pkg: LoadedRolePackage, relation: RoleRelation) {
+    const endpoints = relationEndpoints(relation)
+    return this.pluginObject(pkg, 'role_relation', relation.id, relation.type, relation.type, {
+      id: relation.id,
+      type: relation.type,
+      source: endpoints.source,
+      target: endpoints.target,
+      confidence: relation.confidence,
     })
   }
 
@@ -363,6 +388,37 @@ export class RolePackageRuntime {
         },
       },
     }
+  }
+
+  private roleRadarProjection(pkg: LoadedRolePackage, query: string) {
+    const root = pkg.semantic.nodes.find(item => item.type === 'market_role')
+    if (!root) throw new Error('role_package_invalid:missing role root')
+    const selected = new Map<string, RoleNode>([[root.id, root]])
+    const semanticRelations = pkg.semantic.edges
+    for (const ring of [...RADAR_RING_LIMITS.keys()].filter(value => value > 0)) {
+      const candidates = pkg.semantic.nodes.filter(item => item.ring === ring)
+      const ranked = candidates.map(item => {
+        const connected = semanticRelations.filter(relation => {
+          const endpoints = relationEndpoints(relation)
+          return (endpoints.source === item.id && selected.has(endpoints.target))
+            || (endpoints.target === item.id && selected.has(endpoints.source))
+        }).length
+        return { item, score: connected * 100 + this.score(item, query || pkg.manifest.roleTitle) + (item.confidence || 0) }
+      }).sort((left, right) => right.score - left.score || left.item.id.localeCompare(right.item.id))
+      ranked.slice(0, RADAR_RING_LIMITS.get(ring) || 0).forEach(({ item }) => selected.set(item.id, item))
+    }
+    const ids = new Set(selected.keys())
+    const relations = semanticRelations.filter(relation => {
+      const endpoints = relationEndpoints(relation)
+      return ids.has(endpoints.source) && ids.has(endpoints.target)
+    }).slice(0, 56)
+    const rings = [...new Set([...selected.values()].map(item => item.ring || 0))].sort((left, right) => left - right).map(ring => ({
+      ring,
+      label: ({ 0: '岗位中心', 1: '岗位身份与边界', 2: '典型任务', 3: '抽象能力', 4: '能力单元', 5: '知识技能' } as Record<number, string>)[ring] || `第 ${ring} 层`,
+      objectIds: [...selected.values()].filter(item => (item.ring || 0) === ring).map(item => item.id),
+      total: pkg.semantic.nodes.filter(item => (item.ring || 0) === ring).length,
+    }))
+    return { root, nodes: [...selected.values()], relations, rings }
   }
 
   listPackages() {
@@ -392,20 +448,26 @@ export class RolePackageRuntime {
     const capabilities = take('capability', 6)
     const scenarios = take('scenario', 4)
     const related = take('related_role', 4)
-    const nodes = [...new Map([root, ...tasks, ...capabilities, ...scenarios, ...related].map(item => [item.id, item])).values()]
-    const facts = nodes.map(item => ({
+    const overviewNodes = [...new Map([root, ...tasks, ...capabilities, ...scenarios, ...related].map(item => [item.id, item])).values()]
+    const radar = this.roleRadarProjection(pkg, query)
+    const facts = overviewNodes.map(item => ({
       objectId: item.id,
       statement: `${item.label}：${item.summary}`,
       lifecycle: item.lifecycle || ('knowledgeState' in item ? item.knowledgeState : undefined) || 'snapshot',
       evidenceBindingIds: (pkg.bindingsByTarget.get(item.id) || []).map(binding => binding.id).slice(0, 4),
     }))
     return this.result(pkg, `一次读取“${root.label}”的岗位定位、${tasks.length} 项任务、${capabilities.length} 项核心能力和 ${scenarios.length} 个工作场景。`, ROLE_RENDERERS.overview,
-      nodes.map(item => this.nodeObject(pkg, item)), {
+      [
+        ...overviewNodes.map(item => this.nodeObject(pkg, item)),
+        ...radar.nodes.filter(item => !overviewNodes.some(node => node.id === item.id)).map(item => this.radarNodeObject(pkg, item)),
+        ...radar.relations.map(item => this.radarRelationObject(pkg, item)),
+      ], {
         kind: 'role_overview', rootId: root.id,
         sections: {
           tasks: tasks.map(item => item.id), capabilities: capabilities.map(item => item.id),
           scenarios: scenarios.map(item => item.id), relatedRoles: related.map(item => item.id),
         },
+        radar: { rootId: radar.root.id, rings: radar.rings, relationIds: radar.relations.map(item => item.id) },
         grounding: {
           policy: 'snapshot_facts_only', facts,
           requiredDisclosure: `岗位事实固定于 ${pkg.manifest.snapshotAsOf} 的 ${pkg.manifest.snapshotId}；未出现在 facts 中的内容必须明确标为“通用补充（非岗位快照）”。`,
@@ -416,22 +478,12 @@ export class RolePackageRuntime {
 
   capabilityRadar(selector: PackageSelector, query: string) {
     const pkg = this.resolveForQuery(selector, query)
-    const section = pkg.views.sections.find(item => item.itemIds.some(id => {
-      const object = pkg.objects.get(id)
-      return Boolean(object) && objectKind(object!) === 'capability'
-    }))
-    const capabilities = (section?.itemIds || []).map(id => pkg.objects.get(id))
-      .filter((item): item is RoleNode => Boolean(item) && objectKind(item!) === 'capability')
-      .sort((left, right) => (right.confidence || 0) - (left.confidence || 0) || left.id.localeCompare(right.id))
-      .slice(0, 8)
-    const selected = query.trim()
-      ? capabilities.sort((left, right) => this.score(right, query) - this.score(left, query))
-      : capabilities
-    return this.result(pkg, `读取 ${selected.length} 个岗位能力维度，形成独立能力雷达。`, ROLE_RENDERERS.radar,
-      selected.map(item => this.nodeObject(pkg, item)), {
-        kind: 'capability_radar', sectionId: section?.id || '',
-        axes: selected.map(item => ({ objectId: item.id, label: item.label, value: item.confidence || 0.65 })),
-        scale: { minimum: 0, maximum: 1, meaning: '岗位包证据强度兼容投影，不是学习者能力分数或统计概率。' },
+    const radar = this.roleRadarProjection(pkg, query)
+    return this.result(pkg, `以“${radar.root.label}”为中心展开 ${radar.rings.length - 1} 个语义维度、${radar.nodes.length - 1} 个外围节点和 ${radar.relations.length} 条关系。`, ROLE_RENDERERS.radar,
+      [...radar.nodes.map(item => this.radarNodeObject(pkg, item)), ...radar.relations.map(item => this.radarRelationObject(pkg, item))], {
+        kind: 'role_dimension_radar', rootId: radar.root.id, rings: radar.rings,
+        relationIds: radar.relations.map(item => item.id),
+        boundary: '这是岗位包语义图的有界环形投影，不是学习者能力评分，也不以证据强度绘制面积。',
       })
   }
 

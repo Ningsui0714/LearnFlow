@@ -1,6 +1,6 @@
 # LearnFlow 架构权威与维护边界
 
-Contract impact（`2026-09-01.1`）：插件 Tool Renderer 在既有 `tool / skill / object / tool_renderer` 四类扩展点内增加两个确定性宿主交互：把已校验 Plugin Object 作为版本化引用放入当前草稿，以及把原 ToolRun 作为只读投影展开到对话纸张。引用只携带插件、对象类型、稳定对象 ID 和 schema version，发送时仍由学习者确认；纸张复用同一 ToolRun，不复制领域权威。岗位插件的全景输出可在全景、能力雷达和对象卡片间切换，雷达输出也可切卡片；拖拽由通用 Plugin Object MIME 合同承载。宿主不识别岗位插件 ID、对象类型或 renderer，Renderer 仍不能调用工具、发送消息、写核心对象、EvidenceEvent 或五核。
+Contract impact（`2026-09-01.1`）：插件 Tool Renderer 在既有 `tool / skill / object / tool_renderer` 四类扩展点内增加两个确定性宿主交互：把已校验 Plugin Object 作为版本化引用放入当前草稿，以及把原 ToolRun 作为只读投影展开到对话纸张。引用只携带插件、对象类型、稳定对象 ID 和 schema version，发送时仍由学习者确认；纸张复用同一 ToolRun，不复制领域权威。岗位插件的全景输出可在全景、岗位中心语义雷达和对象卡片间切换，雷达输出也可切卡片；拖拽由通用 Plugin Object MIME 合同承载。宿主不识别岗位插件 ID、对象类型或 renderer，Renderer 仍不能调用工具、发送消息、写核心对象、EvidenceEvent 或五核。
 
 Contract impact（`2026-08-31.7`）：插件仍只开放 `tool / skill / object / tool_renderer` 四类扩展点，但 Tool Renderer 新增一个通用 `onPrompt(prompt)` 对话续接回调；插件组件只能把结构化对象引用转成下一轮用户草稿，不能直接调用工具或写核心状态。Tutor 的近期 ToolRun 投影保留有界的插件 `pluginId / toolId / presentation.state / Plugin Object`，从而让“这个能力、第二项任务”等追问继续固定同一快照；宿主不识别具体插件、岗位、对象类型或 Renderer。首个岗位插件升级为目标级岗位全景工具，恢复 Static Role Package 的 views、retrieval、object-index、snapshot 与 reference-migrations，只读支持能力雷达、关系图、事理森林、包目录和版本比较。三类主 Agent、五核、EvidenceEvent、数据库和四类扩展点不变。
 
