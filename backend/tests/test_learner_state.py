@@ -412,6 +412,70 @@ def test_explicit_profile_edit_routes_human_and_value_through_reducer(client: Te
     assert value["long_term"]["career_goal"].startswith("优先探索 Agent 工程")
 
 
+def test_planning_profile_self_report_is_scoped_and_never_upgrades_mastery(client: TestClient):
+    client_event_id = eid("planning-profile")
+    response = client.post("/api/learner-state/events", json={
+        "event_type": "vnext_planning_profile_self_reported",
+        "client_event_id": client_event_id,
+        "payload": {
+            "planning_goal": "成为大模型应用工程师",
+            "self_report": {
+                "version": "planning-profile-self-report.v1",
+                "evidence_quote": "我是大二学生，每周投入15到20小时；学过机器学习，用过PyTorch，写过简单Flask接口。",
+                "education_stage": "大二",
+                "weekly_hours": {"min": 15, "max": 20},
+                "current_load": "manageable",
+                "knowledge_exposures": [{"subject": "机器学习", "statement": "学过机器学习基础"}],
+                "knowledge_gaps": [{"subject": "生产级软件工程", "statement": "没写过生产级代码"}],
+                "practice_exposures": [{"subject": "Flask 接口", "statement": "写过简单 Flask 接口"}],
+                "goal_candidate": "成为大模型应用工程师",
+            },
+        },
+    })
+    assert response.status_code == 200, response.text
+    snapshot = client.get("/api/learner-state/snapshot").json()
+    kernels = snapshot["kernels"]
+    assert kernels["structure"]["short_term"]["current_task"] == "规划：成为大模型应用工程师"
+    assert kernels["structure"]["short_term"]["planning_position"]["education_stage"] == "大二"
+    background = kernels["knowledge"]["short_term"]["declared_planning_background"]
+    assert background["self_report_only"] is True
+    assert background["mastery_unchanged"] is True
+    assert kernels["human"]["short_term"]["planning_availability"]["weekly_hours"] == {"min": 15, "max": 20}
+    assert kernels["value"]["short_term"]["goal_candidate"] == "成为大模型应用工程师"
+    assert kernels["value"]["short_term"]["goal_status"] == "exploring"
+    practice = kernels["practice"]["short_term"]["self_reported_experience"]
+    assert practice["verified"] is False
+    assert practice["attempt_evidence"] is False
+
+    async def inspect_evidence():
+        async with async_session() as db:
+            event = (await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.client_event_id.endswith(client_event_id),
+            ))).scalar_one()
+            facts = (await db.execute(
+                select(MemoryFact).where(MemoryFact.source_event_id == event.id)
+            )).scalars().all()
+            human_nodes = (await db.execute(
+                select(MemoryNode)
+                .join(MemoryFact, MemoryFact.node_id == MemoryNode.id)
+                .where(
+                    MemoryFact.source_event_id == event.id,
+                    MemoryNode.kernel_name == "human",
+                )
+            )).scalars().all()
+            return event, facts, human_nodes
+
+    event, facts, human_nodes = asyncio.run(inspect_evidence())
+    assert event.actor_type == "learner"
+    assert event.provenance["self_report"] is True
+    assert {fact.evidence_grade for fact in facts} == {"self_reported"}
+    planning_fact = next(
+        fact for fact in facts if fact.predicate == "short_term.planning_availability"
+    )
+    assert planning_fact.consumption_status == "excluded"
+    assert next(node for node in human_nodes if node.id == planning_fact.node_id).status == "transient"
+
+
 def test_explicit_human_adaptation_is_scoped_transient_and_answer_free(client: TestClient):
     async def seed_scope():
         async with async_session() as db:

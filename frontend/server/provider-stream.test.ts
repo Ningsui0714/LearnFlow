@@ -27,6 +27,27 @@ test('chat completions text is delivered as provider deltas and rebuilt', async 
   assert.equal(result.streamed, true)
 })
 
+test('chat completion length stops survive stream normalization', async () => {
+  const response = sseResponse([
+    'data: {"choices":[{"delta":{"content":"未完成正文"}}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
+    'data: [DONE]\n\n',
+  ])
+  const result = await readProviderStream(response)
+  assert.equal((result.payload as any).choices[0].finish_reason, 'length')
+})
+
+test('responses API incomplete status and details survive stream normalization', async () => {
+  const response = sseResponse([
+    'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"未完成正文"}\n\n',
+    'event: response.incomplete\ndata: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}}\n\n',
+  ])
+  const result = await readProviderStream(response)
+  assert.equal((result.payload as any).status, 'incomplete')
+  assert.equal((result.payload as any).incomplete_details.reason, 'max_output_tokens')
+  assert.equal(textFromTutorProviderResponse(result.payload), '未完成正文')
+})
+
 test('chat completions tool-call argument deltas are reassembled without leaking text', async () => {
   const deltas: string[] = []
   const response = sseResponse([

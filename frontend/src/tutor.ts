@@ -172,6 +172,15 @@ export function textFromTutorProviderResponse(payload: unknown): string {
   return ''
 }
 
+export function incompleteTutorProviderReason(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const root = payload as Record<string, any>
+  const finishReason = String(root.choices?.[0]?.finish_reason || '').trim()
+  if (finishReason === 'length' || finishReason === 'max_tokens') return finishReason
+  if (String(root.status || '').trim() !== 'incomplete') return ''
+  return String(root.incomplete_details?.reason || root.incomplete_details?.type || 'incomplete').trim()
+}
+
 export function errorFromTutorProviderResponse(payload: unknown, status: number) {
   if (payload && typeof payload === 'object') {
     const error = (payload as Record<string, unknown>).error

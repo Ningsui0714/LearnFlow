@@ -46,7 +46,7 @@ RELATION_TYPES = (
 )
 TRANSIENT_HUMAN_KEYS = {
     "affect", "cognitive_load", "attention", "frustration", "support_need",
-    "pace_adjustment", "format_request",
+    "pace_adjustment", "format_request", "planning_availability",
 }
 NON_MEMORY_PATCH_KEYS = {
     "transient_expires_at", "adaptation_source", "adaptation_scope",

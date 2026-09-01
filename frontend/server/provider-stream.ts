@@ -65,6 +65,7 @@ export async function readProviderStream(
   let completedResponse: unknown
   let streamError = ''
   let dialect: 'chat' | 'responses' | undefined
+  let chatFinishReason = ''
   const chatTools = new Map<number, StreamToolCall>()
   const responseTools = new Map<string, StreamToolCall>()
   const responseToolKeys = new Map<number, string>()
@@ -81,6 +82,7 @@ export async function readProviderStream(
     if (Array.isArray(root.choices)) {
       dialect = 'chat'
       const choice = root.choices[0]
+      if (typeof choice?.finish_reason === 'string') chatFinishReason = choice.finish_reason
       const delta = asRecord(choice?.delta)
       emitText(delta?.content)
       for (const item of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
@@ -108,7 +110,9 @@ export async function readProviderStream(
       streamError = String(error?.message || '模型流式响应失败')
     }
     if (type === 'response.output_text.delta') emitText(root.delta)
-    if (type === 'response.completed' && root.response) completedResponse = root.response
+    if ((type === 'response.completed' || type === 'response.incomplete') && root.response) {
+      completedResponse = root.response
+    }
 
     if (type === 'response.output_item.added' || type === 'response.output_item.done') {
       const item = asRecord(root.item)
@@ -162,7 +166,12 @@ export async function readProviderStream(
       function: { name: tool.name, arguments: tool.arguments },
     }))
     return {
-      payload: { choices: [{ message: { content: text || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) } }] },
+      payload: {
+        choices: [{
+          message: { content: text || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+          ...(chatFinishReason ? { finish_reason: chatFinishReason } : {}),
+        }],
+      },
       text,
       streamed: true,
     }
@@ -170,7 +179,11 @@ export async function readProviderStream(
 
   if (completedResponse) {
     const completedText = textFromCompletedPayload(completedResponse)
-    return { payload: completedResponse, text: text || completedText, streamed: true }
+    const streamedText = text || completedText
+    const payload = streamedText && !completedText
+      ? { ...completedResponse, output_text: streamedText }
+      : completedResponse
+    return { payload, text: streamedText, streamed: true }
   }
   const output = [...responseTools.values()].map(tool => ({
     type: 'function_call', call_id: tool.id, name: tool.name, arguments: tool.arguments,

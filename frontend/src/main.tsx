@@ -66,7 +66,9 @@ import {
   closeLearningPlan,
   createLearningPlan,
   decideValueClaimProposal,
+  extractPlanningProfileSelfReport,
   learningPlanTutorContext,
+  planningGoalSummary,
   planningKindLabel,
   projectLearningPlan,
   updateLearningPlan,
@@ -170,6 +172,7 @@ type Message = {
   learningTaskId?: string
   formalTaskId?: number
   learningGoal?: string
+  learningGoalKind?: 'learning_task' | 'planning_goal' | 'conversation_topic'
   persistedByTutor?: boolean
   streaming?: boolean
   streamingPhase?: string
@@ -335,6 +338,9 @@ function messageFromFormal(message: FormalTutorMessage): Message {
     learningTaskId: typeof vnext.learningTaskId === 'string' ? vnext.learningTaskId : undefined,
     formalTaskId: typeof vnext.formalTaskId === 'number' ? vnext.formalTaskId : undefined,
     learningGoal: typeof vnext.learningGoal === 'string' ? vnext.learningGoal : undefined,
+    learningGoalKind: ['learning_task', 'planning_goal', 'conversation_topic'].includes(String(vnext.learningGoalKind))
+      ? vnext.learningGoalKind as Message['learningGoalKind']
+      : undefined,
     persistedByTutor: message.meta_data?.source !== 'vnext_chat_session_store',
   }
 }
@@ -351,6 +357,7 @@ function syncMessageMetaData(message: Message): Record<string, unknown> {
     learningTaskId: message.learningTaskId,
     formalTaskId: message.formalTaskId,
     learningGoal: message.learningGoal,
+    learningGoalKind: message.learningGoalKind,
   }
 }
 
@@ -1362,6 +1369,7 @@ function App({ auth }: { auth: AuthGateSession }) {
           segment_id: finishedMessage.id,
           mode: formalModeId(mode),
           goal: message.learningGoal || '',
+          goal_kind: message.learningGoalKind || 'conversation_topic',
           outcome: 'tutor_output_delivered',
           content_exposure: mode === 'simple_explain' || mode === 'guided_learning',
           learning_task_id: message.formalTaskId || message.learningTaskId,
@@ -1627,6 +1635,38 @@ function App({ auth }: { auth: AuthGateSession }) {
             },
           })
         }
+        if (mode === 'learning_plan' && planningProjection) {
+          const selfReport = extractPlanningProfileSelfReport(
+            content,
+            planningGoalSummary(planningProjection),
+          )
+          if (selfReport) {
+            await syncFormalEvent({
+              id: `planning-profile:${clientTurnId}`,
+              type: 'vnext_planning_profile_self_reported',
+              at: now + humanAdaptationSignals.length + 1,
+              detail: '学习者在规划对话中明确提供当前基础、投入或实践经历',
+              payload: {
+                self_report: {
+                  version: selfReport.version,
+                  evidence_quote: selfReport.evidenceQuote,
+                  education_stage: selfReport.educationStage,
+                  weekly_hours: selfReport.weeklyHours,
+                  current_load: selfReport.currentLoad,
+                  knowledge_exposures: selfReport.knowledgeExposures,
+                  knowledge_gaps: selfReport.knowledgeGaps,
+                  practice_exposures: selfReport.practiceExposures,
+                  goal_candidate: selfReport.goalCandidate,
+                },
+                planning_goal: planningGoalSummary(planningProjection),
+                conversation_id: conversationId,
+                session_id: formalSessionId,
+                project_id: conversation.projectId,
+                checkpoint_id: conversation.checkpointId,
+              },
+            })
+          }
+        }
         if (mode === 'guided_learning' && learningProjection) {
           if (!formalSessionId) {
             const session = await createFormalTutorSession(true, {
@@ -1800,7 +1840,11 @@ function App({ auth }: { auth: AuthGateSession }) {
         learningSubstateLabel: turnStep?.substateLabel,
         learningTaskId: learningProjection?.task.id,
         formalTaskId: learningProjection?.task.formalTaskId,
-        learningGoal: learningProjection?.task.objective || planningProjection?.plan.objective || content,
+        learningGoal: learningProjection?.task.objective
+          || (planningProjection ? planningGoalSummary(planningProjection) : content),
+        learningGoalKind: learningProjection
+          ? 'learning_task'
+          : planningProjection ? 'planning_goal' : 'conversation_topic',
       }, formalSessionId)
       setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
     } catch (error) {

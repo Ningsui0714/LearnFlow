@@ -6,6 +6,7 @@ import {
   closeLearningPlan,
   createLearningPlan,
   decideValueClaimProposal,
+  extractPlanningProfileSelfReport,
   hasPlanningIntent,
   learningPlanTutorContext,
   projectLearningPlan,
@@ -16,6 +17,7 @@ import {
 test('large learning and future direction goals enter planning while atomic goals do not', () => {
   assert.equal(hasPlanningIntent('我想用三个月系统学习智能体，并做一个能用的项目'), true)
   assert.equal(hasPlanningIntent('我未来应该走智能体工程还是机器学习科研方向'), true)
+  assert.equal(hasPlanningIntent('我想成为大模型应用工程师'), true)
   assert.equal(hasPlanningIntent('带我弄懂 Python 闭包'), false)
   assert.equal(hasPlanningIntent('什么是决策树'), false)
 })
@@ -38,7 +40,7 @@ test('direction planning proposes a value claim and requires an explicit learner
   const before = projectLearningPlan(created.plan, created.events)
   assert.equal(created.plan.kind, 'direction')
   assert.equal(before.valueProposal?.decision, 'proposed')
-  assert.equal(before.valueProposal?.proposedClaim, '当前方向候选：我未来想从事智能体工程，也保留机器学习科研方向。')
+  assert.equal(before.valueProposal?.proposedClaim, '当前方向候选：智能体工程。')
 
   const acceptedEvents = decideValueClaimProposal(created.events, before, 'accepted', 200)
   const accepted = projectLearningPlan(created.plan, acceptedEvents)
@@ -46,6 +48,23 @@ test('direction planning proposes a value claim and requires an explicit learner
   assert.equal(accepted.valueProposal?.decision, 'accepted')
   assert.equal(context.valueProposal?.formalWriteCompleted, false)
   assert.match(acceptedEvents.at(-1)?.detail || '', /正式后端不可用/)
+})
+
+test('planning self report is split into typed evidence instead of one raw task string', () => {
+  const report = extractPlanningProfileSelfReport(
+    '我是大二在校生，每周能投入15-20小时。学过机器学习和深度学习，用过PyTorch写简单训练脚本；没写过生产级代码，只写过简单Flask接口，RAG和Agent没实际动手。',
+    '成为大模型应用工程师',
+  )
+  assert.equal(report?.educationStage, '大二')
+  assert.deepEqual(report?.weeklyHours, { min: 15, max: 20 })
+  assert.equal(report?.goalCandidate, '成为大模型应用工程师')
+  assert.ok(report?.knowledgeExposures.some(item => item.subject === '机器学习与深度学习'))
+  assert.ok(report?.knowledgeGaps.some(item => item.subject === '生产级软件工程'))
+  assert.ok(report?.practiceExposures.some(item => item.subject === 'Flask 接口'))
+})
+
+test('a continuation-only planning reply does not create a fake self report', () => {
+  assert.equal(extractPlanningProfileSelfReport('然后呢', '成为大模型应用工程师'), undefined)
 })
 
 test('planning updates and closes only through its local event queue', () => {

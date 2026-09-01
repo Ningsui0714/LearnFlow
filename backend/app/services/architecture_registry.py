@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-09-01.3"
+REGISTRY_VERSION = "2026-09-01.4"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -1292,6 +1292,7 @@ EVENTS = {
         _event("vnext_learning_task_completed", "run_vnext_learning_task", (), "local_operational_milestone", origin="vnext"),
         _event("vnext_learning_plan_started", "run_vnext_learning_plan", (), "local_operational", origin="vnext"),
         _event("vnext_learning_plan_note_captured", "run_vnext_learning_plan", (), "local_interaction", origin="vnext"),
+        _event("vnext_planning_profile_self_reported", "run_vnext_learning_plan", KERNEL_NAMES, "learner_self_report_for_planning", origin="vnext"),
         _event("vnext_project_seed_ready", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
         _event("vnext_direction_plan_ready", "run_vnext_learning_plan", (), "local_operational_milestone", origin="vnext"),
         _event("vnext_value_claim_proposed", "run_vnext_learning_plan", (), "local_proposal", origin="vnext"),

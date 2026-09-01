@@ -665,7 +665,7 @@ export async function bootstrapFormalRuntime(): Promise<{ connection: FormalRunt
 
 export async function syncFormalEvent(event: LearningEvent | PlanningEvent | {
   id: string
-  type: 'chat_mode_entered' | 'learning_action_segment_completed' | 'vnext_human_adaptation_requested'
+  type: 'chat_mode_entered' | 'learning_action_segment_completed' | 'vnext_human_adaptation_requested' | 'vnext_planning_profile_self_reported'
   at: number
   detail: string
   payload?: Record<string, unknown>

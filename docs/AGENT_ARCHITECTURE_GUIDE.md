@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-01.4`）：Tutor 的模型终态新增 provider 完整性门。流适配器必须保留 `finish_reason/status/incomplete_details`；token 上限中断只能进入有界续接，续接轮不再开放工具，完整正文通过既有展示协议后才可提交。规划态的长段背景不直接进入 Agent 状态栏或五核：确定性提炼器只输出版本化 `planning-profile-self-report.v1`，新事件再由 reducer 分核投影；Knowledge 与 Practice 自报不表示掌握或独立能力，Human 投入只限当前规划语境，Value 方向保持 exploring，Structure 只保存简洁规划锚点。三类主 Agent、评分、路线确认和长期记忆门槛不变。
+
 Contract impact（`2026-09-01.3`）：岗位插件在既有 Tool/Skill/Object/Tool Renderer 接口内增加两个候选工作流。`role_cold_start` 先确认岗位、用途、受众和实际来源，再由 artifact Tool 形成带任务屏障的候选构建合同；没有来源时停在 `waiting_sources`。`role_snapshot_iteration` 固定不可变基线，在目标邻域内形成 proposed patch、结构检查和回归验收合同。两者均由 Tutor 拥有对话控制权，不新增主 Agent；模型只能补候选内容，确定性 handler 固定 hash、范围、阶段和停止条件。当前版本不执行联网研究、外部 role-agent、快照写盘或发布，候选对象不进入学习证据或五核。
 
 Contract impact（`2026-09-01.2`）：插件选择是对话级单调上下文。显式启用但尚未调用时仍可撤销；一旦插件 ToolRun 出现在主对话或任一对话纸张，宿主便从历史记录确定性恢复该插件，把其 Tool 与 Skill 持续放入后续 Tutor 回合，并在选择器中显示“已使用 · 锁定”。这保证对象引用、快照 grounding、失败诊断与代词式追问在刷新、正式会话恢复和纸张切换后仍可重放。状态不由模型统计，也不按插件 ID 硬编码；删除整个对话才结束该上下文。

@@ -48,7 +48,7 @@ ALERT_KINDS = {
 }
 HUMAN_TRANSIENT_KEYS = {
     "affect", "cognitive_load", "frustration", "support_need",
-    "pace_adjustment", "format_request", "adaptation_source",
+    "pace_adjustment", "format_request", "planning_availability", "adaptation_source",
     "adaptation_scope", "transient_expires_at",
 }
 

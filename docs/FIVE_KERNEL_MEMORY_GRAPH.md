@@ -62,6 +62,7 @@ Chat、学习任务、学习路径和规划态只通过 allow-list 事件网关�
 
 - `chat_mode_entered`：记录模式边界，零 Kernel target。
 - `learning_action_segment_completed`：记录一次自由/讲解/带领学习/规划段落；讲解只形成 exposure，明确 learn/plan 目标可形成短期 Value，均不升级掌握。
+- `vnext_planning_profile_self_reported`：把规划对话中明确给出的学段、接触/缺口、每周投入、方向候选和实践经历拆成五核短期事实；固定为 `self_reported`，不把整段原文当任务，不形成 Knowledge 掌握或 Practice 独立表现，Human 的当前投入/负荷限同 scope 使用且 8 小时过期。
 - LearningTask 生命周期事件：创建、开始、暂停、恢复、取消、重开、流程完成；零 Kernel target，任务完成不等于掌握。
 - `vnext_learning_path_node_status_set`：更新 Structure 的路径状态；“学过/掌握”只在 Knowledge 留 self-reported exposure，`mastery_unchanged=true`。
 - `vnext_personal_path_node_added/removed`：更新 Structure 个人覆盖层，并在 Value 留短期候选或 tombstone，不产生长期目标。

@@ -15,6 +15,7 @@ import {
   buildTutorInstructions,
   endpointFor,
   ensureSearchCitations,
+  incompleteTutorProviderReason,
   isDisplayableTutorReply,
   textFromTutorProviderResponse,
 } from '../src/tutor.ts'
@@ -432,6 +433,7 @@ export function buildAgentProviderRequest(options: {
   tools: AgentToolDefinition[]
   includeTools: boolean
   responseFormat?: 'json_object'
+  maxOutputTokens?: number
 }) {
   const endpoint = endpointFor(options.baseUrl)
   const responsesApi = endpoint.endsWith('/responses')
@@ -442,7 +444,7 @@ export function buildAgentProviderRequest(options: {
         model: options.model,
         instructions: options.instructions,
         input: providerInput(options.messages),
-        max_output_tokens: 1400,
+        max_output_tokens: options.maxOutputTokens || 6_000,
         ...(options.responseFormat ? { text: { format: { type: options.responseFormat } } } : {}),
         ...(options.includeTools ? { tools: responsesToolDefinitions(options.tools), tool_choice: 'auto' } : {}),
       },
@@ -453,7 +455,7 @@ export function buildAgentProviderRequest(options: {
     body: {
       model: options.model,
       messages: chatMessages(options.instructions, options.messages),
-      max_tokens: 1400,
+      max_tokens: options.maxOutputTokens || 6_000,
       ...(options.responseFormat ? { response_format: { type: options.responseFormat } } : {}),
       ...(options.includeTools ? { tools: chatToolDefinitions(options.tools), tool_choice: 'auto' } : {}),
     },
@@ -1134,6 +1136,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   const instructions = pluginInstructions ? `${coreInstructions}\n\n${pluginInstructions}` : coreInstructions
 
   let reply = ''
+  let continuationPrefix = ''
   let visualBrief: VisualTeachingBrief | undefined
   let searchSources: SearchSource[] = runs.flatMap(run => run.sources || [])
   const invokeModel = async (
@@ -1282,7 +1285,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         instructions,
         messages: runtimeMessages,
         tools,
-        includeTools: toolCalls < budget.maxToolCalls,
+        includeTools: !continuationPrefix && toolCalls < budget.maxToolCalls,
       })
       const payload = await invokeModel(request)
       const calls = toolCallsFromProviderResponse(payload)
@@ -1340,7 +1343,21 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         }
         continue
       }
-      const candidate = repairTutorDraftForObservedGaps(text, runs)
+      const combinedText = `${continuationPrefix}${text}`
+      const incompleteReason = incompleteTutorProviderReason(payload)
+      if (incompleteReason) {
+        if (!text.trim()) throw new Error(`模型输出未完成且没有可续接正文：${incompleteReason}`)
+        continuationPrefix = combinedText
+        runtimeMessages.push({ role: 'assistant', content: text })
+        runtimeMessages.push({
+          role: 'user',
+          content: '上一段正文因模型输出上限中断。请从断点后继续，只输出尚未完成的后半部分，不要重写或重复已经输出的内容；把当前回答自然完整地收束。',
+        })
+        record({ phase: 'verify', detail: `检测到模型输出上限中断（${incompleteReason}），保留已输出正文并续接`, status: 'retrying' })
+        continue
+      }
+      const candidate = repairTutorDraftForObservedGaps(combinedText, runs)
+      continuationPrefix = ''
       const verification = verifyTutorTurnOutcome({
         reply: candidate,
         mode: input.mode,
@@ -1386,7 +1403,22 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         })
         const payload = await invokeModel(request, finalizationDeadline)
         const text = textFromTutorProviderResponse(payload)
-        const candidate = repairTutorDraftForObservedGaps(text, runs)
+        const combinedText = `${continuationPrefix}${text}`
+        const incompleteReason = incompleteTutorProviderReason(payload)
+        if (incompleteReason) {
+          if (text.trim()) {
+            continuationPrefix = combinedText
+            runtimeMessages.push({ role: 'assistant', content: text })
+            runtimeMessages.push({
+              role: 'user',
+              content: '回答仍因输出上限中断。只续写缺失的结尾并自然收束，不要重复前文。',
+            })
+          }
+          record({ phase: 'verify', detail: `最终收束仍检测到输出中断（${incompleteReason}）`, status: 'retrying' })
+          continue
+        }
+        const candidate = repairTutorDraftForObservedGaps(combinedText, runs)
+        continuationPrefix = ''
         if (verifyTutorTurnOutcome({
           reply: candidate,
           mode: input.mode,

@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-01.4`）：Tutor provider 传输现在保留 Chat Completions 的 `finish_reason` 与 Responses 的 `status/incomplete_details`；输出达到 token 上限时，运行时保留已流出的正文、关闭续接轮工具面并只生成缺失后半段，不能把半句、半表格当作 `final_answer`。普通 Tutor 输出预算由 1400 提高到 6000 token，既有总时限、轮数与工具预算不变。学习规划态新增 `vnext_planning_profile_self_reported`：浏览器只用确定性规则把明确自述拆成当前位置、知识接触/缺口、当前投入、方向候选和未验证实践经历，再经唯一 Event→reducer 链分别写五核短期投影；全部事实保持 `self_reported`，Knowledge/Practice 明确 `mastery_unchanged`，Human 投入/负荷限当前 scope 并在 8 小时后过期。`learning_action_segment_completed` 只接受类型化 `learning_task/planning_goal` 作为任务与优先级，不再把长段自我介绍写成任务。新增事件和注册表版本向后兼容，无数据库 schema 迁移。
+
 Contract impact（`2026-09-01.3`）：插件四类扩展点不变，`artifact` Tool 的权威进一步明确为“未提交候选制品”：可由插件 Skill 编排冷启动或迭代合同、结构化 patch 和校验门槛，但不能批准自己、发布版本、覆盖既有 Plugin Object、写 LearnFlow 核心对象或五核。首个岗位插件新增冷启动候选与固定基线迭代候选；冷启动保持来源资格→任务屏障→岗位内核→语义/事理补全→独立校验语义，迭代固定 `snapshotId + rootHash` 并要求 meaningful diff 与核心回归门。当前没有持久化/发布适配器，因此候选 ToolRun 必须明确显示未创建后继快照。关系 Renderer 可展开本次 ToolResult 的全部有界节点与边并逐节点检查真实一跳关系，宿主仍不识别岗位 ID 或 Renderer。
 
 Contract impact（`2026-09-01.2`）：对话中的插件激活改为可重放的单调状态：插件在尚未产生 ToolRun 前可以取消；第一次完成或尝试 namespaced Tool 后，宿主从主对话与纸张历史确定性提炼 `plugin_id`，把它并入后续每轮工具面与 Skill 上下文，选择器不再允许关闭。失败 ToolRun 也计为已参与，避免删掉诊断所需的能力合同。该规则由通用 ToolRun 命名空间和插件信封驱动，不识别具体插件 ID；对话删除仍会删除这项会话状态。四类扩展点、三类主 Agent、核心对象、EvidenceEvent 与五核写入边界不变。

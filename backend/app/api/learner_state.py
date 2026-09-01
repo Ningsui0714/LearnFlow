@@ -52,6 +52,7 @@ SYNC_EVENT_TYPES = {
     "vnext_learning_task_completed",
     "vnext_learning_plan_started",
     "vnext_learning_plan_note_captured",
+    "vnext_planning_profile_self_reported",
     "vnext_project_seed_ready",
     "vnext_direction_plan_ready",
     "vnext_value_claim_proposed",
@@ -527,10 +528,18 @@ async def sync_learner_event(
                 "vnext_sync": True,
                 **(
                     {"self_report": True, "explicit_current_context": True}
-                    if request.event_type == "vnext_human_adaptation_requested"
+                    if request.event_type in {
+                        "vnext_human_adaptation_requested",
+                        "vnext_planning_profile_self_reported",
+                    }
                     else {}
                 ),
             },
+            actor_type=(
+                "learner"
+                if request.event_type == "vnext_planning_profile_self_reported"
+                else None
+            ),
             client_event_id=request.client_event_id,
         )
     except ValueError as error:

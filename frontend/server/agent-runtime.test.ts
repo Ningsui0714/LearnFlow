@@ -288,6 +288,38 @@ test('provider deltas reach the UI live and a tool decision resets only the draf
   assert.equal(typeof result.trace.timings?.firstTextDeltaMs, 'number')
 })
 
+test('Tutor continues a token-limited provider answer before accepting the final state', async () => {
+  const events: any[] = []
+  const requests: any[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'learning_plan',
+    messages: [{ role: 'user', content: '给我一个三个月的大模型应用工程学习计划' }],
+    toolChoice: 'auto',
+    generate: async () => 'unused',
+    taskQueue: [],
+    knowledgeDomains: [],
+    observe: event => events.push(event),
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) {
+        request.onTextDelta?.('第一阶段先补工程基础，')
+        return { choices: [{ message: { content: '第一阶段先补工程基础，' }, finish_reason: 'length' }] }
+      }
+      request.onTextDelta?.('第二阶段完成可评测的 RAG 项目。')
+      return { choices: [{ message: { content: '第二阶段完成可评测的 RAG 项目。' }, finish_reason: 'stop' }] }
+    },
+  })
+  assert.equal(result.reply, '第一阶段先补工程基础，第二阶段完成可评测的 RAG 项目。')
+  assert.equal(result.trace.modelRounds, 2)
+  assert.equal(requests[0].body.max_tokens, 6_000)
+  assert.equal(requests[1].body.tools, undefined)
+  assert.ok(events.some(event => event.type === 'trajectory' && /输出上限中断/.test(event.event.detail)))
+})
+
 test('guided learning keeps the learner in flow when the provider returns no teaching text', async () => {
   const result = await runTutorAgentTurn({
     baseUrl: 'https://example.com/v1/chat/completions',

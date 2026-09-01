@@ -44,7 +44,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-09-01.3"
+    assert REGISTRY_VERSION == "2026-09-01.4"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -199,6 +199,8 @@ def test_chat_modes_are_tutor_postures_with_registered_action_projection():
     )
     assert EVENTS["vnext_human_adaptation_requested"].kernel_targets == ("human",)
     assert EVENTS["vnext_human_adaptation_requested"].evidence_role == "explicit_transient_adaptation"
+    assert EVENTS["vnext_planning_profile_self_reported"].kernel_targets == KERNEL_NAMES
+    assert EVENTS["vnext_planning_profile_self_reported"].evidence_role == "learner_self_report_for_planning"
     assert {"pace_adjustment", "format_request"} <= set(KERNELS["human"].short_term_keys)
     assert WORKBENCHES["learning_tasks"].capabilities == ("manage_learning_tasks",)
     assert WORKBENCHES["focused_learning"].name == "Learning Artifact Workbench"

@@ -25,6 +25,18 @@ export type PlanningSignal = {
   value: string
 }
 
+export type PlanningProfileSelfReport = {
+  version: 'planning-profile-self-report.v1'
+  evidenceQuote: string
+  educationStage?: string
+  weeklyHours?: { min: number; max: number }
+  currentLoad?: 'manageable' | 'constrained'
+  knowledgeExposures: Array<{ subject: string; statement: string }>
+  knowledgeGaps: Array<{ subject: string; statement: string }>
+  practiceExposures: Array<{ subject: string; statement: string }>
+  goalCandidate?: string
+}
+
 export type ValueClaimProposal = {
   id: string
   currentClaim: string
@@ -120,7 +132,7 @@ const DIRECTION_REQUIREMENTS: LearningPlanProjection['requirements'] = [
   { id: 'constraints', label: '现实约束' },
 ]
 
-const DIRECTION_PATTERN = /(?:未来|以后|职业|就业|工作方向|发展方向|科研方向|读研|升学|转行|从事什么|走什么方向|适合.*方向)/i
+const DIRECTION_PATTERN = /(?:未来|以后|职业|就业|工作方向|发展方向|科研方向|读研|升学|转行|从事什么|走什么方向|适合.*方向|成为.{0,24}(?:工程师|研究员|开发者|科学家))/i
 const COMPLEX_PLAN_PATTERN = /(?:系统(?:地)?学|完整(?:地)?学|学习规划|学习路线|路线图|从零.*(?:到|学)|几个月|半年|一年|长期学习|做一个.*(?:项目|系统|应用|作品)|构建.*(?:项目|系统|应用)|复现.*论文|围绕.*仓库.*学)/i
 const EXPLICIT_VALUE_PATTERN = /(?:我(?:想|希望|打算|倾向|计划)|目标是|(?:未来|以后).*(?:做|从事|研究|方向)|准备(?:走|做|研究))/i
 
@@ -132,6 +144,94 @@ function id(prefix: string) {
 
 function compact(value: string, limit = 180) {
   return value.replace(/\s+/g, ' ').trim().slice(0, limit)
+}
+
+function sentenceContaining(input: string, pattern: RegExp, fallback: string) {
+  const sentences = input.split(/[。！？!?\n]+/).map(item => compact(item, 240)).filter(Boolean)
+  return sentences.find(sentence => pattern.test(sentence)) || fallback
+}
+
+function directionObjective(input: string) {
+  const explicit = input.match(/(?:我)?(?:未来)?(?:想|希望|打算|计划)(?:未来)?(?:成为|从事|做|走)?\s*([^，。！？!?\n]{2,60}(?:工程师|工程|研究员|开发者|科学家|方向))/i)
+  if (explicit?.[1]) return `探索并规划${compact(explicit[1], 80)}`
+  return '规划当前发展方向'
+}
+
+export function planningGoalSummary(projection: LearningPlanProjection) {
+  const proposal = projection.valueProposal?.proposedClaim
+    ?.replace(/^当前方向候选：/, '')
+    .replace(/[。！？!?]+$/, '')
+    .trim()
+  if (projection.plan.kind === 'direction') {
+    return compact(proposal || projection.plan.objective || '规划当前发展方向', 160)
+  }
+  return compact(projection.plan.objective || '形成可验证的项目学习计划', 160)
+}
+
+export function extractPlanningProfileSelfReport(
+  input: string,
+  goalHint = '',
+): PlanningProfileSelfReport | undefined {
+  const evidenceQuote = compact(input, 2_000)
+  const knowledgeExposures: PlanningProfileSelfReport['knowledgeExposures'] = []
+  const knowledgeGaps: PlanningProfileSelfReport['knowledgeGaps'] = []
+  const practiceExposures: PlanningProfileSelfReport['practiceExposures'] = []
+  const add = (
+    target: Array<{ subject: string; statement: string }>,
+    subject: string,
+    pattern: RegExp,
+  ) => {
+    if (!pattern.test(input)) return
+    target.push({ subject, statement: sentenceContaining(input, pattern, subject) })
+  }
+
+  add(knowledgeExposures, 'Python', /(?:主要用|熟悉|会用|使用)\s*Python|Python\s*(?:基础|课程|作业|实验)/i)
+  add(knowledgeExposures, '机器学习与深度学习', /(?:上过|学过|了解|熟悉).{0,24}(?:机器学习|深度学习)|(?:CNN|RNN|Transformer)/i)
+  add(knowledgeExposures, 'PyTorch', /(?:用过|使用过|写过).{0,12}PyTorch/i)
+  add(knowledgeExposures, '大模型 API', /(?:调用过|用过|试过).{0,18}(?:OpenAI|大模型).{0,10}API/i)
+  add(knowledgeExposures, 'RAG 与 Agent', /(?:RAG|Agent).{0,30}(?:听过|概念|了解)/i)
+
+  add(knowledgeGaps, '生产级软件工程', /没写过生产级代码|(?:单元测试|日志|异常处理).{0,24}(?:不熟|不太熟|没接触)/i)
+  add(knowledgeGaps, '后端与系统设计', /后端.{0,12}(?:为零|基本为零)|没接触过.{0,24}(?:数据库|系统架构)/i)
+  add(knowledgeGaps, 'RAG 与 Agent 实践', /(?:RAG|Agent).{0,30}(?:没实际|没有实际|没动手|未实践)/i)
+
+  add(practiceExposures, 'Flask 接口', /(?:写过|做过).{0,18}Flask.{0,12}(?:接口|课设)/i)
+  add(practiceExposures, 'PyTorch 训练脚本', /PyTorch.{0,24}(?:训练脚本|跑通实验|简单)/i)
+  add(practiceExposures, '大模型 API 调用', /(?:OpenAI|大模型).{0,12}API.{0,24}(?:摘要|简单任务|调用)/i)
+
+  const educationStage = input.match(/(?:大[一二三四]|研[一二三]|本科生|研究生|在校生)/)?.[0]
+  const weekly = input.match(/每周.{0,8}?(\d{1,2})\s*(?:-|—|~|～|到|至)\s*(\d{1,2})\s*小时/i)
+    || input.match(/每周.{0,8}?(\d{1,2})\s*小时/i)
+  const weeklyHours = weekly
+    ? { min: Number(weekly[1]), max: Number(weekly[2] || weekly[1]) }
+    : undefined
+  const currentLoad = /课业压力(?:还好|不大|可控)|时间(?:比较|较)?充足/i.test(input)
+    ? 'manageable' as const
+    : /课业压力(?:大|较大)|时间不多|很忙/i.test(input) ? 'constrained' as const : undefined
+  const explicitGoal = directionObjective(input)
+  const hasProfileFacts = Boolean(
+    educationStage || weeklyHours || currentLoad
+    || knowledgeExposures.length || knowledgeGaps.length || practiceExposures.length,
+  )
+  const goalCandidate = explicitGoal !== '规划当前发展方向'
+    ? explicitGoal.replace(/^探索并规划/, '')
+    : hasProfileFacts ? compact(goalHint, 160) || undefined : undefined
+
+  if (
+    !educationStage && !weeklyHours && !currentLoad && !goalCandidate
+    && !knowledgeExposures.length && !knowledgeGaps.length && !practiceExposures.length
+  ) return undefined
+  return {
+    version: 'planning-profile-self-report.v1',
+    evidenceQuote,
+    ...(educationStage ? { educationStage } : {}),
+    ...(weeklyHours ? { weeklyHours } : {}),
+    ...(currentLoad ? { currentLoad } : {}),
+    knowledgeExposures,
+    knowledgeGaps,
+    practiceExposures,
+    ...(goalCandidate ? { goalCandidate } : {}),
+  }
 }
 
 export function hasPlanningIntent(input: string) {
@@ -176,11 +276,9 @@ function extractSignals(kind: LearningPlanKind, input: string): PlanningSignal[]
 
 function valueClaimProposal(input: string, now: number): ValueClaimProposal | undefined {
   const quote = compact(input, 140)
-  if (!EXPLICIT_VALUE_PATTERN.test(quote)) return undefined
-  const claimText = quote
-    .replace(/[，,；;]?(?:你|请)?(?:建议|帮我|告诉我).*(?:怎么|如何)?(?:规划|选择|发展).*$/i, '')
-    .replace(/[。！？!?]+$/, '')
-    .trim()
+  const objective = directionObjective(input)
+  if (!EXPLICIT_VALUE_PATTERN.test(quote) || objective === '规划当前发展方向') return undefined
+  const claimText = objective.replace(/^探索并规划/, '').trim()
   return {
     id: id('value-proposal'),
     currentClaim: CURRENT_VALUE_CLAIM,
@@ -210,7 +308,9 @@ export function appendPlanningEvents(
 
 export function createLearningPlan(input: string, now = Date.now(), existingEvents: PlanningEvent[] = []) {
   const kind = classifyLearningPlan(input)
-  const objective = compact(input.replace(/^(?:请|帮我|我想|我希望|给我)?\s*(?:规划|制定)?\s*/i, ''), 160) || '新的学习规划'
+  const objective = kind === 'direction'
+    ? directionObjective(input)
+    : compact(input.replace(/^(?:请|帮我|我想|我希望|给我)?\s*(?:规划|制定)?\s*/i, ''), 160) || '新的学习规划'
   const plan: LearningPlan = { id: id('plan'), kind, objective, createdAt: now }
   const signals = extractSignals(kind, input)
   const proposal = kind === 'direction' ? valueClaimProposal(input, now) : undefined

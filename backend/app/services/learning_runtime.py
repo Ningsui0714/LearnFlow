@@ -40,6 +40,7 @@ REDUCER_EVENT_TYPES = frozenset({
     "vnext_value_claim_proposal_accepted",
     "vnext_learning_path_plan_committed", "vnext_learning_path_plan_revised",
     "vnext_learning_path_plan_archived", "vnext_learning_path_node_status_set",
+    "vnext_planning_profile_self_reported",
     "vnext_personal_path_node_added", "vnext_personal_path_node_removed",
     "learning_action_segment_completed", "micro_learning_started",
     "registration_profile_completed", "learner_concept_statement_recorded",
@@ -612,11 +613,138 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
         )
         return
 
+    if et == "vnext_planning_profile_self_reported":
+        report = dict(p.get("self_report") or {})
+        if report.get("version") != "planning-profile-self-report.v1":
+            return
+
+        def observations(key: str) -> list[dict[str, Any]]:
+            normalized: list[dict[str, Any]] = []
+            for item in list(report.get(key) or [])[:12]:
+                if not isinstance(item, dict):
+                    continue
+                subject = str(item.get("subject") or "").strip()[:160]
+                statement = str(item.get("statement") or "").strip()[:500]
+                if subject and statement:
+                    normalized.append({"subject": subject, "statement": statement})
+            return normalized
+
+        education_stage = str(report.get("education_stage") or "").strip()[:80]
+        planning_goal = str(p.get("planning_goal") or report.get("goal_candidate") or "").strip()[:200]
+        goal_candidate = str(report.get("goal_candidate") or planning_goal).strip()[:200]
+        evidence_quote = str(report.get("evidence_quote") or "").strip()[:2000]
+        knowledge_exposures = observations("knowledge_exposures")
+        knowledge_gaps = observations("knowledge_gaps")
+        practice_exposures = observations("practice_exposures")
+        weekly = dict(report.get("weekly_hours") or {})
+        weekly_min = weekly.get("min")
+        weekly_max = weekly.get("max")
+        if not isinstance(weekly_min, int) or not isinstance(weekly_max, int):
+            weekly_min = weekly_max = None
+        elif not (0 <= weekly_min <= weekly_max <= 168):
+            weekly_min = weekly_max = None
+        current_load = str(report.get("current_load") or "")
+        if current_load not in {"manageable", "constrained"}:
+            current_load = ""
+
+        if education_stage or planning_goal:
+            position = {
+                "education_stage": education_stage,
+                "planning_goal": planning_goal,
+                "self_reported": True,
+                "evidence_quote": evidence_quote[:500],
+                "evidence_id": event.id,
+            }
+            structure_patch: dict[str, Any] = {"planning_position": position}
+            if planning_goal:
+                structure_patch["current_task"] = f"规划：{planning_goal}"[:240]
+            await _apply_patch(
+                db, event, "structure", structure_patch,
+                "规划对话只把明确自述投影为当前位置与规划锚点，不把整段原文冒充学习任务",
+            )
+
+        if knowledge_exposures or knowledge_gaps:
+            await _apply_patch(
+                db, event, "knowledge",
+                {
+                    "declared_planning_background": {
+                        "exposures": knowledge_exposures,
+                        "gaps": knowledge_gaps,
+                        "self_report_only": True,
+                        "mastery_unchanged": True,
+                        "evidence_id": event.id,
+                    },
+                    "mastery_unchanged": True,
+                },
+                "规划中的课程与技能自述只形成未验证背景，不升级为掌握证据",
+            )
+
+        if weekly_min is not None or current_load:
+            expires_at = (datetime.utcnow() + timedelta(hours=8)).isoformat()
+            availability = {
+                "weekly_hours": (
+                    {"min": weekly_min, "max": weekly_max}
+                    if weekly_min is not None else None
+                ),
+                "current_load": current_load or None,
+                "self_reported": True,
+                "scope": "current_planning_dialogue",
+                "evidence_id": event.id,
+            }
+            await _apply_patch(
+                db, event, "human", {
+                    "planning_availability": availability,
+                    "transient_expires_at": expires_at,
+                    "adaptation_source": "explicit_current_context",
+                    "adaptation_scope": {
+                        "project_id": event.project_id,
+                        "checkpoint_id": event.checkpoint_id,
+                        "session_id": event.session_id,
+                    },
+                },
+                "规划中的明确时间投入与当前负荷只作为有界适配依据",
+            )
+
+        if goal_candidate:
+            await _apply_patch(
+                db, event, "value",
+                {
+                    "goal_candidate": goal_candidate,
+                    "goal_status": "exploring",
+                    "current_priority": goal_candidate,
+                    "goal_evidence_quote": evidence_quote[:500],
+                },
+                "规划目标先作为可检查候选；未经学习者确认不巩固为长期价值声明",
+            )
+
+        if practice_exposures:
+            await _apply_patch(
+                db, event, "practice",
+                {
+                    "self_reported_experience": {
+                        "items": practice_exposures,
+                        "verified": False,
+                        "attempt_evidence": False,
+                        "mastery_unchanged": True,
+                        "evidence_id": event.id,
+                    },
+                    "mastery_unchanged": True,
+                },
+                "规划中的项目与工具经历只记录为自述接触，不冒充正式 Attempt 或迁移证据",
+            )
+        return
+
     if et == "learning_action_segment_completed":
+        goal = str(p.get("goal") or "").strip()[:500]
+        goal_kind = str(p.get("goal_kind") or "").strip()
+        if not goal_kind and p.get("mode") == "learn":
+            goal_kind = "learning_task"
+        projectable_goal = goal if goal_kind in {"learning_task", "planning_goal"} else ""
         action = {
             "segment_id": p.get("segment_id"),
             "mode": p.get("mode"),
-            "goal": p.get("goal", ""),
+            "goal": projectable_goal,
+            "goal_kind": goal_kind,
             "outcome": p.get("outcome", ""),
             "learning_task_id": p.get("learning_task_id"),
             "project_proposal_id": p.get("project_proposal_id"),
@@ -625,10 +753,9 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             "skills": list(p.get("skills") or []),
             "evidence_id": event.id,
         }
-        structure_patch: dict[str, Any] = {
-            "last_learning_action": action,
-            "current_task": p.get("goal", "")[:500],
-        }
+        structure_patch: dict[str, Any] = {"last_learning_action": action}
+        if projectable_goal:
+            structure_patch["current_task"] = projectable_goal
         if p.get("learning_task_id") or event.checkpoint_id:
             structure_patch["resume_anchor"] = {
                 "session_id": event.session_id,
@@ -645,18 +772,18 @@ async def _reduce_event(db: AsyncSession, event: EvidenceEvent):
             await _apply_patch(
                 db, event, "knowledge",
                 {
-                    "last_explanation": p.get("goal", "")[:500],
+                    "last_explanation": projectable_goal,
                     "exposure_only": True,
                     "last_learning_action_id": p.get("segment_id"),
                     "mastery_unchanged": True,
                 },
                 "对话讲解或任务引导只形成内容接触证据，不代表掌握",
             )
-        if p.get("goal") and p.get("mode") in {"learn", "plan"}:
+        if projectable_goal and p.get("mode") in {"learn", "plan"}:
             await _apply_patch(
                 db, event, "value",
                 {
-                    "current_priority": p.get("goal", "")[:500],
+                    "current_priority": projectable_goal,
                     "current_motivation": "explicit_learning_action",
                 },
                 "学习动作保留本轮明确目标，不自动巩固为长期价值声明",
