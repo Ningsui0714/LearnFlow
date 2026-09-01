@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-01.3`）：岗位插件在既有 Tool/Skill/Object/Tool Renderer 接口内增加两个候选工作流。`role_cold_start` 先确认岗位、用途、受众和实际来源，再由 artifact Tool 形成带任务屏障的候选构建合同；没有来源时停在 `waiting_sources`。`role_snapshot_iteration` 固定不可变基线，在目标邻域内形成 proposed patch、结构检查和回归验收合同。两者均由 Tutor 拥有对话控制权，不新增主 Agent；模型只能补候选内容，确定性 handler 固定 hash、范围、阶段和停止条件。当前版本不执行联网研究、外部 role-agent、快照写盘或发布，候选对象不进入学习证据或五核。
+
 Contract impact（`2026-09-01.2`）：插件选择是对话级单调上下文。显式启用但尚未调用时仍可撤销；一旦插件 ToolRun 出现在主对话或任一对话纸张，宿主便从历史记录确定性恢复该插件，把其 Tool 与 Skill 持续放入后续 Tutor 回合，并在选择器中显示“已使用 · 锁定”。这保证对象引用、快照 grounding、失败诊断与代词式追问在刷新、正式会话恢复和纸张切换后仍可重放。状态不由模型统计，也不按插件 ID 硬编码；删除整个对话才结束该上下文。
 
 Contract impact（`2026-09-01.1`）：插件结果继续只存在于 Tutor ToolRun，但 Renderer 可通过通用宿主回调把同一结果展开成只读对话纸张，或把已校验 Plugin Object 拖入当前草稿成为稳定引用。纸张不复制领域权威，引用不自动发送；两者均不产生学习证据。岗位插件在自身客户端包内组合全景、能力雷达和对象卡片切换，宿主只处理 ToolRun、Plugin Object 和纸张，不出现岗位 ID、类型或视图分支。三类主 Agent、四类插件扩展点、五核和 EvidenceEvent 链不变。

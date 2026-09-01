@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-01.3`）：插件四类扩展点不变，`artifact` Tool 的权威进一步明确为“未提交候选制品”：可由插件 Skill 编排冷启动或迭代合同、结构化 patch 和校验门槛，但不能批准自己、发布版本、覆盖既有 Plugin Object、写 LearnFlow 核心对象或五核。首个岗位插件新增冷启动候选与固定基线迭代候选；冷启动保持来源资格→任务屏障→岗位内核→语义/事理补全→独立校验语义，迭代固定 `snapshotId + rootHash` 并要求 meaningful diff 与核心回归门。当前没有持久化/发布适配器，因此候选 ToolRun 必须明确显示未创建后继快照。关系 Renderer 可展开本次 ToolResult 的全部有界节点与边并逐节点检查真实一跳关系，宿主仍不识别岗位 ID 或 Renderer。
+
 Contract impact（`2026-09-01.2`）：对话中的插件激活改为可重放的单调状态：插件在尚未产生 ToolRun 前可以取消；第一次完成或尝试 namespaced Tool 后，宿主从主对话与纸张历史确定性提炼 `plugin_id`，把它并入后续每轮工具面与 Skill 上下文，选择器不再允许关闭。失败 ToolRun 也计为已参与，避免删掉诊断所需的能力合同。该规则由通用 ToolRun 命名空间和插件信封驱动，不识别具体插件 ID；对话删除仍会删除这项会话状态。四类扩展点、三类主 Agent、核心对象、EvidenceEvent 与五核写入边界不变。
 
 Contract impact（`2026-09-01.1`）：插件 Tool Renderer 在既有 `tool / skill / object / tool_renderer` 四类扩展点内增加两个确定性宿主交互：把已校验 Plugin Object 作为版本化引用放入当前草稿，以及把原 ToolRun 作为只读投影展开到对话纸张。引用只携带插件、对象类型、稳定对象 ID 和 schema version，发送时仍由学习者确认；纸张复用同一 ToolRun，不复制领域权威。岗位插件的全景输出可在全景、岗位中心语义雷达和对象卡片间切换，雷达输出也可切卡片；拖拽由通用 Plugin Object MIME 合同承载。宿主不识别岗位插件 ID、对象类型或 renderer，Renderer 仍不能调用工具、发送消息、写核心对象、EvidenceEvent 或五核。

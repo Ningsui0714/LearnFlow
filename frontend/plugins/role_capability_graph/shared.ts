@@ -1,8 +1,8 @@
 export const ROLE_CAPABILITY_PLUGIN = {
   id: 'role_capability_graph',
   name: '岗位图谱',
-  version: '1.2.1',
-  description: '在 Tutor 对话中交互阅读岗位快照，以岗位为中心展开语义雷达，并继续探索对象、关系、事理、证据与版本。',
+  version: '1.3.0',
+  description: '在 Tutor 对话中交互阅读岗位快照，并以候选制品方式启动岗位冷启动与快照迭代。',
   icon: '岗',
 } as const
 
@@ -14,6 +14,8 @@ export const ROLE_OBJECT_TYPES = [
   'role_evidence',
   'role_audit',
   'role_snapshot',
+  'role_build_candidate',
+  'role_iteration_candidate',
 ] as const
 
 export const ROLE_RENDERERS = {
@@ -26,4 +28,6 @@ export const ROLE_RENDERERS = {
   audit: 'audit_panel',
   catalog: 'role_package_catalog',
   comparison: 'role_package_comparison',
+  buildCandidate: 'role_build_candidate',
+  iterationCandidate: 'role_iteration_candidate',
 } as const

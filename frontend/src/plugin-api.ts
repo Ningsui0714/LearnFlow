@@ -216,6 +216,8 @@ function validateJsonValue(value: unknown, rule: Record<string, unknown>, label:
     if (typeof rule.maximum === 'number') assert(value <= rule.maximum, `${label} exceeds maximum`)
   }
   if (Array.isArray(value) && rule.items && typeof rule.items === 'object') {
+    if (typeof rule.minItems === 'number') assert(value.length >= rule.minItems, `${label} has fewer than minItems`)
+    if (typeof rule.maxItems === 'number') assert(value.length <= rule.maxItems, `${label} exceeds maxItems`)
     value.forEach((item, index) => validateJsonValue(item, rule.items as Record<string, unknown>, `${label}[${index}]`))
   }
 }

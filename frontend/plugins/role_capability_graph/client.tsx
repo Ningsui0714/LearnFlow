@@ -256,18 +256,21 @@ function RoleCards(props: PluginToolRendererProps) {
 }
 
 function RoleGraph(props: PluginToolRendererProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [selectedId, setSelectedId] = useState('')
   const allNodes = props.objects.filter(object => object.objectType === 'role_object')
   const relationObjects = props.objects.filter(object => object.objectType === 'role_relation')
   const payload = (props.result.payload || {}) as RecordValue
   const rootId = String(payload.rootId || allNodes[0]?.objectId || '')
-  const nodeObjects = [allNodes.find(object => object.objectId === rootId), ...allNodes.filter(object => object.objectId !== rootId)].filter(Boolean).slice(0, 16) as typeof allNodes
+  const nodeLimit = expanded ? allNodes.length : Math.min(16, allNodes.length)
+  const nodeObjects = [allNodes.find(object => object.objectId === rootId), ...allNodes.filter(object => object.objectId !== rootId)].filter(Boolean).slice(0, nodeLimit) as typeof allNodes
   const visibleIds = new Set(nodeObjects.map(object => object.objectId))
   const visibleRelations = relationObjects.filter(object => {
     const relation = dataOf(object)
     return visibleIds.has(String(relation.source)) && visibleIds.has(String(relation.target))
-  }).slice(0, 28)
+  }).slice(0, expanded ? relationObjects.length : 28)
   const width = 760
-  const height = 430
+  const height = expanded ? 560 : 430
   const center = { x: width / 2, y: height / 2 }
   const positions = new Map<string, { x: number; y: number }>()
   const ordered = [...nodeObjects].sort((left, right) => left.objectId === rootId ? -1 : right.objectId === rootId ? 1 : left.objectId.localeCompare(right.objectId))
@@ -277,9 +280,15 @@ function RoleGraph(props: PluginToolRendererProps) {
       const ringIndex = index - (ordered[0]?.objectId === rootId ? 1 : 0)
       const count = Math.max(1, ordered.length - 1)
       const angle = (Math.PI * 2 * ringIndex) / count - Math.PI / 2
-      const radius = ringIndex < 8 ? 112 : 176
+      const band = ringIndex < 8 ? 0 : ringIndex < 18 ? 1 : 2
+      const radius = expanded ? [118, 190, 252][band] : (ringIndex < 8 ? 112 : 176)
       positions.set(object.objectId, { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius })
     }
+  })
+  const selected = allNodes.find(object => object.objectId === (selectedId || rootId))
+  const selectedRelations = relationObjects.filter(object => {
+    const relation = dataOf(object)
+    return String(relation.source) === selected?.objectId || String(relation.target) === selected?.objectId
   })
   return (
     <section className="role-plugin-view role-plugin-graph" aria-label="岗位关系图">
@@ -303,16 +312,68 @@ function RoleGraph(props: PluginToolRendererProps) {
           })}
         </g>
       </svg>
+      <div className="role-plugin-graph-toolbar"><span>显示 {nodeObjects.length}/{allNodes.length} 个节点 · {visibleRelations.length}/{relationObjects.length} 条关系</span>{allNodes.length > 16 && <button type="button" onClick={() => setExpanded(value => !value)}>{expanded ? '收起图谱' : `展示全部 ${allNodes.length} 个节点`}</button>}</div>
       <div className="role-plugin-graph-focus">{ordered.map(object => <button
         key={object.objectId}
         type="button"
         {...interactiveObjectProps(props, object)}
-        onClick={() => props.onPrompt?.(`以“${object.label}”为中心展开一层岗位关系（固定快照 ${String(snapshotOf(props.result).snapshotId || '')}，对象 ${object.objectId}）`)}
+        aria-pressed={selected?.objectId === object.objectId}
+        onClick={() => setSelectedId(object.objectId)}
       >{object.label}</button>)}</div>
+      {selected && <article className="role-plugin-graph-inspector" {...interactiveObjectProps(props, selected)}>
+        <header><span>{categoryOf(selected)}</span><strong>{selected.label}</strong><small>{selectedRelations.length} 条直接关系</small></header>
+        <p>{String(dataOf(selected).summary || '')}</p>
+        <div>{selectedRelations.map(object => {
+          const relation = dataOf(object)
+          const outgoing = String(relation.source) === selected.objectId
+          const otherId = String(outgoing ? relation.target : relation.source)
+          const other = allNodes.find(node => node.objectId === otherId)
+          return <button key={object.objectId} type="button" onClick={() => other && setSelectedId(other.objectId)}>
+            <small>{outgoing ? '→' : '←'} {String(relation.type || 'relation')}</small><strong>{other?.label || otherId}</strong>
+          </button>
+        })}</div>
+        <FollowActions props={props} objectId={selected.objectId} label={selected.label} />
+      </article>}
       <p className="role-plugin-legend">关系类型：{[...new Set(visibleRelations.map(object => String(dataOf(object).type || 'relation')))].join(' · ')}</p>
       {payload.truncated && <p className="role-plugin-boundary">子图达到本次节点上限；这是有界投影，不是完整岗位包。</p>}
     </section>
   )
+}
+
+function CandidateHeader({ value }: { value: RecordValue }) {
+  return <header className="role-plugin-candidate-header"><span>{String(value.status || 'candidate')}</span><strong>{String(value.roleTitle || '岗位候选')}</strong><code>{String(value.artifactId || '')}</code></header>
+}
+
+function ColdStartCandidate(props: PluginToolRendererProps) {
+  const object = props.objects.find(item => item.objectType === 'role_build_candidate')
+  const value = (object?.value || {}) as RecordValue
+  const data = (value.data || {}) as RecordValue
+  const stages = (data.stages || []) as RecordValue[]
+  return <section className="role-plugin-view role-plugin-candidate" aria-label="岗位冷启动候选">
+    <CandidateHeader value={value} />
+    <div className="role-plugin-candidate-summary"><span>用途</span><strong>{String(data.purpose || '—')}</strong><span>市场 / 受众</span><strong>{String(data.market || '—')} · {(data.audiences || []).join('、') || '待确认'}</strong><span>来源输入</span><strong>{(data.sourceBriefs || []).length} 条</strong></div>
+    <ol className="role-plugin-workflow-stages">{stages.map((stage, index) => <li key={String(stage.id)} data-status={String(stage.status)}><i>{index + 1}</i><span><strong>{String(stage.title)}</strong><small>{String(stage.output)}</small></span><b>{String(stage.status)}</b></li>)}</ol>
+    {!(data.sourceBriefs || []).length && <p className="role-plugin-warning">当前没有真实来源，只建立了构建合同。继续提供 JD、职业标准、技术文档或脱敏工作证据后，才能进入证据抽取。</p>}
+    <details><summary>任务屏障与发布门槛</summary><div className="role-plugin-gates">{Object.entries(data.gates || {}).map(([key, items]) => <section key={key}><strong>{key}</strong><ul>{(items as string[]).map(item => <li key={item}>{item}</li>)}</ul></section>)}</div></details>
+    {object && <div className="role-plugin-actions"><button type="button" onClick={() => props.onReference?.(object)}>引用候选合同</button>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`继续完善“${value.roleTitle}”冷启动候选：请先核对来源与岗位边界（候选 ${value.artifactId}）`)}>继续补资料</button>}</div>}
+    <p className="role-plugin-boundary">候选合同不是岗位事实，也不是已创建或已发布的快照。</p>
+  </section>
+}
+
+function IterationCandidate(props: PluginToolRendererProps) {
+  const object = props.objects.find(item => item.objectType === 'role_iteration_candidate')
+  const value = (object?.value || {}) as RecordValue
+  const data = (value.data || {}) as RecordValue
+  return <section className="role-plugin-view role-plugin-candidate" aria-label="岗位迭代候选">
+    <CandidateHeader value={value} />
+    <div className="role-plugin-base-lock"><span>固定基线</span><strong>{String(value.baseSnapshotId || '—')}</strong><code>{String(value.expectedRootHash || '').slice(0, 18)}…</code></div>
+    <div className="role-plugin-candidate-summary"><span>目标</span><strong>{String(data.objective || '—')}</strong><span>发起方式</span><strong>{String(data.initiativeProfile || 'co_guided')}</strong><span>范围</span><strong>{(data.targetIds || []).length ? `${data.targetIds.length} 个目标 / ${(data.neighborhoodIds || []).length} 个邻域对象` : '全局检查'}</strong></div>
+    <section className="role-plugin-patch-list"><header><strong>候选 patch</strong><small>{(data.proposedChanges || []).length} 条</small></header>{(data.proposedChanges || []).length ? (data.proposedChanges || []).map((change: RecordValue) => <article key={String(change.id)}><span>{String(change.status)}</span><p>{String(change.statement)}</p></article>) : <p>尚无候选变更；需要先补充具体目标、证据或修改意图。</p>}</section>
+    <ol className="role-plugin-workflow-stages">{(data.workItems || []).map((item: RecordValue, index: number) => <li key={String(item.id)} data-status={String(item.status)}><i>{index + 1}</i><span><strong>{String(item.title)}</strong><small>{item.deterministic ? '确定性阶段' : '候选研究阶段'}</small></span><b>{String(item.status)}</b></li>)}</ol>
+    <details><summary>验收与停止条件</summary><div className="role-plugin-gates"><section><strong>acceptance</strong><ul>{(data.acceptancePolicy || []).map((item: string) => <li key={item}>{item}</li>)}</ul></section><section><strong>stop</strong><ul>{(data.stopConditions || []).map((item: string) => <li key={item}>{item}</li>)}</ul></section></div></details>
+    {object && <div className="role-plugin-actions"><button type="button" onClick={() => props.onReference?.(object)}>引用迭代候选</button>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`审查并继续细化岗位迭代候选 ${value.artifactId}；基线必须保持 ${value.baseSnapshotId}`)}>继续细化</button>}</div>}
+    <p className="role-plugin-boundary">原快照保持不变。只有独立验证通过且产生 meaningful diff，后续持久化能力才可创建后继快照。</p>
+  </section>
 }
 
 function ProcessForest(props: PluginToolRendererProps) {
@@ -412,6 +473,8 @@ const plugin = defineLearnFlowPluginClient({
     [ROLE_RENDERERS.audit]: AuditPanel,
     [ROLE_RENDERERS.catalog]: PackageCatalog,
     [ROLE_RENDERERS.comparison]: PackageComparison,
+    [ROLE_RENDERERS.buildCandidate]: ColdStartCandidate,
+    [ROLE_RENDERERS.iterationCandidate]: IterationCandidate,
   },
 })
 

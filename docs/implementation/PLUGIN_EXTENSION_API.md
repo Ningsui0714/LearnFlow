@@ -29,6 +29,10 @@ conversation ToolRun
 第一版只接受 `read_only` 和 `artifact` 风险等级。插件 Tool 不能写五核、EvidenceEvent、LearnFlow 核心对象，
 也不能批准自己的产物。输入拒绝额外字段；输出必须是有界 JSON，失败以结构化 ToolRun 返回。
 
+`artifact` 表示未提交候选制品，不表示副作用授权。它可以承载生成/迭代合同、候选 patch、diff 与校验报告，
+但必须显式给出基线、状态、限制和停止条件；插件 Tool 不能把候选批准为正式版本，也不能原地覆盖既有对象。
+若宿主尚未提供独立持久化/确认能力，Renderer 和 Tutor 必须明确显示“尚未创建或发布”。
+
 Tool 描述必须同时说明“何时使用”和“不要用于什么”。插件数量增加时，宿主只暴露默认启用或本轮显式
 启用的包，不把所有插件 schema 常驻塞入模型上下文。
 
@@ -109,17 +113,19 @@ client.tsx      renderer components，导出 default 或 plugin
 
 ## 6. 首个官方消费包
 
-`frontend/plugins/role_capability_graph/` 是首个官方实现，只消费已发布的不可变 Static Role Package：
+`frontend/plugins/role_capability_graph/` 是首个官方实现，读取已发布的不可变 Static Role Package，并开始以候选制品接入构建工作流：
 
-- 十个只读 Tool：目标级岗位全景、能力雷达、精确读取、岗位检索、关系查询、事理追踪、证据检查、岗位包审计、包目录与版本比较；
-- 一个 `role_capability_graphing` Agent Skill；
-- 岗位对象、关系、证据、审计和快照五类 Plugin Object；
-- 岗位全景、岗位卡片、能力雷达、岗位关系图、事理森林、证据、审计、包目录和版本比较九个 Tool Renderer。
+- 十个只读 Tool，加两个 `artifact` Tool：冷启动候选合同与固定基线迭代候选；
+- 阅读、冷启动和迭代三个 Agent Skill；
+- 五类已发布岗位对象，加冷启动候选和迭代候选两类 Plugin Object；
+- 九个读取 Renderer，加冷启动阶段和迭代 patch 两个候选 Renderer。
 
 插件 runtime 按自身数据目录发现包并校验 manifest 中全部组件 SHA-256，包括 views、retrieval-index、
 object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
-每次返回都固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。它不包含原系统的
-冷启动、迭代、工作区实例化、发布、Tag、回滚或 Registry；这些能力不能伪装成只读 Tool 或提示词 Skill。
+读取结果固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。冷启动候选保留
+`ProjectBrief + SourceInput → Task Barrier → kernel → semantic/process enrichment → validation` 的阶段语义；迭代候选固定
+`snapshotId + rootHash`，保留检查、目标邻域、候选 patch、meaningful diff 与核心回归门。当前只接入候选合同，
+不执行外部 role-agent、工作区实例化、持久化、发布、Tag、回滚或 Registry；Renderer 必须明确区分候选与正式快照。
 
 ## 7. 当前边界
 

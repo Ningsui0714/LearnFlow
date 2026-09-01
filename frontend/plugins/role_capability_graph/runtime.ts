@@ -140,6 +140,21 @@ export type PackageSelector = {
   snapshotId?: string
 }
 
+type ColdStartPlanInput = {
+  roleTitle: string
+  purpose: string
+  market: string
+  audiences: string[]
+  sourceBriefs: string[]
+}
+
+type IterationPlanInput = {
+  prompt: string
+  targetIds: string[]
+  proposedChanges: string[]
+  initiativeProfile: 'autonomous' | 'co_guided' | 'user_directed'
+}
+
 const PACKAGE_ROOT = fileURLToPath(new URL('./data/packages', import.meta.url))
 const MAX_OBJECT_IDS = 25
 const MAX_SEARCH_RESULTS = 12
@@ -258,6 +273,10 @@ function objectKind(object: RoleNode | ProcessScenario | ProcessNode) {
 
 function jsonRecord(value: unknown): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject
+}
+
+function artifactDigest(value: unknown) {
+  return sha256(JSON.stringify(value))
 }
 
 export class RolePackageRuntime {
@@ -387,6 +406,109 @@ export class RolePackageRuntime {
           focusObjectIds,
         },
       },
+    }
+  }
+
+  private candidateObject(objectType: 'role_build_candidate' | 'role_iteration_candidate', label: string, value: JsonObject): LearnFlowPluginObject {
+    return {
+      protocol: LEARNFLOW_PLUGIN_OBJECT_VERSION,
+      pluginId: ROLE_CAPABILITY_PLUGIN.id,
+      objectType,
+      objectId: String(value.artifactId),
+      schemaVersion: ROLE_OBJECT_SCHEMA_VERSION,
+      label,
+      value,
+    }
+  }
+
+  planColdStart(input: ColdStartPlanInput): PluginToolResult {
+    const sources = [...new Set(input.sourceBriefs.map(item => item.trim()).filter(Boolean))].slice(0, 12)
+    const audiences = [...new Set(input.audiences.map(item => item.trim()).filter(Boolean))].slice(0, 8)
+    const status = sources.length ? 'ready_for_evidence_extraction' : 'waiting_sources'
+    const contract = {
+      protocol: 'role-capability.cold-start-candidate.v1',
+      roleTitle: input.roleTitle.trim(), purpose: input.purpose.trim(), market: input.market.trim() || '中国大陆', audiences,
+      sourceBriefs: sources,
+      evidencePolicy: [
+        '用户简报只能支持用户明确陈述的岗位边界',
+        '候选事实必须绑定实际来源片段；模型常识不得冒充来源',
+        'observed_pattern 只接受脱敏工作观察证据',
+      ],
+      stages: [
+        { id: 'brief', title: '岗位边界假设', status: 'ready', output: 'ProjectBrief' },
+        { id: 'sources', title: '来源资格与证据分段', status: sources.length ? 'ready' : 'waiting', output: 'SourceAsset / SourceSegment' },
+        { id: 'task_barrier', title: '任务屏障', status: 'pending', output: '5—8 个证据绑定的代表任务' },
+        { id: 'kernel', title: '岗位内核', status: 'pending', output: '候选不可变 kernel snapshot' },
+        { id: 'semantic', title: '语义补全', status: 'pending', output: '能力、知识技能与依赖' },
+        { id: 'process', title: '事理森林', status: 'pending', output: '场景、事件、参与者、交付物与风险' },
+        { id: 'validate', title: '交叉校验', status: 'pending', output: '协议、证据、时间、过程与 Agent 可用性报告' },
+      ],
+      gates: {
+        taskBarrier: ['任务属于目标岗位或明确目标团队', '每个代表任务具有来源绑定', '外部用户和相邻岗位行动不得冒充目标岗位任务'],
+        publication: ['协议不变量通过', '候选快照独立校验', '用户或后续核心能力显式确认发布'],
+      },
+      limitations: ['本 ToolRun 只保存候选合同，不执行联网研究、不调用外部 role-agent、不创建或发布快照。'],
+    }
+    const contentHash = artifactDigest(contract)
+    const artifactId = `cold-start:${contentHash.slice(0, 20)}`
+    const value = jsonRecord({ artifactKind: 'cold_start_contract', artifactId, status, contentHash, baseSnapshotId: '', expectedRootHash: '', roleTitle: input.roleTitle.trim(), data: contract })
+    return {
+      summary: sources.length
+        ? `已为“${input.roleTitle.trim()}”建立冷启动候选合同，登记 ${sources.length} 条来源摘要；尚未生成或发布岗位快照。`
+        : `已为“${input.roleTitle.trim()}”建立冷启动候选合同；当前等待真实来源，尚未生成岗位事实。`,
+      objects: [this.candidateObject('role_build_candidate', `${input.roleTitle.trim()} · 冷启动候选`, value)],
+      payload: jsonRecord({ kind: 'role_build_candidate', artifact: value, contract }),
+      presentation: { renderer: ROLE_RENDERERS.buildCandidate, state: { artifactId, status, focusObjectIds: [artifactId] } },
+    }
+  }
+
+  planIteration(selector: PackageSelector, input: IterationPlanInput): PluginToolResult {
+    const pkg = input.targetIds.length ? this.resolveForObjects(selector, input.targetIds) : this.resolve(selector)
+    const descriptor = this.descriptor(pkg)
+    const targetIds = [...new Set(input.targetIds)].slice(0, 60)
+    const missingIds = targetIds.filter(id => !pkg.objects.has(id))
+    if (missingIds.length) throw new Error(`role_iteration_target_not_found:${missingIds.join(',')}`)
+    const proposedChanges = [...new Set(input.proposedChanges.map(item => item.trim()).filter(Boolean))].slice(0, 20)
+    const neighborhood = new Set(targetIds)
+    targetIds.forEach(id => [...(pkg.outgoing.get(id) || []), ...(pkg.incoming.get(id) || [])].forEach(relation => {
+      const endpoints = relationEndpoints(relation)
+      neighborhood.add(endpoints.source); neighborhood.add(endpoints.target)
+    }))
+    const inferredIntents = [
+      /修复|错误|断裂|冲突/u.test(input.prompt) ? 'repair' : '',
+      /更新|最新|时点|刷新/u.test(input.prompt) ? 'refresh' : '',
+      /核验|验证|证据/u.test(input.prompt) ? 'verify' : '',
+      /实例|工作区/u.test(input.prompt) ? 'instantiate' : '',
+    ].filter(Boolean)
+    if (!inferredIntents.length) inferredIntents.push('expand')
+    const contract = {
+      protocol: 'role-capability.iteration-candidate.v1',
+      base: descriptor,
+      initiativeProfile: input.initiativeProfile,
+      objective: input.prompt.trim(),
+      targetIds,
+      neighborhoodIds: [...neighborhood].slice(0, 80),
+      changeIntents: inferredIntents,
+      proposedChanges: proposedChanges.map((statement, index) => ({ id: `change:${index + 1}`, status: 'proposed', statement })),
+      workItems: [
+        { id: 'inspect', title: '检查基线协议、证据、时间与覆盖', status: 'planned', deterministic: true },
+        { id: 'research', title: '围绕目标邻域补充来源', status: proposedChanges.length ? 'planned' : 'waiting_input', deterministic: false },
+        { id: 'rebuild', title: '重建受影响的语义/事理候选', status: 'planned', deterministic: false },
+        { id: 'evaluate', title: '计算 meaningful diff 与核心回归', status: 'planned', deterministic: true },
+      ],
+      acceptancePolicy: ['基线 snapshotId 与 rootHash 必须保持匹配', '协议必须有效', '已接受核心不能新增回归', '至少存在可说明的信息增量或风险改善'],
+      stopConditions: ['最多两轮研究', '没有 meaningful diff 时保持当前快照', '候选不能批准或覆盖自己的基线'],
+      limitations: ['本 ToolRun 只生成候选迭代合同与 patch 描述；未执行研究、重建、写盘或发布。'],
+    }
+    const contentHash = artifactDigest(contract)
+    const artifactId = `iteration:${contentHash.slice(0, 20)}`
+    const status = proposedChanges.length ? 'candidate_patch_ready' : 'waiting_changes'
+    const value = jsonRecord({ artifactKind: 'snapshot_iteration', artifactId, status, contentHash, baseSnapshotId: descriptor.snapshotId, expectedRootHash: descriptor.rootHash, roleTitle: descriptor.roleTitle, data: contract })
+    return {
+      summary: `已固定“${descriptor.roleTitle}”快照 ${descriptor.snapshotId}，形成 ${targetIds.length || '全局'} 个目标范围和 ${proposedChanges.length} 条候选变更；原快照未修改。`,
+      objects: [this.candidateObject('role_iteration_candidate', `${descriptor.roleTitle} · 迭代候选`, value)],
+      payload: jsonRecord({ kind: 'role_iteration_candidate', snapshot: descriptor, artifact: value, contract }),
+      presentation: { renderer: ROLE_RENDERERS.iterationCandidate, state: { artifactId, status, snapshotId: descriptor.snapshotId, rootHash: descriptor.rootHash, focusObjectIds: targetIds } },
     }
   }
 
@@ -598,10 +720,27 @@ export class RolePackageRuntime {
       const endpoints = relationEndpoints(relation)
       return nodeIds.has(endpoints.source) && nodeIds.has(endpoints.target)
     }).slice(0, 48)
+    const relationFacts = boundedRelations.map(relation => {
+      const endpoints = relationEndpoints(relation)
+      return {
+        relationId: relation.id,
+        type: relation.type,
+        sourceId: endpoints.source,
+        sourceLabel: pkg.objects.get(endpoints.source)?.label || endpoints.source,
+        targetId: endpoints.target,
+        targetLabel: pkg.objects.get(endpoints.target)?.label || endpoints.target,
+      }
+    })
     return this.result(pkg, `从“${pkg.objects.get(objectId)!.label}”读取 ${nodes.length} 个节点和 ${boundedRelations.length} 条关系。`, ROLE_RENDERERS.graph, [
       ...nodes.map(object => this.nodeObject(pkg, object)),
       ...boundedRelations.map(relation => this.relationObject(pkg, relation)),
-    ], { kind: 'role_graph', rootId: objectId, depth: Math.min(Math.max(1, depth), 2), direction, truncated: nodeIds.size >= limit })
+    ], {
+      kind: 'role_graph', rootId: objectId, depth: Math.min(Math.max(1, depth), 2), direction, truncated: nodeIds.size >= limit,
+      grounding: {
+        policy: 'returned_relations_only', relationFacts,
+        requiredDisclosure: `只能解释 relationFacts 中逐条列出的方向和关系类型；不得改名、反向或补造未返回的关系。子图固定于 ${pkg.manifest.snapshotId}。`,
+      },
+    })
   }
 
   traceProcess(selector: PackageSelector, objectId: string, maxNodes: number) {
