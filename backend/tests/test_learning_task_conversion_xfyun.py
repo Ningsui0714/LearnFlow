@@ -256,6 +256,54 @@ async def test_xingchen_generation_automatically_repairs_publish_gate_patch_once
 
 
 @pytest.mark.asyncio
+async def test_xingchen_generation_gets_second_publish_gate_repair_attempt():
+    class SequencedWorkflowClient:
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        async def run(self, user_input: str, *, uid: str) -> dict:
+            self.calls.append((user_input, uid))
+            if len(self.calls) <= 2:
+                return {
+                    "run_id": f"run_patch_{len(self.calls)}",
+                    "content": _targeted_patch_content(),
+                    "usage": {},
+                }
+            return {
+                "run_id": "run_published",
+                "content": (
+                    "/api/v1/learning-task-conversion/tasks/"
+                    "ltc_generated_01/interactive.html"
+                ),
+                "usage": {},
+            }
+
+    async def bundle_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_bundle())
+
+    client = SequencedWorkflowClient()
+    generated = await generate_xingchen_learning_task(
+        "windows可执行软件的打包",
+        uid="learner-second-repair",
+        workflow_client=client,  # type: ignore[arg-type]
+        bundle_gateway=LearningTaskBundleGateway(
+            base_url="https://conversion.example",
+            transport=httpx.MockTransport(bundle_handler),
+        ),
+    )
+
+    assert len(client.calls) == 3
+    assert client.calls[1][0] != client.calls[2][0]
+    assert "不复用占位内容" in client.calls[2][0]
+    assert "Windows可执行软件包" in client.calls[2][0]
+    assert all(len(prompt) <= 500 for prompt, _uid in client.calls)
+    assert generated["workflow_run_ids"] == [
+        "run_patch_1", "run_patch_2", "run_published",
+    ]
+    assert generated["repair_reasons"] == ["publish_gate"]
+
+
+@pytest.mark.asyncio
 async def test_xingchen_generation_surfaces_publish_gate_reason_after_failed_repair():
     class RejectedWorkflowClient:
         async def run(self, _user_input: str, *, uid: str) -> dict:
@@ -323,7 +371,59 @@ async def test_xingchen_generation_retries_when_compiled_plan_fails_step_schema(
 
 
 @pytest.mark.asyncio
-async def test_xingchen_generation_surfaces_exact_schema_path_after_failed_structure_repair():
+async def test_xingchen_generation_gets_second_structure_repair_attempt():
+    class SequencedWorkflowClient:
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        async def run(self, user_input: str, *, uid: str) -> dict:
+            self.calls.append((user_input, uid))
+            task_card_id = (
+                f"ltc_short_{len(self.calls)}"
+                if len(self.calls) <= 2
+                else "ltc_repaired"
+            )
+            return {
+                "run_id": f"run_{len(self.calls)}",
+                "content": (
+                    "/api/v1/learning-task-conversion/tasks/"
+                    f"{task_card_id}/interactive.html"
+                ),
+                "usage": {},
+            }
+
+    async def bundle_handler(request: httpx.Request) -> httpx.Response:
+        task_card_id = request.url.path.split("/tasks/", 1)[1].split("/", 1)[0]
+        bundle = _bundle(task_card_id)
+        if task_card_id.startswith("ltc_short_"):
+            bundle["task"]["work_task"]["task_steps"] = (
+                bundle["task"]["work_task"]["task_steps"][:4]
+            )
+        return httpx.Response(200, json=bundle)
+
+    client = SequencedWorkflowClient()
+    generated = await generate_xingchen_learning_task(
+        "实现 Unity 第三人称摄像机跟随与遮挡恢复",
+        uid="learner-second-schema-repair",
+        workflow_client=client,  # type: ignore[arg-type]
+        bundle_gateway=LearningTaskBundleGateway(
+            base_url="https://conversion.example",
+            transport=httpx.MockTransport(bundle_handler),
+        ),
+        plan_schema=_minimum_five_step_schema(),
+    )
+
+    assert len(client.calls) == 3
+    assert "5至7个" in client.calls[2][0]
+    assert "不可合并" in client.calls[2][0]
+    assert all(len(prompt) <= 500 for prompt, _uid in client.calls)
+    assert generated["workflow_run_ids"] == ["run_1", "run_2", "run_3"]
+    assert generated["repair_reasons"] == ["structure_schema"]
+    assert generated["task_card_id"] == "ltc_repaired"
+
+
+@pytest.mark.asyncio
+async def test_xingchen_generation_expands_provider_plan_after_failed_structure_repairs():
     class AlwaysShortWorkflowClient:
         def __init__(self):
             self.calls = 0
@@ -345,17 +445,73 @@ async def test_xingchen_generation_surfaces_exact_schema_path_after_failed_struc
         bundle["task"]["work_task"]["task_steps"] = bundle["task"]["work_task"]["task_steps"][:4]
         return httpx.Response(200, json=bundle)
 
-    with pytest.raises(
-        XingchenWorkflowError,
-        match=r"讯飞任务结构自动修订后仍未通过：\$\.steps：至少需要 5 项，实际只有 4 项",
-    ):
-        await generate_xingchen_learning_task(
-            "配置企业园区交换机 VLAN",
-            uid="learner-schema-rejected",
-            workflow_client=AlwaysShortWorkflowClient(),  # type: ignore[arg-type]
-            bundle_gateway=LearningTaskBundleGateway(
-                base_url="https://conversion.example",
-                transport=httpx.MockTransport(bundle_handler),
-            ),
-            plan_schema=_minimum_five_step_schema(),
+    generated = await generate_xingchen_learning_task(
+        "配置企业园区交换机 VLAN",
+        uid="learner-schema-expanded",
+        workflow_client=AlwaysShortWorkflowClient(),  # type: ignore[arg-type]
+        bundle_gateway=LearningTaskBundleGateway(
+            base_url="https://conversion.example",
+            transport=httpx.MockTransport(bundle_handler),
+        ),
+        plan_schema=_minimum_five_step_schema(),
+    )
+
+    assert len(generated["workflow_run_ids"]) == 3
+    assert generated["repair_reasons"] == [
+        "structure_schema", "structure_expansion",
+    ]
+    assert len(generated["plan"]["steps"]) == 5
+    assert generated["plan"]["steps"][0]["title"] == "核对环境"
+    assert generated["plan"]["steps"][1]["title"] == "核验核对环境结果"
+    assert generated["plan"]["steps"][-1]["title"] == "配置 HTTPS"
+
+
+@pytest.mark.asyncio
+async def test_xingchen_generation_expands_two_coarse_steps_to_five():
+    class AlwaysTwoStepWorkflowClient:
+        def __init__(self):
+            self.calls = 0
+
+        async def run(self, _user_input: str, *, uid: str) -> dict:
+            self.calls += 1
+            return {
+                "run_id": f"run_two_{self.calls}",
+                "content": (
+                    "/api/v1/learning-task-conversion/tasks/"
+                    f"ltc_two_{self.calls}/interactive.html"
+                ),
+                "usage": {},
+            }
+
+    async def bundle_handler(request: httpx.Request) -> httpx.Response:
+        task_card_id = request.url.path.split("/tasks/", 1)[1].split("/", 1)[0]
+        bundle = _bundle(task_card_id)
+        bundle["task"]["work_task"]["task_steps"] = (
+            bundle["task"]["work_task"]["task_steps"][:2]
         )
+        return httpx.Response(200, json=bundle)
+
+    generated = await generate_xingchen_learning_task(
+        "在 Blender 中完成角色骨骼绑定与动画导出验收",
+        uid="learner-two-step-expanded",
+        workflow_client=AlwaysTwoStepWorkflowClient(),  # type: ignore[arg-type]
+        bundle_gateway=LearningTaskBundleGateway(
+            base_url="https://conversion.example",
+            transport=httpx.MockTransport(bundle_handler),
+        ),
+        plan_schema=_minimum_five_step_schema(),
+    )
+
+    assert generated["workflow_run_ids"] == [
+        "run_two_1", "run_two_2", "run_two_3",
+    ]
+    assert generated["repair_reasons"] == [
+        "structure_schema", "structure_expansion",
+    ]
+    assert [step["title"] for step in generated["plan"]["steps"]] == [
+        "核对环境",
+        "核验核对环境结果",
+        "安装服务",
+        "核验安装服务结果",
+        "汇总验收与交付",
+    ]

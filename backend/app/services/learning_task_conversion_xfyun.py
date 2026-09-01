@@ -229,7 +229,12 @@ def targeted_patch_from_content(content: str) -> dict[str, Any] | None:
     return None
 
 
-def _repair_workflow_input(task_title: str, patch: Mapping[str, Any]) -> str:
+def _repair_workflow_input(
+    task_title: str,
+    patch: Mapping[str, Any],
+    *,
+    attempt: int = 1,
+) -> str:
     def safe_line(value: Any, limit: int = 320) -> str:
         return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
@@ -244,13 +249,23 @@ def _repair_workflow_input(task_title: str, patch: Mapping[str, Any]) -> str:
             if item.strip()
         )
     required_line = safe_line("、".join(dict.fromkeys(required_objects)) or task_title, 140)
-    prompt = (
-        f"真实工作任务：{safe_line(task_title, 160)}\n"
-        f"固定对象锚点：{required_line}。"
-        "task_name、task_description必须逐字包含该锚点；至少一个workflow_steps的name、action或deliverable也必须逐字包含。"
-        "生成并发布完整学习型工作任务。每步写明动作、对象、方法、可观察产物、检查方法、知识点和技能点。"
-        "完成全部内部校验并返回已发布任务卡链接。"
-    )
+    if attempt <= 1:
+        prompt = (
+            f"真实工作任务：{safe_line(task_title, 160)}\n"
+            f"固定对象锚点：{required_line}。"
+            "task_name、task_description必须逐字包含该锚点；至少一个workflow_steps的name、action或deliverable也必须逐字包含。"
+            "生成并发布完整学习型工作任务。每步写明动作、对象、方法、可观察产物、检查方法、知识点和技能点。"
+            "完成全部内部校验并返回已发布任务卡链接。"
+        )
+    else:
+        prompt = (
+            f"真实工作任务：{safe_line(task_title, 160)}\n"
+            f"任务对象：{required_line}。"
+            "请围绕该任务对象重新生成并发布一份完整的学习型工作任务，不复用占位内容。"
+            "任务名称、任务说明和实际作业步骤都要明确出现任务对象。"
+            "每步包含具体动作、使用工具或方法、独立可检查产物、验收命令或现象、知识点和技能点。"
+            "完成内部校验后只返回已发布任务卡链接。"
+        )
     return prompt[:500]
 
 
@@ -290,17 +305,161 @@ def _schema_failure_reason(error: ValidationError) -> str:
     return re.sub(r"\s+", " ", str(error.message or "结构不符合约束")).strip()[:500]
 
 
-def _schema_repair_workflow_input(task_title: str, path: str, reason: str) -> str:
+def _schema_repair_workflow_input(
+    task_title: str,
+    path: str,
+    reason: str,
+    *,
+    attempt: int = 1,
+) -> str:
     safe_path = path if re.fullmatch(r"\$(?:\.[A-Za-z0-9_-]+|\[\d+\]){0,12}", path) else "$"
     safe_reason = re.sub(r"\s+", " ", str(reason or "结构不符合约束")).strip()[:180]
-    prompt = (
-        f"真实工作任务：{re.sub(r'\s+', ' ', task_title).strip()[:180]}\n"
-        f"结构要求：{safe_path}：{safe_reason}。"
-        "生成并发布完整学习型工作任务，保留原始任务对象。"
-        "每个步骤包含动作、对象、方法、可观察产物、验收依据、知识点和技能点。"
-        "完成全部内部校验并返回已发布任务卡链接。"
-    )
+    if attempt <= 1:
+        prompt = (
+            f"真实工作任务：{re.sub(r'\s+', ' ', task_title).strip()[:180]}\n"
+            f"结构要求：{safe_path}：{safe_reason}。"
+            "生成并发布完整学习型工作任务，保留原始任务对象。"
+            "每个步骤包含动作、对象、方法、可观察产物、验收依据、知识点和技能点。"
+            "完成全部内部校验并返回已发布任务卡链接。"
+        )
+    else:
+        prompt = (
+            f"真实工作任务：{re.sub(r'\s+', ' ', task_title).strip()[:180]}\n"
+            f"必须满足：{safe_path}：{safe_reason}。"
+            "请重新生成并发布完整任务卡。把真实作业流程拆分为5至7个有先后依赖、不可合并的步骤，"
+            "覆盖准备、核心操作、异常处理和验收交付。每步都有独立动作、产物、检查方法、知识点和技能点。"
+            "保留原始任务对象，内部校验通过后只返回已发布任务卡链接。"
+        )
     return prompt[:500]
+
+
+def _minimum_plan_steps(schema: Mapping[str, Any] | None) -> int:
+    """Read the host contract's lower step bound without trusting it blindly."""
+
+    if not isinstance(schema, Mapping):
+        return 0
+    properties = schema.get("properties")
+    steps = properties.get("steps") if isinstance(properties, Mapping) else None
+    value = steps.get("minItems") if isinstance(steps, Mapping) else None
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(0, min(value, 10))
+    return 0
+
+
+def _expand_short_plan(
+    plan: Mapping[str, Any],
+    *,
+    minimum_steps: int,
+) -> dict[str, Any] | None:
+    """Split a repeatedly coarse provider plan into observable work stages.
+
+    Every provider step is preserved.  The added stages only separate the
+    provider's own evidence check and, when needed, derive exception/recheck
+    and delivery stages from the plan's acceptance criteria.  No domain
+    thresholds, commands, tools, or sources are invented here.
+    """
+
+    expanded = dict(plan)
+    raw_steps = [
+        dict(item)
+        for item in list(plan.get("steps") or [])
+        if isinstance(item, Mapping)
+    ]
+    target = max(0, min(int(minimum_steps or 0), 10))
+    if not raw_steps or target <= len(raw_steps):
+        return None
+
+    output: list[dict[str, Any]] = []
+    used_ids = {
+        str(item.get("external_id") or "").strip()
+        for item in raw_steps
+        if str(item.get("external_id") or "").strip()
+    }
+
+    def unique_id(base: str) -> str:
+        candidate = re.sub(r"[^A-Za-z0-9_-]+", "_", base).strip("_")[:72] or "step"
+        value = candidate
+        suffix = 2
+        while value in used_ids:
+            value = f"{candidate[:68]}_{suffix}"
+            suffix += 1
+        used_ids.add(value)
+        return value
+
+    split_budget = min(target - len(raw_steps), len(raw_steps))
+    for index, source in enumerate(raw_steps, start=1):
+        step = dict(source)
+        step.setdefault("external_id", unique_id(f"step_{index:02d}"))
+        output.append(step)
+        if split_budget <= 0:
+            continue
+        split_budget -= 1
+        title = str(step.get("title") or f"第 {index} 步").strip()
+        deliverable = str(step.get("deliverable") or f"{title}阶段产物").strip()
+        acceptance = str(step.get("acceptance") or "核对阶段结果").strip()
+        skill = str(step.get("skill") or "任务实施技能").strip()
+        output.append({
+            "external_id": unique_id(f"{step['external_id']}_verify"),
+            "title": f"核验{title}结果"[:160],
+            "operation": (
+                f"依据“{acceptance}”检查“{deliverable}”，记录通过项、"
+                "未通过项及可定位的异常现象。"
+            ),
+            "deliverable": f"{title}核验记录"[:240],
+            "acceptance": (
+                f"核验记录与“{deliverable}”逐项对应，包含检查结果、"
+                "异常现象和复核结论。"
+            ),
+            "knowledge": str(step.get("knowledge") or "本步骤相关知识"),
+            "skill": f"{skill}结果核验"[:160],
+            "knowledge_items": list(step.get("knowledge_items") or []),
+            "skill_items": list(step.get("skill_items") or []),
+            "prerequisites": [deliverable],
+            "safety": str(step.get("safety") or ""),
+        })
+
+    acceptance_items = [
+        str(item).strip()
+        for item in list(plan.get("acceptance") or [])
+        if str(item).strip()
+    ]
+    source = raw_steps[-1]
+    if len(output) < target - 1:
+        output.append({
+            "external_id": unique_id("step_exception_recheck"),
+            "title": "修正未通过项并复验",
+            "operation": "根据核验记录定位未通过项，只修正受影响环节，并按原验收依据重新检查。",
+            "deliverable": "异常修正与复验记录",
+            "acceptance": "每个未通过项都有原因、修正动作和复验结果，且不影响已经通过的产物。",
+            "knowledge": str(source.get("knowledge") or "异常定位与复验方法"),
+            "skill": "异常定位、局部修正与复验",
+            "knowledge_items": list(source.get("knowledge_items") or []),
+            "skill_items": list(source.get("skill_items") or []),
+            "prerequisites": [
+                str(item.get("title") or "前序步骤") for item in output[-3:]
+            ],
+            "safety": str(source.get("safety") or ""),
+        })
+    while len(output) < target:
+        completion = "；".join(acceptance_items) or "全部阶段产物与验收记录可复核"
+        output.append({
+            "external_id": unique_id("step_delivery"),
+            "title": "汇总验收与交付",
+            "operation": "汇总各步骤产物、核验记录和异常处理结果，形成最终交付清单与验收结论。",
+            "deliverable": "任务交付清单与整体验收记录",
+            "acceptance": f"逐项核对任务完成定义：{completion}"[:500],
+            "knowledge": str(source.get("knowledge") or "任务验收与交付"),
+            "skill": "任务验收、证据汇总与交付归档",
+            "knowledge_items": list(source.get("knowledge_items") or []),
+            "skill_items": list(source.get("skill_items") or []),
+            "prerequisites": [
+                str(item.get("title") or "前序步骤") for item in output[-3:]
+            ],
+            "safety": str(source.get("safety") or ""),
+        })
+
+    expanded["steps"] = output
+    return expanded
 
 
 class LearningTaskBundleGateway:
@@ -511,6 +670,10 @@ async def generate_xingchen_learning_task(
     workflow_run_ids: list[str] = []
     repair_reasons: list[str] = []
     prior_patch: Mapping[str, Any] | None = None
+    publish_repair_attempts = 0
+    max_publish_repair_attempts = 2
+    schema_repair_attempts = 0
+    max_schema_repair_attempts = 2
     while True:
         workflow_run_ids.append(str(run.get("run_id") or ""))
         content = str(run.get("content") or "")
@@ -523,11 +686,17 @@ async def generate_xingchen_learning_task(
                 str(item).strip() for item in list((patch or prior_patch or {}).get("hard_errors") or [])
                 if str(item).strip()
             ]
-            if patch is not None and "publish_gate" not in repair_reasons:
-                repair_reasons.append("publish_gate")
+            if patch is not None and publish_repair_attempts < max_publish_repair_attempts:
+                publish_repair_attempts += 1
+                if "publish_gate" not in repair_reasons:
+                    repair_reasons.append("publish_gate")
                 run = await client.run(
-                    _repair_workflow_input(task_title, patch),
-                    uid=f"{uid[:24]}-publish-repair",
+                    _repair_workflow_input(
+                        task_title,
+                        patch,
+                        attempt=publish_repair_attempts,
+                    ),
+                    uid=f"{uid[:18]}-publish-repair-{publish_repair_attempts}",
                 )
                 continue
             if hard_errors:
@@ -547,16 +716,42 @@ async def generate_xingchen_learning_task(
             if failure is not None:
                 raise XingchenTaskStructureError(*failure)
         except XingchenTaskStructureError as exc:
-            if "structure_schema" not in repair_reasons:
-                repair_reasons.append("structure_schema")
+            if schema_repair_attempts < max_schema_repair_attempts:
+                schema_repair_attempts += 1
+                if "structure_schema" not in repair_reasons:
+                    repair_reasons.append("structure_schema")
                 run = await client.run(
-                    _schema_repair_workflow_input(task_title, exc.path, exc.reason),
-                    uid=f"{uid[:24]}-schema-repair",
+                    _schema_repair_workflow_input(
+                        task_title,
+                        exc.path,
+                        exc.reason,
+                        attempt=schema_repair_attempts,
+                    ),
+                    uid=f"{uid[:18]}-schema-repair-{schema_repair_attempts}",
                 )
                 continue
-            raise XingchenWorkflowError(
-                f"讯飞任务结构自动修订后仍未通过：{exc.path}：{exc.reason}"
-            ) from exc
+            expanded_plan = _expand_short_plan(
+                plan,
+                minimum_steps=_minimum_plan_steps(plan_schema),
+            )
+            if expanded_plan is not None:
+                expanded_failure = (
+                    _schema_failure(expanded_plan, plan_schema)
+                    if plan_schema is not None
+                    else None
+                )
+                if expanded_failure is None:
+                    plan = expanded_plan
+                    if "structure_expansion" not in repair_reasons:
+                        repair_reasons.append("structure_expansion")
+                else:
+                    raise XingchenWorkflowError(
+                        f"讯飞任务结构自动修订后仍未通过：{exc.path}：{exc.reason}"
+                    ) from exc
+            else:
+                raise XingchenWorkflowError(
+                    f"讯飞任务结构自动修订后仍未通过：{exc.path}：{exc.reason}"
+                ) from exc
 
         return {
             "protocol": "learnflow.xingchen-learning-task-generation.v1",
