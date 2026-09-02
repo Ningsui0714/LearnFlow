@@ -124,12 +124,15 @@ client.tsx      renderer components，导出 default 或 plugin
 object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
 读取结果固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。冷启动候选保留
 `ProjectBrief + SourceInput → Task Barrier → kernel → semantic/process enrichment → validation` 的阶段语义；迭代候选固定
-`snapshotId + rootHash`，保留检查、目标邻域、候选 patch、meaningful diff 与核心回归门。当前只接入候选合同，
-不执行外部 role-agent、工作区实例化、持久化、发布、Tag、回滚或 Registry；Renderer 必须明确区分候选与正式快照。
+`snapshotId + rootHash`，保留检查、目标邻域、候选 patch、meaningful diff 与核心回归门。当前 Tutor 只接入候选合同，
+不执行外部 role-agent、工作区实例化、发布、Tag、回滚或 Registry；Renderer 必须明确区分候选与正式快照。
+维护期另有纯文件导入器：它只接收 role-agent 导出的 `static-role-package@3.0.0` bundle，在写盘前独立校验组件
+hash、canonical root hash、snapshot 身份和版本冲突，再原子安装不可变目录。它不是模型 Tool，也不让候选制品
+批准自己。详细合同见 `docs/implementation/ROLE_PACKAGE_FILE_EXCHANGE.md`。
 
 ## 7. 当前边界
 
-- 这是受信、随应用发布的本机代码包，不提供第三方下载、签名、runner、沙箱或热安装。
+- 这是受信的本机代码包；纯文件导入只提供维护期显式命令，不提供第三方下载、签名、runner、沙箱或对话内热安装。
 - 没有 Plugin Instance、Snapshot、独立工作台、专用侧栏或插件数据库。
 - “展开到新纸”只是既有 ToolRun 的对话内只读投影，不是 Plugin Snapshot 持久化对象或独立工作台。
 - `defaultEnabled` 只适合官方内置能力；其他包必须由调用方传入 `activePluginIds`。
