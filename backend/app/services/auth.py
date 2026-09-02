@@ -63,6 +63,10 @@ class ModelCredentialDecryptionError(RuntimeError):
     pass
 
 
+class ModelCredentialFormatError(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class EncryptedModelCredential:
     ciphertext: str
@@ -276,6 +280,20 @@ def _model_credential_hint(api_key: str) -> str:
     return f"{api_key[:3]}…{api_key[-4:]}"
 
 
+def _validate_model_credential_plaintext(api_key: str) -> str:
+    """Validate the provider-neutral HTTP Authorization credential shape."""
+    plaintext = api_key.strip()
+    if (
+        not plaintext
+        or not plaintext.isascii()
+        or any(ord(character) < 0x21 or ord(character) > 0x7E for character in plaintext)
+    ):
+        raise ModelCredentialFormatError(
+            "model credential must contain printable ASCII without whitespace"
+        )
+    return plaintext
+
+
 def model_credential_configured(account: UserAccount) -> bool:
     return bool(
         account.api_key_ciphertext
@@ -286,9 +304,7 @@ def model_credential_configured(account: UserAccount) -> bool:
 
 
 def encrypt_model_credential(account_id: int, api_key: str) -> EncryptedModelCredential:
-    plaintext = api_key.strip()
-    if not plaintext:
-        raise ValueError("model credential is empty")
+    plaintext = _validate_model_credential_plaintext(api_key)
     kek, version = _model_credential_kek()
     nonce = secrets.token_bytes(12)
     ciphertext = AESGCM(kek).encrypt(
@@ -321,8 +337,10 @@ def decrypt_model_credential(account: UserAccount) -> str:
             ciphertext,
             _model_credential_aad(account.id, stored_version),
         )
-        return plaintext.decode("utf-8")
+        return _validate_model_credential_plaintext(plaintext.decode("utf-8"))
     except ModelCredentialEncryptionUnavailable:
+        raise
+    except ModelCredentialFormatError:
         raise
     except ModelCredentialDecryptionError:
         raise
@@ -493,7 +511,6 @@ def require_runtime_bridge_request(request: Request) -> None:
         for name in (
             "origin",
             "sec-fetch-site",
-            "sec-fetch-mode",
             "sec-fetch-dest",
             "sec-fetch-user",
         )
