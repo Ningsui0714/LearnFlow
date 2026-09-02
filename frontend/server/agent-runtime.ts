@@ -34,7 +34,12 @@ import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
 import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
-import type { LearnFlowPluginRegistry, PluginActivationContext } from '../src/plugin-api.ts'
+import {
+  pluginObjectReferenceUri,
+  type LearnFlowPluginObject,
+  type LearnFlowPluginRegistry,
+  type PluginActivationContext,
+} from '../src/plugin-api.ts'
 import { stickyConversationPluginIds, lockedConversationPluginIds } from '../src/conversation-plugin-state.ts'
 import {
   completeVisualTeachingBundle,
@@ -134,6 +139,8 @@ export type TutorAgentRuntimeInput = {
   formalProjectContext?: AgentProjectContext
   conversationId?: string
   sheetId?: string
+  formalSessionId?: number
+  referencedPluginObjects?: LearnFlowPluginObject[]
   backendBase?: string
   requestCookie?: string
   generate: TutorAgentToolRuntimeOptions['generate']
@@ -749,11 +756,41 @@ export function directLearningTaskIntakeRequest(
   activePluginIds: readonly string[] | undefined,
   _projectId: number | undefined,
   message: string,
+  referencedPluginObjects: readonly LearnFlowPluginObject[] = [],
 ) {
   // Preparing and clarifying a WF03 task is conversation-scoped. Requiring a
   // project here made the explicitly selected plugin silently fall back to
   // Tutor's generic tools in a new/global conversation.
   if (!activePluginIds?.includes('learning_task_conversion')) return undefined
+  const referencedTasks = referencedPluginObjects.flatMap(object => {
+    const value = object.value && typeof object.value === 'object' && !Array.isArray(object.value)
+      ? object.value as Record<string, unknown> : {}
+    const data = value.data && typeof value.data === 'object' && !Array.isArray(value.data)
+      ? value.data as Record<string, unknown> : {}
+    const category = String(value.category || data.type || data.kind || '')
+    if (category !== 'task') return []
+    const title = String(object.label || data.label || '').replace(/\s+/g, ' ').trim().slice(0, 300)
+    if (title.length < 2) return []
+    const description = String(data.summary || data.description || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 2_000)
+    return [{
+      id: object.objectId,
+      title,
+      description,
+      source: 'role_package' as const,
+      sourceRef: pluginObjectReferenceUri(object),
+    }]
+  })
+  if (referencedTasks.length === 1) {
+    const task = referencedTasks[0]
+    return {
+      rawInput: task.title,
+      taskDescription: task.description,
+      candidateTasks: [task],
+      selectedTaskTitle: task.title,
+      selectedTaskDescription: task.description,
+    }
+  }
   const quoted = message.match(/[“"]([^”"]{2,300})[”"]/)?.[1]?.trim()
   const normalized = message.replace(/^(?:请|帮我|请帮我|麻烦你)?\s*/i, '').trim()
   if (/^(?:生成|转化|转换|创建)(?:一个|一份)?(?:学习型任务|学习任务)[。！!？?]*$/i.test(normalized)) {
@@ -1093,7 +1130,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         scope: {
           mode: input.mode,
           learnerId: Number((input.formalLearnerContext as any)?.scope?.learner_id) || undefined,
+          sessionId: input.formalSessionId,
           conversationId: input.conversationId,
+          sheetId: input.sheetId,
           projectId: activation.projectId,
           checkpointId: activation.checkpointId,
         },
@@ -1446,6 +1485,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     input.activePluginIds,
     pluginActivation(input).projectId,
     latestMessage,
+    input.referencedPluginObjects,
   )
   if (directIntake && input.pluginRegistry?.resolveTool(
     'learning_task_conversion__prepare_learning_task_intake',
@@ -1460,7 +1500,14 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       { responseFormat: 'json_object' },
     )
     const preflight = parseLearningTaskPreflightResult(preflightText, directIntake.rawInput)
-    const preparedInput = preflightResultToIntakeInput(preflight, directIntake.taskDescription, input.model)
+    const preparedInput = {
+      ...preflightResultToIntakeInput(preflight, directIntake.taskDescription, input.model),
+      ...(directIntake.candidateTasks ? {
+        candidateTasks: directIntake.candidateTasks,
+        selectedTaskTitle: directIntake.selectedTaskTitle,
+        selectedTaskDescription: directIntake.selectedTaskDescription,
+      } : {}),
+    }
     record({
       phase: 'reason',
       detail: `独立语义模型判定为 ${preflight.input_kind}，置信度 ${Math.round(preflight.confidence * 100)}%`,

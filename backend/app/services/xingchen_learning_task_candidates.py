@@ -1032,6 +1032,7 @@ def bundle_to_candidate(
     source_snapshot: SourceSnapshot,
     provider_run: Mapping[str, Any],
     target_step_count: int,
+    upstream_task: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_envelope = bundle.get("task")
     work = task_envelope.get("work_task") if isinstance(task_envelope, Mapping) else {}
@@ -1185,6 +1186,21 @@ def bundle_to_candidate(
     objective = _compact(
         work.get("teaching_task_description") or work.get("enterprise_task_description"), 2_000,
     ) or f"完成“{task_title}”并提交可独立检查的过程产物。"
+    upstream = dict(upstream_task or {})
+    raw_origin = upstream.get("learnflowOrigin")
+    raw_origin = dict(raw_origin) if isinstance(raw_origin, Mapping) else {}
+    session_id = raw_origin.get("sessionId")
+    origin = {
+        **({"sessionId": session_id} if isinstance(session_id, int) and session_id > 0 else {}),
+        **({"conversationId": _compact(raw_origin.get("conversationId"), 160)} if _compact(raw_origin.get("conversationId"), 160) else {}),
+        **({"sheetId": _compact(raw_origin.get("sheetId"), 160)} if _compact(raw_origin.get("sheetId"), 160) else {}),
+    }
+    raw_task_source = upstream.get("taskSource")
+    raw_task_source = dict(raw_task_source) if isinstance(raw_task_source, Mapping) else {}
+    task_source = {
+        "kind": _compact(raw_task_source.get("kind"), 80),
+        "ref": _compact(raw_task_source.get("ref"), 500),
+    }
     candidate = {
         "schemaVersion": CANDIDATE_SCHEMA_VERSION,
         "candidateId": candidate_id,
@@ -1287,6 +1303,8 @@ def bundle_to_candidate(
             "workflowArtifacts": dict(provider_run.get("workflowOutput") or {}),
             "kernelTargets": [],
             "masteryUnchanged": True,
+            "origin": origin,
+            "taskSource": task_source,
         },
     }
     candidate["validation"] = validate_candidate(candidate)
@@ -1635,6 +1653,7 @@ async def generate_candidate(
                     "workflowOutput": workflow_output,
                 },
                 target_step_count=target_step_count,
+                upstream_task=upstream_task,
             )
             artifact = LearningTaskCandidateArtifact(
                 candidate_id=candidate_id,
@@ -1721,6 +1740,14 @@ async def confirm_candidate_as_learning_task(
     mappings = dict(candidate.get("mappings") or {})
     assessment = dict(candidate.get("assessment") or {})
     candidate_id = str(candidate.get("candidateId") or "")
+    provenance = dict(candidate.get("provenance") or {})
+    origin = dict(provenance.get("origin") or {})
+    session_id = origin.get("sessionId")
+    session_id = session_id if isinstance(session_id, int) and session_id > 0 else None
+    conversation_id = _compact(origin.get("conversationId"), 160)
+    sheet_id = _compact(origin.get("sheetId"), 160)
+    task_source = dict(provenance.get("taskSource") or {})
+    task_source_ref = _compact(task_source.get("ref"), 500)
     work_steps = [dict(item) for item in list(task_data.get("steps") or []) if isinstance(item, Mapping)]
     plan = {
         "schema_version": "learning-task-plan.v1",
@@ -1779,6 +1806,18 @@ async def confirm_candidate_as_learning_task(
         "schemaVersion": candidate.get("schemaVersion"),
         "rootHash": candidate_root_hash,
     }]
+    if conversation_id:
+        source_refs.append({
+            "type": "conversation",
+            "id": conversation_id,
+            **({"sheetId": sheet_id} if sheet_id else {}),
+        })
+    if task_source_ref:
+        source_refs.append({
+            "type": "plugin_object",
+            "source": _compact(task_source.get("kind"), 80),
+            "ref": task_source_ref,
+        })
     source_refs.extend(
         {
             "type": "source_version",
@@ -1798,6 +1837,7 @@ async def confirm_candidate_as_learning_task(
         origin_kind="learning_task_candidate",
         created_by="learning_design_agent",
         status="queued",
+        session_id=session_id,
         project_id=project_id,
         estimated_minutes=int(plan["estimated_minutes"]),
         preferred_skills=["evidence_grounded_teaching", "practice_verification"],

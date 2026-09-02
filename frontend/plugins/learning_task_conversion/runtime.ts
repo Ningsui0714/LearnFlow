@@ -49,16 +49,34 @@ function normalizedSourceVersionIds(value: unknown): number[] {
     .sort((left, right) => left - right)
 }
 
-function stableRequestId(input: JsonRecord, context: PluginToolContext) {
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson)
+  if (!value || typeof value !== 'object') return value
+  return Object.keys(value as JsonRecord).sort().reduce<JsonRecord>((result, key) => {
+    result[key] = canonicalJson((value as JsonRecord)[key])
+    return result
+  }, {})
+}
+
+function stableRequestId(
+  input: JsonRecord,
+  context: PluginToolContext,
+  request: {
+    taskTitle: string
+    taskDescription: string
+    upstreamTask: JsonRecord
+    sourceVersionIds: number[]
+    targetStepCount: number
+    maxSourceSegments: number
+  },
+) {
   if (typeof input.requestId === 'string' && input.requestId.trim()) return input.requestId.trim()
-  const fingerprint = createHash('sha256').update(JSON.stringify({
+  const fingerprint = createHash('sha256').update(JSON.stringify(canonicalJson({
     projectId: context.scope.projectId,
     conversationId: context.scope.conversationId || '',
-    taskTitle: input.taskTitle,
-    taskDescription: input.taskDescription || '',
     intakeRootHash: input.intakeRootHash || '',
-    sourceVersionIds: normalizedSourceVersionIds(input.sourceVersionIds),
-  })).digest('hex').slice(0, 24)
+    ...request,
+  }))).digest('hex').slice(0, 24)
   return `plugin:${context.scope.projectId}:${fingerprint}`
 }
 
@@ -141,17 +159,38 @@ export const learningTaskConversionRuntime = {
       taskSource: String(input.taskSource || 'user_explicit') as 'user_explicit' | 'role_package' | 'project_source' | 'model_proposed',
       taskSourceRef: String(input.taskSourceRef || ''),
     })
-    const candidate = await integration(context).request('create_candidate', {
-      schemaVersion: 'role-learning-task-candidate-request.v1',
-      requestId: stableRequestId(input, context),
+    const suppliedUpstreamTask = input.upstreamTask && typeof input.upstreamTask === 'object'
+      ? input.upstreamTask as JsonRecord : {}
+    const origin = {
+      ...(context.scope.sessionId ? { sessionId: context.scope.sessionId } : {}),
+      ...(context.scope.conversationId ? { conversationId: context.scope.conversationId } : {}),
+      ...(context.scope.sheetId ? { sheetId: context.scope.sheetId } : {}),
+    }
+    const upstreamTask = {
+      ...suppliedUpstreamTask,
+      taskSource: {
+        kind: intake.taskContract.source,
+        ref: intake.taskContract.sourceRef,
+      },
+      ...(Object.keys(origin).length ? { learnflowOrigin: origin } : {}),
+    }
+    const sourceVersionIds = normalizedSourceVersionIds(input.sourceVersionIds)
+    const targetStepCount = Number.isInteger(input.targetStepCount)
+      ? Number(input.targetStepCount)
+      : suggestLearningTaskStepCount(intake.taskContract.title, intake.taskContract.description)
+    const maxSourceSegments = Number(input.maxSourceSegments || 16)
+    const requestIdentity = {
       taskTitle: intake.taskContract.title,
       taskDescription: intake.taskContract.description,
-      upstreamTask: input.upstreamTask && typeof input.upstreamTask === 'object' ? input.upstreamTask : null,
-      sourceVersionIds: normalizedSourceVersionIds(input.sourceVersionIds),
-      targetStepCount: Number.isInteger(input.targetStepCount)
-        ? Number(input.targetStepCount)
-        : suggestLearningTaskStepCount(intake.taskContract.title, intake.taskContract.description),
-      maxSourceSegments: Number(input.maxSourceSegments || 16),
+      upstreamTask,
+      sourceVersionIds,
+      targetStepCount,
+      maxSourceSegments,
+    }
+    const candidate = await integration(context).request('create_candidate', {
+      schemaVersion: 'role-learning-task-candidate-request.v1',
+      requestId: stableRequestId(input, context, requestIdentity),
+      ...requestIdentity,
     }) as JsonRecord
     return candidateResult(candidate)
   },

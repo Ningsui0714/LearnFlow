@@ -749,6 +749,14 @@ def test_candidate_read_api_is_project_and_account_scoped(client: TestClient):
 
 def test_explicit_candidate_confirmation_creates_one_formal_task_without_mastery_write(client: TestClient):
     project_id = _create_project(client, "候选确认")
+    conversation_id = f"chat-{uuid.uuid4()}"
+    session_response = client.post("/api/agent/sessions", json={
+        "session_type": "global",
+        "title": "图谱任务转化",
+        "client_conversation_id": conversation_id,
+    })
+    assert session_response.status_code == 200, session_response.text
+    session_id = session_response.json()["id"]
     workflow, gateway = _clients(_bundle("ltc_confirm_candidate"))
 
     async def seed():
@@ -757,7 +765,18 @@ def test_explicit_candidate_confirmation_creates_one_formal_task_without_mastery
             return await generate_candidate(
                 db, project=project, learner_id=project.learner_id,
                 request_id=f"request-{uuid.uuid4().hex}", task_title="Nginx 部署与 HTTPS 验收",
-                task_description="在测试服务器完成部署并留下验收记录", upstream_task=None,
+                task_description="在测试服务器完成部署并留下验收记录",
+                upstream_task={
+                    "learnflowOrigin": {
+                        "sessionId": session_id,
+                        "conversationId": conversation_id,
+                        "sheetId": "main",
+                    },
+                    "taskSource": {
+                        "kind": "role_package",
+                        "ref": "plugin-object://role_capability_graph/role_object/task%3Allmapp%3Abuild-agent-integration?schema=role-capability.object.v1",
+                    },
+                },
                 source_version_ids=[], target_step_count=6, max_source_segments=8,
                 workflow_client=workflow, bundle_gateway=gateway,
             )
@@ -779,6 +798,19 @@ def test_explicit_candidate_confirmation_creates_one_formal_task_without_mastery
     assert result["masteryChanged"] is False
     assert result["kernelWrites"] == 0
     assert result["managementNavigation"]["path"] == f"/tasks?task={result['learningTask']['id']}"
+    assert result["navigation"] == {
+        "kind": "conversation", "path": f"/chat/{conversation_id}",
+    }
+    assert result["learningTask"]["origin_navigation"] == result["navigation"]
+    assert result["learningTask"]["session_id"] == session_id
+    assert any(
+        item.get("type") == "conversation" and item.get("id") == conversation_id
+        for item in result["learningTask"]["source_refs"]
+    )
+    assert any(
+        item.get("type") == "plugin_object" and item.get("source") == "role_package"
+        for item in result["learningTask"]["source_refs"]
+    )
     assert result["learningTask"]["origin_kind"] == "learning_task_candidate"
     assert result["learningTask"]["created_by"] == "learning_design_agent"
     assert result["learningTask"]["plan"]["work_steps"] == candidate["task"]["steps"]

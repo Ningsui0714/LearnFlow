@@ -115,6 +115,46 @@ test('explicit project plugin request maps to local intake instead of calling th
   assert.equal(directLearningTaskIntakeRequest(['learning_task_conversion'], 7, '解释一下学习型任务是什么'), undefined)
 })
 
+test('a referenced role graph task becomes the exact source-backed intake', () => {
+  const reference = {
+    protocol: 'learnflow-plugin-object.v1' as const,
+    pluginId: 'role_capability_graph',
+    objectType: 'role_object',
+    objectId: 'task:llmapp:build-agent-integration',
+    schemaVersion: 'role-capability.object.v1',
+    label: '构建Agent工作流与工具系统集成',
+    value: {
+      category: 'task',
+      data: {
+        type: 'task',
+        label: '构建Agent工作流与工具系统集成',
+        summary: '实现编排、工具调用、权限、重试、确认、幂等与异常处理。',
+      },
+    },
+  }
+  assert.deepEqual(
+    directLearningTaskIntakeRequest(
+      ['learning_task_conversion'],
+      undefined,
+      '生成学习型任务\n\n引用插件对象（固定到产生它们的 ToolRun）：\n- 构建Agent工作流与工具系统集成（plugin-object://...）',
+      [reference],
+    ),
+    {
+      rawInput: '构建Agent工作流与工具系统集成',
+      taskDescription: '实现编排、工具调用、权限、重试、确认、幂等与异常处理。',
+      candidateTasks: [{
+        id: 'task:llmapp:build-agent-integration',
+        title: '构建Agent工作流与工具系统集成',
+        description: '实现编排、工具调用、权限、重试、确认、幂等与异常处理。',
+        source: 'role_package',
+        sourceRef: 'plugin-object://role_capability_graph/role_object/task%3Allmapp%3Abuild-agent-integration?schema=role-capability.object.v1',
+      }],
+      selectedTaskTitle: '构建Agent工作流与工具系统集成',
+      selectedTaskDescription: '实现编排、工具调用、权限、重试、确认、幂等与异常处理。',
+    },
+  )
+})
+
 test('selecting the plugin routes plain task text through intake without command wording', () => {
   assert.deepEqual(
     directLearningTaskIntakeRequest(
@@ -334,7 +374,7 @@ test('prepare tool is local and draft requires its explicit hash-bound confirmat
     rawInput: '部署 Nginx 并验收 HTTPS',
   }, {
     ...activation,
-    scope: { mode: 'learning_plan', conversationId: 'conversation-1', projectId: 7 },
+    scope: { mode: 'learning_plan', sessionId: 41, conversationId: 'conversation-1', sheetId: 'sheet-2', projectId: 7 },
     signal: AbortSignal.timeout(5_000),
   })
   const intake = preparedExecution.result.objects?.[0].value as any
@@ -351,7 +391,7 @@ test('prepare tool is local and draft requires its explicit hash-bound confirmat
     taskSource: intake.taskContract.source,
   }, {
     ...activation,
-    scope: { mode: 'learning_plan', conversationId: 'conversation-1', projectId: 7 },
+    scope: { mode: 'learning_plan', sessionId: 41, conversationId: 'conversation-1', sheetId: 'sheet-2', projectId: 7 },
     signal: AbortSignal.timeout(5_000),
     projectIntegration: {
       request: async (operation, payload) => {
@@ -363,6 +403,12 @@ test('prepare tool is local and draft requires its explicit hash-bound confirmat
   assert.equal(calls.length, 1)
   assert.equal(calls[0].operation, 'create_candidate')
   assert.equal(calls[0].payload.taskTitle, '部署 Nginx 并验收 HTTPS')
+  assert.deepEqual(calls[0].payload.upstreamTask.learnflowOrigin, {
+    sessionId: 41,
+    conversationId: 'conversation-1',
+    sheetId: 'sheet-2',
+  })
+  assert.deepEqual(calls[0].payload.upstreamTask.taskSource, { kind: 'user_explicit', ref: '' })
   assert.match(calls[0].payload.requestId, /^plugin:7:/)
   assert.equal(execution.result.objects?.[0].objectType, 'learning_task_candidate')
   assert.equal((execution.result.objects?.[0].value as any).lifecycle, 'candidate')
@@ -432,6 +478,54 @@ test('candidate request id treats source version ids as an ordered-independent s
   assert.equal(requestPayloads[0].requestId, requestPayloads[1].requestId)
   assert.deepEqual(requestPayloads[0].sourceVersionIds, [3, 9])
   assert.deepEqual(requestPayloads[1].sourceVersionIds, [3, 9])
+})
+
+test('candidate request id covers every backend idempotency input', async () => {
+  const loaded = await registry()
+  const requestPayloads: any[] = []
+  const preparedExecution = await loaded.execute('learning_task_conversion__prepare_learning_task_intake', {
+    rawInput: '部署 Nginx 并验收 HTTPS',
+  }, {
+    ...activation,
+    scope: { mode: 'learning_plan', conversationId: 'conversation-1', projectId: 7 },
+    signal: AbortSignal.timeout(5_000),
+  })
+  const intake = preparedExecution.result.objects?.[0].value as any
+  const context = {
+    ...activation,
+    scope: { mode: 'learning_plan' as const, conversationId: 'conversation-1', projectId: 7 },
+    signal: AbortSignal.timeout(5_000),
+    projectIntegration: {
+      request: async (_operation: string, payload: any) => {
+        requestPayloads.push(payload)
+        return sampleCandidate() as any
+      },
+    },
+  }
+  const baseInput = {
+    originalInput: intake.originalInput,
+    intakeId: intake.intakeId,
+    intakeRootHash: intake.intakeRootHash,
+    intakeConfirmed: true,
+    taskTitle: intake.taskContract.title,
+    taskDescription: intake.taskContract.description,
+    taskSource: intake.taskContract.source,
+  }
+
+  await loaded.execute('learning_task_conversion__draft_learning_task', {
+    ...baseInput, targetStepCount: 5, maxSourceSegments: 8, upstreamTask: { lane: 'a' },
+  }, context)
+  await loaded.execute('learning_task_conversion__draft_learning_task', {
+    ...baseInput, targetStepCount: 6, maxSourceSegments: 8, upstreamTask: { lane: 'a' },
+  }, context)
+  await loaded.execute('learning_task_conversion__draft_learning_task', {
+    ...baseInput, targetStepCount: 5, maxSourceSegments: 9, upstreamTask: { lane: 'a' },
+  }, context)
+  await loaded.execute('learning_task_conversion__draft_learning_task', {
+    ...baseInput, targetStepCount: 5, maxSourceSegments: 8, upstreamTask: { lane: 'b' },
+  }, context)
+
+  assert.equal(new Set(requestPayloads.map(payload => payload.requestId)).size, 4)
 })
 
 test('draft tool rejects missing or changed intake confirmation before provider access', async () => {

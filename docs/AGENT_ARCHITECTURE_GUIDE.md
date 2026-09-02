@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-02.6`）：点击或拖入的 Plugin Object 在发送时同时保留学习者可见引用文本与已校验结构化信封。学习型任务转化可据此精确锁定被引用的 `task` label/摘要，把 `plugin-object://` 仅保存为来源，不再让“引用插件对象”包装语或 URI 污染任务契约；宿主保持插件无关。候选确认会把原正式 Session、Chat、纸张及插件对象引用传入正式 `LearningTask.source_refs`，因此任务队列的“回到学习现场”重新打开同一对话和纸张；旧任务由客户端按 session 或项目内最近转化对话兼容恢复。插件请求指纹与后端幂等输入保持同构，隐藏控制回合不再影响上下文、对话标题、纸张预览、输入计数或中断恢复。现有项目范围、双确认、Practice 评分与五核证据边界不变。
+
 Contract impact（`2026-09-02.5`）：LearnFlow、Role Atlas 是对等一级产品，Graph Hub 是共享发现层。Graph Hub/Role Atlas 通过短时、主体绑定的签名令牌把精确岗位包交给 LearnFlow；LearnFlow 在确定性 API 中创建普通对话并投影 `role_package_reference` ToolRun，使岗位插件从第一轮起锁定不可变版本。导航、验签和会话创建不交给模型，不新增主 Agent，也不写核心对象、EvidenceEvent 或五核。`search_graph_hub` 仍以正式 `learner_id` 派生主体并保持只读。
 
 Contract impact（`2026-09-02.3`）：岗位包发现从“列出全部可见包”收紧为“按用户目标岗位确定性匹配”。Tutor 在未引用岗位包时必须把岗位名称传给 `list_role_packages`；工具只返回标题、岗位根节点或 alias 与查询整体包含匹配的不可变版本。无匹配时返回 `matchStatus=not_found` 和预填 `role` 参数的 Role Atlas `/projects/new` 入口，Skill 禁止继续调用岗位内容工具或借用无关包。链接基地址由 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置，本地默认 `http://localhost:3000`。LearnFlow 仍不执行冷启动、迭代或发布，不写核心对象、EvidenceEvent 或五核。

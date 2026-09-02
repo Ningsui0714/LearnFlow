@@ -13,7 +13,11 @@ export type TutorTurnMessage = {
 export function recoverableTutorTurn(messages: TutorTurnMessage[], pending: boolean) {
   if (pending) return undefined
   const latest = messages[messages.length - 1]
-  return latest?.role === 'user' && latest.content.trim() ? latest : undefined
+  return latest?.role === 'user' && !latest.hiddenFromTranscript && latest.content.trim() ? latest : undefined
+}
+
+export function hasVisibleStudentMessage(messages: TutorTurnMessage[]) {
+  return messages.some(message => message.role === 'user' && !message.hiddenFromTranscript)
 }
 
 export function buildTutorContextMessages(

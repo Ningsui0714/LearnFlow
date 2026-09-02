@@ -83,6 +83,9 @@ ToolRun 投影会有界保留 `presentation.state` 和最多 16 个 Plugin Objec
 宿主还提供两个不增加扩展点的确定性交互：`onReference(object)` 只接受已校验的 Plugin Object，并通过
 `application/x-learnflow-plugin-object` 拖拽载荷或点击操作把 `pluginId + objectType + objectId + schemaVersion`
 放入当前草稿；宿主会重新要求该引用命中当前可见 ToolRun 中的已校验对象，不信任任意外部拖拽 JSON。
+发送草稿时，宿主同时提交学习者可见的 `plugin-object://` 引用文本和对应的完整已校验对象信封；前者用于对话可读性，
+后者供本轮 Tool 路由精确读取 `label/value`，不得从展示文本反向解析领域对象。该结构化输入只存活于当前 Tutor 回合，
+仍受 JSON 大小、对象数量、ownership 与 schema 校验约束，不能绕过插件 Tool 的项目范围或确认门。
 `onOpenPaper()` 把产生当前结果的原 ToolRun 作为只读投影附到对话纸张。引用不会自动发送，
 纸张不会复制 Plugin Object 的领域权威，两者都不能触发工具、Action、EvidenceEvent 或五核写入。视图切换
 属于插件 Renderer 内部状态，例如同一岗位全景结果可以切换为能力雷达或对象卡片；宿主不理解这些视图语义。

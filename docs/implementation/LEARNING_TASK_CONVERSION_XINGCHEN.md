@@ -28,6 +28,8 @@
 
 学习者在项目对话的工具选择器启用插件后，可像选择 Codex plugin 一样直接输入岗位、方向、学习主题或具体工作任务，不必再写“生成学习型任务”命令。宿主先使用该能力专属的独立语义模型做一次严格 JSON 预检：具体工作任务形成候选契约；岗位/方向只提出三个同领域、可执行、可验收的典型任务选项；学习主题或含糊输入只追问一个高价值缺口。模型被要求原样回显用户输入，但该回显不具备标识权威；宿主始终恢复自己持有的原始输入，再经过本地层级、锚点和候选选择规则，才能交给 `prepare_learning_task_intake` 生成不可变准备单。只有学习者点击或表达确认后，Tutor 才把原始输入、`intakeId`、`intakeRootHash` 和锁定后的任务契约交给 `draft_learning_task`，随后才调用讯飞。页面不跳转，也不要求用户到独立插件页重复输入。宿主仅暴露 allow-list 操作的 `projectIntegration.request`；插件无法取得后端地址、Cookie、任意 fetch 或 provider 凭据。
 
+从其他插件的 Renderer 点击或拖入一个已校验 `task` 对象时，宿主把对象信封作为本轮结构化引用传给 Tutor；转化入口使用对象原始 `label` 作为任务名、对象摘要作为描述，并把 `plugin-object://...` 仅作为 `role_package` 来源引用。学习者可见的“引用插件对象”包装文本不参与任务标题、动作或工作对象提取。该逻辑只识别通用对象类别，不识别岗位插件 ID、岗位对象 ID 或具体 renderer；引用多个任务时仍需先明确选择一个。
+
 ## 3. 请求合同
 
 `POST /api/projects/{project_id}/integrations/xingchen/learning-task-candidates`
@@ -150,6 +152,6 @@ handoff 使用 `learnflow.personalized-learning-handoff.v1`，包含 `taskSteps`
 }
 ```
 
-LearnFlow 会重新执行当前 validator，并校验 `expectedRootHash` 与候选固定快照完全一致；不一致返回 409。成功后由 Learning Design 调用正式任务运行时，幂等创建 `origin_kind=learning_task_candidate` 的 `LearningTask`。provider 的详细步骤保存在 `plan.work_steps`，正式运行阶段保持 LearnFlow 的 `learn → practice → verify → consolidate` 四阶段合同；评分策略明确归属 Practice Agent 的确定性规则。响应为 `learning-task-candidate-confirmation-result.v1`，提供 `/tasks?task={id}` 个性化学习入口。
+LearnFlow 会重新执行当前 validator，并校验 `expectedRootHash` 与候选固定快照完全一致；不一致返回 409。成功后由 Learning Design 调用正式任务运行时，幂等创建 `origin_kind=learning_task_candidate` 的 `LearningTask`。provider 的详细步骤保存在 `plan.work_steps`，正式运行阶段保持 LearnFlow 的 `learn → practice → verify → consolidate` 四阶段合同；评分策略明确归属 Practice Agent 的确定性规则。响应为 `learning-task-candidate-confirmation-result.v1`：`managementNavigation` 提供 `/tasks?task={id}` 管理入口，`navigation/origin_navigation` 优先提供候选产生时的 `/chat/:conversationId` 学习现场。候选 provenance 和正式任务 `source_refs` 保存原 `sessionId + conversationId + sheetId` 及插件对象来源，客户端据此恢复同一对话纸张；没有这些字段的旧任务可按 session 或同项目最近的转化对话兼容恢复。
 
 相同候选重复确认返回同一正式任务，不重复创建；确认事件、任务创建与任务接受事件均不写五核。候选 artifact 本身保持不可变、`unconfirmed`，作为正式任务的来源引用保存，不被覆盖成第二个状态权威。

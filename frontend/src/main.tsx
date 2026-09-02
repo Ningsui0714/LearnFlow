@@ -135,6 +135,7 @@ import {
   uploadFormalProjectFile,
   type FormalLearnerProfilePatch,
   type FormalLearnerSnapshot,
+  type FormalLearningTask,
   type FormalLearningTaskAction,
   type FormalLearningFileRef,
   type FormalLearningSkillRun,
@@ -147,7 +148,7 @@ import { parseLearningTaskDraftConfirmation } from '../plugins/learning_task_con
 import type { AgentDecisionSummary, AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
-import { buildTutorContextMessages, recoverableTutorTurn } from './turn-recovery'
+import { buildTutorContextMessages, hasVisibleStudentMessage, recoverableTutorTurn } from './turn-recovery'
 import {
   deletePaperSheet,
   findPaperSheetByArtifact,
@@ -575,7 +576,9 @@ function activeMessages(conversation: Conversation) {
 }
 
 function paperPreview(messages: Message[]) {
-  const latest = [...messages].reverse().find(message => message.role !== 'system')
+  const latest = [...messages].reverse().find(
+    message => message.role !== 'system' && !message.hiddenFromTranscript,
+  )
   return latest?.content
     .replace(/```[\s\S]*?```/g, ' 代码片段 ')
     .replace(/[#>*_`\[\]()~-]/g, ' ')
@@ -886,6 +889,48 @@ function App({ auth }: { auth: AuthGateSession }) {
       }
     })
     setSidebarOpen(false)
+  }
+
+  const returnToLearningScene = (task: FormalLearningTask) => {
+    const routeMatch = task.origin_navigation?.path.match(/^\/chat\/([^/?#]+)/)
+    const routeConversationId = routeMatch
+      ? decodeURIComponent(routeMatch[1])
+      : ''
+    const sourceRef = task.source_refs.find(ref => ref.type === 'conversation')
+    const sourceConversationId = typeof sourceRef?.id === 'string' ? sourceRef.id : ''
+    const target = workspace.conversations.find(conversation => (
+      conversation.id === routeConversationId
+      || conversation.id === sourceConversationId
+      || (task.session_id && conversation.formalSessionId === task.session_id)
+    )) || [...workspace.conversations]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .find(conversation => (
+        task.project_id
+        && conversation.projectId === task.project_id
+        && activeConversationPluginIds(conversation).includes('learning_task_conversion')
+      ))
+    if (target) {
+      const sheetId = typeof sourceRef?.sheetId === 'string' ? sourceRef.sheetId : 'main'
+      setWorkspace(previous => ({
+        ...previous,
+        conversations: previous.conversations.map(conversation => conversation.id === target.id
+          ? {
+              ...conversation,
+              activeSheetId: sheetId === 'main' || conversation.sheets.some(sheet => sheet.id === sheetId)
+                ? sheetId
+                : 'main',
+            }
+          : conversation),
+      }))
+      openTab(chatTab(target))
+      return
+    }
+    if (task.project_id) {
+      openTab({ id: `project:${task.project_id}`, kind: 'project', title: task.title, projectId: task.project_id })
+      return
+    }
+    const fallback = task.origin_navigation?.path
+    if (fallback && !fallback.startsWith('/tasks')) window.location.assign(fallback)
   }
 
   const newConversation = () => {
@@ -1513,7 +1558,11 @@ function App({ auth }: { auth: AuthGateSession }) {
   const runTutorTurn = async (
     conversationId: string,
     rawContent: string,
-    options: { replayInterruptedTurn?: boolean; hideUserMessage?: boolean } = {},
+    options: {
+      replayInterruptedTurn?: boolean
+      hideUserMessage?: boolean
+      referencedPluginObjects?: LearnFlowPluginObject[]
+    } = {},
   ) => {
     let conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) {
@@ -1606,7 +1655,9 @@ function App({ auth }: { auth: AuthGateSession }) {
       }
     }
 
-    if (!replayInterruptedTurn && mode === 'learning_plan') {
+    const learningTaskConversionActive = activeConversationPluginIds(conversation)
+      .includes('learning_task_conversion')
+    if (!replayInterruptedTurn && mode === 'learning_plan' && !learningTaskConversionActive) {
       if (!planningProjection) {
         const created = createLearningPlan(content, now, planningEvents)
         learningPlans = [...learningPlans, created.plan]
@@ -1641,7 +1692,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     setWorkspace(previous => {
       const conversations = previous.conversations.map(item => {
         if (item.id !== conversationId) return item
-        const firstStudentMessage = !item.messages.some(message => message.role === 'user')
+        const firstStudentMessage = !hasVisibleStudentMessage(item.messages)
         const userMessage: Message = {
           id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
           persistedByTutor: isDesktopRuntime(),
@@ -1652,7 +1703,9 @@ function App({ auth }: { auth: AuthGateSession }) {
         }
         return {
           ...item,
-          title: !replayInterruptedTurn && sheetId === 'main' && firstStudentMessage ? content.slice(0, 22) : item.title,
+          title: !replayInterruptedTurn && !options.hideUserMessage && sheetId === 'main' && firstStudentMessage
+            ? content.slice(0, 22)
+            : item.title,
           updatedAt: now,
           mode,
           learningTasks,
@@ -1956,6 +2009,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         conversationId,
         sheetId,
         activePluginIds: activeConversationPluginIds(conversation),
+        referencedPluginObjects: options.referencedPluginObjects,
         onEvent: event => updateLiveTurn(conversationId, event),
       })
       const finishedMessage = finishTurn(conversationId, sheetId, mode, {
@@ -2004,7 +2058,7 @@ function App({ auth }: { auth: AuthGateSession }) {
       : message
     if (!content.trim()) return
     setPluginDraftReferences(previous => ({ ...previous, [draftKey]: [] }))
-    await runTutorTurn(conversationId, content)
+    await runTutorTurn(conversationId, content, { referencedPluginObjects: references })
   }
 
   const updateLearningTask = async (
@@ -2543,6 +2597,7 @@ function App({ auth }: { auth: AuthGateSession }) {
             onAction={(task, action) => { void updateFormalTask(task, action) }}
             onGenerateFiles={task => { void generateTaskFiles(task) }}
             onOpenFiles={() => openTab(LEARNING_FILES_TAB)}
+            onReturnToScene={returnToLearningScene}
           />
         </Suspense>
       )
@@ -2928,7 +2983,8 @@ function App({ auth }: { auth: AuthGateSession }) {
         </div>
         <div className="composer-dock">
           <form className="composer" onSubmit={event => sendMessage(conversation.id, event)}>
-            {planProjection && conversation.mode === 'learning_plan' && (
+            {planProjection && conversation.mode === 'learning_plan'
+              && !activeConversationPluginIds(conversation).includes('learning_task_conversion') && (
               <>
                 <section className="planning-anchor" aria-label="当前学习规划">
                   <span className="planning-mark">◇</span>
@@ -3329,7 +3385,7 @@ function App({ auth }: { auth: AuthGateSession }) {
               >
                 <button type="button" className="conversation-open" onClick={() => openTab(chatTab(conversation))}>
                   <span className="conversation-glyph">□</span>
-                  <span><strong>{conversation.title}</strong><small>{conversation.messages.filter(message => message.role === 'user').length} 条输入</small></span>
+                  <span><strong>{conversation.title}</strong><small>{conversation.messages.filter(message => message.role === 'user' && !message.hiddenFromTranscript).length} 条输入</small></span>
                 </button>
                 <button type="button" className="conversation-delete" onClick={() => setPendingDelete(conversation)} aria-label={`删除对话${conversation.title}`} title="删除对话">⌫</button>
               </div>

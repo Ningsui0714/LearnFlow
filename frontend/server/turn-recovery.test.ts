@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildTutorContextMessages, recoverableTutorTurn } from '../src/turn-recovery.ts'
+import {
+  buildTutorContextMessages,
+  hasVisibleStudentMessage,
+  recoverableTutorTurn,
+} from '../src/turn-recovery.ts'
 
 test('identifies a user message orphaned by reload as recoverable', () => {
   const turn = recoverableTutorTurn([
@@ -47,4 +51,10 @@ test('hidden control messages never enter later Tutor model context', () => {
   assert.deepEqual(buildTutorContextMessages(messages, 'ignored during replay', true), [
     { role: 'assistant', content: '请选择候选任务' },
   ])
+  assert.equal(hasVisibleStudentMessage(messages), false)
+  assert.equal(recoverableTutorTurn(messages, false), undefined)
+  assert.equal(hasVisibleStudentMessage([
+    ...messages,
+    { role: 'user', content: '真正的学习问题' },
+  ]), true)
 })

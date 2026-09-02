@@ -21,6 +21,7 @@ import {
   visualTeachingBriefPrompt,
 } from '../server/visual-teaching-skill.ts'
 import { VISUAL_TEACHING_BRIEF_VERSION, VISUAL_TEACHING_SKILL_ID } from './visual-teaching.ts'
+import type { LearnFlowPluginObject } from './plugin-api.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -480,6 +481,7 @@ export async function requestTutorReply(options: {
   conversationId?: string
   sheetId?: string
   activePluginIds?: string[]
+  referencedPluginObjects?: LearnFlowPluginObject[]
   onEvent?: (event: AgentTurnStreamEvent) => void
 }): Promise<AgentTurnResponse> {
   const controller = new AbortController()

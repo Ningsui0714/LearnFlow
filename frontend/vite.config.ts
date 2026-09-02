@@ -23,6 +23,7 @@ import { createAccountCredentialResolver, type ModelCredential } from './server/
 import { buildBackendProxyHeaders } from './server/backend-proxy-security.ts'
 import { AI_LATENCY_BUDGETS } from './src/latency-budgets.ts'
 import { createLearnFlowPluginRegistryProvider } from './server/plugin-loader.ts'
+import { parsePluginObjectDragData, type LearnFlowPluginObject } from './src/plugin-api.ts'
 
 function loadTutorKey(mode: string): ModelCredential {
   const localEnv = loadEnv(mode, process.cwd(), '')
@@ -321,6 +322,12 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           typeof value === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(value)
         )))].slice(0, 16)
         : undefined
+      const referencedPluginObjects = Array.isArray(input.referencedPluginObjects)
+        ? input.referencedPluginObjects.flatMap(value => {
+          const parsed = parsePluginObjectDragData(JSON.stringify(value))
+          return parsed ? [parsed] : []
+        }).slice(0, 12) as LearnFlowPluginObject[]
+        : []
       const submittedMessages = Array.isArray(input.messages)
         ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
             if (!message || typeof message !== 'object') return false
@@ -329,7 +336,12 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           })
         : []
       const latestSubmittedMessage = [...submittedMessages].reverse().find(message => message.role === 'user')?.content || ''
-      const directIntake = directLearningTaskIntakeRequest(activePluginIds, formalScope.projectId, latestSubmittedMessage)
+      const directIntake = directLearningTaskIntakeRequest(
+        activePluginIds,
+        formalScope.projectId,
+        latestSubmittedMessage,
+        referencedPluginObjects,
+      )
       const directDraft = directLearningTaskDraftConfirmationRequest(activePluginIds, formalScope.projectId, latestSubmittedMessage)
       const directPluginTurn = Boolean(directIntake || directDraft)
       const runtimeBaseUrl = directIntake ? learningTaskPreflight.baseUrl : baseUrl
@@ -371,6 +383,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         requestId,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
+        formalSessionId: formalScope.sessionId,
+        referencedPluginObjects,
         mode: modeValue,
         model,
         messageCount: messages.length,
