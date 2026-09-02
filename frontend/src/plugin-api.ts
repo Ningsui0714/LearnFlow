@@ -128,6 +128,7 @@ export type PluginToolResult = {
 export type PluginToolContext = {
   scope: {
     mode: TutorMode
+    learnerId?: number
     conversationId?: string
     projectId?: number
     checkpointId?: number

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { loadLearnFlowPluginRegistry } from './plugin-loader.ts'
 import { RolePackageRuntime } from '../plugins/role_capability_graph/runtime.ts'
@@ -20,6 +23,7 @@ test('role capability plugin is discovered declaratively with explanation-only r
   const loaded = await registry()
   const tools = loaded.toolDefinitions(activation)
   assert.deepEqual(tools.map(tool => tool.name), [
+    'role_capability_graph__search_graph_hub',
     'role_capability_graph__explore_role',
     'role_capability_graph__read_capability_radar',
     'role_capability_graph__read_role_objects',
@@ -33,7 +37,7 @@ test('role capability plugin is discovered declaratively with explanation-only r
     'role_capability_graph__reference_role_package',
     'role_capability_graph__compare_role_packages',
   ])
-  assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 12)
+  assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 13)
   assert.equal(tools.filter(tool => tool.risk === 'artifact').length, 0)
   assert.match(loaded.skillInstructions(activation), /唯一岗位事实版本/)
   assert.match(loaded.skillInstructions(activation), /作为 query 调用 list_role_packages/)
@@ -44,6 +48,59 @@ test('role capability plugin is discovered declaratively with explanation-only r
   assert.match(loaded.skillInstructions(activation), /只在 role-agent\/Hub 进行/)
   assert.match(loaded.skillInstructions(activation), /matchStatus=not_found/)
   assert.match(loaded.skillInstructions(activation), /不得调用 explore_role/)
+  assert.match(loaded.skillInstructions(activation), /先调用 search_graph_hub/)
+})
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue)
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, item]) => [key, canonicalValue(item)]))
+  return typeof value === 'string' ? value.normalize('NFC') : value
+}
+
+function canonicalStringify(value: unknown) {
+  return JSON.stringify(canonicalValue(value))
+}
+
+test('graph hub recommendation exposes an unreviewed personal graph only to its LearnFlow learner', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'learnflow-graph-hub-'))
+  const core = {
+    protocol: 'graph-hub-catalog.v1',
+    generatedAt: new Date().toISOString(),
+    audienceSubjectId: 'learnflow:learner:7',
+    entries: [{
+      graphId: 'personal-agent-map', graphVersion: '1.0.0', graphType: 'knowledge',
+      title: '我的 Agent 学习图', summary: 'Agent 评测与工具设计', keywords: ['Agent', '评测'],
+      ownerSubjectId: 'learnflow:learner:7', maintainerName: 'Learner 7', kind: 'personal',
+      review: 'pending_owner', access: 'owner', objectHash: 'a'.repeat(64), objectPath: `objects/sha256/${'a'.repeat(64)}.graph.json`,
+      submittedAt: new Date().toISOString(),
+      nodeIndex: [{ id: 'agent-eval', label: 'Agent 评测', type: 'knowledge_skill', summary: '可靠性评测' }],
+    }],
+  }
+  const rootHash = createHash('sha256').update(canonicalStringify({ ...core, generatedAt: '', rootHash: '' })).digest('hex')
+  const catalogFile = join(root, 'catalog.json')
+  await writeFile(catalogFile, canonicalStringify({ ...core, rootHash }), 'utf8')
+  const previous = process.env.LEARNFLOW_GRAPH_HUB_CATALOG
+  process.env.LEARNFLOW_GRAPH_HUB_CATALOG = catalogFile
+  try {
+    const loaded = await registry()
+    const owner = await loaded.execute('role_capability_graph__search_graph_hub', {
+      query: 'Agent 评测', topK: 3,
+    }, { ...executionContext, scope: { ...executionContext.scope, learnerId: 7 } })
+    assert.equal((owner.result.payload as any).recommendations.length, 1)
+    assert.equal((owner.result.payload as any).recommendations[0].review, 'pending_owner')
+    assert.equal(owner.result.objects?.[0].objectType, 'graph_recommendation')
+    assert.match(String((owner.result.payload as any).boundary), /不写学习路径、EvidenceEvent 或五核/)
+
+    await assert.rejects(loaded.execute('role_capability_graph__search_graph_hub', {
+      query: 'Agent 评测', topK: 3,
+    }, { ...executionContext, scope: { ...executionContext.scope, learnerId: 8 } }), /graph_hub_catalog_not_visible:audience/)
+  } finally {
+    if (previous === undefined) delete process.env.LEARNFLOW_GRAPH_HUB_CATALOG
+    else process.env.LEARNFLOW_GRAPH_HUB_CATALOG = previous
+  }
 })
 
 test('package catalog filters by requested role and hands unmatched roles to Role Atlas', async () => {

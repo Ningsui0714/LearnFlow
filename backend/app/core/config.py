@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     local_agent_default_timeout_seconds: int = 900
     local_agent_max_output_bytes: int = 2 * 1024 * 1024
     auth_cookie_name: str = "learnflow_session"
+    # Set to a shared parent domain (for example `.example.com`) when
+    # LearnFlow and Role Atlas use sibling subdomains with shared login.
+    auth_cookie_domain: str = ""
     # The existing setting remains the absolute browser-session lifetime.
     auth_session_days: int = 7
     auth_session_idle_minutes: int = 120
@@ -135,6 +138,8 @@ class Settings(BaseSettings):
     # currently authenticated account's encrypted provider credential.  It
     # must never be embedded in or forwarded to browser code.
     auth_runtime_bridge_token: str = Field(default="", repr=False)
+    # Short-lived, learner-bound Role Package handoff verification secret.
+    role_package_launch_secret: str = Field(default="", repr=False)
 
     # Embedding
     embedding_backend: str = "local"  # local | api

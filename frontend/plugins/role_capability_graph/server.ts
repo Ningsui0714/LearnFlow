@@ -5,6 +5,9 @@ import {
   type PluginJson,
   type PluginJsonSchema,
 } from '../../src/plugin-api.ts'
+import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 const { packageSelector, rolePackageRuntime } = await import(
   versionedPluginModuleUrl('./runtime.ts', import.meta.url)
 ) as typeof import('./runtime.ts')
@@ -14,6 +17,25 @@ const {
   ROLE_OBJECT_TYPES,
   ROLE_RENDERERS,
 } = await import(versionedPluginModuleUrl('./shared.ts', import.meta.url)) as typeof import('./shared.ts')
+const { graphHubSubject, recommendGraphHubEntries } = await import(
+  versionedPluginModuleUrl('./graph-hub.ts', import.meta.url)
+) as typeof import('./graph-hub.ts')
+
+function scopedGraphHubCatalog(learnerId?: number) {
+  const subject = graphHubSubject(learnerId)
+  const rootValue = String(process.env.LEARNFLOW_GRAPH_HUB_CATALOG_ROOT || '').trim()
+  if (rootValue) {
+    const root = resolve(rootValue)
+    const audienceHash = createHash('sha256').update(subject).digest('hex')
+    const scoped = join(root, 'subjects', audienceHash, 'catalog.json')
+    if (existsSync(scoped)) return { catalogFile: scoped, subject }
+    const publicCatalog = join(root, 'catalogs', 'public.json')
+    if (existsSync(publicCatalog)) return { catalogFile: publicCatalog, subject }
+  }
+  const catalogFile = String(process.env.LEARNFLOW_GRAPH_HUB_CATALOG || '').trim()
+  if (!catalogFile) throw new Error('graph_hub_not_configured:LEARNFLOW_GRAPH_HUB_CATALOG_ROOT')
+  return { catalogFile, subject }
+}
 
 const selectorProperties = {
   packageId: { type: 'string', maxLength: 220, description: '可选的精确岗位包 ID；安装多个包时必须用于消歧。' },
@@ -37,7 +59,7 @@ const objectSchema: PluginJsonSchema = {
   additionalProperties: false,
 }
 
-const objects = [
+const roleObjects = [
   ['role_object', '岗位对象', '岗位、任务、能力、知识技能、场景和事理对象。'],
   ['role_relation', '岗位关系', '语义关系、事理关系和语义—过程桥接。'],
   ['role_evidence', '岗位证据', '固定来源片段、证据绑定和适用边界。'],
@@ -52,6 +74,28 @@ const objects = [
     return typeof item.rootHash === 'string' && /^[a-f0-9]{64}$/.test(item.rootHash) ? [] : ['rootHash must be a SHA-256 digest']
   },
 }))
+const graphRecommendationObject = {
+  type: 'graph_recommendation',
+  title: '图谱推荐',
+  description: '图谱 Hub 在当前主体可见范围内返回的版本化图谱候选。',
+  schemaVersion: ROLE_OBJECT_SCHEMA_VERSION,
+  schema: {
+    type: 'object' as const,
+    properties: {
+      graphId: { type: 'string' }, graphVersion: { type: 'string' }, graphType: { type: 'string' },
+      title: { type: 'string' }, summary: { type: 'string' }, kind: { type: 'string' }, review: { type: 'string' },
+      access: { type: 'string' }, objectHash: { type: 'string' }, ownerSubjectId: { type: 'string' },
+      maintainerName: { type: 'string' }, score: { type: 'number' }, matchedNodes: { type: 'array', items: { type: 'object' } },
+    },
+    required: ['graphId', 'graphVersion', 'graphType', 'title', 'summary', 'kind', 'review', 'access', 'objectHash', 'ownerSubjectId', 'maintainerName', 'score', 'matchedNodes'],
+    additionalProperties: false as const,
+  },
+  validate: (value: PluginJson) => {
+    const item = value as Record<string, unknown>
+    return typeof item.objectHash === 'string' && /^[a-f0-9]{64}$/.test(item.objectHash) ? [] : ['objectHash must be a SHA-256 digest']
+  },
+}
+const objects = [...roleObjects, graphRecommendationObject]
 const plugin = defineLearnFlowPlugin({
   manifest: {
     apiVersion: LEARNFLOW_PLUGIN_API_VERSION,
@@ -59,6 +103,22 @@ const plugin = defineLearnFlowPlugin({
     defaultEnabled: false,
     objects,
     tools: [
+      {
+        id: 'search_graph_hub', title: '检索并推荐图谱', description: '按学习目标在图谱 Hub 中检索官方图谱、已审核个人图谱，以及当前学习者自己的未审核图谱，返回有界候选和命中节点。',
+        whenToUse: '用户询问有哪些相关图谱、希望按学习目标推荐图谱，或尚未确定应进入哪一种图谱时使用。',
+        whenNotToUse: '已有明确岗位包与稳定对象 ID 时使用精确岗位工具；不得用它修改图谱、替用户确认学习路径或访问其他人的未审核个人图谱。',
+        toolClass: 'perception', risk: 'read_only',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', minLength: 1, maxLength: 500, description: '学习目标、岗位方向、课程或知识主题，例如“Agent 评测学习路线”。' },
+            graphTypes: { type: 'array', items: { type: 'string', enum: ['learning_path', 'role_semantic', 'role_process', 'knowledge', 'custom'] }, maxItems: 5, description: '可选图谱类型过滤；省略表示全部类型。' },
+            topK: { type: 'integer', minimum: 1, maximum: 10, description: '返回候选数，默认 5。' },
+          },
+          required: ['query'], additionalProperties: false,
+        },
+        outputObjectTypes: ['graph_recommendation'], availableInModes: ['free', 'simple_explain', 'guided_learning', 'learning_plan'],
+      },
       {
         id: 'explore_role', title: '读取岗位全景', description: '一次返回岗位定位、典型任务、核心能力、工作场景、相邻岗位和可引用事实合同，避免为岗位概览连续调用多个细粒度工具。',
         whenToUse: '用户首次询问某个岗位是什么、做什么、需要什么能力，或请求岗位整体介绍时优先作为第一且通常唯一的工具。',
@@ -187,6 +247,7 @@ const plugin = defineLearnFlowPlugin({
       whenToUse: '学习者讨论职业方向、岗位职责、典型任务、能力结构、知识技能、工作过程或岗位证据。',
       whenNotToUse: '不要用于判断学习者是否掌握、直接规划核心学习路径、冷启动或迭代岗位包；生产维护只在 role-agent/Hub 进行。',
       instructions: [
+        '用户先询问有哪些可用图谱、希望按学习目标推荐图谱或尚未确定图谱类型时，先调用 search_graph_hub；它只返回当前主体可见的候选，不替学习者选择或修改图谱。',
         '当前问题涉及职业方向、岗位职责、典型任务、能力结构、知识技能、工作过程或岗位证据时，在回答或追问之前必须先调用本插件工具；不得只读取核心学习路径或依靠通用知识作答。',
         '先把插件返回的 snapshot 描述视为本轮唯一岗位事实版本；回答中不得混用其他快照。对话中还没有岗位包引用时，先把用户询问的岗位名称或原始问题作为 query 调用 list_role_packages；只有查询全部目录时才能省略 query。不得替用户自动选择。',
         '若 list_role_packages 返回 matchStatus=not_found，则当前岗位没有可用岗位包：不得调用 explore_role、search_role_knowledge 或其他岗位内容工具，不得用目录中的无关岗位包作“有限探索”。应明确说明未匹配，并引导用户点击工具结果中的 Role Atlas 入口自主研究；LearnFlow 不执行岗位包冷启动或迭代。',
@@ -199,7 +260,7 @@ const plugin = defineLearnFlowPlugin({
         '需要解释单个节点的证据缺口、关系边界或过程风险时，调用 research_role_node_risks；其结果仍固定当前快照，只能用于解释。',
         '岗位对象和工具结果不是学习者掌握证据。阅读 Skill 不创建、修复、发布或覆盖岗位快照。冷启动与迭代只在 role-agent/Hub 进行。',
       ].join('\n'),
-      tools: ['explore_role', 'read_capability_radar', 'read_role_objects', 'search_role_knowledge', 'query_role_graph', 'trace_work_process', 'inspect_role_evidence', 'audit_role_package', 'research_role_node_risks', 'list_role_packages', 'reference_role_package', 'compare_role_packages'],
+      tools: ['search_graph_hub', 'explore_role', 'read_capability_radar', 'read_role_objects', 'search_role_knowledge', 'query_role_graph', 'trace_work_process', 'inspect_role_evidence', 'audit_role_package', 'research_role_node_risks', 'list_role_packages', 'reference_role_package', 'compare_role_packages'],
       objectTypes: [...ROLE_OBJECT_TYPES],
     }],
     renderers: [
@@ -217,6 +278,16 @@ const plugin = defineLearnFlowPlugin({
     ],
   },
   handlers: {
+    search_graph_hub: (input, context) => {
+      const scoped = scopedGraphHubCatalog(context.scope.learnerId)
+      return recommendGraphHubEntries({
+        catalogFile: scoped.catalogFile,
+        actorSubjectId: scoped.subject,
+        query: String(input.query),
+        graphTypes: Array.isArray(input.graphTypes) ? input.graphTypes.map(String) : undefined,
+        topK: Number(input.topK || 5),
+      })
+    },
     explore_role: input => rolePackageRuntime.explore(packageSelector(input), String(input.query)),
     read_capability_radar: input => rolePackageRuntime.capabilityRadar(packageSelector(input), String(input.query || '')),
     read_role_objects: input => rolePackageRuntime.readObjects(packageSelector(input), input.objectIds as string[], input.includeRelations !== false),

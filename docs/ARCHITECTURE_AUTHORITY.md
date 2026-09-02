@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-02.5`）：LearnFlow 与 Role Atlas 保持一级产品对等，Graph Hub 是共享发现层。新增的岗位包交接是确定性产品入口：短时 HMAC 令牌同时固定正式学习者主体和不可变 `packageId + packageVersion + snapshotId + rootHash`；LearnFlow 消费后新建正式 `AgentSession + AgentMessage`，启用岗位插件并投影一条 `role_package_reference` ToolRun。该入口不调用模型、不新增主 Agent、不写核心学习对象、EvidenceEvent 或五核；跨子域登录仍由 LearnFlow 会话统一负责。既有 `search_graph_hub` 保持只读、主体由服务端派生且模型不能传 owner。
+
 Contract impact（`2026-09-02.3`）：`list_role_packages` 新增可选 `query`。讨论特定岗位时 Tutor 必须传入该目标，runtime 只返回确定性名称/alias 匹配；`not_found` 是正式、可渲染的空结果，不得降级为另一个岗位包或继续探索。空态提供 Role Atlas 冷启动页 `/projects/new?role=...`，基地址由 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置。该跳转只移交岗位研究，不创建 LearnFlow Tool、候选对象、事件或学习状态；生产、迭代、审核和发布边界不变。
 
 Contract impact（`2026-09-02.2`）：岗位插件增加确定性的“发现—选择—引用”合同。`list_role_packages` 只列当前主体可见且协议有效的不可变包；`reference_role_package` 必须接收目录原样返回的 `packageId + packageVersion + snapshotId + rootHash`，校验四元身份后生成固定到该 ToolRun 的只读 `role_package_reference`。模型不得按标题替用户选择，也不得静默换版本。开发模拟会额外发现本机 role-agent `packages/` 下所有有效静态包，并明确标记为 `role_agent_simulation / simulation_all`，不冒充正式 Hub 审核。正式网关仍由服务端认证主体并过滤官方、审核通过和 owner-private 目录。引用不安装、不生产、不发布岗位包，不写核心对象、EvidenceEvent 或五核。

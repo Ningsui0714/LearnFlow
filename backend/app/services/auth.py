@@ -370,6 +370,7 @@ def set_auth_cookie(response: Response, token: str):
         secure=settings.auth_cookie_secure,
         samesite="lax",
         path="/",
+        domain=settings.auth_cookie_domain or None,
     )
 
 
@@ -380,6 +381,7 @@ def clear_auth_cookie(response: Response):
         secure=settings.auth_cookie_secure,
         httponly=True,
         samesite="lax",
+        domain=settings.auth_cookie_domain or None,
     )
 
 

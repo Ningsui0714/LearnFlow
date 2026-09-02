@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-02.5`）：LearnFlow、Role Atlas 是对等一级产品，Graph Hub 是共享发现层。Graph Hub/Role Atlas 通过短时、主体绑定的签名令牌把精确岗位包交给 LearnFlow；LearnFlow 在确定性 API 中创建普通对话并投影 `role_package_reference` ToolRun，使岗位插件从第一轮起锁定不可变版本。导航、验签和会话创建不交给模型，不新增主 Agent，也不写核心对象、EvidenceEvent 或五核。`search_graph_hub` 仍以正式 `learner_id` 派生主体并保持只读。
+
 Contract impact（`2026-09-02.3`）：岗位包发现从“列出全部可见包”收紧为“按用户目标岗位确定性匹配”。Tutor 在未引用岗位包时必须把岗位名称传给 `list_role_packages`；工具只返回标题、岗位根节点或 alias 与查询整体包含匹配的不可变版本。无匹配时返回 `matchStatus=not_found` 和预填 `role` 参数的 Role Atlas `/projects/new` 入口，Skill 禁止继续调用岗位内容工具或借用无关包。链接基地址由 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置，本地默认 `http://localhost:3000`。LearnFlow 仍不执行冷启动、迭代或发布，不写核心对象、EvidenceEvent 或五核。
 
 Contract impact（`2026-09-02.2`）：岗位包选择采用两步只读 ACI，而不是模型隐式状态。Tutor 先以 `list_role_packages` 取得当前可见候选、来源范围和完整不可变身份；学习者明确选择后，Tutor 才能以四元身份调用 `reference_role_package`。成功 ToolRun 返回 `role_package_reference` 与 `requiredSelector`，后续岗位工具必须逐字段复用。引用仍依赖可重放 ToolRun/Plugin Object，不建立插件数据库或第二套对话状态。开发环境对 role-agent 目录的自动发现只是 Hub 可见性模拟；生产环境不会启用该隐式源。

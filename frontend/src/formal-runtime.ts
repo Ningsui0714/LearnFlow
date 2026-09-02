@@ -213,6 +213,8 @@ export type FormalTutorSession = {
   client_conversation_id?: string
   vnext_managed?: boolean
   vnext_mode?: 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
+  plugin_ids?: string[]
+  role_package_binding?: Record<string, unknown> | null
   chat_mode?: { id?: 'free' | 'explain' | 'learn' | 'plan'; status?: string }
   messages?: FormalTutorMessage[]
   created_at?: string | null
@@ -820,6 +822,13 @@ export async function createFormalTutorSession(
       title: scope.title,
       client_conversation_id: scope.clientConversationId,
     }),
+  })
+}
+
+export async function consumeFormalRolePackageLaunch(token: string, clientConversationId: string) {
+  return jsonRequest<FormalTutorSession>('/api/agent/role-package-launches/consume', {
+    method: 'POST',
+    body: JSON.stringify({ token, client_conversation_id: clientConversationId }),
   })
 }
 

@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-09-02.3"
+REGISTRY_VERSION = "2026-09-02.5"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -413,6 +413,8 @@ TOOLS = {
                      KERNEL_NAMES, (), "learner/session/project/checkpoint-scoped LearningTask queue + answer-free LearningAttempt/RemediationCase/ReviewSchedule projection + project source knowledge domains -> bounded read-only observation"),
         ToolContract("domain_knowledge_reader", "Learner Domain Knowledge Library Reader", "tutor_agent", "vnext", "read",
                      (), (), "learner-owned processed Source/Chunk library -> relevance-ranked, provenance-bearing, bounded untrusted context; never learner knowledge evidence"),
+        ToolContract("graph_hub_reader", "Scoped Graph Hub Search and Recommender", "tutor_agent", "vnext", "read",
+                     (), (), "authenticated LearnFlow learner scope + content-addressed Graph Hub catalog -> official, approved-personal, and owner-only pending-personal graph recommendations with bounded node matches; zero learner-state write"),
         ToolContract("learning_file_service", "Managed Lecture and Practice File Service", "tutor_agent", "vnext", "artifact",
                      (), (), "learner-owned Lecture/Exercise/ConceptQuestion refs -> answer-safe file views, explicit open/attach audit events; generation and opening never imply mastery"),
         ToolContract("active_learning_file_reader", "Active Paper Learning File Reader", "tutor_agent", "vnext", "read",
@@ -536,7 +538,7 @@ TOOLS = {
 TOOL_INTERFACE_ROLES = {
     **{tool_id: "aci_tool" for tool_id in {
         "action_board", "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "learning_diagram_generator", "learning_animation_generator",
-        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
+        "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader", "graph_hub_reader",
         "review_context_reader", "review_reflection_gateway",
         "vnext_learning_path_planner", "vnext_learning_path_plan_manager",
         "personal_concept_graph_reader", "concept_self_report_gateway",
@@ -577,7 +579,7 @@ TOOL_MODEL_EXPOSURE = {
         "vnext_native"
         if tool_id in {
             "computer_knowledge_search", "web_evidence_reader", "learning_video_search", "learning_video_inspector", "learning_diagram_generator", "learning_animation_generator",
-            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader",
+            "vnext_five_kernel_profile_reader", "vnext_learning_workspace_reader", "vnext_learning_path_exact_reader", "vnext_learning_path_fuzzy_reader", "vnext_personal_path_node_proposer", "domain_knowledge_reader", "graph_hub_reader",
             "review_context_reader", "project_workspace_reader", "project_source_reader",
             "project_learning_file_reader", "project_roadmap_reader", "project_roadmap_proposer", "project_learning_file_proposer",
             "assessment_blueprint_builder", "dynamic_practice_generator", "similar_practice_generator", "practice_quality_inspector", "active_learning_file_reader",
@@ -1476,6 +1478,7 @@ _PYTHON_MEMBER_BINDING_TARGETS = {
 
 
 _API_BINDING_TARGETS = {
+    "api:agent.consume_role_package_launch": ("app.api.agent", "/agent/role-package-launches/consume", "POST", "consume_role_package_launch"),
     "api:agent.sync_vnext_session": ("app.api.agent", "/agent/sessions/{session_id}/vnext", "PUT", "sync_vnext_session"),
     "api:agent.start_skill_run": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs", "POST", "start_learning_skill_run"),
     "api:agent.advance_skill_turn": ("app.api.agent", "/agent/sessions/{session_id}/skill-runs/{run_id}/turns", "POST", "advance_learning_skill_turn"),
@@ -1556,6 +1559,8 @@ _FRONTEND_HANDLER_TARGETS = {
     "frontend:agent_runtime.run": ("frontend/server/agent-runtime.ts", "runTutorAgentTurn", ""),
     "frontend:plugin.registry": ("frontend/src/plugin-api.ts", "LearnFlowPluginRegistry", ""),
     "frontend:plugin.loader": ("frontend/server/plugin-loader.ts", "loadLearnFlowPluginRegistry", ""),
+    "frontend:plugin.graph_hub": ("frontend/plugins/role_capability_graph/graph-hub.ts", "recommendGraphHubEntries", ""),
+    "frontend:role_package_launch": ("frontend/src/main.tsx", "rolePackageLaunchTokenFromPath", "/launch/role-package/"),
     "frontend:visual.generate": ("frontend/server/learning-visual-spec.ts", "generateLearningVisual", ""),
     "frontend:visual_storyboard.compile": ("frontend/server/visual-storyboard-tool.ts", "compileVisualStoryboard", ""),
     "frontend:visual_storyboard.design_ascii": ("frontend/server/visual-storyboard-tool.ts", "designAsciiStoryboard", ""),
@@ -1675,6 +1680,7 @@ _TOOL_BINDING_IDS = {
     "vnext_five_kernel_profile_reader": ("py:five_kernel.context",),
     "vnext_learning_workspace_reader": ("api:learner_state.workspace",),
     "domain_knowledge_reader": ("api:knowledge_library.context",),
+    "graph_hub_reader": ("frontend:plugin.graph_hub",),
     "learning_file_service": ("api:learning_files.list",),
     "active_learning_file_reader": ("frontend:tool:read_active_learning_file",),
     "assessment_blueprint_builder": ("py:assessment.create",),
