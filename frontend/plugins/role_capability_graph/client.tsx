@@ -513,9 +513,28 @@ function ProcessForest(props: PluginToolRendererProps) {
 
 function PackageCatalog(props: PluginToolRendererProps) {
   const payload = (props.result.payload || {}) as RecordValue
+  const sourceLabel = (item: RecordValue) => ({
+    official_builtin: '官方维护', reviewed_public: '审核通过', owner_private: '我维护的',
+    role_agent_simulation: 'role-agent 模拟', installed: '本地已安装',
+  } as Record<string, string>)[String(item.sourceKind || '')] || '可用岗位包'
   return <section className="role-plugin-view role-plugin-catalog" aria-label="岗位包目录">
-    <header><strong>已安装岗位包</strong><small>{String(payload.count || 0)} 个不可变版本</small></header>
-    {(payload.packages || []).map((item: RecordValue) => <article key={String(item.snapshotId)}><span>{String(item.roleTitle)}</span><strong>v{String(item.packageVersion)}</strong><p>{String(item.snapshotAsOf)} · <code>{String(item.snapshotId)}</code></p>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`介绍岗位包“${String(item.roleTitle)}”（固定快照 ${String(item.snapshotId)}）`)}>使用此版本</button>}</article>)}
+    <header><strong>可引用岗位包</strong><small>{String(payload.count || 0)} 个不可变版本</small></header>
+    {(payload.packages || []).map((item: RecordValue) => <article key={`${String(item.packageId)}@${String(item.packageVersion)}`}><span>{sourceLabel(item)} · {String(item.roleTitle)}</span><strong>v{String(item.packageVersion)}</strong><p>{String(item.snapshotAsOf)} · <code>{String(item.snapshotId)}</code></p>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`引用这个岗位包。请调用 reference_role_package，并原样使用以下身份：packageId=${String(item.packageId)}；packageVersion=${String(item.packageVersion)}；snapshotId=${String(item.snapshotId)}；rootHash=${String(item.rootHash)}`)}>引用此岗位包</button>}</article>)}
+    {payload.simulation && <p className="role-plugin-warning">{String(payload.simulation)}</p>}
+    {Array.isArray(payload.warnings) && payload.warnings.length > 0 && <p className="role-plugin-warning">另有 {payload.warnings.length} 个 role-agent 目录项未通过协议校验，因此没有加入可引用列表。</p>}
+    <p className="role-plugin-boundary">选择动作会固定不可变版本，但不会安装、修改或发布岗位包。</p>
+  </section>
+}
+
+function PackageReference(props: PluginToolRendererProps) {
+  const reference = props.objects.find(item => item.objectType === 'role_package_reference')
+  const value = (reference?.value || {}) as RecordValue
+  const data = (value.data || {}) as RecordValue
+  return <section className="role-plugin-view role-plugin-catalog" aria-label="岗位包引用">
+    <header><strong>已引用岗位包</strong><small>固定到本次 ToolRun</small></header>
+    <article><span>{String(value.roleTitle || reference?.label || '岗位包')}</span><strong>v{String(value.packageVersion || '—')}</strong><p><code>{String(value.snapshotId || '')}</code></p><p><code>{String(value.rootHash || '').slice(0, 20)}…</code></p></article>
+    {reference && props.onReference && <div className="role-plugin-actions"><button type="button" onClick={() => props.onReference?.(reference)}>引用到输入框</button></div>}
+    <p className="role-plugin-boundary">{String(data.boundary || '后续岗位读取必须复用该精确快照。')}</p>
   </section>
 }
 
@@ -578,6 +597,7 @@ const plugin = defineLearnFlowPluginClient({
     [ROLE_RENDERERS.evidence]: EvidencePanel,
     [ROLE_RENDERERS.audit]: AuditPanel,
     [ROLE_RENDERERS.catalog]: PackageCatalog,
+    [ROLE_RENDERERS.packageReference]: PackageReference,
     [ROLE_RENDERERS.comparison]: PackageComparison,
     [ROLE_RENDERERS.nodeRisk]: NodeRiskResearch,
   },

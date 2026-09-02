@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-09-02.1"
+REGISTRY_VERSION = "2026-09-02.2"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -2359,7 +2359,7 @@ def registry_manifest() -> dict[str, Any]:
             "skill_ontology": "pedagogical methods define local teaching transitions; playbooks compose capabilities; coordination skills manage handoff",
             "skill_spec_authority": "SkillSpec v3 with knowledge_requirements in architecture_registry.py -> backend runtime + generated frontend manifest; no handwritten frontend workflow copy",
             "plugin_extension_authority": "trusted in-process Agent packages may contribute only namespaced tool, Agent skill, versioned JSON object and tool-result renderer contracts; the host validates and routes them generically and none can write kernels, evidence or core objects",
-            "role_package_ecosystem": "role-agent cold-start and iteration -> independently reviewed Hub publication -> LearnFlow maintenance-time install -> read-only snapshot explanation; LearnFlow exposes no role-package production or publication tool",
+            "role_package_ecosystem": "role-agent cold-start and iteration -> independently reviewed Hub publication -> actor-scoped catalog -> explicit immutable package reference -> read-only snapshot explanation; LearnFlow exposes no role-package production or publication tool",
             "assessment_design_authority": "AssessmentBlueprint + Rubric are versioned learner-scoped proposals; generation is zero-target and deterministic grading remains Practice Agent authority",
         },
         "agents": [asdict(item) for item in AGENTS.values()],

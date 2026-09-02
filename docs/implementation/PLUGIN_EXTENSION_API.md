@@ -115,14 +115,16 @@ client.tsx      renderer components，导出 default 或 plugin
 
 `frontend/plugins/role_capability_graph/` 是首个官方实现，只读取已发布的不可变 Static Role Package：
 
-- 十一个只读 Tool，其中 `research_role_node_risks` 只为解释节点证据、关系和事理风险；
+- 十二个只读 Tool；`list_role_packages -> reference_role_package` 负责用户明确选择与不可变引用，`research_role_node_risks` 只为解释节点证据、关系和事理风险；
 - 一个证据化岗位图谱阅读 Agent Skill；
-- 五类已发布岗位对象，加一类只读节点风险解释 Object；
-- 九个常规读取 Renderer，加一个节点风险研究 Renderer。
+- 五类已发布岗位对象，加一类岗位包引用 Object 和一类只读节点风险解释 Object；
+- 十一个 ToolResult Renderer，包括岗位包目录、岗位包引用和节点风险研究。
 
 插件 runtime 按自身数据目录发现包并校验 manifest 中全部组件 SHA-256，包括 views、retrieval-index、
 object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
-读取结果固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。节点风险研究只读取当前
+目录先展示当前主体可见的候选；引用工具只有在学习者明确选择并原样提供 `packageId + packageVersion + snapshotId + rootHash`
+时才固定引用。后续工具必须复用该 selector。开发态可把本机 role-agent 的有效静态包标为模拟可用；生产态不启用该
+隐式来源。读取结果固定同一四元身份并显式披露截断与覆盖。节点风险研究只读取当前
 快照的两跳邻域、关系、证据、生命周期和显式风险，不联网补证据，也不生成修改建议或后继版本。冷启动、迭代、
 审核、发布、Tag、回滚和 Registry 全部留在 role-agent/Hub；LearnFlow Tutor 没有这些生产入口。
 维护期另有纯文件导入器：它只接收 role-agent 导出的 `static-role-package@3.0.0` bundle，在写盘前独立校验组件

@@ -8,6 +8,17 @@
 2. Hub 用确定性 `submit -> review -> publish` 状态机冻结版本、执行所有权和独立审核门，并产生内容寻址目录。
 3. LearnFlow 只读取目录中对当前主体可见的已发布条目，再独立校验 bundle 后安装到岗位插件；安装不产生学习证据。
 
+## 对话中的岗位包引用
+
+插件使用两步只读工具合同：
+
+1. `list_role_packages` 展示服务端已经按主体过滤的官方包、审核通过的公共包和 owner 自己的私有包。
+2. 学习者明确选择后，`reference_role_package` 必须收到目录中的 `packageId + packageVersion + snapshotId + rootHash`，逐项匹配后产生固定到 ToolRun 的 `role_package_reference`。
+
+引用不是安装或复制。后续岗位工具从引用对象的 `requiredSelector` 复用精确版本；标题、自然语言相似度和模型偏好都不能
+覆盖用户选择。当前开发模拟额外扫描本机 role-agent `packages/`，把其中协议有效的静态岗位包标记为
+`role_agent_simulation / simulation_all` 并全部视为可引用；该标签不表示正式审核，生产环境默认关闭这一来源。
+
 ## 第一阶段：纯文件 Hub
 
 ```text

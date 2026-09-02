@@ -30,7 +30,8 @@ const objectSchema: PluginJsonSchema = {
   properties: {
     packageId: { type: 'string' }, packageVersion: { type: 'string' }, snapshotId: { type: 'string' },
     snapshotAsOf: { type: 'string' }, rootHash: { type: 'string' }, roleTitle: { type: 'string' },
-    evidencePolicy: { type: 'string' }, category: { type: 'string' }, data: { type: 'object' },
+    evidencePolicy: { type: 'string' }, sourceKind: { type: 'string' }, accessScope: { type: 'string' },
+    category: { type: 'string' }, data: { type: 'object' },
   },
   required: ['packageId', 'packageVersion', 'snapshotId', 'snapshotAsOf', 'rootHash', 'roleTitle', 'evidencePolicy', 'category', 'data'],
   additionalProperties: false,
@@ -42,6 +43,7 @@ const objects = [
   ['role_evidence', '岗位证据', '固定来源片段、证据绑定和适用边界。'],
   ['role_audit', '岗位审计', '结构校验、警告、研究主题与覆盖统计。'],
   ['role_snapshot', '岗位快照', '不可变岗位包版本、时点和 root hash 描述。'],
+  ['role_package_reference', '岗位包引用', '由用户明确选择并固定到产生它的 ToolRun 的不可变岗位包引用。'],
   ['role_node_risk', '节点研究风险', '固定节点的证据缺口、关系边界、候选状态与过程风险解释。'],
 ].map(([type, title, description]) => ({
   type, title, description, schemaVersion: ROLE_OBJECT_SCHEMA_VERSION, schema: objectSchema,
@@ -149,12 +151,20 @@ const plugin = defineLearnFlowPlugin({
         outputObjectTypes: ['role_node_risk', 'role_object', 'role_relation'], availableInModes: ['free', 'simple_explain', 'guided_learning', 'learning_plan'],
       },
       {
-        id: 'list_role_packages', title: '列出岗位包版本', description: '列出插件已安装的全部岗位包、版本、快照时点和 root hash。',
-        whenToUse: '用户询问可用岗位、版本、数据时点，或版本比较前需要消歧时。',
-        whenNotToUse: '不要用于解释具体岗位内容，也不要声称未安装的岗位包可用。',
+        id: 'list_role_packages', title: '列出可引用岗位包', description: '列出当前主体可见且协议有效的岗位包、来源范围、版本、快照时点和 root hash，供用户明确选择。开发模拟同时发现本机 role-agent 中的有效静态岗位包。',
+        whenToUse: '用户询问有哪些官方、审核通过、自己维护或当前可用的岗位包，尚未选定岗位包，或版本比较前需要消歧时。',
+        whenNotToUse: '不要用于解释具体岗位内容，不要把模拟来源描述成正式审核，也不要替用户自动完成选择。',
         toolClass: 'perception', risk: 'read_only', renderer: ROLE_RENDERERS.catalog,
         inputSchema: { type: 'object', properties: {}, additionalProperties: false }, outputObjectTypes: ['role_snapshot'],
         availableInModes: ['free', 'simple_explain', 'guided_learning', 'learning_plan'],
+      },
+      {
+        id: 'reference_role_package', title: '引用岗位包', description: '根据用户刚刚选择的完整不可变身份引用一个岗位包，并把精确 selector 固定到本次 ToolRun，供后续岗位工具复用。',
+        whenToUse: '用户从岗位包目录明确选择一个版本，或明确提供 packageId、packageVersion、snapshotId 与 rootHash 并要求使用、引用或切换到该岗位包时。',
+        whenNotToUse: '缺少完整身份、只有模糊岗位名称、用户尚未选择、包不可见或 rootHash 不匹配时不得调用；先列出候选。它不安装、修改或发布岗位包。',
+        toolClass: 'perception', risk: 'read_only', renderer: ROLE_RENDERERS.packageReference,
+        inputSchema: schema({ rootHash: { type: 'string', minLength: 64, maxLength: 64, description: '目录返回的 64 位 SHA-256 root hash。' } }, ['packageId', 'packageVersion', 'snapshotId', 'rootHash']),
+        outputObjectTypes: ['role_package_reference'], availableInModes: ['free', 'simple_explain', 'guided_learning', 'learning_plan'],
       },
       {
         id: 'compare_role_packages', title: '比较岗位包版本', description: '比较两个已安装不可变岗位快照的对象新增、移除、内容变更和引用迁移命中。',
@@ -178,8 +188,9 @@ const plugin = defineLearnFlowPlugin({
       whenNotToUse: '不要用于判断学习者是否掌握、直接规划核心学习路径、冷启动或迭代岗位包；生产维护只在 role-agent/Hub 进行。',
       instructions: [
         '当前问题涉及职业方向、岗位职责、典型任务、能力结构、知识技能、工作过程或岗位证据时，在回答或追问之前必须先调用本插件工具；不得只读取核心学习路径或依靠通用知识作答。',
-        '先把插件返回的 snapshot 描述视为本轮唯一岗位事实版本；回答中不得混用其他快照。',
-        '首次介绍岗位或询问“是什么、做什么、需要什么能力”时，第一步调用 role_capability_graph__explore_role；它一次返回足够的岗位全景，取得结果后通常直接回答，不要再机械调用搜索、对象读取和关系图。',
+        '先把插件返回的 snapshot 描述视为本轮唯一岗位事实版本；回答中不得混用其他快照。对话中还没有岗位包引用、用户询问可用包或存在多个可能匹配版本时，先调用 list_role_packages 展示候选，不得替用户自动选择。',
+        '用户明确选择目录中的一个版本后，必须把目录返回的 packageId、packageVersion、snapshotId、rootHash 原样传给 reference_role_package。引用成功后的所有岗位读取都复用 requiredSelector；不得只按标题重新匹配或静默换版本。',
+        '已经存在明确岗位包引用时，首次介绍岗位或询问“是什么、做什么、需要什么能力”调用 explore_role，并带上引用中的精确 selector；它一次返回足够的岗位全景，取得结果后通常直接回答，不要再机械调用搜索、对象读取和关系图。',
         '只有局部问题没有稳定对象 ID 时才调用 search_role_knowledge；已有 ID 时精确读取；需要岗位中心、任务、能力单元和知识技能逐环展开时用 read_capability_radar；解释局部关系时查询图；解释工作如何发生时追踪事理过程。',
         '涉及重要事实、争议、可信度或时间边界时检查证据。引用对象 ID，并区分 accepted/candidate 与 observed_pattern/documented_norm/inferred_pattern。',
         '最终回答只能使用工具明确返回的 objects、relations 与 grounding 事实，并应就近保留对象 ID。若结果带 relationFacts，关系方向和类型必须逐字服从该列表，不得改名、反向或补造。若要使用模型常识，必须单列为“通用补充（非岗位快照）”；不得把补充伪装成插件结论。',
@@ -187,7 +198,7 @@ const plugin = defineLearnFlowPlugin({
         '需要解释单个节点的证据缺口、关系边界或过程风险时，调用 research_role_node_risks；其结果仍固定当前快照，只能用于解释。',
         '岗位对象和工具结果不是学习者掌握证据。阅读 Skill 不创建、修复、发布或覆盖岗位快照。冷启动与迭代只在 role-agent/Hub 进行。',
       ].join('\n'),
-      tools: ['explore_role', 'read_capability_radar', 'read_role_objects', 'search_role_knowledge', 'query_role_graph', 'trace_work_process', 'inspect_role_evidence', 'audit_role_package', 'research_role_node_risks', 'list_role_packages', 'compare_role_packages'],
+      tools: ['explore_role', 'read_capability_radar', 'read_role_objects', 'search_role_knowledge', 'query_role_graph', 'trace_work_process', 'inspect_role_evidence', 'audit_role_package', 'research_role_node_risks', 'list_role_packages', 'reference_role_package', 'compare_role_packages'],
       objectTypes: [...ROLE_OBJECT_TYPES],
     }],
     renderers: [
@@ -199,7 +210,8 @@ const plugin = defineLearnFlowPlugin({
       { id: ROLE_RENDERERS.evidence, title: '岗位证据', description: '显示来源片段、证据强度与限制。' },
       { id: ROLE_RENDERERS.audit, title: '岗位审计', description: '显示协议状态、统计、警告和研究缺口。' },
       { id: ROLE_RENDERERS.nodeRisk, title: '节点风险研究', description: '显示固定节点的证据、关系、状态和过程风险，只用于解释。' },
-      { id: ROLE_RENDERERS.catalog, title: '岗位包目录', description: '显示已安装岗位包、版本与固定快照。' },
+      { id: ROLE_RENDERERS.catalog, title: '岗位包目录', description: '显示当前可引用岗位包、来源范围、版本与固定快照，并让用户发起精确选择。' },
+      { id: ROLE_RENDERERS.packageReference, title: '岗位包引用', description: '显示用户已选择并固定到当前 ToolRun 的岗位包身份。' },
       { id: ROLE_RENDERERS.comparison, title: '岗位版本比较', description: '显示两个固定快照之间的对象和引用迁移差异。' },
     ],
   },
@@ -214,6 +226,9 @@ const plugin = defineLearnFlowPlugin({
     audit_role_package: input => rolePackageRuntime.audit(packageSelector(input)),
     research_role_node_risks: input => rolePackageRuntime.researchNodeRisks(packageSelector(input), String(input.objectId), String(input.question || ''), Number(input.maxNodes || 16)),
     list_role_packages: () => rolePackageRuntime.listPackages(),
+    reference_role_package: input => rolePackageRuntime.referencePackage({
+      packageId: String(input.packageId), packageVersion: String(input.packageVersion), snapshotId: String(input.snapshotId), rootHash: String(input.rootHash),
+    }),
     compare_role_packages: input => rolePackageRuntime.compare({
       packageId: typeof input.basePackageId === 'string' ? input.basePackageId : undefined,
       packageVersion: typeof input.basePackageVersion === 'string' ? input.basePackageVersion : undefined,

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import { loadLearnFlowPluginRegistry } from './plugin-loader.ts'
+import { RolePackageRuntime } from '../plugins/role_capability_graph/runtime.ts'
 
 const activation = { mode: 'simple_explain' as const, activePluginIds: ['role_capability_graph'] }
 const executionContext = {
@@ -29,16 +30,57 @@ test('role capability plugin is discovered declaratively with explanation-only r
     'role_capability_graph__audit_role_package',
     'role_capability_graph__research_role_node_risks',
     'role_capability_graph__list_role_packages',
+    'role_capability_graph__reference_role_package',
     'role_capability_graph__compare_role_packages',
   ])
-  assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 11)
+  assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 12)
   assert.equal(tools.filter(tool => tool.risk === 'artifact').length, 0)
   assert.match(loaded.skillInstructions(activation), /唯一岗位事实版本/)
-  assert.match(loaded.skillInstructions(activation), /第一步调用 role_capability_graph__explore_role/)
+  assert.match(loaded.skillInstructions(activation), /先调用 list_role_packages 展示候选/)
+  assert.match(loaded.skillInstructions(activation), /reference_role_package/)
   assert.match(loaded.skillInstructions(activation), /通用补充（非岗位快照）/)
   assert.match(loaded.skillInstructions(activation), /不能覆盖 LearnFlow 的教学状态/)
   assert.match(loaded.skillInstructions(activation), /节点.*风险/u)
   assert.match(loaded.skillInstructions(activation), /只在 role-agent\/Hub 进行/)
+})
+
+test('package catalog requires an exact user selection before producing a pinned reference', async () => {
+  const loaded = await registry()
+  const catalog = await loaded.execute('role_capability_graph__list_role_packages', {}, executionContext)
+  const candidate = (catalog.result.payload as any).packages[0]
+  assert.ok(candidate.packageId && candidate.packageVersion && candidate.snapshotId && candidate.rootHash)
+  const selected = await loaded.execute('role_capability_graph__reference_role_package', {
+    packageId: candidate.packageId,
+    packageVersion: candidate.packageVersion,
+    snapshotId: candidate.snapshotId,
+    rootHash: candidate.rootHash,
+  }, executionContext)
+  assert.equal(selected.result.presentation?.renderer, 'role_capability_graph:role_package_reference')
+  assert.equal(selected.result.objects?.[0].objectType, 'role_package_reference')
+  assert.deepEqual((selected.result.payload as any).requiredSelector, {
+    packageId: candidate.packageId,
+    packageVersion: candidate.packageVersion,
+    snapshotId: candidate.snapshotId,
+  })
+  assert.equal((selected.result.presentation?.state as any).rootHash, candidate.rootHash)
+  await assert.rejects(() => loaded.execute('role_capability_graph__reference_role_package', {
+    packageId: candidate.packageId,
+    packageVersion: candidate.packageVersion,
+    snapshotId: candidate.snapshotId,
+    rootHash: '0'.repeat(64),
+  }, executionContext), /role_package_reference_mismatch/)
+})
+
+test('role-agent simulation source exposes every valid static package as referenceable', () => {
+  const runtime = new RolePackageRuntime([{
+    root: resolve(process.cwd(), 'plugins/role_capability_graph/data/packages'),
+    sourceKind: 'role_agent_simulation',
+    accessScope: 'simulation_all',
+  }])
+  const payload = runtime.listPackages().payload as any
+  assert.ok(payload.packages.length >= 1)
+  assert.ok(payload.packages.every((item: any) => item.sourceKind === 'role_agent_simulation' && item.accessScope === 'simulation_all'))
+  assert.match(payload.simulation, /不代表已经通过正式 Hub 审核/)
 })
 
 test('node deep research finds bounded snapshot risks for explanation without producing a patch', async () => {

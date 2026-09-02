@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-02.2`）：岗位包选择采用两步只读 ACI，而不是模型隐式状态。Tutor 先以 `list_role_packages` 取得当前可见候选、来源范围和完整不可变身份；学习者明确选择后，Tutor 才能以四元身份调用 `reference_role_package`。成功 ToolRun 返回 `role_package_reference` 与 `requiredSelector`，后续岗位工具必须逐字段复用。引用仍依赖可重放 ToolRun/Plugin Object，不建立插件数据库或第二套对话状态。开发环境对 role-agent 目录的自动发现只是 Hub 可见性模拟；生产环境不会启用该隐式源。
+
 Contract impact（`2026-09-02.1`）：岗位图谱生态采用“role-agent 生产、Hub 治理、LearnFlow 消费”分层。冷启动和迭代不再进入 LearnFlow Tutor 工具面；旧候选 Tool/Skill/Object/Renderer 已移除。LearnFlow 只保留固定快照阅读，以及面向解释的节点风险研究：从精确 `objectId` 有界展开两跳邻域，逐字保留关系方向，汇总直接/邻域证据、证据限制、candidate 状态、低置信度和显式事理风险，并披露截断。该研究不调用外部来源、不生成 patch，也不能触发 Hub 提交、审核或发布。Hub 的公共发布使用独立 reviewer，私有包仅对 owner 可见；插件安装仍是维护期确定性命令且零 Kernel target。
 
 Contract impact（`2026-09-01.4`）：Tutor 的模型终态新增 provider 完整性门。流适配器必须保留 `finish_reason/status/incomplete_details`；token 上限中断只能进入有界续接，续接轮不再开放工具，完整正文通过既有展示协议后才可提交。规划态的长段背景不直接进入 Agent 状态栏或五核：确定性提炼器只输出版本化 `planning-profile-self-report.v1`，新事件再由 reducer 分核投影；Knowledge 与 Practice 自报不表示掌握或独立能力，Human 投入只限当前规划语境，Value 方向保持 exploring，Structure 只保存简洁规划锚点。三类主 Agent、评分、路线确认和长期记忆门槛不变。

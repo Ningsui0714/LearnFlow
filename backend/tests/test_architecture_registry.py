@@ -44,7 +44,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-09-02.1"
+    assert REGISTRY_VERSION == "2026-09-02.2"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -81,6 +81,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert "paper_projection_only" in PLUGIN_EXTENSION_POINTS["tool_renderer"].restrictions
     assert "none can write kernels" in manifest["authority"]["plugin_extension_authority"]
     assert "LearnFlow exposes no role-package production" in manifest["authority"]["role_package_ecosystem"]
+    assert "explicit immutable package reference" in manifest["authority"]["role_package_ecosystem"]
     assert tuple(CHAT_MODES) == ("free", "explain", "learn", "plan")
     assert [item["id"] for item in chat_mode_manifest()] == [
         "free", "explain", "learn", "plan",

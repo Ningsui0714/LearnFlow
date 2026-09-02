@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   LEARNFLOW_PLUGIN_OBJECT_VERSION,
@@ -132,6 +132,7 @@ type LoadedRolePackage = {
   assets: Map<string, SourceAsset>
   segments: Map<string, SourceSegment>
   bindingsByTarget: Map<string, EvidenceBinding[]>
+  source: RolePackageSource
 }
 
 export type PackageSelector = {
@@ -162,18 +163,45 @@ function sha256(value: string) {
   return createHash('sha256').update(value).digest('hex')
 }
 
-function discoverManifests(root: string) {
-  const manifests: string[] = []
-  for (const packageDirectory of readdirSync(root, { withFileTypes: true }).filter(item => item.isDirectory())) {
-    const packagePath = join(root, packageDirectory.name)
-    for (const versionDirectory of readdirSync(packagePath, { withFileTypes: true }).filter(item => item.isDirectory())) {
-      manifests.push(join(packagePath, versionDirectory.name, 'manifest.json'))
+export type RolePackageSource = {
+  root: string
+  sourceKind: 'official_builtin' | 'reviewed_public' | 'owner_private' | 'role_agent_simulation' | 'installed'
+  accessScope: 'official' | 'reviewed_public' | 'owner_private' | 'simulation_all' | 'installed'
+}
+
+function defaultPackageSources(): RolePackageSource[] {
+  const sources: RolePackageSource[] = [{ root: PACKAGE_ROOT, sourceKind: 'official_builtin', accessScope: 'official' }]
+  const explicitRoots = (process.env.LEARNFLOW_ROLE_AGENT_PACKAGE_ROOTS || '').split(delimiter).filter(Boolean)
+  const inferredRoots = process.env.NODE_ENV === 'production' ? [] : [
+    resolve(PACKAGE_ROOT, '../../../../../../CEG C/role-agent/packages'),
+    resolve(process.cwd(), '../../CEG C/role-agent/packages'),
+  ]
+  for (const root of [...explicitRoots, ...inferredRoots]) {
+    const absolute = resolve(root)
+    if (existsSync(absolute) && !sources.some(source => resolve(source.root) === absolute)) {
+      sources.push({ root: absolute, sourceKind: 'role_agent_simulation', accessScope: 'simulation_all' })
     }
   }
+  return sources
+}
+
+function discoverManifests(root: string) {
+  const manifests: string[] = []
+  if (!existsSync(root)) return manifests
+  const visit = (directory: string, depth: number) => {
+    if (depth > 4 || manifests.length >= 2_000) return
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      const path = join(directory, entry.name)
+      if (entry.isFile() && entry.name === 'manifest.json') manifests.push(path)
+      else if (entry.isDirectory()) visit(path, depth + 1)
+    }
+  }
+  visit(root, 0)
   return manifests.sort()
 }
 
-function loadPackage(manifestPath: string): LoadedRolePackage {
+function loadPackage(manifestPath: string, source: RolePackageSource): LoadedRolePackage {
   const manifest = asObject(readJson(manifestPath).value, 'manifest') as unknown as StaticPackageManifest
   if (manifest.packageProtocol !== 'static-role-package' || !manifest.packageId || !manifest.snapshotId || !manifest.rootHash) {
     throw new Error(`role_package_invalid:${manifestPath}`)
@@ -226,7 +254,7 @@ function loadPackage(manifestPath: string): LoadedRolePackage {
   ]))
   return {
     manifest, semantic, process, sources, validation, snapshot, views, retrieval, objectIndex, referenceMigrations,
-    objects, relations, outgoing, incoming, assets, segments, bindingsByTarget,
+    objects, relations, outgoing, incoming, assets, segments, bindingsByTarget, source,
   }
 }
 
@@ -262,9 +290,36 @@ function jsonRecord(value: unknown): JsonObject {
 
 export class RolePackageRuntime {
   readonly packages: readonly LoadedRolePackage[]
+  readonly discoveryIssues: readonly string[]
 
-  constructor(root = PACKAGE_ROOT) {
-    this.packages = discoverManifests(root).map(loadPackage)
+  constructor(root: string | RolePackageSource[] = defaultPackageSources()) {
+    const sources: RolePackageSource[] = typeof root === 'string'
+      ? [{ root: resolve(root), sourceKind: 'installed', accessScope: 'installed' }]
+      : root.map(source => ({ ...source, root: resolve(source.root) }))
+    const releases = new Map<string, LoadedRolePackage>()
+    const discoveryIssues: string[] = []
+    for (const source of sources) {
+      for (const manifestPath of discoverManifests(source.root)) {
+        let pkg: LoadedRolePackage
+        try { pkg = loadPackage(manifestPath, source) }
+        catch (error) {
+          if (source.sourceKind !== 'role_agent_simulation') throw error
+          discoveryIssues.push(`${manifestPath}: ${error instanceof Error ? error.message : 'invalid package'}`)
+          continue
+        }
+        const key = `${pkg.manifest.packageId}@${pkg.manifest.packageVersion}`
+        const existing = releases.get(key)
+        if (existing && existing.manifest.rootHash !== pkg.manifest.rootHash) {
+          if (source.sourceKind !== 'role_agent_simulation') throw new Error(`role_package_version_conflict:${key}`)
+          discoveryIssues.push(`${manifestPath}: role_package_version_conflict:${key}`)
+          continue
+        }
+        if (!existing) releases.set(key, pkg)
+      }
+    }
+    this.packages = [...releases.values()].sort((left, right) => left.manifest.roleTitle.localeCompare(right.manifest.roleTitle)
+      || left.manifest.packageVersion.localeCompare(right.manifest.packageVersion))
+    this.discoveryIssues = discoveryIssues.slice(0, 20)
     if (!this.packages.length) throw new Error('role_package_unavailable:no static packages were found')
   }
 
@@ -317,6 +372,8 @@ export class RolePackageRuntime {
       rootHash: pkg.manifest.rootHash,
       roleTitle: pkg.manifest.roleTitle,
       evidencePolicy: pkg.manifest.evidencePolicy,
+      sourceKind: pkg.source.sourceKind,
+      accessScope: pkg.source.accessScope,
     }
   }
 
@@ -487,12 +544,59 @@ export class RolePackageRuntime {
   listPackages() {
     const packages = this.packages.map(pkg => this.descriptor(pkg))
     return {
-      summary: `已安装 ${packages.length} 个不可变岗位包版本。`,
+      summary: `发现 ${packages.length} 个当前可引用的不可变岗位包版本。`,
       objects: this.packages.map(pkg => this.pluginObject(
         pkg, 'role_snapshot', pkg.manifest.snapshotId, pkg.manifest.roleTitle, 'snapshot', this.descriptor(pkg),
       )),
-      payload: { kind: 'role_package_catalog', packages, count: packages.length },
+      payload: {
+        kind: 'role_package_catalog', packages, count: packages.length,
+        selectionContract: '用户选择后必须用 packageId、packageVersion、snapshotId 与 rootHash 调用 reference_role_package；不得只凭标题猜测。',
+        simulation: packages.some(item => item.sourceKind === 'role_agent_simulation')
+          ? '开发模拟会把本机 role-agent packages 目录中的有效静态岗位包视为可用；这不代表已经通过正式 Hub 审核。'
+          : '',
+        warnings: [...this.discoveryIssues],
+      },
       presentation: { renderer: ROLE_RENDERERS.catalog, state: { snapshotIds: packages.map(item => item.snapshotId) } },
+    } satisfies PluginToolResult
+  }
+
+  referencePackage(input: Required<PackageSelector> & { rootHash: string }) {
+    const pkg = this.resolve({
+      packageId: input.packageId,
+      packageVersion: input.packageVersion,
+      snapshotId: input.snapshotId,
+    })
+    if (pkg.manifest.rootHash !== input.rootHash) throw new Error('role_package_reference_mismatch:rootHash does not match the selected immutable package')
+    const descriptor = this.descriptor(pkg)
+    const referenceId = `package-reference:${pkg.manifest.rootHash}`
+    const reference = this.pluginObject(pkg, 'role_package_reference', referenceId, `${pkg.manifest.roleTitle} · 已引用`, 'package_reference', {
+      ...descriptor,
+      referenceId,
+      pinnedBy: 'explicit_tool_selection',
+      boundary: '该引用只固定当前对话中的岗位事实版本，不安装、修改或发布岗位包，也不形成学习者掌握证据。',
+    })
+    return {
+      summary: `已引用“${pkg.manifest.roleTitle}”岗位包 ${pkg.manifest.packageVersion}，后续岗位读取必须固定 ${pkg.manifest.snapshotId}。`,
+      objects: [reference],
+      payload: {
+        kind: 'role_package_reference', reference: descriptor,
+        requiredSelector: {
+          packageId: pkg.manifest.packageId,
+          packageVersion: pkg.manifest.packageVersion,
+          snapshotId: pkg.manifest.snapshotId,
+        },
+        boundary: '引用固定到本次 ToolRun；后续工具必须复用精确 selector，不得按标题静默切换版本。',
+      },
+      presentation: {
+        renderer: ROLE_RENDERERS.packageReference,
+        state: {
+          packageId: pkg.manifest.packageId,
+          packageVersion: pkg.manifest.packageVersion,
+          snapshotId: pkg.manifest.snapshotId,
+          rootHash: pkg.manifest.rootHash,
+          focusObjectIds: [],
+        },
+      },
     } satisfies PluginToolResult
   }
 
