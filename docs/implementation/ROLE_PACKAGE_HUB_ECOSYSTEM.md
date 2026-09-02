@@ -12,8 +12,12 @@
 
 插件使用两步只读工具合同：
 
-1. `list_role_packages` 展示服务端已经按主体过滤的官方包、审核通过的公共包和 owner 自己的私有包。
+1. `list_role_packages` 接收目标岗位查询，并在服务端已经按主体过滤的官方包、审核通过的公共包和 owner 自己的私有包中做确定性名称/alias 匹配；只有查询全部目录时才省略查询。
 2. 学习者明确选择后，`reference_role_package` 必须收到目录中的 `packageId + packageVersion + snapshotId + rootHash`，逐项匹配后产生固定到 ToolRun 的 `role_package_reference`。
+
+若目标岗位没有匹配版本，工具返回 `matchStatus=not_found`、空候选和 Role Atlas `/projects/new?role=...` 入口。Tutor 不得把其他岗位包
+当作“有限替代”，也不得继续调用内容工具；学习者可跳转到 Role Atlas 自主研究。基地址由 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置，
+本地默认 `http://localhost:3000`。跳转不在 LearnFlow 内创建或修改岗位包。
 
 引用不是安装或复制。后续岗位工具从引用对象的 `requiredSelector` 复用精确版本；标题、自然语言相似度和模型偏好都不能
 覆盖用户选择。当前开发模拟额外扫描本机 role-agent `packages/`，把其中协议有效的静态岗位包标记为
