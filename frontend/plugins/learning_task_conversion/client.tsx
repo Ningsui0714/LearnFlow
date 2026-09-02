@@ -27,7 +27,7 @@ function ActionBar({ props, candidate }: { props: PluginToolRendererProps; candi
     <button type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件检查候选 ${id} 的来源证据和 grounding 边界。`)}>检查来源</button>
     <button type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件审计候选 ${id}，只报告确定性校验结果。`)}>重新审计</button>
     <button type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件为候选 ${id} 准备 Tutor 审阅包并解释关键步骤；暂时不要创建正式 LearningTask。`)}>让 Tutor 审阅</button>
-    {rootHash && <button className="primary" type="button" onClick={() => props.onPrompt?.(`我明确确认采用候选 ${id}（rootHash: ${rootHash}）。请立即调用 learning_task_conversion__confirm_learning_task_candidate，candidateId 使用 ${id}，expectedRootHash 使用 ${rootHash}，confirmed 设为 true；成功后给我进入个性化学习的入口。`)}>确认并创建正式任务</button>}
+    {rootHash && <button className="primary" type="button" onClick={() => props.onPrompt?.(`我明确确认采用候选 ${id}（rootHash: ${rootHash}）。请立即调用 learning_task_conversion__confirm_learning_task_candidate，candidateId 使用 ${id}，expectedRootHash 使用 ${rootHash}，confirmed 设为 true；成功后返回正式学习任务入口。`)}>确认并创建正式任务</button>}
   </div>
 }
 
@@ -52,24 +52,37 @@ function CandidateRenderer(props: PluginToolRendererProps) {
   const selectedSkills = (selected?.skillTargetIds || []).map((id: string) => skills.get(String(id))).filter(Boolean) as JsonRecord[]
   const warnings = Array.isArray(candidate.warnings) ? candidate.warnings as JsonRecord[] : []
   const candidateObject = props.objects.find(item => item.objectType === 'learning_task_candidate')
+  const stepLabels = new Map(steps.map((step, index) => [
+    String(step.id),
+    `步骤 ${String(index + 1).padStart(2, '0')}：${String(step.title || '未命名步骤')}`,
+  ]))
+  const selectedStepLabel = selected
+    ? stepLabels.get(String(selected.id)) || `当前步骤：${String(selected.title || '未命名步骤')}`
+    : '当前步骤'
+  const derivationLabel = (value: unknown) => ({
+    pedagogical_transformation: '由任务步骤转化得到',
+    provider_supplied: '由讯飞工作流提供',
+    source_grounded: '由来源材料支持',
+    local_order_derivation: '由步骤顺序推导',
+  }[String(value)] || '由任务设计生成')
 
   return <section className="ltc-workbench" aria-label="学习型任务候选工作台">
     <header className="ltc-hero" {...(candidateObject ? pluginObjectDragProps(candidateObject) : {})}>
       <div className="ltc-mark">转</div>
       <div>
-        <span>LEARNING TASK CANDIDATE · 未提交</span>
+        <span>学习型任务候选 · 未提交</span>
         <h3>{String(task.title || '学习型任务候选')}</h3>
         <p>{String(task.learningObjective || '')}</p>
       </div>
       <div className="ltc-hero-meta">
         <GroundingBadge status={String(candidate.groundingStatus || '')} />
         <strong>{steps.length} 个步骤</strong>
-        <small>{String(candidate.candidateId || '')}</small>
+        <small>{candidate.candidateId ? `候选编号：${String(candidate.candidateId)}` : ''}</small>
       </div>
     </header>
 
     <div className="ltc-boundaries">
-      <span>候选 artifact</span><i>≠</i><span>正式 LearningTask</span><i>≠</i><span>掌握证据</span>
+      <span>候选成果</span><i>≠</i><span>正式学习任务</span><i>≠</i><span>掌握证据</span>
     </div>
 
     <div className="ltc-task-context">
@@ -80,7 +93,7 @@ function CandidateRenderer(props: PluginToolRendererProps) {
 
     <div className="ltc-body">
       <nav className="ltc-step-list" aria-label="任务步骤">
-        <header><span>WORK STEPS</span><strong>按真实作业先后展开</strong></header>
+        <header><span>工作步骤</span><strong>按真实作业先后展开</strong></header>
         {steps.map((step, index) => <button
           key={String(step.id)}
           type="button"
@@ -96,7 +109,7 @@ function CandidateRenderer(props: PluginToolRendererProps) {
 
       {selected && <main className="ltc-step-detail">
         <header>
-          <span>{String(selected.order || '').padStart(2, '0')} · WORK STEP</span>
+          <span>第 {String(selected.order || '').padStart(2, '0')} 步 · 工作步骤</span>
           <h4>{String(selected.title || '')}</h4>
           <p>按真实作业顺序执行，本步骤完成后留下可检查产物。</p>
         </header>
@@ -111,17 +124,17 @@ function CandidateRenderer(props: PluginToolRendererProps) {
         <section className="ltc-dependency">
           <span>前置与依赖</span>
           <div>{(selected.prerequisiteStepIds || []).length
-            ? (selected.prerequisiteStepIds || []).map((id: string) => <code key={id}>{id}</code>)
+            ? (selected.prerequisiteStepIds || []).map((id: string) => <code key={id}>{stepLabels.get(String(id)) || '前置步骤'}</code>)
             : <code>任务契约与环境已就绪</code>}
-            <b>→</b><code className="current">{String(selected.id)}</code><b>→</b><code>{String(selected.deliverables?.[0] || '可检查产物')}</code>
+            <b>→</b><code className="current">{selectedStepLabel}</code><b>→</b><code>{String(selected.deliverables?.[0] || '可检查产物')}</code>
           </div>
-          {selected.dependencyDerivation === 'local_order_derivation' && <small>该线性依赖由 LearnFlow 根据 provider 步骤顺序派生，已在 provenance 中标记。</small>}
+          {selected.dependencyDerivation === 'local_order_derivation' && <small>该前置关系由 LearnFlow 根据讯飞返回的步骤顺序推导，供你核对。</small>}
         </section>
         {(selected.safetyRequirements || []).length > 0 && <section className="ltc-safety"><span>安全要求</span><p>{selected.safetyRequirements.join('；')}</p></section>}
       </main>}
 
       <aside className="ltc-mapping">
-        <header><span>STEP MAPPING</span><strong>本步骤知识与技能</strong></header>
+        <header><span>步骤映射</span><strong>本步骤知识与技能</strong></header>
         <section>
           <span className="kind">知 · 知识点</span>
           {selectedKnowledge.length ? selectedKnowledge.map(item => <article key={String(item.id)}>
@@ -133,7 +146,7 @@ function CandidateRenderer(props: PluginToolRendererProps) {
           <span className="kind">技 · 技能点</span>
           {selectedSkills.length ? selectedSkills.map(item => <article key={String(item.id)}>
             <strong>{String(item.title || '')}</strong><p>{String(item.description || '')}</p>
-            <small>{String(item.derivationKind || '')}</small>
+            <small>{derivationLabel(item.derivationKind)}</small>
           </article>) : <p className="empty">本步骤没有技能点映射。</p>}
         </section>
         {(selected.resources || []).length > 0 && <section>

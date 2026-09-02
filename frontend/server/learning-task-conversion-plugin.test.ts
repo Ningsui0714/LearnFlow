@@ -3,8 +3,11 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
 import {
+  directLearningTaskCandidateOperationRequest,
   directLearningTaskDraftConfirmationRequest,
+  directLearningTaskCandidateSelectionRequest,
   directLearningTaskIntakeRequest,
+  projectPluginIntegrationRequestBody,
   runTutorAgentTurn,
 } from './agent-runtime.ts'
 import { learningTaskDraftConfirmationPrompt } from '../plugins/learning_task_conversion/intake.ts'
@@ -52,6 +55,49 @@ async function registry() {
   return loadLearnFlowPluginRegistry(resolve(process.cwd(), 'plugins'))
 }
 
+test('candidate card actions route directly to the selected conversion plugin', () => {
+  const candidateId = 'ltc_69a5b98f127ced3900858bc10686'
+  const rootHash = 'b'.repeat(64)
+  assert.deepEqual(
+    directLearningTaskCandidateOperationRequest(
+      ['learning_task_conversion'],
+      7,
+      `请调用学习型任务转化插件检查候选 ${candidateId} 的来源证据和 grounding 边界。`,
+    ),
+    {
+      toolName: 'learning_task_conversion__inspect_learning_task_evidence',
+      arguments: { candidateId },
+    },
+  )
+  assert.deepEqual(
+    directLearningTaskCandidateOperationRequest(
+      ['learning_task_conversion'],
+      7,
+      `我明确确认采用候选 ${candidateId}（rootHash: ${rootHash}）。请立即调用 learning_task_conversion__confirm_learning_task_candidate。`,
+    ),
+    {
+      toolName: 'learning_task_conversion__confirm_learning_task_candidate',
+      arguments: { candidateId, expectedRootHash: rootHash, confirmed: true },
+    },
+  )
+})
+
+test('candidate confirmation keeps candidateId in the URL instead of the strict request body', () => {
+  const requestBody = projectPluginIntegrationRequestBody(
+    { method: 'POST', suffix: '/confirm' },
+    {
+      candidateId: 'ltc_69a5b98f127ced3900858bc10686',
+      schemaVersion: 'learning-task-candidate-confirmation.v1',
+      confirmationId: 'plugin-confirm:abc12345',
+      expectedRootHash: 'c'.repeat(64),
+      confirmed: true,
+    },
+  )
+  assert.equal('candidateId' in requestBody, false)
+  assert.equal(requestBody.confirmed, true)
+  assert.equal(requestBody.expectedRootHash, 'c'.repeat(64))
+})
+
 test('explicit project plugin request maps to local intake instead of calling the provider', () => {
   assert.deepEqual(
     directLearningTaskIntakeRequest(
@@ -84,6 +130,17 @@ test('selecting the plugin routes plain task text through intake without command
   assert.equal(
     directLearningTaskIntakeRequest([], 7, 'Unity游戏客户端开发工程师'),
     undefined,
+  )
+  assert.deepEqual(
+    directLearningTaskIntakeRequest(
+      ['learning_task_conversion'],
+      undefined,
+      'unity摄像机的放置与2D视角跟随',
+    ),
+    {
+      rawInput: 'unity摄像机的放置与2D视角跟随',
+      taskDescription: 'unity摄像机的放置与2D视角跟随',
+    },
   )
 })
 
@@ -129,6 +186,52 @@ test('selected role candidate re-enters the independent semantic preflight as an
     )?.rawInput,
     'Unity摄像机跟随与遮挡修正模块开发',
   )
+})
+
+test('clicking a displayed task candidate reuses its exact intake without another model round', () => {
+  const candidate = {
+    id: 'task_unity_1',
+    title: '2D 横版项目主摄像机的添加、摆放与马里奥式横向跟随',
+    description: '在 Unity 2D 横版场景中完成主摄像机添加、正交摆放和横向跟随。',
+    source: 'model_proposed',
+    sourceRef: 'model-preflight:deepseek-chat',
+  }
+  const originalInput = 'unity摄像机放置与2D视角的跟随（类似于马里奥的摄像机）'
+  const request = directLearningTaskCandidateSelectionRequest(
+    ['learning_task_conversion'],
+    7,
+    `生成学习型任务：“${candidate.title}”（来源于“${originalInput}”的已选任务候选）`,
+    [{
+      role: 'assistant',
+      content: '请选择任务',
+      toolRuns: [{
+        id: 'prepare-1', kind: 'plugin', status: 'completed', title: '准备', detail: '请选择', durationMs: 1,
+        plugin: {
+          pluginId: 'learning_task_conversion', toolId: 'prepare_learning_task_intake',
+          result: {
+            summary: '请选择',
+            objects: [{
+              protocol: 'learnflow-plugin-object.v1', pluginId: 'learning_task_conversion',
+              objectType: 'learning_task_intake', objectId: 'lti_unity',
+              schemaVersion: 'learning-task-conversion-intake.v1', label: '准备单',
+              value: {
+                originalInput, roleName: '', candidateTasks: [candidate],
+                preflight: {
+                  method: 'semantic_model', schemaVersion: 'learning-task-intake-model.v1',
+                  model: 'deepseek-chat', assessedKind: 'ambiguous', confidence: 0.8, rationale: '任务范围候选。',
+                },
+              },
+            }],
+          },
+        },
+      } as any],
+    }],
+  )
+
+  assert.equal(request?.rawInput, originalInput)
+  assert.equal(request?.selectedTaskTitle, candidate.title)
+  assert.equal(request?.selectedTaskDescription, candidate.description)
+  assert.equal(request?.modelAssessment?.model, 'deepseek-chat')
 })
 
 test('direct learning-task intake performs exactly one semantic model round before the local plugin gate', async () => {
@@ -267,6 +370,22 @@ test('prepare tool is local and draft requires its explicit hash-bound confirmat
   assert.equal((execution.result.payload as any).formalLearningTaskCreated, false)
   assert.equal((execution.result.payload as any).kernelWrites, 0)
   assert.equal(execution.result.presentation?.renderer, 'learning_task_conversion:learning_task_candidate')
+})
+
+test('prepare tool keeps its JSON contract when a model sends a partial assessment', async () => {
+  const loaded = await registry()
+  const freeActivation = { mode: 'free' as const, projectId: 7, activePluginIds: ['learning_task_conversion'] }
+  const execution = await loaded.execute('learning_task_conversion__prepare_learning_task_intake', {
+    rawInput: '方向A',
+    modelAssessment: {},
+  }, {
+    ...freeActivation,
+    scope: { mode: 'free', projectId: 7 },
+    signal: AbortSignal.timeout(2_000),
+  })
+
+  assert.equal(typeof execution.result.payload, 'object')
+  assert.equal((execution.result.payload as any).preflight.method, 'deterministic_guard')
 })
 
 test('draft tool rejects missing or changed intake confirmation before provider access', async () => {

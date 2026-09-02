@@ -86,6 +86,7 @@ const CONCRETE_ACTIONS = [
   '安装', '拆装', '装配', '检修', '维修', '维护', '调试', '检测', '校准', '配置', '部署',
   '制作', '加工', '焊接', '更换', '诊断', '排查', '修复', '验收', '重装', '测试', '巡检',
   '接线', '调优', '迁移', '备份', '恢复', '集成', '实现', '开发', '构建', '发布', '装机',
+  '添加', '放置', '摆放', '跟随', '编写', '挂载', '对准', '限制', '调整', '优化',
 ] as const
 const CONCRETE_SCOPE = /(?:模块|功能|接口|API|页面|组件|脚本|服务|环境|驱动|摄像机|角色|场景|电池|电机|设备|系统安装|系统重装|网络配置|故障|产线|工位|数据库|流水线|模型训练|验收)/i
 const BROAD_DEVELOPMENT = /^(?:linux|windows|android|ios|unity|游戏客户端|前端|后端|嵌入式|机器人|人工智能|ai|大数据|软件|系统|应用)?\s*(?:系统|客户端|应用)?\s*开发$/i
@@ -195,10 +196,10 @@ export function classifyLearningTaskInput(rawInput: string): LearningTaskInputKi
 
 function lockedTerms(rawInput: string) {
   const topic = stripIntent(rawInput)
-  const latin = topic.match(/[A-Za-z][A-Za-z0-9+#.-]*/g) || []
+  const latin = topic.match(/[0-9]+[A-Za-z][A-Za-z0-9+#.-]*|[A-Za-z][A-Za-z0-9+#.-]*/g) || []
   const chinese = topic
     .replace(ROLE_SUFFIX, '')
-    .split(/[，,。；;：:、与和及的\s]+/)
+    .split(/[，,。；;：:、与和及的\s（）()]+/)
     .map(item => item.trim())
     .filter(item => item.length >= 2 && !CONCRETE_ACTIONS.includes(item as typeof CONCRETE_ACTIONS[number]))
   return [...new Set([...latin, ...chinese])].slice(0, 8)
@@ -276,7 +277,14 @@ export function prepareLearningTaskIntake(
   // ambiguous phrase, a semantic work-task judgment may still fill the gap.
   const correctedModelTaskKind = assessedKind === 'work_task'
     && (deterministicKind === 'role' || deterministicKind === 'role_or_direction')
-  const inputKind = correctedModelTaskKind ? deterministicKind : assessedKind || deterministicKind
+  // If the text itself already contains a recognizable action and object,
+  // semantic uncertainty must not force the learner to invent an enterprise
+  // backstory. WF03 exists to expand that compact task into checkable steps.
+  const correctedModelAmbiguity = deterministicKind === 'work_task'
+    && (assessedKind === 'ambiguous' || assessedKind === 'learning_topic')
+  const inputKind = correctedModelTaskKind || correctedModelAmbiguity
+    ? deterministicKind
+    : assessedKind || deterministicKind
   const terms = lockedTerms(originalInput)
   const candidates = sanitizeCandidates(input.candidateTasks)
   const selectedTaskTitle = clean(input.selectedTaskTitle, 300)
@@ -285,6 +293,12 @@ export function prepareLearningTaskIntake(
     warnings.push({
       code: 'model_task_kind_corrected',
       message: '语义模型把岗位或宽泛方向误判为单个任务，已由本地规则恢复为任务选择流程。',
+    })
+  }
+  if (correctedModelAmbiguity) {
+    warnings.push({
+      code: 'model_ambiguity_corrected',
+      message: '输入已包含可识别的动作与工作对象，已直接形成待确认任务，不再要求补充企业背景。',
     })
   }
   const assessment = input.modelAssessment
@@ -302,7 +316,6 @@ export function prepareLearningTaskIntake(
 
   if (selectedTaskTitle) {
     const selected = candidates.find(candidate => candidate.title === selectedTaskTitle)
-    const sourceBacked = selected && selected.source !== 'model_proposed'
     if (!selected && !preservesLockedTerms(selectedTaskTitle, terms)) {
       warnings.push({
         code: 'semantic_anchor_changed',
@@ -316,7 +329,24 @@ export function prepareLearningTaskIntake(
         selected?.source || 'model_proposed',
         selected?.sourceRef || '',
       )
-      if (contract.action && contract.workObject && (sourceBacked || preservesLockedTerms(selectedTaskTitle, terms))) {
+      // Exact membership in the displayed candidate list is itself the
+      // selection anchor: the learner is choosing a previously presented
+      // semantic candidate, not asking the host to invent a replacement now.
+      const anchorPreserved = Boolean(selected || preservesLockedTerms(selectedTaskTitle, terms))
+      if (anchorPreserved && (!contract.action || !contract.workObject)) {
+        // A learner-selected semantic candidate may express a complete work
+        // package through domain verbs outside the small deterministic list
+        // (for example 摄像机“添加、摆放与跟随”). The local extractor supplies
+        // display metadata; it must not veto the semantic proposal plus the
+        // learner's explicit selection.
+        contract.action = '实施'
+        contract.workObject = selectedTaskTitle
+        warnings.push({
+          code: 'semantic_selected_contract_used',
+          message: '所选任务已通过语义候选与原文锚点校验；本地动作词仅作为展示信息，不再阻止确认。',
+        })
+      }
+      if (contract.action && contract.workObject && anchorPreserved) {
         return {
           schemaVersion: LEARNING_TASK_INTAKE_SCHEMA_VERSION,
           intakeId: intakeId(originalInput), originalInput, inputKind, status: 'ready_for_confirmation',
@@ -368,14 +398,14 @@ export function prepareLearningTaskIntake(
       ? `请从“${roleName || stripIntent(originalInput)}”中选一个具体、可执行的企业工作任务。`
       : inputKind === 'learning_topic'
         ? `你希望围绕“${stripIntent(originalInput)}”完成哪个实际工作任务？`
-        : '请补充一个包含明确动作和工作对象的企业真实工作任务。')
+        : '请补充要完成的动作和对象，例如“为 Unity 2D 场景配置摄像机跟随”。')
   return {
     schemaVersion: LEARNING_TASK_INTAKE_SCHEMA_VERSION,
     intakeId: intakeId(originalInput), originalInput, inputKind,
     status: needsSelection ? 'needs_task_selection' : 'needs_input',
     lockedTerms: terms, roleName,
     taskContract: taskContract('', ''),
-    missingFields: ['具体企业工作任务'], candidateTasks: candidates, nextQuestion,
+    missingFields: ['要完成的动作和对象'], candidateTasks: candidates, nextQuestion,
     confirmed: false, warnings, preflight,
   }
 }

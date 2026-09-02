@@ -21,6 +21,22 @@ import { suggestLearningTaskStepCount } from './intake.ts'
 
 type JsonRecord = Record<string, any>
 
+const INTAKE_KINDS = new Set(['role', 'role_or_direction', 'work_task', 'learning_topic', 'ambiguous'])
+
+function normalizedModelAssessment(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const input = value as JsonRecord
+  if (!INTAKE_KINDS.has(String(input.assessedKind || ''))) return undefined
+  return {
+    schemaVersion: String(input.schemaVersion || 'learning-task-intake-model.v1'),
+    model: String(input.model || 'semantic-preflight'),
+    assessedKind: String(input.assessedKind) as 'role' | 'role_or_direction' | 'work_task' | 'learning_topic' | 'ambiguous',
+    confidence: Math.max(0, Math.min(1, Number(input.confidence) || 0)),
+    rationale: String(input.rationale || ''),
+    nextQuestion: String(input.nextQuestion || ''),
+  }
+}
+
 function integration(context: PluginToolContext) {
   if (!context.scope.projectId) throw new Error('plugin_contract_invalid:learning-task conversion requires a project')
   if (!context.projectIntegration) throw new Error('plugin_integration_error:backend_unavailable:项目集成通道不可用')
@@ -86,9 +102,10 @@ export const learningTaskConversionRuntime = {
       candidateTasks: Array.isArray(input.candidateTasks) ? input.candidateTasks : [],
       selectedTaskTitle: String(input.selectedTaskTitle || ''),
       selectedTaskDescription: String(input.selectedTaskDescription || ''),
-      modelAssessment: input.modelAssessment && typeof input.modelAssessment === 'object'
-        ? input.modelAssessment
-        : undefined,
+      // This field is normally injected by the host preflight, but the model
+      // can also attempt the public tool directly. Never let a partial object
+      // introduce undefined values into the plugin's JSON result envelope.
+      modelAssessment: normalizedModelAssessment(input.modelAssessment),
     })
     const ready = intake.status === 'ready_for_confirmation'
     return {

@@ -20,6 +20,7 @@ test('classifies the user examples without silently changing domains', () => {
   assert.equal(classifyLearningTaskInput('linux系统开发'), 'role_or_direction')
   assert.equal(classifyLearningTaskInput('新能源汽车电池安装'), 'work_task')
   assert.equal(classifyLearningTaskInput('电脑Windows系统安装'), 'work_task')
+  assert.equal(classifyLearningTaskInput('unity摄像机的放置与2D视角跟随'), 'work_task')
   assert.equal(classifyLearningTaskInput('Windows 11'), 'ambiguous')
   assert.equal(
     classifyLearningTaskInput('Unity游戏客户端第三人称摄像机跟随与遮挡修正模块开发及验收'),
@@ -202,6 +203,34 @@ test('semantic work-task judgment is not blocked by a local keyword miss', () =>
   assert.equal(intake.taskContract.title, '为客户机下发公司根证书')
   assert.equal(intake.taskContract.action, '执行')
   assert.ok(intake.warnings.some(item => item.code === 'semantic_contract_used'))
+  assert.doesNotThrow(() => assertConfirmedLearningTaskIntake({
+    originalInput: intake.originalInput,
+    intakeId: intake.intakeId,
+    intakeRootHash: intake.intakeRootHash,
+    intakeConfirmed: true,
+    taskTitle: intake.taskContract.title,
+    taskDescription: intake.taskContract.description,
+    taskSource: intake.taskContract.source,
+  }))
+})
+
+test('a learner-selected semantic candidate is not rejected by the local action vocabulary', () => {
+  const intake = prepareLearningTaskIntakeEnvelope({
+    rawInput: 'unity摄像机放置与2D视角的跟随（类似于马里奥的摄像机）',
+    candidateTasks: [{
+      title: '2D 横版项目主摄像机的添加、摆放与马里奥式横向跟随',
+      description: '在 Unity 2D 横版平台场景中完成主摄像机添加、正交摆放和横向跟随。',
+      source: 'model_proposed',
+      sourceRef: 'semantic-preflight',
+    }],
+    selectedTaskTitle: '2D 横版项目主摄像机的添加、摆放与马里奥式横向跟随',
+  })
+
+  assert.equal(intake.status, 'ready_for_confirmation')
+  assert.equal(intake.taskContract.action, '添加')
+  assert.equal(intake.taskContract.workObject, '2D 横版项目主摄像机 摆放 马里奥式横向跟随')
+  assert.ok(!intake.warnings.some(item => item.code === 'semantic_selected_contract_used'))
+  assert.ok(!intake.warnings.some(item => item.code === 'selected_task_not_executable'))
 })
 
 test('local structure guard corrects a model that mistakes a role for one work task', () => {

@@ -103,6 +103,7 @@ import {
   bootstrapFormalRuntime,
   confirmFormalValueClaim,
   commitFormalLearningPathPlan,
+  createFormalProject,
   createFormalTutorSession,
   createFormalProjectFreeSession,
   deleteFormalTutorSession,
@@ -141,6 +142,7 @@ import {
   type FormalTutorMessage,
   type FormalTutorSession,
 } from './formal-runtime'
+import { parseLearningTaskDraftConfirmation } from '../plugins/learning_task_conversion/intake.ts'
 import type { AgentDecisionSummary, AgentTurnStreamEvent, AgentTurnTrace } from './agent-contracts'
 import type { FormalProjectCheckpoint, FormalProjectWorkspace, ProjectLearningFileProposal, ProjectRoadmapProposal } from './project'
 import { projectSidebarChats } from './project-sidebar'
@@ -163,6 +165,8 @@ type Message = {
   createdAt: number
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
+  /** Opaque provider payload required to continue some thinking-model conversations. */
+  reasoningContent?: string
   agentTrace?: AgentTurnTrace
   decisionSummaries?: AgentDecisionSummary[]
   learningActionLabel?: string
@@ -177,6 +181,8 @@ type Message = {
   streaming?: boolean
   streamingPhase?: string
   pluginResultProjection?: boolean
+  /** Internal control payload produced by an explicit plugin button click. */
+  hiddenFromTranscript?: boolean
 }
 
 type LiveTurn = {
@@ -328,6 +334,7 @@ function messageFromFormal(message: FormalTutorMessage): Message {
     createdAt: message.created_at ? Date.parse(message.created_at) || Date.now() : Date.now(),
     tutorMode,
     toolRuns: Array.isArray(vnext.toolRuns) ? vnext.toolRuns as TutorToolRun[] : undefined,
+    reasoningContent: typeof vnext.reasoningContent === 'string' ? vnext.reasoningContent : undefined,
     agentTrace: vnext.agentTrace && typeof vnext.agentTrace === 'object'
       ? vnext.agentTrace as AgentTurnTrace
       : undefined,
@@ -341,6 +348,7 @@ function messageFromFormal(message: FormalTutorMessage): Message {
     learningGoalKind: ['learning_task', 'planning_goal', 'conversation_topic'].includes(String(vnext.learningGoalKind))
       ? vnext.learningGoalKind as Message['learningGoalKind']
       : undefined,
+    hiddenFromTranscript: vnext.hiddenFromTranscript === true,
     persistedByTutor: message.meta_data?.source !== 'vnext_chat_session_store',
   }
 }
@@ -349,6 +357,7 @@ function syncMessageMetaData(message: Message): Record<string, unknown> {
   return {
     tutorMode: message.tutorMode,
     toolRuns: message.toolRuns,
+    reasoningContent: message.reasoningContent,
     agentTrace: message.agentTrace,
     learningActionLabel: message.learningActionLabel,
     learningSkillId: message.learningSkillId,
@@ -358,6 +367,7 @@ function syncMessageMetaData(message: Message): Record<string, unknown> {
     formalTaskId: message.formalTaskId,
     learningGoal: message.learningGoal,
     learningGoalKind: message.learningGoalKind,
+    hiddenFromTranscript: message.hiddenFromTranscript,
   }
 }
 
@@ -556,6 +566,17 @@ function paperPreview(messages: Message[]) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 150) || '还没有写入内容'
+}
+
+function humanizeTutorMessageContent(message: Message) {
+  if (
+    message.role === 'system'
+    && /reasoning_content.*thinking mode must be passed back to the API/i.test(message.content)
+  ) {
+    const mode = message.content.match(/^“([^”]+)”/)?.[1] || 'Tutor'
+    return `“${mode}”续接失败：模型上下文中的思考数据不完整，本轮没有执行。请重新发送本轮消息。`
+  }
+  return message.content
 }
 
 function inheritedContextMessages(conversation: Conversation) {
@@ -1380,6 +1401,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         },
       }).catch(error => setFormalError(error instanceof Error ? error.message : '学习片段事件同步失败'))
     }
+    return finishedMessage
   }
 
   const updateLiveTurn = (conversationId: string, event: AgentTurnStreamEvent) => {
@@ -1448,9 +1470,9 @@ function App({ auth }: { auth: AuthGateSession }) {
   const runTutorTurn = async (
     conversationId: string,
     rawContent: string,
-    options: { replayInterruptedTurn?: boolean } = {},
+    options: { replayInterruptedTurn?: boolean; hideUserMessage?: boolean } = {},
   ) => {
-    const conversation = workspace.conversations.find(item => item.id === conversationId)
+    let conversation = workspace.conversations.find(item => item.id === conversationId)
     if (!conversation) {
       console.warn('[tutor-ui] ignored turn for missing conversation', { conversationId })
       return
@@ -1580,6 +1602,7 @@ function App({ auth }: { auth: AuthGateSession }) {
         const userMessage: Message = {
           id: uid('message'), role: 'user', content, createdAt: now, tutorMode: mode,
           persistedByTutor: isDesktopRuntime(),
+          hiddenFromTranscript: Boolean(options.hideUserMessage),
           learningSkillId: learningProjection?.skillId,
           learningSubstateId: optimisticTurnStep?.substateId,
           learningSubstateLabel: optimisticTurnStep?.substateLabel,
@@ -1608,6 +1631,62 @@ function App({ auth }: { auth: AuthGateSession }) {
       }
     })
     if (!replayInterruptedTurn) setDrafts(previous => ({ ...previous, [draftKey]: '' }))
+
+    // A global conversation is a valid place to prepare a WF03 task. The
+    // backend candidate artifact does need a project boundary, so create and
+    // bind that boundary only after the learner explicitly confirms the
+    // prepared contract. Without this bridge the confirmation used to fall
+    // back into Tutor and could start an unrelated visual/personalized lesson.
+    const draftConfirmation = activeConversationPluginIds(conversation).includes('learning_task_conversion')
+      ? parseLearningTaskDraftConfirmation(content)
+      : undefined
+    if (draftConfirmation && !conversation.projectId) {
+      try {
+        setLiveTurns(previous => previous[conversationId] ? {
+          ...previous,
+          [conversationId]: { ...previous[conversationId], phase: '正在建立 WF03 任务承载空间' },
+        } : previous)
+        const created = await createFormalProject({
+          name: draftConfirmation.taskTitle.slice(0, 80),
+          objective: draftConfirmation.taskTitle,
+          expectedOutcome: '形成可复核的学习型任务步骤、知识点与技能点映射',
+        })
+        await createFormalProjectFreeSession(created.project.id, `${created.project.name} · WF03 转化`)
+        const boundWorkspace = await loadFormalProject(created.project.id)
+        formalSessionId = boundWorkspace.free_sessions[boundWorkspace.free_sessions.length - 1]?.session_id
+        conversation = {
+          ...conversation,
+          projectId: boundWorkspace.project.id,
+          projectRole: 'free',
+          formalSessionId,
+          projectSources: boundWorkspace.sources,
+        }
+        setFormalProjectWorkspaces(previous => ({ ...previous, [boundWorkspace.project.id]: boundWorkspace }))
+        setFormalProjects(previous => [
+          boundWorkspace.project,
+          ...previous.filter(project => project.id !== boundWorkspace.project.id),
+        ])
+        setExpandedProjects(previous => ({ ...previous, [boundWorkspace.project.id]: true }))
+        setWorkspace(previous => ({
+          ...previous,
+          conversations: previous.conversations.map(item => item.id === conversationId
+            ? {
+                ...item,
+                projectId: boundWorkspace.project.id,
+                projectRole: 'free',
+                formalSessionId,
+                projectSources: boundWorkspace.sources,
+              }
+            : item),
+        }))
+      } catch (error) {
+        finishTurn(conversationId, sheetId, mode, {
+          role: 'system',
+          content: `学习型任务契约已经确认，但 WF03 任务承载空间创建失败：${error instanceof Error ? error.message : '未知错误'}。本轮没有进入个性化学习或其他 Tutor 功能。`,
+        })
+        return
+      }
+    }
 
     if (!replayInterruptedTurn && formalConnection.status === 'connected' && !configurationIssue) {
       try {
@@ -1758,8 +1837,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     )
     const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
     const directLearningTaskPluginTurn = Boolean(
-      conversation.projectId
-      && activeConversationPluginIds(conversation).includes('learning_task_conversion')
+      activeConversationPluginIds(conversation).includes('learning_task_conversion')
       && content.trim().length >= 2,
     )
 
@@ -1837,8 +1915,8 @@ function App({ auth }: { auth: AuthGateSession }) {
         activePluginIds: activeConversationPluginIds(conversation),
         onEvent: event => updateLiveTurn(conversationId, event),
       })
-      finishTurn(conversationId, sheetId, mode, {
-        role: 'assistant', content: reply.reply, toolRuns: reply.toolRuns, agentTrace: reply.trace,
+      const finishedMessage = finishTurn(conversationId, sheetId, mode, {
+        role: 'assistant', content: reply.reply, reasoningContent: reply.reasoningContent, toolRuns: reply.toolRuns, agentTrace: reply.trace,
         persistedByTutor: isDesktopRuntime(),
         learningSkillId: learningProjection?.skillId,
         learningSubstateId: turnStep?.substateId,
@@ -1851,6 +1929,14 @@ function App({ auth }: { auth: AuthGateSession }) {
           ? 'learning_task'
           : planningProjection ? 'planning_goal' : 'conversation_topic',
       }, formalSessionId)
+      const generatedCandidateRun = reply.toolRuns.find(run => (
+        run.status === 'completed'
+        && run.plugin?.pluginId === 'learning_task_conversion'
+        && run.plugin.result.objects?.some(object => object.objectType === 'learning_task_candidate')
+      ))
+      if (generatedCandidateRun) {
+        openPluginResultPaper(conversationId, finishedMessage.id, generatedCandidateRun)
+      }
       setToolChoices(previous => ({ ...previous, [draftKey]: 'auto' }))
     } catch (error) {
       finishTurn(conversationId, sheetId, mode, {
@@ -2482,6 +2568,7 @@ function App({ auth }: { auth: AuthGateSession }) {
       || (visibleMode === 'guided_learning' ? '准备态' : '')
     const formalVerificationReady = taskProjection?.task.formalSkillState === 'verification_ready'
     const sheet = activeSheet(conversation)
+    const pluginProjectionSheet = Boolean(sheet?.messages.some(message => message.pluginResultProjection))
     const sheetId = conversation.activeSheetId
     const draftKey = surfaceKey(conversation.id, sheetId)
     const draftPluginObjects = pluginDraftReferences[draftKey] || []
@@ -2631,7 +2718,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                 </header>
                 <div className="paper-tree-map">
                   <ol className="paper-tree-timeline" aria-label="主对话输入输出缩略">
-                    {conversation.messages.map((message, index) => (
+                    {conversation.messages.filter(message => !message.hiddenFromTranscript).map((message, index) => (
                       <li key={message.id}>
                         <button type="button" onClick={() => focusMainMessage(message.id)}>
                           <span>{message.role === 'user' ? '你' : message.role === 'assistant' ? 'Tutor' : '系统'} · {String(index + 1).padStart(2, '0')}</span>
@@ -2642,7 +2729,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                     ))}
                   </ol>
                   <div className="paper-tree-branches" aria-label="从对话消息或纸张展开的分支">
-                    {conversation.messages.map((message, index) => {
+                    {conversation.messages.filter(message => !message.hiddenFromTranscript).map((message, index) => {
                       const roots = topLevelPages.filter(page => page.sourceMessageId === message.id)
                       if (!roots.length) return null
                       return (
@@ -2653,7 +2740,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                       )
                     })}
                     {topLevelPages.some(page => !page.sourceMessageId) && (
-                      <section className="paper-tree-unanchored" style={{ gridRow: conversation.messages.length + 1 }}>
+                      <section className="paper-tree-unanchored" style={{ gridRow: conversation.messages.filter(message => !message.hiddenFromTranscript).length + 1 }}>
                         <span>工作台文件与未定位纸张</span>
                         <ul>{topLevelPages.filter(page => !page.sourceMessageId).map(page => renderPaperTreeNode(page, ['main']))}</ul>
                       </section>
@@ -2705,7 +2792,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                 </div>
               </div>
             ) : (
-              <div className={hasWorkbench ? 'paper-stack' : 'conversation-paper'}>
+              <div className={hasWorkbench ? `paper-stack${pluginProjectionSheet ? ' paper-stack-plugin' : ''}` : 'conversation-paper'}>
                 {hasWorkbench && backPages.length > 0 && (
                   <div className="paper-edge-deck" aria-label="其他纸张；悬停展开">
                     {backPages.map((page, index) => (
@@ -2727,7 +2814,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                     {pages.length - 1 > backPages.length && <span className="paper-edge-more">+{pages.length - 1 - backPages.length}</span>}
                   </div>
                 )}
-                <div className={hasWorkbench ? `paper-sheet${sheet?.artifact ? ' paper-sheet-artifact' : ''}` : 'conversation-page-content'}>
+                <div className={hasWorkbench ? `paper-sheet${sheet?.artifact ? ' paper-sheet-artifact' : ''}${pluginProjectionSheet ? ' paper-sheet-plugin' : ''}` : 'conversation-page-content'}>
                   {sheet?.artifact?.kind === 'lecture' && (
                     <Suspense fallback={<div className="page-loading">正在打开讲义纸张…</div>}>
                       <LectureFilePage lectureId={Number(sheet.artifact.ref)} embedded conversationId={conversation.id} sheetId={sheet.id} onFollowUp={() => {
@@ -2763,7 +2850,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                   )}
                   <MessageList
                     messages={messages}
-                    onPluginPrompt={prompt => setDrafts(previous => ({ ...previous, [draftKey]: prompt }))}
+                    onPluginPrompt={prompt => { void runTutorTurn(conversation.id, prompt, { hideUserMessage: true }) }}
                     onPluginReference={object => addPluginDraftReference(draftKey, object)}
                     onOpenPluginResult={(run, sourceMessageId) => openPluginResultPaper(conversation.id, sourceMessageId, run)}
                     onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
@@ -3289,10 +3376,11 @@ function App({ auth }: { auth: AuthGateSession }) {
   )
 }
 
-function ToolRunCard({ run, sourceMessageId, conversationId, onPluginPrompt, onPluginReference, onOpenPluginResult, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
+function ToolRunCard({ run, sourceMessageId, conversationId, compactPluginResult, onPluginPrompt, onPluginReference, onOpenPluginResult, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
   run: TutorToolRun
   sourceMessageId: string
   conversationId: string
+  compactPluginResult?: boolean
   onPluginPrompt: (prompt: string) => void
   onPluginReference: (object: LearnFlowPluginObject) => void
   onOpenPluginResult: (run: TutorToolRun, sourceMessageId: string) => void
@@ -3408,12 +3496,16 @@ function ToolRunCard({ run, sourceMessageId, conversationId, onPluginPrompt, onP
         </div>
       )}
       {run.artifact && <VisualArtifact artifact={run.artifact} />}
-      {run.plugin && <PluginToolResultView
-        run={run}
-        onPrompt={onPluginPrompt}
-        onReference={onPluginReference}
-        onOpenPaper={() => onOpenPluginResult(run, sourceMessageId)}
-      />}
+      {run.plugin && (compactPluginResult
+        ? <button type="button" className="button-secondary" onClick={() => onOpenPluginResult(run, sourceMessageId)}>
+            在独立页面查看完整学习型任务 →
+          </button>
+        : <PluginToolResultView
+            run={run}
+            onPrompt={onPluginPrompt}
+            onReference={onPluginReference}
+            onOpenPaper={() => onOpenPluginResult(run, sourceMessageId)}
+          />)}
     </section>
   )
 }
@@ -3519,7 +3611,7 @@ function MessageList({ messages, conversationId, onPluginPrompt, onPluginReferen
     document.addEventListener('selectionchange', captureKeyboardSelection)
     return () => document.removeEventListener('selectionchange', captureKeyboardSelection)
   }, [])
-  const visibleMessages = useMemo(() => messages, [messages])
+  const visibleMessages = useMemo(() => messages.filter(message => !message.hiddenFromTranscript), [messages])
 
   const captureSelection = (messageId: string, container: HTMLElement) => {
     const selection = globalThis.getSelection()
@@ -3589,6 +3681,10 @@ function MessageList({ messages, conversationId, onPluginPrompt, onPluginReferen
                       run={run}
                       sourceMessageId={message.id}
                       conversationId={conversationId}
+                      compactPluginResult={!message.pluginResultProjection && Boolean(
+                        run.plugin?.pluginId === 'learning_task_conversion'
+                        && run.plugin.result.objects?.some(object => object.objectType === 'learning_task_candidate')
+                      )}
                       onPluginPrompt={onPluginPrompt}
                       onPluginReference={onPluginReference}
                       onOpenPluginResult={onOpenPluginResult}
@@ -3618,7 +3714,7 @@ function MessageList({ messages, conversationId, onPluginPrompt, onPluginReferen
               ) : (
                 <Suspense fallback={<div className="markdown-loading">正在排版…</div>}>
                   <MarkdownContent content={humanizeLearningFileReferences(
-                    message.content,
+                    humanizeTutorMessageContent(message),
                     (message.toolRuns || []).flatMap(run => run.learningFile
                       && (run.learningFile.kind === 'lecture' || run.learningFile.kind === 'practice')
                       ? [{ kind: run.learningFile.kind, ref: run.learningFile.ref, title: run.learningFile.title }]

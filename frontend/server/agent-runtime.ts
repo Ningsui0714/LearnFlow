@@ -99,7 +99,7 @@ export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'ani
 }
 
 type RuntimeMessage =
-  | { role: 'user' | 'assistant'; content: string; toolCalls?: AgentToolCall[] }
+  | { role: 'user' | 'assistant'; content: string; toolCalls?: AgentToolCall[]; reasoningContent?: string }
   | { role: 'tool'; content: string; toolCallId: string; toolName: string }
 
 type ProviderInvoke = (request: {
@@ -209,6 +209,18 @@ const PROJECT_PLUGIN_INTEGRATION_OPERATIONS = {
   },
 } as const
 
+export function projectPluginIntegrationRequestBody(
+  route: { method: 'GET' | 'POST'; suffix: string },
+  body: Record<string, unknown>,
+) {
+  if (route.method !== 'POST' || !route.suffix) return body
+  // Candidate operations address the candidate in the URL. The backend
+  // confirmation contract forbids unknown JSON fields, so the routing-only
+  // candidateId must not be duplicated in the request body.
+  const { candidateId: _candidateId, ...requestBody } = body
+  return requestBody
+}
+
 async function requestProjectPluginIntegration(options: {
   input: TutorAgentRuntimeInput
   pluginId: string
@@ -254,7 +266,7 @@ async function requestProjectPluginIntegration(options: {
       ...(options.input.requestCookie ? { Cookie: options.input.requestCookie } : {}),
       ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     },
-    ...(route.method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    ...(route.method === 'POST' ? { body: JSON.stringify(projectPluginIntegrationRequestBody(route, body)) } : {}),
     signal: options.signal,
   })
   const text = await response.text()
@@ -441,6 +453,14 @@ export function toolCallsFromProviderResponse(payload: unknown): AgentToolCall[]
   return result
 }
 
+export function reasoningContentFromProviderResponse(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return ''
+  const root = payload as Record<string, any>
+  const choice = Array.isArray(root.choices) ? root.choices[0] : undefined
+  const reasoningContent = choice?.message?.reasoning_content
+  return typeof reasoningContent === 'string' ? reasoningContent : ''
+}
+
 function chatToolDefinitions(tools: AgentToolDefinition[]) {
   return tools.map(tool => ({
     type: 'function',
@@ -496,6 +516,7 @@ function chatMessages(instructions: string, messages: RuntimeMessage[]) {
         return {
           role: 'assistant',
           content: message.content || null,
+          ...(message.reasoningContent ? { reasoning_content: message.reasoningContent } : {}),
           tool_calls: message.toolCalls.map(call => ({
             id: call.id,
             type: 'function',
@@ -503,7 +524,13 @@ function chatMessages(instructions: string, messages: RuntimeMessage[]) {
           })),
         }
       }
-      return { role: message.role, content: message.content }
+      return {
+        role: message.role,
+        content: message.content,
+        ...(message.role === 'assistant' && message.reasoningContent
+          ? { reasoning_content: message.reasoningContent }
+          : {}),
+      }
     }),
   ]
 }
@@ -576,10 +603,23 @@ function compactPriorRuns(messages: TutorContextMessage[]) {
 }
 
 function envelopePrompt(envelope: AgentContextEnvelope) {
+  const observationDetails = envelope.observations
+    .map((observation, index) => [
+      `### 观察 ${index + 1} · ${observation.source}`,
+      safeJson(observation.data, 5_000),
+    ].join('\n'))
+    .join('\n')
+    .slice(0, 24_000)
+  const envelopeSummary = {
+    ...envelope,
+    observations: envelope.observations.map(observation => ({ ...observation, data: undefined })),
+  }
   return [
     '## 本轮 Agent ContextEnvelope',
     '这是 Harness 提供的有界运行状态，不是新的长期记忆权威。',
-    safeJson(envelope, 12_000),
+    safeJson(envelopeSummary, 12_000),
+    observationDetails ? '\n## 宿主预取的结构化观察\n这些观察由 Harness 直接提供，不是模型曾经发出的工具调用。\n' : '',
+    observationDetails,
     '',
     '## 工具策略',
     '只有需要外部观察时才调用工具。可以连续调用不同读取工具，但不得重复相同调用。',
@@ -707,12 +747,18 @@ function explicitToolCall(choice: TutorToolChoice, message: string, projectScope
 
 export function directLearningTaskIntakeRequest(
   activePluginIds: readonly string[] | undefined,
-  projectId: number | undefined,
+  _projectId: number | undefined,
   message: string,
 ) {
-  if (!projectId || !activePluginIds?.includes('learning_task_conversion')) return undefined
+  // Preparing and clarifying a WF03 task is conversation-scoped. Requiring a
+  // project here made the explicitly selected plugin silently fall back to
+  // Tutor's generic tools in a new/global conversation.
+  if (!activePluginIds?.includes('learning_task_conversion')) return undefined
   const quoted = message.match(/[“"]([^”"]{2,300})[”"]/)?.[1]?.trim()
   const normalized = message.replace(/^(?:请|帮我|请帮我|麻烦你)?\s*/i, '').trim()
+  if (/^(?:生成|转化|转换|创建)(?:一个|一份)?(?:学习型任务|学习任务)[。！!？?]*$/i.test(normalized)) {
+    return undefined
+  }
   if (/(?:解释|介绍|说明).{0,12}(?:学习型任务|这个插件)|(?:学习型任务|这个插件).{0,12}(?:是什么|怎么用|有何作用)/i.test(normalized)) {
     return undefined
   }
@@ -752,6 +798,87 @@ export function directLearningTaskDraftConfirmationRequest(
 ) {
   if (!projectId || !activePluginIds?.includes('learning_task_conversion')) return undefined
   return parseLearningTaskDraftConfirmation(message)
+}
+
+export function directLearningTaskCandidateOperationRequest(
+  activePluginIds: readonly string[] | undefined,
+  projectId: number | undefined,
+  message: string,
+): { toolName: string; arguments: Record<string, unknown> } | undefined {
+  if (!projectId || !activePluginIds?.includes('learning_task_conversion')) return undefined
+  const candidateId = message.match(/\b(ltc_[a-z0-9]+)\b/i)?.[1]
+  if (!candidateId) return undefined
+  if (/learning_task_conversion__inspect_learning_task_evidence|检查.{0,12}(?:来源|证据)|来源证据|grounding/i.test(message)) {
+    return {
+      toolName: 'learning_task_conversion__inspect_learning_task_evidence',
+      arguments: { candidateId },
+    }
+  }
+  if (/learning_task_conversion__audit_learning_task_candidate|(?:重新)?审计|确定性校验/i.test(message)) {
+    return {
+      toolName: 'learning_task_conversion__audit_learning_task_candidate',
+      arguments: { candidateId },
+    }
+  }
+  if (/learning_task_conversion__prepare_learning_handoff|Tutor\s*审阅|审阅包|交接包/i.test(message)) {
+    return {
+      toolName: 'learning_task_conversion__prepare_learning_handoff',
+      arguments: { candidateId },
+    }
+  }
+  const expectedRootHash = message.match(/(?:rootHash|expectedRootHash)\s*[:：]?\s*([a-f0-9]{64})/i)?.[1]
+  if (
+    expectedRootHash
+    && /learning_task_conversion__confirm_learning_task_candidate|确认.{0,16}(?:候选|正式任务)|创建正式(?:学习)?任务/i.test(message)
+  ) {
+    return {
+      toolName: 'learning_task_conversion__confirm_learning_task_candidate',
+      arguments: { candidateId, expectedRootHash, confirmed: true },
+    }
+  }
+  return undefined
+}
+
+export function directLearningTaskCandidateSelectionRequest(
+  activePluginIds: readonly string[] | undefined,
+  _projectId: number | undefined,
+  message: string,
+  history: TutorContextMessage[],
+) {
+  if (!activePluginIds?.includes('learning_task_conversion')) return undefined
+  const match = message.trim().match(
+    /^生成学习型任务：[“"](.{2,300}?)[”"]（来源于[“"](.{2,500}?)[”"]的已选任务候选）$/,
+  )
+  if (!match) return undefined
+  const [, selectedTitle, originalInput] = match
+  for (const historyMessage of [...history].reverse()) {
+    for (const run of [...(historyMessage.toolRuns || [])].reverse()) {
+      if (run.plugin?.pluginId !== 'learning_task_conversion') continue
+      const intakeObject = run.plugin.result.objects?.find(object => object.objectType === 'learning_task_intake')
+      const intake = intakeObject?.value as Record<string, any> | undefined
+      if (!intake || String(intake.originalInput) !== originalInput) continue
+      const selected = Array.isArray(intake.candidateTasks)
+        ? intake.candidateTasks.find((candidate: any) => String(candidate?.title) === selectedTitle)
+        : undefined
+      if (!selected) return undefined
+      return {
+        rawInput: originalInput,
+        roleName: String(intake.roleName || ''),
+        candidateTasks: [selected],
+        selectedTaskTitle: selectedTitle,
+        selectedTaskDescription: String(selected.description || ''),
+        modelAssessment: intake.preflight?.method === 'semantic_model' ? {
+          schemaVersion: String(intake.preflight.schemaVersion || 'learning-task-intake-model.v1'),
+          model: String(intake.preflight.model || 'semantic-preflight'),
+          assessedKind: String(intake.preflight.assessedKind || 'ambiguous'),
+          confidence: Number(intake.preflight.confidence || 0),
+          rationale: String(intake.preflight.rationale || ''),
+          nextQuestion: '',
+        } : undefined,
+      }
+    }
+  }
+  return undefined
 }
 
 export function verifyTutorTurnOutcome(options: {
@@ -841,7 +968,18 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   const trajectory: AgentTrajectoryEvent[] = []
   const decisionSummaries: AgentDecisionSummary[] = []
   const runs: TutorToolRun[] = []
-  const runtimeMessages: RuntimeMessage[] = input.messages.slice(-18).map(message => ({ role: message.role, content: message.content }))
+  const requiresReasoningReplay = /deepseek/i.test(`${input.baseUrl} ${input.model}`)
+  const runtimeMessages: RuntimeMessage[] = input.messages.slice(-18)
+    // Conversations created before reasoning persistence cannot legally replay
+    // their assistant turns to DeepSeek thinking models. The user's messages,
+    // tool snapshots and formal state remain available; only the unreplayable
+    // legacy assistant prose is omitted.
+    .filter(message => !(requiresReasoningReplay && message.role === 'assistant' && !message.reasoningContent))
+    .map(message => ({
+    role: message.role,
+    content: message.content,
+    ...(message.reasoningContent ? { reasoningContent: message.reasoningContent } : {}),
+    }))
   const observations: AgentContextEnvelope['observations'] = []
   const signatures = new Set<string>()
   let modelRounds = 0
@@ -852,6 +990,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let committedText = ''
   let visibleDraft = ''
   let visualTeaching: VisualTeachingBundle | undefined
+  let replyReasoningContent = ''
   let firstTextDeltaAt: number | undefined
   let pathGapPending = false
   let pathFuzzyPending = false
@@ -1018,7 +1157,12 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     }
   }
 
-  const execute = async (call: AgentToolCall, searchSources: SearchSource[] = []) => {
+  const execute = async (
+    call: AgentToolCall,
+    searchSources: SearchSource[] = [],
+    recordAssistantMessage = true,
+    recordRuntimeMessages = true,
+  ) => {
     if (
       (call.name === 'generate_learning_diagram' && visualIntent !== 'diagram')
       || (call.name === 'generate_learning_animation' && visualIntent !== 'animation')
@@ -1027,8 +1171,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         error: 'visual_intent_required',
         guidance: '图解和动画只在学习者本轮明确要求对应视觉形式时调用；普通讲解请直接使用文字、例子或既有学习文件。',
       }
-      runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
-      runtimeMessages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(blocked) })
+      if (recordRuntimeMessages && recordAssistantMessage) runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
+      if (recordRuntimeMessages) runtimeMessages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(blocked) })
       record({ phase: 'act', detail: `阻止缺少明确视觉意图的 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'blocked' })
       return [] as string[]
     }
@@ -1049,8 +1193,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         error: 'duplicate_tool_call',
         guidance: '相同工具和参数本轮已经执行；请使用已有观察、修改参数或结束回答。',
       }
-      runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
-      runtimeMessages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(duplicate) })
+      if (recordRuntimeMessages && recordAssistantMessage) runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
+      if (recordRuntimeMessages) runtimeMessages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(duplicate) })
       record({ phase: 'act', detail: '阻止重复工具调用', toolCallId: call.id, toolName: call.name, status: 'blocked' })
       return [] as string[]
     }
@@ -1066,7 +1210,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       startedAt: Date.now(),
     })
     record({ phase: 'act', detail: `调用 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'started' })
-    runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
+    if (recordRuntimeMessages && recordAssistantMessage) runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
     const result = input.executeTool
       ? await input.executeTool(call.name, call.arguments, toolOptions, {
         callId: call.id,
@@ -1133,12 +1277,14 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         || call.name === 'inspect_learning_video',
       data: result.observation,
     })
-    runtimeMessages.push({
-      role: 'tool',
-      toolCallId: call.id,
-      toolName: call.name,
-      content: safeJson(result.observation),
-    })
+    if (recordRuntimeMessages) {
+      runtimeMessages.push({
+        role: 'tool',
+        toolCallId: call.id,
+        toolName: call.name,
+        content: safeJson(result.observation),
+      })
+    }
     if (result.directReply) fallbackReply = result.directReply
     record({
       phase: 'act',
@@ -1150,13 +1296,104 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     return result.searchSources || []
   }
 
-  const refreshPathAfterSearch = async (sources: SearchSource[]) => {
+  const refreshPathAfterSearch = async (sources: SearchSource[], recordRuntimeMessages = true) => {
     if (!pathGapPending || !sources.length || !input.learnerPathState) return
     await execute({
       id: `path-evidence-refresh-${id}-${toolCalls + 1}`,
       name: 'propose_personal_path_node',
       arguments: { query: latestMessage, source_urls: sources.map(source => source.url) },
-    }, sources)
+    }, sources, recordRuntimeMessages, recordRuntimeMessages)
+  }
+
+  const directCandidateOperation = directLearningTaskCandidateOperationRequest(
+    input.activePluginIds,
+    pluginActivation(input).projectId,
+    latestMessage,
+  )
+  if (directCandidateOperation && input.pluginRegistry?.resolveTool(
+    directCandidateOperation.toolName,
+    pluginActivation(input),
+  )) {
+    record({ phase: 'observe', detail: '已识别候选卡片操作，直接调用学习型任务转化插件', status: 'completed' })
+    await execute({
+      id: `direct-learning-task-candidate-operation-${id}`,
+      name: directCandidateOperation.toolName,
+      arguments: directCandidateOperation.arguments,
+    })
+    const run = runs[runs.length - 1]
+    const reply = run?.status === 'completed'
+      ? run.detail
+      : `候选操作失败：${run?.detail || '插件没有返回可用观察'}`
+    stopReason = run?.status === 'completed' ? 'final_answer' : 'error'
+    record({
+      phase: 'finalize',
+      detail: run?.status === 'completed' ? '候选操作已由插件直接完成' : '候选操作失败',
+      status: run?.status === 'completed' ? 'completed' : 'failed',
+    })
+    reconcileVisibleDraft(reply)
+    return {
+      reply,
+      toolRuns: runs,
+      trace: {
+        version: 'vnext-agent-trace.v1',
+        turnId: id,
+        modelRounds: 0,
+        toolCalls,
+        stopReason,
+        events: trajectory,
+        decisionSummaries,
+        timings: {
+          ...(firstTextDeltaAt ? { firstTextDeltaMs: firstTextDeltaAt - startedAt } : {}),
+          totalMs: Date.now() - startedAt,
+        },
+      },
+    }
+  }
+
+  const directSelection = directLearningTaskCandidateSelectionRequest(
+    input.activePluginIds,
+    pluginActivation(input).projectId,
+    latestMessage,
+    input.messages,
+  )
+  if (directSelection && input.pluginRegistry?.resolveTool(
+    'learning_task_conversion__prepare_learning_task_intake',
+    pluginActivation(input),
+  )) {
+    record({ phase: 'observe', detail: '已读取上一张准备单中的学习者所选任务，直接固化确认契约', status: 'completed' })
+    await execute({
+      id: `direct-learning-task-selection-${id}`,
+      name: 'learning_task_conversion__prepare_learning_task_intake',
+      arguments: directSelection as unknown as Record<string, unknown>,
+    })
+    const run = runs[runs.length - 1]
+    const reply = run?.status === 'completed'
+      ? `${run.detail}\n\n已沿用上一张准备单中的原文、候选描述与语义预检结果；请在确认卡上核对后再调用讯飞。`
+      : `任务候选选择失败：${run?.detail || '插件没有返回可用观察'}`
+    stopReason = run?.status === 'completed' ? 'final_answer' : 'error'
+    record({
+      phase: 'finalize',
+      detail: run?.status === 'completed' ? '所选任务已形成待确认契约' : '所选任务未能形成确认契约',
+      status: run?.status === 'completed' ? 'completed' : 'failed',
+    })
+    reconcileVisibleDraft(reply)
+    return {
+      reply,
+      toolRuns: runs,
+      trace: {
+        version: 'vnext-agent-trace.v1',
+        turnId: id,
+        modelRounds: 0,
+        toolCalls,
+        stopReason,
+        events: trajectory,
+        decisionSummaries,
+        timings: {
+          ...(firstTextDeltaAt ? { firstTextDeltaMs: firstTextDeltaAt - startedAt } : {}),
+          totalMs: Date.now() - startedAt,
+        },
+      },
+    }
   }
 
   const directDraft = directLearningTaskDraftConfirmationRequest(
@@ -1271,19 +1508,19 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     || input.mode === 'learning_plan'
     || /(?:根据我|适合我|我的基础|我的情况|我之前|我学过|我不会|我总是|记得我|偏好|目标|熟练度|掌握度|薄弱|错题)/i.test(latestMessage)
   if (needsLearnerContext) {
-    await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } })
+    await execute({ id: `observe-memory-${id}`, name: 'read_learner_context', arguments: { query: latestMessage } }, [], false, false)
   }
   if (input.formalProjectContext) {
-    await execute({ id: `observe-project-${id}`, name: 'read_project_workspace', arguments: { query: latestMessage } })
+    await execute({ id: `observe-project-${id}`, name: 'read_project_workspace', arguments: { query: latestMessage } }, [], false, false)
     if (['simple_explain', 'guided_learning', 'learning_plan'].includes(input.mode)) {
-      await execute({ id: `observe-project-sources-${id}`, name: 'read_project_sources', arguments: { query: latestMessage } })
+      await execute({ id: `observe-project-sources-${id}`, name: 'read_project_sources', arguments: { query: latestMessage } }, [], false, false)
     }
     if (input.formalProjectContext.tool_policy?.roadmap_tool_access === 'project_tutor' && input.mode === 'learning_plan') {
-      await execute({ id: `observe-roadmap-${id}`, name: 'read_project_roadmap', arguments: { query: latestMessage } })
+      await execute({ id: `observe-roadmap-${id}`, name: 'read_project_roadmap', arguments: { query: latestMessage } }, [], false, false)
     }
   }
   if (input.mode === 'guided_learning' || input.mode === 'learning_plan') {
-    await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } })
+    await execute({ id: `observe-workspace-${id}`, name: 'read_learning_workspace', arguments: { query: latestMessage } }, [], false, false)
   }
   if (
     selectingLearningFile
@@ -1298,34 +1535,34 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         learning_task_id: input.learningTaskContext.formalTaskId,
         file_kinds: ['lecture', 'practice'],
       },
-    })
+    }, [], false, false)
   }
   if (input.activeArtifactContext) {
-    await execute({ id: `observe-active-file-${id}`, name: 'read_active_learning_file', arguments: {} })
+    await execute({ id: `observe-active-file-${id}`, name: 'read_active_learning_file', arguments: {} }, [], false, false)
   }
   if (input.formalDomainKnowledgeContext && ['simple_explain', 'guided_learning', 'learning_plan'].includes(input.mode) && input.toolChoice === 'auto') {
-    await execute({ id: `observe-domain-${id}`, name: 'read_domain_knowledge', arguments: { query: latestMessage } })
+    await execute({ id: `observe-domain-${id}`, name: 'read_domain_knowledge', arguments: { query: latestMessage } }, [], false, false)
   }
   if (input.toolChoice === 'auto' && shouldAutoSupplementKnowledge(input, latestMessage)) {
     const sources = await execute({
       id: `auto-knowledge-search-${id}`, name: 'search_computer_knowledge',
       arguments: { query: latestMessage, depth: /(?:论文|研究|综述|全面|深度)/i.test(latestMessage) ? 'deep' : 'standard' },
-    })
+    }, [], false, false)
     for (const [index, source] of sources.filter(item => item.url).slice(0, 2).entries()) {
       await execute({
         id: `auto-knowledge-read-${id}-${index + 1}`, name: 'read_web_evidence',
         arguments: { url: source.url, query: latestMessage },
-      }, sources)
+      }, sources, false, false)
     }
   }
   if (input.mode === 'learning_plan' && input.learnerPathState) {
-    await execute({ id: `observe-path-exact-${id}`, name: 'lookup_learning_path_node', arguments: { query: latestMessage } })
+    await execute({ id: `observe-path-exact-${id}`, name: 'lookup_learning_path_node', arguments: { query: latestMessage } }, [], false, false)
     if (pathFuzzyPending) {
-      await execute({ id: `observe-path-fuzzy-${id}`, name: 'search_learning_path_graph', arguments: { query: latestMessage, limit: 6 } })
+      await execute({ id: `observe-path-fuzzy-${id}`, name: 'search_learning_path_graph', arguments: { query: latestMessage, limit: 6 } }, [], false, false)
     }
   }
   if (input.formalReviewContext && /复习|错题|遗忘|记不住|熟练度|掌握度|记忆曲线|间隔|回忆|薄弱/i.test(latestMessage)) {
-    await execute({ id: `observe-review-${id}`, name: 'read_review_context', arguments: { query: latestMessage } })
+    await execute({ id: `observe-review-${id}`, name: 'read_review_context', arguments: { query: latestMessage } }, [], false, false)
   }
   const explicit = explicitToolCall(input.toolChoice, latestMessage, Boolean(input.formalProjectContext))
     || (visualIntent === 'none' ? undefined : {
@@ -1336,8 +1573,8 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   // Both visual modalities are deferred to visual_teaching_composition. The
   // Skill commits an independent explanation before either renderer runs.
   if (explicit && !['generate_learning_diagram', 'generate_learning_animation'].includes(explicit.name)) {
-    const sources = await execute(explicit)
-    if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(sources)
+    const sources = await execute(explicit, [], false, false)
+    if (explicit.name === 'search_computer_knowledge') await refreshPathAfterSearch(sources, false)
   }
   record({ phase: 'observe', detail: `观察空间已就绪：${observations.length} 个结构化观察`, status: 'completed' })
 
@@ -1355,7 +1592,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       learningTask: input.learningTaskContext,
       learningPlan: input.learningPlanContext,
     },
-    observations: observations.map(item => ({ ...item, data: undefined })),
+    // Host-prefetched observations are carried in the bounded instruction
+    // envelope. They must not be forged as assistant tool calls: DeepSeek
+    // thinking mode requires every replayed assistant tool call to include the
+    // provider's original reasoning_content.
+    observations,
     recentToolObservations: compactPriorRuns(input.messages),
     budgets: {
       maxModelRounds: budget.maxModelRounds,
@@ -1425,6 +1666,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           includeTools: false,
         }), deadline, false)
         explanation = textFromTutorProviderResponse(explanationPayload).trim()
+        let explanationReasoningContent = reasoningContentFromProviderResponse(explanationPayload)
         try {
           explanation = validateVisualTeachingExplanation(explanation)
         } catch (firstError) {
@@ -1437,22 +1679,24 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             instructions,
             messages: [
               ...runtimeMessages,
-              { role: 'assistant' as const, content: explanation },
+              { role: 'assistant' as const, content: explanation, ...(explanationReasoningContent ? { reasoningContent: explanationReasoningContent } : {}) },
               { role: 'user' as const, content: visualTeachingExplanationPrompt(modality, latestMessage, true) },
             ],
             tools: [],
             includeTools: false,
           }), deadline, false)
           explanation = validateVisualTeachingExplanation(textFromTutorProviderResponse(explanationPayload).trim())
+          explanationReasoningContent = reasoningContentFromProviderResponse(explanationPayload)
         }
 
         commitTeachingSegment(explanation, modality)
-        runtimeMessages.push({ role: 'assistant', content: explanation })
+        runtimeMessages.push({ role: 'assistant', content: explanation, ...(explanationReasoningContent ? { reasoningContent: explanationReasoningContent } : {}) })
+        replyReasoningContent = explanationReasoningContent
         record({ phase: 'decide', detail: '独立讲解已提交；后续 Brief 或视觉失败不得撤销', status: 'completed' })
 
         try {
           modelRounds += 1
-          let rawBrief = textFromTutorProviderResponse(await invokeModel(buildAgentProviderRequest({
+          let rawBriefPayload = await invokeModel(buildAgentProviderRequest({
             baseUrl: input.baseUrl,
             model: input.model,
             instructions,
@@ -1460,7 +1704,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             tools: [],
             includeTools: false,
             responseFormat: 'json_object',
-          }), deadline, false)).trim()
+          }), deadline, false)
+          let rawBrief = textFromTutorProviderResponse(rawBriefPayload).trim()
+          let rawBriefReasoningContent = reasoningContentFromProviderResponse(rawBriefPayload)
           try {
             visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage, explanation)
             if (visualBrief.explanation !== explanation) throw new Error('visual_teaching_explanation_mismatch')
@@ -1468,19 +1714,21 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             if (Date.now() >= deadline - 1_000) throw firstError
             record({ phase: 'decide', detail: 'VisualBrief 未通过结构门，进行一次限次修复', status: 'retrying' })
             modelRounds += 1
-            rawBrief = textFromTutorProviderResponse(await invokeModel(buildAgentProviderRequest({
+            rawBriefPayload = await invokeModel(buildAgentProviderRequest({
               baseUrl: input.baseUrl,
               model: input.model,
               instructions,
               messages: [
                 ...runtimeMessages,
-                { role: 'assistant', content: rawBrief },
+                { role: 'assistant', content: rawBrief, ...(rawBriefReasoningContent ? { reasoningContent: rawBriefReasoningContent } : {}) },
                 { role: 'user', content: visualTeachingBriefPrompt(modality, latestMessage, explanation, true) },
               ],
               tools: [],
               includeTools: false,
               responseFormat: 'json_object',
-            }), deadline, false)).trim()
+            }), deadline, false)
+            rawBrief = textFromTutorProviderResponse(rawBriefPayload).trim()
+            rawBriefReasoningContent = reasoningContentFromProviderResponse(rawBriefPayload)
             visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage, explanation)
             if (visualBrief.explanation !== explanation) throw new Error('visual_teaching_explanation_mismatch')
           }
@@ -1534,18 +1782,27 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       })
       const payload = await invokeModel(request)
       const calls = toolCallsFromProviderResponse(payload)
+      const reasoningContent = reasoningContentFromProviderResponse(payload)
       const text = textFromTutorProviderResponse(payload)
       if (calls.length) {
         resetVisibleDraft('tool_call')
         record({ phase: 'decide', detail: `模型选择 ${calls.length} 个工具`, status: 'completed' })
-        for (const call of calls.slice(0, budget.maxToolCalls - toolCalls)) {
+        const acceptedCalls = calls.slice(0, budget.maxToolCalls - toolCalls)
+        if (acceptedCalls.length) {
+          runtimeMessages.push({
+            role: 'assistant',
+            content: text,
+            toolCalls: acceptedCalls,
+            ...(reasoningContent ? { reasoningContent } : {}),
+          })
+        }
+        for (const call of acceptedCalls) {
           if (!modelVisibleToolNames.has(call.name)) {
             const observation = {
               error: 'tool_not_available',
               requestedTool: call.name,
               guidance: '该工具没有向当前状态或作用域开放。请只使用本轮 tools 列表中的工具。',
             }
-            runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
             runtimeMessages.push({
               role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(observation),
             })
@@ -1569,7 +1826,6 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
                 ? '学习路径目标已经由正式图谱可靠定位。请直接基于已有图谱回答，不要为补充一般背景重复联网。'
                 : '当前目标存在多个正式图谱候选。请先让学习者消歧，不要用联网结果替学习者选择方向。',
             }
-            runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
             runtimeMessages.push({
               role: 'tool', toolCallId: call.id, toolName: call.name, content: safeJson(observation),
             })
@@ -1579,7 +1835,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             })
             continue
           }
-          const sources = await execute(call, searchSources)
+          const sources = await execute(call, searchSources, false)
           if (sources.length) {
             const byUrl = new Map([...searchSources, ...sources].map(source => [source.url, source]))
             searchSources = [...byUrl.values()]
@@ -1593,7 +1849,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       if (incompleteReason) {
         if (!text.trim()) throw new Error(`模型输出未完成且没有可续接正文：${incompleteReason}`)
         continuationPrefix = combinedText
-        runtimeMessages.push({ role: 'assistant', content: text })
+        runtimeMessages.push({ role: 'assistant', content: text, ...(reasoningContent ? { reasoningContent } : {}) })
         runtimeMessages.push({
           role: 'user',
           content: '上一段正文因模型输出上限中断。请从断点后继续，只输出尚未完成的后半部分，不要重写或重复已经输出的内容；把当前回答自然完整地收束。',
@@ -1612,12 +1868,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       })
       if (verification.valid) {
         reply = candidate
+        replyReasoningContent = reasoningContent
         reconcileVisibleDraft(candidate)
         stopReason = 'final_answer'
         record({ phase: 'verify', detail: '最终回复通过展示协议校验', status: 'completed' })
         break
       }
-      runtimeMessages.push({ role: 'assistant', content: text })
+      runtimeMessages.push({ role: 'assistant', content: text, ...(reasoningContent ? { reasoningContent } : {}) })
       resetVisibleDraft('verification')
       runtimeMessages.push({
         role: 'user',
@@ -1648,12 +1905,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         })
         const payload = await invokeModel(request, finalizationDeadline)
         const text = textFromTutorProviderResponse(payload)
+        const reasoningContent = reasoningContentFromProviderResponse(payload)
         const combinedText = `${continuationPrefix}${text}`
         const incompleteReason = incompleteTutorProviderReason(payload)
         if (incompleteReason) {
           if (text.trim()) {
             continuationPrefix = combinedText
-            runtimeMessages.push({ role: 'assistant', content: text })
+            runtimeMessages.push({ role: 'assistant', content: text, ...(reasoningContent ? { reasoningContent } : {}) })
             runtimeMessages.push({
               role: 'user',
               content: '回答仍因输出上限中断。只续写缺失的结尾并自然收束，不要重复前文。',
@@ -1672,6 +1930,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           observations,
         }).valid) {
           reply = candidate
+          replyReasoningContent = reasoningContent
           reconcileVisibleDraft(candidate)
         } else {
           resetVisibleDraft('verification')
@@ -1714,6 +1973,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   reconcileVisibleDraft(reply)
   return {
     reply,
+    ...(replyReasoningContent ? { reasoningContent: replyReasoningContent } : {}),
     toolRuns: runs,
     ...(visualTeaching ? { visualTeaching } : {}),
     trace: {

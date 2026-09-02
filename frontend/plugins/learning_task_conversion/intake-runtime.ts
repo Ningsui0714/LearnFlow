@@ -26,11 +26,12 @@ export function learningTaskIntakeRootHash(intake: LearningTaskConversionIntake)
     schemaVersion: intake.schemaVersion,
     intakeId: intake.intakeId,
     originalInput: intake.originalInput,
-    inputKind: intake.inputKind,
-    status: intake.status,
-    lockedTerms: intake.lockedTerms,
-    roleName: intake.roleName,
-    taskContract: intake.taskContract,
+    taskContract: {
+      title: intake.taskContract.title,
+      description: intake.taskContract.description,
+      source: intake.taskContract.source,
+      sourceRef: intake.taskContract.sourceRef,
+    },
   }))).digest('hex')
 }
 
@@ -70,6 +71,17 @@ export function assertConfirmedLearningTaskIntake(
     candidateTasks: sourceCandidate,
     selectedTaskTitle: input.taskSource === 'user_explicit' ? undefined : input.taskTitle,
     selectedTaskDescription: input.taskDescription,
+    // Confirmation rebuilds the exact learner-approved task contract without
+    // making a second model call. The semantic kind was already established in
+    // the preparation turn; local keyword extraction must not invalidate it.
+    modelAssessment: input.taskSource === 'user_explicit' ? {
+      schemaVersion: 'learning-task-intake-model.v1',
+      model: 'confirmed-preflight',
+      assessedKind: 'work_task',
+      confidence: 1,
+      rationale: '沿用学习者已确认的语义预检任务合同。',
+      nextQuestion: '',
+    } : undefined,
   })
   if (input.taskSource === 'user_explicit' && intake.taskContract.title !== input.taskTitle.trim()) {
     throw new Error('learning_task_intake_anchor_mismatch:任务名称必须保持用户已确认的原始工作任务')

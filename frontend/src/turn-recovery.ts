@@ -6,6 +6,7 @@ export type TutorTurnMessage = {
   content: string
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
+  reasoningContent?: string
 }
 
 export function recoverableTutorTurn(messages: TutorTurnMessage[], pending: boolean) {
@@ -25,6 +26,7 @@ export function buildTutorContextMessages(
       role: message.role,
       content: message.content,
       ...(message.toolRuns ? { toolRuns: message.toolRuns } : {}),
+      ...(message.reasoningContent ? { reasoningContent: message.reasoningContent } : {}),
     }))
   return replayInterruptedTurn ? existing : [...existing, { role: 'user', content }]
 }
