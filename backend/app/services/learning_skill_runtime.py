@@ -1340,6 +1340,7 @@ async def create_learning_skill_run(
     client_request_id: str,
     source: str = "user",
     domain_source_ids: list[int] | None = None,
+    learning_task_id: int | None = None,
 ) -> tuple[LearningSkillRun, bool]:
     await _validate_session_scope(db, session)
     if skill_id not in RUNTIME_SKILL_IDS or not selectable_learning_skill(skill_id):
@@ -1347,6 +1348,22 @@ async def create_learning_skill_run(
     normalized_goal = _learning_goal(goal, skill_id)
     if len(normalized_goal) < 2:
         raise RuntimeError("missing_goal")
+    requested_task: LearningTask | None = None
+    if learning_task_id:
+        requested_task = (await db.execute(select(LearningTask).where(
+            LearningTask.id == learning_task_id,
+            LearningTask.learner_id == session.learner_id,
+            LearningTask.status.in_({"queued", "active", "paused"}),
+        ))).scalar_one_or_none()
+        if (
+            not requested_task
+            or requested_task.project_id != session.project_id
+            or requested_task.checkpoint_id != session.checkpoint_id
+            or requested_task.session_id not in {None, session.id}
+        ):
+            raise RuntimeError("unsupported_scope")
+        if requested_task.session_id is None:
+            requested_task.session_id = session.id
     request_key = f"skill-run:{session.id}:{client_request_id}"
     existing = (await db.execute(select(LearningSkillRun).where(
         LearningSkillRun.learner_id == session.learner_id,
@@ -1354,15 +1371,23 @@ async def create_learning_skill_run(
     ))).scalar_one_or_none()
     if existing:
         await validate_learning_skill_run_scope(db, session=session, run=existing)
-        if not existing.learning_task_id:
-            await _ensure_atomic_learning_task(
-                db, session=session, run=existing, source=source,
-            )
+        if requested_task and existing.learning_task_id not in {None, requested_task.id}:
+            raise RuntimeError("unsupported_scope")
+        if requested_task and not existing.learning_task_id:
+            existing.learning_task_id = requested_task.id
+        await _ensure_atomic_learning_task(
+            db, session=session, run=existing, source=source,
+        )
         await validate_learning_skill_run_scope(db, session=session, run=existing)
         return existing, False
 
     current = await active_skill_run(db, session)
-    if current and current.skill_id == skill_id and current.goal == normalized_goal:
+    if (
+        current
+        and current.skill_id == skill_id
+        and current.goal == normalized_goal
+        and (not requested_task or current.learning_task_id == requested_task.id)
+    ):
         await validate_learning_skill_run_scope(db, session=session, run=current)
         if not current.learning_task_id:
             await _ensure_atomic_learning_task(
@@ -1447,6 +1472,7 @@ async def create_learning_skill_run(
         run_data=initial_data,
         action_log=[],
         client_request_id=request_key,
+        learning_task_id=requested_task.id if requested_task else None,
         version=1,
     )
     db.add(run)

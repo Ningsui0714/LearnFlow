@@ -16,6 +16,7 @@ import {
 } from './tutor'
 import {
   activeLearningTaskProjection,
+  activateFormalLearningTask,
   advanceLearningSkillStep,
   appendLearningEvents,
   bindFormalSkillRun,
@@ -891,7 +892,26 @@ function App({ auth }: { auth: AuthGateSession }) {
     setSidebarOpen(false)
   }
 
-  const returnToLearningScene = (task: FormalLearningTask) => {
+  const returnToLearningScene = async (task: FormalLearningTask) => {
+    setFormalBusyKey(`task:${task.id}`)
+    setFormalError('')
+    let executableTask = task
+    try {
+      if (task.status === 'queued' || task.status === 'paused') {
+        executableTask = await actOnFormalLearningTask(
+          task,
+          task.status === 'queued' ? 'start' : 'resume',
+        )
+        setFormalSnapshot(previous => previous ? {
+          ...previous,
+          learning_tasks: previous.learning_tasks.map(item => item.id === executableTask.id ? executableTask : item),
+        } : previous)
+      }
+    } catch (error) {
+      setFormalError(error instanceof Error ? error.message : '正式学习任务无法启动')
+      setFormalBusyKey('')
+      return
+    }
     const routeMatch = task.origin_navigation?.path.match(/^\/chat\/([^/?#]+)/)
     const routeConversationId = routeMatch
       ? decodeURIComponent(routeMatch[1])
@@ -911,26 +931,58 @@ function App({ auth }: { auth: AuthGateSession }) {
       ))
     if (target) {
       const sheetId = typeof sourceRef?.sheetId === 'string' ? sourceRef.sheetId : 'main'
+      let formalSessionId = target.formalSessionId
+      if (!formalSessionId) {
+        try {
+          const session = await createFormalTutorSession(true, {
+            projectId: target.projectId || executableTask.project_id || undefined,
+            checkpointId: target.checkpointId || executableTask.checkpoint_id || undefined,
+            title: target.title,
+            clientConversationId: target.id,
+          })
+          formalSessionId = session.id
+        } catch (error) {
+          setFormalError(error instanceof Error ? error.message : '学习现场会话创建失败')
+          setFormalBusyKey('')
+          return
+        }
+      }
       setWorkspace(previous => ({
         ...previous,
         conversations: previous.conversations.map(conversation => conversation.id === target.id
-          ? {
-              ...conversation,
-              activeSheetId: sheetId === 'main' || conversation.sheets.some(sheet => sheet.id === sheetId)
-                ? sheetId
-                : 'main',
-            }
+          ? (() => {
+              const activated = activateFormalLearningTask(
+                executableTask,
+                conversation.learningTasks,
+                conversation.learningEvents,
+              )
+              return {
+                ...conversation,
+                formalSessionId,
+                mode: 'guided_learning' as const,
+                learningTasks: activated.tasks,
+                learningEvents: activated.events,
+                preferredSkillId: projectLearningTask(activated.task, activated.events).skillId,
+                activeSheetId: sheetId === 'main' || conversation.sheets.some(sheet => sheet.id === sheetId)
+                  ? sheetId
+                  : 'main',
+                updatedAt: Date.now(),
+              }
+            })()
           : conversation),
       }))
       openTab(chatTab(target))
+      setFormalBusyKey('')
       return
     }
     if (task.project_id) {
       openTab({ id: `project:${task.project_id}`, kind: 'project', title: task.title, projectId: task.project_id })
+      setFormalBusyKey('')
       return
     }
     const fallback = task.origin_navigation?.path
     if (fallback && !fallback.startsWith('/tasks')) window.location.assign(fallback)
+    setFormalBusyKey('')
   }
 
   const newConversation = () => {
@@ -1858,6 +1910,7 @@ function App({ auth }: { auth: AuthGateSession }) {
               binding.objective,
               `vnext-skill:${binding.id}`.slice(0, 120),
               conversation.projectId ? [] : conversation.domainSources.map(source => source.id),
+              binding.formalTaskId,
             )
             formalSkillRun = started.active_skill_run
           } else {
@@ -2950,6 +3003,14 @@ function App({ auth }: { auth: AuthGateSession }) {
                     messages={messages}
                     onPluginPrompt={prompt => { void runTutorTurn(conversation.id, prompt, { hideUserMessage: true }) }}
                     onPluginReference={object => addPluginDraftReference(draftKey, object)}
+                    onOpenLearningTask={taskId => {
+                      void (async () => {
+                        const snapshot = await refreshFormalSnapshot(true)
+                        const task = snapshot?.learning_tasks.find(item => item.id === taskId)
+                        if (task) await returnToLearningScene(task)
+                        else setFormalError(`找不到正式学习任务 #${taskId}`)
+                      })()
+                    }}
                     onOpenPluginResult={(run, sourceMessageId) => openPluginResultPaper(conversation.id, sourceMessageId, run)}
                     onQuoteFollowUp={(messageId, quote) => createFollowUpSheet(conversation.id, messageId, quote)}
                     onAcceptPathProposal={acceptPersonalPathNode}
@@ -3475,13 +3536,14 @@ function App({ auth }: { auth: AuthGateSession }) {
   )
 }
 
-function ToolRunCard({ run, sourceMessageId, conversationId, compactPluginResult, onPluginPrompt, onPluginReference, onOpenPluginResult, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
+function ToolRunCard({ run, sourceMessageId, conversationId, compactPluginResult, onPluginPrompt, onPluginReference, onOpenLearningTask, onOpenPluginResult, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteError, projectBusyKey, projectError, learningFileProposalError }: {
   run: TutorToolRun
   sourceMessageId: string
   conversationId: string
   compactPluginResult?: boolean
   onPluginPrompt: (prompt: string) => void
   onPluginReference: (object: LearnFlowPluginObject) => void
+  onOpenLearningTask: (taskId: number) => void
   onOpenPluginResult: (run: TutorToolRun, sourceMessageId: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
   onAttachLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }, sourceMessageId: string) => void
@@ -3603,6 +3665,7 @@ function ToolRunCard({ run, sourceMessageId, conversationId, compactPluginResult
             run={run}
             onPrompt={onPluginPrompt}
             onReference={onPluginReference}
+            onOpenLearningTask={onOpenLearningTask}
             onOpenPaper={() => onOpenPluginResult(run, sourceMessageId)}
           />)}
     </section>
@@ -3667,11 +3730,12 @@ function ToolDecisionBridge({
   )
 }
 
-function MessageList({ messages, conversationId, onPluginPrompt, onPluginReference, onOpenPluginResult, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
+function MessageList({ messages, conversationId, onPluginPrompt, onPluginReference, onOpenLearningTask, onOpenPluginResult, onQuoteFollowUp, onOpenLearningFile, onAttachLearningFile, onAcceptPathProposal, onAcceptPathPlan, onAcceptProjectRoadmap, onAcceptProjectLearningFile, activePathPlanId, pathPlanBusyId, pathPlanWriteErrors, projectBusyKey, projectError, learningFileProposalErrors }: {
   messages: Message[]
   conversationId: string
   onPluginPrompt: (prompt: string) => void
   onPluginReference: (object: LearnFlowPluginObject) => void
+  onOpenLearningTask: (taskId: number) => void
   onOpenPluginResult: (run: TutorToolRun, sourceMessageId: string) => void
   onQuoteFollowUp: (messageId: string, quote: string) => void
   onOpenLearningFile: (file: { kind: 'lecture' | 'practice'; ref: string; title: string }) => void
@@ -3786,6 +3850,7 @@ function MessageList({ messages, conversationId, onPluginPrompt, onPluginReferen
                       )}
                       onPluginPrompt={onPluginPrompt}
                       onPluginReference={onPluginReference}
+                      onOpenLearningTask={onOpenLearningTask}
                       onOpenPluginResult={onOpenPluginResult}
                       onOpenLearningFile={onOpenLearningFile}
                       onAttachLearningFile={onAttachLearningFile}

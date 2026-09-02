@@ -210,8 +210,9 @@ function HandoffRenderer(props: PluginToolRendererProps) {
 function ConfirmationRenderer(props: PluginToolRendererProps) {
   const confirmation = firstValue(props)
   const task = (confirmation.learningTask || {}) as JsonRecord
-  const navigation = (confirmation.managementNavigation || confirmation.navigation || {}) as JsonRecord
+  const navigation = (confirmation.navigation || confirmation.managementNavigation || {}) as JsonRecord
   const href = String(navigation.path || '')
+  const taskId = Number(task.id || 0)
   return <section className="ltc-panel ltc-confirmation">
     <header><div className="ltc-mark">启</div><div><span>FORMAL LEARNING TASK</span><h3>{String(task.title || '正式学习任务')}</h3></div><b className="pass">已确认</b></header>
     <p>{String(task.objective || '候选已由 LearnFlow 重新校验并创建为正式学习任务。')}</p>
@@ -221,7 +222,9 @@ function ConfirmationRenderer(props: PluginToolRendererProps) {
       <span><strong>0</strong><small>本次掌握写入</small></span>
     </div>
     <div className="ltc-boundaries"><span>用户已确认</span><i>→</i><span>LearnFlow 正式任务</span><i>→</i><span>个性化学习与确定性验收</span></div>
-    {href ? <a className="ltc-enter-learning" href={href}>进入个性化学习 →</a> : <p>正式任务已创建，可从“学习任务”中打开。</p>}
+    {taskId > 0 && props.onOpenLearningTask
+      ? <button type="button" className="ltc-enter-learning" onClick={() => props.onOpenLearningTask?.(taskId)}>进入个性化学习 →</button>
+      : href ? <a className="ltc-enter-learning" href={href}>进入个性化学习 →</a> : <p>正式任务已创建，可从“学习任务”中打开。</p>}
     <footer>正式任务创建不代表已经掌握；只有后续正式作答和验收证据可更新学习状态。</footer>
   </section>
 }
