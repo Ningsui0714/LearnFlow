@@ -133,6 +133,14 @@ export type PluginToolContext = {
     checkpointId?: number
   }
   signal: AbortSignal
+  /**
+   * Least-privilege bridge supplied by the Tutor host.  The host binds the
+   * active plugin and authenticated project scope; plugins never receive a
+   * backend base URL, browser cookie, or arbitrary fetch capability.
+   */
+  projectIntegration?: {
+    request: (operation: string, payload?: PluginJson) => Promise<PluginJson>
+  }
 }
 
 export type PluginToolHandler = (

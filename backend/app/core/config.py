@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     learning_task_plan_model_budget_seconds: float = 120.0
     micro_learning_artifact_model_budget_seconds: float = 180.0
 
+    # Server-only Xingchen integration for candidate learning-task artifacts.
+    # Provider credentials are loaded from an ignored feature-private file and
+    # are never returned to the browser or plugin package.
+    learning_task_xfyun_credentials_path: str = ""
+    learning_task_conversion_base_url: str = ""
+    learning_task_conversion_timeout_seconds: float = 30.0
+    learning_task_conversion_max_source_segments: int = 16
+
     # Vision (image understanding) — Moonshot
     vision_api_key: str = ""
     vision_base_url: str = "https://api.moonshot.cn/v1"
@@ -153,6 +161,10 @@ class Settings(BaseSettings):
         # after upgrading from older desktop builds that did not persist a
         # separate settings.env yet.
         env_file = ENV_FILES
+        # Removed integrations may leave inert keys in an operator-managed env
+        # file during rollback or upgrade.  Unknown keys must not resurrect a
+        # capability and should not prevent the current authority from booting.
+        extra = "ignore"
 
     @field_validator("llm_base_url", mode="before")
     @classmethod

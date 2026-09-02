@@ -1,5 +1,5 @@
 from app.models.project import (
-    Project, Source, SourceVersion, Chunk, DomainKnowledgePacket,
+    Project, Source, SourceVersion, Chunk, DomainKnowledgePacket, LearningTaskCandidateArtifact,
     Roadmap, Checkpoint, Lecture, Exercise,
     LectureVersion, LectureNote, ArtifactAnnotation, ExerciseDraft,
     ProcessAnimation, ProjectWorkspace, WorkspaceOperation,

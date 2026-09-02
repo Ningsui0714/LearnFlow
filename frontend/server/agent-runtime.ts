@@ -191,6 +191,68 @@ function pluginActivation(input: TutorAgentRuntimeInput): PluginActivationContex
   }
 }
 
+const PROJECT_PLUGIN_INTEGRATION_OPERATIONS = {
+  learning_task_conversion: {
+    create_candidate: { method: 'POST', suffix: '' },
+    read_candidate: { method: 'GET', suffix: '' },
+    inspect_evidence: { method: 'GET', suffix: '/evidence' },
+    audit_candidate: { method: 'GET', suffix: '/audit' },
+    prepare_handoff: { method: 'GET', suffix: '/handoff' },
+  },
+} as const
+
+async function requestProjectPluginIntegration(options: {
+  input: TutorAgentRuntimeInput
+  pluginId: string
+  operation: string
+  payload?: unknown
+  signal: AbortSignal
+}) {
+  const projectId = options.input.formalProjectContext?.project?.id
+  if (!projectId) throw new Error('plugin_integration_error:project_required:当前插件操作需要项目作用域')
+  if (!options.input.backendBase) throw new Error('plugin_integration_error:backend_unavailable:LearnFlow 后端地址不可用')
+  const pluginRoutes = PROJECT_PLUGIN_INTEGRATION_OPERATIONS[
+    options.pluginId as keyof typeof PROJECT_PLUGIN_INTEGRATION_OPERATIONS
+  ] as Record<string, { method: 'GET' | 'POST'; suffix: string }> | undefined
+  const route = pluginRoutes?.[options.operation]
+  if (!route) throw new Error('plugin_integration_error:operation_forbidden:插件请求了未授权的项目集成操作')
+  const body = options.payload && typeof options.payload === 'object' && !Array.isArray(options.payload)
+    ? options.payload as Record<string, unknown> : {}
+  const candidateId = typeof body.candidateId === 'string' && /^ltc_[A-Za-z0-9_-]{1,72}$/.test(body.candidateId)
+    ? body.candidateId : ''
+  if (route.method === 'GET' && !candidateId) {
+    throw new Error('plugin_integration_error:candidate_id_required:只读候选操作缺少 candidateId')
+  }
+  const basePath = `/api/projects/${projectId}/integrations/xingchen/learning-task-candidates`
+  const path = route.method === 'POST'
+    ? basePath
+    : `${basePath}/${encodeURIComponent(candidateId)}${route.suffix}`
+  const response = await fetch(`${options.input.backendBase}${path}`, {
+    method: route.method,
+    headers: {
+      ...(route.method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.input.requestCookie ? { Cookie: options.input.requestCookie } : {}),
+    },
+    ...(route.method === 'POST' ? { body: JSON.stringify(body) } : {}),
+    signal: options.signal,
+  })
+  const text = await response.text()
+  let result: unknown = null
+  try {
+    result = JSON.parse(text)
+  } catch {
+    result = { detail: { code: 'invalid_backend_response', message: text.slice(0, 500) } }
+  }
+  if (!response.ok) {
+    const detail = result && typeof result === 'object'
+      ? (result as Record<string, any>).detail || result : {}
+    const code = String(detail?.code || `http_${response.status}`).slice(0, 100)
+    const message = String(detail?.message || '项目集成请求失败').slice(0, 500)
+    throw new Error(`plugin_integration_error:${code}:${message}`)
+  }
+  return result as any
+}
+
 function runtimeToolDefinitions(input: TutorAgentRuntimeInput) {
   const pluginTools = input.pluginRegistry?.toolDefinitions(pluginActivation(input)) || []
   return [
@@ -826,6 +888,15 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           checkpointId: activation.checkpointId,
         },
         signal: AbortSignal.timeout(registered.contribution.timeoutMs || 30_000),
+        projectIntegration: {
+          request: (operation, payload) => requestProjectPluginIntegration({
+            input,
+            pluginId: registered.pluginId,
+            operation,
+            payload,
+            signal: AbortSignal.timeout(registered.contribution.timeoutMs || 30_000),
+          }),
+        },
       })
       return {
         run: {

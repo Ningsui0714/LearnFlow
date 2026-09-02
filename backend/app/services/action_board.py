@@ -91,6 +91,11 @@ ACTION_BOARD = {
             (),
         ),
         ActionDefinition(
+            "draft_learning_task_candidate", "把真实工作任务转为学习型任务候选", "artifact", "explicit_or_auto",
+            {},
+            ("plan_learning_task",),
+        ),
+        ActionDefinition(
             "read_vnext_five_kernel_profile", "为 vNext Tutor 读取正式五核上下文", "none", "none",
             {},
             (),
