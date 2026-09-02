@@ -185,8 +185,44 @@ test('real semantic preflight proposes executable tasks for a role without silen
   assert.equal(intake.preflight.confidence, 0.94)
 })
 
-test('semantic preflight rejects a rewritten original input before plugin execution', () => {
-  assert.throws(() => parseLearningTaskPreflightResult(JSON.stringify({
+test('semantic work-task judgment is not blocked by a local keyword miss', () => {
+  const intake = prepareLearningTaskIntakeEnvelope({
+    rawInput: '为客户机下发公司根证书',
+    modelAssessment: {
+      schemaVersion: 'learning-task-intake-model.v1',
+      model: 'deepseek-chat',
+      assessedKind: 'work_task',
+      confidence: 0.73,
+      rationale: '这是带有动作、对象和可检查结果的单个任务。',
+      nextQuestion: '',
+    },
+  })
+  assert.equal(intake.inputKind, 'work_task')
+  assert.equal(intake.status, 'ready_for_confirmation')
+  assert.equal(intake.taskContract.title, '为客户机下发公司根证书')
+  assert.equal(intake.taskContract.action, '执行')
+  assert.ok(intake.warnings.some(item => item.code === 'semantic_contract_used'))
+})
+
+test('local structure guard corrects a model that mistakes a role for one work task', () => {
+  const intake = prepareLearningTaskIntakeEnvelope({
+    rawInput: '风力发电运维工程师',
+    modelAssessment: {
+      schemaVersion: 'learning-task-intake-model.v1',
+      model: 'deepseek-chat',
+      assessedKind: 'work_task',
+      confidence: 0.73,
+      rationale: '误把岗位中的运维识别为动作。',
+      nextQuestion: '',
+    },
+  })
+  assert.equal(intake.inputKind, 'role')
+  assert.equal(intake.status, 'needs_task_selection')
+  assert.ok(intake.warnings.some(item => item.code === 'model_task_kind_corrected'))
+})
+
+test('semantic preflight restores the host-owned original input and local anchor checks still reject domain replacement', () => {
+  const result = parseLearningTaskPreflightResult(JSON.stringify({
     schema_version: 'learning-task-intake-model.v1',
     original_input: 'RAG知识库开发',
     input_kind: 'work_task',
@@ -196,7 +232,16 @@ test('semantic preflight rejects a rewritten original input before plugin execut
     confidence: 0.99,
     rationale: '错误替换。',
     next_question: '',
-  }), 'Linux系统开发'), /anchor_mismatch/)
+  }), 'Linux系统开发')
+  assert.equal(result.original_input, 'Linux系统开发')
+  const intake = prepareLearningTaskIntakeEnvelope(preflightResultToIntakeInput(
+    result,
+    'Linux系统开发',
+    'deepseek-chat',
+  ))
+  assert.equal(intake.status, 'needs_task_selection')
+  assert.equal(intake.originalInput, 'Linux系统开发')
+  assert.doesNotMatch(JSON.stringify(intake.taskContract), /RAG/)
 })
 
 test('semantic preflight cannot choose a task on behalf of a broad direction', () => {

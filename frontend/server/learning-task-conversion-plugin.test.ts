@@ -87,6 +87,20 @@ test('selecting the plugin routes plain task text through intake without command
   )
 })
 
+test('candidate review operations remain in Tutor tool selection instead of restarting intake', () => {
+  for (const message of [
+    '检查候选 ltc_1234567890abcdef 的来源证据',
+    '审计候选 ltc_1234567890abcdef 并执行确定性校验',
+    '为候选 ltc_1234567890abcdef 准备 Tutor 审阅包',
+    '调用 learning_task_conversion__inspect_learning_task_evidence 检查候选',
+  ]) {
+    assert.equal(
+      directLearningTaskIntakeRequest(['learning_task_conversion'], 7, message),
+      undefined,
+    )
+  }
+})
+
 test('explicit intake shortcut accepts both task-first and command-first phrasing', () => {
   assert.equal(
     directLearningTaskIntakeRequest(

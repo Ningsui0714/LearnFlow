@@ -716,6 +716,17 @@ export function directLearningTaskIntakeRequest(
   if (/(?:解释|介绍|说明).{0,12}(?:学习型任务|这个插件)|(?:学习型任务|这个插件).{0,12}(?:是什么|怎么用|有何作用)/i.test(normalized)) {
     return undefined
   }
+  // Once a candidate exists, review/audit/handoff prompts belong to Tutor's
+  // ordinary tool-selection loop.  Treating them as a fresh intake would run
+  // the semantic preflight again and hide the candidate operation the learner
+  // explicitly requested.
+  if (
+    /learning_task_conversion__(?:read_learning_task_candidate|inspect_learning_task_evidence|audit_learning_task_candidate|prepare_learning_handoff|confirm_learning_task_candidate)/i.test(normalized)
+    || /(?:检查|审计|审阅|复核).{0,24}候选\s+ltc_/i.test(normalized)
+    || /候选\s+ltc_.{0,40}(?:来源证据|grounding|审阅包|交接包|确定性校验)/i.test(normalized)
+  ) {
+    return undefined
+  }
   const taskAfterIntent = normalized.match(
     /^(?:为我|给我)?\s*(?:转化|转换|生成|拆解)(?:一个|一份)?(?:学习型任务|学习任务|学习步骤|可验收步骤)\s*[：:,，;；\s]+(.{2,300})$/i,
   )?.[1]?.trim()

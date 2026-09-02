@@ -269,11 +269,24 @@ export function prepareLearningTaskIntake(
 ): LearningTaskConversionIntake {
   const originalInput = clean(input.rawInput, 500)
   const deterministicKind = classifyLearningTaskInput(originalInput)
-  const inputKind = input.modelAssessment?.assessedKind || deterministicKind
+  const assessedKind = input.modelAssessment?.assessedKind
+  // A model can over-read an action word inside a role or broad direction
+  // (for example “运维工程师” or “Unity 客户端开发”). The local classifier
+  // remains authoritative for those two structural cases. For an otherwise
+  // ambiguous phrase, a semantic work-task judgment may still fill the gap.
+  const correctedModelTaskKind = assessedKind === 'work_task'
+    && (deterministicKind === 'role' || deterministicKind === 'role_or_direction')
+  const inputKind = correctedModelTaskKind ? deterministicKind : assessedKind || deterministicKind
   const terms = lockedTerms(originalInput)
   const candidates = sanitizeCandidates(input.candidateTasks)
   const selectedTaskTitle = clean(input.selectedTaskTitle, 300)
   const warnings: LearningTaskConversionIntake['warnings'] = []
+  if (correctedModelTaskKind) {
+    warnings.push({
+      code: 'model_task_kind_corrected',
+      message: '语义模型把岗位或宽泛方向误判为单个任务，已由本地规则恢复为任务选择流程。',
+    })
+  }
   const assessment = input.modelAssessment
   const preflight: LearningTaskConversionIntake['preflight'] = assessment ? {
     method: 'semantic_model',
@@ -324,20 +337,25 @@ export function prepareLearningTaskIntake(
     const title = stripIntent(originalInput)
     const contract = taskContract(title, clean(input.taskDescription, 2_000))
     if (!contract.action || !contract.workObject) {
+      // The semantic model has already judged this as a concrete task. Local
+      // keyword extraction is only presentation metadata, not a second hard
+      // gate. Keep the learner's wording intact and let explicit confirmation
+      // decide whether the slow provider may run.
+      contract.action = '执行'
+      contract.workObject = title
       warnings.push({
-        code: 'model_task_not_executable',
-        message: '语义模型将输入判定为工作任务，但本地检查未找到“动作 + 工作对象”，不能提交讯飞。',
+        code: 'semantic_contract_used',
+        message: '本地关键词未完整拆出动作和对象，已采用语义模型的任务判断，仍需你确认后才会调用讯飞。',
       })
-    } else {
-      return {
-        schemaVersion: LEARNING_TASK_INTAKE_SCHEMA_VERSION,
-        intakeId: intakeId(originalInput), originalInput, inputKind, status: 'ready_for_confirmation',
-        lockedTerms: terms, roleName: clean(input.roleName, 160),
-        taskContract: contract,
-        missingFields: [], candidateTasks: candidates,
-        nextQuestion: '请确认是否按这个企业真实工作任务生成学习型任务。',
-        confirmed: false, warnings, preflight,
-      }
+    }
+    return {
+      schemaVersion: LEARNING_TASK_INTAKE_SCHEMA_VERSION,
+      intakeId: intakeId(originalInput), originalInput, inputKind, status: 'ready_for_confirmation',
+      lockedTerms: terms, roleName: clean(input.roleName, 160),
+      taskContract: contract,
+      missingFields: [], candidateTasks: candidates,
+      nextQuestion: '请确认是否按这个企业真实工作任务生成学习型任务。',
+      confirmed: false, warnings, preflight,
     }
   }
 

@@ -38,8 +38,10 @@ export function learningTaskPreflightInstructions() {
     'original_input 必须与输入 JSON 的 raw_input 完全一致，不得翻译、改写或替换技术方向。',
     'input_kind 只能是 role、role_or_direction、work_task、learning_topic、ambiguous。',
     'work_task 表示“动作 + 工作对象 + 可检查结果”的单个企业真实工作任务；岗位、职业或宽泛开发方向不能冒充 work_task。',
+    '硬规则：以“工程师、技师、技术员、操作员、运维员、管理员、设计师、分析师、开发人员、测试人员、岗位、职业”表示人员职责范围的输入必须判为 role；即使名称中含“开发、运维、测试”等动作词，也绝不能判为 work_task。',
+    '硬规则：只有任务名称本身同时明确“做什么动作”和“操作什么对象”时才可判为 work_task，例如“交换机 VLAN 配置与连通性验收”；“风力发电运维工程师”“Unity 游戏客户端开发”都不是单个 work_task。',
     '若是 work_task：selected_task.title 必须保持原任务名称和技术锚点，description 用一两句话说明实际作业对象、结果和验收边界；candidate_tasks 返回空数组。',
-    '若是岗位、方向或学习主题：selected_task 必须为 null；candidate_tasks 给出 3 个同领域、互不重复、可执行且可验收的典型工作任务，每项必须是动作加工作对象，不得推荐相似岗位或热门替代方向。',
+    '若是岗位、方向或学习主题：selected_task 必须为 null；candidate_tasks 必须给出 3 个同领域、互不重复、可执行且可验收的典型工作任务，每项必须是动作加工作对象，不得推荐相似岗位或热门替代方向。',
     '若信息不足：selected_task 为 null，candidate_tasks 可为空，next_question 只追问一个最高价值缺口。',
     '不得输出学习路径、课程章节、学习目标、固定步数、个性化建议或知识讲解。',
     'JSON 字段必须完整：schema_version、original_input、input_kind、role_name、selected_task、candidate_tasks、confidence、rationale、next_question。',
@@ -64,14 +66,16 @@ export function parseLearningTaskPreflightResult(
   }
   const raw = value as Record<string, unknown>
   const schemaVersion = compact(raw.schema_version, 80)
-  const originalInput = compact(raw.original_input, 500)
+  const echoedOriginalInput = compact(raw.original_input, 500)
   const expected = compact(expectedOriginalInput, 500)
   if (schemaVersion !== LEARNING_TASK_PREFLIGHT_SCHEMA_VERSION) {
     throw new Error('learning_task_preflight_schema_mismatch:语义预检合同版本不匹配')
   }
-  if (originalInput !== expected) {
-    throw new Error('learning_task_preflight_anchor_mismatch:语义预检改写了用户原始任务')
-  }
+  // The host already owns the immutable user input. A model echo is never an
+  // authoritative identifier, so punctuation or wrapper drift must not make
+  // a valid preflight unusable. Any semantic replacement still has to pass
+  // the deterministic locked-term checks in prepareLearningTaskIntake.
+  const originalInput = expected
   const allowedKinds = new Set(['role', 'role_or_direction', 'work_task', 'learning_topic', 'ambiguous'])
   const inputKind = compact(raw.input_kind, 40)
   if (!allowedKinds.has(inputKind)) {
@@ -107,7 +111,10 @@ export function parseLearningTaskPreflightResult(
     selected_task: selectedTask,
     candidate_tasks: candidates,
     confidence: Number.isFinite(confidenceValue) ? Math.max(0, Math.min(1, confidenceValue)) : 0,
-    rationale: compact(raw.rationale, 500),
+    rationale: compact(
+      `${raw.rationale || ''}${echoedOriginalInput && echoedOriginalInput !== expected ? ' 模型回显与用户原文不一致，已由宿主恢复原文主键。' : ''}`,
+      500,
+    ),
     next_question: compact(raw.next_question, 500),
   }
 }
@@ -123,21 +130,12 @@ export function preflightResultToIntakeInput(
     sourceRef: `model-preflight:${model}`,
   }))
   const selected = result.selected_task
+  const selectedPreservesOriginalTitle = selected?.title === result.original_input
   return {
     rawInput: result.original_input,
     roleName: result.role_name,
-    taskDescription: selected?.description || taskDescription,
+    taskDescription: selectedPreservesOriginalTitle ? selected?.description || taskDescription : taskDescription,
     candidateTasks,
-    ...(selected && selected.title !== result.original_input ? {
-      candidateTasks: [{
-        title: selected.title,
-        description: selected.description,
-        source: 'model_proposed' as const,
-        sourceRef: `model-preflight:${model}`,
-      }],
-      selectedTaskTitle: selected.title,
-      selectedTaskDescription: selected.description,
-    } : {}),
     modelAssessment: {
       schemaVersion: result.schema_version,
       model,

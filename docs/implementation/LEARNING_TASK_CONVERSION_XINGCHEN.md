@@ -26,7 +26,7 @@
 | `learning_task_conversion__prepare_learning_handoff` | read-only | 形成 Tutor 审阅包；不创建正式任务 |
 | `learning_task_conversion__confirm_learning_task_candidate` | artifact | 显式确认后由 LearnFlow 幂等创建正式任务 |
 
-学习者在项目对话的工具选择器启用插件后，可像选择 Codex plugin 一样直接输入岗位、方向、学习主题或具体工作任务，不必再写“生成学习型任务”命令。宿主先使用该能力专属的独立语义模型做一次严格 JSON 预检：具体工作任务形成候选契约；岗位/方向只提出三个同领域、可执行、可验收的典型任务选项；学习主题或含糊输入只追问一个高价值缺口。预检结果必须原样回显用户输入，且再经过本地层级、锚点和候选选择规则，才能交给 `prepare_learning_task_intake` 生成不可变准备单。只有学习者点击或表达确认后，Tutor 才把原始输入、`intakeId`、`intakeRootHash` 和锁定后的任务契约交给 `draft_learning_task`，随后才调用讯飞。页面不跳转，也不要求用户到独立插件页重复输入。宿主仅暴露 allow-list 操作的 `projectIntegration.request`；插件无法取得后端地址、Cookie、任意 fetch 或 provider 凭据。
+学习者在项目对话的工具选择器启用插件后，可像选择 Codex plugin 一样直接输入岗位、方向、学习主题或具体工作任务，不必再写“生成学习型任务”命令。宿主先使用该能力专属的独立语义模型做一次严格 JSON 预检：具体工作任务形成候选契约；岗位/方向只提出三个同领域、可执行、可验收的典型任务选项；学习主题或含糊输入只追问一个高价值缺口。模型被要求原样回显用户输入，但该回显不具备标识权威；宿主始终恢复自己持有的原始输入，再经过本地层级、锚点和候选选择规则，才能交给 `prepare_learning_task_intake` 生成不可变准备单。只有学习者点击或表达确认后，Tutor 才把原始输入、`intakeId`、`intakeRootHash` 和锁定后的任务契约交给 `draft_learning_task`，随后才调用讯飞。页面不跳转，也不要求用户到独立插件页重复输入。宿主仅暴露 allow-list 操作的 `projectIntegration.request`；插件无法取得后端地址、Cookie、任意 fetch 或 provider 凭据。
 
 ## 3. 请求合同
 
@@ -45,7 +45,7 @@
 }
 ```
 
-插件调用该接口前还执行不可跳过的双层前置合同：专属语义模型先按 `learning-task-intake-model.v1` 返回 `original_input`、输入层级、候选任务、置信度与单一追问；本地代码随后验证原文完全一致、岗位/方向不能被模型代选、任务锚点没有被偷换。确认阶段要求 `originalInput` 原样保留、`intakeConfirmed=true`，且 `intakeId` 与 `intakeRootHash` 能由当前锁定契约重新计算一致。任何模型结构错误、语义锚点变化、未确认调用或过期 hash 都在讯飞调用前失败。`targetStepCount` 由已确认任务的动作数、验收/安全/证据门槛及描述复杂度确定，范围为 4—9，而不是固定六步。
+插件调用该接口前还执行不可跳过的双层前置合同：专属语义模型先按 `learning-task-intake-model.v1` 返回 `original_input`、输入层级、候选任务、置信度与单一追问；本地代码不信任模型回显，以宿主持有的原文为主键，并验证岗位/方向不能被模型代选、任务锚点没有被偷换。确认阶段要求 `originalInput` 原样保留、`intakeConfirmed=true`，且 `intakeId` 与 `intakeRootHash` 能由当前锁定契约重新计算一致。任何模型结构错误、语义锚点变化、未确认调用或过期 hash 都在讯飞调用前失败。`targetStepCount` 由已确认任务的动作数、验收/安全/证据门槛及描述复杂度确定，范围为 4—9，而不是固定六步。
 
 `learner_id` 不在请求合同中，由登录会话获得。后端要求 `project_id` 属于当前学习者；`sourceVersionIds` 必须属于该项目，去重后最多 20 个。`requestId` 在 learner + project 范围幂等：相同输入返回同一候选，不同输入复用同一 ID 返回 409。
 
