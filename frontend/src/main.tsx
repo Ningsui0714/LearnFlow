@@ -2141,6 +2141,8 @@ function App({ auth }: { auth: AuthGateSession }) {
             skillId,
             projection.task.objective,
             `vnext-skill-switch:${projection.task.id}:${skillId}`.slice(0, 120),
+            [],
+            projection.task.formalTaskId,
           )
           run = started.active_skill_run
         } else {
