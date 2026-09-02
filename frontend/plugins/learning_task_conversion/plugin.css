@@ -8,6 +8,7 @@
 .ltc-hero>div,.ltc-task-context article,.ltc-body,.ltc-body>*,.ltc-mapping>section{min-width:0}
 .ltc-hero h3,.ltc-hero p,.ltc-task-context p,.ltc-operation p,.ltc-mapping p{overflow-wrap:anywhere}
 .ltc-dependency code{max-width:100%;overflow-wrap:anywhere;white-space:normal}
+.ltc-confirmation>p{margin:0;color:#53645c;line-height:1.6}.ltc-enter-learning{justify-self:end;padding:10px 15px;border-radius:10px;color:#fff;background:var(--ltc-green);font-weight:800;text-decoration:none}.ltc-enter-learning:hover{background:#115845}
 
 @container ltc-workbench (max-width:900px){
   .ltc-hero{grid-template-columns:auto minmax(0,1fr)}

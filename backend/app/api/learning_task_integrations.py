@@ -14,9 +14,11 @@ from app.services.xingchen_learning_task_candidates import (
     candidate_audit_view,
     candidate_evidence_view,
     candidate_handoff_view,
+    confirm_candidate_as_learning_task,
     generate_candidate,
     read_candidate_artifact,
 )
+from app.services.learning_tasks import learning_task_view
 
 
 router = APIRouter(
@@ -53,6 +55,23 @@ class CandidateCreateRequest(BaseModel):
         if any(item <= 0 for item in value):
             raise ValueError("sourceVersionIds must be positive")
         return list(dict.fromkeys(value))
+
+
+class CandidateConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: Literal["learning-task-candidate-confirmation.v1"] = Field(alias="schemaVersion")
+    confirmation_id: str = Field(alias="confirmationId", min_length=8, max_length=160)
+    expected_root_hash: str = Field(alias="expectedRootHash", pattern=r"^[a-f0-9]{64}$")
+    confirmed: Literal[True]
+
+    @field_validator("confirmation_id")
+    @classmethod
+    def validate_confirmation_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-:." for char in normalized):
+            raise ValueError("confirmationId may contain letters, digits, underscore, dash, colon and dot only")
+        return normalized
 
 
 def _integration_http_error(exc: LearningTaskIntegrationError) -> HTTPException:
@@ -146,3 +165,50 @@ async def prepare_learning_task_candidate_handoff(
         return candidate_handoff_view(await _owned_candidate(db, current, project_id, candidate_id))
     except LearningTaskIntegrationError as exc:
         raise _integration_http_error(exc) from exc
+
+
+@router.post("/{candidate_id}/confirm")
+async def confirm_learning_task_candidate(
+    project_id: int,
+    candidate_id: str,
+    data: CandidateConfirmRequest,
+    current: CurrentLearner = Depends(get_current_learner),
+    db: AsyncSession = Depends(get_db),
+):
+    candidate = await _owned_candidate(db, current, project_id, candidate_id)
+    try:
+        task, created = await confirm_candidate_as_learning_task(
+            db,
+            candidate=candidate,
+            learner_id=current.learner.id,
+            project_id=project_id,
+            confirmation_id=data.confirmation_id,
+            expected_root_hash=data.expected_root_hash,
+        )
+        view = await learning_task_view(db, task)
+        await db.commit()
+        return {
+            "schemaVersion": "learning-task-candidate-confirmation-result.v1",
+            "candidateId": candidate_id,
+            "created": created,
+            "formalLearningTaskCreated": True,
+            "learningTask": view,
+            "navigation": view["navigation"],
+            "managementNavigation": view["management_navigation"],
+            "masteryChanged": False,
+            "kernelWrites": 0,
+        }
+    except LearningTaskIntegrationError as exc:
+        await db.rollback()
+        raise _integration_http_error(exc) from exc
+    except RuntimeError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=422, detail={
+            "code": "formal_learning_task_creation_failed",
+            "message": "候选已确认，但 LearnFlow 无法创建正式学习任务",
+            "stage": "commit",
+            "retryable": False,
+            "whoFixes": "learnflow",
+            "suggestedAction": "检查正式 LearningTask 范围与计划合同",
+            "diagnostics": {"reason": str(exc)},
+        }) from exc

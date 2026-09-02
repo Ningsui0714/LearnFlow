@@ -51,6 +51,13 @@ import {
   type VisualTeachingBrief,
   type VisualTeachingBundle,
 } from '../src/visual-teaching.ts'
+import { parseLearningTaskDraftConfirmation } from '../plugins/learning_task_conversion/intake.ts'
+import {
+  learningTaskPreflightInput,
+  learningTaskPreflightInstructions,
+  parseLearningTaskPreflightResult,
+  preflightResultToIntakeInput,
+} from '../plugins/learning_task_conversion/preflight-model.ts'
 
 export type TutorAgentBudget = {
   maxModelRounds: number
@@ -198,6 +205,7 @@ const PROJECT_PLUGIN_INTEGRATION_OPERATIONS = {
     inspect_evidence: { method: 'GET', suffix: '/evidence' },
     audit_candidate: { method: 'GET', suffix: '/audit' },
     prepare_handoff: { method: 'GET', suffix: '/handoff' },
+    confirm_candidate: { method: 'POST', suffix: '/confirm' },
   },
 } as const
 
@@ -220,11 +228,11 @@ async function requestProjectPluginIntegration(options: {
     ? options.payload as Record<string, unknown> : {}
   const candidateId = typeof body.candidateId === 'string' && /^ltc_[A-Za-z0-9_-]{1,72}$/.test(body.candidateId)
     ? body.candidateId : ''
-  if (route.method === 'GET' && !candidateId) {
-    throw new Error('plugin_integration_error:candidate_id_required:只读候选操作缺少 candidateId')
+  if ((route.method === 'GET' || route.suffix) && !candidateId) {
+    throw new Error('plugin_integration_error:candidate_id_required:候选操作缺少 candidateId')
   }
   const basePath = `/api/projects/${projectId}/integrations/xingchen/learning-task-candidates`
-  const path = route.method === 'POST'
+  const path = route.method === 'POST' && !route.suffix
     ? basePath
     : `${basePath}/${encodeURIComponent(candidateId)}${route.suffix}`
   let csrfToken = ''
@@ -697,26 +705,42 @@ function explicitToolCall(choice: TutorToolChoice, message: string, projectScope
   }
 }
 
-export function directLearningTaskDraftRequest(
+export function directLearningTaskIntakeRequest(
   activePluginIds: readonly string[] | undefined,
   projectId: number | undefined,
   message: string,
 ) {
   if (!projectId || !activePluginIds?.includes('learning_task_conversion')) return undefined
-  if (!/(?:转化|转换|生成|拆解).{0,12}(?:学习型任务|学习任务|学习步骤|可验收步骤)|(?:学习型任务|学习任务).{0,12}(?:转化|转换|生成|拆解)/i.test(message)) return undefined
   const quoted = message.match(/[“"]([^”"]{2,300})[”"]/)?.[1]?.trim()
-  const taskTitle = (quoted || message
-    .replace(/^(?:请|帮我|请帮我)?\s*(?:把)?\s*/i, '')
-    .split(/(?:转化|转换|生成|拆解)(?:为|成)?(?:一个|一份)?(?:学习型任务|学习任务|学习步骤|可验收步骤)/i)[0]
-    .replace(/[，,;；:：\s]+$/g, '')
-    .trim()).slice(0, 300)
-  if (taskTitle.length < 2) return undefined
-  const requestedSteps = Number(message.match(/(\d{1,2})\s*个?(?:可验收)?步骤/i)?.[1] || 6)
-  return {
-    taskTitle,
-    taskDescription: message.slice(0, 2_000),
-    targetStepCount: Math.max(3, Math.min(12, requestedSteps)),
+  const normalized = message.replace(/^(?:请|帮我|请帮我|麻烦你)?\s*/i, '').trim()
+  if (/(?:解释|介绍|说明).{0,12}(?:学习型任务|这个插件)|(?:学习型任务|这个插件).{0,12}(?:是什么|怎么用|有何作用)/i.test(normalized)) {
+    return undefined
   }
+  const taskAfterIntent = normalized.match(
+    /^(?:为我|给我)?\s*(?:转化|转换|生成|拆解)(?:一个|一份)?(?:学习型任务|学习任务|学习步骤|可验收步骤)\s*[：:,，;；\s]+(.{2,300})$/i,
+  )?.[1]?.trim()
+  const taskBeforeIntent = normalized.match(
+    /^(?:把|将)?\s*(.{2,300}?)\s*(?:转化|转换|生成|拆解)(?:为|成)?(?:一个|一份)?(?:学习型任务|学习任务|学习步骤|可验收步骤)\s*$/i,
+  )?.[1]?.trim()
+  // Selecting this plugin is the user's routing decision, like choosing a
+  // Codex plugin for the next message.  Do not require them to repeat a
+  // command such as “生成学习型任务”; plain task/role/topic text goes through
+  // the same semantic preflight and confirmation gates.
+  const taskTitle = (quoted || taskAfterIntent || taskBeforeIntent || normalized).slice(0, 300)
+  if (taskTitle.length < 2) return undefined
+  return {
+    rawInput: taskTitle,
+    taskDescription: message.slice(0, 2_000),
+  }
+}
+
+export function directLearningTaskDraftConfirmationRequest(
+  activePluginIds: readonly string[] | undefined,
+  projectId: number | undefined,
+  message: string,
+) {
+  if (!projectId || !activePluginIds?.includes('learning_task_conversion')) return undefined
+  return parseLearningTaskDraftConfirmation(message)
 }
 
 export function verifyTutorTurnOutcome(options: {
@@ -1124,7 +1148,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     }, sources)
   }
 
-  const directDraft = directLearningTaskDraftRequest(
+  const directDraft = directLearningTaskDraftConfirmationRequest(
     input.activePluginIds,
     pluginActivation(input).projectId,
     latestMessage,
@@ -1133,7 +1157,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     'learning_task_conversion__draft_learning_task',
     pluginActivation(input),
   )) {
-    record({ phase: 'observe', detail: '已识别明确的学习型任务转化请求', status: 'completed' })
+    record({ phase: 'observe', detail: '已核对准备单确认信息，开始生成学习型任务候选', status: 'completed' })
     await execute({
       id: `direct-learning-task-draft-${id}`,
       name: 'learning_task_conversion__draft_learning_task',
@@ -1141,12 +1165,12 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     })
     const run = runs[runs.length - 1]
     const reply = run?.status === 'completed'
-      ? `${run.detail}\n\n这仍是未确认候选；返回的步骤不代表你已经执行或掌握。`
-      : `学习型任务转化失败：${run?.detail || '插件没有返回可用观察'} `
+      ? `${run.detail}\n\n这是尚未提交的候选；请先检查步骤、知识技能映射与来源，再决定是否创建正式学习任务。`
+      : `学习型任务候选生成失败：${run?.detail || '插件没有返回可用观察'}`
     stopReason = run?.status === 'completed' ? 'final_answer' : 'error'
     record({
       phase: 'finalize',
-      detail: run?.status === 'completed' ? '讯飞候选已返回，等待学习者复核' : '讯飞候选生成失败',
+      detail: run?.status === 'completed' ? '学习型任务候选已返回，等待复核' : '学习型任务候选生成失败',
       status: run?.status === 'completed' ? 'completed' : 'failed',
     })
     reconcileVisibleDraft(reply)
@@ -1157,6 +1181,65 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         version: 'vnext-agent-trace.v1',
         turnId: id,
         modelRounds: 0,
+        toolCalls,
+        stopReason,
+        events: trajectory,
+        decisionSummaries,
+        timings: {
+          ...(firstTextDeltaAt ? { firstTextDeltaMs: firstTextDeltaAt - startedAt } : {}),
+          totalMs: Date.now() - startedAt,
+        },
+      },
+    }
+  }
+
+  const directIntake = directLearningTaskIntakeRequest(
+    input.activePluginIds,
+    pluginActivation(input).projectId,
+    latestMessage,
+  )
+  if (directIntake && input.pluginRegistry?.resolveTool(
+    'learning_task_conversion__prepare_learning_task_intake',
+    pluginActivation(input),
+  )) {
+    record({ phase: 'observe', detail: '已识别学习型任务转化请求，先调用独立语义模型预检', status: 'completed' })
+    const preflightText = await input.generate(
+      learningTaskPreflightInstructions(),
+      learningTaskPreflightInput(directIntake.rawInput, directIntake.taskDescription),
+      30_000,
+      1_400,
+      { responseFormat: 'json_object' },
+    )
+    const preflight = parseLearningTaskPreflightResult(preflightText, directIntake.rawInput)
+    const preparedInput = preflightResultToIntakeInput(preflight, directIntake.taskDescription, input.model)
+    record({
+      phase: 'reason',
+      detail: `独立语义模型判定为 ${preflight.input_kind}，置信度 ${Math.round(preflight.confidence * 100)}%`,
+      status: 'completed',
+    })
+    await execute({
+      id: `direct-learning-task-intake-${id}`,
+      name: 'learning_task_conversion__prepare_learning_task_intake',
+      arguments: preparedInput as unknown as Record<string, unknown>,
+    })
+    const run = runs[runs.length - 1]
+    const reply = run?.status === 'completed'
+      ? `${run.detail}\n\n独立语义模型已完成一次真实预检；这仍只是任务转化准备单，你确认前不会调用讯飞，也不会创建候选或正式任务。`
+      : `任务转化准备失败：${run?.detail || '插件没有返回可用观察'} `
+    stopReason = run?.status === 'completed' ? 'final_answer' : 'error'
+    record({
+      phase: 'finalize',
+      detail: run?.status === 'completed' ? '任务转化准备单已返回，等待学习者选择或确认' : '任务转化准备失败',
+      status: run?.status === 'completed' ? 'completed' : 'failed',
+    })
+    reconcileVisibleDraft(reply)
+    return {
+      reply,
+      toolRuns: runs,
+      trace: {
+        version: 'vnext-agent-trace.v1',
+        turnId: id,
+        modelRounds: 1,
         toolCalls,
         stopReason,
         events: trajectory,

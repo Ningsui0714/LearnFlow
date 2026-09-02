@@ -1760,7 +1760,7 @@ function App({ auth }: { auth: AuthGateSession }) {
     const directLearningTaskPluginTurn = Boolean(
       conversation.projectId
       && activeConversationPluginIds(conversation).includes('learning_task_conversion')
-      && /(?:转化|转换|生成|拆解).{0,12}(?:学习型任务|学习任务|学习步骤|可验收步骤)|(?:学习型任务|学习任务).{0,12}(?:转化|转换|生成|拆解)/i.test(content),
+      && content.trim().length >= 2,
     )
 
     if (configurationIssue && !directLearningTaskPluginTurn) {

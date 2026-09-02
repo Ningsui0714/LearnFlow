@@ -11,7 +11,11 @@ import {
 import { isTutorToolChoice } from './src/tooling.ts'
 import { sanitizeLearningTaskTutorContext } from './src/learning.ts'
 import { sanitizeLearningPlanTutorContext } from './src/planning.ts'
-import { directLearningTaskDraftRequest, runTutorAgentTurn } from './server/agent-runtime.ts'
+import {
+  directLearningTaskDraftConfirmationRequest,
+  directLearningTaskIntakeRequest,
+  runTutorAgentTurn,
+} from './server/agent-runtime.ts'
 import { readProviderStream } from './server/provider-stream.ts'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
@@ -25,9 +29,20 @@ function loadTutorKey(mode: string): ModelCredential {
   const candidates: Array<[string, string | undefined]> = [
     ['启动环境', process.env.LEARNFLOW_API_KEY],
     ['frontend/.env.local', localEnv.LEARNFLOW_API_KEY],
+    ['frontend/.env.local 学习型任务预检', localEnv.LEARNING_TASK_PREFLIGHT_API_KEY],
   ]
   const match = candidates.find(([, value]) => value && value !== 'sk-your-key-here')
   return { apiKey: match?.[1]?.trim() || '', source: match?.[0] || '' }
+}
+
+function loadLearningTaskPreflightConfiguration(mode: string) {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  const value = (name: string) => String(process.env[name] || localEnv[name] || '').trim()
+  return {
+    apiKey: value('LEARNING_TASK_PREFLIGHT_API_KEY'),
+    baseUrl: value('LEARNING_TASK_PREFLIGHT_BASE_URL') || 'https://api.deepseek.com/v1',
+    model: value('LEARNING_TASK_PREFLIGHT_MODEL') || 'deepseek-chat',
+  }
 }
 
 function loadRuntimeBridgeToken(mode: string) {
@@ -131,6 +146,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
   const legacyKeyConfiguration = loadTutorKey(mode)
   const runtimeBridgeToken = loadRuntimeBridgeToken(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
+  const learningTaskPreflight = loadLearningTaskPreflightConfiguration(mode)
   const resolveAccountKey = createAccountCredentialResolver({
     mode,
     backendBase,
@@ -306,18 +322,21 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           })
         : []
       const latestSubmittedMessage = [...submittedMessages].reverse().find(message => message.role === 'user')?.content || ''
-      const directPluginTurn = Boolean(directLearningTaskDraftRequest(
-        activePluginIds,
-        formalScope.projectId,
-        latestSubmittedMessage,
-      ))
-      const configurationIssue = tutorConfigurationIssue(baseUrl, model)
-      if (configurationIssue && !directPluginTurn) throw new Error(configurationIssue)
+      const directIntake = directLearningTaskIntakeRequest(activePluginIds, formalScope.projectId, latestSubmittedMessage)
+      const directDraft = directLearningTaskDraftConfirmationRequest(activePluginIds, formalScope.projectId, latestSubmittedMessage)
+      const directPluginTurn = Boolean(directIntake || directDraft)
+      const runtimeBaseUrl = directIntake ? learningTaskPreflight.baseUrl : baseUrl
+      const runtimeModel = directIntake ? learningTaskPreflight.model : model
+      const configurationIssue = tutorConfigurationIssue(runtimeBaseUrl, runtimeModel)
+      if (directIntake && !learningTaskPreflight.apiKey) {
+        throw new Error('学习型任务语义预检模型尚未配置，请设置服务端私密 LEARNING_TASK_PREFLIGHT_API_KEY。')
+      }
+      if (configurationIssue && !directDraft) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
 
       let localProvider = false
-      if (!directPluginTurn) {
-        const providerUrl = new URL(baseUrl)
+      if (!directDraft) {
+        const providerUrl = new URL(runtimeBaseUrl)
         localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
         if (!localProvider && providerUrl.protocol !== 'https:') {
           throw new Error('非本机模型服务必须使用 HTTPS，避免账户密钥明文传输。')
@@ -326,8 +345,10 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           throw new Error('Base URL 不能内嵌账号或密码。')
         }
       }
-      const keyConfiguration: ModelCredential = directPluginTurn
-        ? { apiKey: '', source: '学习型任务插件直达' }
+      const keyConfiguration: ModelCredential = directIntake
+        ? { apiKey: learningTaskPreflight.apiKey, source: '学习型任务转化私密语义预检' }
+        : directDraft
+          ? { apiKey: '', source: '学习型任务插件确认直达' }
         : await resolveAccountKey(request)
       const invokeProvider = (providerRequest: {
         endpoint: string
@@ -459,7 +480,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         generationOptions?: { responseFormat?: 'json_object' },
       ) => {
         const request = buildProviderRequest({
-          baseUrl, model, instructions,
+          baseUrl: runtimeBaseUrl, model: runtimeModel, instructions,
           messages: [{ role: 'user', content: inputText }],
           maxTokens: Math.max(400, Math.min(7_000, Number(maxTokens) || 1_200)),
           responseFormat: generationOptions?.responseFormat,
@@ -476,8 +497,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         installedPluginIds: pluginRegistry.packages.map(item => item.manifest.id),
       })
       const result = await runTutorAgentTurn({
-        baseUrl,
-        model,
+        baseUrl: runtimeBaseUrl,
+        model: runtimeModel,
         mode: modeValue,
         messages,
         toolChoice,

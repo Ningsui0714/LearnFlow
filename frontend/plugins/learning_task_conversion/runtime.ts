@@ -8,9 +8,16 @@ import {
 } from '../../src/plugin-api.ts'
 import {
   LEARNING_TASK_CONVERSION_PLUGIN,
+  LEARNING_TASK_CONFIRMATION_SCHEMA_VERSION,
   LEARNING_TASK_OBJECT_SCHEMA_VERSION,
   LEARNING_TASK_RENDERERS,
 } from './shared.ts'
+import {
+  assertConfirmedLearningTaskIntake,
+  intakeEnvelopeJson,
+  prepareLearningTaskIntakeEnvelope,
+} from './intake-runtime.ts'
+import { suggestLearningTaskStepCount } from './intake.ts'
 
 type JsonRecord = Record<string, any>
 
@@ -27,18 +34,25 @@ function stableRequestId(input: JsonRecord, context: PluginToolContext) {
     conversationId: context.scope.conversationId || '',
     taskTitle: input.taskTitle,
     taskDescription: input.taskDescription || '',
+    intakeRootHash: input.intakeRootHash || '',
     sourceVersionIds: input.sourceVersionIds || [],
   })).digest('hex').slice(0, 24)
   return `plugin:${context.scope.projectId}:${fingerprint}`
 }
 
-function object(objectType: string, objectId: string, label: string, value: PluginJson): LearnFlowPluginObject {
+function object(
+  objectType: string,
+  objectId: string,
+  label: string,
+  value: PluginJson,
+  schemaVersion = LEARNING_TASK_OBJECT_SCHEMA_VERSION,
+): LearnFlowPluginObject {
   return {
     protocol: LEARNFLOW_PLUGIN_OBJECT_VERSION,
     pluginId: LEARNING_TASK_CONVERSION_PLUGIN.id,
     objectType,
     objectId,
-    schemaVersion: LEARNING_TASK_OBJECT_SCHEMA_VERSION,
+    schemaVersion,
     label,
     value,
   }
@@ -64,15 +78,56 @@ function candidateResult(candidate: JsonRecord, summary = ''): PluginToolResult 
 }
 
 export const learningTaskConversionRuntime = {
+  prepare(input: JsonRecord): PluginToolResult {
+    const intake = prepareLearningTaskIntakeEnvelope({
+      rawInput: String(input.rawInput || ''),
+      roleName: String(input.roleName || ''),
+      taskDescription: String(input.taskDescription || ''),
+      candidateTasks: Array.isArray(input.candidateTasks) ? input.candidateTasks : [],
+      selectedTaskTitle: String(input.selectedTaskTitle || ''),
+      selectedTaskDescription: String(input.selectedTaskDescription || ''),
+      modelAssessment: input.modelAssessment && typeof input.modelAssessment === 'object'
+        ? input.modelAssessment
+        : undefined,
+    })
+    const ready = intake.status === 'ready_for_confirmation'
+    return {
+      summary: ready
+        ? `已锁定企业工作任务“${intake.taskContract.title}”，等待你确认；本轮没有调用讯飞。`
+        : intake.nextQuestion,
+      objects: [object(
+        'learning_task_intake',
+        intake.intakeId,
+        ready ? intake.taskContract.title : '学习型任务转化准备单',
+        intakeEnvelopeJson(intake),
+        intake.schemaVersion,
+      )],
+      payload: intakeEnvelopeJson(intake),
+      presentation: { renderer: LEARNING_TASK_RENDERERS.intake },
+    }
+  },
+
   async draft(input: JsonRecord, context: PluginToolContext): Promise<PluginToolResult> {
+    const intake = assertConfirmedLearningTaskIntake({
+      originalInput: String(input.originalInput || ''),
+      intakeId: String(input.intakeId || ''),
+      intakeRootHash: String(input.intakeRootHash || ''),
+      intakeConfirmed: input.intakeConfirmed === true,
+      taskTitle: String(input.taskTitle || ''),
+      taskDescription: String(input.taskDescription || ''),
+      taskSource: String(input.taskSource || 'user_explicit') as 'user_explicit' | 'role_package' | 'project_source' | 'model_proposed',
+      taskSourceRef: String(input.taskSourceRef || ''),
+    })
     const candidate = await integration(context).request('create_candidate', {
       schemaVersion: 'role-learning-task-candidate-request.v1',
       requestId: stableRequestId(input, context),
-      taskTitle: String(input.taskTitle || '').trim(),
-      taskDescription: String(input.taskDescription || '').trim(),
+      taskTitle: intake.taskContract.title,
+      taskDescription: intake.taskContract.description,
       upstreamTask: input.upstreamTask && typeof input.upstreamTask === 'object' ? input.upstreamTask : null,
       sourceVersionIds: Array.isArray(input.sourceVersionIds) ? input.sourceVersionIds : [],
-      targetStepCount: Number(input.targetStepCount || 6),
+      targetStepCount: Number.isInteger(input.targetStepCount)
+        ? Number(input.targetStepCount)
+        : suggestLearningTaskStepCount(intake.taskContract.title, intake.taskContract.description),
       maxSourceSegments: Number(input.maxSourceSegments || 16),
     }) as JsonRecord
     return candidateResult(candidate)
@@ -120,6 +175,40 @@ export const learningTaskConversionRuntime = {
       objects: [object('learning_task_handoff', String(handoff.candidateId), 'Tutor 审阅候选包', handoff as PluginJson)],
       payload: handoff as PluginJson,
       presentation: { renderer: LEARNING_TASK_RENDERERS.handoff },
+    }
+  },
+
+  async confirm(input: JsonRecord, context: PluginToolContext): Promise<PluginToolResult> {
+    const candidateId = String(input.candidateId || '').trim()
+    const expectedRootHash = String(input.expectedRootHash || '').trim()
+    const confirmationId = typeof input.confirmationId === 'string' && input.confirmationId.trim()
+      ? input.confirmationId.trim()
+      : `plugin-confirm:${createHash('sha256').update(JSON.stringify({
+          projectId: context.scope.projectId,
+          candidateId,
+          expectedRootHash,
+        })).digest('hex').slice(0, 24)}`
+    const result = await integration(context).request('confirm_candidate', {
+      candidateId,
+      schemaVersion: 'learning-task-candidate-confirmation.v1',
+      confirmationId,
+      expectedRootHash,
+      confirmed: input.confirmed === true,
+    }) as JsonRecord
+    const task = (result.learningTask || {}) as JsonRecord
+    return {
+      summary: result.created
+        ? `已按你的明确确认创建正式学习任务“${task.title || candidateId}”；现在可以进入个性化学习。`
+        : `该候选已确认过，已返回同一个正式学习任务“${task.title || candidateId}”。`,
+      objects: [object(
+        'learning_task_confirmation',
+        String(task.id || candidateId),
+        String(task.title || '正式学习任务'),
+        result as PluginJson,
+        LEARNING_TASK_CONFIRMATION_SCHEMA_VERSION,
+      )],
+      payload: result as PluginJson,
+      presentation: { renderer: LEARNING_TASK_RENDERERS.confirmation },
     }
   },
 }

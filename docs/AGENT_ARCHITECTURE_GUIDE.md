@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-02.3`）：学习型任务转化先在 Tutor 内本地判断输入层级、锁定原文语义锚点并要求显式确认，未确认或 hash 漂移时不得调用 provider。讯飞结束节点的固定 HTTPS 交接 JSON 只会规范化为候选并经确定性校验；候选仅可在学习者再次明确确认 `candidateId + sourceSnapshot.rootHash` 后，由 Learning Design 与正式任务运行时幂等创建 `LearningTask`。确认只产生正式任务与零 target 操作事件，不证明掌握。Practice Agent 与确定性规则继续独占评分、Rubric 通过、证据升级及独立验证；三类主 Agent 和五核权威不变。
+
 Contract impact（`2026-09-02.2`）：岗位包选择采用两步只读 ACI，而不是模型隐式状态。Tutor 先以 `list_role_packages` 取得当前可见候选、来源范围和完整不可变身份；学习者明确选择后，Tutor 才能以四元身份调用 `reference_role_package`。成功 ToolRun 返回 `role_package_reference` 与 `requiredSelector`，后续岗位工具必须逐字段复用。引用仍依赖可重放 ToolRun/Plugin Object，不建立插件数据库或第二套对话状态。开发环境对 role-agent 目录的自动发现只是 Hub 可见性模拟；生产环境不会启用该隐式源。
 
 Contract impact（`2026-09-02.1`）：岗位图谱生态采用“role-agent 生产、Hub 治理、LearnFlow 消费”分层。冷启动和迭代不再进入 LearnFlow Tutor 工具面；旧候选 Tool/Skill/Object/Renderer 已移除。LearnFlow 只保留固定快照阅读，以及面向解释的节点风险研究：从精确 `objectId` 有界展开两跳邻域，逐字保留关系方向，汇总直接/邻域证据、证据限制、candidate 状态、低置信度和显式事理风险，并披露截断。该研究不调用外部来源、不生成 patch，也不能触发 Hub 提交、审核或发布。Hub 的公共发布使用独立 reviewer，私有包仅对 owner 可见；插件安装仍是维护期确定性命令且零 Kernel target。

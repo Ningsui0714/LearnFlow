@@ -17,7 +17,7 @@ from typing import Any
 from app.services.action_board import ACTION_BOARD
 
 
-REGISTRY_VERSION = "2026-09-02.2"
+REGISTRY_VERSION = "2026-09-02.3"
 EVENT_SCHEMA_VERSION = "learnflow.evidence.v1"
 SKILL_SPEC_VERSION = "learnflow.skill.v3"
 # The learner-facing SkillSpec changed in this registry release.
@@ -408,7 +408,7 @@ TOOLS = {
         ToolContract("vnext_learning_plan_runtime", "vNext In-chat Learning Plan Runtime", "tutor_agent", "vnext", "orchestration",
                      KERNEL_NAMES, (), "planning events -> learner-visible proposal -> explicit confirmation EvidenceEvent -> reducer; proposal/rejection remain zero-target"),
         ToolContract("learning_task_candidate_gateway", "Source-pinned Learning Task Candidate Gateway", "tutor_agent", "learnflow", "artifact",
-                     (), (), "owned Project + immutable SourceVersion segments -> fixed Xingchen workflow -> versioned bundle -> deterministic validator -> unconfirmed candidate artifact; read, audit and handoff preparation remain zero-kernel and cannot publish a LearningTask"),
+                     (), (), "owned Project + immutable SourceVersion segments -> fixed Xingchen workflow -> versioned bundle -> deterministic validator -> unconfirmed candidate artifact; read, audit and handoff remain zero-kernel; only a root-hash-bound explicit learner confirmation may ask LearnFlow Learning Design and the formal task runtime to create a LearningTask, while the external workflow can never publish one"),
         ToolContract("vnext_five_kernel_profile_reader", "vNext Formal Five-kernel Context Reader", "tutor_agent", "vnext", "read",
                      KERNEL_NAMES, (), "ContextPolicy -> KernelHead + scoped Memory Graph -> bounded read-only Tutor context; local simulation is offline fallback only"),
         ToolContract("vnext_learning_workspace_reader", "vNext Scoped Learning Workspace Reader", "tutor_agent", "vnext", "read",
@@ -1069,8 +1069,8 @@ SKILLS = {
                       "validated content artifact; no direct kernel mutation", "LearnFlow contract", "companion"),
         SkillContract("learning_task_conversion", "有来源的真实工作任务转化", "tutor_agent",
                       ("learning_task_candidate_gateway",),
-                      "source-pinned role-learning-task-candidate.v1 artifact + deterministic audit + confirmation-required Tutor handoff",
-                      "LearnFlow candidate contract; no formal LearningTask, mastery evidence or kernel write before explicit confirmation", "learnflow"),
+                      "source-pinned role-learning-task-candidate.v1 artifact + deterministic audit + root-hash-bound learner confirmation + formal LearnFlow LearningTask",
+                      "Xingchen only drafts a candidate; LearnFlow revalidates and creates the formal task after explicit confirmation; scoring, evidence promotion and every kernel write remain under deterministic LearnFlow authority", "learnflow"),
         SkillContract("workspace_file_management", "受控本地项目文件管理", "tutor_agent",
                       ("workspace_file_service", "evidence_ledger"),
                       "hash-bound diff proposal + explicit confirmation + operational event",
@@ -1312,6 +1312,7 @@ EVENTS = {
         _event("learning_task_candidate_generated", "draft_learning_task_candidate", (), "unconfirmed_artifact", origin="companion"),
         _event("learning_task_candidate_audited", "draft_learning_task_candidate", (), "deterministic_artifact_inspection", origin="learnflow"),
         _event("learning_task_candidate_handoff_prepared", "draft_learning_task_candidate", (), "confirmation_required_candidate_handoff", origin="learnflow"),
+        _event("learning_task_candidate_confirmed", "manage_learning_tasks", (), "learner_confirmed_candidate_promotion", origin="learnflow"),
         _event("vnext_learning_path_node_status_set", "manage_vnext_personal_path_node", ("structure", "knowledge"), "learner_self_report_for_navigation", origin="vnext"),
         _event("vnext_personal_path_node_added", "manage_vnext_personal_path_node", ("structure", "value"), "learner_confirmed_structure_overlay", origin="vnext"),
         _event("vnext_personal_path_node_removed", "manage_vnext_personal_path_node", ("structure", "value"), "learner_confirmed_structure_overlay_removal", origin="vnext"),
@@ -1463,6 +1464,7 @@ _PYTHON_BINDING_TARGETS = {
     "py:learning_task.plan": ("app.services.learning_tasks", "generate_learning_task_plan"),
     "py:learning_task_candidate.generate": ("app.services.xingchen_learning_task_candidates", "generate_candidate"),
     "py:learning_task_candidate.validate": ("app.services.xingchen_learning_task_candidates", "validate_candidate"),
+    "py:learning_task_candidate.confirm": ("app.services.xingchen_learning_task_candidates", "confirm_candidate_as_learning_task"),
     "py:micro_learning.create": ("app.services.micro_learning", "create_micro_learning_run"),
     "py:micro_learning.analyze": ("app.services.micro_learning", "analyze_teach_back"),
     "py:workspace.delete_conversation": ("app.services.workspace_lifecycle", "delete_conversation_workspace"),
@@ -1545,6 +1547,7 @@ _API_BINDING_TARGETS = {
     "api:learning_task_candidates.evidence": ("app.api.learning_task_integrations", "/projects/{project_id}/integrations/xingchen/learning-task-candidates/{candidate_id}/evidence", "GET", "inspect_learning_task_candidate_evidence"),
     "api:learning_task_candidates.audit": ("app.api.learning_task_integrations", "/projects/{project_id}/integrations/xingchen/learning-task-candidates/{candidate_id}/audit", "GET", "audit_learning_task_candidate"),
     "api:learning_task_candidates.handoff": ("app.api.learning_task_integrations", "/projects/{project_id}/integrations/xingchen/learning-task-candidates/{candidate_id}/handoff", "GET", "prepare_learning_task_candidate_handoff"),
+    "api:learning_task_candidates.confirm": ("app.api.learning_task_integrations", "/projects/{project_id}/integrations/xingchen/learning-task-candidates/{candidate_id}/confirm", "POST", "confirm_learning_task_candidate"),
     "api:micro_learning.create": ("app.api.micro_learning", "/micro-learning/runs", "POST", "create_run"),
     "api:micro_learning.advance": ("app.api.micro_learning", "/micro-learning/runs/{run_id}/advance", "POST", "advance"),
     "api:micro_learning.teach_back": ("app.api.micro_learning", "/micro-learning/runs/{run_id}/teach-back", "POST", "teach_back"),
@@ -1693,10 +1696,11 @@ _TOOL_BINDING_IDS = {
     "vnext_learning_task_runtime": ("py:learning_skill.prepare",),
     "vnext_learning_plan_runtime": ("frontend:planning.create",),
     "learning_task_candidate_gateway": (
-        "py:learning_task_candidate.generate", "py:learning_task_candidate.validate",
+        "py:learning_task_candidate.generate", "py:learning_task_candidate.validate", "py:learning_task_candidate.confirm",
         "api:learning_task_candidates.create", "api:learning_task_candidates.read",
         "api:learning_task_candidates.evidence", "api:learning_task_candidates.audit",
-        "api:learning_task_candidates.handoff", "frontend:plugin.learning_task_conversion",
+        "api:learning_task_candidates.handoff", "api:learning_task_candidates.confirm",
+        "frontend:plugin.learning_task_conversion",
     ),
     "vnext_five_kernel_profile_reader": ("py:five_kernel.context",),
     "vnext_learning_workspace_reader": ("api:learner_state.workspace",),
@@ -1789,7 +1793,8 @@ _SKILL_BINDING_IDS = {
     "learning_path_planning": ("frontend:path.plan", "py:roadmap.agent"),
     "learning_task_conversion": (
         "frontend:plugin.learning_task_conversion", "api:learning_task_candidates.create",
-        "py:learning_task_candidate.validate",
+        "api:learning_task_candidates.confirm", "py:learning_task_candidate.validate",
+        "py:learning_task_candidate.confirm",
     ),
     "learning_resource_curation": ("frontend:agent_runtime.run", "frontend:tool:search_computer_knowledge"),
     "project_apprenticeship_orchestration": ("api:vnext_projects.context", "api:vnext_projects.apply_roadmap"),

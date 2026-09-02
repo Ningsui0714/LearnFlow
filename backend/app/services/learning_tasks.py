@@ -578,6 +578,7 @@ async def create_learning_task(
     source_refs: list[dict[str, Any]] | None = None,
     success_criteria: list[str] | None = None,
     use_model_planner: bool = True,
+    plan_override: dict[str, Any] | None = None,
 ) -> tuple[LearningTask, bool]:
     existing = (await db.execute(select(LearningTask).where(
         LearningTask.learner_id == learner_id,
@@ -598,7 +599,7 @@ async def create_learning_task(
     learner_context = _portable_planner_context(
         await get_kernel_projection(db, learner_id)
     )
-    plan = (
+    plan = dict(plan_override) if plan_override is not None else (
         await generate_learning_task_plan(
             title=_clean(title, 255),
             objective=_clean(objective, 2_000),

@@ -35,6 +35,8 @@ from app.models.project import (
 CANDIDATE_SCHEMA_VERSION = "role-learning-task-candidate.v1"
 PROVIDER_REQUEST_SCHEMA_VERSION = "lf.xingchen-ltc.v1"
 INTEGRATION_BUNDLE_SCHEMA_VERSION = "learning-task-conversion-integration-bundle-v1"
+PERSONALIZED_HANDOFF_SCHEMA_VERSION = "learning-task-to-personalized-learning-v1"
+VALIDATOR_VERSION = "learning-task-candidate-validator.v1.1"
 MAX_PROVIDER_INPUT_CHARS = 500
 MAX_SEGMENT_CHARS = 1_200
 MAX_SOURCE_CHARS = 10_000
@@ -463,6 +465,122 @@ class LearningTaskBundleGateway:
         return validate_integration_bundle(payload, task_card_id)
 
 
+class XingchenHandoffGateway:
+    """Read the narrow handoff artifact returned by the fixed workflow.
+
+    The deployed workflow currently returns a versioned personalized-learning
+    handoff directly, while older deployments exposed a service-to-service
+    bundle endpoint.  This reader is pinned to the configured artifact origin
+    and exact task path, keeps TLS verification enabled and never follows a
+    redirect, so model output cannot turn it into a general-purpose URL fetcher.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        timeout_seconds: float | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+        ca_file: str | Path | None = None,
+    ) -> None:
+        configured = str(base_url if base_url is not None else settings.learning_task_conversion_base_url).strip()
+        try:
+            parsed = urlsplit(configured.rstrip("/"))
+        except ValueError as exc:
+            raise LearningTaskIntegrationError(
+                "integration_config_invalid", "讯飞交接产物来源不是有效 URL", status_code=503,
+                suggested_action="配置工作流产物的 HTTPS 来源",
+            ) from exc
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            raise LearningTaskIntegrationError(
+                "integration_config_invalid", "讯飞交接产物来源必须使用不含凭据的 HTTPS 地址", status_code=503,
+                suggested_action="配置工作流产物的 HTTPS 来源",
+            )
+        self.origin = f"{parsed.scheme}://{parsed.netloc}"
+        self.timeout_seconds = max(2.0, min(float(
+            timeout_seconds if timeout_seconds is not None
+            else settings.learning_task_conversion_timeout_seconds
+        ), 120.0))
+        self.transport = transport
+        configured_ca = str(ca_file if ca_file is not None else settings.learning_task_bundle_ca_file).strip()
+        self.verify: bool | ssl.SSLContext = True
+        if configured_ca:
+            try:
+                self.verify = ssl.create_default_context(cafile=str(Path(configured_ca).expanduser()))
+            except (OSError, ssl.SSLError) as exc:
+                raise LearningTaskIntegrationError(
+                    "integration_config_invalid", "任务交接服务 CA 文件无法加载", status_code=503,
+                    who_fixes="operator", suggested_action="配置可读且有效的 PEM CA 文件",
+                ) from exc
+
+    async def read(self, artifact_url: str, task_card_id: str) -> dict[str, Any]:
+        safe_id = _compact(task_card_id, 160)
+        expected_paths = {
+            f"/api/v1/learning-task-conversion/tasks/{safe_id}/handoff.json",
+            f"/api/v1/learning-task-conversion/tasks/{safe_id}/personalized-learning.json",
+            f"/api/v1/wf03/learning-tasks/{safe_id}/handoff.json",
+            f"/api/v1/wf03/learning-tasks/{safe_id}/personalized-learning.json",
+        }
+        try:
+            parsed = urlsplit(str(artifact_url or "").strip())
+        except ValueError as exc:
+            raise LearningTaskIntegrationError(
+                "bundle_handoff_url_invalid", "讯飞交接 JSON 地址无效", status_code=502,
+                who_fixes="provider", suggested_action="让工作流返回固定任务卡对应的 HTTPS 交接地址",
+            ) from exc
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if (
+            parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or origin.casefold() != self.origin.casefold() or parsed.path not in expected_paths
+            or parsed.query or parsed.fragment
+        ):
+            raise LearningTaskIntegrationError(
+                "bundle_handoff_url_invalid", "讯飞交接 JSON 不属于已配置任务卡产物地址", status_code=502,
+                who_fixes="provider", suggested_action="检查结束节点 handoff_url 与任务包服务来源",
+                diagnostics={
+                    "expectedPaths": sorted(expected_paths),
+                    "actualPath": parsed.path,
+                    "originMatched": origin.casefold() == self.origin.casefold(),
+                },
+            )
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.origin,
+                timeout=self.timeout_seconds,
+                follow_redirects=False,
+                trust_env=False,
+                transport=self.transport,
+                verify=self.verify,
+            ) as client:
+                response = await client.get(parsed.path, headers={"Accept": "application/json"})
+        except httpx.TimeoutException as exc:
+            raise LearningTaskIntegrationError(
+                "bundle_handoff_timeout", "讯飞交接 JSON 响应超时", status_code=504,
+                retryable=True, who_fixes="provider", suggested_action="稍后使用相同 requestId 重试",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise LearningTaskIntegrationError(
+                "bundle_handoff_unavailable", "无法读取讯飞交接 JSON", status_code=503,
+                retryable=True, who_fixes="operator", suggested_action="检查工作流产物服务和 HTTPS 证书",
+            ) from exc
+        if response.status_code >= 400:
+            raise _upstream_error(response, service="讯飞交接产物服务")
+        if len(response.content) > MAX_BUNDLE_RESPONSE_BYTES:
+            raise LearningTaskIntegrationError(
+                "bundle_response_too_large", "讯飞交接 JSON 超过大小限制", status_code=502,
+                who_fixes="provider", suggested_action="缩小交接 JSON 后重新生成",
+                diagnostics={"bytes": len(response.content), "limit": MAX_BUNDLE_RESPONSE_BYTES},
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise LearningTaskIntegrationError(
+                "bundle_invalid_json", "讯飞交接产物不是 JSON", status_code=502,
+                who_fixes="provider", suggested_action="修复工作流交接产物格式",
+            ) from exc
+        return handoff_to_integration_bundle(payload, safe_id)
+
+
 def _json_objects(text: str) -> Iterable[dict[str, Any]]:
     decoder = json.JSONDecoder()
     for match in re.finditer(r"\{", str(text or "")):
@@ -478,12 +596,92 @@ def task_card_id_from_content(content: str) -> str:
     for pattern in (
         r"/learning-task-conversion/tasks/(ltc_[A-Za-z0-9_-]{1,96})/",
         r"/learning-tasks/(ltc_[A-Za-z0-9_-]{1,96})/",
+        r"/tasks/(ltc_[A-Za-z0-9_-]{1,96})(?:/|\b)",
         r'"task_card_id"\s*:\s*"(ltc_[A-Za-z0-9_-]{1,96})"',
     ):
         match = re.search(pattern, str(content or ""))
         if match:
             return match.group(1)
     return ""
+
+
+def _safe_workflow_artifact_url(value: Any) -> str:
+    """Keep a usable artifact reference without persisting query credentials."""
+    text = _compact(value, 2_000)
+    if not text:
+        return ""
+    parsed = urlsplit(text)
+    if parsed.scheme in {"http", "https"} and parsed.hostname:
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    if text.startswith("/"):
+        return text.split("?", 1)[0].split("#", 1)[0]
+    return ""
+
+
+def workflow_end_output(content: str) -> dict[str, str]:
+    """Parse the exported Xingchen end-node contract from JSON or Markdown."""
+    aliases = {
+        "interactive_url": ("interactive_url", "交互式任务页"),
+        "pdf_url": ("pdf_url", "实训工单 PDF"),
+        "handoff_url": ("handoff_url", "个性化学习交接 JSON"),
+        "feedback_url": ("feedback_url", "关系校验反馈 JSON"),
+        "failure_report": ("failure_report", "失败报告"),
+    }
+    output: dict[str, str] = {}
+    for value in _json_objects(content):
+        for key in aliases:
+            if key in value and _compact(value.get(key), 2_000):
+                output[key] = _compact(value.get(key), 2_000)
+    for line in str(content or "").splitlines():
+        normalized = line.strip().lstrip("#*- ").strip()
+        for key, labels in aliases.items():
+            for label in labels:
+                match = re.match(rf"^{re.escape(label)}\s*[：:]\s*(.+)$", normalized, re.IGNORECASE)
+                if match and _compact(match.group(1), 2_000):
+                    output[key] = _compact(match.group(1), 2_000)
+                    break
+    for key in ("interactive_url", "pdf_url", "handoff_url", "feedback_url"):
+        if key in output:
+            output[key] = _safe_workflow_artifact_url(output[key])
+            if not output[key]:
+                output.pop(key, None)
+    return output
+
+
+def _meaningful_failure_report(value: Any) -> str:
+    text = _compact(value, 2_000)
+    return "" if text.casefold() in {"", "[]", "{}", "null", "none", "无"} else text
+
+
+def _workflow_output_error(content: str, output: Mapping[str, Any]) -> LearningTaskIntegrationError:
+    failure_report = _meaningful_failure_report(output.get("failure_report"))
+    diagnostic_text = " ".join(filter(None, (failure_report, _compact(content, 2_000))))
+    insufficient_markers = (
+        "无法从这句话确定", "无法确定你要转换", "输入不足", "信息不足",
+        "请补充其中一种", "请补充岗位", "请补充技术方向", "请补充具体",
+    )
+    diagnostics = {
+        "outputFields": sorted(str(key) for key in output),
+        "failureReport": failure_report,
+        "providerDiagnostics": provider_diagnostics(content),
+    }
+    if any(marker in diagnostic_text for marker in insufficient_markers):
+        return LearningTaskIntegrationError(
+            "workflow_input_insufficient", "讯飞工作流需要更具体的岗位或真实工作任务", status_code=422,
+            retryable=False, who_fixes="user", suggested_action=failure_report or "补充岗位、技术方向或可验收的真实工作任务",
+            diagnostics=diagnostics,
+        )
+    if failure_report:
+        return LearningTaskIntegrationError(
+            "workflow_review_failed", "讯飞工作流候选未通过独立评审", status_code=422,
+            retryable=True, who_fixes="provider", suggested_action="LearnFlow 将携带失败报告自动重新生成；连续失败后需检查工作流评审节点",
+            diagnostics=diagnostics,
+        )
+    return LearningTaskIntegrationError(
+        "workflow_artifact_missing", "讯飞工作流完成但没有返回可解析的任务包", status_code=422,
+        retryable=True, who_fixes="provider", suggested_action="让结束节点返回集成 bundle 或含任务卡 ID 的四类产物 URL",
+        diagnostics={**diagnostics, "contentPreview": _compact(content, 1_000)},
+    )
 
 
 def provider_diagnostics(content: str) -> list[str]:
@@ -558,6 +756,46 @@ def validate_integration_bundle(payload: Any, task_card_id: str) -> dict[str, An
             diagnostics={"issues": errors[:24], "issueCount": len(errors)},
         )
     return dict(payload)
+
+
+def handoff_to_integration_bundle(payload: Any, task_card_id: str) -> dict[str, Any]:
+    """Normalize the workflow's public handoff contract into the internal bundle.
+
+    No semantic fields are invented here.  The handoff already contains the
+    work task, steps, mappings and acceptance data; this adapter only adds the
+    trusted task-card binding and the internal envelope expected by the same
+    deterministic validator used for the legacy bundle endpoint.
+    """
+    if not isinstance(payload, Mapping):
+        raise LearningTaskIntegrationError(
+            "bundle_contract_invalid", "讯飞交接 JSON 必须是对象", status_code=422,
+            who_fixes="provider", suggested_action="让 handoff_url 返回版本化 JSON 对象",
+            diagnostics={"issues": [{"path": "$", "reason": "交接产物必须是 JSON 对象"}], "issueCount": 1},
+        )
+    if payload.get("schema_version") != PERSONALIZED_HANDOFF_SCHEMA_VERSION:
+        raise LearningTaskIntegrationError(
+            "bundle_contract_invalid", "讯飞交接 JSON 版本不受支持", status_code=422,
+            who_fixes="provider", suggested_action="让 handoff_url 返回 learning-task-to-personalized-learning-v1",
+            diagnostics={
+                "issues": [{"path": "$.schema_version", "reason": "不支持的交接合同版本"}],
+                "issueCount": 1,
+            },
+        )
+    work_task = payload.get("work_task")
+    bundle = {
+        "schema_version": INTEGRATION_BUNDLE_SCHEMA_VERSION,
+        "task_card_id": task_card_id,
+        "verification_status": _compact(payload.get("verification_status"), 80) or "provisional",
+        "task": {"work_task": dict(work_task) if isinstance(work_task, Mapping) else work_task},
+        "handoff_contract": {
+            "schema_version": PERSONALIZED_HANDOFF_SCHEMA_VERSION,
+            "review_required": bool(payload.get("review_required", True)),
+            "evidence_required": bool(payload.get("evidence_required", True)),
+            "release_scope": _compact(payload.get("release_scope"), 160),
+            "source_typical_task_id": _compact(payload.get("source_typical_task_id"), 160),
+        },
+    }
+    return validate_integration_bundle(bundle, task_card_id)
 
 
 async def build_source_snapshot(
@@ -813,6 +1051,7 @@ def bundle_to_candidate(
     steps: list[dict[str, Any]] = []
     knowledge_targets: dict[str, dict[str, Any]] = {}
     skill_targets: dict[str, dict[str, Any]] = {}
+    capability_targets: dict[str, dict[str, Any]] = {}
     provider_steps = list(work.get("task_steps") or [])
     provider_step_ids = [str(item.get("step_id")) for item in provider_steps if isinstance(item, Mapping)]
     for index, raw in enumerate(provider_steps, start=1):
@@ -867,7 +1106,7 @@ def bundle_to_candidate(
                 })
         deliverable = _compact(raw.get("deliverable"), 800)
         criterion = _compact(raw.get("check") or raw.get("acceptance"), 800)
-        steps.append({
+        step = {
             "id": step_id,
             "order": index,
             "title": _compact(raw.get("name") or raw.get("title") or raw.get("action"), 300),
@@ -881,21 +1120,39 @@ def bundle_to_candidate(
             "safetyRequirements": _text_list(raw.get("safety") or raw.get("safety_points"), limit=6),
             "knowledgeTargetIds": knowledge_ids,
             "skillTargetIds": skill_ids,
+            "capabilityTargetIds": [f"capability_{step_id}"],
             "citationIds": [value for value in step_citations if value in allowed_citations],
-        })
+        }
+        steps.append(step)
+        capability_targets[f"capability_{step_id}"] = {
+            "id": f"capability_{step_id}",
+            "title": f"独立完成{step['title']}",
+            "description": f"在规定边界内完成“{step['action']}”，并提交“{deliverable}”供确定性验收。",
+            "derivedFromObjectIds": [step_id],
+            "citationIds": list(step["citationIds"]),
+            "derivationKind": "pedagogical_transformation",
+        }
     global_success = _text_list(work.get("acceptance_tests"), limit=16)
     evidence_required = list(dict.fromkeys(
         item for step in steps for item in step["deliverables"]
     ))
-    rubric = [{
-        "id": f"rubric_{index:02d}",
-        "criterion": criterion,
-        "passCondition": criterion,
-        "derivedFromObjectIds": [steps[min(index - 1, len(steps) - 1)]["id"]] if steps else [],
-        "derivationKind": "pedagogical_transformation",
-    } for index, criterion in enumerate(global_success or [
-        criterion for step in steps for criterion in step["successCriteria"]
-    ], start=1)]
+    rubric = []
+    for index, criterion in enumerate(global_success or [
+        item for step in steps for item in step["successCriteria"]
+    ], start=1):
+        source_step = steps[min(index - 1, len(steps) - 1)] if steps else {}
+        rubric.append({
+            "id": f"rubric_{index:02d}",
+            "criterion": criterion,
+            "passCondition": criterion,
+            "levels": [
+                {"id": "pass", "label": "通过", "condition": criterion},
+                {"id": "revise", "label": "需修订", "condition": f"未提供足以证明“{criterion}”的独立证据"},
+            ],
+            "derivedFromObjectIds": [source_step["id"]] if source_step else [],
+            "citationIds": list(source_step.get("citationIds") or []),
+            "derivationKind": "pedagogical_transformation",
+        })
     used_citation_objects = [
         item for item in source_snapshot.citations if item["citationId"] in used_citations
     ]
@@ -969,17 +1226,27 @@ def bundle_to_candidate(
         "mappings": {
             "knowledgeTargets": list(knowledge_targets.values()),
             "skillTargets": list(skill_targets.values()),
-            "capabilityTargets": [],
+            "capabilityTargets": list(capability_targets.values()),
         },
         "assessment": {
             "evidenceRequired": evidence_required,
             "rubric": rubric,
+            "scoringPolicy": {
+                "owner": "practice_agent",
+                "method": "deterministic_binary_gate_after_submission",
+                "llmMayScore": False,
+            },
             "independentVerification": {
                 "required": True,
                 "methods": list(dict.fromkeys(
                     criterion for step in steps for criterion in step["successCriteria"]
                 )),
+                "validatorId": "learning_task_candidate_independent_verification",
+                "validatorVersion": VALIDATOR_VERSION,
+                "procedure": "逐项核对步骤产物、成功标准和 rubric；任一必需项缺证据即退回修订",
+                "passCondition": "all_required_evidence_and_rubric_items_pass",
                 "authority": "learnflow_deterministic_rules_after_user_confirmation",
+                "requiresUserConfirmation": True,
             },
         },
         "coverage": {
@@ -992,6 +1259,7 @@ def bundle_to_candidate(
                 "returnedStepCount": len(steps),
                 "knowledgeTargetCount": len(knowledge_targets),
                 "skillTargetCount": len(skill_targets),
+                "capabilityTargetCount": len(capability_targets),
                 "citationCount": len(used_citations),
                 "truncated": False,
                 "omittedStepCount": 0,
@@ -1008,13 +1276,15 @@ def bundle_to_candidate(
             "workflowRunIds": [value for value in list(provider_run.get("workflowRunIds") or []) if value],
             "taskCardId": _compact(bundle.get("task_card_id"), 160),
             "contractVersion": INTEGRATION_BUNDLE_SCHEMA_VERSION,
-            "validatorVersion": "learning-task-candidate-validator.v1",
+            "validatorVersion": VALIDATOR_VERSION,
             "verificationStatus": _compact(bundle.get("verification_status"), 80),
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "localDerivations": [
                 "linear prerequisites are derived only when provider step order has no explicit dependency",
                 "rubric rows are derived from provider success criteria",
+                "capability targets are pedagogical transformations of candidate steps, not岗位来源事实",
             ],
+            "workflowArtifacts": dict(provider_run.get("workflowOutput") or {}),
             "kernelTargets": [],
             "masteryUnchanged": True,
         },
@@ -1046,6 +1316,8 @@ def _has_cycle(steps: list[Mapping[str, Any]]) -> bool:
 def validate_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
+    safety_sensitive = False
+    safety_gate_passed = True
 
     def require(condition: bool, path: str, reason: str) -> None:
         if not condition:
@@ -1075,9 +1347,10 @@ def validate_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
             "高压", "带电", "电池包", "危险化学", "起重", "焊接", "生产环境",
             "root 权限", "管理员权限", "删除数据", "医疗", "消防", "燃气",
         ))
-        require(not safety_sensitive or bool(safety_text) or any(
+        safety_gate_passed = not safety_sensitive or bool(safety_text) or any(
             _text_list(step.get("safetyRequirements")) for step in steps if isinstance(step, Mapping)
-        ), "$.task.safetyRequirements", "安全敏感任务必须包含明确安全要求")
+        )
+        require(safety_gate_passed, "$.task.safetyRequirements", "安全敏感任务必须包含明确安全要求")
     step_ids = [str(step.get("id") or "") for step in steps if isinstance(step, Mapping)]
     require(len(step_ids) == len(steps), "$.task.steps", "每个步骤都必须是对象并具有 ID")
     require(len(set(step_ids)) == len(step_ids), "$.task.steps", "步骤 ID 必须唯一")
@@ -1121,6 +1394,24 @@ def validate_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
             require(bool(derived) and not (derived - step_set), f"$.mappings.{group}[{index}].derivedFromObjectIds", "映射必须指向本候选步骤")
             require(target.get("derivationKind") in {"direct_fact", "pedagogical_transformation", "explicit_assumption"}, f"$.mappings.{group}[{index}].derivationKind", "derivationKind 无效")
             referenced_citations.update(str(value) for value in list(target.get("citationIds") or []))
+    assessment = candidate.get("assessment")
+    if isinstance(assessment, Mapping):
+        scoring_policy = assessment.get("scoringPolicy")
+        if isinstance(scoring_policy, Mapping):
+            require(scoring_policy.get("owner") == "practice_agent", "$.assessment.scoringPolicy.owner", "评分权威必须属于 Practice Agent")
+            require(scoring_policy.get("llmMayScore") is False, "$.assessment.scoringPolicy.llmMayScore", "模型不得决定评分或通过状态")
+        for index, row in enumerate(list(assessment.get("rubric") or [])):
+            if not isinstance(row, Mapping):
+                issues.append({"path": f"$.assessment.rubric[{index}]", "reason": "rubric 行必须是对象"})
+                continue
+            require(bool(_compact(row.get("criterion"), 1_000)), f"$.assessment.rubric[{index}].criterion", "rubric criterion 不能为空")
+            require(bool(_compact(row.get("passCondition"), 1_000)), f"$.assessment.rubric[{index}].passCondition", "rubric passCondition 不能为空")
+            derived = {str(value) for value in list(row.get("derivedFromObjectIds") or [])}
+            require(bool(derived) and not (derived - step_set), f"$.assessment.rubric[{index}].derivedFromObjectIds", "rubric 必须指向本候选步骤")
+            referenced_citations.update(str(value) for value in list(row.get("citationIds") or []))
+        verification = assessment.get("independentVerification")
+        if isinstance(verification, Mapping):
+            require(verification.get("authority") == "learnflow_deterministic_rules_after_user_confirmation", "$.assessment.independentVerification.authority", "独立验证必须由用户确认后的 LearnFlow 确定性规则控制")
     require(not (referenced_citations - citation_ids), "$.citations", "存在未绑定到固定来源快照的 citationId")
     coverage = candidate.get("coverage")
     require(isinstance(coverage, Mapping), "$.coverage", "缺少覆盖统计")
@@ -1145,7 +1436,16 @@ def validate_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
         "valid": not issues,
         "issues": issues,
         "warnings": warnings,
-        "policyVersion": "learning-task-candidate-validator.v1",
+        "policyVersion": VALIDATOR_VERSION,
+        "riskClass": "safety_sensitive" if safety_sensitive else "standard",
+        "safetyGatePassed": bool(safety_gate_passed),
+        "sourceClosureValid": not bool(referenced_citations - citation_ids),
+        "snapshotCoherent": bool(isinstance(source_snapshot, Mapping) and re.fullmatch(
+            r"[a-f0-9]{64}", str(source_snapshot.get("rootHash") or ""),
+        )),
+        "requiresUserConfirmation": True,
+        "promotable": False,
+        "deterministic": True,
         "kernelWrites": 0,
         "masteryChanged": False,
     }
@@ -1238,21 +1538,22 @@ def _repair_provider_input(base: Mapping[str, Any], error: LearningTaskIntegrati
 
 async def _bundle_from_run(
     run: Mapping[str, Any],
-    gateway: LearningTaskBundleGateway,
-) -> dict[str, Any]:
+    gateway: LearningTaskBundleGateway | None,
+    handoff_gateway: XingchenHandoffGateway | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
     content = str(run.get("content") or "")
+    workflow_output = workflow_end_output(content)
     for value in _json_objects(content):
         if value.get("schema_version") == INTEGRATION_BUNDLE_SCHEMA_VERSION:
-            return validate_integration_bundle(value, str(value.get("task_card_id") or ""))
+            return validate_integration_bundle(value, str(value.get("task_card_id") or "")), workflow_output
     task_card_id = task_card_id_from_content(content)
     if not task_card_id:
-        diagnostics = provider_diagnostics(content)
-        raise LearningTaskIntegrationError(
-            "workflow_artifact_missing", "讯飞工作流完成但没有返回可解析的任务包", status_code=422,
-            retryable=False, who_fixes="provider", suggested_action="让结束节点返回集成 bundle 或任务卡 ID",
-            diagnostics={"providerDiagnostics": diagnostics, "contentPreview": _compact(content, 1_000)},
-        )
-    return await gateway.read(task_card_id)
+        raise _workflow_output_error(content, workflow_output)
+    if gateway is None and workflow_output.get("handoff_url"):
+        reader = handoff_gateway or XingchenHandoffGateway()
+        return await reader.read(workflow_output["handoff_url"], task_card_id), workflow_output
+    legacy_gateway = gateway or LearningTaskBundleGateway()
+    return await legacy_gateway.read(task_card_id), workflow_output
 
 
 async def generate_candidate(
@@ -1269,6 +1570,7 @@ async def generate_candidate(
     max_source_segments: int,
     workflow_client: XingchenWorkflowClient | None = None,
     bundle_gateway: LearningTaskBundleGateway | None = None,
+    handoff_gateway: XingchenHandoffGateway | None = None,
 ) -> dict[str, Any]:
     full_source_snapshot = await build_source_snapshot(
         db, project, source_version_ids=source_version_ids,
@@ -1309,7 +1611,6 @@ async def generate_candidate(
         return dict(existing.candidate_json or {})
 
     client = workflow_client or XingchenWorkflowClient()
-    gateway = bundle_gateway or LearningTaskBundleGateway()
     run_ids: list[str] = []
     provider_input: Mapping[str, Any] = base_provider_input
     last_error: LearningTaskIntegrationError | None = None
@@ -1318,7 +1619,9 @@ async def generate_candidate(
         if run.get("runId"):
             run_ids.append(str(run["runId"]))
         try:
-            bundle = await _bundle_from_run(run, gateway)
+            bundle, workflow_output = await _bundle_from_run(
+                run, bundle_gateway, handoff_gateway,
+            )
             candidate_id = f"ltc_{canonical_hash({'project': project.id, 'request': request_id, 'input': fingerprint})[:28]}"
             candidate = bundle_to_candidate(
                 bundle,
@@ -1326,7 +1629,11 @@ async def generate_candidate(
                 request_id=request_id,
                 task_title=task_title,
                 source_snapshot=source_snapshot,
-                provider_run={**run, "workflowRunIds": run_ids},
+                provider_run={
+                    **run,
+                    "workflowRunIds": run_ids,
+                    "workflowOutput": workflow_output,
+                },
                 target_step_count=target_step_count,
             )
             artifact = LearningTaskCandidateArtifact(
@@ -1357,6 +1664,7 @@ async def generate_candidate(
         except LearningTaskIntegrationError as exc:
             if exc.code not in {
                 "bundle_contract_invalid", "candidate_validation_failed", "workflow_artifact_missing",
+                "workflow_review_failed",
             } or attempt >= 2:
                 raise
             last_error = exc
@@ -1380,6 +1688,163 @@ async def read_candidate_artifact(
             who_fixes="user", suggested_action="重新生成候选或检查 candidateId",
         )
     return dict(artifact.candidate_json or {})
+
+
+async def confirm_candidate_as_learning_task(
+    db: AsyncSession,
+    *,
+    candidate: Mapping[str, Any],
+    learner_id: int,
+    project_id: int,
+    confirmation_id: str,
+    expected_root_hash: str,
+) -> tuple[Any, bool]:
+    """Promote one revalidated candidate through LearnFlow's formal task runtime.
+
+    The external workflow never calls this function.  A learner-confirmed host
+    request supplies the immutable candidate root hash; Learning Design owns the
+    resulting plan and the existing task runtime owns lifecycle events.
+    """
+    from app.services.learning_runtime import record_event
+    from app.services.learning_tasks import create_learning_task
+
+    validation = validate_candidate(candidate)
+    source_snapshot = dict(candidate.get("sourceSnapshot") or {})
+    candidate_root_hash = str(source_snapshot.get("rootHash") or "")
+    if expected_root_hash != candidate_root_hash:
+        raise LearningTaskIntegrationError(
+            "candidate_version_conflict", "候选来源快照已经变化，请重新打开后确认", status_code=409,
+            who_fixes="user", suggested_action="刷新候选并确认当前 rootHash",
+            diagnostics={"expectedRootHash": expected_root_hash, "currentRootHash": candidate_root_hash},
+        )
+    task_data = dict(candidate.get("task") or {})
+    mappings = dict(candidate.get("mappings") or {})
+    assessment = dict(candidate.get("assessment") or {})
+    candidate_id = str(candidate.get("candidateId") or "")
+    work_steps = [dict(item) for item in list(task_data.get("steps") or []) if isinstance(item, Mapping)]
+    plan = {
+        "schema_version": "learning-task-plan.v1",
+        "summary": "候选经用户确认后进入 LearnFlow；具体工作步骤保持原顺序，教学与验收仍由 LearnFlow 控制。",
+        "estimated_minutes": int(task_data.get("estimatedMinutes") or max(30, len(work_steps) * 35)),
+        "phases": [
+            {
+                "id": "learn", "kind": "learn", "title": "学习步骤所需知识与技能",
+                "purpose": "按工作步骤读取已映射的知识点、技能点和来源边界。",
+                "methods": ["evidence_grounded_teaching", "guided_explanation"],
+                "required": True, "status": "pending",
+                "completion_rule": "已逐步学习任务所需知识与技能，并保留来源边界。",
+                "artifact_outputs": ["learning_task_candidate"],
+            },
+            {
+                "id": "practice", "kind": "practice", "title": "执行真实工作步骤",
+                "purpose": "按候选 work_steps 的依赖顺序执行，并提交每步可检查产物。",
+                "methods": ["practice_verification", "remediation_loop"],
+                "required": True, "status": "pending",
+                "completion_rule": "所有必需步骤均提交了对应产物；完成不等于掌握。",
+                "artifact_outputs": list(task_data.get("deliverables") or [])[:20],
+            },
+            {
+                "id": "verify", "kind": "verify", "title": "独立验收",
+                "purpose": "由 Practice Agent 的确定性规则核对证据与 rubric。",
+                "methods": ["verified_micro_learning", "practice_verification"],
+                "required": True, "status": "pending",
+                "completion_rule": "全部必需证据与 rubric 项由确定性规则判定通过。",
+                "artifact_outputs": ["assessment"],
+            },
+            {
+                "id": "consolidate", "kind": "consolidate", "title": "交付与复习衔接",
+                "purpose": "归档任务产物，并只根据正式评估决定是否进入复习队列。",
+                "methods": ["spaced_review"],
+                "required": True, "status": "pending",
+                "completion_rule": "任务产物已归档，正式评估需要的复习项已转交或明确无需转交。",
+                "artifact_outputs": ["review_schedule"],
+            },
+        ],
+        "adaptation_triggers": ["步骤证据不足", "确定性验收未通过", "学习者要求调整讲法"],
+        "work_steps": work_steps,
+        "candidate_id": candidate_id,
+        "candidate_schema_version": candidate.get("schemaVersion"),
+        "source_snapshot": source_snapshot,
+        "mappings": mappings,
+        "assessment": assessment,
+        "confirmation": {
+            "confirmationId": confirmation_id,
+            "expectedRootHash": expected_root_hash,
+            "confirmedBy": "learner",
+        },
+    }
+    source_refs = [{
+        "type": "learning_task_candidate",
+        "id": candidate_id,
+        "schemaVersion": candidate.get("schemaVersion"),
+        "rootHash": candidate_root_hash,
+    }]
+    source_refs.extend(
+        {
+            "type": "source_version",
+            "id": item.get("sourceVersionId"),
+            "contentHash": item.get("contentHash"),
+            "authorityTier": item.get("authorityTier"),
+        }
+        for item in list(candidate.get("sourceBindings") or [])
+        if isinstance(item, Mapping) and item.get("sourceVersionId")
+    )
+    task, created = await create_learning_task(
+        db,
+        learner_id=learner_id,
+        title=str(task_data.get("title") or "学习型工作任务"),
+        objective=str(task_data.get("learningObjective") or "完成任务并提交可验收证据"),
+        client_request_id=f"candidate-confirm:{candidate_id}",
+        origin_kind="learning_task_candidate",
+        created_by="learning_design_agent",
+        status="queued",
+        project_id=project_id,
+        estimated_minutes=int(plan["estimated_minutes"]),
+        preferred_skills=["evidence_grounded_teaching", "practice_verification"],
+        source_refs=source_refs,
+        success_criteria=[str(item) for item in list(task_data.get("successCriteria") or [])],
+        use_model_planner=False,
+        plan_override=plan,
+    )
+    if created:
+        task.artifact_refs = [{
+            "type": "learning_task_candidate",
+            "id": candidate_id,
+            "schema_version": candidate.get("schemaVersion"),
+            "root_hash": candidate_root_hash,
+        }]
+        task.review_handoff = {
+            "candidateId": candidate_id,
+            "sourceSnapshot": source_snapshot,
+            "mappings": mappings,
+            "assessment": assessment,
+            "validatorVersion": validation.get("policyVersion"),
+            "requiresDeterministicAssessment": True,
+            "masteryUnchangedAtConfirmation": True,
+        }
+        task.action_log = [{
+            "action": "candidate_confirmed",
+            "confirmation_id": confirmation_id,
+            "candidate_id": candidate_id,
+            "root_hash": candidate_root_hash,
+            "actor": "learner",
+        }]
+        await record_event(
+            db,
+            learner_id=learner_id,
+            project_id=project_id,
+            event_type="learning_task_candidate_confirmed",
+            source="user",
+            payload={
+                "candidate_id": candidate_id,
+                "learning_task_id": task.id,
+                "root_hash": candidate_root_hash,
+                "confirmation_id": confirmation_id,
+                "mastery_claimed": False,
+            },
+            client_event_id=f"learning-task-candidate:{candidate_id}:confirmed",
+        )
+    return task, created
 
 
 def candidate_evidence_view(candidate: Mapping[str, Any]) -> dict[str, Any]:
@@ -1463,9 +1928,9 @@ def candidate_handoff_view(candidate: Mapping[str, Any]) -> dict[str, Any]:
 __all__ = [
     "CANDIDATE_SCHEMA_VERSION", "INTEGRATION_BUNDLE_SCHEMA_VERSION",
     "LearningTaskBundleGateway", "LearningTaskIntegrationError", "SourceSnapshot",
-    "XingchenCredentials", "XingchenWorkflowClient", "build_source_snapshot",
+    "XingchenCredentials", "XingchenWorkflowClient", "XingchenHandoffGateway", "build_source_snapshot",
     "bundle_to_candidate", "candidate_audit_view", "candidate_evidence_view",
     "candidate_handoff_view", "generate_candidate", "load_xingchen_credentials",
-    "read_candidate_artifact", "task_card_id_from_content", "validate_candidate",
-    "validate_integration_bundle",
+    "confirm_candidate_as_learning_task", "read_candidate_artifact", "task_card_id_from_content", "workflow_end_output", "validate_candidate",
+    "handoff_to_integration_bundle", "validate_integration_bundle",
 ]

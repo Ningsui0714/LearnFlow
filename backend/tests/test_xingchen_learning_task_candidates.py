@@ -19,10 +19,12 @@ from app.services.xingchen_learning_task_candidates import (
     LearningTaskBundleGateway,
     LearningTaskIntegrationError,
     XingchenCredentials,
+    XingchenHandoffGateway,
     XingchenWorkflowClient,
     build_source_snapshot,
     candidate_audit_view,
     generate_candidate,
+    handoff_to_integration_bundle,
     load_bundle_service_token,
     validate_candidate,
     validate_integration_bundle,
@@ -210,6 +212,17 @@ def test_source_versions_are_pinned_and_their_segments_really_enter_provider_inp
     assert any(item["code"] == "provider_step_count_mismatch" for item in candidate["warnings"])
     assert candidate["rootHash"] == candidate["sourceSnapshot"]["rootHash"]
     assert candidate["validation"]["kernelWrites"] == 0
+    assert candidate["validation"]["promotable"] is False
+    assert candidate["validation"]["requiresUserConfirmation"] is True
+    assert candidate["mappings"]["capabilityTargets"]
+    assert candidate["task"]["steps"][0]["capabilityTargetIds"]
+    assert candidate["assessment"]["scoringPolicy"] == {
+        "owner": "practice_agent",
+        "method": "deterministic_binary_gate_after_submission",
+        "llmMayScore": False,
+    }
+    assert candidate["assessment"]["rubric"][0]["levels"][0]["id"] == "pass"
+    assert candidate["assessment"]["independentVerification"]["passCondition"] == "all_required_evidence_and_rubric_items_pass"
     assert before == after
     serialized = json.dumps(candidate)
     assert "test-key" not in serialized and "test-secret" not in serialized and "test-app" not in serialized
@@ -383,6 +396,115 @@ def test_invalid_bundle_reports_precise_paths_and_repair_can_return_a_full_candi
     assert candidate["validation"]["valid"] is True
 
 
+def test_exported_end_node_urls_are_parsed_and_query_credentials_are_not_persisted(client: TestClient):
+    project_id = _create_project(client)
+    bundle = _bundle("ltc_end_node_contract")
+
+    class EndNodeWorkflow:
+        async def run(self, _provider_input, *, uid):
+            return {
+                "runId": "run-end-node", "workflowId": "fixed-flow", "usage": {},
+                "content": """## 岗位典型工作任务转化结果
+交互式任务页：https://bundle.example/api/v1/learning-task-conversion/tasks/ltc_end_node_contract/interactive.html?token=must-not-persist
+实训工单 PDF：https://bundle.example/api/v1/learning-task-conversion/tasks/ltc_end_node_contract/report.pdf
+个性化学习交接 JSON：https://bundle.example/api/v1/learning-task-conversion/tasks/ltc_end_node_contract/handoff.json
+关系校验反馈 JSON：https://bundle.example/api/v1/learning-task-conversion/tasks/ltc_end_node_contract/feedback.json
+失败报告：{}
+""",
+            }
+
+    _unused, gateway = _clients(bundle)
+
+    async def run():
+        async with async_session() as db:
+            project = await db.get(Project, project_id)
+            return await generate_candidate(
+                db, project=project, learner_id=project.learner_id,
+                request_id=f"request-{uuid.uuid4().hex}", task_title="Nginx 部署与验收",
+                task_description="", upstream_task=None, source_version_ids=[],
+                target_step_count=3, max_source_segments=8,
+                workflow_client=EndNodeWorkflow(), bundle_gateway=gateway,
+            )
+
+    candidate = asyncio.run(run())
+    artifacts = candidate["provenance"]["workflowArtifacts"]
+    assert artifacts["interactive_url"].endswith("/ltc_end_node_contract/interactive.html")
+    assert artifacts["handoff_url"].endswith("/ltc_end_node_contract/handoff.json")
+    assert "must-not-persist" not in json.dumps(candidate)
+
+
+def test_workflow_input_insufficient_is_reported_once_without_blind_repair(client: TestClient):
+    project_id = _create_project(client)
+    calls = 0
+
+    class InsufficientWorkflow:
+        async def run(self, _provider_input, *, uid):
+            nonlocal calls
+            calls += 1
+            return {
+                "runId": "run-insufficient", "workflowId": "fixed-flow", "usage": {},
+                "content": "我还无法从这句话确定你要转换的岗位、技术方向或企业真实工作任务。请补充其中一种。",
+            }
+
+    _unused, gateway = _clients(_bundle("ltc_unused"))
+
+    async def run():
+        async with async_session() as db:
+            project = await db.get(Project, project_id)
+            with pytest.raises(LearningTaskIntegrationError) as caught:
+                await generate_candidate(
+                    db, project=project, learner_id=project.learner_id,
+                    request_id=f"request-{uuid.uuid4().hex}", task_title="Java",
+                    task_description="", upstream_task=None, source_version_ids=[],
+                    target_step_count=6, max_source_segments=8,
+                    workflow_client=InsufficientWorkflow(), bundle_gateway=gateway,
+                )
+            return caught.value
+
+    error = asyncio.run(run())
+    assert calls == 1
+    assert error.code == "workflow_input_insufficient"
+    assert error.who_fixes == "user"
+    assert error.retryable is False
+
+
+def test_workflow_review_failure_is_sent_back_for_full_regeneration(client: TestClient):
+    project_id = _create_project(client)
+    calls: list[dict] = []
+    bundle = _bundle("ltc_review_repaired")
+
+    class ReviewRepairWorkflow:
+        async def run(self, provider_input, *, uid):
+            calls.append(dict(provider_input))
+            if len(calls) == 1:
+                return {
+                    "runId": "run-review-failed", "workflowId": "fixed-flow", "usage": {},
+                    "content": "失败报告：候选未达到 COMMIT_READY，步骤产物缺少独立验收依据。",
+                }
+            return {
+                "runId": "run-review-repaired", "workflowId": "fixed-flow", "usage": {},
+                "content": json.dumps(bundle, ensure_ascii=False),
+            }
+
+    _unused, gateway = _clients(bundle)
+
+    async def run():
+        async with async_session() as db:
+            project = await db.get(Project, project_id)
+            return await generate_candidate(
+                db, project=project, learner_id=project.learner_id,
+                request_id=f"request-{uuid.uuid4().hex}", task_title="Nginx 部署与验收",
+                task_description="", upstream_task=None, source_version_ids=[],
+                target_step_count=3, max_source_segments=8,
+                workflow_client=ReviewRepairWorkflow(), bundle_gateway=gateway,
+            )
+
+    candidate = asyncio.run(run())
+    assert len(calls) == 2
+    assert calls[1]["fix"]["e"] == "workflow_review_failed"
+    assert candidate["validation"]["valid"] is True
+
+
 def test_validator_rejects_dangling_dependencies_cycles_bad_urls_and_missing_safety():
     candidate = {
         "schemaVersion": "role-learning-task-candidate.v1", "candidateId": "ltc_validator",
@@ -497,6 +619,75 @@ def test_bundle_service_rejects_bare_public_ip():
     assert caught.value.code == "integration_config_invalid"
 
 
+def test_pinned_workflow_handoff_accepts_certificate_verified_https_ip_without_becoming_a_url_fetcher():
+    task_card_id = "ltc_handoff_direct"
+    legacy = _bundle(task_card_id)
+    handoff = {
+        "schema_version": "learning-task-to-personalized-learning-v1",
+        "verification_status": "provisional",
+        "review_required": False,
+        "evidence_required": True,
+        "release_scope": "evidence_pending_learning_task_draft",
+        "source_typical_task_id": "tt_source_1",
+        "work_task": legacy["task"]["work_task"],
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path in {
+            "/api/v1/learning-task-conversion/tasks/ltc_handoff_direct/handoff.json",
+            "/api/v1/learning-task-conversion/tasks/ltc_handoff_direct/personalized-learning.json",
+        }
+        assert request.headers.get("Accept") == "application/json"
+        return httpx.Response(200, json=handoff)
+
+    gateway = XingchenHandoffGateway(
+        base_url="https://82.156.199.145",
+        transport=httpx.MockTransport(handler),
+    )
+    bundle = asyncio.run(gateway.read(
+        "https://82.156.199.145/api/v1/learning-task-conversion/tasks/ltc_handoff_direct/handoff.json",
+        task_card_id,
+    ))
+    assert bundle["schema_version"] == "learning-task-conversion-integration-bundle-v1"
+    assert bundle["task_card_id"] == task_card_id
+    assert bundle["handoff_contract"]["review_required"] is False
+    personalized = asyncio.run(gateway.read(
+        "https://82.156.199.145/api/v1/learning-task-conversion/tasks/ltc_handoff_direct/personalized-learning.json",
+        task_card_id,
+    ))
+    assert personalized["task_card_id"] == task_card_id
+
+    for unsafe_url in (
+        "https://example.com/api/v1/learning-task-conversion/tasks/ltc_handoff_direct/handoff.json",
+        "https://82.156.199.145/api/v1/learning-task-conversion/tasks/another/handoff.json",
+        "https://82.156.199.145/api/v1/learning-task-conversion/tasks/ltc_handoff_direct/handoff.json?token=secret",
+    ):
+        with pytest.raises(LearningTaskIntegrationError) as caught:
+            asyncio.run(gateway.read(unsafe_url, task_card_id))
+        assert caught.value.code == "bundle_handoff_url_invalid"
+
+
+def test_personalized_handoff_normalization_reuses_the_strict_bundle_validator():
+    task_card_id = "ltc_handoff_normalized"
+    work_task = _bundle(task_card_id)["task"]["work_task"]
+    normalized = handoff_to_integration_bundle({
+        "schema_version": "learning-task-to-personalized-learning-v1",
+        "verification_status": "provisional",
+        "work_task": work_task,
+    }, task_card_id)
+    assert normalized["task"]["work_task"] == work_task
+
+    broken = deepcopy(work_task)
+    broken["task_steps"][0]["deliverable"] = ""
+    with pytest.raises(LearningTaskIntegrationError) as caught:
+        handoff_to_integration_bundle({
+            "schema_version": "learning-task-to-personalized-learning-v1",
+            "work_task": broken,
+        }, task_card_id)
+    assert caught.value.code == "bundle_contract_invalid"
+    assert caught.value.diagnostics["issues"][0]["path"].endswith(".deliverable")
+
+
 def test_bundle_service_requires_and_sends_server_to_server_authentication():
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers.get("Authorization") == "Bearer test-bundle-token"
@@ -554,6 +745,75 @@ def test_candidate_read_api_is_project_and_account_scoped(client: TestClient):
         })
         assert registered.status_code == 200, registered.text
         assert outsider.get(base).status_code == 404
+
+
+def test_explicit_candidate_confirmation_creates_one_formal_task_without_mastery_write(client: TestClient):
+    project_id = _create_project(client, "候选确认")
+    workflow, gateway = _clients(_bundle("ltc_confirm_candidate"))
+
+    async def seed():
+        async with async_session() as db:
+            project = await db.get(Project, project_id)
+            return await generate_candidate(
+                db, project=project, learner_id=project.learner_id,
+                request_id=f"request-{uuid.uuid4().hex}", task_title="Nginx 部署与 HTTPS 验收",
+                task_description="在测试服务器完成部署并留下验收记录", upstream_task=None,
+                source_version_ids=[], target_step_count=6, max_source_segments=8,
+                workflow_client=workflow, bundle_gateway=gateway,
+            )
+
+    candidate = asyncio.run(seed())
+    url = f"/api/projects/{project_id}/integrations/xingchen/learning-task-candidates/{candidate['candidateId']}/confirm"
+    payload = {
+        "schemaVersion": "learning-task-candidate-confirmation.v1",
+        "confirmationId": f"confirmation-{uuid.uuid4().hex}",
+        "expectedRootHash": candidate["sourceSnapshot"]["rootHash"],
+        "confirmed": True,
+    }
+    response = client.post(url, json=payload)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["schemaVersion"] == "learning-task-candidate-confirmation-result.v1"
+    assert result["created"] is True
+    assert result["formalLearningTaskCreated"] is True
+    assert result["masteryChanged"] is False
+    assert result["kernelWrites"] == 0
+    assert result["managementNavigation"]["path"] == f"/tasks?task={result['learningTask']['id']}"
+    assert result["learningTask"]["origin_kind"] == "learning_task_candidate"
+    assert result["learningTask"]["created_by"] == "learning_design_agent"
+    assert result["learningTask"]["plan"]["work_steps"] == candidate["task"]["steps"]
+    assert [phase["kind"] for phase in result["learningTask"]["plan"]["phases"]] == [
+        "learn", "practice", "verify", "consolidate",
+    ]
+
+    repeated = client.post(url, json={**payload, "confirmationId": f"confirmation-{uuid.uuid4().hex}"})
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created"] is False
+    assert repeated.json()["learningTask"]["id"] == result["learningTask"]["id"]
+
+    mismatch = client.post(url, json={**payload, "expectedRootHash": "b" * 64})
+    assert mismatch.status_code == 409
+    assert mismatch.json()["detail"]["code"] == "candidate_version_conflict"
+
+    async def inspect():
+        async with async_session() as db:
+            tasks = list((await db.execute(select(LearningTask).where(
+                LearningTask.project_id == project_id,
+                LearningTask.origin_kind == "learning_task_candidate",
+            ))).scalars().all())
+            events = list((await db.execute(select(EvidenceEvent).where(
+                EvidenceEvent.project_id == project_id,
+                EvidenceEvent.event_type == "learning_task_candidate_confirmed",
+            ))).scalars().all())
+            assert len(tasks) == 1
+            assert len(events) == 1
+            assert events[0].payload["mastery_claimed"] is False
+            mutation_count = int((await db.execute(select(func.count(KernelMutation.id)).where(
+                KernelMutation.event_id.in_([event.id for event in events]),
+            ))).scalar_one())
+            assert mutation_count == 0
+
+    asyncio.run(inspect())
 
 
 def test_candidate_table_contains_only_candidate_artifacts(client: TestClient):

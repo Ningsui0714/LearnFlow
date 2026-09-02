@@ -5,6 +5,7 @@ import {
   type PluginToolRendererProps,
 } from '../../src/PluginToolResultView.tsx'
 import { LEARNING_TASK_CONVERSION_PLUGIN, LEARNING_TASK_RENDERERS } from './shared.ts'
+import { LearningTaskIntakeRenderer } from './intake-client.tsx'
 import './plugin.css'
 
 type JsonRecord = Record<string, any>
@@ -20,11 +21,13 @@ function candidateValue(props: PluginToolRendererProps): JsonRecord {
 
 function ActionBar({ props, candidate }: { props: PluginToolRendererProps; candidate: JsonRecord }) {
   const id = String(candidate.candidateId || '')
+  const rootHash = String(candidate.sourceSnapshot?.rootHash || '')
   if (!props.onPrompt || !id) return null
   return <div className="ltc-actions" aria-label="候选后续操作">
     <button type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件检查候选 ${id} 的来源证据和 grounding 边界。`)}>检查来源</button>
     <button type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件审计候选 ${id}，只报告确定性校验结果。`)}>重新审计</button>
-    <button className="primary" type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件为候选 ${id} 准备 Tutor 审阅包，然后逐步解释并等待我确认；不要创建正式 LearningTask。`)}>让 Tutor 审阅候选</button>
+    <button type="button" onClick={() => props.onPrompt?.(`请调用学习型任务转化插件为候选 ${id} 准备 Tutor 审阅包并解释关键步骤；暂时不要创建正式 LearningTask。`)}>让 Tutor 审阅</button>
+    {rootHash && <button className="primary" type="button" onClick={() => props.onPrompt?.(`我明确确认采用候选 ${id}（rootHash: ${rootHash}）。请立即调用 learning_task_conversion__confirm_learning_task_candidate，candidateId 使用 ${id}，expectedRootHash 使用 ${rootHash}，confirmed 设为 true；成功后给我进入个性化学习的入口。`)}>确认并创建正式任务</button>}
   </div>
 }
 
@@ -191,15 +194,36 @@ function HandoffRenderer(props: PluginToolRendererProps) {
   </section>
 }
 
+function ConfirmationRenderer(props: PluginToolRendererProps) {
+  const confirmation = firstValue(props)
+  const task = (confirmation.learningTask || {}) as JsonRecord
+  const navigation = (confirmation.managementNavigation || confirmation.navigation || {}) as JsonRecord
+  const href = String(navigation.path || '')
+  return <section className="ltc-panel ltc-confirmation">
+    <header><div className="ltc-mark">启</div><div><span>FORMAL LEARNING TASK</span><h3>{String(task.title || '正式学习任务')}</h3></div><b className="pass">已确认</b></header>
+    <p>{String(task.objective || '候选已由 LearnFlow 重新校验并创建为正式学习任务。')}</p>
+    <div className="ltc-metrics">
+      <span><strong>{task.plan?.work_steps?.length || 0}</strong><small>真实工作步骤</small></span>
+      <span><strong>{task.plan?.phases?.length || 0}</strong><small>学习运行阶段</small></span>
+      <span><strong>0</strong><small>本次掌握写入</small></span>
+    </div>
+    <div className="ltc-boundaries"><span>用户已确认</span><i>→</i><span>LearnFlow 正式任务</span><i>→</i><span>个性化学习与确定性验收</span></div>
+    {href ? <a className="ltc-enter-learning" href={href}>进入个性化学习 →</a> : <p>正式任务已创建，可从“学习任务”中打开。</p>}
+    <footer>正式任务创建不代表已经掌握；只有后续正式作答和验收证据可更新学习状态。</footer>
+  </section>
+}
+
 export default defineLearnFlowPluginClient({
   pluginId: LEARNING_TASK_CONVERSION_PLUGIN.id,
   name: LEARNING_TASK_CONVERSION_PLUGIN.name,
   description: LEARNING_TASK_CONVERSION_PLUGIN.description,
   icon: LEARNING_TASK_CONVERSION_PLUGIN.icon,
   renderers: {
+    [LEARNING_TASK_RENDERERS.intake]: LearningTaskIntakeRenderer,
     [LEARNING_TASK_RENDERERS.candidate]: CandidateRenderer,
     [LEARNING_TASK_RENDERERS.evidence]: EvidenceRenderer,
     [LEARNING_TASK_RENDERERS.audit]: AuditRenderer,
     [LEARNING_TASK_RENDERERS.handoff]: HandoffRenderer,
+    [LEARNING_TASK_RENDERERS.confirmation]: ConfirmationRenderer,
   },
 })

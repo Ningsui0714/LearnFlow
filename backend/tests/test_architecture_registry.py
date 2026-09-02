@@ -44,7 +44,7 @@ def test_registry_has_three_agents_five_kernels_and_no_drift():
     assert set(ACTION_BOARD) == set(CAPABILITY_OWNERS)
     assert validate_registry() == []
     manifest = registry_manifest()
-    assert REGISTRY_VERSION == "2026-09-02.2"
+    assert REGISTRY_VERSION == "2026-09-02.3"
     assert manifest["schema_valid"] is True
     assert manifest["valid"] is (
         manifest["schema_valid"] and manifest["implementation_valid"]
@@ -133,6 +133,7 @@ def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable(
         "learning_task_candidate_generated",
         "learning_task_candidate_audited",
         "learning_task_candidate_handoff_prepared",
+        "learning_task_candidate_confirmed",
     ):
         assert EVENTS[event_id].kernel_targets == ()
 
