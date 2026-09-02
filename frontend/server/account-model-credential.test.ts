@@ -29,7 +29,7 @@ test('account credential resolver forwards only identity material and keeps brid
     },
   })
 
-  assert.deepEqual(result, { apiKey: 'sk-account-only', source: '当前账户的加密凭据' })
+  assert.deepEqual(result, { apiKey: 'sk-account-only', source: '平台后台统一模型配置' })
   const headers = new Headers(observed?.headers)
   assert.equal(headers.get('X-LearnFlow-Runtime-Bridge-Token'), BRIDGE)
   assert.equal(headers.get('Cookie'), 'learnflow_session=opaque')
@@ -71,7 +71,7 @@ test('development migration fallback remains explicit and account errors are sta
     mode: 'production',
     backendBase: 'http://127.0.0.1:8010',
     runtimeBridgeToken: BRIDGE,
-    fetchImpl: (async () => new Response('{}', { status: 409 })) as typeof fetch,
+    fetchImpl: (async () => new Response('{}', { status: 503 })) as typeof fetch,
   })
-  assert.deepEqual(await unconfiguredResolver({}), { apiKey: '', source: '当前账户尚未配置' })
+  assert.deepEqual(await unconfiguredResolver({}), { apiKey: '', source: '平台后台尚未配置模型' })
 })

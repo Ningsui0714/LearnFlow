@@ -140,6 +140,12 @@ class Settings(BaseSettings):
     auth_runtime_bridge_token: str = Field(default="", repr=False)
     # Short-lived, learner-bound Role Package handoff verification secret.
     role_package_launch_secret: str = Field(default="", repr=False)
+    # Public registration is closed unless this deployment-controlled code is
+    # supplied by the registering user. Empty keeps local/test environments open.
+    registration_invite_code: str = Field(default="", repr=False)
+    # -1 means unlimited. The account projection keeps the quota contract
+    # stable while the initial production cohort is intentionally unmetered.
+    default_account_credit_limit: int = -1
 
     # Embedding
     embedding_backend: str = "local"  # local | api

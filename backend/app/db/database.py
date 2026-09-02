@@ -65,6 +65,8 @@ EXTRA_COLUMNS = {
         ("api_key_hint", "TEXT"),
         ("api_key_encryption_version", "INTEGER"),
         ("api_key_updated_at", "DATETIME"),
+        ("credit_limit", "INTEGER DEFAULT -1"),
+        ("credit_used", "INTEGER DEFAULT 0"),
     ],
     "auth_sessions": [
         ("is_dev_login", "BOOLEAN DEFAULT 0"),

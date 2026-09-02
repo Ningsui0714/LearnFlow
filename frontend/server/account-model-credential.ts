@@ -68,10 +68,10 @@ export function createAccountCredentialResolver(options: CredentialResolverOptio
         const payload = await upstream.json() as { api_key?: unknown }
         const apiKey = typeof payload.api_key === 'string' ? payload.api_key.trim() : ''
         if (!apiKey) throw new Error('账户模型凭据解析结果为空')
-        return { apiKey, source: '当前账户的加密凭据' }
+        return { apiKey, source: '平台后台统一模型配置' }
       }
       if (upstream.status === 401) return { apiKey: '', source: '尚未登录' }
-      if (upstream.status === 409) return { apiKey: '', source: '当前账户尚未配置' }
+      if (upstream.status === 503) return { apiKey: '', source: '平台后台尚未配置模型' }
       const detail = await responseDetail(upstream)
       throw new Error(detail || `账户模型凭据解析失败（${upstream.status}）`)
     }

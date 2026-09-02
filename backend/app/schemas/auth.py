@@ -34,6 +34,7 @@ def validate_new_password(password: str) -> str:
 
 
 class RegisterRequest(BaseModel):
+    invite_code: str = Field(default="", min_length=0, max_length=128)
     username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_-]+$")
     password: str = Field(min_length=PASSWORD_MIN_LENGTH, max_length=128)
     display_name: str = Field(min_length=1, max_length=40)
@@ -80,6 +81,14 @@ class AuthenticatedProfileResponse(BaseModel):
     career_goal_status: str
 
 
+class AccountQuotaResponse(BaseModel):
+    unit: Literal["credits"] = "credits"
+    unlimited: bool
+    limit: int | None = None
+    used: int = 0
+    remaining: int | None = None
+
+
 class AuthenticatedAccountResponse(BaseModel):
     id: int
     account_number: int
@@ -94,6 +103,7 @@ class AuthenticatedAccountResponse(BaseModel):
     dev_test_login_enabled: bool
     is_dev_login: bool
     desktop_auth_token: str | None = None
+    quota: AccountQuotaResponse
 
 
 class LogoutResponse(BaseModel):

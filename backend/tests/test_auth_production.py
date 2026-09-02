@@ -52,6 +52,7 @@ def fast_test_kdf(monkeypatch):
     monkeypatch.setattr(settings, "auth_api_key_kek", "")
     monkeypatch.setattr(settings, "auth_api_key_kek_version", 1)
     monkeypatch.setattr(settings, "auth_runtime_bridge_token", "")
+    monkeypatch.setattr(settings, "registration_invite_code", "")
 
 
 def registration(
@@ -86,6 +87,24 @@ def bind_csrf(client: TestClient) -> str:
     token = response.json()["csrf_token"]
     client.headers["X-CSRF-Token"] = token
     return token
+
+
+def test_registration_requires_configured_invite_and_starts_unlimited(monkeypatch):
+    monkeypatch.setattr(settings, "registration_invite_code", "67lf76")
+    monkeypatch.setattr(settings, "default_account_credit_limit", -1)
+    with TestClient(app) as raw_client:
+        client = browser(raw_client)
+        rejected = client.post("/api/auth/register", json=registration("wrong_invite_user"))
+        assert rejected.status_code == 403
+        accepted_payload = registration("invited_unlimited_user")
+        accepted_payload["invite_code"] = "67lf76"
+        accepted = client.post("/api/auth/register", json=accepted_payload)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["quota"] == {
+            "unit": "credits",
+            "unlimited": True,
+            "used": 0,
+        }
 
 
 def sha256_text(value: str) -> str:
@@ -393,6 +412,7 @@ def test_password_policy_two_categories_and_argon2id_hash_only_storage():
 
 
 def test_account_model_credential_encrypted_crud_empty_preserve_and_test(monkeypatch):
+    pytest.skip("旧的账户私有密钥 CRUD 已由平台后台统一凭据取代")
     secret = "sk-account-secret-1234567890"
     with TestClient(app) as raw_client:
         client = browser(raw_client)
@@ -600,7 +620,7 @@ def test_ryan_zero_admin_safe_projection_and_user_isolation(monkeypatch):
             "/api/auth/model-credential",
             json={"api_key": ordinary_secret},
         )
-        assert credential.status_code == 200, credential.text
+        assert credential.status_code == 403, credential.text
         project = user.post("/api/projects", json={
             "name": "普通用户私有项目",
             "description": "管理员角色不能绕过学习资源 ownership",
@@ -619,7 +639,7 @@ def test_ryan_zero_admin_safe_projection_and_user_isolation(monkeypatch):
         ordinary_projection = next(
             row for row in rows if row["username"] == "ordinary_rbac_user"
         )
-        assert ordinary_projection["api_key_configured"] is True
+        assert ordinary_projection["api_key_configured"] is False
         assert ordinary_secret not in projection.text
         assert "sk-…2468" not in projection.text
 
@@ -760,7 +780,8 @@ def test_cookie_csrf_origin_revocation_and_desktop_bearer_exemption(monkeypatch)
             headers=bearer_headers,
             json={"api_key": desktop_secret},
         )
-        assert saved.status_code == 200, saved.text
+        assert saved.status_code == 403, saved.text
+        monkeypatch.setattr(settings, "llm_api_key", desktop_secret)
         resolved = bearer_client.post(
             "/api/auth/model-credential/internal/resolve",
             headers={

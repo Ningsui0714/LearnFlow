@@ -169,6 +169,7 @@ export default function AuthGate({ children }: AuthGateProps) {
       return
     }
     const input: FormalRegistrationInput = {
+      invite_code: field(data, 'invite_code'),
       username: field(data, 'username'),
       password,
       display_name: field(data, 'display_name'),
@@ -252,7 +253,8 @@ export default function AuthGate({ children }: AuthGateProps) {
           </form>
         ) : (
           <form className={styles.form} onSubmit={submitRegistration}>
-            <header><p className={styles.eyebrow}>创建账号</p><h2 id="auth-title">建立独立学习档案</h2><span>填写基本信息，创建你的专属学习空间。</span></header>
+            <header><p className={styles.eyebrow}>创建账号</p><h2 id="auth-title">建立独立学习档案</h2><span>注册采用邀请制；模型与额度由平台统一提供。</span></header>
+            <label><span>邀请码</span><input name="invite_code" type="password" autoComplete="one-time-code" required maxLength={128} /></label>
             <div className={styles.grid}>
               <label><span>用户名</span><input name="username" autoComplete="username" required minLength={3} maxLength={32} pattern={"[A-Za-z0-9_\\-]+"} title="仅支持字母、数字、下划线和连字符" /></label>
               <label><span>显示名称</span><input name="display_name" autoComplete="name" required maxLength={40} /></label>

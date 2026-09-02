@@ -389,6 +389,13 @@ export type FormalAccount = {
   dev_test_login_enabled: boolean
   is_dev_login: boolean
   desktop_auth_token?: string
+  quota?: {
+    unit: 'credits'
+    unlimited: boolean
+    limit?: number | null
+    used: number
+    remaining?: number | null
+  }
 }
 
 export type FormalAuthStatus = {
@@ -402,6 +409,7 @@ export type FormalDemoStatus = {
 }
 
 export type FormalRegistrationInput = {
+  invite_code: string
   username: string
   password: string
   display_name: string

@@ -1,4 +1,5 @@
 import ipaddress
+import hmac
 import time
 from datetime import datetime
 from urllib.parse import urlsplit
@@ -68,6 +69,9 @@ dev_router = APIRouter(prefix="/dev", tags=["Development"])
 
 
 def _account_view(current: CurrentLearner, desktop_auth_token: str | None = None) -> dict:
+    credit_limit = int(current.account.credit_limit if current.account.credit_limit is not None else -1)
+    credit_used = max(0, int(current.account.credit_used or 0))
+    unlimited = credit_limit < 0
     result = {
         "id": current.account.id,
         "account_number": current.account.account_number,
@@ -89,6 +93,13 @@ def _account_view(current: CurrentLearner, desktop_auth_token: str | None = None
         },
         "dev_test_login_enabled": settings.dev_test_login_enabled,
         "is_dev_login": current.is_dev_login,
+        "quota": {
+            "unit": "credits",
+            "unlimited": unlimited,
+            "limit": None if unlimited else credit_limit,
+            "used": credit_used,
+            "remaining": None if unlimited else max(0, credit_limit - credit_used),
+        },
     }
     if desktop_auth_token:
         result["desktop_auth_token"] = desktop_auth_token
@@ -177,6 +188,10 @@ async def register(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
+    expected_invite = str(settings.registration_invite_code or "").strip()
+    supplied_invite = str(data.invite_code or "").strip()
+    if expected_invite and not hmac.compare_digest(supplied_invite, expected_invite):
+        raise HTTPException(403, "邀请码无效")
     normalized = normalize_username(data.username)
     existing = (await db.execute(
         select(UserAccount.id).where(UserAccount.username_normalized == normalized)
@@ -196,6 +211,8 @@ async def register(
         "password_hash": password_hash,
         "password_version": 1,
         "must_change_password": False,
+        "credit_limit": int(settings.default_account_credit_limit),
+        "credit_used": 0,
     }
     if normalized == "ryan":
         account_kwargs.update(account_number=0, role="admin")
@@ -338,7 +355,7 @@ async def get_model_credential(
     current: CurrentLearner = Depends(get_current_learner),
 ):
     response.headers["Cache-Control"] = "no-store"
-    return _model_credential_view(current.account)
+    return ModelCredentialMetadata(configured=bool(settings.llm_api_key.strip()))
 
 
 @router.put("/auth/model-credential", response_model=ModelCredentialMetadata)
@@ -347,20 +364,7 @@ async def put_model_credential(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    api_key = data.api_key.strip()
-    if not api_key:
-        return _model_credential_view(current.account)
-    try:
-        envelope = encrypt_model_credential(current.account.id, api_key)
-    except ModelCredentialEncryptionUnavailable:
-        _raise_model_credential_kek_error()
-    current.account.api_key_ciphertext = envelope.ciphertext
-    current.account.api_key_nonce = envelope.nonce
-    current.account.api_key_hint = envelope.key_hint
-    current.account.api_key_encryption_version = envelope.version
-    current.account.api_key_updated_at = datetime.utcnow()
-    await db.commit()
-    return _model_credential_view(current.account)
+    raise HTTPException(403, "模型与 API Key 由后台统一管理")
 
 
 @router.delete("/auth/model-credential", response_model=ModelCredentialMetadata)
@@ -368,13 +372,7 @@ async def delete_model_credential(
     db: AsyncSession = Depends(get_db),
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    current.account.api_key_ciphertext = None
-    current.account.api_key_nonce = None
-    current.account.api_key_hint = None
-    current.account.api_key_encryption_version = None
-    current.account.api_key_updated_at = datetime.utcnow()
-    await db.commit()
-    return _model_credential_view(current.account)
+    raise HTTPException(403, "模型与 API Key 由后台统一管理")
 
 
 @router.post(
@@ -385,56 +383,7 @@ async def test_model_credential(
     data: ModelCredentialTestRequest,
     current: CurrentLearner = Depends(get_current_learner),
 ):
-    if not model_credential_configured(current.account):
-        raise HTTPException(409, "尚未配置账户模型凭据")
-    try:
-        api_key = decrypt_model_credential(current.account)
-    except ModelCredentialEncryptionUnavailable:
-        _raise_model_credential_kek_error()
-    except ModelCredentialDecryptionError:
-        raise HTTPException(
-            500,
-            "账户模型凭据无法解密，请检查 KEK 版本或密文完整性",
-        ) from None
-
-    base_url = _validated_model_base_url(
-        data.base_url.strip() or settings.llm_base_url
-    )
-    model = data.model.strip() or settings.llm_model
-    if not model:
-        raise HTTPException(422, "模型名称不能为空")
-    try:
-        from openai import AsyncOpenAI
-
-        started = time.perf_counter()
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        provider_response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": "只回复 OK"}],
-            max_tokens=16,
-            timeout=60,
-            **openai_chat_provider_kwargs(
-                base_url,
-                model,
-                thinking_enabled=False,
-            ),
-        )
-        latency_ms = round((time.perf_counter() - started) * 1000)
-    except Exception as exc:
-        status_code = getattr(exc, "status_code", None)
-        error_name = type(exc).__name__.casefold()
-        if status_code in {401, 403} or "authentication" in error_name:
-            raise HTTPException(400, "模型凭据验证失败") from None
-        if status_code == 404:
-            raise HTTPException(400, "模型或服务地址不可用") from None
-        if "timeout" in error_name:
-            raise HTTPException(400, "模型服务连接超时") from None
-        raise HTTPException(400, "模型服务连接测试失败") from None
-    return ModelCredentialTestResponse(
-        status="ok",
-        model=str(getattr(provider_response, "model", None) or model),
-        latency_ms=latency_ms,
-    )
+    raise HTTPException(403, "模型连接测试仅由后台运维执行")
 
 
 @router.post(
@@ -450,28 +399,19 @@ async def resolve_model_credential_for_runtime(
     # This is intentionally checked both by the request-security middleware and
     # here so direct route invocation cannot bypass the server-only boundary.
     require_runtime_bridge_request(request)
-    if not model_credential_configured(current.account):
+    api_key = str(settings.llm_api_key or "").strip()
+    if not api_key or api_key in {"***", "sk-your-key-here"}:
         raise HTTPException(
-            409,
-            "尚未配置账户模型凭据",
+            503,
+            "后台模型服务尚未配置",
             headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
         )
-    try:
-        api_key = decrypt_model_credential(current.account)
-    except ModelCredentialEncryptionUnavailable:
-        _raise_model_credential_kek_error()
-    except ModelCredentialDecryptionError:
-        raise HTTPException(
-            500,
-            "账户模型凭据无法解密，请检查 KEK 版本或密文完整性",
-            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
-        ) from None
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return ModelCredentialResolveResponse(
         api_key=api_key,
-        key_hint=str(current.account.api_key_hint or ""),
-        version=int(current.account.api_key_encryption_version),
+        key_hint="server-managed",
+        version=1,
     )
 
 

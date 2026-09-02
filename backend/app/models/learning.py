@@ -130,6 +130,8 @@ class UserAccount(Base):
     api_key_hint = Column(String(32), nullable=True)
     api_key_encryption_version = Column(Integer, nullable=True)
     api_key_updated_at = Column(DateTime, nullable=True)
+    credit_limit = Column(Integer, default=-1, nullable=False)
+    credit_used = Column(Integer, default=0, nullable=False)
 
 
 class AuthSession(Base):

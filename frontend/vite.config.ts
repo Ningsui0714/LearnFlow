@@ -30,6 +30,14 @@ function loadTutorKey(mode: string): ModelCredential {
   return { apiKey: match?.[1]?.trim() || '', source: match?.[0] || '' }
 }
 
+function loadTutorConfiguration(mode: string) {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  return {
+    baseUrl: String(process.env.LEARNFLOW_LLM_BASE_URL || localEnv.LEARNFLOW_LLM_BASE_URL || '').trim(),
+    model: String(process.env.LEARNFLOW_LLM_MODEL || localEnv.LEARNFLOW_LLM_MODEL || '').trim(),
+  }
+}
+
 function loadRuntimeBridgeToken(mode: string) {
   const frontendEnv = loadEnv(mode, process.cwd(), '')
   const backendEnv = loadEnv(mode, resolve(process.cwd(), '../backend'), '')
@@ -136,6 +144,7 @@ function sendStreamEvent(response: any, payload: unknown) {
 
 function tutorProxy(mode: string, backendBase: string): Plugin {
   const legacyKeyConfiguration = loadTutorKey(mode)
+  const platformTutor = loadTutorConfiguration(mode)
   const runtimeBridgeToken = loadRuntimeBridgeToken(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
   const resolveAccountKey = createAccountCredentialResolver({
@@ -260,8 +269,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       const payload = await readJsonBody(request)
       if (!payload || typeof payload !== 'object') throw new Error('请求内容无效')
       const input = payload as Record<string, unknown>
-      const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : ''
-      const model = typeof input.model === 'string' ? input.model : ''
+      const baseUrl = platformTutor.baseUrl
+      const model = platformTutor.model
       const modeValue = input.mode
       const toolChoice = isTutorToolChoice(input.toolChoice) ? input.toolChoice : 'auto'
       const selectionContext = typeof input.selectionContext === 'string' ? input.selectionContext.slice(0, 1600) : ''
