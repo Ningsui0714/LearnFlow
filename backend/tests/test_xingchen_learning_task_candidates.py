@@ -10,6 +10,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
+from app.core.config import settings
 from app.db.database import async_session
 from app.main import app
 from app.models.learning import EvidenceEvent, KernelMutation, LearningTask
@@ -22,9 +23,17 @@ from app.services.xingchen_learning_task_candidates import (
     build_source_snapshot,
     candidate_audit_view,
     generate_candidate,
+    load_bundle_service_token,
     validate_candidate,
     validate_integration_bundle,
 )
+
+
+def test_bundle_service_token_can_use_a_separate_private_file(tmp_path, monkeypatch):
+    token_file = tmp_path / "bundle.env"
+    token_file.write_text("LEARNING_TASK_BUNDLE_SERVICE_TOKEN=test-service-token\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "learning_task_bundle_credentials_path", str(token_file))
+    assert load_bundle_service_token() == "test-service-token"
 
 
 @pytest.fixture(scope="module")
@@ -183,16 +192,22 @@ def test_source_versions_are_pinned_and_their_segments_really_enter_provider_inp
             return snapshot, captured, candidate, before, after
 
     snapshot, captured, candidate, before, after = asyncio.run(run())
-    assert captured[0]["schema_version"] == "learnflow.xingchen-learning-task-request.v1"
-    assert captured[0]["source_snapshot"]["root_hash"] == snapshot.root_hash
-    assert captured[0]["source_segments"][0]["text"].startswith("来源片段")
-    assert captured[0]["source_segments"][0]["citationId"] == candidate["citations"][0]["citationId"]
+    assert captured[0]["v"] == "lf.xingchen-ltc.v1"
+    assert captured[0]["ss"] == candidate["sourceSnapshot"]["snapshotId"]
+    assert captured[0]["s"]["x"].startswith("来源片段")
+    assert captured[0]["s"]["c"] == candidate["citations"][0]["citationId"]
+    assert captured[0]["n"] == 6
+    assert len(json.dumps(captured[0], ensure_ascii=False, separators=(",", ":"))) <= 500
     assert candidate["groundingStatus"] == "grounded"
     assert candidate["coverage"]["source"]["truncated"] is True
-    assert candidate["coverage"]["source"]["omittedSegmentCount"] == 1
+    assert candidate["coverage"]["source"]["omittedSegmentCount"] == 2
+    assert candidate["coverage"]["source"]["omittedCharacterCount"] > 0
+    assert candidate["coverage"]["source"]["providerInputCharacterLimit"] == 500
+    assert any(item["code"] == "provider_context_truncated" for item in candidate["warnings"])
     assert candidate["sourceBindings"][0]["sourceVersionId"] == version_id
     assert candidate["lifecycle"] == "candidate"
     assert candidate["confirmationStatus"] == "unconfirmed"
+    assert any(item["code"] == "provider_step_count_mismatch" for item in candidate["warnings"])
     assert candidate["rootHash"] == candidate["sourceSnapshot"]["rootHash"]
     assert candidate["validation"]["kernelWrites"] == 0
     assert before == after
@@ -221,10 +236,14 @@ def test_different_selected_source_versions_change_the_actual_provider_request(c
 
     asyncio.run(run())
     assert len(captured) == 2
-    assert captured[0]["source_segments"][0]["sourceVersionId"] == linux_version
-    assert captured[1]["source_segments"][0]["sourceVersionId"] == container_version
-    assert captured[0]["source_segments"][0]["text"] != captured[1]["source_segments"][0]["text"]
-    assert captured[0]["source_snapshot"]["root_hash"] != captured[1]["source_snapshot"]["root_hash"]
+    assert captured[0]["s"]["v"] == linux_version
+    assert captured[1]["s"]["v"] == container_version
+    assert captured[0]["s"]["x"] != captured[1]["s"]["x"]
+    assert captured[0]["ss"] != captured[1]["ss"]
+    assert all(
+        len(json.dumps(item, ensure_ascii=False, separators=(",", ":"))) <= 500
+        for item in captured
+    )
 
 
 def test_request_id_is_idempotent_and_conflicts_on_different_input(client: TestClient):
@@ -294,7 +313,7 @@ def test_sources_received_but_not_cited_remain_unverified_instead_of_grounded(cl
             )
 
     candidate = asyncio.run(run())
-    assert captured[0]["source_segments"]
+    assert captured[0]["s"]
     assert candidate["groundingStatus"] == "source_supplied_unverified"
     assert candidate["citations"] == []
     assert any(
@@ -358,8 +377,9 @@ def test_invalid_bundle_reports_precise_paths_and_repair_can_return_a_full_candi
 
     candidate = asyncio.run(run())
     assert len(calls) == 2
-    assert calls[1]["repair"]["errorCode"] == "bundle_contract_invalid"
-    assert calls[1]["repair"]["issues"][0]["path"] == "$.task.work_task.task_steps"
+    assert calls[1]["fix"]["e"] == "bundle_contract_invalid"
+    assert calls[1]["fix"]["p"][0] == "$.task.work_task.task_steps"
+    assert len(json.dumps(calls[1], ensure_ascii=False, separators=(",", ":"))) <= 500
     assert candidate["validation"]["valid"] is True
 
 

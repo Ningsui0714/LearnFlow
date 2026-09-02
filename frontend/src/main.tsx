@@ -1757,8 +1757,13 @@ function App({ auth }: { auth: AuthGateSession }) {
       replayInterruptedTurn,
     )
     const turnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
+    const directLearningTaskPluginTurn = Boolean(
+      conversation.projectId
+      && activeConversationPluginIds(conversation).includes('learning_task_conversion')
+      && /(?:转化|转换|生成|拆解).{0,12}(?:学习型任务|学习任务|学习步骤|可验收步骤)|(?:学习型任务|学习任务).{0,12}(?:转化|转换|生成|拆解)/i.test(content),
+    )
 
-    if (configurationIssue) {
+    if (configurationIssue && !directLearningTaskPluginTurn) {
       finishTurn(conversationId, sheetId, mode, {
         role: 'system',
         content: `本轮已识别为“${TUTOR_MODE_LABELS[mode]}”，但模型连接还不能使用：${configurationIssue}`,

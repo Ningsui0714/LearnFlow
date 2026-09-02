@@ -16,6 +16,7 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+import ssl
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
@@ -32,11 +33,12 @@ from app.models.project import (
 
 
 CANDIDATE_SCHEMA_VERSION = "role-learning-task-candidate.v1"
-PROVIDER_REQUEST_SCHEMA_VERSION = "learnflow.xingchen-learning-task-request.v1"
+PROVIDER_REQUEST_SCHEMA_VERSION = "lf.xingchen-ltc.v1"
 INTEGRATION_BUNDLE_SCHEMA_VERSION = "learning-task-conversion-integration-bundle-v1"
-MAX_PROVIDER_INPUT_CHARS = 24_000
+MAX_PROVIDER_INPUT_CHARS = 500
 MAX_SEGMENT_CHARS = 1_200
 MAX_SOURCE_CHARS = 10_000
+MAX_PROVIDER_SOURCE_TEXT_CHARS = 48
 MAX_PROVIDER_RESPONSE_BYTES = 2_000_000
 MAX_BUNDLE_RESPONSE_BYTES = 4_000_000
 MAX_STEPS = 12
@@ -217,7 +219,10 @@ def load_xingchen_credentials(path: str | Path | None = None) -> XingchenCredent
 
 
 def load_bundle_service_token(path: str | Path | None = None) -> str:
-    source = Path(path).expanduser() if path else _credentials_path()
+    configured = str(settings.learning_task_bundle_credentials_path or "").strip()
+    source = Path(path).expanduser() if path else (
+        Path(configured).expanduser() if configured else _credentials_path()
+    )
     if not source.is_file():
         raise LearningTaskIntegrationError(
             "bundle_service_not_configured", "讯飞任务包服务认证尚未配置", status_code=503,
@@ -376,6 +381,7 @@ class LearningTaskBundleGateway:
         transport: httpx.AsyncBaseTransport | None = None,
         service_token: str | None = None,
         allow_test_url: bool = False,
+        ca_file: str | Path | None = None,
     ) -> None:
         configured = str(base_url if base_url is not None else settings.learning_task_conversion_base_url)
         if allow_test_url and transport is not None:
@@ -393,6 +399,18 @@ class LearningTaskBundleGateway:
         ), 120.0))
         self.transport = transport
         self.service_token = str(service_token or "").strip()
+        configured_ca = str(
+            ca_file if ca_file is not None else settings.learning_task_bundle_ca_file
+        ).strip()
+        self.verify: bool | ssl.SSLContext = True
+        if configured_ca:
+            try:
+                self.verify = ssl.create_default_context(cafile=str(Path(configured_ca).expanduser()))
+            except (OSError, ssl.SSLError) as exc:
+                raise LearningTaskIntegrationError(
+                    "integration_config_invalid", "任务包服务 CA 文件无法加载", status_code=503,
+                    who_fixes="operator", suggested_action="配置可读且有效的 PEM CA 文件",
+                ) from exc
 
     async def read(self, task_card_id: str) -> dict[str, Any]:
         service_token = self.service_token or load_bundle_service_token()
@@ -404,6 +422,7 @@ class LearningTaskBundleGateway:
                 follow_redirects=False,
                 trust_env=False,
                 transport=self.transport,
+                verify=self.verify,
             ) as client:
                 for attempt in range(5):
                     response = await client.get(
@@ -595,7 +614,14 @@ async def build_source_snapshot(
     segments: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     total_chars = 0
-    available_segments = sum(len(chunks_by_version.get(version.id, [])) for version, _source in rows)
+    available_chunks = [
+        chunk
+        for version, _source in rows
+        for chunk in chunks_by_version.get(version.id, [])
+        if str(chunk.content or "").strip()
+    ]
+    available_segments = len(available_chunks)
+    available_characters = sum(len(str(chunk.content or "").strip()) for chunk in available_chunks)
     for version, source in rows:
         bindings.append({
             "sourceId": source.id,
@@ -638,7 +664,8 @@ async def build_source_snapshot(
             })
             total_chars += len(text)
     omitted = max(0, available_segments - len(segments))
-    truncated = omitted > 0 or any(len(str(chunk.content or "")) > MAX_SEGMENT_CHARS for chunk in chunk_rows[:len(segments)])
+    omitted_characters = max(0, available_characters - total_chars)
+    truncated = omitted > 0 or omitted_characters > 0
     if not segments:
         warnings.append({
             "code": "ungrounded",
@@ -647,7 +674,7 @@ async def build_source_snapshot(
     elif truncated:
         warnings.append({
             "code": "source_context_truncated",
-            "message": f"来源上下文已按预算截断，省略 {omitted} 个片段。",
+            "message": f"来源上下文已按预算截断，省略 {omitted} 个片段、{omitted_characters} 个字符。",
         })
     root_hash = canonical_hash({"projectId": project.id, "bindings": bindings, "segments": segments})
     return SourceSnapshot(
@@ -663,8 +690,80 @@ async def build_source_snapshot(
             "availableSegmentCount": available_segments,
             "includedSegmentCount": len(segments),
             "omittedSegmentCount": omitted,
+            "availableCharacters": available_characters,
             "includedCharacters": total_chars,
+            "omittedCharacterCount": omitted_characters,
             "truncated": truncated,
+        },
+        warnings=warnings,
+    )
+
+
+def _provider_bounded_snapshot(source_snapshot: SourceSnapshot) -> SourceSnapshot:
+    """Pin exactly the source excerpt that can cross Xingchen's 500-char wire limit."""
+    segments: list[dict[str, Any]] = []
+    citations: list[dict[str, Any]] = []
+    if source_snapshot.segments:
+        original = source_snapshot.segments[0]
+        text = _compact(original.get("text"), MAX_PROVIDER_SOURCE_TEXT_CHARS)
+        segment = {
+            "citationId": original["citationId"],
+            "sourceVersionId": original["sourceVersionId"],
+            "text": text,
+        }
+        segments.append(segment)
+        citation = next(
+            (
+                dict(item)
+                for item in source_snapshot.citations
+                if item.get("citationId") == original.get("citationId")
+            ),
+            None,
+        )
+        if citation:
+            citation["excerpt"] = text
+            citations.append(citation)
+
+    available_segments = int(source_snapshot.coverage.get("availableSegmentCount") or 0)
+    available_characters = int(source_snapshot.coverage.get("availableCharacters") or 0)
+    included_characters = sum(len(str(item.get("text") or "")) for item in segments)
+    omitted_segments = max(0, available_segments - len(segments))
+    omitted_characters = max(0, available_characters - included_characters)
+    truncated = omitted_segments > 0 or omitted_characters > 0
+    warnings = [
+        dict(item)
+        for item in source_snapshot.warnings
+        if item.get("code") not in {"source_context_truncated", "provider_context_truncated"}
+    ]
+    if segments and truncated:
+        warnings.append({
+            "code": "provider_context_truncated",
+            "message": (
+                "讯飞当前工作流的 user_query 最多 500 字符；"
+                f"已发送 1 个来源摘要，省略 {omitted_segments} 个片段、"
+                f"{omitted_characters} 个字符。"
+            ),
+        })
+    root_hash = canonical_hash({
+        "bindings": source_snapshot.bindings,
+        "providerSegments": segments,
+    })
+    return SourceSnapshot(
+        package_id=source_snapshot.package_id,
+        package_version=f"source-set.{root_hash[:12]}",
+        snapshot_id=f"source_snapshot_{root_hash[:20]}",
+        root_hash=root_hash,
+        bindings=source_snapshot.bindings,
+        citations=citations,
+        segments=segments,
+        coverage={
+            **source_snapshot.coverage,
+            "includedSegmentCount": len(segments),
+            "omittedSegmentCount": omitted_segments,
+            "includedCharacters": included_characters,
+            "omittedCharacterCount": omitted_characters,
+            "truncated": truncated,
+            "providerInputCharacterLimit": MAX_PROVIDER_INPUT_CHARS,
         },
         warnings=warnings,
     )
@@ -805,6 +904,14 @@ def bundle_to_candidate(
         warnings.append({
             "code": "sources_supplied_without_citation_binding",
             "message": "来源片段已进入 provider 输入，但输出没有绑定 citationId；候选不得宣称为直接岗位事实。",
+        })
+    if len(steps) != target_step_count:
+        warnings.append({
+            "code": "provider_step_count_mismatch",
+            "message": (
+                f"请求 {target_step_count} 个步骤，讯飞实际返回 {len(steps)} 个；"
+                "候选仍可复核，但不得宣称已满足目标步数。"
+            ),
         })
     grounding_status = (
         "ungrounded" if not source_snapshot.segments
@@ -1051,16 +1158,82 @@ def validate_candidate(candidate: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _serialized_provider_length(value: Mapping[str, Any]) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+
+
+def _fit_provider_input(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Deterministically shrink optional prose while preserving task and source identity."""
+    fitted = json.loads(json.dumps(value, ensure_ascii=False))
+    source = fitted.get("s") if isinstance(fitted.get("s"), dict) else {}
+    if _serialized_provider_length(fitted) <= MAX_PROVIDER_INPUT_CHARS:
+        return fitted
+    fitted.pop("d", None)
+    while _serialized_provider_length(fitted) > MAX_PROVIDER_INPUT_CHARS and source:
+        text = str(source.get("x") or "")
+        if len(text) <= 24:
+            break
+        source["x"] = text[:-8]
+    while _serialized_provider_length(fitted) > MAX_PROVIDER_INPUT_CHARS:
+        title = str(fitted.get("t") or "")
+        if len(title) <= 24:
+            break
+        fitted["t"] = title[:-8]
+    if _serialized_provider_length(fitted) > MAX_PROVIDER_INPUT_CHARS:
+        raise LearningTaskIntegrationError(
+            "provider_input_too_large", "讯飞紧凑请求仍超过 500 字符限制", status_code=422,
+            who_fixes="learnflow", suggested_action="减少请求标识长度后重试",
+            diagnostics={
+                "characters": _serialized_provider_length(fitted),
+                "limit": MAX_PROVIDER_INPUT_CHARS,
+            },
+        )
+    return fitted
+
+
+def _base_provider_input(
+    *,
+    request_id: str,
+    task_title: str,
+    task_description: str,
+    source_snapshot: SourceSnapshot,
+    target_step_count: int,
+) -> dict[str, Any]:
+    request_ref = f"r_{canonical_hash(request_id)[:12]}"
+    source_segment = source_snapshot.segments[0] if source_snapshot.segments else None
+    provider_input: dict[str, Any] = {
+        "v": PROVIDER_REQUEST_SCHEMA_VERSION,
+        "r": request_ref,
+        "t": _compact(task_title, 48),
+        "d": _compact(task_description, 24),
+        "n": target_step_count,
+        "ss": source_snapshot.snapshot_id,
+        "s": ({
+            "c": source_segment["citationId"],
+            "v": source_segment["sourceVersionId"],
+            "x": source_segment["text"],
+        } if source_segment else {}),
+        "o": "bundle-v1",
+    }
+    if not provider_input["d"]:
+        del provider_input["d"]
+    return _fit_provider_input(provider_input)
+
+
 def _repair_provider_input(base: Mapping[str, Any], error: LearningTaskIntegrationError, attempt: int) -> dict[str, Any]:
-    return {
+    repaired = {
         **dict(base),
-        "repair": {
-            "attempt": attempt,
-            "errorCode": error.code,
-            "issues": list(error.diagnostics.get("issues") or [])[:16],
-            "instruction": "重新生成完整任务包；只修复所列结构、引用、依赖或安全问题，不返回解释文字。",
+        "fix": {
+            "a": attempt,
+            "e": _compact(error.code, 40),
+            "p": [
+                _compact(item.get("path"), 56)
+                for item in list(error.diagnostics.get("issues") or [])[:3]
+                if isinstance(item, Mapping) and item.get("path")
+            ],
         },
     }
+    return _fit_provider_input(repaired)
 
 
 async def _bundle_from_run(
@@ -1097,36 +1270,31 @@ async def generate_candidate(
     workflow_client: XingchenWorkflowClient | None = None,
     bundle_gateway: LearningTaskBundleGateway | None = None,
 ) -> dict[str, Any]:
-    source_snapshot = await build_source_snapshot(
+    full_source_snapshot = await build_source_snapshot(
         db, project, source_version_ids=source_version_ids,
         max_segments=max_source_segments,
     )
-    base_provider_input = {
-        "schema_version": PROVIDER_REQUEST_SCHEMA_VERSION,
+    source_snapshot = _provider_bounded_snapshot(full_source_snapshot)
+    fingerprint = canonical_hash({
+        "schema_version": "role-learning-task-candidate-request.v1",
         "request_id": request_id,
         "task": {
             "title": _compact(task_title, 300),
             "description": _compact(task_description, 2_000),
             "upstream_task": dict(upstream_task or {}),
         },
-        "source_snapshot": {
-            "package_id": source_snapshot.package_id,
-            "package_version": source_snapshot.package_version,
-            "snapshot_id": source_snapshot.snapshot_id,
-            "root_hash": source_snapshot.root_hash,
-        },
-        "source_segments": source_snapshot.segments,
-        "output_contract": {
-            "schema_version": INTEGRATION_BUNDLE_SCHEMA_VERSION,
-            "target_step_count": target_step_count,
-            "step_bounds": {"minimum": MIN_STEPS, "maximum": MAX_STEPS},
-            "required_step_fields": ["step_id", "name", "action", "deliverable", "check"],
-            "required_mapping_fields": ["knowledge_point_ids", "skill_point_ids"],
-            "citation_rule": "Only cite citationId values present in source_segments.",
-            "authority_rule": "Uncited model output is a candidate pedagogical transformation, never a source fact.",
-        },
-    }
-    fingerprint = canonical_hash(base_provider_input)
+        "source_snapshot_root_hash": source_snapshot.root_hash,
+        "source_version_ids": source_version_ids,
+        "target_step_count": target_step_count,
+        "max_source_segments": max_source_segments,
+    })
+    base_provider_input = _base_provider_input(
+        request_id=request_id,
+        task_title=task_title,
+        task_description=task_description,
+        source_snapshot=source_snapshot,
+        target_step_count=target_step_count,
+    )
     existing = (await db.execute(select(LearningTaskCandidateArtifact).where(
         LearningTaskCandidateArtifact.learner_id == learner_id,
         LearningTaskCandidateArtifact.project_id == project.id,

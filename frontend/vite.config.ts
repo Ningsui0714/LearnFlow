@@ -11,7 +11,7 @@ import {
 import { isTutorToolChoice } from './src/tooling.ts'
 import { sanitizeLearningTaskTutorContext } from './src/learning.ts'
 import { sanitizeLearningPlanTutorContext } from './src/planning.ts'
-import { runTutorAgentTurn } from './server/agent-runtime.ts'
+import { directLearningTaskDraftRequest, runTutorAgentTurn } from './server/agent-runtime.ts'
 import { readProviderStream } from './server/provider-stream.ts'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
@@ -298,19 +298,37 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           typeof value === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(value)
         )))].slice(0, 16)
         : undefined
+      const submittedMessages = Array.isArray(input.messages)
+        ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
+            if (!message || typeof message !== 'object') return false
+            const item = message as Record<string, unknown>
+            return (item.role === 'assistant' || item.role === 'user') && typeof item.content === 'string'
+          })
+        : []
+      const latestSubmittedMessage = [...submittedMessages].reverse().find(message => message.role === 'user')?.content || ''
+      const directPluginTurn = Boolean(directLearningTaskDraftRequest(
+        activePluginIds,
+        formalScope.projectId,
+        latestSubmittedMessage,
+      ))
       const configurationIssue = tutorConfigurationIssue(baseUrl, model)
-      if (configurationIssue) throw new Error(configurationIssue)
+      if (configurationIssue && !directPluginTurn) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
 
-      const providerUrl = new URL(baseUrl)
-      const localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
-      if (!localProvider && providerUrl.protocol !== 'https:') {
-        throw new Error('非本机模型服务必须使用 HTTPS，避免账户密钥明文传输。')
+      let localProvider = false
+      if (!directPluginTurn) {
+        const providerUrl = new URL(baseUrl)
+        localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
+        if (!localProvider && providerUrl.protocol !== 'https:') {
+          throw new Error('非本机模型服务必须使用 HTTPS，避免账户密钥明文传输。')
+        }
+        if (providerUrl.username || providerUrl.password) {
+          throw new Error('Base URL 不能内嵌账号或密码。')
+        }
       }
-      if (providerUrl.username || providerUrl.password) {
-        throw new Error('Base URL 不能内嵌账号或密码。')
-      }
-      const keyConfiguration = await resolveAccountKey(request)
+      const keyConfiguration: ModelCredential = directPluginTurn
+        ? { apiKey: '', source: '学习型任务插件直达' }
+        : await resolveAccountKey(request)
       const invokeProvider = (providerRequest: {
         endpoint: string
         body: unknown
@@ -318,13 +336,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         onTextDelta?: (delta: string) => void
       }) => callProvider({ ...providerRequest, apiKey: keyConfiguration.apiKey })
 
-      const messages = Array.isArray(input.messages)
-        ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
-            if (!message || typeof message !== 'object') return false
-            const item = message as Record<string, unknown>
-            return (item.role === 'assistant' || item.role === 'user') && typeof item.content === 'string'
-          })
-        : []
+      const messages = submittedMessages
       if (messages.length === 0) throw new Error('没有可发送的对话内容')
 
       console.info('[tutor] turn started', {
@@ -337,7 +349,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         toolChoice,
       })
 
-      if (!localProvider && !keyConfiguration.apiKey) {
+      if (!directPluginTurn && !localProvider && !keyConfiguration.apiKey) {
         throw new Error('当前账号尚未配置模型 API Key。请在账号设置中保存并测试连接。')
       }
 

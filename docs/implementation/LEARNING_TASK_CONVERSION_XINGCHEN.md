@@ -45,7 +45,9 @@
 
 `learner_id` 不在请求合同中，由登录会话获得。后端要求 `project_id` 属于当前学习者；`sourceVersionIds` 必须属于该项目，去重后最多 20 个。`requestId` 在 learner + project 范围幂等：相同输入返回同一候选，不同输入复用同一 ID 返回 409。
 
-后端发送给讯飞的 `AGENT_USER_INPUT` 是序列化 JSON，版本为 `learnflow.xingchen-learning-task-request.v1`，包含任务、`source_snapshot`、有界 `source_segments` 与输出合同。来源最多 20 个片段、单片段 1200 字符、来源总量 10000 字符、总 provider 输入 24000 字符；截断会进入 `coverage` 和 `warnings`。
+后端发送给讯飞的 `AGENT_USER_INPUT` 是序列化紧凑 JSON，版本为 `lf.xingchen-ltc.v1`。当前线上工作流内部工具的 `user_query` 上限是 500 字符，因此 wire contract 只发送任务标题、有界描述、目标步数、快照 ID 与一个带 `citationId`/`sourceVersionId` 的来源摘要，并在发送前硬性校验总长不超过 500。LearnFlow 仍在本地计算完整请求指纹，不会因 wire 压缩破坏幂等冲突检查。未发送片段数与未发送字符数都会明确进入 `coverage` 和 `provider_context_truncated` warning；不得把未发送内容声称为 provider 已使用的岗位事实。
+
+wire 中的短键是固定合同：`v`=合同版本、`r`=脱敏请求引用、`t`=任务标题、`d`=有界描述、`n`=目标步数、`ss`=快照 ID、`s.c`=citationId、`s.v`=sourceVersionId、`s.x`=来源摘要、`o`=输出类型。结构修订使用 `fix` 字段并同样受 500 字符限制。当 provider 返回步数与 `n` 不一致时，候选保留实际步骤并返回 `provider_step_count_mismatch` warning，不伪造本地步骤填数。
 
 ## 4. 候选响应合同
 
@@ -113,7 +115,7 @@ LearnFlow 不信任 workflow 自报的 gate。Validator 实际检查：候选版
 
 ## 7. 配置与安全
 
-讯飞凭据和 `LEARNING_TASK_BUNDLE_SERVICE_TOKEN` 只从 `backend/.private/learning_task_conversion.xfyun.env` 或 `LEARNING_TASK_XFYUN_CREDENTIALS_PATH` 指向的私密文件读取；`.private/` 已被忽略。示例配置只列变量名，不包含值。bundle 服务必须是通过证书校验的 HTTPS DNS 域名，生产配置拒绝裸 IP；每次读取都携带服务间 Bearer token，`task_card_id` 不是访问凭证。插件和错误 payload 不含密钥。
+讯飞凭据和 `LEARNING_TASK_BUNDLE_SERVICE_TOKEN` 只从私密文件读取；默认共用 `backend/.private/learning_task_conversion.xfyun.env`，也可分别通过 `LEARNING_TASK_XFYUN_CREDENTIALS_PATH` 与 `LEARNING_TASK_BUNDLE_CREDENTIALS_PATH` 指向不同文件。`.private/` 已被忽略，示例配置只列变量名、不包含值。bundle 服务必须是通过证书校验的 HTTPS DNS 域名，生产配置拒绝裸 IP；私有 CA 可由 `LEARNING_TASK_BUNDLE_CA_FILE` 指定。每次读取都携带服务间 Bearer token，`task_card_id` 不是访问凭证。插件和错误 payload 不含密钥。
 
 未配置受信 DNS bundle 地址或服务间 token 时在线能力显式返回不可用，不能伪造成功。Seeded demo 不依赖该在线插件即可完成核心 LearnFlow 闭环。
 

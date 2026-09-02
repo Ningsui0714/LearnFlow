@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
+import { directLearningTaskDraftRequest } from './agent-runtime.ts'
 import { loadLearnFlowPluginRegistry } from './plugin-loader.ts'
 
 const activation = {
@@ -45,6 +46,24 @@ function sampleCandidate() {
 async function registry() {
   return loadLearnFlowPluginRegistry(resolve(process.cwd(), 'plugins'))
 }
+
+test('explicit project plugin request maps directly to the candidate drafting tool', () => {
+  assert.deepEqual(
+    directLearningTaskDraftRequest(
+      ['learning_task_conversion'],
+      7,
+      '请把“在 Ubuntu 服务器配置 Fail2ban 并完成封禁与解封验收”转化为学习型任务，生成 6 个可验收步骤。',
+    ),
+    {
+      taskTitle: '在 Ubuntu 服务器配置 Fail2ban 并完成封禁与解封验收',
+      taskDescription: '请把“在 Ubuntu 服务器配置 Fail2ban 并完成封禁与解封验收”转化为学习型任务，生成 6 个可验收步骤。',
+      targetStepCount: 6,
+    },
+  )
+  assert.equal(directLearningTaskDraftRequest([], 7, '生成学习型任务'), undefined)
+  assert.equal(directLearningTaskDraftRequest(['learning_task_conversion'], undefined, '生成学习型任务'), undefined)
+  assert.equal(directLearningTaskDraftRequest(['learning_task_conversion'], 7, '解释一下学习型任务是什么'), undefined)
+})
 
 test('learning-task conversion contributes one artifact tool and four read-only tools', async () => {
   const loaded = await registry()

@@ -227,11 +227,24 @@ async function requestProjectPluginIntegration(options: {
   const path = route.method === 'POST'
     ? basePath
     : `${basePath}/${encodeURIComponent(candidateId)}${route.suffix}`
+  let csrfToken = ''
+  if (route.method === 'POST') {
+    const csrfResponse = await fetch(`${options.input.backendBase}/api/auth/csrf`, {
+      headers: options.input.requestCookie ? { Cookie: options.input.requestCookie } : {},
+      signal: options.signal,
+    })
+    const csrfBody = await csrfResponse.json().catch(() => ({})) as Record<string, unknown>
+    csrfToken = typeof csrfBody.csrf_token === 'string' ? csrfBody.csrf_token : ''
+    if (!csrfResponse.ok || !csrfToken) {
+      throw new Error(`plugin_integration_error:csrf_unavailable:无法取得项目集成写请求所需的 CSRF 令牌`)
+    }
+  }
   const response = await fetch(`${options.input.backendBase}${path}`, {
     method: route.method,
     headers: {
       ...(route.method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
       ...(options.input.requestCookie ? { Cookie: options.input.requestCookie } : {}),
+      ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     },
     ...(route.method === 'POST' ? { body: JSON.stringify(body) } : {}),
     signal: options.signal,
@@ -684,6 +697,28 @@ function explicitToolCall(choice: TutorToolChoice, message: string, projectScope
   }
 }
 
+export function directLearningTaskDraftRequest(
+  activePluginIds: readonly string[] | undefined,
+  projectId: number | undefined,
+  message: string,
+) {
+  if (!projectId || !activePluginIds?.includes('learning_task_conversion')) return undefined
+  if (!/(?:转化|转换|生成|拆解).{0,12}(?:学习型任务|学习任务|学习步骤|可验收步骤)|(?:学习型任务|学习任务).{0,12}(?:转化|转换|生成|拆解)/i.test(message)) return undefined
+  const quoted = message.match(/[“"]([^”"]{2,300})[”"]/)?.[1]?.trim()
+  const taskTitle = (quoted || message
+    .replace(/^(?:请|帮我|请帮我)?\s*(?:把)?\s*/i, '')
+    .split(/(?:转化|转换|生成|拆解)(?:为|成)?(?:一个|一份)?(?:学习型任务|学习任务|学习步骤|可验收步骤)/i)[0]
+    .replace(/[，,;；:：\s]+$/g, '')
+    .trim()).slice(0, 300)
+  if (taskTitle.length < 2) return undefined
+  const requestedSteps = Number(message.match(/(\d{1,2})\s*个?(?:可验收)?步骤/i)?.[1] || 6)
+  return {
+    taskTitle,
+    taskDescription: message.slice(0, 2_000),
+    targetStepCount: Math.max(3, Math.min(12, requestedSteps)),
+  }
+}
+
 export function verifyTutorTurnOutcome(options: {
   reply: string
   mode: TutorMode
@@ -1087,6 +1122,51 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       name: 'propose_personal_path_node',
       arguments: { query: latestMessage, source_urls: sources.map(source => source.url) },
     }, sources)
+  }
+
+  const directDraft = directLearningTaskDraftRequest(
+    input.activePluginIds,
+    pluginActivation(input).projectId,
+    latestMessage,
+  )
+  if (directDraft && input.pluginRegistry?.resolveTool(
+    'learning_task_conversion__draft_learning_task',
+    pluginActivation(input),
+  )) {
+    record({ phase: 'observe', detail: '已识别明确的学习型任务转化请求', status: 'completed' })
+    await execute({
+      id: `direct-learning-task-draft-${id}`,
+      name: 'learning_task_conversion__draft_learning_task',
+      arguments: directDraft,
+    })
+    const run = runs[runs.length - 1]
+    const reply = run?.status === 'completed'
+      ? `${run.detail}\n\n这仍是未确认候选；返回的步骤不代表你已经执行或掌握。`
+      : `学习型任务转化失败：${run?.detail || '插件没有返回可用观察'} `
+    stopReason = run?.status === 'completed' ? 'final_answer' : 'error'
+    record({
+      phase: 'finalize',
+      detail: run?.status === 'completed' ? '讯飞候选已返回，等待学习者复核' : '讯飞候选生成失败',
+      status: run?.status === 'completed' ? 'completed' : 'failed',
+    })
+    reconcileVisibleDraft(reply)
+    return {
+      reply,
+      toolRuns: runs,
+      trace: {
+        version: 'vnext-agent-trace.v1',
+        turnId: id,
+        modelRounds: 0,
+        toolCalls,
+        stopReason,
+        events: trajectory,
+        decisionSummaries,
+        timings: {
+          ...(firstTextDeltaAt ? { firstTextDeltaMs: firstTextDeltaAt - startedAt } : {}),
+          totalMs: Date.now() - startedAt,
+        },
+      },
+    }
   }
 
   record({ phase: 'observe', detail: '开始组装本轮观察空间', status: 'started' })

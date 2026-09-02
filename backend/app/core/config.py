@@ -73,6 +73,8 @@ class Settings(BaseSettings):
     # are never returned to the browser or plugin package.
     learning_task_xfyun_credentials_path: str = ""
     learning_task_conversion_base_url: str = ""
+    learning_task_bundle_credentials_path: str = ""
+    learning_task_bundle_ca_file: str = ""
     learning_task_conversion_timeout_seconds: float = 30.0
     learning_task_conversion_max_source_segments: int = 16
 
