@@ -80,6 +80,13 @@ function loadBackendBase(mode: string) {
   ).replace(/\/$/, '')
 }
 
+function loadTutorAllowedOrigins(mode: string) {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  const configured = String(process.env.LEARNFLOW_PUBLIC_ORIGIN || localEnv.LEARNFLOW_PUBLIC_ORIGIN || '')
+    .split(',').map(value => value.trim()).filter(Boolean)
+  return new Set(['http://127.0.0.1:4174', 'http://localhost:4174', ...configured])
+}
+
 function readJsonBody(request: any): Promise<unknown> {
   return new Promise((resolveBody, rejectBody) => {
     let body = ''
@@ -158,6 +165,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
   // without restarting Vite. Reload the server registry per turn as well so the
   // UI never advertises a capability that the Tutor process cannot resolve.
   const pluginRegistryProvider = createLearnFlowPluginRegistryProvider({ reload: mode !== 'production' })
+  const allowedOrigins = loadTutorAllowedOrigins(mode)
 
   const callProvider = async (options: {
     endpoint: string
@@ -250,7 +258,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
     }
 
     const origin = request.headers.origin
-    if (origin && !['http://127.0.0.1:4174', 'http://localhost:4174'].includes(origin)) {
+    if (origin && !allowedOrigins.has(origin)) {
       sendJson(response, 403, { error: '拒绝非本地页面请求' })
       return
     }

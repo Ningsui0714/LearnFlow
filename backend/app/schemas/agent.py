@@ -17,6 +17,16 @@ class AgentSessionCreate(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
+class RolePackageLaunchConsumeRequest(BaseModel):
+    token: str = Field(min_length=80, max_length=8_192)
+    client_conversation_id: str = Field(min_length=8, max_length=120)
+
+    @field_validator("token", "client_conversation_id", mode="before")
+    @classmethod
+    def normalize_launch_identity(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
+
+
 class VNextSessionMessage(BaseModel):
     client_message_id: str = Field(min_length=8, max_length=120)
     role: Literal["assistant", "user", "system"]

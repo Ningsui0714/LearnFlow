@@ -104,6 +104,7 @@ import {
   confirmFormalValueClaim,
   commitFormalLearningPathPlan,
   createFormalProject,
+  consumeFormalRolePackageLaunch,
   createFormalTutorSession,
   createFormalProjectFreeSession,
   deleteFormalTutorSession,
@@ -383,7 +384,22 @@ function conversationFromFormal(session: FormalTutorSession, existing?: Conversa
     formalSessionId: session.id,
     updatedAt: session.updated_at ? Date.parse(session.updated_at) || base.updatedAt : base.updatedAt,
   }
-  return { ...conversation, pluginIds: activeConversationPluginIds(conversation) }
+  const withSessionPlugins = {
+    ...conversation,
+    pluginIds: stickyConversationPluginIds(session.plugin_ids || [], conversation.pluginIds),
+  }
+  return { ...withSessionPlugins, pluginIds: activeConversationPluginIds(withSessionPlugins) }
+}
+
+function rolePackageLaunchTokenFromPath() {
+  const prefix = '/launch/role-package/'
+  if (!window.location.pathname.startsWith(prefix)) return ''
+  try {
+    const token = decodeURIComponent(window.location.pathname.slice(prefix.length))
+    return token.length <= 8_192 ? token : ''
+  } catch {
+    return ''
+  }
 }
 
 function formalChatFingerprint(conversation: Conversation) {
@@ -619,6 +635,8 @@ function App({ auth }: { auth: AuthGateSession }) {
   const [expandedProjects, setExpandedProjects] = useState<Record<number, boolean>>({})
   const [projectPanelConversationId, setProjectPanelConversationId] = useState('')
   const formalChatHydrated = useRef(false)
+  const pendingRolePackageLaunchToken = useRef(rolePackageLaunchTokenFromPath())
+  const rolePackageLaunchStarted = useRef(false)
   const formalChatFingerprints = useRef<Record<string, string>>({})
   const paperAttachIntents = useRef(new Map<string, string>())
 
@@ -738,6 +756,27 @@ function App({ auth }: { auth: AuthGateSession }) {
   }
 
   useEffect(() => { refreshFormalProjects() }, [])
+
+  useEffect(() => {
+    const token = pendingRolePackageLaunchToken.current
+    if (!token || rolePackageLaunchStarted.current) return
+    rolePackageLaunchStarted.current = true
+    const clientConversationId = uid('chat')
+    void consumeFormalRolePackageLaunch(token, clientConversationId).then(session => {
+      const conversation = conversationFromFormal(session)
+      const tab = chatTab(conversation)
+      setWorkspace(previous => {
+        const conversations = [conversation, ...previous.conversations.filter(item => (
+          item.id !== conversation.id && item.formalSessionId !== conversation.formalSessionId
+        ))]
+        const tabs = [...previous.tabs.filter(item => item.id !== tab.id), tab].slice(-12)
+        return { ...previous, conversations, tabs, activeTabId: tab.id, splitTabId: '' }
+      })
+      pendingRolePackageLaunchToken.current = ''
+    }).catch(error => {
+      setFormalError(error instanceof Error ? error.message : '岗位包交接失败')
+    })
+  }, [])
 
   useEffect(() => {
     let active = true

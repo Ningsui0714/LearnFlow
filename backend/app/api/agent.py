@@ -11,7 +11,7 @@ from app.models.learning import (
 )
 from app.models.project import Project, Roadmap, Checkpoint, Task
 from app.schemas.agent import (
-    AgentSessionCreate, TutorTurnRequest, LearningEventRequest, VNextSessionSyncRequest,
+    AgentSessionCreate, RolePackageLaunchConsumeRequest, TutorTurnRequest, LearningEventRequest, VNextSessionSyncRequest,
     ProjectProposalUpdateRequest, ProjectProposalAcceptRequest,
     LearningSkillRunCreateRequest, LearningSkillRunActionRequest,
     LearningSkillRunTurnRequest, VisualPlannerRequest,
@@ -40,6 +40,8 @@ from app.services.learning_skill_runtime import (
     prepare_learning_skill_turn,
     validate_learning_skill_run_scope,
 )
+from app.core.config import settings
+from app.services.role_package_launch import RolePackageLaunchError, verify_role_package_launch
 from app.services.project_proposals import (
     list_session_proposals, proposal_view, set_proposal_status,
     start_resource_search, update_project_proposal,
@@ -70,10 +72,13 @@ def _vnext_conversation_id(session: AgentSession) -> str:
 
 def _vnext_session_summary(session: AgentSession) -> dict:
     vnext = dict((session.context_summary or {}).get("vnext") or {})
+    role_package_binding = dict((session.context_summary or {}).get("role_package_binding") or {})
     return {
         "client_conversation_id": str(vnext.get("conversation_id") or ""),
         "vnext_managed": bool(vnext.get("conversation_id")),
         "vnext_mode": str(vnext.get("mode") or "free"),
+        "plugin_ids": list((session.context_summary or {}).get("plugin_ids") or []),
+        "role_package_binding": role_package_binding or None,
     }
 
 
@@ -596,6 +601,137 @@ async def create_or_resume_session(
     )
     if data.title:
         session.title = data.title
+    await db.commit()
+    return await _session_payload(db, session)
+
+
+@router.post("/role-package-launches/consume")
+async def consume_role_package_launch(
+    data: RolePackageLaunchConsumeRequest,
+    db: AsyncSession = Depends(get_db),
+    current: CurrentLearner = Depends(get_current_learner),
+):
+    """Create one ordinary LearnFlow chat bound to an immutable Role Package.
+
+    This is a deterministic product handoff. It creates chat authority and a
+    plugin reference projection, but deliberately emits no learning evidence
+    and changes no learner-state kernel.
+    """
+    try:
+        launch = verify_role_package_launch(data.token, settings.role_package_launch_secret)
+    except RolePackageLaunchError as error:
+        status = 503 if str(error) == "role_package_launch_not_configured" else 400
+        raise HTTPException(status, str(error)) from error
+    expected_subject = f"learnflow:learner:{current.learner.id}"
+    if launch["subject"] != expected_subject:
+        raise HTTPException(403, "role_package_launch_subject_mismatch")
+
+    candidates = list((await db.execute(select(AgentSession).where(
+        AgentSession.learner_id == current.learner.id,
+        AgentSession.session_type == "global",
+        AgentSession.project_id.is_(None),
+        AgentSession.status == "active",
+    ).order_by(AgentSession.updated_at.desc()))).scalars().all())
+    existing = next((item for item in candidates if dict(
+        (item.context_summary or {}).get("role_package_binding") or {}
+    ).get("launch_id") == launch["launchId"]), None)
+    if existing:
+        return await _session_payload(db, existing)
+
+    package_ref = dict(launch["packageRef"])
+    selector = {
+        "packageId": package_ref["packageId"],
+        "packageVersion": package_ref["packageVersion"],
+        "snapshotId": package_ref["snapshotId"],
+    }
+    binding = {
+        "protocol": launch["protocol"],
+        "launch_id": launch["launchId"],
+        "source": launch["source"],
+        "role_title": launch["roleTitle"],
+        "package_ref": package_ref,
+        "bound_at": datetime.utcnow().isoformat(),
+    }
+    session = AgentSession(
+        learner_id=current.learner.id,
+        session_type="global",
+        title=f"{launch['roleTitle']} · 学习对话",
+        status="active",
+        context_summary={
+            "role": "vnext_global_chat",
+            "vnext": {
+                "schema_version": "vnext-chat.v1",
+                "conversation_id": data.client_conversation_id,
+                "mode": "free",
+            },
+            "plugin_ids": ["role_capability_graph"],
+            "role_package_binding": binding,
+        },
+    )
+    db.add(session)
+    await db.flush()
+    descriptor = {
+        "packageId": package_ref["packageId"],
+        "packageVersion": package_ref["packageVersion"],
+        "snapshotId": package_ref["snapshotId"],
+        "rootHash": package_ref["rootHash"],
+        "roleTitle": launch["roleTitle"],
+    }
+    reference = {
+        "protocol": "learnflow.plugin-object.v1",
+        "pluginId": "role_capability_graph",
+        "objectType": "role_package_reference",
+        "objectId": f"package-reference:{package_ref['rootHash']}",
+        "schemaVersion": "role-capability.object.v1",
+        "label": f"{launch['roleTitle']} · 已引用",
+        "value": {
+            **descriptor,
+            "category": "package_reference",
+            "data": {
+                **descriptor,
+                "pinnedBy": "signed_product_handoff",
+                "boundary": "该引用固定当前对话中的岗位事实版本，不形成学习者掌握证据。",
+            },
+        },
+    }
+    tool_run = {
+        "id": f"role-package-launch:{launch['launchId']}",
+        "kind": "plugin",
+        "status": "completed",
+        "title": "引用岗位包",
+        "detail": f"已固定 {launch['roleTitle']} v{package_ref['packageVersion']}",
+        "durationMs": 0,
+        "toolName": "role_capability_graph__reference_role_package",
+        "plugin": {
+            "pluginId": "role_capability_graph",
+            "toolId": "reference_role_package",
+            "result": {
+                "summary": f"已引用“{launch['roleTitle']}”岗位包 {package_ref['packageVersion']}。",
+                "objects": [reference],
+                "payload": {
+                    "kind": "role_package_reference",
+                    "reference": descriptor,
+                    "requiredSelector": selector,
+                    "boundary": "后续岗位读取必须复用精确 selector，不得按标题静默切换版本。",
+                },
+                "presentation": {
+                    "renderer": "role_package_reference",
+                    "state": descriptor,
+                },
+            },
+        },
+    }
+    db.add(AgentMessage(
+        session_id=session.id,
+        role="assistant",
+        content=f"已为这个新对话固定“{launch['roleTitle']}”岗位包 v{package_ref['packageVersion']}。后续岗位问题会使用这个不可变快照。",
+        meta_data={
+            "source": "role_package_launch",
+            "role_package_binding": binding,
+            "vnext": {"tutorMode": "free", "toolRuns": [tool_run]},
+        },
+        idempotency_key=f"role-package-launch:{current.learner.id}:{launch['launchId']}"[:160],
+    ))
     await db.commit()
     return await _session_payload(db, session)
 

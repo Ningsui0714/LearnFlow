@@ -1092,6 +1092,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         ...activation,
         scope: {
           mode: input.mode,
+          learnerId: Number((input.formalLearnerContext as any)?.scope?.learner_id) || undefined,
           conversationId: input.conversationId,
           projectId: activation.projectId,
           checkpointId: activation.checkpointId,

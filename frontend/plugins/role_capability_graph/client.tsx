@@ -520,11 +520,12 @@ function PackageCatalog(props: PluginToolRendererProps) {
   } as Record<string, string>)[String(item.sourceKind || '')] || '可用岗位包'
   return <section className="role-plugin-view role-plugin-catalog" aria-label="岗位包目录">
     <header><strong>{isNotFound ? '暂未找到可用岗位包' : '可引用岗位包'}</strong><small>{String(payload.count || 0)} 个匹配版本</small></header>
-    {isNotFound && <article className="role-plugin-empty"><span>Role Atlas · 自主岗位研究</span><strong>{String(payload.requestedRole || '新岗位')}</strong><p>当前可见目录中没有匹配的不可变岗位包。你可以前往 Role Atlas，以该岗位为起点完成资料研究、冷启动与后续迭代。</p>{payload.roleAgentResearchUrl && <a href={String(payload.roleAgentResearchUrl)} target="_blank" rel="noreferrer">前往 Role Atlas 自主研究这个岗位 ↗</a>}</article>}
+    {isNotFound && <article className="role-plugin-empty"><span>继续查找或研究</span><strong>{String(payload.requestedRole || '新岗位')}</strong><p>当前插件目录里没有匹配的不可变岗位包。你可以先去共享 Graph Hub 查看其他已发布图谱，也可以进入 Role Atlas 为该岗位做研究和冷启动。</p><div className="role-plugin-actions">{payload.graphHubBrowseUrl && <a href={String(payload.graphHubBrowseUrl)} target="_blank" rel="noreferrer">打开 Graph Hub ↗</a>}{payload.roleAgentResearchUrl && <a href={String(payload.roleAgentResearchUrl)} target="_blank" rel="noreferrer">进入 Role Atlas 研究 ↗</a>}</div></article>}
     {(payload.packages || []).map((item: RecordValue) => <article key={`${String(item.packageId)}@${String(item.packageVersion)}`}><span>{sourceLabel(item)} · {String(item.roleTitle)}</span><strong>v{String(item.packageVersion)}</strong><p>{String(item.snapshotAsOf)} · <code>{String(item.snapshotId)}</code></p>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`引用这个岗位包。请调用 reference_role_package，并原样使用以下身份：packageId=${String(item.packageId)}；packageVersion=${String(item.packageVersion)}；snapshotId=${String(item.snapshotId)}；rootHash=${String(item.rootHash)}`)}>引用此岗位包</button>}</article>)}
     {payload.simulation && <p className="role-plugin-warning">{String(payload.simulation)}</p>}
     {Array.isArray(payload.warnings) && payload.warnings.length > 0 && <p className="role-plugin-warning">另有 {payload.warnings.length} 个 role-agent 目录项未通过协议校验，因此没有加入可引用列表。</p>}
-    <p className="role-plugin-boundary">{isNotFound ? 'Role Atlas 负责岗位包研究、冷启动与迭代；LearnFlow 只引用已经可用的不可变岗位包。' : '选择动作会固定不可变版本，但不会安装、修改或发布岗位包。'}</p>
+    {!isNotFound && payload.graphHubBrowseUrl && <div className="role-plugin-actions"><a href={String(payload.graphHubBrowseUrl)} target="_blank" rel="noreferrer">在 Graph Hub 查看更多图谱 ↗</a></div>}
+    <p className="role-plugin-boundary">{isNotFound ? 'Graph Hub 负责跨产品发现；Role Atlas 负责岗位包研究与迭代；LearnFlow 负责学习对话和个人学习状态。' : '选择动作会固定不可变版本，但不会安装、修改或发布岗位包。'}</p>
   </section>
 }
 

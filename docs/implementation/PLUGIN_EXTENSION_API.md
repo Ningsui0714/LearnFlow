@@ -113,12 +113,14 @@ client.tsx      renderer components，导出 default 或 plugin
 
 ## 6. 首个官方消费包
 
-`frontend/plugins/role_capability_graph/` 是首个官方实现，只读取已发布的不可变 Static Role Package：
+`frontend/plugins/role_capability_graph/` 是首个官方实现，只读取已发布的不可变 Static Role Package，并可从受信 Graph Hub 目录读取当前主体可见的图谱候选：
 
-- 十二个只读 Tool；`list_role_packages -> reference_role_package` 负责用户明确选择与不可变引用，`research_role_node_risks` 只为解释节点证据、关系和事理风险；
+- 十三个只读 Tool；`search_graph_hub` 负责按学习目标检索官方图、已审核个人图和所有者自己的未审核图，`list_role_packages -> reference_role_package` 负责用户明确选择与不可变引用，`research_role_node_risks` 只为解释节点证据、关系和事理风险；
 - 一个证据化岗位图谱阅读 Agent Skill；
 - 五类已发布岗位对象，加一类岗位包引用 Object 和一类只读节点风险解释 Object；
 - 十一个 ToolResult Renderer，包括岗位包目录、岗位包引用和节点风险研究。
+
+Graph Hub 目录使用 `graph-hub-catalog.v1`。所有者作用域目录必须带 `audienceSubjectId=learnflow:learner:<id>`；宿主从正式学习者上下文把 `learnerId` 注入通用 Plugin Tool scope，插件据此校验目录，模型 schema 不包含 owner 参数。未审核个人图不得出现在公共目录，也不得在其他学习者的调用中降级为匿名可见。`LEARNFLOW_GRAPH_HUB_CATALOG` 指向公共目录或当前学习者作用域目录；工具最多返回 10 个图、每图 6 个命中节点，并显式返回 omitted/truncated。检索结果是只读推荐，不写学习路径、Plugin 持久化权威、EvidenceEvent 或五核。
 
 插件 runtime 按自身数据目录发现包并校验 manifest 中全部组件 SHA-256，包括 views、retrieval-index、
 object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
@@ -146,3 +148,6 @@ hash、canonical root hash、snapshot 身份和版本冲突，再原子安装不
 协议权威由 `backend/app/services/architecture_registry.py::PLUGIN_EXTENSION_POINTS` 和
 `frontend/src/plugin-api.ts` 共同约束；测试必须覆盖命名空间、未启用状态、输入边界、对象归属、renderer
 声明、重复 ID 和通用降级显示。
+## 跨产品岗位包交接
+
+Graph Hub 或 Role Atlas 可以把已发布岗位包交给 LearnFlow，但这不是模型工具调用。来源产品先用共享 HMAC 密钥签发最多 15 分钟、绑定 `learnflow:learner:<id>` 的 `role-package-launch.v1` 令牌；LearnFlow 的 `/api/agent/role-package-launches/consume` 验签、核对当前登录主体，并创建普通 `AgentSession + AgentMessage`。首条消息投影一个完成态 `role_package_reference` Plugin ToolRun，因此岗位插件会被锁定启用，后续读取只能复用令牌中的精确 selector。该入口不得写 EvidenceEvent 或五核，也不得把导航和会话创建暴露成模型可调用工具。

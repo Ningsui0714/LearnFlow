@@ -286,6 +286,20 @@ function roleAgentResearchUrl(query: string) {
   return target.toString()
 }
 
+function graphHubBrowseUrl(query: string) {
+  const configured = process.env.LEARNFLOW_GRAPH_HUB_BASE_URL || process.env.LEARNFLOW_ROLE_AGENT_BASE_URL || DEFAULT_ROLE_AGENT_BASE_URL
+  let base: URL
+  try {
+    base = new URL(configured)
+    if (!['http:', 'https:'].includes(base.protocol)) throw new Error('unsupported protocol')
+  } catch {
+    base = new URL(DEFAULT_ROLE_AGENT_BASE_URL)
+  }
+  const target = new URL('/hub', base)
+  if (query.trim()) target.searchParams.set('q', query.trim())
+  return target.toString()
+}
+
 function packageMatchesQuery(pkg: LoadedRolePackage, query: string) {
   const needle = normalize(query)
   if (!needle) return true
@@ -569,6 +583,7 @@ export class RolePackageRuntime {
     const packages = matched.map(pkg => this.descriptor(pkg))
     const matchStatus = requestedRole ? (packages.length ? 'matched' : 'not_found') : 'all'
     const researchUrl = matchStatus === 'not_found' ? roleAgentResearchUrl(requestedRole) : ''
+    const hubUrl = graphHubBrowseUrl(requestedRole)
     return {
       summary: matchStatus === 'not_found'
         ? `没有发现与“${requestedRole}”匹配的可引用岗位包；可以前往 Role Atlas 自主研究该岗位。`
@@ -578,7 +593,7 @@ export class RolePackageRuntime {
       )),
       payload: {
         kind: 'role_package_catalog', packages, count: packages.length, totalAvailable: this.packages.length,
-        requestedRole, matchStatus, roleAgentResearchUrl: researchUrl,
+        requestedRole, matchStatus, roleAgentResearchUrl: researchUrl, graphHubBrowseUrl: hubUrl,
         selectionContract: '用户选择后必须用 packageId、packageVersion、snapshotId 与 rootHash 调用 reference_role_package；不得只凭标题猜测。',
         simulation: packages.some(item => item.sourceKind === 'role_agent_simulation')
           ? '开发模拟会把本机 role-agent packages 目录中的有效静态岗位包视为可用；这不代表已经通过正式 Hub 审核。'
