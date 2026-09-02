@@ -3096,6 +3096,7 @@ function App({ auth }: { auth: AuthGateSession }) {
                   formalSkillRunActive={Boolean(activeTaskProjection?.task.formalSkillRunId)}
                   toolChoice={toolChoices[draftKey] || 'auto'}
                   toolDisabled={Boolean(pendingMode)}
+                  activePluginIds={activePluginIds}
                   sourceCount={attachedSources.length}
                   sourceKind={conversation.projectId ? 'project' : 'conversation'}
                   onSkillChange={choice => selectLearningSkill(conversation.id, choice)}

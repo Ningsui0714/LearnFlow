@@ -7,8 +7,10 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { LEARNING_SKILLS, type LearningSkillId } from './learning'
+import { installedClientPlugins } from './PluginToolResultView.tsx'
+import { visibleToolCapabilities } from './tool-capability-catalog.ts'
 import { TOOL_CHOICE_LABELS, type TutorToolChoice } from './tooling'
-import './ComposerCapabilityPicker.module.css'
+import './ComposerCapabilityPicker.css'
 
 export type ComposerLearningSkillChoice = LearningSkillId | 'auto'
 
@@ -20,6 +22,7 @@ type ComposerCapabilityPickerProps = {
   formalSkillRunActive: boolean
   toolChoice: TutorToolChoice
   toolDisabled: boolean
+  activePluginIds: readonly string[]
   sourceCount: number
   sourceKind: 'conversation' | 'project'
   onSkillChange: (choice: ComposerLearningSkillChoice) => void
@@ -65,6 +68,7 @@ export default function ComposerCapabilityPicker({
   formalSkillRunActive,
   toolChoice,
   toolDisabled,
+  activePluginIds,
   sourceCount,
   sourceKind,
   onSkillChange,
@@ -109,6 +113,9 @@ export default function ComposerCapabilityPicker({
     disabled: choice === 'domain' && sourceCount === 0,
     status: choice === 'domain' && sourceCount === 0 ? '未附加' : undefined,
   }))
+  const toolCapabilities = visibleToolCapabilities(activePluginIds, installedClientPlugins)
+  const coreCapabilityCount = toolCapabilities.filter(item => item.source === 'core').length
+  const pluginCapabilityCount = toolCapabilities.length - coreCapabilityCount
 
   const selectedSkill = skillOptions.find(option => option.value === skillChoice) || skillOptions[0]
   const selectedTool = toolOptions.find(option => option.value === toolChoice) || toolOptions[0]
@@ -313,8 +320,8 @@ export default function ComposerCapabilityPicker({
           ref={toolTriggerRef}
           type="button"
           className="composer-capability-picker__trigger composer-capability-picker__trigger--tool"
-          aria-label={`本轮工具：${selectedTool.label}`}
-          aria-haspopup="listbox"
+          aria-label={`工具能力：${coreCapabilityCount} 类系统能力${pluginCapabilityCount ? `，${pluginCapabilityCount} 项插件能力` : ''}；本轮偏好：${selectedTool.label}`}
+          aria-haspopup="dialog"
           aria-expanded={openMenu === 'tool'}
           aria-controls={`${id}-tool-listbox`}
           disabled={toolDisabled}
@@ -324,8 +331,11 @@ export default function ComposerCapabilityPicker({
         >
           <span className="composer-capability-picker__trigger-icon composer-capability-picker__trigger-icon--tool" aria-hidden="true">{selectedTool.glyph}</span>
           <span className="composer-capability-picker__trigger-copy">
-            <span className="composer-capability-picker__eyebrow">工具 · 本轮</span>
-            <span className="composer-capability-picker__selection"><strong>{selectedTool.label}</strong></span>
+            <span className="composer-capability-picker__eyebrow">工具能力 · 可见</span>
+            <span className="composer-capability-picker__selection">
+              <strong>{selectedTool.label}</strong>
+              <small>{coreCapabilityCount} 类{pluginCapabilityCount ? ` + ${pluginCapabilityCount} 插件` : ''}</small>
+            </span>
           </span>
           <span className="composer-capability-picker__chevron"><Chevron /></span>
         </button>
@@ -335,15 +345,55 @@ export default function ComposerCapabilityPicker({
             ref={toolPanelRef}
             id={`${id}-tool-listbox`}
             className="composer-capability-picker__popover composer-capability-picker__popover--tool"
-            role="listbox"
-            aria-label="选择本轮工具"
+            role="dialog"
+            aria-label="工具能力与本轮偏好"
           >
             <header className="composer-capability-picker__popover-header">
-              <span>本轮工具</span>
-              <strong>指定下一条消息的工具偏好</strong>
-              <p>这里只指定本轮工具偏好，不改变 Tutor 状态或学习方法。</p>
+              <span>工具能力</span>
+              <strong>Tutor 当前可使用的功能</strong>
+              <p>这里按功能概括展示能力；底层接口会根据对话状态、任务范围和安全条件自动开放。</p>
             </header>
-            <div className="composer-capability-picker__options">
+            <section className="composer-capability-picker__catalog" aria-label="可用工具能力">
+              <div className="composer-capability-picker__section-heading">
+                <strong>系统能力</strong>
+                <span>始终可见 · 按条件调用</span>
+              </div>
+              <div className="composer-capability-picker__capabilities">
+                {toolCapabilities.filter(item => item.source === 'core').map(capability => (
+                  <article key={capability.id} className="composer-capability-picker__capability">
+                    <span className="composer-capability-picker__capability-icon" aria-hidden="true">{capability.glyph}</span>
+                    <span className="composer-capability-picker__capability-copy">
+                      <strong>{capability.label}</strong>
+                      <small>{capability.purpose}</small>
+                    </span>
+                    <b>{capability.status}</b>
+                  </article>
+                ))}
+              </div>
+              <div className="composer-capability-picker__section-heading composer-capability-picker__section-heading--plugin">
+                <strong>插件能力</strong>
+                <span>{pluginCapabilityCount ? `已启用 ${pluginCapabilityCount}` : '启用后显示在这里'}</span>
+              </div>
+              {pluginCapabilityCount ? (
+                <div className="composer-capability-picker__capabilities">
+                  {toolCapabilities.filter(item => item.source === 'plugin').map(capability => (
+                    <article key={capability.id} className="composer-capability-picker__capability composer-capability-picker__capability--plugin">
+                      <span className="composer-capability-picker__capability-icon" aria-hidden="true">{capability.glyph}</span>
+                      <span className="composer-capability-picker__capability-copy">
+                        <strong>{capability.label}</strong>
+                        <small>{capability.purpose}</small>
+                      </span>
+                      <b>{capability.status}</b>
+                    </article>
+                  ))}
+                </div>
+              ) : <p className="composer-capability-picker__plugin-empty">通过旁边的“插件”入口启用后，这里会显示它提供的整体功能，不展开底层工具。</p>}
+            </section>
+            <div className="composer-capability-picker__preference-heading">
+              <strong>本轮偏好</strong>
+              <span>只影响下一条消息；自动模式仍可使用上面的全部能力</span>
+            </div>
+            <div className="composer-capability-picker__options" role="listbox" aria-label="选择本轮工具偏好">
               {toolOptions.map(option => {
                 const selected = option.value === toolChoice
                 return (
