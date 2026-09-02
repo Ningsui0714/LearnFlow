@@ -36,12 +36,41 @@ test('role capability plugin is discovered declaratively with explanation-only r
   assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 12)
   assert.equal(tools.filter(tool => tool.risk === 'artifact').length, 0)
   assert.match(loaded.skillInstructions(activation), /唯一岗位事实版本/)
-  assert.match(loaded.skillInstructions(activation), /先调用 list_role_packages 展示候选/)
+  assert.match(loaded.skillInstructions(activation), /作为 query 调用 list_role_packages/)
   assert.match(loaded.skillInstructions(activation), /reference_role_package/)
   assert.match(loaded.skillInstructions(activation), /通用补充（非岗位快照）/)
   assert.match(loaded.skillInstructions(activation), /不能覆盖 LearnFlow 的教学状态/)
   assert.match(loaded.skillInstructions(activation), /节点.*风险/u)
   assert.match(loaded.skillInstructions(activation), /只在 role-agent\/Hub 进行/)
+  assert.match(loaded.skillInstructions(activation), /matchStatus=not_found/)
+  assert.match(loaded.skillInstructions(activation), /不得调用 explore_role/)
+})
+
+test('package catalog filters by requested role and hands unmatched roles to Role Atlas', async () => {
+  const loaded = await registry()
+  const matched = await loaded.execute('role_capability_graph__list_role_packages', {
+    query: '我想了解大模型应用工程师',
+  }, executionContext)
+  const matchedPayload = matched.result.payload as any
+  assert.equal(matchedPayload.matchStatus, 'matched')
+  assert.ok(matchedPayload.packages.length >= 1)
+  assert.ok(matchedPayload.packages.every((item: any) => item.roleTitle === '大模型应用工程师'))
+
+  const missing = await loaded.execute('role_capability_graph__list_role_packages', {
+    query: '软件测试工程师',
+  }, executionContext)
+  const missingPayload = missing.result.payload as any
+  assert.equal(missingPayload.matchStatus, 'not_found')
+  assert.equal(missingPayload.requestedRole, '软件测试工程师')
+  assert.deepEqual(missingPayload.packages, [])
+  assert.deepEqual(missing.result.objects, [])
+  assert.equal(missing.result.presentation?.renderer, 'role_capability_graph:role_package_catalog')
+  const target = new URL(missingPayload.roleAgentResearchUrl)
+  assert.equal(target.pathname, '/projects/new')
+  assert.equal(target.searchParams.get('role'), '软件测试工程师')
+  await assert.rejects(() => loaded.execute('role_capability_graph__explore_role', {
+    query: '软件测试工程师',
+  }, executionContext), /role_package_not_matched/)
 })
 
 test('package catalog requires an exact user selection before producing a pinned reference', async () => {
@@ -148,7 +177,10 @@ test('capability radar expands semantic rings around the role and package catalo
 
 test('search pins one immutable package and returns typed objects with explicit coverage', async () => {
   const loaded = await registry()
+  const catalog = await loaded.execute('role_capability_graph__list_role_packages', { query: '大模型应用工程师' }, executionContext)
+  const selector = (catalog.result.payload as any).packages[0]
   const execution = await loaded.execute('role_capability_graph__search_role_knowledge', {
+    packageId: selector.packageId, packageVersion: selector.packageVersion, snapshotId: selector.snapshotId,
     query: 'RAG 评测与知识库', topK: 5, includeCandidate: true,
   }, executionContext)
   assert.equal(execution.result.presentation?.renderer, 'role_capability_graph:role_cards')
@@ -164,7 +196,10 @@ test('search pins one immutable package and returns typed objects with explicit 
 
 test('graph, process, evidence and audit tools preserve package identity and renderer contracts', async () => {
   const loaded = await registry()
-  const search = await loaded.execute('role_capability_graph__search_role_knowledge', { query: '构建 RAG', topK: 1 }, executionContext)
+  const catalog = await loaded.execute('role_capability_graph__list_role_packages', { query: '大模型应用工程师' }, executionContext)
+  const selector = (catalog.result.payload as any).packages[0]
+  const exactSelector = { packageId: selector.packageId, packageVersion: selector.packageVersion, snapshotId: selector.snapshotId }
+  const search = await loaded.execute('role_capability_graph__search_role_knowledge', { ...exactSelector, query: '构建 RAG', topK: 1 }, executionContext)
   const objectId = search.result.objects![0].objectId
   const graph = await loaded.execute('role_capability_graph__query_role_graph', { objectId, depth: 1, direction: 'both', maxNodes: 12 }, executionContext)
   assert.equal(graph.result.presentation?.renderer, 'role_capability_graph:role_graph')
@@ -175,7 +210,7 @@ test('graph, process, evidence and audit tools preserve package identity and ren
   assert.ok(graphPayload.grounding.relationFacts.every((fact: any) => fact.relationId && fact.sourceId && fact.targetId && fact.type))
   assert.match(graphPayload.grounding.requiredDisclosure, /不得改名、反向或补造/)
 
-  const task = await loaded.execute('role_capability_graph__search_role_knowledge', { query: '发布应用', topK: 8 }, executionContext)
+  const task = await loaded.execute('role_capability_graph__search_role_knowledge', { ...exactSelector, query: '发布应用', topK: 8 }, executionContext)
   const processAnchor = task.result.objects!.find(object => ['task', 'scenario', 'event'].includes(String((object.value as any).category)))
   assert.ok(processAnchor)
   const process = await loaded.execute('role_capability_graph__trace_work_process', { objectId: processAnchor!.objectId, maxNodes: 20 }, executionContext)

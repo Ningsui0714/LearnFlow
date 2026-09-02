@@ -148,6 +148,7 @@ const MAX_GRAPH_NODES = 28
 const MAX_PROCESS_NODES = 36
 const MAX_EVIDENCE_TARGETS = 8
 const RADAR_RING_LIMITS = new Map([[0, 1], [1, 6], [2, 6], [3, 5], [4, 5], [5, 4]])
+const DEFAULT_ROLE_AGENT_BASE_URL = 'http://localhost:3000'
 
 function asObject(value: unknown, label: string): JsonObject {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`role_package_invalid:${label}`)
@@ -271,6 +272,31 @@ function tokens(value: string) {
   return [...result]
 }
 
+function roleAgentResearchUrl(query: string) {
+  const configured = process.env.LEARNFLOW_ROLE_AGENT_BASE_URL || DEFAULT_ROLE_AGENT_BASE_URL
+  let base: URL
+  try {
+    base = new URL(configured)
+    if (!['http:', 'https:'].includes(base.protocol)) throw new Error('unsupported protocol')
+  } catch {
+    base = new URL(DEFAULT_ROLE_AGENT_BASE_URL)
+  }
+  const target = new URL('/projects/new', base)
+  target.searchParams.set('role', query.trim())
+  return target.toString()
+}
+
+function packageMatchesQuery(pkg: LoadedRolePackage, query: string) {
+  const needle = normalize(query)
+  if (!needle) return true
+  const root = pkg.semantic.nodes.find(item => item.type === 'market_role')
+  const names = [pkg.manifest.roleTitle, pkg.manifest.packageId, root?.label, ...(root?.aliases || [])]
+    .filter((value): value is string => Boolean(value))
+    .map(normalize)
+    .filter(Boolean)
+  return names.some(name => needle === name || needle.includes(name) || name.includes(needle))
+}
+
 function relationEndpoints(relation: RoleRelation) {
   return {
     source: relation.source || relation.processNodeId || '',
@@ -342,15 +368,11 @@ export class RolePackageRuntime {
   }
 
   private resolveForQuery(selector: PackageSelector, query: string) {
-    if (this.hasSelector(selector) || this.packages.length === 1) return this.resolve(selector)
-    const ranked = this.packages.map(pkg => {
-      const roleText = `${pkg.manifest.roleTitle} ${pkg.manifest.packageId}`
-      const score = tokens(query).filter(token => new Set(tokens(roleText)).has(token)).length
-        + (normalize(query).includes(normalize(pkg.manifest.roleTitle)) ? 20 : 0)
-      return { pkg, score }
-    }).sort((left, right) => right.score - left.score || left.pkg.manifest.packageId.localeCompare(right.pkg.manifest.packageId))
-    if (ranked[0]?.score && ranked[0].score > (ranked[1]?.score || 0)) return ranked[0].pkg
-    throw new Error('role_package_ambiguous:list installed packages and provide an exact package or snapshot selector')
+    if (this.hasSelector(selector)) return this.resolve(selector)
+    const matches = this.packages.filter(pkg => packageMatchesQuery(pkg, query))
+    if (matches.length === 1) return matches[0]
+    if (!matches.length) throw new Error('role_package_not_matched:list role packages with the requested role and use the Role Atlas handoff when none match')
+    throw new Error('role_package_ambiguous:list role packages with the requested role and provide an exact package or snapshot selector')
   }
 
   private resolveForObjects(selector: PackageSelector, objectIds: string[]) {
@@ -541,22 +563,29 @@ export class RolePackageRuntime {
     return { root, nodes: [...selected.values()], relations, rings }
   }
 
-  listPackages() {
-    const packages = this.packages.map(pkg => this.descriptor(pkg))
+  listPackages(query = '') {
+    const requestedRole = query.trim()
+    const matched = requestedRole ? this.packages.filter(pkg => packageMatchesQuery(pkg, requestedRole)) : this.packages
+    const packages = matched.map(pkg => this.descriptor(pkg))
+    const matchStatus = requestedRole ? (packages.length ? 'matched' : 'not_found') : 'all'
+    const researchUrl = matchStatus === 'not_found' ? roleAgentResearchUrl(requestedRole) : ''
     return {
-      summary: `发现 ${packages.length} 个当前可引用的不可变岗位包版本。`,
-      objects: this.packages.map(pkg => this.pluginObject(
+      summary: matchStatus === 'not_found'
+        ? `没有发现与“${requestedRole}”匹配的可引用岗位包；可以前往 Role Atlas 自主研究该岗位。`
+        : `${requestedRole ? `为“${requestedRole}”` : ''}发现 ${packages.length} 个当前可引用的不可变岗位包版本。`,
+      objects: matched.map(pkg => this.pluginObject(
         pkg, 'role_snapshot', pkg.manifest.snapshotId, pkg.manifest.roleTitle, 'snapshot', this.descriptor(pkg),
       )),
       payload: {
-        kind: 'role_package_catalog', packages, count: packages.length,
+        kind: 'role_package_catalog', packages, count: packages.length, totalAvailable: this.packages.length,
+        requestedRole, matchStatus, roleAgentResearchUrl: researchUrl,
         selectionContract: '用户选择后必须用 packageId、packageVersion、snapshotId 与 rootHash 调用 reference_role_package；不得只凭标题猜测。',
         simulation: packages.some(item => item.sourceKind === 'role_agent_simulation')
           ? '开发模拟会把本机 role-agent packages 目录中的有效静态岗位包视为可用；这不代表已经通过正式 Hub 审核。'
           : '',
         warnings: [...this.discoveryIssues],
       },
-      presentation: { renderer: ROLE_RENDERERS.catalog, state: { snapshotIds: packages.map(item => item.snapshotId) } },
+      presentation: { renderer: ROLE_RENDERERS.catalog, state: { requestedRole, matchStatus, snapshotIds: packages.map(item => item.snapshotId) } },
     } satisfies PluginToolResult
   }
 

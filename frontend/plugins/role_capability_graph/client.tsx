@@ -513,16 +513,18 @@ function ProcessForest(props: PluginToolRendererProps) {
 
 function PackageCatalog(props: PluginToolRendererProps) {
   const payload = (props.result.payload || {}) as RecordValue
+  const isNotFound = payload.matchStatus === 'not_found'
   const sourceLabel = (item: RecordValue) => ({
     official_builtin: '官方维护', reviewed_public: '审核通过', owner_private: '我维护的',
     role_agent_simulation: 'role-agent 模拟', installed: '本地已安装',
   } as Record<string, string>)[String(item.sourceKind || '')] || '可用岗位包'
   return <section className="role-plugin-view role-plugin-catalog" aria-label="岗位包目录">
-    <header><strong>可引用岗位包</strong><small>{String(payload.count || 0)} 个不可变版本</small></header>
+    <header><strong>{isNotFound ? '暂未找到可用岗位包' : '可引用岗位包'}</strong><small>{String(payload.count || 0)} 个匹配版本</small></header>
+    {isNotFound && <article className="role-plugin-empty"><span>Role Atlas · 自主岗位研究</span><strong>{String(payload.requestedRole || '新岗位')}</strong><p>当前可见目录中没有匹配的不可变岗位包。你可以前往 Role Atlas，以该岗位为起点完成资料研究、冷启动与后续迭代。</p>{payload.roleAgentResearchUrl && <a href={String(payload.roleAgentResearchUrl)} target="_blank" rel="noreferrer">前往 Role Atlas 自主研究这个岗位 ↗</a>}</article>}
     {(payload.packages || []).map((item: RecordValue) => <article key={`${String(item.packageId)}@${String(item.packageVersion)}`}><span>{sourceLabel(item)} · {String(item.roleTitle)}</span><strong>v{String(item.packageVersion)}</strong><p>{String(item.snapshotAsOf)} · <code>{String(item.snapshotId)}</code></p>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`引用这个岗位包。请调用 reference_role_package，并原样使用以下身份：packageId=${String(item.packageId)}；packageVersion=${String(item.packageVersion)}；snapshotId=${String(item.snapshotId)}；rootHash=${String(item.rootHash)}`)}>引用此岗位包</button>}</article>)}
     {payload.simulation && <p className="role-plugin-warning">{String(payload.simulation)}</p>}
     {Array.isArray(payload.warnings) && payload.warnings.length > 0 && <p className="role-plugin-warning">另有 {payload.warnings.length} 个 role-agent 目录项未通过协议校验，因此没有加入可引用列表。</p>}
-    <p className="role-plugin-boundary">选择动作会固定不可变版本，但不会安装、修改或发布岗位包。</p>
+    <p className="role-plugin-boundary">{isNotFound ? 'Role Atlas 负责岗位包研究、冷启动与迭代；LearnFlow 只引用已经可用的不可变岗位包。' : '选择动作会固定不可变版本，但不会安装、修改或发布岗位包。'}</p>
   </section>
 }
 

@@ -122,9 +122,11 @@ client.tsx      renderer components，导出 default 或 plugin
 
 插件 runtime 按自身数据目录发现包并校验 manifest 中全部组件 SHA-256，包括 views、retrieval-index、
 object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
-目录先展示当前主体可见的候选；引用工具只有在学习者明确选择并原样提供 `packageId + packageVersion + snapshotId + rootHash`
-时才固定引用。后续工具必须复用该 selector。开发态可把本机 role-agent 的有效静态包标为模拟可用；生产态不启用该
-隐式来源。读取结果固定同一四元身份并显式披露截断与覆盖。节点风险研究只读取当前
+讨论特定岗位时，目录工具必须接收用户的岗位查询，只展示岗位标题、根节点 label 或 alias 与查询整体确定性包含匹配的候选；
+无匹配返回 `matchStatus=not_found` 和 Role Atlas 自主研究入口，不能展示无关岗位包，也不能继续调用岗位内容工具。查询全部目录时
+才省略 `query`。引用工具只有在学习者明确选择并原样提供 `packageId + packageVersion + snapshotId + rootHash` 时才固定引用。
+后续工具必须复用该 selector。Role Atlas 基地址通过 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置，本地默认 `http://localhost:3000`；
+开发态可把本机 role-agent 的有效静态包标为模拟可用，生产态不启用该隐式来源。读取结果固定同一四元身份并显式披露截断与覆盖。节点风险研究只读取当前
 快照的两跳邻域、关系、证据、生命周期和显式风险，不联网补证据，也不生成修改建议或后继版本。冷启动、迭代、
 审核、发布、Tag、回滚和 Registry 全部留在 role-agent/Hub；LearnFlow Tutor 没有这些生产入口。
 维护期另有纯文件导入器：它只接收 role-agent 导出的 `static-role-package@3.0.0` bundle，在写盘前独立校验组件
