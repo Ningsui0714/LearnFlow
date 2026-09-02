@@ -469,39 +469,16 @@ function RoleGraph(props: PluginToolRendererProps) {
   )
 }
 
-function CandidateHeader({ value }: { value: RecordValue }) {
-  return <header className="role-plugin-candidate-header"><span>{String(value.status || 'candidate')}</span><strong>{String(value.roleTitle || '岗位候选')}</strong><code>{String(value.artifactId || '')}</code></header>
-}
-
-function ColdStartCandidate(props: PluginToolRendererProps) {
-  const object = props.objects.find(item => item.objectType === 'role_build_candidate')
-  const value = (object?.value || {}) as RecordValue
-  const data = (value.data || {}) as RecordValue
-  const stages = (data.stages || []) as RecordValue[]
-  return <section className="role-plugin-view role-plugin-candidate" aria-label="岗位冷启动候选">
-    <CandidateHeader value={value} />
-    <div className="role-plugin-candidate-summary"><span>用途</span><strong>{String(data.purpose || '—')}</strong><span>市场 / 受众</span><strong>{String(data.market || '—')} · {(data.audiences || []).join('、') || '待确认'}</strong><span>来源输入</span><strong>{(data.sourceBriefs || []).length} 条</strong></div>
-    <ol className="role-plugin-workflow-stages">{stages.map((stage, index) => <li key={String(stage.id)} data-status={String(stage.status)}><i>{index + 1}</i><span><strong>{String(stage.title)}</strong><small>{String(stage.output)}</small></span><b>{String(stage.status)}</b></li>)}</ol>
-    {!(data.sourceBriefs || []).length && <p className="role-plugin-warning">当前没有真实来源，只建立了构建合同。继续提供 JD、职业标准、技术文档或脱敏工作证据后，才能进入证据抽取。</p>}
-    <details><summary>任务屏障与发布门槛</summary><div className="role-plugin-gates">{Object.entries(data.gates || {}).map(([key, items]) => <section key={key}><strong>{key}</strong><ul>{(items as string[]).map(item => <li key={item}>{item}</li>)}</ul></section>)}</div></details>
-    {object && <div className="role-plugin-actions"><button type="button" onClick={() => props.onReference?.(object)}>引用候选合同</button>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`继续完善“${value.roleTitle}”冷启动候选：请先核对来源与岗位边界（候选 ${value.artifactId}）`)}>继续补资料</button>}</div>}
-    <p className="role-plugin-boundary">候选合同不是岗位事实，也不是已创建或已发布的快照。</p>
-  </section>
-}
-
-function IterationCandidate(props: PluginToolRendererProps) {
-  const object = props.objects.find(item => item.objectType === 'role_iteration_candidate')
-  const value = (object?.value || {}) as RecordValue
-  const data = (value.data || {}) as RecordValue
-  return <section className="role-plugin-view role-plugin-candidate" aria-label="岗位迭代候选">
-    <CandidateHeader value={value} />
-    <div className="role-plugin-base-lock"><span>固定基线</span><strong>{String(value.baseSnapshotId || '—')}</strong><code>{String(value.expectedRootHash || '').slice(0, 18)}…</code></div>
-    <div className="role-plugin-candidate-summary"><span>目标</span><strong>{String(data.objective || '—')}</strong><span>发起方式</span><strong>{String(data.initiativeProfile || 'co_guided')}</strong><span>范围</span><strong>{(data.targetIds || []).length ? `${data.targetIds.length} 个目标 / ${(data.neighborhoodIds || []).length} 个邻域对象` : '全局检查'}</strong></div>
-    <section className="role-plugin-patch-list"><header><strong>候选 patch</strong><small>{(data.proposedChanges || []).length} 条</small></header>{(data.proposedChanges || []).length ? (data.proposedChanges || []).map((change: RecordValue) => <article key={String(change.id)}><span>{String(change.status)}</span><p>{String(change.statement)}</p></article>) : <p>尚无候选变更；需要先补充具体目标、证据或修改意图。</p>}</section>
-    <ol className="role-plugin-workflow-stages">{(data.workItems || []).map((item: RecordValue, index: number) => <li key={String(item.id)} data-status={String(item.status)}><i>{index + 1}</i><span><strong>{String(item.title)}</strong><small>{item.deterministic ? '确定性阶段' : '候选研究阶段'}</small></span><b>{String(item.status)}</b></li>)}</ol>
-    <details><summary>验收与停止条件</summary><div className="role-plugin-gates"><section><strong>acceptance</strong><ul>{(data.acceptancePolicy || []).map((item: string) => <li key={item}>{item}</li>)}</ul></section><section><strong>stop</strong><ul>{(data.stopConditions || []).map((item: string) => <li key={item}>{item}</li>)}</ul></section></div></details>
-    {object && <div className="role-plugin-actions"><button type="button" onClick={() => props.onReference?.(object)}>引用迭代候选</button>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`审查并继续细化岗位迭代候选 ${value.artifactId}；基线必须保持 ${value.baseSnapshotId}`)}>继续细化</button>}</div>}
-    <p className="role-plugin-boundary">原快照保持不变。只有独立验证通过且产生 meaningful diff，后续持久化能力才可创建后继快照。</p>
+function NodeRiskResearch(props: PluginToolRendererProps) {
+  const riskObject = props.objects.find(item => item.objectType === 'role_node_risk')
+  const data = riskObject ? dataOf(riskObject) : {}
+  return <section className="role-plugin-view role-plugin-audit" aria-label="岗位节点风险研究">
+    <SnapshotBadge result={props.result} />
+    <header><strong>{String(data.focusLabel || '节点风险研究')}</strong><span>{String(data.question || '围绕节点证据、关系和过程边界进行解释')}</span></header>
+    <div className="role-plugin-metrics"><span><strong>{String(data.evidence?.directBindings || 0)}</strong><small>直接证据</small></span><span><strong>{String(data.evidence?.neighborhoodBindings || 0)}</strong><small>邻域证据</small></span><span><strong>{String((data.neighborhoodIds || []).length)}</strong><small>研究节点</small></span></div>
+    <div className="role-plugin-audit-issues">{(data.risks || []).map((risk: RecordValue) => <article key={String(risk.id)}><span>{String(risk.severity)}</span><strong>{String(risk.title)}</strong><p>{String(risk.detail)}</p>{risk.objectId && props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`解释风险节点“${String(risk.title)}”（对象 ${String(risk.objectId)}）`)}>继续解释</button>}</article>)}</div>
+    {riskObject && props.onReference && <div className="role-plugin-actions"><button type="button" onClick={() => props.onReference?.(riskObject)}>引用研究结果</button></div>}
+    <p className="role-plugin-boundary">{String(data.boundary || '')}</p>
   </section>
 }
 
@@ -602,8 +579,7 @@ const plugin = defineLearnFlowPluginClient({
     [ROLE_RENDERERS.audit]: AuditPanel,
     [ROLE_RENDERERS.catalog]: PackageCatalog,
     [ROLE_RENDERERS.comparison]: PackageComparison,
-    [ROLE_RENDERERS.buildCandidate]: ColdStartCandidate,
-    [ROLE_RENDERERS.iterationCandidate]: IterationCandidate,
+    [ROLE_RENDERERS.nodeRisk]: NodeRiskResearch,
   },
 })
 

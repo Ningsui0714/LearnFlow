@@ -15,7 +15,7 @@ async function registry() {
   return loadLearnFlowPluginRegistry(resolve(process.cwd(), 'plugins'))
 }
 
-test('role capability plugin is discovered declaratively with read and candidate-artifact tools', async () => {
+test('role capability plugin is discovered declaratively with explanation-only read tools', async () => {
   const loaded = await registry()
   const tools = loaded.toolDefinitions(activation)
   assert.deepEqual(tools.map(tool => tool.name), [
@@ -27,60 +27,38 @@ test('role capability plugin is discovered declaratively with read and candidate
     'role_capability_graph__trace_work_process',
     'role_capability_graph__inspect_role_evidence',
     'role_capability_graph__audit_role_package',
+    'role_capability_graph__research_role_node_risks',
     'role_capability_graph__list_role_packages',
     'role_capability_graph__compare_role_packages',
-    'role_capability_graph__start_role_cold_start',
-    'role_capability_graph__draft_role_iteration',
   ])
-  assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 10)
-  assert.equal(tools.filter(tool => tool.risk === 'artifact').length, 2)
+  assert.equal(tools.filter(tool => tool.risk === 'read_only').length, 11)
+  assert.equal(tools.filter(tool => tool.risk === 'artifact').length, 0)
   assert.match(loaded.skillInstructions(activation), /唯一岗位事实版本/)
   assert.match(loaded.skillInstructions(activation), /第一步调用 role_capability_graph__explore_role/)
   assert.match(loaded.skillInstructions(activation), /通用补充（非岗位快照）/)
   assert.match(loaded.skillInstructions(activation), /不能覆盖 LearnFlow 的教学状态/)
-  assert.match(loaded.skillInstructions(activation), /任务屏障/)
-  assert.match(loaded.skillInstructions(activation), /候选 patch/)
+  assert.match(loaded.skillInstructions(activation), /节点.*风险/u)
+  assert.match(loaded.skillInstructions(activation), /只在 role-agent\/Hub 进行/)
 })
 
-test('cold start produces an inspectable candidate contract without inventing a snapshot', async () => {
-  const loaded = await registry()
-  const waiting = await loaded.execute('role_capability_graph__start_role_cold_start', {
-    roleTitle: '数据治理工程师', purpose: '研究岗位边界与课程输入', audiences: ['学习者'], sourceBriefs: [],
-  }, executionContext)
-  assert.equal(waiting.result.presentation?.renderer, 'role_capability_graph:role_build_candidate')
-  const object = waiting.result.objects?.[0]
-  assert.equal(object?.objectType, 'role_build_candidate')
-  assert.equal((object?.value as any).status, 'waiting_sources')
-  assert.match((object?.value as any).contentHash, /^[a-f0-9]{64}$/)
-  assert.equal((object?.value as any).data.stages[2].id, 'task_barrier')
-  assert.doesNotMatch(waiting.result.summary, /已创建.*快照/u)
-
-  const ready = await loaded.execute('role_capability_graph__start_role_cold_start', {
-    roleTitle: '数据治理工程师', purpose: '研究岗位边界与课程输入', sourceBriefs: ['某职业标准：职责与任务条款'],
-  }, executionContext)
-  assert.equal((ready.result.objects?.[0].value as any).status, 'ready_for_evidence_extraction')
-  await assert.rejects(() => loaded.execute('role_capability_graph__start_role_cold_start', {
-    roleTitle: '数据治理工程师', purpose: '边界测试', sourceBriefs: Array.from({ length: 13 }, (_, index) => `来源 ${index}`),
-  }, executionContext), /exceeds maxItems/)
-})
-
-test('iteration fixes an exact base snapshot and returns only a candidate patch contract', async () => {
+test('node deep research finds bounded snapshot risks for explanation without producing a patch', async () => {
   const loaded = await registry()
   const overview = await loaded.execute('role_capability_graph__explore_role', { query: '大模型应用工程师' }, executionContext)
   const payload = overview.result.payload as any
   const targetId = payload.sections.tasks[0]
-  const iteration = await loaded.execute('role_capability_graph__draft_role_iteration', {
+  const research = await loaded.execute('role_capability_graph__research_role_node_risks', {
     snapshotId: payload.snapshot.snapshotId,
-    prompt: '补充这个任务的证据并核验过程覆盖',
-    targetIds: [targetId], proposedChanges: ['补充一条有来源绑定的验收活动'], initiativeProfile: 'co_guided',
+    objectId: targetId,
+    question: '解释这个节点的证据边界和过程风险',
+    maxNodes: 12,
   }, executionContext)
-  assert.equal(iteration.result.presentation?.renderer, 'role_capability_graph:role_iteration_candidate')
-  const candidate = iteration.result.objects?.[0]
-  assert.equal(candidate?.objectType, 'role_iteration_candidate')
-  assert.equal((candidate?.value as any).baseSnapshotId, payload.snapshot.snapshotId)
-  assert.equal((candidate?.value as any).expectedRootHash, payload.snapshot.rootHash)
-  assert.equal((candidate?.value as any).data.proposedChanges[0].status, 'proposed')
-  assert.match((candidate?.value as any).data.stopConditions.join(' '), /保持当前快照/)
+  assert.equal(research.result.presentation?.renderer, 'role_capability_graph:role_node_risk_research')
+  const risk = research.result.objects?.find(item => item.objectType === 'role_node_risk')
+  assert.ok(risk)
+  assert.equal((risk!.value as any).snapshotId, payload.snapshot.snapshotId)
+  assert.equal((risk!.value as any).rootHash, payload.snapshot.rootHash)
+  assert.ok((risk!.value as any).data.risks.length >= 1)
+  assert.match((risk!.value as any).data.boundary, /不生成修改建议、patch 或后继版本/)
 })
 
 test('one overview call returns grounded role, task, capability and scenario sections', async () => {

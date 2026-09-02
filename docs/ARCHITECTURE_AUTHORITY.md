@@ -1,5 +1,7 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-02.1`）：岗位图谱生产与消费正式分离。冷启动 workflow、快照迭代 skill、候选 patch、独立审核和发布只属于 role-agent/Hub；LearnFlow 岗位插件删除对应 artifact Tool、Skill、候选 Object 与 Renderer，不再提供任何岗位包生产入口。插件新增唯一的节点研究能力 `research_role_node_risks`：它固定已安装不可变快照，确定性读取焦点节点的两跳邻域、真实关系、证据绑定、生命周期和事理风险，输出只读 `role_node_risk` 解释对象；不联网补证据、不生成修改建议、patch、版本或发布动作。维护期纯文件 Hub 使用内容寻址岗位包、独立 reviewer 门和公共/所有者可见性目录；LearnFlow 只安装公共已审核包或当前主体自己的私有包，并再次校验完整 bundle。三类主 Agent、插件四类扩展点、五核、EvidenceEvent 与核心对象写入边界不变。
+
 Contract impact（`2026-09-01.4`）：Tutor provider 传输现在保留 Chat Completions 的 `finish_reason` 与 Responses 的 `status/incomplete_details`；输出达到 token 上限时，运行时保留已流出的正文、关闭续接轮工具面并只生成缺失后半段，不能把半句、半表格当作 `final_answer`。普通 Tutor 输出预算由 1400 提高到 6000 token，既有总时限、轮数与工具预算不变。学习规划态新增 `vnext_planning_profile_self_reported`：浏览器只用确定性规则把明确自述拆成当前位置、知识接触/缺口、当前投入、方向候选和未验证实践经历，再经唯一 Event→reducer 链分别写五核短期投影；全部事实保持 `self_reported`，Knowledge/Practice 明确 `mastery_unchanged`，Human 投入/负荷限当前 scope 并在 8 小时后过期。`learning_action_segment_completed` 只接受类型化 `learning_task/planning_goal` 作为任务与优先级，不再把长段自我介绍写成任务。新增事件和注册表版本向后兼容，无数据库 schema 迁移。
 
 Contract impact（`2026-09-01.3`）：插件四类扩展点不变，`artifact` Tool 的权威进一步明确为“未提交候选制品”：可由插件 Skill 编排冷启动或迭代合同、结构化 patch 和校验门槛，但不能批准自己、发布版本、覆盖既有 Plugin Object、写 LearnFlow 核心对象或五核。首个岗位插件新增冷启动候选与固定基线迭代候选；冷启动保持来源资格→任务屏障→岗位内核→语义/事理补全→独立校验语义，迭代固定 `snapshotId + rootHash` 并要求 meaningful diff 与核心回归门。当前没有持久化/发布适配器，因此候选 ToolRun 必须明确显示未创建后继快照。关系 Renderer 可展开本次 ToolResult 的全部有界节点与边并逐节点检查真实一跳关系，宿主仍不识别岗位 ID 或 Renderer。

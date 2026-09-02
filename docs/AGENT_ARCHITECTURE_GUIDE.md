@@ -1,5 +1,7 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-02.1`）：岗位图谱生态采用“role-agent 生产、Hub 治理、LearnFlow 消费”分层。冷启动和迭代不再进入 LearnFlow Tutor 工具面；旧候选 Tool/Skill/Object/Renderer 已移除。LearnFlow 只保留固定快照阅读，以及面向解释的节点风险研究：从精确 `objectId` 有界展开两跳邻域，逐字保留关系方向，汇总直接/邻域证据、证据限制、candidate 状态、低置信度和显式事理风险，并披露截断。该研究不调用外部来源、不生成 patch，也不能触发 Hub 提交、审核或发布。Hub 的公共发布使用独立 reviewer，私有包仅对 owner 可见；插件安装仍是维护期确定性命令且零 Kernel target。
+
 Contract impact（`2026-09-01.4`）：Tutor 的模型终态新增 provider 完整性门。流适配器必须保留 `finish_reason/status/incomplete_details`；token 上限中断只能进入有界续接，续接轮不再开放工具，完整正文通过既有展示协议后才可提交。规划态的长段背景不直接进入 Agent 状态栏或五核：确定性提炼器只输出版本化 `planning-profile-self-report.v1`，新事件再由 reducer 分核投影；Knowledge 与 Practice 自报不表示掌握或独立能力，Human 投入只限当前规划语境，Value 方向保持 exploring，Structure 只保存简洁规划锚点。三类主 Agent、评分、路线确认和长期记忆门槛不变。
 
 Contract impact（`2026-09-01.3`）：岗位插件在既有 Tool/Skill/Object/Tool Renderer 接口内增加两个候选工作流。`role_cold_start` 先确认岗位、用途、受众和实际来源，再由 artifact Tool 形成带任务屏障的候选构建合同；没有来源时停在 `waiting_sources`。`role_snapshot_iteration` 固定不可变基线，在目标邻域内形成 proposed patch、结构检查和回归验收合同。两者均由 Tutor 拥有对话控制权，不新增主 Agent；模型只能补候选内容，确定性 handler 固定 hash、范围、阶段和停止条件。当前版本不执行联网研究、外部 role-agent、快照写盘或发布，候选对象不进入学习证据或五核。

@@ -113,22 +113,22 @@ client.tsx      renderer components，导出 default 或 plugin
 
 ## 6. 首个官方消费包
 
-`frontend/plugins/role_capability_graph/` 是首个官方实现，读取已发布的不可变 Static Role Package，并开始以候选制品接入构建工作流：
+`frontend/plugins/role_capability_graph/` 是首个官方实现，只读取已发布的不可变 Static Role Package：
 
-- 十个只读 Tool，加两个 `artifact` Tool：冷启动候选合同与固定基线迭代候选；
-- 阅读、冷启动和迭代三个 Agent Skill；
-- 五类已发布岗位对象，加冷启动候选和迭代候选两类 Plugin Object；
-- 九个读取 Renderer，加冷启动阶段和迭代 patch 两个候选 Renderer。
+- 十一个只读 Tool，其中 `research_role_node_risks` 只为解释节点证据、关系和事理风险；
+- 一个证据化岗位图谱阅读 Agent Skill；
+- 五类已发布岗位对象，加一类只读节点风险解释 Object；
+- 九个常规读取 Renderer，加一个节点风险研究 Renderer。
 
 插件 runtime 按自身数据目录发现包并校验 manifest 中全部组件 SHA-256，包括 views、retrieval-index、
 object-index、snapshot 与 reference-migrations；代码不写具体岗位、对象 ID 或快照 ID。
-读取结果固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。冷启动候选保留
-`ProjectBrief + SourceInput → Task Barrier → kernel → semantic/process enrichment → validation` 的阶段语义；迭代候选固定
-`snapshotId + rootHash`，保留检查、目标邻域、候选 patch、meaningful diff 与核心回归门。当前 Tutor 只接入候选合同，
-不执行外部 role-agent、工作区实例化、发布、Tag、回滚或 Registry；Renderer 必须明确区分候选与正式快照。
+读取结果固定 `packageId + packageVersion + snapshotId + rootHash`，显式披露截断与覆盖。节点风险研究只读取当前
+快照的两跳邻域、关系、证据、生命周期和显式风险，不联网补证据，也不生成修改建议或后继版本。冷启动、迭代、
+审核、发布、Tag、回滚和 Registry 全部留在 role-agent/Hub；LearnFlow Tutor 没有这些生产入口。
 维护期另有纯文件导入器：它只接收 role-agent 导出的 `static-role-package@3.0.0` bundle，在写盘前独立校验组件
 hash、canonical root hash、snapshot 身份和版本冲突，再原子安装不可变目录。它不是模型 Tool，也不让候选制品
-批准自己。详细合同见 `docs/implementation/ROLE_PACKAGE_FILE_EXCHANGE.md`。
+批准自己。纯文件 Hub 在其上增加独立审核和可见范围目录，LearnFlow 只安装公共已审核包或当前主体自己的私有包。
+详细合同见 `docs/implementation/ROLE_PACKAGE_FILE_EXCHANGE.md` 与 `docs/implementation/ROLE_PACKAGE_HUB_ECOSYSTEM.md`。
 
 ## 7. 当前边界
 
