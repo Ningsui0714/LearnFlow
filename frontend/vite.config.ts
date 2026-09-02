@@ -29,7 +29,6 @@ function loadTutorKey(mode: string): ModelCredential {
   const candidates: Array<[string, string | undefined]> = [
     ['启动环境', process.env.LEARNFLOW_API_KEY],
     ['frontend/.env.local', localEnv.LEARNFLOW_API_KEY],
-    ['frontend/.env.local 学习型任务预检', localEnv.LEARNING_TASK_PREFLIGHT_API_KEY],
   ]
   const match = candidates.find(([, value]) => value && value !== 'sk-your-key-here')
   return { apiKey: match?.[1]?.trim() || '', source: match?.[0] || '' }

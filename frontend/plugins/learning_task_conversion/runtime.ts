@@ -43,6 +43,12 @@ function integration(context: PluginToolContext) {
   return context.projectIntegration
 }
 
+function normalizedSourceVersionIds(value: unknown): number[] {
+  if (!Array.isArray(value)) return []
+  return [...new Set(value.filter((item): item is number => Number.isInteger(item) && item > 0))]
+    .sort((left, right) => left - right)
+}
+
 function stableRequestId(input: JsonRecord, context: PluginToolContext) {
   if (typeof input.requestId === 'string' && input.requestId.trim()) return input.requestId.trim()
   const fingerprint = createHash('sha256').update(JSON.stringify({
@@ -51,7 +57,7 @@ function stableRequestId(input: JsonRecord, context: PluginToolContext) {
     taskTitle: input.taskTitle,
     taskDescription: input.taskDescription || '',
     intakeRootHash: input.intakeRootHash || '',
-    sourceVersionIds: input.sourceVersionIds || [],
+    sourceVersionIds: normalizedSourceVersionIds(input.sourceVersionIds),
   })).digest('hex').slice(0, 24)
   return `plugin:${context.scope.projectId}:${fingerprint}`
 }
@@ -141,7 +147,7 @@ export const learningTaskConversionRuntime = {
       taskTitle: intake.taskContract.title,
       taskDescription: intake.taskContract.description,
       upstreamTask: input.upstreamTask && typeof input.upstreamTask === 'object' ? input.upstreamTask : null,
-      sourceVersionIds: Array.isArray(input.sourceVersionIds) ? input.sourceVersionIds : [],
+      sourceVersionIds: normalizedSourceVersionIds(input.sourceVersionIds),
       targetStepCount: Number.isInteger(input.targetStepCount)
         ? Number(input.targetStepCount)
         : suggestLearningTaskStepCount(intake.taskContract.title, intake.taskContract.description),

@@ -596,12 +596,16 @@ function humanizeTutorMessageContent(message: Message) {
 }
 
 function inheritedContextMessages(conversation: Conversation) {
-  const mainMessages = conversation.messages.filter(message => !message.learningActionLabel)
+  const mainMessages = conversation.messages.filter(
+    message => !message.learningActionLabel && !message.hiddenFromTranscript,
+  )
   if (conversation.activeSheetId === 'main') return mainMessages
   const chain = paperAncestorChain(conversation.sheets, conversation.activeSheetId)
   return [
     ...mainMessages,
-    ...chain.flatMap(sheet => sheet.messages.filter(message => !message.learningActionLabel)),
+    ...chain.flatMap(sheet => sheet.messages.filter(
+      message => !message.learningActionLabel && !message.hiddenFromTranscript,
+    )),
   ]
 }
 

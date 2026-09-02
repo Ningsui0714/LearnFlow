@@ -388,6 +388,52 @@ test('prepare tool keeps its JSON contract when a model sends a partial assessme
   assert.equal((execution.result.payload as any).preflight.method, 'deterministic_guard')
 })
 
+test('candidate request id treats source version ids as an ordered-independent set', async () => {
+  const loaded = await registry()
+  const requestPayloads: any[] = []
+  const preparedExecution = await loaded.execute('learning_task_conversion__prepare_learning_task_intake', {
+    rawInput: '部署 Nginx 并验收 HTTPS',
+  }, {
+    ...activation,
+    scope: { mode: 'learning_plan', conversationId: 'conversation-1', projectId: 7 },
+    signal: AbortSignal.timeout(5_000),
+  })
+  const intake = preparedExecution.result.objects?.[0].value as any
+  const context = {
+    ...activation,
+    scope: { mode: 'learning_plan' as const, conversationId: 'conversation-1', projectId: 7 },
+    signal: AbortSignal.timeout(5_000),
+    projectIntegration: {
+      request: async (_operation: string, payload: any) => {
+        requestPayloads.push(payload)
+        return sampleCandidate() as any
+      },
+    },
+  }
+  const baseInput = {
+    originalInput: intake.originalInput,
+    intakeId: intake.intakeId,
+    intakeRootHash: intake.intakeRootHash,
+    intakeConfirmed: true,
+    taskTitle: intake.taskContract.title,
+    taskDescription: intake.taskContract.description,
+    taskSource: intake.taskContract.source,
+  }
+
+  await loaded.execute('learning_task_conversion__draft_learning_task', {
+    ...baseInput,
+    sourceVersionIds: [9, 3, 9],
+  }, context)
+  await loaded.execute('learning_task_conversion__draft_learning_task', {
+    ...baseInput,
+    sourceVersionIds: [3, 9],
+  }, context)
+
+  assert.equal(requestPayloads[0].requestId, requestPayloads[1].requestId)
+  assert.deepEqual(requestPayloads[0].sourceVersionIds, [3, 9])
+  assert.deepEqual(requestPayloads[1].sourceVersionIds, [3, 9])
+})
+
 test('draft tool rejects missing or changed intake confirmation before provider access', async () => {
   const loaded = await registry()
   let providerCalls = 0

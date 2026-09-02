@@ -29,3 +29,22 @@ test('replaying an interrupted turn does not duplicate its user message in conte
   assert.deepEqual(buildTutorContextMessages(messages, '解释一下 CNN', true), messages)
   assert.equal(buildTutorContextMessages(messages, '继续', false).at(-1)?.content, '继续')
 })
+
+test('hidden control messages never enter later Tutor model context', () => {
+  const messages = [
+    { role: 'assistant' as const, content: '请选择候选任务' },
+    {
+      role: 'user' as const,
+      content: 'internal plugin invocation payload',
+      hiddenFromTranscript: true,
+    },
+  ]
+
+  assert.deepEqual(buildTutorContextMessages(messages, '继续', false), [
+    { role: 'assistant', content: '请选择候选任务' },
+    { role: 'user', content: '继续' },
+  ])
+  assert.deepEqual(buildTutorContextMessages(messages, 'ignored during replay', true), [
+    { role: 'assistant', content: '请选择候选任务' },
+  ])
+})

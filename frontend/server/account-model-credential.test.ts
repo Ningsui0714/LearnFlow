@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 
 import { createAccountCredentialResolver } from './account-model-credential.ts'
@@ -74,4 +76,12 @@ test('development migration fallback remains explicit and account errors are sta
     fetchImpl: (async () => new Response('{}', { status: 409 })) as typeof fetch,
   })
   assert.deepEqual(await unconfiguredResolver({}), { apiKey: '', source: '当前账户尚未配置' })
+})
+
+test('Tutor legacy credential selection never falls back to the task preflight key', () => {
+  const viteConfig = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8')
+  const loadTutorKeyBody = viteConfig.match(/function loadTutorKey[\s\S]*?\n}\n\nfunction loadLearningTaskPreflightConfiguration/)?.[0] || ''
+
+  assert.match(loadTutorKeyBody, /LEARNFLOW_API_KEY/)
+  assert.doesNotMatch(loadTutorKeyBody, /LEARNING_TASK_PREFLIGHT_API_KEY/)
 })
