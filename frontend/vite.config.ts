@@ -655,5 +655,8 @@ export default defineConfig(({ mode }) => {
     port: 4174,
     strictPort: true,
   },
+  preview: {
+    allowedHosts: ['learn.learnflow.club', 'learnflow.club'],
+  },
   }
 })
