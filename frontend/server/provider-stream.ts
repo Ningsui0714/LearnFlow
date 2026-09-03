@@ -66,6 +66,7 @@ export async function readProviderStream(
   let streamError = ''
   let dialect: 'chat' | 'responses' | undefined
   let chatFinishReason = ''
+  let chatReasoningContent = ''
   const chatTools = new Map<number, StreamToolCall>()
   const responseTools = new Map<string, StreamToolCall>()
   const responseToolKeys = new Map<number, string>()
@@ -85,6 +86,7 @@ export async function readProviderStream(
       if (typeof choice?.finish_reason === 'string') chatFinishReason = choice.finish_reason
       const delta = asRecord(choice?.delta)
       emitText(delta?.content)
+      if (typeof delta?.reasoning_content === 'string') chatReasoningContent += delta.reasoning_content
       for (const item of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
         const index = Number.isInteger(item?.index) ? Number(item.index) : chatTools.size
         const current = chatTools.get(index) || { id: '', name: '', arguments: '' }
@@ -168,7 +170,11 @@ export async function readProviderStream(
     return {
       payload: {
         choices: [{
-          message: { content: text || null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+          message: {
+            content: text || null,
+            ...(chatReasoningContent ? { reasoning_content: chatReasoningContent } : {}),
+            ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+          },
           ...(chatFinishReason ? { finish_reason: chatFinishReason } : {}),
         }],
       },

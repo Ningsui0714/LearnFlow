@@ -21,6 +21,7 @@ import {
   visualTeachingBriefPrompt,
 } from '../server/visual-teaching-skill.ts'
 import { VISUAL_TEACHING_BRIEF_VERSION, VISUAL_TEACHING_SKILL_ID } from './visual-teaching.ts'
+import type { LearnFlowPluginObject } from './plugin-api.ts'
 
 export type TutorMode = 'free' | 'simple_explain' | 'guided_learning' | 'learning_plan'
 
@@ -28,6 +29,8 @@ export type TutorContextMessage = {
   role: 'assistant' | 'user'
   content: string
   toolRuns?: TutorToolRun[]
+  /** Provider-owned opaque reasoning payload required by some thinking models on continuation. */
+  reasoningContent?: string
 }
 
 export const TUTOR_MODE_LABELS: Record<TutorMode, string> = {
@@ -478,6 +481,7 @@ export async function requestTutorReply(options: {
   conversationId?: string
   sheetId?: string
   activePluginIds?: string[]
+  referencedPluginObjects?: LearnFlowPluginObject[]
   onEvent?: (event: AgentTurnStreamEvent) => void
 }): Promise<AgentTurnResponse> {
   const controller = new AbortController()
@@ -577,7 +581,7 @@ export async function requestTutorReply(options: {
       if (!result) throw new Error('本地 Tutor 流式服务没有返回终态')
       return result
     }
-    const payload = await response.json().catch(() => null) as { reply?: unknown; error?: unknown; requestId?: unknown; toolRuns?: unknown; trace?: unknown } | null
+    const payload = await response.json().catch(() => null) as { reply?: unknown; reasoningContent?: unknown; error?: unknown; requestId?: unknown; toolRuns?: unknown; trace?: unknown } | null
     if (!response.ok) {
       const message = typeof payload?.error === 'string' ? payload.error : `本地 Tutor 服务返回 HTTP ${response.status}`
       const requestId = typeof payload?.requestId === 'string' ? `（请求编号 ${payload.requestId}）` : ''
@@ -588,6 +592,7 @@ export async function requestTutorReply(options: {
     }
     return {
       reply: payload.reply.trim(),
+      ...(typeof payload.reasoningContent === 'string' && payload.reasoningContent ? { reasoningContent: payload.reasoningContent } : {}),
       toolRuns: Array.isArray(payload.toolRuns) ? payload.toolRuns as TutorToolRun[] : [],
       trace: payload.trace as AgentTurnTrace,
     }

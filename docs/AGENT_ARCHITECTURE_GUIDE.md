@@ -1,12 +1,20 @@
 # LearnFlow 智能体架构与协作指南
 
+Contract impact（`2026-09-02.7`）：从学习任务队列或确认卡进入正式任务时，前端不再只打开来源页面，而是启动/恢复该 `LearningTask`、恢复原 Conversation/Session scope、切换到 `guided_learning` 并创建浏览器 `LearningTaskBinding`。随后首个正式 SkillRun 请求携带 `learning_task_id`，运行时验证 learner/project/checkpoint/session 后把 SkillRun 绑定到同一任务；重复请求重放现有运行，不生成第二条原子任务。该变化只补齐 Tutor 主状态到正式 SkillRun 的既有包含关系，不新增状态机、Agent、事件或掌握写入。
+
+Contract impact（`2026-09-02.6`）：点击或拖入的 Plugin Object 在发送时同时保留学习者可见引用文本与已校验结构化信封。学习型任务转化可据此精确锁定被引用的 `task` label/摘要，把 `plugin-object://` 仅保存为来源，不再让“引用插件对象”包装语或 URI 污染任务契约；宿主保持插件无关。候选确认会把原正式 Session、Chat、纸张及插件对象引用传入正式 `LearningTask.source_refs`，因此任务队列的“回到学习现场”重新打开同一对话和纸张；旧任务由客户端按 session 或项目内最近转化对话兼容恢复。插件请求指纹与后端幂等输入保持同构，隐藏控制回合不再影响上下文、对话标题、纸张预览、输入计数或中断恢复。现有项目范围、双确认、Practice 评分与五核证据边界不变。
+
 Contract impact（`2026-09-02.5`）：LearnFlow、Role Atlas 是对等一级产品，Graph Hub 是共享发现层。Graph Hub/Role Atlas 通过短时、主体绑定的签名令牌把精确岗位包交给 LearnFlow；LearnFlow 在确定性 API 中创建普通对话并投影 `role_package_reference` ToolRun，使岗位插件从第一轮起锁定不可变版本。导航、验签和会话创建不交给模型，不新增主 Agent，也不写核心对象、EvidenceEvent 或五核。`search_graph_hub` 仍以正式 `learner_id` 派生主体并保持只读。
 
 Contract impact（`2026-09-02.3`）：岗位包发现从“列出全部可见包”收紧为“按用户目标岗位确定性匹配”。Tutor 在未引用岗位包时必须把岗位名称传给 `list_role_packages`；工具只返回标题、岗位根节点或 alias 与查询整体包含匹配的不可变版本。无匹配时返回 `matchStatus=not_found` 和预填 `role` 参数的 Role Atlas `/projects/new` 入口，Skill 禁止继续调用岗位内容工具或借用无关包。链接基地址由 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置，本地默认 `http://localhost:3000`。LearnFlow 仍不执行冷启动、迭代或发布，不写核心对象、EvidenceEvent 或五核。
 
+Contract impact（`2026-09-02.3`）：学习型任务转化在 Tutor 内先由能力专属语义模型按严格 JSON 合同判断输入层级，再由本地规则锁定原文语义锚点并要求显式确认；未确认或 hash 漂移时不得调用讯飞。讯飞结束节点的固定 HTTPS 交接 JSON 只会规范化为候选并经确定性校验；候选仅可在学习者再次明确确认 `candidateId + sourceSnapshot.rootHash` 后，由 Learning Design 与正式任务运行时幂等创建 `LearningTask`。确认只产生正式任务与零 target 操作事件，不证明掌握。Practice Agent 与确定性规则继续独占评分、Rubric 通过、证据升级及独立验证；三类主 Agent 和五核权威不变。
+
 Contract impact（`2026-09-02.2`）：岗位包选择采用两步只读 ACI，而不是模型隐式状态。Tutor 先以 `list_role_packages` 取得当前可见候选、来源范围和完整不可变身份；学习者明确选择后，Tutor 才能以四元身份调用 `reference_role_package`。成功 ToolRun 返回 `role_package_reference` 与 `requiredSelector`，后续岗位工具必须逐字段复用。引用仍依赖可重放 ToolRun/Plugin Object，不建立插件数据库或第二套对话状态。开发环境对 role-agent 目录的自动发现只是 Hub 可见性模拟；生产环境不会启用该隐式源。
 
 Contract impact（`2026-09-02.1`）：岗位图谱生态采用“role-agent 生产、Hub 治理、LearnFlow 消费”分层。冷启动和迭代不再进入 LearnFlow Tutor 工具面；旧候选 Tool/Skill/Object/Renderer 已移除。LearnFlow 只保留固定快照阅读，以及面向解释的节点风险研究：从精确 `objectId` 有界展开两跳邻域，逐字保留关系方向，汇总直接/邻域证据、证据限制、candidate 状态、低置信度和显式事理风险，并披露截断。该研究不调用外部来源、不生成 patch，也不能触发 Hub 提交、审核或发布。Hub 的公共发布使用独立 reviewer，私有包仅对 owner 可见；插件安装仍是维护期确定性命令且零 Kernel target。
+
+Contract impact（`2026-09-01.5`）：学习型任务转化以 Tutor 可选的 `learning_task_conversion` Product Skill 接入，不成为第四个主 Agent。插件只声明现有 `objects / tools / skills / renderers`，模型调用的是 namespaced `learning_task_conversion__draft_learning_task`；宿主用当前登录会话和项目范围把请求转给后端，插件看不到 Cookie、后端地址或讯飞凭据。远程 workflow 只生成候选，LearnFlow 固定来源快照并重新校验；没有引用时明确 `ungrounded` 或 `source_supplied_unverified`。候选 handoff 只进入 Tutor 当前对话的审阅上下文，用户确认前不创建正式 `LearningTask`、不进入 Learning Design 正式规划、也不写五核或掌握证据。兼容和部署合同见 `docs/implementation/LEARNING_TASK_CONVERSION_XINGCHEN.md`。
 
 Contract impact（`2026-09-01.4`）：Tutor 的模型终态新增 provider 完整性门。流适配器必须保留 `finish_reason/status/incomplete_details`；token 上限中断只能进入有界续接，续接轮不再开放工具，完整正文通过既有展示协议后才可提交。规划态的长段背景不直接进入 Agent 状态栏或五核：确定性提炼器只输出版本化 `planning-profile-self-report.v1`，新事件再由 reducer 分核投影；Knowledge 与 Practice 自报不表示掌握或独立能力，Human 投入只限当前规划语境，Value 方向保持 exploring，Structure 只保存简洁规划锚点。三类主 Agent、评分、路线确认和长期记忆门槛不变。
 

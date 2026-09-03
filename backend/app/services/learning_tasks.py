@@ -13,6 +13,7 @@ import json
 import logging
 import re
 from typing import Any
+from urllib.parse import quote
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -578,6 +579,7 @@ async def create_learning_task(
     source_refs: list[dict[str, Any]] | None = None,
     success_criteria: list[str] | None = None,
     use_model_planner: bool = True,
+    plan_override: dict[str, Any] | None = None,
 ) -> tuple[LearningTask, bool]:
     existing = (await db.execute(select(LearningTask).where(
         LearningTask.learner_id == learner_id,
@@ -598,7 +600,7 @@ async def create_learning_task(
     learner_context = _portable_planner_context(
         await get_kernel_projection(db, learner_id)
     )
-    plan = (
+    plan = dict(plan_override) if plan_override is not None else (
         await generate_learning_task_plan(
             title=_clean(title, 255),
             objective=_clean(objective, 2_000),
@@ -1173,6 +1175,18 @@ def task_management_navigation(task: LearningTask) -> dict[str, Any]:
 
 def task_origin_navigation(task: LearningTask) -> dict[str, Any]:
     """Return the learner-visible source/return anchor for a task."""
+    conversation_ref = next((
+        item for item in list(task.source_refs or [])
+        if isinstance(item, dict)
+        and item.get("type") == "conversation"
+        and str(item.get("id") or "").strip()
+    ), None)
+    if conversation_ref:
+        conversation_id = str(conversation_ref["id"]).strip()[:160]
+        return {
+            "kind": "conversation",
+            "path": f"/chat/{quote(conversation_id, safe='')}",
+        }
     if (
         task.origin_kind == "checkpoint"
         and task.checkpoint_id
@@ -1189,6 +1203,9 @@ def task_origin_navigation(task: LearningTask) -> dict[str, Any]:
 
 def task_execution_navigation(task: LearningTask) -> dict[str, Any]:
     """Return the surface where the next learning interaction should happen."""
+    origin = task_origin_navigation(task)
+    if origin["path"] != task_management_navigation(task)["path"]:
+        return origin
     if task.origin_kind == "checkpoint" and task.checkpoint_id and task.project_id:
         return {
             "kind": "checkpoint",

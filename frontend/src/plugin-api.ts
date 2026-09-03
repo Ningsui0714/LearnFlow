@@ -56,8 +56,12 @@ export function parsePluginObjectDragData(raw: string): LearnFlowPluginObject | 
 }
 
 export function pluginObjectReferenceText(object: LearnFlowPluginObject) {
+  return `- ${object.label}（${pluginObjectReferenceUri(object)}）`
+}
+
+export function pluginObjectReferenceUri(object: LearnFlowPluginObject) {
   const path = [object.pluginId, object.objectType, object.objectId].map(value => encodeURIComponent(value)).join('/')
-  return `- ${object.label}（plugin-object://${path}?schema=${encodeURIComponent(object.schemaVersion)}）`
+  return `plugin-object://${path}?schema=${encodeURIComponent(object.schemaVersion)}`
 }
 
 export type PluginObjectContribution = {
@@ -129,11 +133,21 @@ export type PluginToolContext = {
   scope: {
     mode: TutorMode
     learnerId?: number
+    sessionId?: number
     conversationId?: string
+    sheetId?: string
     projectId?: number
     checkpointId?: number
   }
   signal: AbortSignal
+  /**
+   * Least-privilege bridge supplied by the Tutor host.  The host binds the
+   * active plugin and authenticated project scope; plugins never receive a
+   * backend base URL, browser cookie, or arbitrary fetch capability.
+   */
+  projectIntegration?: {
+    request: (operation: string, payload?: PluginJson) => Promise<PluginJson>
+  }
 }
 
 export type PluginToolHandler = (

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  activeLearningTaskProjection,
   advanceLearningSkillStep,
+  activateFormalLearningTask,
   appendLearningEvents,
   canAdvanceLearningSkillStep,
   createLearningTask,
@@ -55,6 +57,30 @@ test('a task starts at the recommended skill own first step', () => {
   assert.equal(projection.stepId, 'studying_worked_example')
   assert.equal(projection.stepIndex, 0)
   assert.equal(projection.eventCount, 4)
+})
+
+test('a formal queue task is activated as one guided-learning binding', () => {
+  const first = createLearningTask('旧的学习目标', 50)
+  const activated = activateFormalLearningTask({
+    id: 42,
+    objective: '实现上下文与模型行为控制',
+    version: 3,
+    preferred_skills: ['guided_explanation'],
+  }, [first.task], first.events, 100)
+
+  assert.equal(activated.task.id, 'formal-learning-task-42')
+  assert.equal(activated.task.formalTaskId, 42)
+  assert.equal(activated.task.formalTaskVersion, 3)
+  assert.equal(activeLearningTaskProjection(activated.tasks, activated.events)?.task.formalTaskId, 42)
+  assert.equal(projectLearningTask(first.task, activated.events).status, 'paused')
+
+  const repeated = activateFormalLearningTask({
+    id: 42,
+    objective: '实现上下文与模型行为控制',
+    version: 4,
+  }, activated.tasks, activated.events, 200)
+  assert.equal(repeated.tasks.filter(task => task.formalTaskId === 42).length, 1)
+  assert.equal(repeated.task.formalTaskVersion, 4)
 })
 
 test('each learning skill owns a distinct deterministic flow', () => {

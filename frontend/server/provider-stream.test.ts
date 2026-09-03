@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { toolCallsFromProviderResponse } from './agent-runtime.ts'
+import { reasoningContentFromProviderResponse, toolCallsFromProviderResponse } from './agent-runtime.ts'
 import { readProviderStream } from './provider-stream.ts'
 import { textFromTutorProviderResponse } from '../src/tutor.ts'
 
@@ -59,6 +59,19 @@ test('chat completions tool-call argument deltas are reassembled without leaking
   assert.deepEqual(deltas, [])
   assert.deepEqual(toolCallsFromProviderResponse(result.payload), [{
     id: 'call-1', name: 'search_computer_knowledge', arguments: { query: '梯度下降' },
+  }])
+})
+
+test('chat completions preserve streamed reasoning content for the next tool round', async () => {
+  const response = sseResponse([
+    'data: {"choices":[{"delta":{"reasoning_content":"先核对"}}]}\n\n',
+    'data: {"choices":[{"delta":{"reasoning_content":"学习路径","tool_calls":[{"index":0,"id":"call-reasoning","type":"function","function":{"name":"read_learner_context","arguments":"{}"}}]}}]}\n\n',
+    'data: [DONE]\n\n',
+  ])
+  const result = await readProviderStream(response)
+  assert.equal(reasoningContentFromProviderResponse(result.payload), '先核对学习路径')
+  assert.deepEqual(toolCallsFromProviderResponse(result.payload), [{
+    id: 'call-reasoning', name: 'read_learner_context', arguments: {},
   }])
 })
 

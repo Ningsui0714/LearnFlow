@@ -36,6 +36,7 @@ from app.services.auth import (
     CurrentLearner,
     ModelCredentialDecryptionError,
     ModelCredentialEncryptionUnavailable,
+    ModelCredentialFormatError,
     PasswordKDFBusy,
     clear_auth_cookie,
     clear_login_failures,
@@ -352,6 +353,11 @@ async def put_model_credential(
         return _model_credential_view(current.account)
     try:
         envelope = encrypt_model_credential(current.account.id, api_key)
+    except ModelCredentialFormatError:
+        raise HTTPException(
+            422,
+            "API Key 格式无效：只能包含不带空白的 ASCII 字符",
+        ) from None
     except ModelCredentialEncryptionUnavailable:
         _raise_model_credential_kek_error()
     current.account.api_key_ciphertext = envelope.ciphertext
@@ -389,6 +395,11 @@ async def test_model_credential(
         raise HTTPException(409, "尚未配置账户模型凭据")
     try:
         api_key = decrypt_model_credential(current.account)
+    except ModelCredentialFormatError:
+        raise HTTPException(
+            422,
+            "账户模型凭据格式无效，请在设置中重新保存 API Key",
+        ) from None
     except ModelCredentialEncryptionUnavailable:
         _raise_model_credential_kek_error()
     except ModelCredentialDecryptionError:
@@ -458,6 +469,12 @@ async def resolve_model_credential_for_runtime(
         )
     try:
         api_key = decrypt_model_credential(current.account)
+    except ModelCredentialFormatError:
+        raise HTTPException(
+            422,
+            "账户模型凭据格式无效，请在设置中重新保存 API Key",
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        ) from None
     except ModelCredentialEncryptionUnavailable:
         _raise_model_credential_kek_error()
     except ModelCredentialDecryptionError:

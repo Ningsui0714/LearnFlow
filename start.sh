@@ -39,14 +39,46 @@ banner() {
 }
 
 check_deps() {
-  # Python + venv
-  if [ ! -f "$VENV_DIR/bin/python" ]; then
-    echo -e "${YELLOW}⚠  后端 venv 不存在，正在创建...${NC}"
-    cd "$BACKEND_DIR"
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -q -r requirements.txt
-    echo -e "${GREEN}✅ 后端依赖安装完成${NC}"
+  # Python + venv. Pinned native dependencies currently support Python
+  # 3.10-3.13. Keep an incompatible/stale user venv untouched and select a
+  # healthy compatible environment instead of failing later in the seed step.
+  local candidate_venv
+  local system_python
+  local startup_venv="$BACKEND_DIR/runtime/startup-venv"
+  for candidate_venv in "$VENV_DIR" "$BACKEND_DIR"/venv* "$startup_venv"; do
+    if [ -x "$candidate_venv/bin/python" ] \
+      && "$candidate_venv/bin/python" -c 'import sys; raise SystemExit(not ((3, 10) <= sys.version_info[:2] < (3, 14)))' >/dev/null 2>&1 \
+      && "$candidate_venv/bin/python" -c 'import fastapi, sqlalchemy, aiosqlite, uvicorn' >/dev/null 2>&1; then
+      VENV_DIR="$candidate_venv"
+      break
+    fi
+  done
+
+  if [ ! -x "$VENV_DIR/bin/python" ] \
+    || ! "$VENV_DIR/bin/python" -c 'import sys; raise SystemExit(not ((3, 10) <= sys.version_info[:2] < (3, 14)))' >/dev/null 2>&1; then
+    for system_python in python3.13 python3.12 python3.11 python3.10 python3; do
+      if command -v "$system_python" >/dev/null 2>&1 \
+        && "$system_python" -c 'import sys; raise SystemExit(not ((3, 10) <= sys.version_info[:2] < (3, 14)))' >/dev/null 2>&1; then
+        mkdir -p "$BACKEND_DIR/runtime"
+        "$system_python" -m venv "$startup_venv"
+        VENV_DIR="$startup_venv"
+        break
+      fi
+    done
+  fi
+
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo -e "${RED}❌ 未找到 Python 3.10-3.13，无法创建后端运行环境${NC}"
+    exit 1
+  fi
+
+  # A stale or partially-created venv is more common than a missing one. The
+  # old existence-only check let startup continue until an unrelated import
+  # error, so verify and repair runtime imports before seeding or serving.
+  if ! "$VENV_DIR/bin/python" -c 'import fastapi, sqlalchemy, aiosqlite, uvicorn' >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠  后端 venv 依赖不完整，正在修复...${NC}"
+    "$VENV_DIR/bin/python" -m pip install -q -r "$BACKEND_DIR/requirements.txt"
+    echo -e "${GREEN}✅ 后端依赖修复完成${NC}"
   fi
 
   # .env
