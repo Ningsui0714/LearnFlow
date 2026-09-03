@@ -12,6 +12,8 @@ import { isTutorToolChoice } from './src/tooling.ts'
 import { sanitizeLearningTaskTutorContext } from './src/learning.ts'
 import { sanitizeLearningPlanTutorContext } from './src/planning.ts'
 import {
+  directLearningTaskCandidateOperationRequest,
+  directLearningTaskCandidateSelectionRequest,
   directLearningTaskDraftConfirmationRequest,
   directLearningTaskIntakeRequest,
   runTutorAgentTurn,
@@ -341,20 +343,33 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         formalScope.projectId,
         latestSubmittedMessage,
         referencedPluginObjects,
+        modeValue,
       )
       const directDraft = directLearningTaskDraftConfirmationRequest(activePluginIds, formalScope.projectId, latestSubmittedMessage)
-      const directPluginTurn = Boolean(directIntake || directDraft)
+      const directCandidateOperation = directLearningTaskCandidateOperationRequest(
+        activePluginIds,
+        formalScope.projectId,
+        latestSubmittedMessage,
+      )
+      const directCandidateSelection = directLearningTaskCandidateSelectionRequest(
+        activePluginIds,
+        formalScope.projectId,
+        latestSubmittedMessage,
+        submittedMessages,
+      )
+      const directPluginTurn = Boolean(directIntake || directDraft || directCandidateOperation || directCandidateSelection)
+      const providerRequired = Boolean(directIntake) || !directPluginTurn
       const runtimeBaseUrl = directIntake ? learningTaskPreflight.baseUrl : baseUrl
       const runtimeModel = directIntake ? learningTaskPreflight.model : model
       const configurationIssue = tutorConfigurationIssue(runtimeBaseUrl, runtimeModel)
       if (directIntake && !learningTaskPreflight.apiKey) {
         throw new Error('学习型任务语义预检模型尚未配置，请设置服务端私密 LEARNING_TASK_PREFLIGHT_API_KEY。')
       }
-      if (configurationIssue && !directDraft) throw new Error(configurationIssue)
+      if (configurationIssue && providerRequired) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
 
       let localProvider = false
-      if (!directDraft) {
+      if (providerRequired) {
         const providerUrl = new URL(runtimeBaseUrl)
         localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
         if (!localProvider && providerUrl.protocol !== 'https:') {
@@ -366,7 +381,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
       }
       const keyConfiguration: ModelCredential = directIntake
         ? { apiKey: learningTaskPreflight.apiKey, source: '学习型任务转化私密语义预检' }
-        : directDraft
+        : directPluginTurn
           ? { apiKey: '', source: '学习型任务插件确认直达' }
         : await resolveAccountKey(request)
       const invokeProvider = (providerRequest: {
@@ -391,7 +406,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         toolChoice,
       })
 
-      if (!directPluginTurn && !localProvider && !keyConfiguration.apiKey) {
+      if (providerRequired && !localProvider && !keyConfiguration.apiKey) {
         throw new Error('当前账号尚未配置模型 API Key。请在账号设置中保存并测试连接。')
       }
 
@@ -543,6 +558,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
         pluginRegistry,
         activePluginIds,
+        referencedPluginObjects,
         generate,
         searchConfiguration,
         invokeProvider,

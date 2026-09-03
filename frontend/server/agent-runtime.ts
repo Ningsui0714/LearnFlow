@@ -757,7 +757,12 @@ export function directLearningTaskIntakeRequest(
   _projectId: number | undefined,
   message: string,
   referencedPluginObjects: readonly LearnFlowPluginObject[] = [],
+  mode?: TutorMode,
 ) {
+  // Conversation plugins stay enabled so historical tool results can be
+  // replayed. Once a formal lesson starts, that sticky activation must not
+  // reinterpret ordinary learner answers as fresh WF03 conversion requests.
+  if (mode === 'guided_learning') return undefined
   // Preparing and clarifying a WF03 task is conversation-scoped. Requiring a
   // project here made the explicitly selected plugin silently fall back to
   // Tutor's generic tools in a new/global conversation.
@@ -1486,6 +1491,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     pluginActivation(input).projectId,
     latestMessage,
     input.referencedPluginObjects,
+    input.mode,
   )
   if (directIntake && input.pluginRegistry?.resolveTool(
     'learning_task_conversion__prepare_learning_task_intake',

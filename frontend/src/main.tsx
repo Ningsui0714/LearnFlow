@@ -739,10 +739,25 @@ function App({ auth }: { auth: AuthGateSession }) {
         if (formalSessionId && missingSessionIds.has(formalSessionId)) return []
         return [formalSessionId ? { ...conversation, formalSessionId } : conversation]
       })
+      // A global chat can be promoted into a project-backed WF03 workspace
+      // while the initial global hydration request is still in flight. Keep
+      // the promoted conversation authoritative and discard the stale global
+      // projection; otherwise two rows with the same client id/session remain
+      // in local state and the stale row keeps PUTing to the now-project
+      // session, producing a 409 every time the learning scene is reopened.
+      const projectConversations = previous.conversations.filter(item => item.projectId)
+      const projectConversationIds = new Set(projectConversations.map(item => item.id))
+      const projectSessionIds = new Set(projectConversations.flatMap(item => (
+        item.formalSessionId ? [item.formalSessionId] : []
+      )))
+      const isPromotedProjectConversation = (conversation: Conversation) => (
+        projectConversationIds.has(conversation.id)
+        || Boolean(conversation.formalSessionId && projectSessionIds.has(conversation.formalSessionId))
+      )
       const conversations = [
-        ...previous.conversations.filter(item => item.projectId),
-        ...canonical,
-        ...remainingLocal,
+        ...projectConversations,
+        ...canonical.filter(conversation => !isPromotedProjectConversation(conversation)),
+        ...remainingLocal.filter(conversation => !isPromotedProjectConversation(conversation)),
       ]
       const byId = new Map(conversations.map(item => [item.id, item]))
       let tabs = previous.tabs.flatMap(tab => {
@@ -931,7 +946,12 @@ function App({ auth }: { auth: AuthGateSession }) {
       ))
     if (target) {
       const sheetId = typeof sourceRef?.sheetId === 'string' ? sourceRef.sheetId : 'main'
-      let formalSessionId = target.formalSessionId
+      // A WF03 candidate may originate in a global chat but be promoted into
+      // a project-backed formal task.  The task session owns its SkillRun, so
+      // returning to the visible source conversation must restore that exact
+      // project session instead of reusing the chat's former global session.
+      let formalSessionId = executableTask.session_id || target.formalSessionId
+      let restoredSkillRun: FormalLearningSkillRun | undefined
       if (!formalSessionId) {
         try {
           const session = await createFormalTutorSession(true, {
@@ -947,6 +967,16 @@ function App({ auth }: { auth: AuthGateSession }) {
           return
         }
       }
+      if (executableTask.session_id && formalSessionId === executableTask.session_id) {
+        try {
+          const taskSession = await loadFormalTutorSession(formalSessionId)
+          if (taskSession.active_skill_run?.learning_task?.id === executableTask.id) {
+            restoredSkillRun = taskSession.active_skill_run
+          }
+        } catch (error) {
+          setFormalError(error instanceof Error ? error.message : '正式 SkillRun 恢复失败')
+        }
+      }
       setWorkspace(previous => ({
         ...previous,
         conversations: previous.conversations.map(conversation => conversation.id === target.id
@@ -956,13 +986,39 @@ function App({ auth }: { auth: AuthGateSession }) {
                 conversation.learningTasks,
                 conversation.learningEvents,
               )
+              let learningTasks = activated.tasks
+              let learningEvents = activated.events
+              let learningTask = activated.task
+              if (restoredSkillRun) {
+                let projection = projectLearningTask(learningTask, learningEvents)
+                if (projection.skillId !== restoredSkillRun.skill.id) {
+                  learningEvents = switchLearningSkill(
+                    learningEvents,
+                    projection,
+                    restoredSkillRun.skill.id,
+                    Date.now() + 1,
+                  )
+                }
+                learningTask = bindFormalSkillRun(learningTask, restoredSkillRun)
+                learningTasks = learningTasks.map(item => item.id === learningTask.id ? learningTask : item)
+                projection = projectLearningTask(learningTask, learningEvents)
+                learningEvents = reconcileLearningEventsWithFormalSkillRun(
+                  learningEvents,
+                  projection,
+                  restoredSkillRun,
+                  Date.now() + 2,
+                )
+              }
+              const projection = projectLearningTask(learningTask, learningEvents)
               return {
                 ...conversation,
                 formalSessionId,
+                projectId: executableTask.project_id || conversation.projectId,
+                projectRole: executableTask.project_id ? 'free' as const : conversation.projectRole,
                 mode: 'guided_learning' as const,
-                learningTasks: activated.tasks,
-                learningEvents: activated.events,
-                preferredSkillId: projectLearningTask(activated.task, activated.events).skillId,
+                learningTasks,
+                learningEvents,
+                preferredSkillId: projection.skillId,
                 activeSheetId: sheetId === 'main' || conversation.sheets.some(sheet => sheet.id === sheetId)
                   ? sheetId
                   : 'main',
@@ -1836,7 +1892,7 @@ function App({ auth }: { auth: AuthGateSession }) {
       }
     }
 
-    if (!replayInterruptedTurn && formalConnection.status === 'connected' && !configurationIssue) {
+    if (!replayInterruptedTurn && formalConnection.status === 'connected') {
       try {
         if (!conversation.projectId) {
           const session = await persistGlobalConversation(conversation)

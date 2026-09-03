@@ -184,6 +184,19 @@ test('selecting the plugin routes plain task text through intake without command
   )
 })
 
+test('sticky conversion plugin does not intercept formal guided-learning replies', () => {
+  assert.equal(
+    directLearningTaskIntakeRequest(
+      ['learning_task_conversion'],
+      7,
+      '我先从定义工具契约和幂等边界开始。',
+      [],
+      'guided_learning',
+    ),
+    undefined,
+  )
+})
+
 test('candidate review operations remain in Tutor tool selection instead of restarting intake', () => {
   for (const message of [
     '检查候选 ltc_1234567890abcdef 的来源证据',
