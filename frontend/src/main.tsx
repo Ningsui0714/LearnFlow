@@ -1721,7 +1721,11 @@ function App({ auth }: { auth: AuthGateSession }) {
       }
     }
 
-    const configurationIssue = tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
+    // The hosted web app uses the provider configured by the server proxy.
+    // Learner-local provider fields only apply to the desktop runtime.
+    const configurationIssue = isDesktopRuntime()
+      ? tutorConfigurationIssue(workspace.settings.baseUrl, workspace.settings.model)
+      : ''
     const optimisticTurnStep = learningProjection ? currentLearningSkillStep(learningProjection) : undefined
 
     // Paint the learner turn before any formal persistence or context work.
@@ -2800,7 +2804,9 @@ function App({ auth }: { auth: AuthGateSession }) {
               {TUTOR_MODE_LABELS[visibleMode]}{visibleSubstateLabel ? ` · ${visibleSubstateLabel}` : ''}
             </span>
             {visibleSkill && <span className="skill-badge">{visibleSkill.name}</span>}
-            <span className="local-label">{workspace.settings.model || '待配置模型'}</span>
+            <span className="local-label">
+              {isDesktopRuntime() ? (workspace.settings.model || '待配置模型') : 'DeepSeek V4 Flash'}
+            </span>
           </div>
         </header>
         <div className={hasWorkbench ? 'paper-workbench' : 'chat-thread'}>

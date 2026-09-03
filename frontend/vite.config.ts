@@ -245,6 +245,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         sendJson(response, 200, {
           configured: Boolean(keyConfiguration.apiKey),
           source: keyConfiguration.source,
+          model: platformTutor.model,
         })
       } catch (error) {
         sendJson(response, 503, {
