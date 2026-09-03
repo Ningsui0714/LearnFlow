@@ -11,7 +11,11 @@ import {
 import { isTutorToolChoice } from './src/tooling.ts'
 import { sanitizeLearningTaskTutorContext } from './src/learning.ts'
 import { sanitizeLearningPlanTutorContext } from './src/planning.ts'
-import { runTutorAgentTurn } from './server/agent-runtime.ts'
+import {
+  directLearningTaskDraftConfirmationRequest,
+  directLearningTaskIntakeRequest,
+  runTutorAgentTurn,
+} from './server/agent-runtime.ts'
 import { readProviderStream } from './server/provider-stream.ts'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
@@ -19,6 +23,7 @@ import { createAccountCredentialResolver, type ModelCredential } from './server/
 import { buildBackendProxyHeaders } from './server/backend-proxy-security.ts'
 import { AI_LATENCY_BUDGETS } from './src/latency-budgets.ts'
 import { createLearnFlowPluginRegistryProvider } from './server/plugin-loader.ts'
+import { parsePluginObjectDragData, type LearnFlowPluginObject } from './src/plugin-api.ts'
 
 function loadTutorKey(mode: string): ModelCredential {
   const localEnv = loadEnv(mode, process.cwd(), '')
@@ -35,6 +40,16 @@ function loadTutorConfiguration(mode: string) {
   return {
     baseUrl: String(process.env.LEARNFLOW_LLM_BASE_URL || localEnv.LEARNFLOW_LLM_BASE_URL || '').trim(),
     model: String(process.env.LEARNFLOW_LLM_MODEL || localEnv.LEARNFLOW_LLM_MODEL || '').trim(),
+  }
+}
+
+function loadLearningTaskPreflightConfiguration(mode: string) {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  const value = (name: string) => String(process.env[name] || localEnv[name] || '').trim()
+  return {
+    apiKey: value('LEARNING_TASK_PREFLIGHT_API_KEY'),
+    baseUrl: value('LEARNING_TASK_PREFLIGHT_BASE_URL') || 'https://api.deepseek.com/v1',
+    model: value('LEARNING_TASK_PREFLIGHT_MODEL') || 'deepseek-chat',
   }
 }
 
@@ -147,6 +162,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
   const platformTutor = loadTutorConfiguration(mode)
   const runtimeBridgeToken = loadRuntimeBridgeToken(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
+  const learningTaskPreflight = loadLearningTaskPreflightConfiguration(mode)
   const resolveAccountKey = createAccountCredentialResolver({
     mode,
     backendBase,
@@ -315,19 +331,53 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
           typeof value === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(value)
         )))].slice(0, 16)
         : undefined
-      const configurationIssue = tutorConfigurationIssue(baseUrl, model)
-      if (configurationIssue) throw new Error(configurationIssue)
+      const referencedPluginObjects = Array.isArray(input.referencedPluginObjects)
+        ? input.referencedPluginObjects.flatMap(value => {
+          const parsed = parsePluginObjectDragData(JSON.stringify(value))
+          return parsed ? [parsed] : []
+        }).slice(0, 12) as LearnFlowPluginObject[]
+        : []
+      const submittedMessages = Array.isArray(input.messages)
+        ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
+            if (!message || typeof message !== 'object') return false
+            const item = message as Record<string, unknown>
+            return (item.role === 'assistant' || item.role === 'user') && typeof item.content === 'string'
+          })
+        : []
+      const latestSubmittedMessage = [...submittedMessages].reverse().find(message => message.role === 'user')?.content || ''
+      const directIntake = directLearningTaskIntakeRequest(
+        activePluginIds,
+        formalScope.projectId,
+        latestSubmittedMessage,
+        referencedPluginObjects,
+      )
+      const directDraft = directLearningTaskDraftConfirmationRequest(activePluginIds, formalScope.projectId, latestSubmittedMessage)
+      const directPluginTurn = Boolean(directIntake || directDraft)
+      const runtimeBaseUrl = directIntake ? learningTaskPreflight.baseUrl : baseUrl
+      const runtimeModel = directIntake ? learningTaskPreflight.model : model
+      const configurationIssue = tutorConfigurationIssue(runtimeBaseUrl, runtimeModel)
+      if (directIntake && !learningTaskPreflight.apiKey) {
+        throw new Error('学习型任务语义预检模型尚未配置，请设置服务端私密 LEARNING_TASK_PREFLIGHT_API_KEY。')
+      }
+      if (configurationIssue && !directDraft) throw new Error(configurationIssue)
       if (!isTutorMode(modeValue)) throw new Error('Tutor 状态无效')
 
-      const providerUrl = new URL(baseUrl)
-      const localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
-      if (!localProvider && providerUrl.protocol !== 'https:') {
-        throw new Error('非本机模型服务必须使用 HTTPS，避免账户密钥明文传输。')
+      let localProvider = false
+      if (!directDraft) {
+        const providerUrl = new URL(runtimeBaseUrl)
+        localProvider = ['localhost', '127.0.0.1', '::1'].includes(providerUrl.hostname)
+        if (!localProvider && providerUrl.protocol !== 'https:') {
+          throw new Error('非本机模型服务必须使用 HTTPS，避免账户密钥明文传输。')
+        }
+        if (providerUrl.username || providerUrl.password) {
+          throw new Error('Base URL 不能内嵌账号或密码。')
+        }
       }
-      if (providerUrl.username || providerUrl.password) {
-        throw new Error('Base URL 不能内嵌账号或密码。')
-      }
-      const keyConfiguration = await resolveAccountKey(request)
+      const keyConfiguration: ModelCredential = directIntake
+        ? { apiKey: learningTaskPreflight.apiKey, source: '学习型任务转化私密语义预检' }
+        : directDraft
+          ? { apiKey: '', source: '学习型任务插件确认直达' }
+        : await resolveAccountKey(request)
       const invokeProvider = (providerRequest: {
         endpoint: string
         body: unknown
@@ -335,26 +385,22 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         onTextDelta?: (delta: string) => void
       }) => callProvider({ ...providerRequest, apiKey: keyConfiguration.apiKey })
 
-      const messages = Array.isArray(input.messages)
-        ? input.messages.filter((message): message is { role: 'assistant' | 'user'; content: string; toolRuns?: any[] } => {
-            if (!message || typeof message !== 'object') return false
-            const item = message as Record<string, unknown>
-            return (item.role === 'assistant' || item.role === 'user') && typeof item.content === 'string'
-          })
-        : []
+      const messages = submittedMessages
       if (messages.length === 0) throw new Error('没有可发送的对话内容')
 
       console.info('[tutor] turn started', {
         requestId,
         conversationId: typeof input.conversationId === 'string' ? input.conversationId.slice(0, 160) : undefined,
         sheetId: typeof input.sheetId === 'string' ? input.sheetId.slice(0, 160) : undefined,
+        formalSessionId: formalScope.sessionId,
+        referencedPluginObjects,
         mode: modeValue,
         model,
         messageCount: messages.length,
         toolChoice,
       })
 
-      if (!localProvider && !keyConfiguration.apiKey) {
+      if (!directPluginTurn && !localProvider && !keyConfiguration.apiKey) {
         throw new Error('当前账号尚未配置模型 API Key。请在账号设置中保存并测试连接。')
       }
 
@@ -464,7 +510,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         generationOptions?: { responseFormat?: 'json_object' },
       ) => {
         const request = buildProviderRequest({
-          baseUrl, model, instructions,
+          baseUrl: runtimeBaseUrl, model: runtimeModel, instructions,
           messages: [{ role: 'user', content: inputText }],
           maxTokens: Math.max(400, Math.min(7_000, Number(maxTokens) || 1_200)),
           responseFormat: generationOptions?.responseFormat,
@@ -481,8 +527,8 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         installedPluginIds: pluginRegistry.packages.map(item => item.manifest.id),
       })
       const result = await runTutorAgentTurn({
-        baseUrl,
-        model,
+        baseUrl: runtimeBaseUrl,
+        model: runtimeModel,
         mode: modeValue,
         messages,
         toolChoice,

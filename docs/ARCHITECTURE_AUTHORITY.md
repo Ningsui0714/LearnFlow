@@ -1,12 +1,20 @@
 # LearnFlow 架构权威与维护边界
 
+Contract impact（`2026-09-02.7`）：正式学习型任务的“进入个性化学习 / 回到学习现场”统一成为确定性运行交接：宿主先启动或恢复原 `LearningTask`，再按候选保存的 Conversation/Session/Project/Checkpoint 锚点打开原对话、切换到 `guided_learning`，并建立只镜像该正式任务的 `LearningTaskBinding`。启动 `LearningSkillRun` 时必须携带正式 `learning_task_id`；后端校验 learner 与完整 scope 后认领同一任务，禁止另建重复原子任务。该桥接不改变四阶段完成门、Practice 判定、EvidenceEvent 或五核语义，任务进入学习现场本身仍为零掌握证据。
+
+Contract impact（`2026-09-02.6`）：通用 Plugin Object 引用除学习者可见文本外，会把当前 ToolRun 中已校验的对象信封作为本轮结构化输入交给 Tutor。学习型任务转化只从对象的 `task` 类别提取原始 label、摘要和不可变 `plugin-object://` 来源引用，URI 不得进入任务标题，宿主也不按插件 ID 或具体岗位分支。候选在正式确认时保存当前 `sessionId + conversationId + sheetId` 和插件对象来源；正式 `LearningTask.origin_navigation` 优先返回原 `/chat/:conversationId`，任务队列对旧任务使用同项目、已参与转化插件的最近对话作兼容恢复。候选 request ID 的本地指纹覆盖后端幂等合同的全部生成参数；隐藏控制消息不参与上下文、标题、预览、计数或中断恢复。该变更不新增插件扩展点、主 Agent、核心对象或 Kernel writer；任务仍需项目范围与两次显式确认，生成和导航均不构成掌握证据。
+
 Contract impact（`2026-09-02.5`）：LearnFlow 与 Role Atlas 保持一级产品对等，Graph Hub 是共享发现层。新增的岗位包交接是确定性产品入口：短时 HMAC 令牌同时固定正式学习者主体和不可变 `packageId + packageVersion + snapshotId + rootHash`；LearnFlow 消费后新建正式 `AgentSession + AgentMessage`，启用岗位插件并投影一条 `role_package_reference` ToolRun。该入口不调用模型、不新增主 Agent、不写核心学习对象、EvidenceEvent 或五核；跨子域登录仍由 LearnFlow 会话统一负责。既有 `search_graph_hub` 保持只读、主体由服务端派生且模型不能传 owner。
 
 Contract impact（`2026-09-02.3`）：`list_role_packages` 新增可选 `query`。讨论特定岗位时 Tutor 必须传入该目标，runtime 只返回确定性名称/alias 匹配；`not_found` 是正式、可渲染的空结果，不得降级为另一个岗位包或继续探索。空态提供 Role Atlas 冷启动页 `/projects/new?role=...`，基地址由 `LEARNFLOW_ROLE_AGENT_BASE_URL` 配置。该跳转只移交岗位研究，不创建 LearnFlow Tool、候选对象、事件或学习状态；生产、迭代、审核和发布边界不变。
 
+Contract impact（`2026-09-02.3`）：`learning_task_conversion` 增加能力专属语义模型预检、本地输入消歧、语义锚点锁定和 root-hash-bound 的两次显式确认链。讯飞仍只能生成未确认候选；结束节点的固定 HTTPS 交接 JSON 会先规范化并经过 LearnFlow 确定性 validator。用户明确确认当前 `candidateId + sourceSnapshot.rootHash` 后，Learning Design 与正式任务运行时才幂等创建 `LearningTask`。provider 工作步骤保存在 `plan.work_steps`，正式运行继续使用 LearnFlow 四阶段合同；评分、通过条件、证据升级、教学策略和五核写入仍由 LearnFlow 权威控制。新增准备 Tool、确认 API、插件 artifact Tool 和 `learning_task_candidate_confirmed` 零 Kernel target 事件，不新增主 Agent、Workbench、Kernel writer 或外部状态权威。
+
 Contract impact（`2026-09-02.2`）：岗位插件增加确定性的“发现—选择—引用”合同。`list_role_packages` 只列当前主体可见且协议有效的不可变包；`reference_role_package` 必须接收目录原样返回的 `packageId + packageVersion + snapshotId + rootHash`，校验四元身份后生成固定到该 ToolRun 的只读 `role_package_reference`。模型不得按标题替用户选择，也不得静默换版本。开发模拟会额外发现本机 role-agent `packages/` 下所有有效静态包，并明确标记为 `role_agent_simulation / simulation_all`，不冒充正式 Hub 审核。正式网关仍由服务端认证主体并过滤官方、审核通过和 owner-private 目录。引用不安装、不生产、不发布岗位包，不写核心对象、EvidenceEvent 或五核。
 
 Contract impact（`2026-09-02.1`）：岗位图谱生产与消费正式分离。冷启动 workflow、快照迭代 skill、候选 patch、独立审核和发布只属于 role-agent/Hub；LearnFlow 岗位插件删除对应 artifact Tool、Skill、候选 Object 与 Renderer，不再提供任何岗位包生产入口。插件新增唯一的节点研究能力 `research_role_node_risks`：它固定已安装不可变快照，确定性读取焦点节点的两跳邻域、真实关系、证据绑定、生命周期和事理风险，输出只读 `role_node_risk` 解释对象；不联网补证据、不生成修改建议、patch、版本或发布动作。维护期纯文件 Hub 使用内容寻址岗位包、独立 reviewer 门和公共/所有者可见性目录；LearnFlow 只安装公共已审核包或当前主体自己的私有包，并再次校验完整 bundle。三类主 Agent、插件四类扩展点、五核、EvidenceEvent 与核心对象写入边界不变。
+
+Contract impact（`2026-09-01.5`）：新增 `learning_task_conversion` Product Skill、`learning_task_candidate_gateway` Tool 与 `draft_learning_task_candidate` capability，但没有新增主 Agent、Workbench、Kernel writer 或评分权威。Tutor 在学习者选择插件并提交具体真实工作任务后，通过项目范围窄接口把固定 `SourceVersion` 片段交给一个服务端配置的讯飞星辰 workflow；LearnFlow 随后拉取版本化 bundle、执行确定性结构/依赖/引用/URL/安全门，并只保存 `role-learning-task-candidate.v1` 未确认 artifact。候选生成、读取、审计和 handoff 准备不创建正式 `LearningTask`，不改变掌握状态；三个候选生命周期 EventContract 均为零 Kernel target。新增候选表和项目 API 是向后兼容扩展，旧插件四类扩展点和正式学习任务 API 不变；部署方需配置被忽略的服务端凭据文件与 HTTPS DNS bundle 地址。
 
 Contract impact（`2026-09-01.4`）：Tutor provider 传输现在保留 Chat Completions 的 `finish_reason` 与 Responses 的 `status/incomplete_details`；输出达到 token 上限时，运行时保留已流出的正文、关闭续接轮工具面并只生成缺失后半段，不能把半句、半表格当作 `final_answer`。普通 Tutor 输出预算由 1400 提高到 6000 token，既有总时限、轮数与工具预算不变。学习规划态新增 `vnext_planning_profile_self_reported`：浏览器只用确定性规则把明确自述拆成当前位置、知识接触/缺口、当前投入、方向候选和未验证实践经历，再经唯一 Event→reducer 链分别写五核短期投影；全部事实保持 `self_reported`，Knowledge/Practice 明确 `mastery_unchanged`，Human 投入/负荷限当前 scope 并在 8 小时后过期。`learning_action_segment_completed` 只接受类型化 `learning_task/planning_goal` 作为任务与优先级，不再把长段自我介绍写成任务。新增事件和注册表版本向后兼容，无数据库 schema 迁移。
 

@@ -314,6 +314,7 @@ async def start_learning_skill_run(
             client_request_id=request.client_request_id,
             source="user",
             domain_source_ids=request.domain_source_ids,
+            learning_task_id=request.learning_task_id,
         )
     except RuntimeError as error:
         raise _skill_run_error(error) from error

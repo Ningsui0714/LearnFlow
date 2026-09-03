@@ -447,6 +447,21 @@ def test_account_model_credential_encrypted_crud_empty_preserve_and_test(monkeyp
 
         kek = base64.urlsafe_b64encode(b"K" * 32).decode().rstrip("=")
         monkeypatch.setattr(settings, "auth_api_key_kek", kek)
+        invalid_unicode = client.put(
+            "/api/auth/model-credential",
+            json={"api_key": "这不是 API Key"},
+        )
+        assert invalid_unicode.status_code == 422
+        assert "格式无效" in invalid_unicode.json()["detail"]
+        assert client.get("/api/auth/model-credential").json()["configured"] is False
+
+        invalid_whitespace = client.put(
+            "/api/auth/model-credential",
+            json={"api_key": "sk-invalid key"},
+        )
+        assert invalid_whitespace.status_code == 422
+        assert client.get("/api/auth/model-credential").json()["configured"] is False
+
         saved = client.put(
             "/api/auth/model-credential",
             json={"api_key": secret},
@@ -476,6 +491,10 @@ def test_account_model_credential_encrypted_crud_empty_preserve_and_test(monkeyp
         server_headers = {
             "Origin": "",
             "Sec-Fetch-Site": "",
+            # Node's server-side fetch implementation adds this header on its
+            # own. It is not browser provenance unless accompanied by Origin,
+            # Sec-Fetch-Site, destination, or user-navigation metadata.
+            "Sec-Fetch-Mode": "cors",
             "X-LearnFlow-Runtime-Bridge-Token": bridge_token,
         }
         wrong_bridge = client.post(

@@ -6,12 +6,18 @@ export type TutorTurnMessage = {
   content: string
   tutorMode?: TutorMode
   toolRuns?: TutorToolRun[]
+  reasoningContent?: string
+  hiddenFromTranscript?: boolean
 }
 
 export function recoverableTutorTurn(messages: TutorTurnMessage[], pending: boolean) {
   if (pending) return undefined
   const latest = messages[messages.length - 1]
-  return latest?.role === 'user' && latest.content.trim() ? latest : undefined
+  return latest?.role === 'user' && !latest.hiddenFromTranscript && latest.content.trim() ? latest : undefined
+}
+
+export function hasVisibleStudentMessage(messages: TutorTurnMessage[]) {
+  return messages.some(message => message.role === 'user' && !message.hiddenFromTranscript)
 }
 
 export function buildTutorContextMessages(
@@ -20,11 +26,14 @@ export function buildTutorContextMessages(
   replayInterruptedTurn = false,
 ): TutorContextMessage[] {
   const existing = messages
-    .filter((message): message is TutorTurnMessage & { role: 'assistant' | 'user' } => message.role !== 'system')
+    .filter((message): message is TutorTurnMessage & { role: 'assistant' | 'user' } => (
+      message.role !== 'system' && !message.hiddenFromTranscript
+    ))
     .map(message => ({
       role: message.role,
       content: message.content,
       ...(message.toolRuns ? { toolRuns: message.toolRuns } : {}),
+      ...(message.reasoningContent ? { reasoningContent: message.reasoningContent } : {}),
     }))
   return replayInterruptedTurn ? existing : [...existing, { role: 'user', content }]
 }

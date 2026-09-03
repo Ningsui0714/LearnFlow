@@ -9,6 +9,7 @@ export type PluginToolRendererProps = {
   objects: readonly LearnFlowPluginObject[]
   onPrompt?: (prompt: string) => void
   onReference?: (object: LearnFlowPluginObject) => void
+  onOpenLearningTask?: (taskId: number) => void
 }
 
 export function writePluginObjectDragData(dataTransfer: DataTransfer, object: LearnFlowPluginObject) {
@@ -75,10 +76,11 @@ function GenericPluginObjects({ objects, onReference }: {
   )
 }
 
-export default function PluginToolResultView({ run, onPrompt, onReference, onOpenPaper }: {
+export default function PluginToolResultView({ run, onPrompt, onReference, onOpenLearningTask, onOpenPaper }: {
   run: TutorToolRun
   onPrompt?: (prompt: string) => void
   onReference?: (object: LearnFlowPluginObject) => void
+  onOpenLearningTask?: (taskId: number) => void
   onOpenPaper?: () => void
 }) {
   const plugin = run.plugin
@@ -98,6 +100,7 @@ export default function PluginToolResultView({ run, onPrompt, onReference, onOpe
         objects={objects}
         onPrompt={onPrompt}
         onReference={onReference}
+        onOpenLearningTask={onOpenLearningTask}
       /> : <div aria-label={`${run.title}插件结果`}>
         <GenericPluginObjects objects={objects} onReference={onReference} />
         {plugin.result.payload !== undefined && (

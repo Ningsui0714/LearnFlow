@@ -165,6 +165,8 @@ export type AgentTurnRequest = {
 
 export type AgentTurnResponse = {
   reply: string
+  /** Opaque provider payload. Persist and return it to thinking models, but never render it. */
+  reasoningContent?: string
   toolRuns: TutorToolRun[]
   trace: AgentTurnTrace
   visualTeaching?: import('./visual-teaching.ts').VisualTeachingBundle

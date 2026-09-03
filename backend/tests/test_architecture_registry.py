@@ -123,6 +123,20 @@ def test_publications_have_lifecycle_bindings_and_optional_rows_are_unavailable(
     assert "search_learning_resources" not in manifest["available_capabilities"]
     assert tools["action_board"]["binding_ids"] == ["py:action_board.execute"]
     assert workbenches["vnext_chat"]["binding_ids"] == ["workbench:vnext_chat"]
+    assert tools["learning_task_candidate_gateway"]["lifecycle"] == "implemented"
+    assert skills["learning_task_conversion"]["lifecycle"] == "implemented"
+    assert capabilities["draft_learning_task_candidate"]["lifecycle"] == "implemented"
+    assert TOOLS["learning_task_candidate_gateway"].writes_kernels == ()
+    assert CAPABILITY_OWNERS["draft_learning_task_candidate"] == (
+        "tutor_agent", "learning_task_candidate_gateway", "vnext_chat",
+    )
+    for event_id in (
+        "learning_task_candidate_generated",
+        "learning_task_candidate_audited",
+        "learning_task_candidate_handoff_prepared",
+        "learning_task_candidate_confirmed",
+    ):
+        assert EVENTS[event_id].kernel_targets == ()
 
 
 def test_targeted_events_declare_payload_and_explicit_reducer_bindings():
@@ -243,16 +257,17 @@ def test_vnext_tools_use_formal_event_gateway_without_direct_kernel_writes():
         "coordinate_vnext_agent_turn",
         "search_computer_knowledge", "read_web_evidence", "search_learning_videos", "inspect_learning_video", "generate_learning_diagram", "generate_learning_animation", "open_selection_followup",
         "run_vnext_learning_task", "run_vnext_learning_plan", "read_vnext_five_kernel_profile",
-            "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
-                "read_active_learning_file", "validate_teaching_contract", "read_checkpoint_delivery_readiness",
-                "recommend_learning_resources", "attach_learning_file_to_chat",
-            "design_assessment_blueprint",
-            "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
+        "read_vnext_learning_workspace", "manage_domain_knowledge_sources", "read_domain_knowledge",
+        "read_active_learning_file", "validate_teaching_contract", "read_checkpoint_delivery_readiness",
+        "recommend_learning_resources", "attach_learning_file_to_chat",
+        "design_assessment_blueprint",
+        "generate_dynamic_practice", "generate_similar_practice", "inspect_practice_quality",
         "read_review_context",
         "lookup_vnext_learning_path_node", "search_vnext_learning_path_graph",
         "propose_vnext_personal_path_node",
         "read_vnext_learning_path_graph", "plan_vnext_learning_path", "manage_vnext_learning_path_plan",
         "read_personal_concept_graph", "record_concept_self_report", "manage_vnext_personal_path_node",
+        "draft_learning_task_candidate",
     }
     assert CAPABILITY_OWNERS["search_computer_knowledge"][0] == "learning_design_agent"
     assert CAPABILITY_OWNERS["read_web_evidence"] == (

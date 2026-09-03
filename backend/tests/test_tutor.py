@@ -26,7 +26,7 @@ from app.services.learning_skill_runtime import (
     learner_response_signal,
     transition_learning_skill_turn,
 )
-from app.services.learning_tasks import ensure_checkpoint_learning_task
+from app.services.learning_tasks import create_learning_task, ensure_checkpoint_learning_task
 from app.services.profile import memory_projection
 from app.services.task_manager import manager
 from app.services.auth import load_current_learner
@@ -1296,6 +1296,67 @@ def test_adaptive_tutor_recommends_guided_explanation_without_silent_activation(
     assert "guided_explanation" in client.get(
         f"/api/learning-tasks/{run['learning_task']['id']}"
     ).json()["plan"]["phases"][0]["methods"]
+
+
+def test_learning_skill_run_claims_requested_formal_task_without_duplicate(client: TestClient):
+    session = client.post("/api/agent/sessions", json={
+        "session_type": "global", "create_new": True,
+    }).json()
+
+    async def seed_task():
+        async with async_session() as db:
+            persisted = await db.get(AgentSession, session["id"])
+            task, _ = await create_learning_task(
+                db,
+                learner_id=persisted.learner_id,
+                title="上下文控制学习型任务",
+                objective="实现上下文与模型行为控制",
+                client_request_id=f"candidate-task-{uuid.uuid4().hex}",
+                origin_kind="learning_task_candidate",
+                created_by="learning_design_agent",
+                status="queued",
+                success_criteria=["完成上下文组装与行为验证"],
+                use_model_planner=False,
+            )
+            await db.commit()
+            return task.id
+
+    task_id = asyncio.run(seed_task())
+    request_id = f"candidate-skill-{uuid.uuid4().hex}"
+    started = client.post(f"/api/agent/sessions/{session['id']}/skill-runs", json={
+        "skill_id": "guided_explanation",
+        "goal": "实现上下文与模型行为控制",
+        "client_request_id": request_id,
+        "learning_task_id": task_id,
+    })
+    assert started.status_code == 200, started.text
+    run = started.json()["active_skill_run"]
+    assert run["learning_task"]["id"] == task_id
+    assert run["learning_task"]["status"] == "active"
+    task = client.get(f"/api/learning-tasks/{task_id}").json()
+    assert task["session_id"] == session["id"]
+
+    retried = client.post(f"/api/agent/sessions/{session['id']}/skill-runs", json={
+        "skill_id": "guided_explanation",
+        "goal": "实现上下文与模型行为控制",
+        "client_request_id": request_id,
+        "learning_task_id": task_id,
+    })
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["created"] is False
+    assert retried.json()["active_skill_run"]["id"] == run["id"]
+    assert retried.json()["active_skill_run"]["learning_task"]["id"] == task_id
+
+    async def scoped_task_count():
+        async with async_session() as db:
+            persisted = await db.get(AgentSession, session["id"])
+            rows = list((await db.execute(select(LearningTask).where(
+                LearningTask.learner_id == persisted.learner_id,
+                LearningTask.objective == "实现上下文与模型行为控制",
+            ))).scalars().all())
+            return len(rows)
+
+    assert asyncio.run(scoped_task_count()) == 1
 
 
 def test_learning_skill_goal_normalizes_conversational_fillers(client: TestClient):

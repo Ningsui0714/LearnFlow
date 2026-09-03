@@ -82,6 +82,7 @@ class LearningSkillRunCreateRequest(BaseModel):
     goal: str = Field(min_length=2, max_length=300)
     client_request_id: str = Field(min_length=8, max_length=120)
     domain_source_ids: list[int] = Field(default_factory=list, max_length=20)
+    learning_task_id: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("goal", "client_request_id", mode="before")
     @classmethod

@@ -13,9 +13,10 @@ type Props = {
   onAction: (task: FormalLearningTask, action: FormalLearningTaskAction) => void
   onGenerateFiles: (task: FormalLearningTask) => void
   onOpenFiles: () => void
+  onReturnToScene: (task: FormalLearningTask) => void
 }
 
-export default function LearningTasksPage({ connection, tasks, busyTaskId, error, onRefresh, onAction, onGenerateFiles, onOpenFiles }: Props) {
+export default function LearningTasksPage({ connection, tasks, busyTaskId, error, onRefresh, onAction, onGenerateFiles, onOpenFiles, onReturnToScene }: Props) {
   const active = tasks.filter(task => !['completed', 'canceled'].includes(task.status))
   return (
     <section className="task-queue-page">
@@ -46,7 +47,7 @@ export default function LearningTasksPage({ connection, tasks, busyTaskId, error
               <small>{task.success_criteria?.[0] || '按任务计划完成可检查的学习动作'}</small>
             </div>
             <div className="task-queue-actions">
-              {task.origin_navigation?.path && <a className="task-return-primary" href={task.origin_navigation.path}>回到学习现场</a>}
+              <button type="button" className="task-return-primary" onClick={() => onReturnToScene(task)}>回到学习现场</button>
               {task.artifact_refs?.length > 0
                 ? <button type="button" onClick={onOpenFiles}>打开讲义与练习</button>
                 : ['queued', 'active', 'paused'].includes(task.status) && <button type="button" disabled={busyTaskId === task.id} onClick={() => onGenerateFiles(task)}>生成讲义与练习</button>}

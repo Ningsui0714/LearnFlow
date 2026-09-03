@@ -122,6 +122,26 @@ class DomainKnowledgePacket(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class LearningTaskCandidateArtifact(Base):
+    """Uncommitted plugin artifact; never learner state or mastery authority."""
+
+    __tablename__ = "learning_task_candidate_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "learner_id", "project_id", "request_id",
+            name="uq_learning_task_candidate_request",
+        ),
+    )
+
+    candidate_id = Column(String(80), primary_key=True)
+    learner_id = Column(Integer, ForeignKey("learners.id"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    request_id = Column(String(160), nullable=False, index=True)
+    input_hash = Column(String(64), nullable=False)
+    candidate_json = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Roadmap(Base):
     __tablename__ = "roadmaps"
 

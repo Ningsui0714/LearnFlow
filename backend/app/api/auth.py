@@ -37,6 +37,7 @@ from app.services.auth import (
     CurrentLearner,
     ModelCredentialDecryptionError,
     ModelCredentialEncryptionUnavailable,
+    ModelCredentialFormatError,
     PasswordKDFBusy,
     clear_auth_cookie,
     clear_login_failures,

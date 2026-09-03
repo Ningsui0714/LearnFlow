@@ -1076,6 +1076,7 @@ export async function startFormalLearningSkillRun(
   goal: string,
   clientRequestId: string,
   domainSourceIds: number[] = [],
+  learningTaskId?: number,
 ) {
   return jsonRequest<{
     session_id: number
@@ -1088,6 +1089,7 @@ export async function startFormalLearningSkillRun(
       goal,
       client_request_id: clientRequestId,
       domain_source_ids: domainSourceIds.slice(0, 20),
+      learning_task_id: learningTaskId,
     }),
   })
 }

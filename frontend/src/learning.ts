@@ -171,6 +171,13 @@ export type FormalSkillRunBindingInput = {
   } | null
 }
 
+export type FormalLearningTaskBindingInput = {
+  id: number
+  objective: string
+  version: number
+  preferred_skills?: string[]
+}
+
 type ManifestSkillState = {
   id: string
   title: string
@@ -311,6 +318,73 @@ export function createLearningTask(objective: string, now = Date.now(), existing
     { type: 'vnext_learning_skill_step_entered', detail: `进入${firstStep.substateLabel}：${firstStep.title}`, skillId, stepId: firstStep.id },
   ], now)
   return { task, events }
+}
+
+/**
+ * Project one formal queue task into the browser conversation that executes it.
+ * The browser object is only a binding: the backend LearningTask remains the
+ * authority and its numeric id is carried into every formal SkillRun request.
+ */
+export function activateFormalLearningTask(
+  formalTask: FormalLearningTaskBindingInput,
+  existingTasks: LearningTask[],
+  existingEvents: LearningEvent[],
+  now = Date.now(),
+) {
+  const id = `formal-learning-task-${formalTask.id}`
+  const preferredSkillId = (formalTask.preferred_skills || []).find(isLearningSkillId)
+    || recommendedLearningSkill(formalTask.objective)
+  let events = existingEvents
+
+  for (const task of existingTasks) {
+    if (task.id === id) continue
+    const projection = projectLearningTask(task, events)
+    if (projection.status === 'active') {
+      events = appendLearningEvents(events, task.id, [{
+        type: 'vnext_learning_task_paused',
+        detail: `切换到正式 LearningTask #${formalTask.id}`,
+      }], now)
+    }
+  }
+
+  const existing = existingTasks.find(task => task.id === id || task.formalTaskId === formalTask.id)
+  if (existing) {
+    const binding: LearningTask = {
+      ...existing,
+      id,
+      objective: formalTask.objective,
+      formalTaskId: formalTask.id,
+      formalTaskVersion: formalTask.version,
+    }
+    const projection = projectLearningTask(binding, events)
+    if (projection.status === 'paused') {
+      events = appendLearningEvents(events, binding.id, [{
+        type: 'vnext_learning_task_resumed',
+        detail: `恢复正式 LearningTask #${formalTask.id}`,
+      }], now + 1)
+    }
+    return {
+      task: binding,
+      tasks: existingTasks.map(task => task === existing ? binding : task),
+      events,
+    }
+  }
+
+  const binding: LearningTask = {
+    id,
+    objective: formalTask.objective.slice(0, 300),
+    createdAt: now,
+    formalTaskId: formalTask.id,
+    formalTaskVersion: formalTask.version,
+  }
+  const firstStep = LEARNING_SKILLS[preferredSkillId].steps[0]
+  events = appendLearningEvents(events, binding.id, [
+    { type: 'vnext_learning_task_created', detail: `绑定正式 LearningTask #${formalTask.id}`, skillId: preferredSkillId },
+    { type: 'vnext_learning_task_started', detail: '从任务队列进入原对话继续学习' },
+    { type: 'vnext_learning_skill_selected', detail: `使用${LEARNING_SKILLS[preferredSkillId].name}`, skillId: preferredSkillId },
+    { type: 'vnext_learning_skill_step_entered', detail: `进入${firstStep.substateLabel}：${firstStep.title}`, skillId: preferredSkillId, stepId: firstStep.id },
+  ], now)
+  return { task: binding, tasks: [...existingTasks, binding], events }
 }
 
 export function appendLearningEvents(

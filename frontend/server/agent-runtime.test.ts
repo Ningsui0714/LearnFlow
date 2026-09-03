@@ -5,6 +5,7 @@ import {
   buildAgentProviderRequest,
   repairTutorDraftForObservedGaps,
   runTutorAgentTurn,
+  reasoningContentFromProviderResponse,
   tutorAgentBudget,
   toolCallsFromProviderResponse,
   verifyTutorTurnOutcome,
@@ -83,6 +84,13 @@ test('provider tool calls are normalized for chat completions and responses APIs
   }), [{ id: 'responses-1', name: 'read_learner_context', arguments: { query: '先修基础' } }])
 })
 
+test('provider reasoning content is extracted only from chat assistant messages', () => {
+  assert.equal(reasoningContentFromProviderResponse({
+    choices: [{ message: { reasoning_content: '原样回传的思考内容' } }],
+  }), '原样回传的思考内容')
+  assert.equal(reasoningContentFromProviderResponse({ output: [] }), '')
+})
+
 test('provider requests expose real tool definitions in both API dialects', () => {
   const tool = {
     name: 'read_learner_context', title: '读取', description: '读取上下文', toolClass: 'perception' as const, risk: 'read_only' as const,
@@ -100,6 +108,44 @@ test('provider requests expose real tool definitions in both API dialects', () =
     messages: [{ role: 'user', content: 'hello' }], tools: [tool], includeTools: true,
   })
   assert.equal((responses.body as any).tools[0].name, 'read_learner_context')
+})
+
+test('chat continuation preserves opaque reasoning content on ordinary assistant messages', () => {
+  const chat = buildAgentProviderRequest({
+    baseUrl: 'https://api.deepseek.com/v1/chat/completions', model: 'deepseek-reasoner', instructions: 'system',
+    messages: [
+      { role: 'user', content: '第一问' },
+      { role: 'assistant', content: '第一答', reasoningContent: '上一轮推理载荷' },
+      { role: 'user', content: '继续' },
+    ],
+    tools: [], includeTools: false,
+  })
+  const assistant = (chat.body as any).messages.find((message: any) => message.role === 'assistant')
+  assert.equal(assistant.reasoning_content, '上一轮推理载荷')
+})
+
+test('DeepSeek continuation omits unreplayable legacy assistant turns', async () => {
+  const requests: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-reasoner',
+    mode: 'free',
+    messages: [
+      { role: 'user', content: '旧问题' },
+      { role: 'assistant', content: '修复前保存、没有 reasoning_content 的旧回答' },
+      { role: 'user', content: '继续说明' },
+    ],
+    toolChoice: 'auto',
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      return { choices: [{ message: { content: '可以继续。', reasoning_content: '新推理载荷' } }] }
+    },
+  })
+  assert.equal(result.reply, '可以继续。')
+  assert.equal(result.reasoningContent, '新推理载荷')
+  assert.equal(requests[0].body.messages.some((message: any) => message.content?.includes('修复前保存')), false)
+  assert.equal(requests[0].body.messages.some((message: any) => message.content === '旧问题'), true)
 })
 
 test('visual planning requests use provider-native JSON object mode in both API dialects', () => {
@@ -238,6 +284,45 @@ test('Tutor runs a bounded observe-act-observe loop and preserves tool results',
   assert.match(result.trace.decisionSummaries?.[0]?.reason || '', /路径/)
   assert.ok(requests[0].body.tools.length >= 3)
   assert.ok(requests[1].body.messages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'path-call'))
+})
+
+test('Tutor passes DeepSeek reasoning content back unchanged with the assistant tool call', async () => {
+  const requests: any[] = []
+  let round = 0
+  const reasoningContent = '必须逐字保留的 reasoning payload'
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-reasoner',
+    mode: 'simple_explain',
+    messages: [{ role: 'user', content: '机器学习之前应该先学什么？' }],
+    toolChoice: 'auto',
+    learnerPathState: createInitialLearnerPathState(),
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) {
+        return { choices: [{ message: {
+          content: null,
+          reasoning_content: reasoningContent,
+          tool_calls: [{
+            id: 'path-reasoning-call',
+            type: 'function',
+            function: { name: 'lookup_learning_path_node', arguments: '{"query":"机器学习前置"}' },
+          }],
+        } }] }
+      }
+      return { choices: [{ message: { content: '建议先补线性代数和概率统计。' } }] }
+    },
+  })
+
+  assert.match(result.reply, /线性代数/)
+  const followupMessages = requests[1].body.messages
+  const assistantToolMessages = followupMessages.filter((message: any) => message.role === 'assistant' && message.tool_calls)
+  assert.equal(assistantToolMessages.length, 1)
+  assert.equal(assistantToolMessages[0].reasoning_content, reasoningContent)
+  assert.equal(assistantToolMessages[0].tool_calls[0].id, 'path-reasoning-call')
+  assert.ok(followupMessages.some((message: any) => message.role === 'tool' && message.tool_call_id === 'path-reasoning-call'))
 })
 
 test('provider deltas reach the UI live and a tool decision resets only the draft round', async () => {
@@ -1132,7 +1217,10 @@ test('planning final state observes five-kernel, workspace and path without upgr
   })
   assert.deepEqual(result.toolRuns.map(run => run.kind), ['memory', 'workspace', 'path', 'path'])
   assert.match(result.reply, /不把“学过”直接当作掌握/)
-  assert.ok(requests[0].body.messages.filter((message: any) => message.role === 'tool').length === 4)
+  assert.equal(requests[0].body.messages.some((message: any) => message.role === 'tool'), false)
+  assert.match(String(requests[0].body.messages[0].content), /read_learner_context/)
+  assert.match(String(requests[0].body.messages[0].content), /read_learning_workspace/)
+  assert.match(String(requests[0].body.messages[0].content), /lookup_learning_path_node/)
 })
 
 test('a known planning target stops after exact lookup', async () => {
@@ -1435,6 +1523,31 @@ const formalProjectContext = {
   },
   tool_policy: { read_only_observations: true, proposals_require_confirmation: true, roadmap_tool_access: 'project_tutor' },
 }
+
+test('host-prefetched project observations do not forge DeepSeek assistant tool calls', async () => {
+  const requests: any[] = []
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://api.deepseek.com/v1/chat/completions',
+    model: 'deepseek-reasoner',
+    mode: 'free',
+    messages: [{ role: 'user', content: '继续解释当前项目' }],
+    toolChoice: 'auto',
+    formalProjectContext,
+    formalLearnerContext: formalProjectContext.five_kernel_context,
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      requests.push(request)
+      const messages = (request.body as any).messages
+      assert.equal(messages.some((message: any) => message.role === 'tool'), false)
+      assert.equal(messages.some((message: any) => message.role === 'assistant' && message.tool_calls?.length), false)
+      assert.match(String((messages[0] as any).content), /read_project_workspace/)
+      return { choices: [{ message: { content: '可以继续。', reasoning_content: '本轮真实思考数据' } }] }
+    },
+  })
+  assert.equal(requests.length, 1)
+  assert.equal(result.reply, '可以继续。')
+  assert.equal(result.reasoningContent, '本轮真实思考数据')
+})
 
 test('project roadmap tool returns an exact-theme proposal without writing project state', async () => {
   const execution = await executeTutorAgentTool('propose_project_roadmap', {
