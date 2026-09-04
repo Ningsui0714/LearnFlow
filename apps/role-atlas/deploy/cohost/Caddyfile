@@ -1,0 +1,34 @@
+{$ROOT_HOST} {
+  redir https://{$LEARNFLOW_HOST}{uri} permanent
+}
+
+{$LEARNFLOW_HOST} {
+  encode zstd gzip
+  reverse_proxy learnflow-frontend:4174
+}
+
+{$ROLE_ATLAS_HOST} {
+  encode zstd gzip
+  @launch path /api/integrations/learnflow/launch
+  reverse_proxy @launch role-atlas-launch-proxy:3010
+  reverse_proxy role-atlas:3000 {
+    header_up Host localhost
+  }
+}
+
+{$GRAPH_HUB_HOST} {
+  encode zstd gzip
+  @root path /
+  redir @root /hub 302
+  @launch path /api/integrations/learnflow/launch
+  reverse_proxy @launch role-atlas-launch-proxy:3010
+  reverse_proxy role-atlas:3000 {
+    header_up Host localhost
+  }
+}
+
+http://:8081 {
+  reverse_proxy https://api.deepseek.com {
+    header_up Host api.deepseek.com
+  }
+}

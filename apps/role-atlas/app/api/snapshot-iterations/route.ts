@@ -1,0 +1,242 @@
+import { z } from "zod/v4";
+import { createModelInvoker, type ModelInvoker } from "@/lib/agent/model";
+import { createSnapshotIterationSkill } from "@/lib/iteration/graph";
+import {
+  appendIterationEvent,
+  attachIterationProjectVersion,
+  completeSnapshotIteration,
+  failSnapshotIteration,
+  getLatestSnapshotIteration,
+  saveIterationCheckpoint,
+  startSnapshotIteration,
+} from "@/lib/iteration/repository";
+import {
+  snapshotIterationRequestSchema,
+  type IterationEvent,
+  type SnapshotIterationResult,
+} from "@/lib/iteration/types";
+import { getConversation, saveProjectCandidateFromIteration } from "@/lib/projects/repository";
+import { resolveProviderConfig, resolveSearchProviderConfig } from "@/lib/server-runtime-config";
+import { resolveSnapshot } from "@/lib/snapshots/resolver";
+import { workerRuntimeBindings } from "@/lib/worker-runtime-bindings";
+import { createDurableJobStream, durableJobResponse, startRoleJobHeartbeat } from "@/lib/jobs/runtime";
+import { checkpointRoleJob, claimRoleJob, completeRoleJob, failRoleJob, renewRoleJobLease } from "@/lib/jobs/repository";
+
+export const runtime = "edge";
+
+const postSchema = z.object({
+  iteration: snapshotIterationRequestSchema,
+  providerConfig: z.unknown().optional(),
+  searchConfig: z.unknown().optional(),
+});
+
+function failureEvent(
+  input: { runId: string; snapshotRef: { snapshotId: string }; projectId?: string },
+  error: unknown,
+): IterationEvent {
+  const raw = error instanceof Error ? error.message : "未知错误";
+  const message = /401|api key|authentication|auth/i.test(raw)
+    ? "模型或检索供应商拒绝了凭据。"
+    : /429|rate limit/i.test(raw)
+      ? "供应商正在限流；运行记录已保留，可稍后重试。"
+      : /abort/i.test(raw)
+        ? "岗位快照迭代已取消，当前快照未改变。"
+        : `岗位快照迭代失败：${raw}`;
+  return {
+    version: "1.0",
+    runId: input.runId,
+    snapshotId: input.snapshotRef.snapshotId,
+    projectId: input.projectId,
+    seq: Number.MAX_SAFE_INTEGER,
+    time: new Date().toISOString(),
+    kind: "iteration.run.failed",
+    phase: "system",
+    payload: { message, retryable: !/凭据/u.test(message) },
+  };
+}
+
+function inactiveModel(): ModelInvoker {
+  return async function* noModelRequired() {
+    yield* [];
+    throw new Error("本轮未进入模型重建阶段。");
+  };
+}
+
+export async function GET(request: Request) {
+  const snapshotId = new URL(request.url).searchParams.get("snapshotId");
+  if (!snapshotId) return Response.json({ error: "缺少 snapshotId。" }, { status: 400 });
+  try {
+    return Response.json({ run: await getLatestSnapshotIteration(snapshotId) });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "迭代运行读取失败。" }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  let parsed: z.infer<typeof postSchema>;
+  try {
+    parsed = postSchema.parse(await request.json());
+  } catch (error) {
+    return Response.json({ error: "岗位快照迭代范围或运行配置无效。", detail: error instanceof Error ? error.message : undefined }, { status: 400 });
+  }
+
+  const resolved = await resolveSnapshot(parsed.iteration.snapshotRef).catch(() => null);
+  if (!resolved) return Response.json({ error: "没有可迭代的岗位快照。" }, { status: 404 });
+  const projectId = resolved.reference.projectId || parsed.iteration.projectId;
+  if (parsed.iteration.conversationId) {
+    const conversation = await getConversation(parsed.iteration.conversationId).catch(() => null);
+    if (!conversation || !projectId || conversation.conversation.projectId !== projectId) {
+      return Response.json({ error: "迭代会话不存在或不属于当前项目。" }, { status: 404 });
+    }
+  }
+
+  const iterationRequest = {
+    ...parsed.iteration,
+    snapshotRef: resolved.reference,
+    projectId,
+  };
+  const mayRebuild = iterationRequest.webResearch || iterationRequest.supplementalSources.length > 0;
+  let model = inactiveModel();
+  let modelLabel: string | undefined;
+  let searchConfig;
+  try {
+    const bindings = workerRuntimeBindings();
+    if (mayRebuild) {
+      const modelConfig = resolveProviderConfig(parsed.providerConfig, bindings);
+      model = createModelInvoker(modelConfig);
+      modelLabel = `${modelConfig.provider}/${modelConfig.model}`;
+    }
+    if (iterationRequest.webResearch) searchConfig = resolveSearchProviderConfig(parsed.searchConfig, bindings);
+  } catch (error) {
+    const message = error instanceof Error && error.message === "SERVER_MODEL_NOT_CONFIGURED"
+      ? "本轮可能重建快照，但服务端尚未配置模型 API Key。"
+      : error instanceof Error && error.message === "SERVER_SEARCH_NOT_CONFIGURED"
+        ? "已开启联网研究，但尚未配置搜索 API Key。"
+        : "模型或搜索配置无效。";
+    return Response.json({ error: message }, { status: 400 });
+  }
+
+  const jobOwner = crypto.randomUUID();
+  const jobKind = iterationRequest.initiativeProfile === "user_directed" && iterationRequest.targetIds.length > 0
+    ? "node_deepening" as const
+    : "snapshot_iteration" as const;
+  const job = await claimRoleJob({
+    id: iterationRequest.runId,
+    kind: jobKind,
+    threadId: `${resolved.reference.snapshotId}:${iterationRequest.runId}`,
+    projectId,
+    baseSnapshotId: resolved.reference.snapshotId,
+    phase: "contract",
+    owner: jobOwner,
+    payload: { iteration: iterationRequest },
+  }).catch(() => null);
+  if (!job?.claimed) return Response.json({ error: "同一岗位快照迭代仍由另一个执行器处理。", code: "JOB_LEASE_HELD" }, { status: 409 });
+
+  try {
+    await startSnapshotIteration(iterationRequest);
+  } catch (error) {
+    await failRoleJob({ jobId: iterationRequest.runId, owner: jobOwner, error: "无法创建岗位快照迭代运行。", retryable: false }).catch(() => undefined);
+    return Response.json({ error: error instanceof Error ? error.message : "无法创建岗位快照迭代运行。" }, { status: 500 });
+  }
+
+  const stopHeartbeat = startRoleJobHeartbeat({ renew: () => renewRoleJobLease(iterationRequest.runId, jobOwner) });
+
+  const graph = createSnapshotIterationSkill({
+    model,
+    modelLabel,
+    searchConfig,
+    onCheckpoint: async (phase, state) => {
+      await Promise.all([
+        saveIterationCheckpoint(iterationRequest.runId, phase, state),
+        checkpointRoleJob({ jobId: iterationRequest.runId, owner: jobOwner, kind: jobKind, phase, state }),
+      ]);
+    },
+  });
+  const recovered = (job.job?.attempt || 1) > 1 && job.checkpoint?.state && typeof job.checkpoint.state === "object"
+    ? job.checkpoint.state as Record<string, unknown>
+    : undefined;
+  const resumablePhases = new Set(["contract", "discovery", "research-plan", "research", "rebuild", "consolidate", "evaluate", "next-round"]);
+  const resumeFrom = recovered && resumablePhases.has(String(recovered.phase))
+    ? String(recovered.phase) as "contract" | "discovery" | "research-plan" | "research" | "rebuild" | "consolidate" | "evaluate" | "next-round"
+    : undefined;
+  const stream = createDurableJobStream<IterationEvent>({
+    signal: request.signal,
+    execute: () => graph.stream(
+      {
+        round: 1,
+        opportunities: [],
+        workItems: [],
+        researchPlans: [],
+        researchReports: [],
+        researchedSources: [],
+        patches: [],
+        migrations: {},
+        ...recovered,
+        request: iterationRequest,
+        base: resolved.result,
+        candidate: recovered?.candidate as typeof resolved.result || resolved.result,
+        resumeFrom,
+      },
+      {
+        configurable: { thread_id: `${resolved.reference.snapshotId}:${iterationRequest.runId}` },
+        streamMode: "custom",
+        signal: request.signal,
+      },
+    ),
+    persist: appendIterationEvent,
+    handle: async (raw, journal) => {
+      const event = raw as IterationEvent;
+      if (event.kind !== "iteration.run.completed" || !event.payload.result) {
+        journal.publish(event);
+        return;
+      }
+      const result = event.payload.result as SnapshotIterationResult;
+      if (result.createdSnapshot) {
+        await journal.commit({
+          ...event,
+          kind: "iteration.snapshot.write.started",
+          phase: "snapshot",
+          time: new Date().toISOString(),
+          payload: { parentSnapshotId: result.baseSnapshotId, status: "candidate" },
+        });
+      }
+      const candidateSnapshotId = await completeSnapshotIteration(result);
+      const projectVersionId = projectId
+        ? await saveProjectCandidateFromIteration(result, projectId, iterationRequest.conversationId)
+        : null;
+      result.candidateSnapshotId = candidateSnapshotId || undefined;
+      result.projectVersionId = projectVersionId || undefined;
+      if (projectVersionId) await attachIterationProjectVersion(result, projectVersionId);
+      if (candidateSnapshotId) {
+        await journal.commit({
+          ...event,
+          seq: event.seq + 1,
+          kind: "iteration.snapshot.created",
+          phase: "snapshot",
+          time: new Date().toISOString(),
+          payload: { candidateSnapshotId, projectVersionId, parentSnapshotId: result.baseSnapshotId, status: "candidate" },
+        });
+        await journal.commit({
+          ...event,
+          seq: event.seq + 2,
+          time: new Date().toISOString(),
+          payload: { ...event.payload, result, candidateSnapshotId, projectVersionId },
+        });
+      } else {
+        await journal.commit({ ...event, payload: { ...event.payload, result, projectVersionId } });
+      }
+      await completeRoleJob({ jobId: iterationRequest.runId, owner: jobOwner, phase: "completed", result: { candidateSnapshotId, projectVersionId } });
+    },
+    onFailure: async (error, journal) => {
+      const event = failureEvent(iterationRequest, error);
+      await journal.commit(event, () => failSnapshotIteration(
+        iterationRequest.runId,
+        String(event.payload.message || "迭代失败"),
+        request.signal.aborted,
+      )).catch(() => undefined);
+      await failRoleJob({ jobId: iterationRequest.runId, owner: jobOwner, error: String(event.payload.message || "迭代失败"), retryable: !request.signal.aborted }).catch(() => undefined);
+    },
+    onFinally: stopHeartbeat,
+  });
+  return durableJobResponse(stream);
+}

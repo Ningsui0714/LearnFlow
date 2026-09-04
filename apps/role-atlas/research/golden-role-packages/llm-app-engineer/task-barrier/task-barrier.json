@@ -1,0 +1,141 @@
+{
+  "schemaVersion": "golden-task-barrier/1.0",
+  "roleId": "role:llm-app-engineer",
+  "snapshotAsOf": "2026-08-24",
+  "status": "frozen_for_v1",
+  "acceptanceRule": "每项任务必须同时具备可辨认的工作对象、动作、交付物、完成边界、两个以上独立来源组支持，并与其他任务存在可解释的边界。",
+  "tasks": [
+    {
+      "id": "task:llmapp:define-scenario",
+      "order": 1,
+      "label": "界定应用场景与验收要求",
+      "workObject": "业务流程、用户、数据、约束与失败代价",
+      "action": "访谈、梳理、判断适用性并把模糊诉求转成可验证要求",
+      "deliverables": ["场景说明", "需求与约束清单", "验收标准", "初始风险清单"],
+      "completionBoundary": "目标用户、输入输出、数据与权限边界、不可接受结果和验收方法均被记录并由关键协作方确认。",
+      "claimIds": ["CLM-T01", "CLM-T02"],
+      "independentSupportGroups": ["cn-ai-occupation-standard", "cn-ai-education-standard", "enterprise-byte", "openai-docs"],
+      "status": "accepted"
+    },
+    {
+      "id": "task:llmapp:design-solution",
+      "order": 2,
+      "label": "设计并验证大模型应用方案",
+      "workObject": "候选技术路径、组件边界和关键风险假设",
+      "action": "比较直接调用、RAG、工作流、Agent及条件性模型适配，设计架构并用原型验证关键假设",
+      "deliverables": ["方案比较记录", "架构与数据流设计", "可回放原型", "技术决策记录"],
+      "completionBoundary": "选定方案满足场景约束，关键不确定性已通过原型验证，未选方案及理由可追溯。",
+      "claimIds": ["CLM-T03", "CLM-T04"],
+      "independentSupportGroups": ["cn-ai-occupation-standard", "enterprise-byte", "enterprise-cssc", "anthropic"],
+      "status": "accepted"
+    },
+    {
+      "id": "task:llmapp:build-rag",
+      "order": 3,
+      "label": "构建并维护领域知识与RAG链路",
+      "workObject": "领域资料、元数据、权限、索引、检索与重排链路",
+      "action": "摄取、解析、分块、索引、检索、重排、引用、版本化并评价检索质量",
+      "deliverables": ["可更新的知识处理管线", "RAG服务或组件", "检索评价集与报告", "知识版本记录"],
+      "completionBoundary": "目标知识可按权限被稳定检索和引用，检索组件达到约定指标，更新与回退路径可执行。",
+      "claimIds": ["CLM-T05", "CLM-T06"],
+      "independentSupportGroups": ["enterprise-didi", "enterprise-lizhi", "enterprise-fanruan", "microsoft-docs"],
+      "status": "accepted"
+    },
+    {
+      "id": "task:llmapp:build-agent-integration",
+      "order": 4,
+      "label": "构建Agent工作流与工具系统集成",
+      "workObject": "工作流状态、步骤、工具契约、业务接口与人工协作点",
+      "action": "实现编排、分支、工具调用、权限、重试、停止、确认、幂等与异常处理",
+      "deliverables": ["可运行的Agent或工作流", "工具与接口契约", "链路trace", "异常与人工介入设计"],
+      "completionBoundary": "目标流程可端到端运行，高影响动作受控，失败和重试不产生不可接受副作用。",
+      "claimIds": ["CLM-T07", "CLM-T08", "CLM-T16"],
+      "independentSupportGroups": ["enterprise-byte", "enterprise-didi", "enterprise-fanruan", "mcp", "owasp", "langgraph"],
+      "status": "accepted"
+    },
+    {
+      "id": "task:llmapp:control-model-behavior",
+      "order": 5,
+      "label": "实现上下文与模型行为控制",
+      "workObject": "Prompt、上下文、结构化输出、模型路由和防护配置",
+      "action": "设计、实现、版本化并测试上下文组装、输出约束、模型选择和必要的领域适配",
+      "deliverables": ["版本化Prompt与上下文配置", "输出schema与校验", "模型路由配置", "目标案例行为结果"],
+      "completionBoundary": "配置与模型版本可追溯，目标案例行为可复核，失败模式和回退策略已记录。",
+      "claimIds": ["CLM-T09", "CLM-T10"],
+      "independentSupportGroups": ["anthropic", "enterprise-byte", "enterprise-cssc", "openai-docs"],
+      "status": "accepted",
+      "conditionalActivities": ["仅在基线方案不能满足要求且数据、成本与维护条件成立时执行PEFT/LoRA"]
+    },
+    {
+      "id": "task:llmapp:evaluate-quality-safety",
+      "order": 6,
+      "label": "设计并执行质量与安全评测",
+      "workObject": "评测目标、样本、标签、量规、组件与端到端结果",
+      "action": "建设评测集，执行组件、端到端、对抗与回归评价，分析误差并作发布判断",
+      "deliverables": ["版本化评测集", "评价量规与指标", "评测报告", "发布或退回结论"],
+      "completionBoundary": "评测数据覆盖目标分布和关键失败模式，结果可复现，结论与发布门槛直接关联。",
+      "claimIds": ["CLM-T11", "CLM-T12"],
+      "independentSupportGroups": ["openai-docs", "nist", "microsoft-docs", "enterprise-fanruan"],
+      "status": "accepted"
+    },
+    {
+      "id": "task:llmapp:release-service",
+      "order": 7,
+      "label": "封装、集成并发布应用服务",
+      "workObject": "应用接口、配置与密钥、运行环境、性能预算和发布物",
+      "action": "封装服务、集成业务系统、测试、部署、验证负载并准备升级和回滚",
+      "deliverables": ["可部署服务", "集成测试结果", "性能与容量记录", "发布记录与运行手册"],
+      "completionBoundary": "目标环境验收通过，版本、配置、依赖和发布决策可追溯，回滚路径经过验证。",
+      "claimIds": ["CLM-T13", "CLM-T17"],
+      "independentSupportGroups": ["cn-ai-occupation-standard", "enterprise-didi", "enterprise-fudan"],
+      "status": "accepted"
+    },
+    {
+      "id": "task:llmapp:operate-improve",
+      "order": 8,
+      "label": "监测、诊断并迭代生产应用",
+      "workObject": "线上trace、日志、指标、用户反馈、坏例与版本差异",
+      "action": "监测运行与业务质量，复现和定位问题，修复、回归、发布或回滚并沉淀经验",
+      "deliverables": ["监测视图", "坏例与根因记录", "修复与回归结果", "迭代或事故记录"],
+      "completionBoundary": "问题影响受控，根因和修复有证据，回归通过且发布后复发情况被继续观察。",
+      "claimIds": ["CLM-T14", "CLM-T15", "CLM-T16", "CLM-T17"],
+      "independentSupportGroups": ["enterprise-didi", "enterprise-fanruan", "vllm", "langchain", "langgraph"],
+      "status": "accepted"
+    }
+  ],
+  "candidateDisposition": [
+    {
+      "candidate": "模型微调与领域适配",
+      "disposition": "attached_conditional_activity",
+      "targetTaskId": "task:llmapp:control-model-behavior",
+      "reason": "正式职业与部分企业样本支持，但跨企业普遍性不足；应由基线差距、数据与维护条件触发。",
+      "claimIds": ["CLM-D01"]
+    },
+    {
+      "candidate": "自托管推理与深度性能优化",
+      "disposition": "adjacent_or_conditional",
+      "targetTaskIds": ["task:llmapp:release-service", "task:llmapp:operate-improve"],
+      "reason": "应用侧性能验证属于核心；组织级推理集群和框架优化属于LLMOps/AI Infra边界。",
+      "claimIds": ["CLM-D02", "CLM-B12"]
+    },
+    {
+      "candidate": "前沿技术跟踪",
+      "disposition": "not_a_core_task",
+      "reason": "缺少独立工作对象与稳定交付边界；作为方案设计和持续改进中的活动。",
+      "claimIds": ["CLM-D04"]
+    },
+    {
+      "candidate": "培训与业务团队赋能",
+      "disposition": "lifecycle_activity",
+      "targetTaskIds": ["task:llmapp:release-service", "task:llmapp:operate-improve"],
+      "reason": "常见但附着于交付、支持和知识转移，不应独立定义岗位骨架。",
+      "claimIds": ["CLM-T17", "CLM-D05"]
+    },
+    {
+      "candidate": "检查工作流质量",
+      "disposition": "merged_by_object_and_deliverable",
+      "targetTaskIds": ["task:llmapp:build-agent-integration", "task:llmapp:evaluate-quality-safety"],
+      "reason": "实现正确性随工作流交付验收，跨案例质量则进入独立评测任务，避免与“编排工作流”随意并列。"
+    }
+  ]
+}

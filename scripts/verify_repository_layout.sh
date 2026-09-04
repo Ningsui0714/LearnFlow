@@ -13,6 +13,9 @@ required_paths=(
   "backend/app/services/architecture_registry.py"
   "desktop/src-tauri/tauri.conf.json"
   "start.sh"
+  "apps/role-atlas/package.json"
+  "apps/role-atlas/app/hub/page.tsx"
+  "apps/role-atlas/deploy/cohost/compose.yaml"
 )
 
 for required_path in "${required_paths[@]}"; do
@@ -36,4 +39,4 @@ if [ -n "$legacy_runtime_refs" ]; then
   exit 1
 fi
 
-echo "LearnFlow 目录权威有效：frontend/ 是唯一产品前端，backend/ 与 desktop/ 为正式依赖。"
+echo "目录权威有效：frontend/ 是唯一 LearnFlow 学习前端；apps/role-atlas/ 是独立岗位建图应用。"

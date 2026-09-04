@@ -1,0 +1,133 @@
+{
+  "schemaVersion": "golden-evidence-segments/1.0",
+  "snapshotAsOf": "2026-08-24",
+  "segments": [
+    {"id":"SEG-GOV-CLASS-01","sourceId":"SRC-GOV-CLASS-2022","ordinal":1,"locator":"PDF第86页，2-02-38数字技术工程技术人员小类","page":86,"section":"2-02-38","excerptType":"close_paraphrase","text":"2022年版职业分类大典将人工智能工程技术人员列入数字技术工程技术人员小类，现行职业编码为2-02-38-01。"},
+    {"id":"SEG-GOV-CLASS-02","sourceId":"SRC-GOV-CLASS-2022","ordinal":2,"locator":"PDF第86页，2-02-38-01职业定义","page":86,"section":"2-02-38-01","excerptType":"close_paraphrase","text":"该职业面向人工智能算法和深度学习技术的分析、研究、开发，以及人工智能系统的设计、优化、运维、管理和应用。"},
+    {"id":"SEG-GOV-CLASS-03","sourceId":"SRC-GOV-CLASS-2022","ordinal":3,"locator":"PDF第86—87页，主要工作任务第5—7项","page":87,"section":"2-02-38-01主要工作任务","excerptType":"close_paraphrase","text":"主要工作任务包括设计、集成、管理和部署人工智能软硬件系统，开发人工智能系统解决方案，并提供技术咨询和服务。"},
+
+    {"id":"SEG-GOV-AISTD-01","sourceId":"SRC-GOV-AI-STD-2021","ordinal":1,"locator":"PDF第5页，1.2—1.4","page":5,"section":"职业概况","excerptType":"close_paraphrase","text":"2021年标准发布时职业编码为2-02-10-09，并设置初级、中级、高级三个等级。"},
+    {"id":"SEG-GOV-AISTD-02","sourceId":"SRC-GOV-AI-STD-2021","ordinal":2,"locator":"PDF第5页，1.4专业技术等级","page":5,"section":"职业方向","excerptType":"close_paraphrase","text":"五个职业方向之一是人工智能应用产品集成实现。"},
+    {"id":"SEG-GOV-AISTD-03","sourceId":"SRC-GOV-AI-STD-2021","ordinal":3,"locator":"PDF第40页，3.5.1工作内容2.1","page":40,"section":"人工智能应用产品集成实现—初级—需求分析","excerptType":"close_paraphrase","text":"初级要求收集用户需求，结合应用领域、服务对象和使用场景选择产品，并形成应用集成需求分析文档。"},
+    {"id":"SEG-GOV-AISTD-04","sourceId":"SRC-GOV-AI-STD-2021","ordinal":4,"locator":"PDF第40—41页，3.5.1工作内容3.1—5.1","page":40,"section":"人工智能应用产品集成实现—初级—设计开发、交付、运维","excerptType":"close_paraphrase","text":"初级工作覆盖数据准备、应用模块和接口开发、组件安装调试、功能与性能测试、部署升级、巡检及运维记录。"},
+    {"id":"SEG-GOV-AISTD-05","sourceId":"SRC-GOV-AI-STD-2021","ordinal":5,"locator":"PDF第42—43页，3.5.2中级工作内容2.1—4.1","page":42,"section":"人工智能应用产品集成实现—中级","excerptType":"close_paraphrase","text":"中级要求把用户诉求转化为集成需求，比较产品组合，梳理数据和业务流程，设计接口，并把测试环境成果交付到正式环境。"},
+    {"id":"SEG-GOV-AISTD-06","sourceId":"SRC-GOV-AI-STD-2021","ordinal":6,"locator":"PDF第43页，3.5.2中级工作内容5.1—6.3","page":43,"section":"运维与咨询","excerptType":"close_paraphrase","text":"中级要求排查上线后的问题和故障、制定运维流程手册，并开展技术体系、隐私和数据安全等咨询评价。"},
+    {"id":"SEG-GOV-AISTD-07","sourceId":"SRC-GOV-AI-STD-2021","ordinal":7,"locator":"PDF第45—46页，3.5.3高级工作内容3.1—5.1","page":45,"section":"高级设计、交付与运维","excerptType":"close_paraphrase","text":"高级要求在设计中平衡安全、成本、质量和可扩展性，制定交付和升级规范，处理疑难故障并优化系统性能。"},
+    {"id":"SEG-GOV-AISTD-08","sourceId":"SRC-GOV-AI-STD-2021","ordinal":8,"locator":"PDF第58页，附录5.1职业方向定义","page":58,"section":"人工智能应用产品集成实现定义","excerptType":"close_paraphrase","text":"该方向把平台、软件、硬件和算法形成集成应用系统，以解决用户总体人工智能需求。"},
+
+    {"id":"SEG-GOV-GENAI-01","sourceId":"SRC-GOV-GENAI-OCC-2024","ordinal":1,"locator":"PDF第3页，4-04-05-13定义","page":3,"section":"生成式人工智能系统应用员","excerptType":"close_paraphrase","text":"生成式人工智能系统应用员运用生成式人工智能技术和工具，从事系统设计、调用、训练、优化与维护管理。"},
+    {"id":"SEG-GOV-GENAI-02","sourceId":"SRC-GOV-GENAI-OCC-2024","ordinal":2,"locator":"PDF第4页，主要工作任务1—2","page":4,"section":"主要工作任务","excerptType":"close_paraphrase","text":"工作任务包括设计数据输入、模型选择、输出格式和生成策略，并调用模型或API生成多种内容。"},
+    {"id":"SEG-GOV-GENAI-03","sourceId":"SRC-GOV-GENAI-OCC-2024","ordinal":3,"locator":"PDF第4页，主要工作任务3—5","page":4,"section":"主要工作任务","excerptType":"close_paraphrase","text":"工作任务还包括依法处理训练数据、评估标注质量、训练场景模型、分析性能瓶颈以及部署系统。"},
+    {"id":"SEG-GOV-GENAI-04","sourceId":"SRC-GOV-GENAI-OCC-2024","ordinal":4,"locator":"PDF第4页，主要工作任务6—7","page":4,"section":"主要工作任务","excerptType":"close_paraphrase","text":"从业者需要检查更新系统、管理文档资源，并按服务规范提供技术咨询、支持和培训。"},
+
+    {"id":"SEG-EDU-01","sourceId":"SRC-EDU-AI-STD-2025","ordinal":1,"locator":"PDF第1页，第5节职业面向","page":1,"section":"职业面向","excerptType":"close_paraphrase","text":"人工智能技术应用专业主要面向人工智能工程技术人员和人工智能训练师等职业。"},
+    {"id":"SEG-EDU-02","sourceId":"SRC-EDU-AI-STD-2025","ordinal":2,"locator":"PDF第1页，主要岗位（群）或技术领域","page":1,"section":"职业面向","excerptType":"close_paraphrase","text":"主要岗位技术领域包括数据采集与处理、算法模型训练与测试、人工智能应用开发、人工智能系统集成与运维。"},
+    {"id":"SEG-EDU-03","sourceId":"SRC-EDU-AI-STD-2025","ordinal":3,"locator":"PDF第2页，第7节（5）—（11）","page":2,"section":"培养规格","excerptType":"close_paraphrase","text":"能力要求覆盖编程和数据库、数据处理、模型选择训练评估、AI应用集成开发、系统部署运维及面向业务需求的综合解决。"},
+    {"id":"SEG-EDU-04","sourceId":"SRC-EDU-AI-STD-2025","ordinal":4,"locator":"PDF第3页，第8.1.2节","page":3,"section":"专业课程","excerptType":"close_paraphrase","text":"专业核心课程应根据岗位工作内容和典型工作任务设置，并结合真实生产项目开展项目式、情境式教学。"},
+    {"id":"SEG-EDU-05","sourceId":"SRC-EDU-AI-STD-2025","ordinal":5,"locator":"PDF第5页，人工智能系统部署与运维","page":5,"section":"专业核心课程典型工作任务","excerptType":"close_paraphrase","text":"部署运维任务包括部署算法支撑平台、实施自动化运维、集成并测试人工智能应用系统。"},
+    {"id":"SEG-EDU-06","sourceId":"SRC-EDU-AI-STD-2025","ordinal":6,"locator":"PDF第5页，人工智能综合项目开发","page":5,"section":"专业核心课程典型工作任务","excerptType":"close_paraphrase","text":"综合项目任务从需求分析、方案和计划开始，贯穿数据、模型、软件开发、集成测试、部署运维和项目文档。"},
+
+    {"id":"SEG-REG-01","sourceId":"SRC-REG-GENAI-2023","ordinal":1,"locator":"网页第二条","section":"适用范围","excerptType":"close_paraphrase","text":"办法适用于利用生成式人工智能技术向中国境内公众提供生成内容的服务；未向公众提供服务的研发应用不适用本办法。"},
+    {"id":"SEG-REG-02","sourceId":"SRC-REG-GENAI-2023","ordinal":2,"locator":"网页第四条","section":"一般要求","excerptType":"close_paraphrase","text":"提供和使用生成式人工智能服务需保护合法权益，并采取措施提高生成内容的准确性和可靠性。"},
+    {"id":"SEG-REG-03","sourceId":"SRC-REG-GENAI-2023","ordinal":3,"locator":"网页第七—八条","section":"训练数据与标注","excerptType":"close_paraphrase","text":"适用范围内的提供者应使用合法来源的数据和基础模型，提高训练数据质量，并对标注规则、质量评估和抽样核验负责。"},
+    {"id":"SEG-REG-04","sourceId":"SRC-REG-GENAI-2023","ordinal":4,"locator":"网页第十一、十三条","section":"服务规范","excerptType":"close_paraphrase","text":"服务需保护输入和使用记录中的个人信息，并提供安全、稳定、持续的服务。"},
+    {"id":"SEG-REG-05","sourceId":"SRC-REG-GENAI-2023","ordinal":5,"locator":"网页第十四条","section":"问题处置","excerptType":"close_paraphrase","text":"发现违法内容时需采取停止生成或传输、消除等措施，并通过模型优化训练等方式整改。"},
+
+    {"id":"SEG-NIST-01","sourceId":"SRC-STD-NIST-600-1","ordinal":1,"locator":"Publication abstract","section":"Abstract","excerptType":"close_paraphrase","text":"NIST AI 600-1是AI风险管理框架面向生成式人工智能的跨行业配置文件，关注设计、开发、使用与评价全生命周期中的可信风险。"},
+    {"id":"SEG-NIST-02","sourceId":"SRC-STD-NIST-600-1","ordinal":2,"locator":"NIST AI 600-1，Introduction","section":"Introduction","excerptType":"close_paraphrase","text":"风险配置应结合具体目标、法律要求、资源与风险容忍度，而不是采用脱离场景的统一阈值。"},
+
+    {"id":"SEG-JD-BYTE-01","sourceId":"SRC-JD-BYTEDANCE-APP-BACKEND","ordinal":1,"locator":"官方职位页，职位描述第1项","section":"职位描述","excerptType":"close_paraphrase","text":"岗位负责把大语言模型工程化落地到脚本、视频创作、对话和Agent应用，建设技术框架与工具。"},
+    {"id":"SEG-JD-BYTE-02","sourceId":"SRC-JD-BYTEDANCE-APP-BACKEND","ordinal":2,"locator":"官方职位页，职位描述第2—4项","section":"职位描述","excerptType":"close_paraphrase","text":"工作涉及与算法团队协作的内容生成优化、多模态高可用系统，以及Planner、AutoPrompt和上下文工程驱动的Agent方案。"},
+    {"id":"SEG-JD-BYTE-03","sourceId":"SRC-JD-BYTEDANCE-APP-BACKEND","ordinal":3,"locator":"官方职位页，任职要求第1—4项","section":"任职要求","excerptType":"close_paraphrase","text":"要求后端服务开发基础、LLM应用架构和Agent/RAG/数据评测实践，并能理解业务需求并转化为技术实现。"},
+
+    {"id":"SEG-JD-DIDI-01","sourceId":"SRC-JD-DIDI-LLM-ENGINEERING","ordinal":1,"locator":"官方职位页，大模型应用开发","section":"岗位职责","excerptType":"close_paraphrase","text":"岗位把算法原型转化为高性能、高可用的RAG或Agent工程产品以解决业务问题。"},
+    {"id":"SEG-JD-DIDI-02","sourceId":"SRC-JD-DIDI-LLM-ENGINEERING","ordinal":2,"locator":"官方职位页，AI应用架构设计与AI数据链路建设","section":"岗位职责","excerptType":"close_paraphrase","text":"职责覆盖服务编排、工具调用、多模型协同，以及非结构化和结构化数据处理、向量化、存储与检索。"},
+    {"id":"SEG-JD-DIDI-03","sourceId":"SRC-JD-DIDI-LLM-ENGINEERING","ordinal":3,"locator":"官方职位页，服务稳定性保障与技术落地协作","section":"岗位职责","excerptType":"close_paraphrase","text":"岗位建设监控、告警和应急响应，优化延迟吞吐，并与算法团队共同制定方案和推进迭代落地。"},
+
+    {"id":"SEG-JD-CSSC-01","sourceId":"SRC-JD-CSSC-LLM-APP","ordinal":1,"locator":"官方职位页第31—37行，工作职责","section":"工作职责","excerptType":"close_paraphrase","text":"职责从业务应用系统开发出发，使用Prompt、RAG和Agent把模型能力转成产品功能，并贯穿方案设计到上线。"},
+    {"id":"SEG-JD-CSSC-02","sourceId":"SRC-JD-CSSC-LLM-APP","ordinal":2,"locator":"官方职位页第33—35行，工作职责","section":"工作职责","excerptType":"close_paraphrase","text":"该样本还要求用LoRA/QLoRA做业务适配，部署模型环境并优化延迟、吞吐与资源成本。"},
+    {"id":"SEG-JD-CSSC-03","sourceId":"SRC-JD-CSSC-LLM-APP","ordinal":3,"locator":"官方职位页第39—45行，任职资格","section":"任职资格","excerptType":"close_paraphrase","text":"任职资格把底层原理、微调对齐、Prompt、RAG、向量库、Agent、Python框架和问题排查组合到同一岗位。"},
+
+    {"id":"SEG-JD-LIZHI-01","sourceId":"SRC-JD-LIZHI-LLM-APP","ordinal":1,"locator":"官方职位页第19—21行，岗位职责","section":"岗位职责","excerptType":"close_paraphrase","text":"岗位基于业务需求承担大模型应用全流程，包括Agent开发、RAG优化和模型工作流编排。"},
+    {"id":"SEG-JD-LIZHI-02","sourceId":"SRC-JD-LIZHI-LLM-APP","ordinal":2,"locator":"官方职位页第21行，岗位职责","section":"岗位职责","excerptType":"close_paraphrase","text":"岗位还建设垂直领域数据集，改善清洗和标注质量，并开发维护企业知识库与AI助手。"},
+    {"id":"SEG-JD-LIZHI-03","sourceId":"SRC-JD-LIZHI-LLM-APP","ordinal":3,"locator":"官方职位页第22—24行，任职资格","section":"任职资格","excerptType":"close_paraphrase","text":"后端编程和LLM工程栈是基础要求；前端、模型部署、微调与低代码平台被列为优先经验。"},
+
+    {"id":"SEG-JD-FANRUAN-01","sourceId":"SRC-JD-FANRUAN-APP-ALGO","ordinal":1,"locator":"官方职位页第38—43行，职责1—3","section":"岗位职责","excerptType":"close_paraphrase","text":"高级岗位围绕Agent编排内核、异常容错回滚、RAG联动和工具调用设计生产级架构。"},
+    {"id":"SEG-JD-FANRUAN-02","sourceId":"SRC-JD-FANRUAN-APP-ALGO","ordinal":2,"locator":"官方职位页第45—48行，职责4—6","section":"岗位职责","excerptType":"close_paraphrase","text":"工作还包括版本管理、监控告警、A/B评测、性能成本优化、业务赋能、规范与可复用组件沉淀。"},
+    {"id":"SEG-JD-FANRUAN-03","sourceId":"SRC-JD-FANRUAN-APP-ALGO","ordinal":3,"locator":"官方职位页第52—71行，任职要求","section":"任职要求","excerptType":"close_paraphrase","text":"生产级架构、框架二次开发、多智能体和大规模知识库是该高级样本的重点，反映资历提升后的平台化扩张。"},
+
+    {"id":"SEG-JD-FUDAN-01","sourceId":"SRC-JD-FUDAN-LLM-APP","ordinal":1,"locator":"官方人事页第68—72行，岗位职责1—2","section":"岗位职责","excerptType":"close_paraphrase","text":"岗位把文档处理、3D场景和业务助手等需求转为工作流、多系统协同、Prompt、知识库、RAG和多Agent方案。"},
+    {"id":"SEG-JD-FUDAN-02","sourceId":"SRC-JD-FUDAN-LLM-APP","ordinal":2,"locator":"官方人事页第71行，岗位职责3—5","section":"岗位职责","excerptType":"close_paraphrase","text":"职责包括高并发服务、模型API和数据中台集成、性能优化、生产应用、技术文档、培训与支持。"},
+    {"id":"SEG-JD-FUDAN-03","sourceId":"SRC-JD-FUDAN-LLM-APP","ordinal":3,"locator":"官方人事页第72行，招聘条件与加分项","section":"招聘条件","excerptType":"close_paraphrase","text":"业务抽象和跨团队推进是基础要求；微调、私有化、多模态和低代码属于加分或特定场景扩展。"},
+
+    {"id":"SEG-JD-WIZ-01","sourceId":"SRC-JD-WIZARD-LLM-APP","ordinal":1,"locator":"职位页搜索抽取，模型应用落地","section":"核心职责","excerptType":"research_note","text":"该岗位把数据库、搜索、代码执行和内部工具链集成到模型，并为其他业务部门沉淀Agent应用实践。"},
+    {"id":"SEG-JD-WIZ-02","sourceId":"SRC-JD-WIZARD-LLM-APP","ordinal":2,"locator":"职位页搜索抽取，评估体系","section":"核心职责","excerptType":"research_note","text":"职责包含构建智能体评估体系和自动化测试框架，以量化复杂任务表现。"},
+    {"id":"SEG-JD-WIZ-03","sourceId":"SRC-JD-WIZARD-LLM-APP","ordinal":3,"locator":"职位页搜索抽取，平台架构设计","section":"核心职责","excerptType":"research_note","text":"分布式Agent调度与高可用推理集群是该量化科技岗位的组合职责，不代表所有应用岗位。"},
+
+    {"id":"SEG-JD-JDINFRA-01","sourceId":"SRC-JD-JD-AI-INFRA","ordinal":1,"locator":"官方职位页第14—22行，岗位描述1—2","section":"岗位描述","excerptType":"close_paraphrase","text":"AI Infra/Agent岗位首先设计多场景AI基础设施架构，并构建Agent核心框架与配套工具链。"},
+    {"id":"SEG-JD-JDINFRA-02","sourceId":"SRC-JD-JD-AI-INFRA","ordinal":2,"locator":"官方职位页第22行，岗位描述3—5","section":"岗位描述","excerptType":"close_paraphrase","text":"岗位还负责工程规范、基础设施性能监控优化和可复用文档，服务对象是团队与平台使用者。"},
+    {"id":"SEG-JD-JDINFRA-03","sourceId":"SRC-JD-JD-AI-INFRA","ordinal":3,"locator":"官方职位页第23—25行，任职要求","section":"任职要求","excerptType":"close_paraphrase","text":"相邻岗位的区分点是平台级可扩展架构、通用框架工具链和基础设施长期建设，而非某个业务应用的端到端交付。"},
+
+    {"id":"SEG-JD-TENCENT-01","sourceId":"SRC-JD-TENCENT-ALGO","ordinal":1,"locator":"官方职位页搜索抽取，岗位职责","section":"岗位职责","excerptType":"research_note","text":"算法岗位承担金融场景的大模型落地与技术攻坚，并追踪Agent、Tool Learning、RAG等方法。"},
+    {"id":"SEG-JD-TENCENT-02","sourceId":"SRC-JD-TENCENT-ALGO","ordinal":2,"locator":"官方职位页搜索抽取，任职要求2—5","section":"任职要求","excerptType":"research_note","text":"该岗位强调SFT、RLHF/DPO、独立微调、高性能推理部署和评估体系，算法与训练深度显著高于稳定应用内核。"},
+    {"id":"SEG-JD-TENCENT-03","sourceId":"SRC-JD-TENCENT-ALGO","ordinal":3,"locator":"官方职位页搜索抽取，加分项","section":"加分项","excerptType":"research_note","text":"论文与大模型算法成果被作为加分条件，是算法相邻岗位的重要边界信号。"},
+
+    {"id":"SEG-JD-MEITUAN-01","sourceId":"SRC-JD-MEITUAN-APP-ALGO","ordinal":1,"locator":"官方职位页搜索抽取，岗位职责1—4","section":"岗位职责","excerptType":"research_note","text":"应用算法实习岗研究大模型与搜推前沿技术，开发生成式搜索和对话系统，并探索Agent、RAG及领域模型调优。"},
+    {"id":"SEG-JD-MEITUAN-02","sourceId":"SRC-JD-MEITUAN-APP-ALGO","ordinal":2,"locator":"官方职位页搜索抽取，任职要求","section":"任职要求","excerptType":"research_note","text":"任职要求突出机器学习、深度学习、NLP、PyTorch/TensorFlow和模型原理。"},
+    {"id":"SEG-JD-MEITUAN-03","sourceId":"SRC-JD-MEITUAN-APP-ALGO","ordinal":3,"locator":"官方职位页搜索抽取，优先条件","section":"优先条件","excerptType":"research_note","text":"复杂搜推算法研发和顶会论文属于优先条件，说明同含“应用”的算法岗仍以模型/算法创新为核心。"},
+
+    {"id":"SEG-TECH-AGENT-01","sourceId":"SRC-TECH-ANTHROPIC-AGENTS","ordinal":1,"locator":"When (and when not) to use agents","section":"When to use agents","excerptType":"close_paraphrase","text":"应用设计应从能满足需求的最简单方案开始，仅在必要时增加Agent复杂度，因为Agent通常以时延和成本换取任务表现。"},
+    {"id":"SEG-TECH-AGENT-02","sourceId":"SRC-TECH-ANTHROPIC-AGENTS","ordinal":2,"locator":"Workflows and agents sections","section":"Architectural patterns","excerptType":"close_paraphrase","text":"固定且可预测的路径适合工作流；无法预先确定步骤的开放问题才更适合自主Agent。"},
+    {"id":"SEG-TECH-AGENT-03","sourceId":"SRC-TECH-ANTHROPIC-AGENTS","ordinal":3,"locator":"Agents section","section":"Agents","excerptType":"close_paraphrase","text":"Agent执行需要从环境结果获得反馈，可在检查点请求人工判断，并用停止条件约束循环。"},
+    {"id":"SEG-TECH-AGENT-04","sourceId":"SRC-TECH-ANTHROPIC-AGENTS","ordinal":4,"locator":"Agents section and Appendix 2","section":"Tools","excerptType":"close_paraphrase","text":"工具集合及其文档需要清晰设计，并在沙箱和护栏下进行充分测试。"},
+
+    {"id":"SEG-TECH-CONTEXT-01","sourceId":"SRC-TECH-ANTHROPIC-CONTEXT","ordinal":1,"locator":"Context engineering vs. prompt engineering","section":"Context engineering","excerptType":"close_paraphrase","text":"上下文工程不仅写Prompt，还持续管理系统指令、工具、外部数据、消息历史等进入有限上下文的信息。"},
+    {"id":"SEG-TECH-CONTEXT-02","sourceId":"SRC-TECH-ANTHROPIC-CONTEXT","ordinal":2,"locator":"Why context engineering is important","section":"Finite context","excerptType":"close_paraphrase","text":"上下文容量并不等于有效注意力无限；增加低价值信息可能降低检索和长程推理精度。"},
+    {"id":"SEG-TECH-CONTEXT-03","sourceId":"SRC-TECH-ANTHROPIC-CONTEXT","ordinal":3,"locator":"The anatomy of effective context","section":"System prompts","excerptType":"close_paraphrase","text":"有效上下文应尽量保留高信号信息，系统指令既不能堆叠脆弱细则，也不能停留在缺少行动信号的空泛表述。"},
+
+    {"id":"SEG-TECH-EVAL-01","sourceId":"SRC-TECH-OPENAI-EVALS","ordinal":1,"locator":"网页第818—823行，Best practices","section":"Evaluation best practices","excerptType":"close_paraphrase","text":"评测驱动开发要求尽早、持续地做范围明确的测试，记录开发过程并用人工反馈校准自动评分。"},
+    {"id":"SEG-TECH-EVAL-02","sourceId":"SRC-TECH-OPENAI-EVALS","ordinal":2,"locator":"网页第833—837行，Evaluation workflow","section":"Evaluation workflow","excerptType":"close_paraphrase","text":"评测流程依次定义目标、收集数据集、定义指标、运行比较，并在每次变更上持续评测和扩充案例。"},
+    {"id":"SEG-TECH-EVAL-03","sourceId":"SRC-TECH-OPENAI-EVALS","ordinal":3,"locator":"网页第858—870行，Q&A over docs","section":"Dataset construction","excerptType":"close_paraphrase","text":"文档问答评测集可结合生产反馈、领域专家答案、历史日志，并覆盖典型、边缘和对抗案例。"},
+    {"id":"SEG-TECH-EVAL-04","sourceId":"SRC-TECH-OPENAI-EVALS","ordinal":4,"locator":"网页第852行","section":"Evaluator design","excerptType":"close_paraphrase","text":"比较、分类或按明确标准评分通常比开放式生成更适合作为自动评价任务；示例阈值不能直接当通用门槛。"},
+
+    {"id":"SEG-TECH-RAG-01","sourceId":"SRC-TECH-MS-RAG","ordinal":1,"locator":"网页Evaluate your search results第541—546行","section":"Evaluate your search results","excerptType":"close_paraphrase","text":"评价检索需要准备测试查询和能回答查询的相关文档标注。"},
+    {"id":"SEG-TECH-RAG-02","sourceId":"SRC-TECH-MS-RAG","ordinal":2,"locator":"网页第546—550行","section":"Retrieval metrics","excerptType":"close_paraphrase","text":"Precision@K衡量返回结果的准确性，Recall@K衡量相关内容覆盖，MRR关注首个相关结果的排名。"},
+    {"id":"SEG-TECH-RAG-03","sourceId":"SRC-TECH-MS-RAG","ordinal":3,"locator":"网页第551行","section":"Positive and negative examples","excerptType":"close_paraphrase","text":"检索测试应同时覆盖可回答和不可回答查询，避免只在正例上优化。"},
+
+    {"id":"SEG-TECH-MCP-01","sourceId":"SRC-TECH-MCP-TOOLS","ordinal":1,"locator":"Tools—Overview and Capabilities","section":"Tools","excerptType":"close_paraphrase","text":"MCP工具由服务器暴露给模型调用，每项工具需要可识别名称和输入schema，结果可含结构化或非结构化内容。"},
+    {"id":"SEG-TECH-MCP-02","sourceId":"SRC-TECH-MCP-TOOLS","ordinal":2,"locator":"网页第82—86行，User Interaction Model","section":"Trust and safety","excerptType":"close_paraphrase","text":"规范建议用户能看见暴露和调用的工具，并能对操作进行确认或否决。"},
+    {"id":"SEG-TECH-MCP-03","sourceId":"SRC-TECH-MCP-TOOLS","ordinal":3,"locator":"Tool annotations and errors sections","section":"Tool contract","excerptType":"close_paraphrase","text":"客户端不能盲信来自不可信服务器的工具注解；工具契约还应保留错误和结果的可解释语义。"},
+
+    {"id":"SEG-TECH-OWASP-01","sourceId":"SRC-TECH-OWASP-AGENCY","ordinal":1,"locator":"网页第2—13行，Description","section":"Excessive Agency","excerptType":"close_paraphrase","text":"Agent的损害性动作可能源于意外、歧义或被操纵的模型输出，风险根因常是功能、权限或自治过度。"},
+    {"id":"SEG-TECH-OWASP-02","sourceId":"SRC-TECH-OWASP-AGENCY","ordinal":2,"locator":"网页第18—35行，Examples","section":"Common examples","excerptType":"close_paraphrase","text":"典型风险包括暴露无关工具、使用过宽下游权限、用通用高权限身份访问，以及高影响操作缺少独立确认。"},
+    {"id":"SEG-TECH-OWASP-03","sourceId":"SRC-TECH-OWASP-AGENCY","ordinal":3,"locator":"网页第37—65行，Prevention and mitigation","section":"Mitigation","excerptType":"close_paraphrase","text":"缓解需要最小化工具功能、权限和自治，校验输入输出，并把安全测试纳入开发管线。"},
+
+    {"id":"SEG-TECH-LG-01","sourceId":"SRC-TECH-LANGGRAPH-INTERRUPTS","ordinal":1,"locator":"Interrupts—Overview","section":"Interrupts","excerptType":"close_paraphrase","text":"人工介入点会暂停执行、保存状态并等待外部输入，恢复时依赖持久化检查点和稳定线程标识。"},
+    {"id":"SEG-TECH-LG-02","sourceId":"SRC-TECH-LANGGRAPH-INTERRUPTS","ordinal":2,"locator":"Rules of interrupts","section":"Re-execution","excerptType":"close_paraphrase","text":"从中断恢复时节点可能从头执行，因此中断前的外部副作用必须按可重执行和幂等方式设计。"},
+    {"id":"SEG-TECH-LG-03","sourceId":"SRC-TECH-LANGGRAPH-INTERRUPTS","ordinal":3,"locator":"Rules of interrupts","section":"Determinism","excerptType":"close_paraphrase","text":"恢复依赖稳定的中断顺序和可序列化状态，随意改变顺序可能造成恢复值错配。"},
+
+    {"id":"SEG-TECH-PEFT-01","sourceId":"SRC-TECH-HF-PEFT","ordinal":1,"locator":"LoRA guide第104—112行","section":"LoRA","excerptType":"close_paraphrase","text":"LoRA冻结基础权重并训练低秩更新矩阵，以降低可训练参数和存储成本。"},
+    {"id":"SEG-TECH-PEFT-02","sourceId":"SRC-TECH-HF-PEFT","ordinal":2,"locator":"LoRA guide，Common parameters","section":"Configuration","excerptType":"close_paraphrase","text":"应用LoRA仍需选择目标模块、秩、缩放和训练配置，并管理基础模型与适配器版本。"},
+    {"id":"SEG-TECH-PEFT-03","sourceId":"SRC-TECH-HF-PEFT","ordinal":3,"locator":"LoRA guide，Merge weights","section":"Inference","excerptType":"close_paraphrase","text":"适配器可在推理前合并到基础模型，但选择与验证仍取决于具体任务、质量和部署约束。"},
+
+    {"id":"SEG-TECH-VLLM-01","sourceId":"SRC-TECH-VLLM-METRICS","ordinal":1,"locator":"Production Metrics—Overview","section":"Production Metrics","excerptType":"close_paraphrase","text":"vLLM通过兼容Prometheus的metrics端点暴露系统健康和请求性能指标。"},
+    {"id":"SEG-TECH-VLLM-02","sourceId":"SRC-TECH-VLLM-METRICS","ordinal":2,"locator":"Metrics list","section":"Request metrics","excerptType":"close_paraphrase","text":"关键请求指标包括首token时延、token间时延、端到端时延、队列时间和成功结束原因。"},
+    {"id":"SEG-TECH-VLLM-03","sourceId":"SRC-TECH-VLLM-METRICS","ordinal":3,"locator":"Metrics list","section":"Engine metrics","excerptType":"close_paraphrase","text":"运行中和等待请求数、KV缓存使用、输入输出token等指标可帮助解释服务层时延与容量问题。"},
+
+    {"id":"SEG-ISSUE-LG-01","sourceId":"SRC-ISSUE-LANGGRAPH-7417","ordinal":1,"locator":"Issue正文Problem与What we observe","section":"Observed failure","excerptType":"close_paraphrase","text":"报告者观察到长时工具调用在原调用仍运行时被重新派发，trace出现相同参数且无前置模型节点的重复执行。"},
+    {"id":"SEG-ISSUE-LG-02","sourceId":"SRC-ISSUE-LANGGRAPH-7417","ordinal":2,"locator":"Issue正文What we tried","section":"Failed attempts","excerptType":"close_paraphrase","text":"报告者记录了多个无效配置尝试，并通过改变执行包装方式观察重执行间隔变化。"},
+    {"id":"SEG-ISSUE-LG-03","sourceId":"SRC-ISSUE-LANGGRAPH-7417","ordinal":3,"locator":"Issue正文What we found in the source","section":"Source inspection","excerptType":"close_paraphrase","text":"调查进一步检查心跳、队列清扫、gRPC监听和可重试异常代码路径，同时明确仍不能确认服务端陈旧判定规则。"},
+
+    {"id":"SEG-ISSUE-LC-01","sourceId":"SRC-ISSUE-LANGCHAIN-37619","ordinal":1,"locator":"Issue正文Reproduction Steps","section":"Minimal reproduction","excerptType":"close_paraphrase","text":"最小复现用同一检索器对比同步与异步调用：同步返回文档，异步路径抛出NotImplementedError。"},
+    {"id":"SEG-ISSUE-LC-02","sourceId":"SRC-ISSUE-LANGCHAIN-37619","ordinal":2,"locator":"Issue正文Description","section":"Root cause","excerptType":"close_paraphrase","text":"报告者定位到同步方法已有实现而异步方法仍是占位，并提出用异步链与异步检索器镜像实现。"},
+    {"id":"SEG-ISSUE-LC-03","sourceId":"SRC-ISSUE-LANGCHAIN-37619","ordinal":3,"locator":"Issue评论，Coverage / validation","section":"Regression validation","excerptType":"close_paraphrase","text":"建议的回归验证覆盖异步返回、改写查询传递、确实调用异步路径以及同步路径不受影响。"},
+
+    {"id":"SEG-ISSUE-VLLM-01","sourceId":"SRC-ISSUE-VLLM-41306","ordinal":1,"locator":"Issue正文与维护者复核","section":"Performance regression","excerptType":"close_paraphrase","text":"报告者用版本、模型、硬件和服务参数对照发现MoE模型时延与吞吐回归；维护者复核到默认MoE后端变化是一个原因。"},
+    {"id":"SEG-ISSUE-VLLM-02","sourceId":"SRC-ISSUE-VLLM-41306","ordinal":2,"locator":"Issue正文benchmark commands","section":"Reproduction","excerptType":"close_paraphrase","text":"复现记录包含服务命令、基准数据集、并发、输入输出长度和后端配置，使结果能按环境重跑。"},
+    {"id":"SEG-ISSUE-VLLM-03","sourceId":"SRC-ISSUE-VLLM-41306","ordinal":3,"locator":"Issue讨论，backend comparison","section":"Controlled comparison","excerptType":"close_paraphrase","text":"讨论通过切换后端与保持其他条件相近来缩小根因，但不同硬件和模型结果仍不一致。"},
+
+    {"id":"SEG-ISSUE-MCP-01","sourceId":"SRC-ISSUE-MCP-2902","ordinal":1,"locator":"Issue正文Background","section":"Production context","excerptType":"research_note","text":"报告者描述无中心编排的多Agent系统使用12个MCP服务器，并遇到无浏览器、无用户重定向的机器间授权空白。"},
+    {"id":"SEG-ISSUE-MCP-02","sourceId":"SRC-ISSUE-MCP-2902","ordinal":2,"locator":"Issue正文Implementation","section":"Local workaround","excerptType":"research_note","text":"其采用HMAC文件令牌作为本地方案，并强调这只是实现选择而非MCP标准结论。"},
+    {"id":"SEG-ISSUE-MCP-03","sourceId":"SRC-ISSUE-MCP-2902","ordinal":3,"locator":"Issue正文Question与讨论","section":"Open question","excerptType":"research_note","text":"无用户参与的Agent间授权、权限委托和安全能力声明仍是协议演进中的开放问题。"}
+  ]
+}

@@ -1,0 +1,36 @@
+name: Role Atlas checks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/**']
+    paths:
+      - 'apps/role-atlas/**'
+      - 'frontend/src/learning-path*.ts'
+      - 'scripts/verify_role_atlas_layout.mjs'
+      - '.github/workflows/role-atlas.yml'
+  pull_request:
+    paths:
+      - 'apps/role-atlas/**'
+      - 'frontend/src/learning-path*.ts'
+      - 'scripts/verify_role_atlas_layout.mjs'
+      - '.github/workflows/role-atlas.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/role-atlas/package-lock.json
+      - run: npm ci
+        working-directory: apps/role-atlas
+      - run: node scripts/verify_role_atlas_layout.mjs
+      - run: npm test && npm run typecheck && npm run build
+        working-directory: apps/role-atlas

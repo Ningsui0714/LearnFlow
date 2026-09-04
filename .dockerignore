@@ -12,3 +12,6 @@ backend/runtime
 backend/data
 data
 output
+
+# Role Atlas has its own Docker build context and ignore file.
+apps/role-atlas

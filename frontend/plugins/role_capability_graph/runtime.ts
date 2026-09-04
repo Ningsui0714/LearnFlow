@@ -174,8 +174,7 @@ function defaultPackageSources(): RolePackageSource[] {
   const sources: RolePackageSource[] = [{ root: PACKAGE_ROOT, sourceKind: 'official_builtin', accessScope: 'official' }]
   const explicitRoots = (process.env.LEARNFLOW_ROLE_AGENT_PACKAGE_ROOTS || '').split(delimiter).filter(Boolean)
   const inferredRoots = process.env.NODE_ENV === 'production' ? [] : [
-    resolve(PACKAGE_ROOT, '../../../../../../CEG C/role-agent/packages'),
-    resolve(process.cwd(), '../../CEG C/role-agent/packages'),
+    fileURLToPath(new URL('../../../apps/role-atlas/packages', import.meta.url)),
   ]
   for (const root of [...explicitRoots, ...inferredRoots]) {
     const absolute = resolve(root)

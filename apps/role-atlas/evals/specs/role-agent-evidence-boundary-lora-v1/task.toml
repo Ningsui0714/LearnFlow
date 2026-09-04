@@ -1,0 +1,49 @@
+schema_version = "1.4"
+artifacts = [
+  "/logs/agent/role-atlas-events.jsonl",
+  "/logs/agent/role-atlas-run.json",
+]
+
+[task]
+name = "role-atlas/role-agent-evidence-boundary-lora-v1"
+version = "1.0.0"
+description = "Evaluate whether the Role Atlas agent preserves evidence boundaries and registered citations for a disputed LoRA duty claim."
+keywords = ["role-atlas", "evidence-grounding", "citations", "llm-application-engineer"]
+
+[[task.authors]]
+name = "Role Atlas"
+
+[metadata]
+golden_package_version = "1.0.0"
+golden_package_root_hash = "206e01b0285eb9b7c3ff5e432bbd2ccbc2561f61ba954e730339b249ca084a76"
+frozen_eval_version = "frozen-v1"
+capability = "evidence-boundary-and-citation-discipline"
+
+[agent]
+timeout_sec = 600.0
+network_mode = "allowlist"
+allowed_hosts = ["api.xiaomimimo.com"]
+
+[verifier]
+timeout_sec = 600.0
+environment_mode = "shared"
+network_mode = "allowlist"
+allowed_hosts = ["api.xiaomimimo.com"]
+collect = []
+
+[verifier.env]
+MIMO_JUDGE_API_KEY = "${MIMO_JUDGE_API_KEY}"
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 1200.0
+os = "linux"
+cpus = 2
+memory_mb = 4096
+mcp_servers = []
+workdir = "/app"
+
+[environment.env]
+MIMO_API_KEY = "${MIMO_API_KEY}"
+
+[solution.env]

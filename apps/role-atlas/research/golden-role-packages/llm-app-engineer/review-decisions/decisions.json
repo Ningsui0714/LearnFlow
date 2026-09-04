@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "golden-role-review-decisions/1.0",
+  "roleId": "role:llm-app-engineer",
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "date": "2026-08-24",
+      "status": "confirmed",
+      "decision": "保留“大模型应用工程师”作为规范岗位包的企业岗位实例名，并保留现有role:llm-app-engineer稳定ID。",
+      "decidedBy": "user",
+      "basis": ["CLM-B08", "CLM-B10"]
+    },
+    {
+      "id": "DEC-002",
+      "date": "2026-08-24",
+      "status": "confirmed",
+      "decision": "以人工智能工程技术人员2-02-38-01为工程主锚，以生成式人工智能系统应用员4-04-05-13为专项规范映射。",
+      "decidedBy": "user",
+      "basis": ["CLM-B01", "CLM-B04", "CLM-B05", "CLM-B06"]
+    },
+    {
+      "id": "DEC-003",
+      "date": "2026-08-24",
+      "status": "confirmed",
+      "decision": "允许在现有v3协议上增加可选、向后兼容的证据定位、断言状态、适用范围、过程引用和验收字段。",
+      "decidedBy": "user",
+      "basis": ["phase-1-audit"]
+    },
+    {
+      "id": "DEC-004",
+      "date": "2026-08-24",
+      "status": "research_decision",
+      "decision": "微调、自托管推理平台、技术雷达和培训支持不作为普遍核心任务；分别降为条件性技能、相邻岗位边界或生命周期活动。",
+      "decidedBy": "golden-package-review",
+      "basis": ["CLM-D01", "CLM-D02", "CLM-D04", "CLM-D05"],
+      "reversible": true
+    },
+    {
+      "id": "DEC-005",
+      "date": "2026-08-24",
+      "status": "confirmed",
+      "decision": "黄金岗位包1.0.0的岗位边界、八项TASK BARRIER、条件职责、审查报告与开放争议全部通过，可冻结为后续自动工作流评测基准。",
+      "decidedBy": "user",
+      "basis": ["final-human-review", "validation-summary", "semantic-diff"]
+    }
+  ]
+}

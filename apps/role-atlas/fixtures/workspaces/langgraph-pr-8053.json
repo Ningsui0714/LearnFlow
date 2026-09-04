@@ -1,0 +1,48 @@
+{
+  "repository": {
+    "fullName": "langchain-ai/langgraph",
+    "url": "https://github.com/langchain-ai/langgraph",
+    "license": "MIT",
+    "baseCommit": "93307d6a427d7f15bcba3264f3774d07af7d7dca"
+  },
+  "issue": {
+    "number": 8038,
+    "title": "Nested subgraph with own checkpointer has writes stored under wrong namespace (regression in 1.2.3)",
+    "body": "用户提供了最小可复现代码：父图节点内调用具有固定 thread_id 的子图时，子图 checkpoint 被写入继承自父任务的 checkpoint_ns，后续 get_state 无法读取，导致每轮从空状态重新运行。报告包含 1.2.2 到 1.2.4 的版本对比、期望/实际结果和根因假设。",
+    "url": "https://github.com/langchain-ai/langgraph/issues/8038",
+    "createdAt": "2026-06-10T12:37:34Z",
+    "closedAt": "2026-06-17T14:29:33Z"
+  },
+  "pullRequest": {
+    "number": 8053,
+    "title": "fix: nested subgraph inherits parent checkpoint_ns (regression in 1.2.3)",
+    "body": "修复 ensure_config 合并导致的 checkpoint 命名空间回归。解决方案把 thread_id、checkpoint_ns、checkpoint_id、checkpoint_map 定义为 checkpoint coordinate：首次显式提供坐标时替换 ambient configurable；非坐标配置仍与 ambient 配置合并。PR 说明列出五种父子图调用契约并增加同步、异步和配置合并回归测试。",
+    "url": "https://github.com/langchain-ai/langgraph/pull/8053",
+    "createdAt": "2026-06-12T04:08:00Z",
+    "mergedAt": "2026-06-17T14:29:32Z",
+    "baseSha": "93307d6a427d7f15bcba3264f3774d07af7d7dca",
+    "headSha": "a07971dfb1a6d0287354317134e53f6b02917d9e"
+  },
+  "commits": [
+    { "sha": "75368a2", "message": "replace ambient configurable with first explicit config", "at": "2026-06-12T04:07:41Z" },
+    { "sha": "7971901", "message": "clear inherited configurable only on an explicit checkpoint coordinate", "at": "2026-06-12T14:31:27Z" },
+    { "sha": "604ad5d", "message": "reset on any explicit thread_id, including the same parent thread id", "at": "2026-06-12T14:54:22Z" },
+    { "sha": "a07971d", "message": "extract checkpoint coordinate keys and fix import ordering", "at": "2026-06-16T15:36:33Z" }
+  ],
+  "reviews": [
+    { "id": "open-swe-review", "state": "commented", "body": "自动审查发现一个潜在问题，开发者据此继续调整 checkpoint coordinate 规则。", "at": "2026-06-12T14:36:54Z" },
+    { "id": "maintainer-approval", "state": "approved", "body": "维护者要求补充更明确的父子图配置示例，确认修复保持回归前行为；说明完善后批准。", "at": "2026-06-17T12:42:12Z" }
+  ],
+  "checks": [
+    { "id": "ci-success", "name": "CI Success", "status": "completed", "conclusion": "success", "at": "2026-06-17T14:10:27Z" },
+    { "id": "benchmark", "name": "benchmark", "status": "completed", "conclusion": "success", "at": "2026-06-16T16:02:12Z" },
+    { "id": "codeql-python", "name": "CodeQL Python", "status": "completed", "conclusion": "success", "at": "2026-06-16T15:37:59Z" }
+  ],
+  "files": [
+    { "path": "libs/langgraph/langgraph/_internal/_config.py", "additions": 23, "deletions": 0 },
+    { "path": "libs/langgraph/langgraph/_internal/_constants.py", "additions": 9, "deletions": 0 },
+    { "path": "libs/langgraph/tests/test_subgraph_persistence.py", "additions": 46, "deletions": 0 },
+    { "path": "libs/langgraph/tests/test_subgraph_persistence_async.py", "additions": 47, "deletions": 0 },
+    { "path": "libs/langgraph/tests/test_utils.py", "additions": 89, "deletions": 0 }
+  ]
+}

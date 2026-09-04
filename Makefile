@@ -1,4 +1,4 @@
-.PHONY: start stop restart demo setup verify verify-layout
+.PHONY: start stop restart demo setup verify verify-layout verify-role-atlas
 
 # ── 启动 ──
 
@@ -43,3 +43,7 @@ verify: verify-layout
 	cd frontend && npm test && npm run build
 	cd backend && venv/bin/python -m pytest -q
 	cargo check --manifest-path desktop/src-tauri/Cargo.toml
+
+verify-role-atlas:
+	node scripts/verify_role_atlas_layout.mjs
+	cd apps/role-atlas && npm test && npm run typecheck && npm run build

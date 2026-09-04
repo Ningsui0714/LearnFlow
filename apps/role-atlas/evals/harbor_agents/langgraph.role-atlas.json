@@ -1,0 +1,6 @@
+{
+  "node_version": 22,
+  "graphs": {
+    "role_atlas_evidence": "./evals/harbor_agents/role-atlas-evidence-agent.ts:roleAtlasHarborGraph"
+  }
+}

@@ -2,7 +2,7 @@
 
 LearnFlow 是面向计算机学习的 Tutor 工作空间。产品以连续对话为主界面，在同一学习现场连接原子学习任务、项目关卡、讲义与练习、复习、学习路径和五核学习者状态。
 
-仓库现在只有一套产品前端：`frontend/`。原来的 vNext 已成为正式 LearnFlow，不再维护旧前端或第二套页面逻辑。
+LearnFlow 学习端只有一套正式前端：`frontend/`，不再维护旧学习前端。岗位建图产品 Role Atlas 与共享发现入口 Graph Hub 位于 `apps/role-atlas/`，独立运行、独立存储，通过岗位包协议交接。
 
 ## 运行
 
@@ -37,6 +37,7 @@ bash start.sh
 frontend/   唯一 React + TypeScript 产品前端，以及本地 Tutor Turn Graph
 backend/    FastAPI、三类 Agent 契约、学习对象、证据链与五核
 desktop/    Tauri 壳与本地 FastAPI sidecar
+apps/role-atlas/  Role Atlas 岗位建图产品与 Graph Hub（独立应用）
 docs/       架构、产品逻辑、运行手册与验证记录
 ```
 
@@ -44,6 +45,19 @@ docs/       架构、产品逻辑、运行手册与验证记录
 `EvidenceEvent -> five_kernel_reducer -> KernelMutation -> Memory Graph` 更新。五核不是五个 Agent；主责任接口仍只有 Tutor、Learning Design 和 Practice 三类。
 
 ## 验证
+
+Role Atlas 使用 Node.js 22.13+，其依赖与 LearnFlow 分开安装：
+
+```bash
+cd apps/role-atlas
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+
+已提交内置岗位包和只读数据，首次启动不需要外部岗位源同步脚本。联合部署见 [部署手册](apps/role-atlas/deploy/cohost/README.md)，同仓边界与源码版本见 [接入说明](docs/implementation/2026-09-04-role-atlas-monorepo.md)。
+
+Role Atlas 单独验证：`make verify-role-atlas`（先安装该应用依赖）。LearnFlow 原验证入口保持不变：
 
 ```bash
 make verify

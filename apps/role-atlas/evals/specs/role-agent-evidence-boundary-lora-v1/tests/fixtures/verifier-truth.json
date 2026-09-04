@@ -1,0 +1,97 @@
+{
+  "schemaVersion": "1.0",
+  "claim": {
+    "id": "CLM-D01",
+    "statement": "LoRA/PEFT微调是所有大模型应用工程师都必须独立承担的核心典型任务。",
+    "status": "disputed",
+    "assertionType": "research_inference",
+    "strength": "weak",
+    "limitations": [
+      "部分同名岗位列为职责，另一些仅列优先项；算法岗位要求更深",
+      "黄金包将其保留为条件性技能和方案分支，不单列核心任务"
+    ]
+  },
+  "evidence": [
+    {
+      "segmentId": "SEG-GOV-GENAI-03",
+      "text": "工作任务还包括依法处理训练数据、评估标注质量、训练场景模型、分析性能瓶颈以及部署系统。",
+      "sourceId": "SRC-GOV-GENAI-OCC-2024",
+      "sourceTitle": "生成式人工智能系统应用员（4-04-05-13）新职业信息",
+      "sourceType": "official_classification",
+      "sourceTier": "authoritative",
+      "qualification": "accepted",
+      "locator": "PDF第4页，主要工作任务3—5",
+      "limitation": "新职业信息支持部分训练活动存在，但不是完整分级标准，也不能证明每个企业岗位均独立承担。"
+    },
+    {
+      "segmentId": "SEG-JD-CSSC-02",
+      "text": "该样本还要求用LoRA/QLoRA做业务适配，部署模型环境并优化延迟、吞吐与资源成本。",
+      "sourceId": "SRC-JD-CSSC-LLM-APP",
+      "sourceTitle": "大模型应用工程师（J12022）",
+      "sourceType": "job_posting",
+      "sourceTier": "primary",
+      "qualification": "accepted",
+      "locator": "官方职位页第33—35行，工作职责",
+      "limitation": "单个大型央企的扩张型岗位样本，不能代表全部企业。"
+    },
+    {
+      "segmentId": "SEG-JD-TENCENT-02",
+      "text": "该岗位强调SFT、RLHF/DPO、独立微调、高性能推理部署和评估体系，算法与训练深度显著高于稳定应用内核。",
+      "sourceId": "SRC-JD-TENCENT-ALGO",
+      "sourceTitle": "理财通AI算法工程师",
+      "sourceType": "job_posting",
+      "sourceTier": "primary",
+      "qualification": "limited",
+      "locator": "官方职位页搜索抽取，任职要求2—5",
+      "limitation": "相邻算法岗位样本，只用于说明深度训练职责可能归入其他岗位。"
+    },
+    {
+      "segmentId": "SEG-JD-LIZHI-03",
+      "text": "后端编程和LLM工程栈是基础要求；前端、模型部署、微调与低代码平台被列为优先经验。",
+      "sourceId": "SRC-JD-LIZHI-LLM-APP",
+      "sourceTitle": "大模型应用工程师",
+      "sourceType": "job_posting",
+      "sourceTier": "primary",
+      "qualification": "accepted",
+      "locator": "官方职位页第22—24行，任职资格",
+      "limitation": "单一音频互联网企业样本，微调是优先经验而非普遍必需职责。"
+    },
+    {
+      "segmentId": "SEG-JD-FUDAN-03",
+      "text": "业务抽象和跨团队推进是基础要求；微调、私有化、多模态和低代码属于加分或特定场景扩展。",
+      "sourceId": "SRC-JD-FUDAN-LLM-APP",
+      "sourceTitle": "AI大模型应用开发工程师",
+      "sourceType": "job_posting",
+      "sourceTier": "primary",
+      "qualification": "accepted",
+      "locator": "官方人事页第72行，招聘条件与加分项",
+      "limitation": "科研院所特定样本，明确把微调列为加分或特定场景扩展。"
+    },
+    {
+      "segmentId": "SEG-TECH-PEFT-01",
+      "text": "LoRA冻结基础权重并训练低秩更新矩阵，以降低可训练参数和存储成本。",
+      "sourceId": "SRC-TECH-HF-PEFT",
+      "sourceTitle": "PEFT LoRA conceptual guide",
+      "sourceType": "official_technical_documentation",
+      "sourceTier": "primary",
+      "qualification": "accepted",
+      "locator": "LoRA guide第104—112行",
+      "limitation": "只支持技术概念与代价，不支持岗位普遍性结论。"
+    }
+  ],
+  "humanBoundary": {
+    "acceptedMeaning": [
+      "现有材料支持部分正式职业活动和部分企业岗位会涉及训练或LoRA/QLoRA。",
+      "跨企业普遍性和所有岗位均独立承担的结论证据不足。",
+      "黄金包将PEFT/LoRA保留为条件性知识技能或方案分支，不列为八项稳定核心任务。",
+      "企业规模、团队分工、数据算力和维护条件会改变职责归属。"
+    ],
+    "prohibitedMeaning": [
+      "所有企业的大模型应用工程师都必须独立承担LoRA/PEFT。",
+      "大模型应用工程师永远不做LoRA/PEFT。",
+      "国家职业材料逐字规定LoRA是该企业岗位的普遍核心任务。",
+      "由一个或少数JD直接外推全部企业。"
+    ]
+  },
+  "frozenCases": ["EVD-DISPUTED-001", "QA-UNCERTAIN-001"]
+}

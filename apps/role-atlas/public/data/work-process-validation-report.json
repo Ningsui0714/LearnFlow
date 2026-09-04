@@ -1,0 +1,17 @@
+{
+  "valid": true,
+  "publishable": false,
+  "errors": [],
+  "warnings": [
+    "当前仅包含 inferred_pattern 场景模板，尚无真实工作区 WorkEpisode。",
+    "T-05 尚无场景覆盖；T-07、T-10 仅部分覆盖。"
+  ],
+  "stats": {
+    "scenarios": 3,
+    "events": 25,
+    "nodes": 36,
+    "relations": 46,
+    "observed_episodes": 0
+  },
+  "validated_at": "2026-08-21T00:00:00Z"
+}

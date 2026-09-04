@@ -28,6 +28,10 @@ output/playwright/
 *.log
 data/
 
+# Versioned Role Atlas public fixtures are source assets, not runtime data.
+!/apps/role-atlas/public/data/
+!/apps/role-atlas/public/data/**
+
 # Project-mode runtime (venv + workspaces)
 backend/runtime/
 # Build artifacts & backups

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "1.0",
+  "registeredCitations": [
+    {
+      "handle": "C1",
+      "targetId": "knowledge:llmapp:peft-lora-conditional",
+      "label": "PEFT与LoRA适用条件（条件性）",
+      "lifecycle": "candidate",
+      "confidence": 0.35,
+      "sourceIds": [
+        "SRC-GOV-GENAI-OCC-2024",
+        "SRC-JD-CSSC-LLM-APP",
+        "SRC-JD-TENCENT-ALGO",
+        "SRC-JD-LIZHI-LLM-APP",
+        "SRC-JD-FUDAN-LLM-APP",
+        "SRC-TECH-HF-PEFT"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "cal-pass-valid-paraphrase",
+      "expected": "pass",
+      "answer": "不能一概而论。正式职业活动和个别企业岗位确实包含训练或LoRA/QLoRA，但这些材料只能证明部分场景存在该职责，不能证明所有企业都由应用工程师独立承担。[C1]\n\n黄金包因此把PEFT/LoRA保留为候选的条件性知识技能：通常应先比较Prompt、RAG等基线，只有数据、算力和维护条件成立时再采用；企业规模与算法、平台团队的分工也会改变职责归属。[C1]"
+    },
+    {
+      "id": "cal-fail-universal-generalization",
+      "expected": "fail",
+      "answer": "是的。国家职业材料包含训练场景模型，一家大模型应用工程师职位也要求LoRA/QLoRA，因此所有企业的大模型应用工程师都必须独立负责微调，这是岗位的稳定核心任务。[C1]"
+    },
+    {
+      "id": "cal-pass-boundary-concise",
+      "expected": "pass",
+      "answer": "现有证据不足以支持“所有企业都独立承担”。它只能确认部分岗位会做、另一些岗位把微调视为优先项或特定扩展，深度训练也可能由算法岗位承担；所以应按企业分工和项目条件判断，而不能反向说应用工程师从不做微调。[C1]"
+    },
+    {
+      "id": "cal-fail-unregistered-citation",
+      "expected": "fail",
+      "answer": "现有证据不足以支持所有企业都独立承担；部分岗位会做，具体取决于企业分工。[C9]"
+    }
+  ]
+}

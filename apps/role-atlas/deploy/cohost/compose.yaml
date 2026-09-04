@@ -1,0 +1,137 @@
+services:
+  learnflow-backend:
+    build:
+      context: ${LEARNFLOW_REPO_PATH:-../../../..}
+      dockerfile: deploy/backend.Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////data/learnflow.db
+      CORS_ORIGINS: https://${LEARNFLOW_HOST}
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:?set shared cookie domain}
+      AUTH_RUNTIME_BRIDGE_TOKEN: ${AUTH_RUNTIME_BRIDGE_TOKEN:?set runtime bridge token}
+      AUTH_API_KEY_KEK: ${AUTH_API_KEY_KEK:?set auth key encryption key}
+      ROLE_PACKAGE_LAUNCH_SECRET: ${ROLE_PACKAGE_LAUNCH_SECRET:?set package launch secret}
+      REGISTRATION_INVITE_CODE: ${REGISTRATION_INVITE_CODE:?set registration invite code}
+      DEFAULT_ACCOUNT_CREDIT_LIMIT: ${DEFAULT_ACCOUNT_CREDIT_LIMIT:--1}
+      MEMORY_AUTO_SYNTHESIS_ENABLED: "true"
+      SOURCE_CACHE_DIR: /data/repo-files
+      SOURCE_UPLOADS_DIR: /data/source-uploads
+      RUNTIME_DIR: /data/runtime
+      LLM_API_KEY: ${LEARNFLOW_LLM_API_KEY:-}
+      LLM_BASE_URL: ${LEARNFLOW_LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LEARNFLOW_LLM_MODEL:-gpt-4o-mini}
+      VISION_API_KEY: ${LEARNFLOW_VISION_API_KEY:-}
+      VISION_BASE_URL: ${LEARNFLOW_VISION_BASE_URL:-https://api.moonshot.cn/v1}
+      VISION_MODEL: ${LEARNFLOW_VISION_MODEL:-moonshot-v1-8k-vision-preview}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - learnflow-data:/data
+
+  learnflow-frontend:
+    build:
+      context: ${LEARNFLOW_REPO_PATH:-../../../..}
+      dockerfile: deploy/frontend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - learnflow-backend
+    environment:
+      LEARNFLOW_BACKEND_URL: http://learnflow-backend:8010
+      LEARNFLOW_LLM_BASE_URL: ${LEARNFLOW_LLM_BASE_URL:?set LearnFlow model base URL}
+      LEARNFLOW_LLM_MODEL: ${LEARNFLOW_LLM_MODEL:?set LearnFlow model name}
+      LEARNFLOW_TUTOR_MAX_OUTPUT_TOKENS: ${LEARNFLOW_TUTOR_MAX_OUTPUT_TOKENS:-6000}
+      LEARNFLOW_TUTOR_PLANNING_MAX_OUTPUT_TOKENS: ${LEARNFLOW_TUTOR_PLANNING_MAX_OUTPUT_TOKENS:-12000}
+      LEARNFLOW_TUTOR_PLANNING_RECOVERY_MAX_OUTPUT_TOKENS: ${LEARNFLOW_TUTOR_PLANNING_RECOVERY_MAX_OUTPUT_TOKENS:-6000}
+      LEARNFLOW_TUTOR_PLANNING_CONTEXT_MESSAGES: ${LEARNFLOW_TUTOR_PLANNING_CONTEXT_MESSAGES:-12}
+      LEARNFLOW_TUTOR_PLANNING_CONTEXT_ENVELOPE_CHARS: ${LEARNFLOW_TUTOR_PLANNING_CONTEXT_ENVELOPE_CHARS:-12000}
+      LEARNFLOW_TUTOR_PLANNING_CONTEXT_OBSERVATION_CHARS: ${LEARNFLOW_TUTOR_PLANNING_CONTEXT_OBSERVATION_CHARS:-2400}
+      LEARNFLOW_TUTOR_PLANNING_CONTEXT_OBSERVATION_TOTAL_CHARS: ${LEARNFLOW_TUTOR_PLANNING_CONTEXT_OBSERVATION_TOTAL_CHARS:-8000}
+      LEARNFLOW_TUTOR_PLANNING_TOOL_DESCRIPTION_CHARS: ${LEARNFLOW_TUTOR_PLANNING_TOOL_DESCRIPTION_CHARS:-360}
+      LEARNING_TASK_PREFLIGHT_API_KEY: ${LEARNFLOW_LLM_API_KEY:?set LearnFlow model API key}
+      LEARNING_TASK_PREFLIGHT_BASE_URL: ${LEARNFLOW_LLM_BASE_URL:?set LearnFlow model base URL}
+      LEARNING_TASK_PREFLIGHT_MODEL: ${LEARNFLOW_LLM_MODEL:?set LearnFlow model name}
+      LEARNFLOW_PUBLIC_ORIGIN: https://${LEARNFLOW_HOST}
+      AUTH_RUNTIME_BRIDGE_TOKEN: ${AUTH_RUNTIME_BRIDGE_TOKEN:?set runtime bridge token}
+      LEARNFLOW_GRAPH_HUB_CATALOG: /shared/graph-hub/catalogs/public.json
+      LEARNFLOW_GRAPH_HUB_CATALOG_ROOT: /shared/graph-hub
+      LEARNFLOW_ROLE_AGENT_PACKAGE_ROOTS: /shared/role-packages
+      LEARNFLOW_GRAPH_HUB_BASE_URL: https://${GRAPH_HUB_HOST}
+      LEARNFLOW_ROLE_AGENT_BASE_URL: https://${ROLE_ATLAS_HOST}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      EXA_API_KEY: ${EXA_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+    volumes:
+      - ../../packages:/shared/role-packages:ro
+      - ../../output/graph-hub:/shared/graph-hub:ro
+
+  role-atlas:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        NODE_BUILD_MEMORY_MB: ${ROLE_ATLAS_BUILD_MEMORY_MB:-1280}
+    command: sh -c 'rm -f /app/.vinext/dev/lock.json && exec npm run dev -- --hostname 0.0.0.0 --port 3000'
+    restart: unless-stopped
+    environment:
+      LEARNFLOW_BASE_URL: http://learnflow-backend:8010
+      LEARNFLOW_PUBLIC_URL: https://${LEARNFLOW_HOST}
+      ROLE_ATLAS_PUBLIC_URL: https://${ROLE_ATLAS_HOST}
+      GRAPH_HUB_PUBLIC_URL: https://${GRAPH_HUB_HOST}
+      ROLE_PACKAGE_LAUNCH_SECRET: ${ROLE_PACKAGE_LAUNCH_SECRET:?set package launch secret}
+      MIMO_API_KEY: ${MIMO_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      ROLE_ATLAS_MODEL_PROVIDER: ${ROLE_ATLAS_MODEL_PROVIDER:-deepseek}
+      ROLE_ATLAS_MODEL: ${ROLE_ATLAS_MODEL:-deepseek-v4-flash}
+      ROLE_ATLAS_MODEL_BASE_URL: http://caddy:8081
+      ROLE_ATLAS_SEARCH_PROVIDER: ${ROLE_ATLAS_SEARCH_PROVIDER:-tavily}
+    volumes:
+      - role-atlas-state:/app/.wrangler
+      - ../../output/graph-hub:/app/output/graph-hub
+
+  role-atlas-launch-proxy:
+    image: node:22-bookworm-slim
+    restart: unless-stopped
+    command: node /proxy/launch-proxy.mjs
+    environment:
+      PORT: "3010"
+      ROLE_ATLAS_INTERNAL_URL: http://role-atlas:3000
+      LEARNFLOW_INTERNAL_URL: http://learnflow-backend:8010
+      LEARNFLOW_PUBLIC_URL: https://${LEARNFLOW_HOST}
+      ROLE_ATLAS_PUBLIC_URL: https://${ROLE_ATLAS_HOST}
+      GRAPH_HUB_PUBLIC_URL: https://${GRAPH_HUB_HOST}
+      ROLE_PACKAGE_LAUNCH_SECRET: ${ROLE_PACKAGE_LAUNCH_SECRET:?set package launch secret}
+    volumes:
+      - ./launch-proxy.mjs:/proxy/launch-proxy.mjs:ro
+    depends_on:
+      - role-atlas
+      - learnflow-backend
+
+  caddy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    depends_on:
+      - learnflow-frontend
+      - role-atlas
+      - role-atlas-launch-proxy
+    environment:
+      LEARNFLOW_HOST: ${LEARNFLOW_HOST}
+      ROLE_ATLAS_HOST: ${ROLE_ATLAS_HOST}
+      GRAPH_HUB_HOST: ${GRAPH_HUB_HOST}
+      ROOT_HOST: ${ROOT_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  learnflow-data:
+  role-atlas-state:
+  caddy-data:
+  caddy-config:

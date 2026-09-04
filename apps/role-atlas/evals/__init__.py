@@ -1,0 +1,1 @@
+"""Role Atlas evaluation assets."""

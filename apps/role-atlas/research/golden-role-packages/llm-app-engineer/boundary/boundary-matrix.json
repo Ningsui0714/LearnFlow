@@ -1,0 +1,136 @@
+{
+  "schemaVersion": "golden-role-boundary/1.0",
+  "snapshotAsOf": "2026-08-24",
+  "roleId": "role:llm-app-engineer",
+  "canonicalTitle": "大模型应用工程师",
+  "decision": {
+    "status": "confirmed",
+    "optionId": "boundary:B",
+    "summary": "保留企业岗位实例名与现有岗位稳定ID；以人工智能工程技术人员为工程主锚，以生成式人工智能系统应用员为专项规范映射。",
+    "confirmedBy": "user",
+    "confirmedAt": "2026-08-24",
+    "reopenTriggers": [
+      "跨行业样本显示模型后训练而非应用交付成为多数岗位的稳定中心",
+      "正式职业标准发布直接定义大模型应用工程师且与当前边界不兼容",
+      "冻结评测发现一个岗位身份无法解释应用交付与平台底座两组互斥任务"
+    ]
+  },
+  "optionsConsidered": [
+    {
+      "id": "boundary:A",
+      "label": "改名为生成式人工智能系统应用员",
+      "disposition": "not_selected",
+      "benefit": "与2024年新职业名称直接一致。",
+      "impact": "会把企业工程岗位与较宽的应用、训练、优化、支持职业活动混为一体，并造成现有岗位ID和市场别名迁移。",
+      "evidenceClaimIds": ["CLM-B05", "CLM-B08"]
+    },
+    {
+      "id": "boundary:B",
+      "label": "保留大模型应用工程师，双层规范锚定",
+      "disposition": "selected",
+      "benefit": "既保持企业岗位可理解性和ID连续性，又不把市场名称冒充国家职业名称。",
+      "impact": "产品展示与Agent回答必须明确区分企业岗位实例、工程主锚和专项规范映射。",
+      "evidenceClaimIds": ["CLM-B01", "CLM-B04", "CLM-B05", "CLM-B06", "CLM-B08", "CLM-B10"]
+    },
+    {
+      "id": "boundary:C",
+      "label": "拆分应用交付岗与Agent/平台岗",
+      "disposition": "deferred",
+      "benefit": "能表达大企业中应用团队与通用平台团队的分工。",
+      "impact": "需要建立两个岗位身份、两套任务骨架和新的稳定ID；当前样本更支持把Agent作为应用方向，把通用平台归入AI Infra相邻岗位。",
+      "evidenceClaimIds": ["CLM-B12", "CLM-B14", "CLM-D03"]
+    }
+  ],
+  "normativeAnchors": [
+    {
+      "id": "occupation:2-02-38-01",
+      "title": "人工智能工程技术人员",
+      "relationship": "primary_engineering_anchor",
+      "reason": "正式范围包含人工智能系统设计、集成、部署、运维与应用；国家标准设有人工智能应用产品集成实现方向。",
+      "evidenceClaimIds": ["CLM-B01", "CLM-B03", "CLM-B04"]
+    },
+    {
+      "id": "occupation:4-04-05-13",
+      "title": "生成式人工智能系统应用员",
+      "relationship": "specialized_normative_mapping",
+      "reason": "直接覆盖生成式人工智能系统的设计、调用、优化、部署、更新和支持，但职业范围宽于企业工程岗位。",
+      "evidenceClaimIds": ["CLM-B05", "CLM-B06"]
+    },
+    {
+      "id": "major:510209",
+      "title": "人工智能技术应用",
+      "relationship": "education_mapping",
+      "reason": "专业教学标准面向人工智能工程技术人员，并包含人工智能应用开发、系统集成与运维。",
+      "evidenceClaimIds": ["CLM-B07"]
+    }
+  ],
+  "stableCore": [
+    {
+      "dimension": "value",
+      "statement": "把业务需求与可用模型转化为可评价、可集成、可运行、可迭代的应用系统。",
+      "evidenceClaimIds": ["CLM-B10"]
+    },
+    {
+      "dimension": "work_objects",
+      "statement": "业务场景、知识与检索链路、Prompt与上下文、Agent/工作流、工具接口、评测资产和应用服务。",
+      "evidenceClaimIds": ["CLM-T01", "CLM-T05", "CLM-T07", "CLM-T09", "CLM-T11", "CLM-T13"]
+    },
+    {
+      "dimension": "completion",
+      "statement": "以可验证需求、可运行系统、评测结论、发布记录及线上改进闭环为完成证据。",
+      "evidenceClaimIds": ["CLM-T02", "CLM-T10", "CLM-T11", "CLM-T13", "CLM-T15"]
+    }
+  ],
+  "adjacentRoles": [
+    {
+      "role": "大模型算法工程师",
+      "boundaryTest": "若主要价值是模型结构、预训练/后训练算法或深度模型优化，归入算法岗位；有限领域适配不能单独改变岗位身份。",
+      "overlap": ["模型选择", "效果实验", "条件性PEFT"],
+      "outsideStableCore": ["原创模型算法", "大规模预训练", "以模型指标为主交付"],
+      "evidenceClaimIds": ["CLM-B11", "CLM-D01"]
+    },
+    {
+      "role": "AI Agent工程师",
+      "boundaryTest": "业务Agent的实现与交付属于本岗位方向；通用Agent平台内核、跨团队框架底座更接近AI Infra。",
+      "overlap": ["工作流", "工具调用", "状态与人工介入"],
+      "outsideStableCore": ["组织级通用Agent平台", "框架内核"],
+      "evidenceClaimIds": ["CLM-B14", "CLM-D03"]
+    },
+    {
+      "role": "后端工程师",
+      "boundaryTest": "只交付通用接口和业务服务且不负责模型行为、知识链路或质量闭环，归入后端岗位。",
+      "overlap": ["API", "数据库", "异步服务", "测试与发布"],
+      "outsideStableCore": ["与模型无关的通用业务服务"],
+      "evidenceClaimIds": ["CLM-B13"]
+    },
+    {
+      "role": "MLOps/LLMOps或AI Infra工程师",
+      "boundaryTest": "组织级算力、训练推理平台、模型网关和通用运维底座是平台岗位；应用侧部署、观测和回滚仍属于本岗位。",
+      "overlap": ["部署", "监控", "性能与成本"],
+      "outsideStableCore": ["组织级通用平台", "集群资源调度", "推理框架底座"],
+      "evidenceClaimIds": ["CLM-B12", "CLM-D02"]
+    }
+  ],
+  "scopeVariants": [
+    {
+      "condition": "小型团队或初创企业",
+      "likelyCombination": ["前后端集成", "轻量运维", "模型适配"],
+      "classificationRule": "仅作为组合职责，不提升为全岗位稳定内核。"
+    },
+    {
+      "condition": "大型企业平台团队",
+      "likelyCombination": ["模型网关", "Agent平台", "推理平台"],
+      "classificationRule": "若主要服务多个应用团队，应标为AI Infra/LLMOps相邻岗位。"
+    },
+    {
+      "condition": "高级或专家层级",
+      "likelyCombination": ["架构决策", "跨团队治理", "复杂性能优化", "技术路线评估"],
+      "classificationRule": "作为资历层级扩展，不改写入门岗位任务骨架。"
+    },
+    {
+      "condition": "强监管或高影响场景",
+      "likelyCombination": ["更严格的数据治理", "人工审批", "审计与风险评估"],
+      "classificationRule": "扩大质量和治理要求，不另建岗位。"
+    }
+  ]
+}
