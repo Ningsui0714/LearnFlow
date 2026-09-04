@@ -20,15 +20,18 @@ const {
 const { graphHubSubject, recommendGraphHubEntries } = await import(
   versionedPluginModuleUrl('./graph-hub.ts', import.meta.url)
 ) as typeof import('./graph-hub.ts')
+const { discoverPublicRolePackages, withHubDiscovery } = await import(
+  versionedPluginModuleUrl('./hub-discovery-client.ts', import.meta.url)
+) as typeof import('./hub-discovery-client.ts')
 
 function scopedGraphHubCatalog(learnerId?: number) {
   const subject = graphHubSubject(learnerId)
   const rootValue = String(process.env.LEARNFLOW_GRAPH_HUB_CATALOG_ROOT || '').trim()
   if (rootValue) {
     const root = resolve(rootValue)
-    const audienceHash = createHash('sha256').update(subject).digest('hex')
+    const audienceHash = subject ? createHash('sha256').update(subject).digest('hex') : ''
     const scoped = join(root, 'subjects', audienceHash, 'catalog.json')
-    if (existsSync(scoped)) return { catalogFile: scoped, subject }
+    if (subject && existsSync(scoped)) return { catalogFile: scoped, subject }
     const publicCatalog = join(root, 'catalogs', 'public.json')
     if (existsSync(publicCatalog)) return { catalogFile: publicCatalog, subject }
   }
@@ -211,7 +214,7 @@ const plugin = defineLearnFlowPlugin({
         outputObjectTypes: ['role_node_risk', 'role_object', 'role_relation'], availableInModes: ['free', 'simple_explain', 'guided_learning', 'learning_plan'],
       },
       {
-        id: 'list_role_packages', title: '列出可引用岗位包', description: '按用户请求的岗位名称确定性筛选当前主体可见且协议有效的岗位包；若没有匹配，返回带岗位参数的 Role Atlas 自主研究入口。省略 query 才列出全部可见版本。',
+        id: 'list_role_packages', title: '列出可引用岗位包', description: '检索当前已加载岗位包和 Graph Hub 公开发布目录，区分已加载、可发现但未加载、无结果与服务不可用；返回完整版本身份及仓库入口，不自动安装。省略 query 才列出全部可见版本。',
         whenToUse: '用户询问一个岗位且尚未引用对应岗位包时，必须把用户原始岗位名称或问题作为 query 传入；查询全部目录或版本比较前消歧时可以省略 query。',
         whenNotToUse: '不要用于解释具体岗位内容，不要把模拟来源描述成正式审核，也不要把未匹配的其他岗位包当作当前岗位候选。',
         toolClass: 'perception', risk: 'read_only', renderer: ROLE_RENDERERS.catalog,
@@ -251,6 +254,7 @@ const plugin = defineLearnFlowPlugin({
         '当前问题涉及职业方向、岗位职责、典型任务、能力结构、知识技能、工作过程或岗位证据时，在回答或追问之前必须先调用本插件工具；不得只读取核心学习路径或依靠通用知识作答。',
         '先把插件返回的 snapshot 描述视为本轮唯一岗位事实版本；回答中不得混用其他快照。对话中还没有岗位包引用时，先把用户询问的岗位名称或原始问题作为 query 调用 list_role_packages；只有查询全部目录时才能省略 query。不得替用户自动选择。',
         '若 list_role_packages 返回 matchStatus=not_found，则当前岗位没有可用岗位包：不得调用 explore_role、search_role_knowledge 或其他岗位内容工具，不得用目录中的无关岗位包作“有限探索”。应明确说明未匹配，并引导用户点击工具结果中的 Role Atlas 入口自主研究；LearnFlow 不执行岗位包冷启动或迭代。',
+        'availablePackages 是 Hub 存在但尚未加载的发布版本，必须展示返回的仓库入口供用户选择“在 LearnFlow 中使用”，不能说该岗位包不存在，也不能直接调用已加载包工具。matchStatus=discovery_unavailable 表示检索暂不可用或未配置，不能宣称仓库无此岗位。只有 packages 中的已加载版本可以直接 reference_role_package。',
         '用户明确选择目录中的一个版本后，必须把目录返回的 packageId、packageVersion、snapshotId、rootHash 原样传给 reference_role_package。引用成功后的所有岗位读取都复用 requiredSelector；不得只按标题重新匹配或静默换版本。',
         '已经存在明确岗位包引用时，首次介绍岗位或询问“是什么、做什么、需要什么能力”调用 explore_role，并带上引用中的精确 selector；它一次返回足够的岗位全景，取得结果后通常直接回答，不要再机械调用搜索、对象读取和关系图。',
         '只有局部问题没有稳定对象 ID 时才调用 search_role_knowledge；已有 ID 时精确读取；需要岗位中心、任务、能力单元和知识技能逐环展开时用 read_capability_radar；解释局部关系时查询图；解释工作如何发生时追踪事理过程。',
@@ -278,15 +282,30 @@ const plugin = defineLearnFlowPlugin({
     ],
   },
   handlers: {
-    search_graph_hub: (input, context) => {
-      const scoped = scopedGraphHubCatalog(context.scope.learnerId)
-      return recommendGraphHubEntries({
-        catalogFile: scoped.catalogFile,
-        actorSubjectId: scoped.subject,
-        query: String(input.query),
-        graphTypes: Array.isArray(input.graphTypes) ? input.graphTypes.map(String) : undefined,
-        topK: Number(input.topK || 5),
-      })
+    search_graph_hub: async (input, context) => {
+      const query = String(input.query)
+      const types = Array.isArray(input.graphTypes) ? input.graphTypes.map(String) : []
+      const rolesRequested = !types.length || types.some(type => ['role_semantic', 'role_process'].includes(type))
+      const hub = rolesRequested ? await discoverPublicRolePackages({ baseUrl: process.env.LEARNFLOW_GRAPH_HUB_BASE_URL,
+        query, limit: Number(input.topK || 5), signal: context.signal }) : undefined
+      // Retain scoped personal/non-role catalog access; its ownership and hash validation are never bypassed.
+      let local
+      try {
+        const scoped = scopedGraphHubCatalog(context.scope.learnerId)
+        local = await recommendGraphHubEntries({ catalogFile: scoped.catalogFile, actorSubjectId: scoped.subject,
+          query, graphTypes: types, topK: Number(input.topK || 5) })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ''
+        if (!hub || !/graph_hub_not_configured|ENOENT/u.test(message)) throw error
+      }
+      if (hub?.status === 'not_configured' && local) return local
+      if (!hub) return local!
+      const roleResult = withHubDiscovery(rolePackageRuntime.listPackages(query), hub, query)
+      return { ...roleResult, objects: local?.objects || [],
+        summary: `${roleResult.summary}${local ? ` ${local.summary}` : ''}`,
+        payload: { ...(roleResult.payload as Record<string, PluginJson>),
+          scopedGraphRecommendations: local?.payload || null },
+      }
     },
     explore_role: input => rolePackageRuntime.explore(packageSelector(input), String(input.query)),
     read_capability_radar: input => rolePackageRuntime.capabilityRadar(packageSelector(input), String(input.query || '')),
@@ -297,7 +316,11 @@ const plugin = defineLearnFlowPlugin({
     inspect_role_evidence: input => rolePackageRuntime.inspectEvidence(packageSelector(input), input.objectIds as string[]),
     audit_role_package: input => rolePackageRuntime.audit(packageSelector(input)),
     research_role_node_risks: input => rolePackageRuntime.researchNodeRisks(packageSelector(input), String(input.objectId), String(input.question || ''), Number(input.maxNodes || 16)),
-    list_role_packages: input => rolePackageRuntime.listPackages(typeof input.query === 'string' ? input.query : ''),
+    list_role_packages: async (input, context) => {
+      const query = typeof input.query === 'string' ? input.query : ''
+      const hub = await discoverPublicRolePackages({ baseUrl: process.env.LEARNFLOW_GRAPH_HUB_BASE_URL, query, signal: context.signal })
+      return withHubDiscovery(rolePackageRuntime.listPackages(query), hub, query)
+    },
     reference_role_package: input => rolePackageRuntime.referencePackage({
       packageId: String(input.packageId), packageVersion: String(input.packageVersion), snapshotId: String(input.snapshotId), rootHash: String(input.rootHash),
     }),

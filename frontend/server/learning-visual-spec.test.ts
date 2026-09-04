@@ -143,6 +143,29 @@ test('a topicless visual request fails before spending a planner call', async ()
   assert.equal(calls, 0)
 })
 
+test('switching from failed animation to an image preserves an arbitrary prior user topic', () => {
+  const resolved = resolveVisualRequest('改成图片吧', [
+    { role: 'user', content: '用动画演示番茄种子萌发' },
+    { role: 'assistant', content: '生成失败，模型请求超时。' },
+    { role: 'user', content: '改成图片吧' },
+  ])
+  assert.equal(resolved.contextEnriched, true)
+  assert.match(resolved.contextSummary || '', /番茄种子萌发/)
+  assert.doesNotMatch(resolved.effectiveRequest, /模型请求超时/)
+})
+
+test('a new explicit topic supersedes older visual artifacts without an algorithm allow-list', () => {
+  const resolved = resolveVisualRequest('做成动画', [
+    { role: 'assistant', content: '', toolRuns: [{ id: 'old', kind: 'image', status: 'completed', title: '旧图', detail: '', durationMs: 1,
+      artifact: { kind: 'image', title: 'TCP握手', subtitle: '', steps: [] } }] },
+    { role: 'user', content: '现在解释蜂群分工' },
+    { role: 'user', content: '做成动画' },
+  ])
+  assert.equal(resolved.topicAnchor?.source, 'prior_user')
+  assert.match(resolved.contextSummary || '', /蜂群分工/)
+  assert.doesNotMatch(resolved.effectiveRequest, /TCP/)
+})
+
 test('concept-only computable requests use disclosed deterministic teaching examples', async () => {
   const cases = [
     ['diagram', '画一下两个矩阵相乘'],

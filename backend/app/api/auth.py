@@ -1,6 +1,7 @@
 import ipaddress
 import hmac
 import time
+from uuid import uuid4
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -223,7 +224,7 @@ async def register(
         await db.flush()
         learner = Learner(
             user_id=account.id,
-            key=f"user-{account.id}",
+            key=f"user-{account.id}-{uuid4().hex}",
             display_name=data.display_name.strip(),
         )
         db.add(learner)
@@ -256,7 +257,7 @@ async def register(
             },
             confidence=1.0,
             provenance={"self_report": True},
-            client_event_id="registration-profile",
+            client_event_id=f"registration-profile:{account.id}",
         )
         if profile.career_goal and profile.career_goal_status == "confirmed":
             await award_career_goal(

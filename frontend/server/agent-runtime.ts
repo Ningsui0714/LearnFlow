@@ -32,8 +32,9 @@ import {
 import type { SearchProviderConfiguration } from './computer-knowledge-search.ts'
 import type { LearningVideoCandidate } from './learning-video-harness.ts'
 import type { AgentProjectContext } from '../src/project.ts'
-import { resolveExplicitVisualIntent } from './visual-tool-execution.ts'
+import { resolveExplicitVisualIntent, resolveVisualRequest } from './visual-tool-execution.ts'
 import { AI_LATENCY_BUDGETS } from '../src/latency-budgets.ts'
+import { runGenerationWithinDeadline } from './generation-deadline.ts'
 import {
   pluginObjectReferenceUri,
   type LearnFlowPluginObject,
@@ -68,11 +69,64 @@ export type TutorAgentBudget = {
   maxModelRounds: number
   maxToolCalls: number
   maxWallTimeMs: number
+  maxOutputTokens: number
+  recoveryMaxOutputTokens: number
+  contextMessageLimit: number
+  contextEnvelopeChars: number
+  contextObservationChars: number
+  contextObservationTotalChars: number
+  toolDescriptionChars: number
   finalizationAttempts: number
   finalizationGraceMs: number
 }
 
-export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'animation' | 'none' = 'none'): TutorAgentBudget {
+export type TutorAgentGenerationConfig = {
+  maxOutputTokens?: number
+  planningMaxOutputTokens?: number
+  planningRecoveryMaxOutputTokens?: number
+  planningContextMessages?: number
+  planningContextEnvelopeChars?: number
+  planningContextObservationChars?: number
+  planningContextObservationTotalChars?: number
+  planningToolDescriptionChars?: number
+}
+
+export const DEFAULT_TUTOR_GENERATION_CONFIG = Object.freeze({
+  maxOutputTokens: 6_000,
+  planningMaxOutputTokens: 12_000,
+  planningRecoveryMaxOutputTokens: 6_000,
+  planningContextMessages: 12,
+  planningContextEnvelopeChars: 12_000,
+  planningContextObservationChars: 2_400,
+  planningContextObservationTotalChars: 8_000,
+  planningToolDescriptionChars: 360,
+})
+
+function boundedGenerationValue(value: number | undefined, fallback: number, minimum: number, maximum: number) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(maximum, Math.max(minimum, Math.round(value)))
+    : fallback
+}
+
+function normalizedTutorGenerationConfig(config: TutorAgentGenerationConfig = {}) {
+  return {
+    maxOutputTokens: boundedGenerationValue(config.maxOutputTokens, DEFAULT_TUTOR_GENERATION_CONFIG.maxOutputTokens, 400, 32_768),
+    planningMaxOutputTokens: boundedGenerationValue(config.planningMaxOutputTokens, DEFAULT_TUTOR_GENERATION_CONFIG.planningMaxOutputTokens, 400, 32_768),
+    planningRecoveryMaxOutputTokens: boundedGenerationValue(config.planningRecoveryMaxOutputTokens, DEFAULT_TUTOR_GENERATION_CONFIG.planningRecoveryMaxOutputTokens, 400, 32_768),
+    planningContextMessages: boundedGenerationValue(config.planningContextMessages, DEFAULT_TUTOR_GENERATION_CONFIG.planningContextMessages, 4, 18),
+    planningContextEnvelopeChars: boundedGenerationValue(config.planningContextEnvelopeChars, DEFAULT_TUTOR_GENERATION_CONFIG.planningContextEnvelopeChars, 2_000, 24_000),
+    planningContextObservationChars: boundedGenerationValue(config.planningContextObservationChars, DEFAULT_TUTOR_GENERATION_CONFIG.planningContextObservationChars, 400, 8_000),
+    planningContextObservationTotalChars: boundedGenerationValue(config.planningContextObservationTotalChars, DEFAULT_TUTOR_GENERATION_CONFIG.planningContextObservationTotalChars, 1_000, 24_000),
+    planningToolDescriptionChars: boundedGenerationValue(config.planningToolDescriptionChars, DEFAULT_TUTOR_GENERATION_CONFIG.planningToolDescriptionChars, 120, 2_000),
+  }
+}
+
+export function tutorAgentBudget(
+  mode: TutorMode,
+  visualIntent: 'diagram' | 'animation' | 'none' = 'none',
+  generationConfig: TutorAgentGenerationConfig = {},
+): TutorAgentBudget {
+  const generation = normalizedTutorGenerationConfig(generationConfig)
   const visualWallTimeMs = visualIntent === 'animation'
     ? AI_LATENCY_BUDGETS.agentTurn.animation
     : visualIntent === 'diagram' ? AI_LATENCY_BUDGETS.agentTurn.diagram : 0
@@ -81,6 +135,13 @@ export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'ani
       maxModelRounds: 9,
       maxToolCalls: 14,
       maxWallTimeMs: Math.max(AI_LATENCY_BUDGETS.agentTurn.guided, visualWallTimeMs),
+      maxOutputTokens: generation.maxOutputTokens,
+      recoveryMaxOutputTokens: generation.maxOutputTokens,
+      contextMessageLimit: 18,
+      contextEnvelopeChars: 12_000,
+      contextObservationChars: 5_000,
+      contextObservationTotalChars: 24_000,
+      toolDescriptionChars: 2_000,
       finalizationAttempts: 2,
       finalizationGraceMs: 45_000,
     }
@@ -90,6 +151,13 @@ export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'ani
       maxModelRounds: 7,
       maxToolCalls: 12,
       maxWallTimeMs: Math.max(AI_LATENCY_BUDGETS.agentTurn.planning, visualWallTimeMs),
+      maxOutputTokens: generation.planningMaxOutputTokens,
+      recoveryMaxOutputTokens: generation.planningRecoveryMaxOutputTokens,
+      contextMessageLimit: generation.planningContextMessages,
+      contextEnvelopeChars: generation.planningContextEnvelopeChars,
+      contextObservationChars: generation.planningContextObservationChars,
+      contextObservationTotalChars: generation.planningContextObservationTotalChars,
+      toolDescriptionChars: generation.planningToolDescriptionChars,
       finalizationAttempts: 2,
       finalizationGraceMs: 40_000,
     }
@@ -98,6 +166,13 @@ export function tutorAgentBudget(mode: TutorMode, visualIntent: 'diagram' | 'ani
     maxModelRounds: 5,
     maxToolCalls: 8,
     maxWallTimeMs: Math.max(AI_LATENCY_BUDGETS.agentTurn.standard, visualWallTimeMs),
+    maxOutputTokens: generation.maxOutputTokens,
+    recoveryMaxOutputTokens: generation.maxOutputTokens,
+    contextMessageLimit: 18,
+    contextEnvelopeChars: 12_000,
+    contextObservationChars: 5_000,
+    contextObservationTotalChars: 24_000,
+    toolDescriptionChars: 2_000,
     finalizationAttempts: 1,
     finalizationGraceMs: 25_000,
   }
@@ -154,6 +229,7 @@ export type TutorAgentRuntimeInput = {
   ) => Promise<TutorAgentToolExecution>
   pluginRegistry?: LearnFlowPluginRegistry
   activePluginIds?: string[]
+  generationConfig?: TutorAgentGenerationConfig
   observe?: (event: AgentTurnStreamEvent) => void
 }
 
@@ -609,14 +685,21 @@ function compactPriorRuns(messages: TutorContextMessage[]) {
   })) as TutorToolRun[]
 }
 
-function envelopePrompt(envelope: AgentContextEnvelope) {
+function envelopePrompt(envelope: AgentContextEnvelope, limits: {
+  envelopeChars?: number
+  observationChars?: number
+  observationTotalChars?: number
+} = {}) {
+  const envelopeChars = limits.envelopeChars || 12_000
+  const observationChars = limits.observationChars || 5_000
+  const observationTotalChars = limits.observationTotalChars || 24_000
   const observationDetails = envelope.observations
     .map((observation, index) => [
       `### 观察 ${index + 1} · ${observation.source}`,
-      safeJson(observation.data, 5_000),
+      safeJson(observation.data, observationChars),
     ].join('\n'))
     .join('\n')
-    .slice(0, 24_000)
+    .slice(0, observationTotalChars)
   const envelopeSummary = {
     ...envelope,
     observations: envelope.observations.map(observation => ({ ...observation, data: undefined })),
@@ -624,7 +707,7 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
   return [
     '## 本轮 Agent ContextEnvelope',
     '这是 Harness 提供的有界运行状态，不是新的长期记忆权威。',
-    safeJson(envelopeSummary, 12_000),
+    safeJson(envelopeSummary, envelopeChars),
     observationDetails ? '\n## 宿主预取的结构化观察\n这些观察由 Harness 直接提供，不是模型曾经发出的工具调用。\n' : '',
     observationDetails,
     '',
@@ -646,6 +729,13 @@ function envelopePrompt(envelope: AgentContextEnvelope) {
     '学习路径必须先调用 lookup_learning_path_node 做精确读取；只有它未命中、存在错别字/近义表达或候选歧义时才调用 search_learning_path_graph。模糊结果为 ambiguous 时应呈现候选让学习者选择，不能直接形成路线。只有模糊检索明确返回 graph_gap 且联网来源已取得后，才可调用 propose_personal_path_node；提案绝不等于已写入。',
     '工具失败时先依据错误类型决定重试、换工具或明确告知缺口。拿到足够证据后直接回答。',
   ].join('\n')
+}
+
+function compactToolDefinitions(tools: AgentToolDefinition[], descriptionLimit: number) {
+  return tools.map(tool => tool.description.length <= descriptionLimit ? tool : {
+    ...tool,
+    description: `${tool.description.slice(0, Math.max(1, descriptionLimit - 1)).trimEnd()}…`,
+  })
 }
 
 function hasExplicitExternalResourceRequest(input: TutorAgentRuntimeInput) {
@@ -1005,13 +1095,13 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   const startedAt = Date.now()
   const latestMessage = [...input.messages].reverse().find(message => message.role === 'user')?.content || ''
   const visualIntent = resolveExplicitVisualIntent(input.toolChoice, latestMessage)
-  const budget = tutorAgentBudget(input.mode, visualIntent)
+  const budget = tutorAgentBudget(input.mode, visualIntent, input.generationConfig)
   const deadline = startedAt + budget.maxWallTimeMs
   const trajectory: AgentTrajectoryEvent[] = []
   const decisionSummaries: AgentDecisionSummary[] = []
   const runs: TutorToolRun[] = []
   const requiresReasoningReplay = /deepseek/i.test(`${input.baseUrl} ${input.model}`)
-  const runtimeMessages: RuntimeMessage[] = input.messages.slice(-18)
+  const runtimeMessages: RuntimeMessage[] = input.messages.slice(-budget.contextMessageLimit)
     // Conversations created before reasoning persistence cannot legally replay
     // their assistant turns to DeepSeek thinking models. The user's messages,
     // tool snapshots and formal state remain available; only the unreplayable
@@ -1029,6 +1119,7 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   let sequence = 0
   let stopReason: AgentTurnResponse['trace']['stopReason'] = 'error'
   let fallbackReply = ''
+  let freshFinalizationRequired = false
   let committedText = ''
   let visibleDraft = ''
   let visualTeaching: VisualTeachingBundle | undefined
@@ -1256,8 +1347,19 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     })
     record({ phase: 'act', detail: `调用 ${call.name}`, toolCallId: call.id, toolName: call.name, status: 'started' })
     if (recordRuntimeMessages && recordAssistantMessage) runtimeMessages.push({ role: 'assistant', content: '', toolCalls: [call] })
-    const result = input.executeTool
-      ? await input.executeTool(call.name, call.arguments, toolOptions, {
+    const visualCall = ['generate_learning_diagram', 'generate_learning_animation'].includes(call.name)
+    const toolStartedAt = Date.now()
+    let acceptingVisualStages = true
+    const executionOptions = visualCall ? {
+      ...toolOptions,
+      generate: ((instructions, prompt, timeoutMs, maxTokens, options) => runGenerationWithinDeadline(deadline, remaining =>
+        input.generate(instructions, prompt, Math.min(timeoutMs || remaining, remaining), maxTokens, options))) as TutorAgentToolRuntimeOptions['generate'],
+      onVisualStage: (stage: Parameters<NonNullable<TutorAgentToolRuntimeOptions['onVisualStage']>>[0]) => {
+        if (acceptingVisualStages) toolOptions.onVisualStage?.(stage)
+      },
+    } : toolOptions
+    const invokeTool = () => input.executeTool
+      ? input.executeTool(call.name, call.arguments, executionOptions, {
         callId: call.id,
         sequence: toolCalls,
         sourceUrls: searchSources.map(source => source.url),
@@ -1265,14 +1367,31 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         videoCandidates: currentVideoCandidates,
       })
       : input.pluginRegistry?.resolveTool(call.name, pluginActivation(input))
-        ? await executeRegisteredPluginTool(call, toolCalls)
-        : await executeTutorAgentTool(call.name, call.arguments, toolOptions, {
+        ? executeRegisteredPluginTool(call, toolCalls)
+        : executeTutorAgentTool(call.name, call.arguments, executionOptions, {
           callId: call.id,
           sequence: toolCalls,
           sourceUrls: searchSources.map(source => source.url),
           searchSources,
           videoCandidates: currentVideoCandidates,
         })
+    let result: TutorAgentToolExecution
+    try {
+      result = visualCall ? await runGenerationWithinDeadline(deadline, invokeTool) : await invokeTool()
+    } catch (error) {
+      if (!visualCall) throw error
+      const detail = error instanceof Error ? error.message.slice(0, 500) : 'visual_tool_failed'
+      result = {
+        run: { id: call.id, toolCallId: call.id, toolName: call.name,
+          kind: call.name === 'generate_learning_animation' ? 'animation' : 'image',
+          status: 'failed', title: toolDefinitions.find(tool => tool.name === call.name)?.title || call.name,
+          detail, observationSummary: detail, durationMs: Date.now() - toolStartedAt,
+          startedAt: toolStartedAt, sequence: toolCalls },
+        observation: { error: detail, terminalState: 'failed' },
+      }
+    } finally {
+      acceptingVisualStages = false
+    }
     if (result.videoCandidates) currentVideoCandidates = result.videoCandidates
     runs.push(result.run)
     input.observe?.({ type: 'tool_completed', run: result.run })
@@ -1663,6 +1782,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     || ['generate_learning_diagram', 'generate_learning_animation'].includes(explicit?.name || '')
   )
   const tools = availableTools(input).filter(tool => !visualAlreadyAttempted || !['generate_learning_diagram', 'generate_learning_animation'].includes(tool.name))
+  const promptTools = input.mode === 'learning_plan'
+    ? compactToolDefinitions(tools, budget.toolDescriptionChars)
+    : tools
   const modelVisibleToolNames = new Set(tools.map(tool => tool.name))
   const coreInstructions = buildTutorInstructions({
     mode: input.mode,
@@ -1670,7 +1792,12 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     activeArtifactContext: input.activeArtifactContext,
     learningTaskContext: input.learningTaskContext,
     learningPlanContext: input.learningPlanContext,
-    toolContext: envelopePrompt(envelope),
+    toolContext: envelopePrompt(envelope, {
+      envelopeChars: budget.contextEnvelopeChars,
+      observationChars: budget.contextObservationChars,
+      observationTotalChars: budget.contextObservationTotalChars,
+    }),
+    toolContextLimit: input.mode === 'learning_plan' ? budget.contextEnvelopeChars : 16_000,
   })
   const pluginInstructions = input.pluginRegistry?.skillInstructions(pluginActivation(input)) || ''
   const instructions = pluginInstructions ? `${coreInstructions}\n\n${pluginInstructions}` : coreInstructions
@@ -1687,9 +1814,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
     let lastError: unknown
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
+        const remainingMs = requestDeadline - Date.now()
+        if (remainingMs <= 0) throw new Error('agent_turn_deadline_exceeded')
         const payload = await input.invokeProvider({
           ...request,
-          timeoutMs: Math.max(1_000, Math.min(AI_LATENCY_BUDGETS.providerRequest, requestDeadline - Date.now())),
+          timeoutMs: Math.min(AI_LATENCY_BUDGETS.providerRequest, remainingMs),
           onTextDelta: streamText ? emitTextDelta : undefined,
         })
         return payload
@@ -1707,6 +1836,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
   try {
     if (explicit && ['generate_learning_diagram', 'generate_learning_animation'].includes(explicit.name)) {
       const modality = explicit.name === 'generate_learning_animation' ? 'animation' as const : 'diagram' as const
+      const visualRequest = resolveVisualRequest(latestMessage, input.messages)
+      const visualQuery = visualRequest.effectiveRequest
+      explicit.arguments = { ...explicit.arguments, query: visualQuery }
+      if (visualRequest.contextEnriched) record({ phase: 'observe', detail: `视觉主题已从${visualRequest.topicAnchor?.source === 'prior_user' ? '前文用户请求' : '同主题已完成产物'}恢复`, status: 'completed' })
       record({ phase: 'decide', detail: '视觉教学 Skill 正在形成可独立成立的讲解与结构化 VisualBrief', status: 'started' })
       let explanation = ''
       try {
@@ -1715,9 +1848,10 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
           baseUrl: input.baseUrl,
           model: input.model,
           instructions,
-          messages: [...runtimeMessages, { role: 'user', content: visualTeachingExplanationPrompt(modality, latestMessage) }],
+          messages: [...runtimeMessages, { role: 'user', content: visualTeachingExplanationPrompt(modality, visualQuery) }],
           tools: [],
           includeTools: false,
+          maxOutputTokens: budget.maxOutputTokens,
         }), deadline, false)
         explanation = textFromTutorProviderResponse(explanationPayload).trim()
         let explanationReasoningContent = reasoningContentFromProviderResponse(explanationPayload)
@@ -1734,10 +1868,11 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             messages: [
               ...runtimeMessages,
               { role: 'assistant' as const, content: explanation, ...(explanationReasoningContent ? { reasoningContent: explanationReasoningContent } : {}) },
-              { role: 'user' as const, content: visualTeachingExplanationPrompt(modality, latestMessage, true) },
+              { role: 'user' as const, content: visualTeachingExplanationPrompt(modality, visualQuery, true) },
             ],
             tools: [],
             includeTools: false,
+            maxOutputTokens: budget.maxOutputTokens,
           }), deadline, false)
           explanation = validateVisualTeachingExplanation(textFromTutorProviderResponse(explanationPayload).trim())
           explanationReasoningContent = reasoningContentFromProviderResponse(explanationPayload)
@@ -1754,15 +1889,16 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
             baseUrl: input.baseUrl,
             model: input.model,
             instructions,
-            messages: [...runtimeMessages, { role: 'user', content: visualTeachingBriefPrompt(modality, latestMessage, explanation) }],
+            messages: [...runtimeMessages, { role: 'user', content: visualTeachingBriefPrompt(modality, visualQuery, explanation) }],
             tools: [],
             includeTools: false,
             responseFormat: 'json_object',
+            maxOutputTokens: budget.maxOutputTokens,
           }), deadline, false)
           let rawBrief = textFromTutorProviderResponse(rawBriefPayload).trim()
           let rawBriefReasoningContent = reasoningContentFromProviderResponse(rawBriefPayload)
           try {
-            visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage, explanation)
+            visualBrief = parseVisualTeachingBrief(rawBrief, modality, visualQuery, explanation)
             if (visualBrief.explanation !== explanation) throw new Error('visual_teaching_explanation_mismatch')
           } catch (firstError) {
             if (Date.now() >= deadline - 1_000) throw firstError
@@ -1775,15 +1911,16 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
               messages: [
                 ...runtimeMessages,
                 { role: 'assistant', content: rawBrief, ...(rawBriefReasoningContent ? { reasoningContent: rawBriefReasoningContent } : {}) },
-                { role: 'user', content: visualTeachingBriefPrompt(modality, latestMessage, explanation, true) },
+                { role: 'user', content: visualTeachingBriefPrompt(modality, visualQuery, explanation, true) },
               ],
               tools: [],
               includeTools: false,
               responseFormat: 'json_object',
+              maxOutputTokens: budget.maxOutputTokens,
             }), deadline, false)
             rawBrief = textFromTutorProviderResponse(rawBriefPayload).trim()
             rawBriefReasoningContent = reasoningContentFromProviderResponse(rawBriefPayload)
-            visualBrief = parseVisualTeachingBrief(rawBrief, modality, latestMessage, explanation)
+            visualBrief = parseVisualTeachingBrief(rawBrief, modality, visualQuery, explanation)
             if (visualBrief.explanation !== explanation) throw new Error('visual_teaching_explanation_mismatch')
           }
         } catch (briefError) {
@@ -1831,8 +1968,9 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         model: input.model,
         instructions,
         messages: runtimeMessages,
-        tools,
+        tools: promptTools,
         includeTools: !continuationPrefix && toolCalls < budget.maxToolCalls,
+        maxOutputTokens: budget.maxOutputTokens,
       })
       const payload = await invokeModel(request)
       const calls = toolCallsFromProviderResponse(payload)
@@ -1901,7 +2039,16 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       const combinedText = `${continuationPrefix}${text}`
       const incompleteReason = incompleteTutorProviderReason(payload)
       if (incompleteReason) {
-        if (!text.trim()) throw new Error(`模型输出未完成且没有可续接正文：${incompleteReason}`)
+        if (!text.trim()) {
+          if (input.mode === 'learning_plan') {
+            freshFinalizationRequired = true
+            continuationPrefix = ''
+            resetVisibleDraft('retry')
+            record({ phase: 'verify', detail: `模型输出仅包含不完整思考（${incompleteReason}），将以精简请求重新生成正文`, status: 'retrying' })
+            break
+          }
+          throw new Error(`模型输出未完成且没有可续接正文：${incompleteReason}`)
+        }
         continuationPrefix = combinedText
         runtimeMessages.push({ role: 'assistant', content: text, ...(reasoningContent ? { reasoningContent } : {}) })
         runtimeMessages.push({
@@ -1941,21 +2088,36 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
       stopReason = Date.now() >= deadline ? 'model_budget' : toolCalls >= budget.maxToolCalls ? 'tool_budget' : 'forced_finalize'
       record({ phase: 'finalize', detail: '进入无工具最终收束', status: 'started' })
       const finalizationDeadline = Math.max(Date.now(), deadline) + budget.finalizationGraceMs
+      const freshPlanningRecovery = freshFinalizationRequired && input.mode === 'learning_plan'
+      let freshRecoveryPrefix = ''
       for (let attempt = 0; attempt < budget.finalizationAttempts && Date.now() < finalizationDeadline && !reply; attempt += 1) {
         modelRounds += 1
-        runtimeMessages.push({
-          role: 'user',
-          content: attempt === 0
-            ? '工具阶段已经结束。请基于已有观察直接给出完整、自然的中文教学回复；明确资料缺口，不再调用工具。'
-            : '上一轮仍没有形成可展示正文。现在只完成当前 SkillRun 要求的一个教学动作：先自然回应，再给最小必要解释或问题；不要调用工具，不要输出协议文本。',
-        })
+        const finalizationPrompt = attempt === 0
+          ? '请直接给出完整、自然的中文教学回复；明确资料缺口，不要调用工具，不要输出协议文本。'
+          : '上一轮仍没有形成可展示正文。现在只完成当前教学动作：先自然回应，再给最小必要解释或问题；不要调用工具，不要输出协议文本。'
+        const finalizationMessages: RuntimeMessage[] = freshPlanningRecovery
+          ? [{
+              role: 'user',
+              content: [
+                latestMessage,
+                finalizationPrompt,
+                freshRecoveryPrefix ? `已有草稿：${freshRecoveryPrefix}\n只补全缺失的结尾，不要重复草稿。` : '',
+              ].filter(Boolean).join('\n\n'),
+            }]
+          : (() => {
+              runtimeMessages.push({ role: 'user', content: finalizationPrompt })
+              return runtimeMessages.slice(-24)
+            })()
         const request = buildAgentProviderRequest({
           baseUrl: input.baseUrl,
           model: input.model,
-          instructions,
-          messages: runtimeMessages.slice(-24),
-          tools,
+          instructions: freshPlanningRecovery
+            ? buildTutorInstructions({ mode: 'learning_plan', learningPlanContext: input.learningPlanContext })
+            : instructions,
+          messages: finalizationMessages,
+          tools: promptTools,
           includeTools: false,
+          maxOutputTokens: budget.recoveryMaxOutputTokens,
         })
         const payload = await invokeModel(request, finalizationDeadline)
         const text = textFromTutorProviderResponse(payload)
@@ -1964,17 +2126,23 @@ export async function runTutorAgentTurn(input: TutorAgentRuntimeInput): Promise<
         const incompleteReason = incompleteTutorProviderReason(payload)
         if (incompleteReason) {
           if (text.trim()) {
-            continuationPrefix = combinedText
-            runtimeMessages.push({ role: 'assistant', content: text, ...(reasoningContent ? { reasoningContent } : {}) })
-            runtimeMessages.push({
-              role: 'user',
-              content: '回答仍因输出上限中断。只续写缺失的结尾并自然收束，不要重复前文。',
-            })
+            if (freshPlanningRecovery) {
+              freshRecoveryPrefix = combinedText
+              continuationPrefix = ''
+            } else {
+              continuationPrefix = combinedText
+              runtimeMessages.push({ role: 'assistant', content: text, ...(reasoningContent ? { reasoningContent } : {}) })
+              runtimeMessages.push({
+                role: 'user',
+                content: '回答仍因输出上限中断。只续写缺失的结尾并自然收束，不要重复前文。',
+              })
+            }
           }
           record({ phase: 'verify', detail: `最终收束仍检测到输出中断（${incompleteReason}）`, status: 'retrying' })
           continue
         }
-        const candidate = repairTutorDraftForObservedGaps(combinedText, runs)
+        const candidateText = freshPlanningRecovery ? `${freshRecoveryPrefix}${text}` : combinedText
+        const candidate = repairTutorDraftForObservedGaps(candidateText, runs)
         continuationPrefix = ''
         if (verifyTutorTurnOutcome({
           reply: candidate,

@@ -6,85 +6,36 @@ import {
   type LearningPathRetrievalCandidate,
   type LearningPathRetrievalResult,
 } from './learning-path-retrieval.ts'
+import { LEARNING_PATH_PROTOCOL_VERSION, type LearningPathGraphContract } from './learning-path-protocol.ts'
+import type {
+  LearningPathEdge,
+  LearningPathNode,
+  LearningPathSource,
+  PathAudience,
+  PathEdgeKind,
+  PathNodeOrigin,
+  PathStage,
+  PersonalPathNodeEvidence,
+  PersonalPathNodeEvidenceAssessment,
+  PersonalPathNodeEvidenceReport,
+  PersonalPathNodeProposal,
+} from './learning-path-protocol.ts'
 
-export type PathNodeOrigin = 'official' | 'personal'
-export type PathEdgeKind = 'hard_prerequisite' | 'soft_prerequisite' | 'co_learning'
+export type {
+  LearningPathEdge,
+  LearningPathNode,
+  LearningPathSource,
+  PathAudience,
+  PathEdgeKind,
+  PathNodeOrigin,
+  PathStage,
+  PersonalPathNodeEvidence,
+  PersonalPathNodeEvidenceAssessment,
+  PersonalPathNodeEvidenceReport,
+  PersonalPathNodeProposal,
+} from './learning-path-protocol.ts'
+
 export type LearnerPathStatus = 'unmarked' | 'exploring' | 'self_reported_exposed' | 'self_reported_mastered'
-export type PathAudience = 'vocational' | 'undergraduate' | 'graduate' | 'self_directed'
-export type PathStage = 'foundation' | 'core' | 'domain' | 'advanced' | 'research'
-
-export type LearningPathSource = {
-  id: string
-  title: string
-  institution: string
-  url: string
-  kind: 'framework' | 'university' | 'vocational' | 'emerging'
-}
-
-export type LearningPathNode = {
-  id: string
-  title: string
-  summary: string
-  aliases: string[]
-  domains: string[]
-  audiences: PathAudience[]
-  stage: PathStage
-  order: number
-  origin: PathNodeOrigin
-  sourceRefs: string[]
-  sourceProposalId?: string
-}
-
-export type LearningPathEdge = {
-  id: string
-  from: string
-  to: string
-  kind: PathEdgeKind
-  rationale: string
-  origin: PathNodeOrigin
-}
-
-export type PersonalPathNodeProposal = {
-  id: string
-  policyId: 'vnext-personal-path-node-proposer-v3'
-  generatedFromSnapshotId: string
-  title: string
-  summary: string
-  aliases: string[]
-  domains: string[]
-  stage: PathStage
-  order: number
-  sourceUrls: string[]
-  sourceEvidence: PersonalPathNodeEvidenceAssessment[]
-  connections: Array<{ nodeId: string; kind: PathEdgeKind; rationale: string }>
-  requiresLearnerConfirmation: true
-  masteryUnchanged: true
-}
-
-export type PersonalPathNodeEvidence = {
-  url: string
-  title?: string
-  snippet?: string
-  source?: string
-  quality?: 'official' | 'academic' | 'community' | 'repository'
-  role?: 'standard' | 'reference' | 'textbook' | 'course' | 'definition' | 'research' | 'example' | 'discussion'
-}
-
-export type PersonalPathNodeEvidenceAssessment = {
-  url: string
-  title: string
-  source: string
-  quality: NonNullable<PersonalPathNodeEvidence['quality']>
-  relevance: number
-  matchedTerms: string[]
-}
-
-export type PersonalPathNodeEvidenceReport = {
-  valid: boolean
-  accepted: PersonalPathNodeEvidenceAssessment[]
-  rejected: Array<{ url: string; reason: 'invalid_url' | 'insufficient_metadata' | 'off_topic' | 'weak_source' }>
-  policyId: 'vnext-personal-path-evidence-v1'
-}
 
 export type LearningPathPlan = {
   id: string
@@ -739,6 +690,15 @@ export const OFFICIAL_PATH_EDGES: LearningPathEdge[] = [
   e('advanced-algorithms', 'thesis-research', 'soft_prerequisite', '理论方向研究常需高阶算法能力'),
   e('advanced-systems', 'thesis-research', 'soft_prerequisite', '系统方向研究常需高阶系统背景'),
 ]
+
+/** Stable, learner-state-free graph payload for read-only external consumers. */
+export function exportOfficialLearningPathContract(): LearningPathGraphContract {
+  return {
+    protocolVersion: LEARNING_PATH_PROTOCOL_VERSION,
+    nodes: OFFICIAL_PATH_NODES.map(node => ({ ...node, aliases: [...node.aliases], domains: [...node.domains], audiences: [...node.audiences], sourceRefs: [...node.sourceRefs] })),
+    edges: OFFICIAL_PATH_EDGES.map(edge => ({ ...edge })),
+  }
+}
 
 function stableHash(value: string) {
   let hash = 2166136261

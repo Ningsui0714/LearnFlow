@@ -59,6 +59,22 @@ export function pluginObjectReferenceText(object: LearnFlowPluginObject) {
   return `- ${object.label}（${pluginObjectReferenceUri(object)}）`
 }
 
+/** A drag payload is a claim, not authority. Match it against the current conversation's actual tool results. */
+export function pluginObjectContentKey(object: LearnFlowPluginObject) {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)])) : value
+  return JSON.stringify(canonical(object))
+}
+
+export function resolvePluginObjectDrop(raw: string, trustedObjects: readonly LearnFlowPluginObject[]) {
+  try {
+    const candidate = parsePluginObjectDragData(raw)
+    if (!candidate) return undefined
+    const key = pluginObjectContentKey(candidate)
+    return trustedObjects.find(object => pluginObjectContentKey(object) === key)
+  } catch { return undefined }
+}
+
 export function pluginObjectReferenceUri(object: LearnFlowPluginObject) {
   const path = [object.pluginId, object.objectType, object.objectId].map(value => encodeURIComponent(value)).join('/')
   return `plugin-object://${path}?schema=${encodeURIComponent(object.schemaVersion)}`

@@ -24,6 +24,7 @@ import {
   validateOfficialLearningPathGraph,
 } from '../src/learning-path-graph.ts'
 import { extractLearningPathTopic } from '../src/learning-path-retrieval.ts'
+import { LEARNING_PATH_PROTOCOL_VERSION, type LearningPathGraphContract } from '../src/learning-path-protocol.ts'
 import { executeTutorAgentTool, TUTOR_AGENT_TOOL_DEFINITIONS } from './tool-runtime.ts'
 import {
   KNOWLEDGE_CLUSTERS,
@@ -43,6 +44,18 @@ const qmlEvidence = [{
   quality: 'academic' as const,
   role: 'course' as const,
 }]
+
+test('学习路径图可按共享协议供岗位系统只读消费', () => {
+  const contract: LearningPathGraphContract = {
+    protocolVersion: LEARNING_PATH_PROTOCOL_VERSION,
+    nodes: OFFICIAL_PATH_NODES,
+    edges: OFFICIAL_PATH_EDGES,
+  }
+  assert.equal(contract.protocolVersion, 'learnflow-learning-path/v1')
+  assert.ok(contract.nodes.length > 0)
+  assert.ok(contract.edges.every(edge => contract.nodes.some(node => node.id === edge.from)
+    && contract.nodes.some(node => node.id === edge.to)))
+})
 
 test('official graph is sourced, broad, and acyclic', () => {
   const validation = validateOfficialLearningPathGraph()

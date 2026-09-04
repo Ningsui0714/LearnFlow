@@ -16,8 +16,10 @@ import {
   directLearningTaskCandidateSelectionRequest,
   directLearningTaskDraftConfirmationRequest,
   directLearningTaskIntakeRequest,
+  DEFAULT_TUTOR_GENERATION_CONFIG,
   runTutorAgentTurn,
 } from './server/agent-runtime.ts'
+import type { TutorAgentGenerationConfig } from './server/agent-runtime.ts'
 import { readProviderStream } from './server/provider-stream.ts'
 import type { SearchProviderConfiguration } from './server/computer-knowledge-search.ts'
 import { sanitizeLearnerPathState } from './src/learning-path-graph.ts'
@@ -42,6 +44,25 @@ function loadTutorConfiguration(mode: string) {
   return {
     baseUrl: String(process.env.LEARNFLOW_LLM_BASE_URL || localEnv.LEARNFLOW_LLM_BASE_URL || '').trim(),
     model: String(process.env.LEARNFLOW_LLM_MODEL || localEnv.LEARNFLOW_LLM_MODEL || '').trim(),
+  }
+}
+
+function loadTutorGenerationConfiguration(mode: string): TutorAgentGenerationConfig {
+  const localEnv = loadEnv(mode, process.cwd(), '')
+  const value = (name: string) => String(process.env[name] || localEnv[name] || '').trim()
+  const integer = (name: string, fallback: number, minimum: number, maximum: number) => {
+    const parsed = Number.parseInt(value(name), 10)
+    return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback
+  }
+  return {
+    maxOutputTokens: integer('LEARNFLOW_TUTOR_MAX_OUTPUT_TOKENS', DEFAULT_TUTOR_GENERATION_CONFIG.maxOutputTokens, 400, 32_768),
+    planningMaxOutputTokens: integer('LEARNFLOW_TUTOR_PLANNING_MAX_OUTPUT_TOKENS', DEFAULT_TUTOR_GENERATION_CONFIG.planningMaxOutputTokens, 400, 32_768),
+    planningRecoveryMaxOutputTokens: integer('LEARNFLOW_TUTOR_PLANNING_RECOVERY_MAX_OUTPUT_TOKENS', DEFAULT_TUTOR_GENERATION_CONFIG.planningRecoveryMaxOutputTokens, 400, 32_768),
+    planningContextMessages: integer('LEARNFLOW_TUTOR_PLANNING_CONTEXT_MESSAGES', DEFAULT_TUTOR_GENERATION_CONFIG.planningContextMessages, 4, 18),
+    planningContextEnvelopeChars: integer('LEARNFLOW_TUTOR_PLANNING_CONTEXT_ENVELOPE_CHARS', DEFAULT_TUTOR_GENERATION_CONFIG.planningContextEnvelopeChars, 2_000, 24_000),
+    planningContextObservationChars: integer('LEARNFLOW_TUTOR_PLANNING_CONTEXT_OBSERVATION_CHARS', DEFAULT_TUTOR_GENERATION_CONFIG.planningContextObservationChars, 400, 8_000),
+    planningContextObservationTotalChars: integer('LEARNFLOW_TUTOR_PLANNING_CONTEXT_OBSERVATION_TOTAL_CHARS', DEFAULT_TUTOR_GENERATION_CONFIG.planningContextObservationTotalChars, 1_000, 24_000),
+    planningToolDescriptionChars: integer('LEARNFLOW_TUTOR_PLANNING_TOOL_DESCRIPTION_CHARS', DEFAULT_TUTOR_GENERATION_CONFIG.planningToolDescriptionChars, 120, 2_000),
   }
 }
 
@@ -165,6 +186,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
   const runtimeBridgeToken = loadRuntimeBridgeToken(mode)
   const searchConfiguration = loadSearchConfiguration(mode)
   const learningTaskPreflight = loadLearningTaskPreflightConfiguration(mode)
+  const tutorGeneration = loadTutorGenerationConfiguration(mode)
   const resolveAccountKey = createAccountCredentialResolver({
     mode,
     backendBase,
@@ -569,6 +591,7 @@ function tutorProxy(mode: string, backendBase: string): Plugin {
         pluginRegistry,
         activePluginIds,
         referencedPluginObjects,
+        generationConfig: tutorGeneration,
         generate,
         searchConfiguration,
         invokeProvider,

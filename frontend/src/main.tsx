@@ -43,7 +43,8 @@ import VisualArtifact from './VisualArtifact'
 import PluginToolResultView from './PluginToolResultView'
 import {
   PLUGIN_OBJECT_DRAG_TYPE,
-  parsePluginObjectDragData,
+  resolvePluginObjectDrop,
+  pluginObjectContentKey,
   pluginObjectReferenceText,
   type LearnFlowPluginObject,
 } from './plugin-api'
@@ -1338,8 +1339,8 @@ function App({ auth }: { auth: AuthGateSession }) {
   const addPluginDraftReference = (draftKey: string, object: LearnFlowPluginObject) => {
     setPluginDraftReferences(previous => {
       const current = previous[draftKey] || []
-      const key = `${object.pluginId}:${object.objectType}:${object.objectId}:${object.schemaVersion}`
-      if (current.some(item => `${item.pluginId}:${item.objectType}:${item.objectId}:${item.schemaVersion}` === key)) return previous
+      const key = pluginObjectContentKey(object)
+      if (current.some(item => pluginObjectContentKey(item) === key)) return previous
       return { ...previous, [draftKey]: [...current, object].slice(-12) }
     })
   }
@@ -2851,7 +2852,24 @@ function App({ auth }: { auth: AuthGateSession }) {
       }, 30)
     }
     return (
-      <section className={`chat-page${conversation.projectId ? ' project-chat-page' : ''}`}>
+      <section className={`chat-page${conversation.projectId ? ' project-chat-page' : ''}`}
+        onDragOver={event => {
+          if (!pendingMode && event.dataTransfer.types.includes(PLUGIN_OBJECT_DRAG_TYPE)) {
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'copy'
+          }
+        }}
+        onDrop={event => {
+          const raw = event.dataTransfer.getData(PLUGIN_OBJECT_DRAG_TYPE)
+          if (!raw) return
+          event.preventDefault()
+          event.stopPropagation()
+          if (pendingMode) return
+          const object = resolvePluginObjectDrop(raw, messages.flatMap(message => message.toolRuns || [])
+            .flatMap(run => run.plugin?.result.objects || []))
+          if (object) addPluginDraftReference(draftKey, object)
+        }}
+      >
         <header className="chat-heading">
           <h1>{conversation.title}</h1>
           <div className="chat-state-stack">
@@ -3304,40 +3322,19 @@ function App({ auth }: { auth: AuthGateSession }) {
               </div>
             )}
             {draftPluginObjects.length > 0 && <div className="composer-plugin-references" aria-label="已引用的插件对象">
-              {draftPluginObjects.map(object => <span key={`${object.pluginId}:${object.objectType}:${object.objectId}`}>
+              {draftPluginObjects.map(object => <span key={pluginObjectContentKey(object)}>
                 <i>↳</i>
                 <strong>{object.label}</strong>
                 <small>{object.objectType}</small>
                 <button type="button" onClick={() => setPluginDraftReferences(previous => ({
                   ...previous,
-                  [draftKey]: (previous[draftKey] || []).filter(item => !(
-                    item.pluginId === object.pluginId && item.objectType === object.objectType && item.objectId === object.objectId
-                  )),
+                  [draftKey]: (previous[draftKey] || []).filter(item => pluginObjectContentKey(item) !== pluginObjectContentKey(object)),
                 }))} aria-label={`移除插件对象引用${object.label}`}>×</button>
               </span>)}
             </div>}
             <textarea
               value={drafts[draftKey] || ''}
               onChange={event => setDrafts(previous => ({ ...previous, [draftKey]: event.target.value }))}
-              onDragOver={event => {
-                if (event.dataTransfer.types.includes(PLUGIN_OBJECT_DRAG_TYPE)) {
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'copy'
-                }
-              }}
-              onDrop={event => {
-                const raw = event.dataTransfer.getData(PLUGIN_OBJECT_DRAG_TYPE)
-                if (!raw) return
-                event.preventDefault()
-                const candidate = parsePluginObjectDragData(raw)
-                const object = candidate && messages.flatMap(message => message.toolRuns || [])
-                  .flatMap(run => run.plugin?.result.objects || [])
-                  .find(item => item.pluginId === candidate.pluginId
-                    && item.objectType === candidate.objectType
-                    && item.objectId === candidate.objectId
-                    && item.schemaVersion === candidate.schemaVersion)
-                if (object) addPluginDraftReference(draftKey, object)
-              }}
               disabled={Boolean(pendingMode)}
               onKeyDown={event => {
                 if (event.key === 'Enter' && !event.shiftKey) {

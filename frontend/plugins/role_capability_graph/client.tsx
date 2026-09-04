@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   defineLearnFlowPluginClient,
   pluginObjectDragProps,
@@ -250,6 +250,10 @@ type RadarRing = { ring: number; label: string; objectIds: string[]; total?: num
 
 function RoleDimensionRadar({ props, radar }: { props: PluginToolRendererProps; radar: RecordValue }) {
   const [selectedId, setSelectedId] = useState(String(radar.rootId || ''))
+  const [hoverId, setHoverId] = useState('')
+  const [focusOnly, setFocusOnly] = useState(false)
+  const [zoom, setZoom] = useState(1)
+  const arrowId = `role-arrow-${useId().replace(/:/g, '')}`
   const objects = new Map(props.objects.filter(object => object.objectType === 'role_object').map(object => [object.objectId, object]))
   const relations = props.objects.filter(object => object.objectType === 'role_relation')
   const rings = ((radar.rings || []) as RadarRing[]).filter(ring => ring.objectIds.some(id => objects.has(id)))
@@ -272,10 +276,19 @@ function RoleDimensionRadar({ props, radar }: { props: PluginToolRendererProps; 
   })
   const visibleIds = new Set(positions.keys())
   const selected = objects.get(selectedId) || objects.get(rootId)
+  const focusId = hoverId || (focusOnly || selected?.objectId !== rootId ? selected?.objectId : '')
+  const neighbors = new Set(focusId ? [focusId] : [])
+  for (const object of relations) {
+    const edge = dataOf(object)
+    if (edge.source === focusId || edge.target === focusId) { neighbors.add(String(edge.source)); neighbors.add(String(edge.target)) }
+  }
   return <div className="role-plugin-dimension-radar">
-    <header><strong>岗位中心语义雷达</strong><span>{Math.max(0, rings.length - 1)} 个维度 · {Math.max(0, visibleIds.size - 1)} 个外围节点</span></header>
-    <div className="role-plugin-radar-stage" role="img" aria-label={`以${objects.get(rootId)?.label || '岗位'}为中心，按岗位边界、任务、能力、能力单元和知识技能向外展开`}>
+    <header><strong>岗位能力结构图</strong><span>{Math.max(0, rings.length - 1)} 个维度 · {Math.max(0, visibleIds.size - 1)} 个外围节点</span></header>
+    <div className="role-plugin-actions"><button type="button" onClick={() => setZoom(Math.max(1, zoom - .25))} disabled={zoom <= 1} aria-label="缩小岗位关系图">−</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom(Math.min(2.5, zoom + .25))} disabled={zoom >= 2.5} aria-label="放大岗位关系图">＋</button><button type="button" aria-pressed={focusOnly} onClick={() => setFocusOnly(!focusOnly)}>只看一跳关系</button><button type="button" onClick={() => { setSelectedId(rootId); setHoverId(''); setFocusOnly(false); setZoom(1) }}>返回全图</button></div>
+    <div className="role-plugin-radar-viewport">
+    <div className="role-plugin-radar-stage" style={{ width: `${zoom * 100}%`, maxWidth: 'none', minHeight: 0 }} role="group" aria-label={`以${objects.get(rootId)?.label || '岗位'}为中心的可交互关系图`}>
       <svg viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+        <defs><marker id={arrowId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#487767" /></marker></defs>
         {rings.filter(ring => ring.ring > 0).map(ring => {
           const radius = maxRadius * (.28 + ring.ring * .14)
           return <circle key={ring.ring} cx={center.x} cy={center.y} r={radius} className={`ring ring-${ring.ring}`} />
@@ -285,30 +298,41 @@ function RoleDimensionRadar({ props, radar }: { props: PluginToolRendererProps; 
           const source = positions.get(String(relation.source || ''))
           const target = positions.get(String(relation.target || ''))
           if (!source || !target) return null
-          return <line key={relationObject.objectId} x1={source.x} y1={source.y} x2={target.x} y2={target.y}><title>{String(relation.type || '')}</title></line>
+          const related = relation.source === focusId || relation.target === focusId
+          if (focusOnly && focusId && !related) return null
+          const distance = Math.hypot(target.x - source.x, target.y - source.y) || 1
+          return <line key={relationObject.objectId} style={{ opacity: focusId ? related ? .95 : .06 : .35, strokeWidth: related ? 2 : 1 }} markerEnd={`url(#${arrowId})`} x1={source.x} y1={source.y} x2={target.x - (target.x - source.x) / distance * 13} y2={target.y - (target.y - source.y) / distance * 13}><title>{String(relation.type || '')}</title></line>
         })}</g>
       </svg>
       {rings.filter(ring => ring.ring > 0).map(ring => <span key={ring.ring} className={`role-plugin-ring-label ring-${ring.ring}`}>{ring.label}<small>{ring.objectIds.filter(id => objects.has(id)).length}{ring.total && ring.total > ring.objectIds.length ? ` / ${ring.total}` : ''}</small></span>)}
       {[...positions].map(([objectId, position]) => {
         const object = objects.get(objectId)
         if (!object) return null
+        const muted = Boolean(focusId && !neighbors.has(objectId))
+        if (focusOnly && muted) return null
         const category = categoryOf(object)
         return <button
           key={objectId}
           type="button"
-          className={`role-plugin-radar-node ${position.ring === 0 ? 'root' : ''} ${selected?.objectId === objectId ? 'selected' : ''}`}
+          className={`role-plugin-radar-node ${position.ring === 0 ? 'root' : ''} ${selected?.objectId === objectId ? 'selected' : ''} ${muted ? 'muted' : ''}`}
           style={{ left: `${position.x / width * 100}%`, top: `${position.y / height * 100}%`, '--role-accent': colorFor(category) } as CSSProperties}
           aria-label={`${object.label}，${category}`}
+          aria-pressed={selected?.objectId === objectId}
+          title={`${object.label} · ${String(dataOf(object).summary || '')}`}
           {...interactiveObjectProps(props, object)}
           onClick={() => setSelectedId(objectId)}
+          onMouseEnter={() => setHoverId(objectId)} onMouseLeave={() => setHoverId('')}
+          onFocus={() => setHoverId(objectId)} onBlur={() => setHoverId('')}
         ><i /><span>{object.label}</span></button>
       })}
+    </div>
     </div>
     {selected && <article className="role-plugin-radar-selection" style={{ '--role-accent': colorFor(categoryOf(selected)) } as CSSProperties} {...interactiveObjectProps(props, selected)}>
       <span>{categoryOf(selected)} · 第 {semanticRingOf(selected) ?? '—'} 环</span><strong>{selected.label}</strong><p>{String(dataOf(selected).summary || '')}</p>
       <FollowActions props={props} objectId={selected.objectId} label={selected.label} />
+      {props.onReference && <button type="button" onClick={() => props.onReference?.(selected)}>引用到对话</button>}
     </article>}
-    <footer>节点可点击查看、双击引用，也可直接拖入下方输入框。环表示岗位语义维度，不表示分数高低。</footer>
+    <footer>悬停高亮一跳关系，点击固定焦点；放大后可滚动查看。节点可双击引用或拖入当前对话区域。环表示岗位语义维度，不表示分数高低。</footer>
   </div>
 }
 
@@ -519,9 +543,12 @@ function PackageCatalog(props: PluginToolRendererProps) {
     role_agent_simulation: 'role-agent 模拟', installed: '本地已安装',
   } as Record<string, string>)[String(item.sourceKind || '')] || '可用岗位包'
   return <section className="role-plugin-view role-plugin-catalog" aria-label="岗位包目录">
-    <header><strong>{isNotFound ? '暂未找到可用岗位包' : '可引用岗位包'}</strong><small>{String(payload.count || 0)} 个匹配版本</small></header>
+    <header><strong>{isNotFound ? '暂未找到可用岗位包' : '岗位包发现'}</strong><small>{String(payload.count || 0)} 个已加载版本 · {Array.isArray(payload.availablePackages) ? payload.availablePackages.length : 0} 个 Hub 候选</small></header>
+    {payload.matchStatus === 'discovery_unavailable' && <p role="status" className="role-plugin-warning">当前环境未加载匹配岗位包，且 Hub 检索{payload.hubStatus === 'not_configured' ? '尚未配置' : '暂时不可用'}；这不代表仓库中没有该岗位包。</p>}
+    {(payload.availablePackages || []).map((item: RecordValue) => <article key={String(item.rootHash)}><span>Graph Hub · 已发布，尚未加载</span><strong>{String(item.roleTitle)} · v{String(item.packageVersion)}</strong><p>{String(item.summary || '')}</p><small>{(item.reasons || []).join(' · ')}</small><p><code>{String(item.snapshotId)}</code></p><a href={String(item.repositoryUrl)} target="_blank" rel="noreferrer">打开仓库并选择“在 LearnFlow 中使用” ↗</a></article>)}
+    {payload.hubTruncated && <p>这里只显示部分匹配发布版本，可在 Graph Hub 继续检索。</p>}
     {isNotFound && <article className="role-plugin-empty"><span>继续查找或研究</span><strong>{String(payload.requestedRole || '新岗位')}</strong><p>当前插件目录里没有匹配的不可变岗位包。你可以先去共享 Graph Hub 查看其他已发布图谱，也可以进入 Role Atlas 为该岗位做研究和冷启动。</p><div className="role-plugin-actions">{payload.graphHubBrowseUrl && <a href={String(payload.graphHubBrowseUrl)} target="_blank" rel="noreferrer">打开 Graph Hub ↗</a>}{payload.roleAgentResearchUrl && <a href={String(payload.roleAgentResearchUrl)} target="_blank" rel="noreferrer">进入 Role Atlas 研究 ↗</a>}</div></article>}
-    {(payload.packages || []).map((item: RecordValue) => <article key={`${String(item.packageId)}@${String(item.packageVersion)}`}><span>{sourceLabel(item)} · {String(item.roleTitle)}</span><strong>v{String(item.packageVersion)}</strong><p>{String(item.snapshotAsOf)} · <code>{String(item.snapshotId)}</code></p>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`引用这个岗位包。请调用 reference_role_package，并原样使用以下身份：packageId=${String(item.packageId)}；packageVersion=${String(item.packageVersion)}；snapshotId=${String(item.snapshotId)}；rootHash=${String(item.rootHash)}`)}>引用此岗位包</button>}</article>)}
+    {(payload.packages || []).map((item: RecordValue) => <article key={`${String(item.packageId)}@${String(item.packageVersion)}:${String(item.snapshotId)}:${String(item.rootHash)}`}><span>{sourceLabel(item)} · {String(item.roleTitle)}</span><strong>v{String(item.packageVersion)}</strong><p>{String(item.snapshotAsOf)} · <code>{String(item.snapshotId)}</code></p>{props.onPrompt && <button type="button" onClick={() => props.onPrompt?.(`引用这个岗位包。请调用 reference_role_package，并原样使用以下身份：packageId=${String(item.packageId)}；packageVersion=${String(item.packageVersion)}；snapshotId=${String(item.snapshotId)}；rootHash=${String(item.rootHash)}`)}>引用此岗位包</button>}</article>)}
     {payload.simulation && <p className="role-plugin-warning">{String(payload.simulation)}</p>}
     {Array.isArray(payload.warnings) && payload.warnings.length > 0 && <p className="role-plugin-warning">另有 {payload.warnings.length} 个 role-agent 目录项未通过协议校验，因此没有加入可引用列表。</p>}
     {!isNotFound && payload.graphHubBrowseUrl && <div className="role-plugin-actions"><a href={String(payload.graphHubBrowseUrl)} target="_blank" rel="noreferrer">在 Graph Hub 查看更多图谱 ↗</a></div>}

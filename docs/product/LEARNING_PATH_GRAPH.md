@@ -6,6 +6,8 @@
 
 ## 数据模型
 
+共享协议由 `frontend/src/learning-path-protocol.ts` 定义，版本为 `learnflow-learning-path/v1`。岗位系统可以只读消费节点和边，并产生兼容的个人节点提案；学习者确认、事件写入和个人状态投影仍只属于 LearnFlow。
+
 - `LearningPathNode`：一门广为人知的课程或稳定技能域，分官方节点和个人节点。
 - `LearningPathEdge`：从前置指向后继，类型为硬前置、软前置或建议共学；所有边都必须保持 DAG。
 - `LearnerPathState`：正式 Structure/Value 覆盖投影，记录节点状态、个人节点和版本化长期路线；浏览器只保留离线缓存。

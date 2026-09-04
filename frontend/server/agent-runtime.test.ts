@@ -57,6 +57,13 @@ test('guided learning receives a larger but still bounded runtime budget', () =>
     maxModelRounds: 5,
     maxToolCalls: 8,
     maxWallTimeMs: 360_000,
+    maxOutputTokens: 6_000,
+    recoveryMaxOutputTokens: 6_000,
+    contextMessageLimit: 18,
+    contextEnvelopeChars: 12_000,
+    contextObservationChars: 5_000,
+    contextObservationTotalChars: 24_000,
+    toolDescriptionChars: 2_000,
     finalizationAttempts: 1,
     finalizationGraceMs: 25_000,
   })
@@ -64,9 +71,32 @@ test('guided learning receives a larger but still bounded runtime budget', () =>
     maxModelRounds: 9,
     maxToolCalls: 14,
     maxWallTimeMs: 540_000,
+    maxOutputTokens: 6_000,
+    recoveryMaxOutputTokens: 6_000,
+    contextMessageLimit: 18,
+    contextEnvelopeChars: 12_000,
+    contextObservationChars: 5_000,
+    contextObservationTotalChars: 24_000,
+    toolDescriptionChars: 2_000,
     finalizationAttempts: 2,
     finalizationGraceMs: 45_000,
   })
+  const planning = tutorAgentBudget('learning_plan', 'none', {
+    planningMaxOutputTokens: 13_000,
+    planningRecoveryMaxOutputTokens: 4_500,
+    planningContextMessages: 9,
+    planningContextEnvelopeChars: 10_000,
+    planningContextObservationChars: 1_800,
+    planningContextObservationTotalChars: 6_000,
+    planningToolDescriptionChars: 280,
+  })
+  assert.equal(planning.maxOutputTokens, 13_000)
+  assert.equal(planning.recoveryMaxOutputTokens, 4_500)
+  assert.equal(planning.contextMessageLimit, 9)
+  assert.equal(planning.contextEnvelopeChars, 10_000)
+  assert.equal(planning.contextObservationChars, 1_800)
+  assert.equal(planning.contextObservationTotalChars, 6_000)
+  assert.equal(planning.toolDescriptionChars, 280)
   assert.equal(tutorAgentBudget('simple_explain', 'diagram').maxWallTimeMs, 600_000)
   assert.equal(tutorAgentBudget('simple_explain', 'animation').maxWallTimeMs, 720_000)
   assert.equal(tutorAgentBudget('guided_learning', 'animation').maxWallTimeMs, 720_000)
@@ -400,9 +430,50 @@ test('Tutor continues a token-limited provider answer before accepting the final
   })
   assert.equal(result.reply, '第一阶段先补工程基础，第二阶段完成可评测的 RAG 项目。')
   assert.equal(result.trace.modelRounds, 2)
-  assert.equal(requests[0].body.max_tokens, 6_000)
+  assert.equal(requests[0].body.max_tokens, 12_000)
   assert.equal(requests[1].body.tools, undefined)
   assert.ok(events.some(event => event.type === 'trajectory' && /输出上限中断/.test(event.event.detail)))
+})
+
+test('planning retries from a clean request when truncation contains no visible text', async () => {
+  const requests: any[] = []
+  let round = 0
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions',
+    model: 'test-model',
+    mode: 'learning_plan',
+    messages: [{ role: 'user', content: '我想系统学习计算机系统，为后续 AI 方向打基础' }],
+    toolChoice: 'auto',
+    generationConfig: {
+      planningMaxOutputTokens: 13_000,
+      planningRecoveryMaxOutputTokens: 4_500,
+      planningContextMessages: 9,
+      planningContextEnvelopeChars: 10_000,
+      planningContextObservationChars: 1_800,
+      planningContextObservationTotalChars: 6_000,
+      planningToolDescriptionChars: 280,
+    },
+    generate: async () => 'unused',
+    taskQueue: [],
+    knowledgeDomains: [],
+    invokeProvider: async request => {
+      requests.push(request)
+      round += 1
+      if (round === 1) {
+        const body = request.body as any
+        assert.equal(body.tools.every((tool: any) => tool.function.description.length <= 280), true)
+        return { choices: [{ message: { reasoning_content: '不完整思考' }, finish_reason: 'length' }] }
+      }
+      const body = request.body as any
+      assert.equal(body.max_tokens, 4_500)
+      assert.equal(body.tools, undefined)
+      assert.equal(body.messages.some((message: any) => message.reasoning_content), false)
+      return { choices: [{ message: { content: '先补齐系统基础，再选择一个 AI 系统方向做项目验证。' }, finish_reason: 'stop' }] }
+    },
+  })
+  assert.equal(result.reply, '先补齐系统基础，再选择一个 AI 系统方向做项目验证。')
+  assert.equal(requests.length, 2)
+  assert.equal(requests[0].body.max_tokens, 13_000)
 })
 
 test('guided learning keeps the learner in flow when the provider returns no teaching text', async () => {
@@ -1051,6 +1122,62 @@ test('a failed animation preserves the committed explanation and cannot drift', 
   const toolStarted = events.findIndex(event => event.type === 'tool_started')
   assert.ok(committed >= 0 && toolStarted > committed)
   assert.equal(events.slice(committed + 1).some(event => event.type === 'text_reset'), false)
+})
+
+test('a thrown visual error closes the running tool and ignores late stage callbacks', async () => {
+  const events: any[] = []
+  let lateStage: (() => void) | undefined
+  const result = await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain',
+    messages: [{ role: 'user', content: '用动画演示联邦学习聚合过程' }], toolChoice: 'auto',
+    generate: async () => 'unused', observe: event => events.push(event),
+    executeTool: async (_name, _args, options) => {
+      lateStage = () => options.onVisualStage?.('planner_received')
+      throw new Error('renderer disconnected')
+    },
+    invokeProvider: async request => ({ choices: [{ message: { content: (request.body as any).response_format
+      ? visualTeachingPayload('animation') : visualTeachingExplanation } }] }),
+  })
+  const started = events.find(event => event.type === 'tool_started')
+  const completed = events.filter(event => event.type === 'tool_completed')
+  assert.equal(completed.length, 1)
+  assert.equal(completed[0].run.toolCallId, started.toolCallId)
+  assert.equal(completed[0].run.status, 'failed')
+  assert.equal(result.toolRuns[0].status, 'failed')
+  assert.equal(result.visualTeaching?.terminalState, 'explanation_only')
+  assert.equal(result.visualTeaching?.explanationPreserved, true)
+  const eventCount = events.length
+  lateStage?.()
+  assert.equal(events.length, eventCount)
+})
+
+test('visual follow-up resolves its topic before the explanation and brief calls', async () => {
+  const prompts: string[] = []
+  const toolQueries: string[] = []
+  await runTutorAgentTurn({
+    baseUrl: 'https://example.com/v1/chat/completions', model: 'test-model', mode: 'simple_explain', toolChoice: 'auto',
+    messages: [{ role: 'user', content: '用动画演示联邦学习聚合过程' },
+      { role: 'assistant', content: '视觉生成失败。' }, { role: 'user', content: '改成图片吧' }],
+    generate: async () => 'unused',
+    invokeProvider: async request => {
+      const body = request.body as any
+      prompts.push(body.messages[body.messages.length - 1].content)
+      return { choices: [{ message: { content: body.response_format ? visualTeachingPayload('diagram') : visualTeachingExplanation } }] }
+    },
+    executeTool: async (name, args, _options, meta) => {
+      toolQueries.push(String(args.query))
+      assert.equal(name, 'generate_learning_diagram')
+      return { run: { id: String(meta?.callId || name), kind: 'image', toolName: name, status: 'failed', title: name, detail: 'fixture failure', durationMs: 1 },
+        observation: { error: 'fixture failure' } } as any
+    },
+  })
+  assert.ok(prompts.length >= 2)
+  for (const prompt of prompts.slice(0, 2)) {
+    assert.match(prompt, /结构化主题锚点/)
+    assert.match(prompt, /联邦学习聚合过程/)
+  }
+  assert.equal(toolQueries.length, 1)
+  assert.match(toolQueries[0], /联邦学习聚合过程/)
 })
 
 test('a brief failure after explanation commit never invokes the renderer', async () => {

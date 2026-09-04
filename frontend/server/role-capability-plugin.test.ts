@@ -103,7 +103,7 @@ test('graph hub recommendation exposes an unreviewed personal graph only to its 
   }
 })
 
-test('package catalog filters by requested role and hands unmatched roles to Role Atlas', async () => {
+test('package catalog filters installed roles without claiming an unconfigured public Hub has no package', async () => {
   const loaded = await registry()
   const matched = await loaded.execute('role_capability_graph__list_role_packages', {
     query: '我想了解大模型应用工程师',
@@ -117,7 +117,9 @@ test('package catalog filters by requested role and hands unmatched roles to Rol
     query: '软件测试工程师',
   }, executionContext)
   const missingPayload = missing.result.payload as any
-  assert.equal(missingPayload.matchStatus, 'not_found')
+  assert.equal(missingPayload.matchStatus, 'discovery_unavailable')
+  assert.equal(missingPayload.hubStatus, 'not_configured')
+  assert.match(missing.result.summary, /不能判断仓库是否存在/)
   assert.equal(missingPayload.requestedRole, '软件测试工程师')
   assert.deepEqual(missingPayload.packages, [])
   assert.deepEqual(missing.result.objects, [])
